@@ -1,10 +1,9 @@
 """Runtime-compiled simulation of collective and gated-edge models.
 
 Simulation prepares programs from the population and live argument shapes on each
-call. Collective continuation values retain their trailing stakeholder axis;
-gated continuation values select one stakeholder's leg, and routing re-evaluates
-the gate at the realized candidate target state. Repeated calls reuse the
-compiled decisions and population gate evaluators for those shapes.
+call. Collective continuation values retain their trailing member axis; a
+consented exit moves a subject within the period into the collective target.
+Repeated calls reuse the compiled decisions and exit programs for those shapes.
 
 Both models below are small enough that every simulated value is an exact
 arithmetic expression, stated in the factory's docstring.
@@ -21,25 +20,21 @@ from _lcm.typing import PytreeValue, ShapeDtypePytree
 from benchmarks.asv._compile_counters import count_compile_requests
 from lcm import (
     AgeGrid,
-    ByAge,
     CollectiveUtility,
+    Consent,
+    Counterparty,
     DiscreteGrid,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
-    ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
-    Transition,
     categorical,
     fixed_transition,
 )
-from lcm.transition import StochasticTransition
-from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND, ScalarInt
+from lcm.exits import Exit, ExitTarget
+from lcm.typing import DiscreteAction, DiscreteState, FloatND, ScalarInt
 from tests.collective_fixtures import (
-    TWO_STAKEHOLDER_V_PERIOD_0,
+    TWO_MEMBER_V_PERIOD_0,
     make_couple_initial_conditions,
-    make_two_stakeholder_model,
+    make_two_member_model,
 )
 from tests.conftest import DECIMAL_PRECISION
 
@@ -47,24 +42,29 @@ _N_SUBJECTS = 2
 
 _DISCOUNT_FACTOR = 0.95
 
-# `single`'s period-0 value at education low and high, in subject order.
-CONSENT_V_SINGLE_PERIOD_0 = (3.85, 8.65)
+# Each subject's own period-0 value at education low and high, in subject order:
+# her married value where she moves, her single value where she stays.
+CONSENT_OWN_VALUE_PERIOD_0 = (5.85, 13.4)
+
+# The regime each subject acts in at period 0: the low-education subject moves
+# into the couple, the high-education one stays single.
+CONSENT_PERIOD_0_REGIMES = ("married", "single")
 
 # The regime each subject occupies at period 1: the low-education subject
-# marries, the high-education one keeps her outside option.
+# stays married, the high-education one keeps her outside option.
 CONSENT_PERIOD_1_REGIMES = ("married_terminal", "single_terminal")
 
 
 def test_collective_model_simulates_under_the_runtime_program(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A collective runtime program keeps both stakeholders' values.
+    """A collective runtime program keeps both members' values.
 
-    Each subject's period-0 row carries both stakeholders' values at the
+    Each subject's period-0 row carries both members' values at the
     household argmax, and they are the same numbers the model solves to.
     """
     compiled = _capture_compiled_dispatches(monkeypatch=monkeypatch)
-    model, params = make_two_stakeholder_model()
+    model, params = make_two_member_model()
     initial_conditions = make_couple_initial_conditions(n_subjects=_N_SUBJECTS)
 
     result = model.simulate(
@@ -78,21 +78,19 @@ def test_collective_model_simulates_under_the_runtime_program(
     period_0 = simulated.loc[simulated["period"] == 0, ["value_f", "value_m"]]
     aaae(
         period_0.to_numpy(),
-        np.asarray(TWO_STAKEHOLDER_V_PERIOD_0),
+        np.asarray(TWO_MEMBER_V_PERIOD_0),
         decimal=DECIMAL_PRECISION,
     )
 
 
-def test_gated_edge_model_simulates_under_the_runtime_program(
+def test_consent_exit_model_simulates_under_the_runtime_program(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A gated-edge runtime program keeps its values and consent routes.
+    """A consented-exit runtime program keeps its values and routes.
 
-    The source regime's own action is chosen against the consent-gated
-    continuation, so its period-0 value is the flow payoff plus the discounted
-    gated continuation — the married value where consent holds and the single
-    fallback where it does not — and each subject then routes to the regime
-    its own gate selects.
+    Each subject's own period-0 value is her married value where both consent
+    and her single value where she does not, and each subject then acts in the
+    regime the consent selects.
     """
     compiled = _capture_compiled_dispatches(monkeypatch=monkeypatch)
     model = _make_consent_model()
@@ -111,21 +109,27 @@ def test_gated_edge_model_simulates_under_the_runtime_program(
     assert compiled, "Simulation must dispatch an actual compiled program."
 
     simulated = result.to_dataframe()
+    period_0 = simulated.loc[simulated["period"] == 0]
+    assert tuple(period_0["regime_name"]) == CONSENT_PERIOD_0_REGIMES
     aaae(
-        simulated.loc[simulated["period"] == 0, "value"].to_numpy(),
-        np.asarray(CONSENT_V_SINGLE_PERIOD_0),
+        np.where(
+            period_0["regime_name"] == "married",
+            period_0["value_f"],
+            period_0["value"],
+        ),
+        np.asarray(CONSENT_OWN_VALUE_PERIOD_0),
         decimal=DECIMAL_PRECISION,
     )
     routed = simulated.loc[simulated["period"] == 1, "regime_name"]
     assert tuple(routed) == CONSENT_PERIOD_1_REGIMES
 
 
-def test_participation_programs_reuse_compilation_for_a_repeated_population(
+def test_exit_programs_reuse_compilation_for_a_repeated_population(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A second forward call reuses the participation programs the first one built.
+    """A second forward call reuses the exit programs the first one built.
 
-    The participation check is evaluated inside the compiled simulation program,
+    The consented exit is evaluated inside the compiled simulation program,
     so the first call must compile and the repeated one must dispatch the same
     executables without tracing, lowering or compiling anything.
     """
@@ -214,67 +218,52 @@ class ConsentRegimeId:
 
     single: ScalarInt  # code 0
     single_terminal: ScalarInt  # code 1
-    married_terminal: ScalarInt  # code 2
+    married: ScalarInt  # code 2
+    married_terminal: ScalarInt  # code 3
+    partner: ScalarInt  # code 4
 
 
 def _make_consent_model() -> Model:
-    """Build a singleton source consenting into a collective target.
+    """Build a singleton source whose consented exit enters a collective target.
 
-    `single` is active at age 0 and transitions with probability one into the
-    two-stakeholder `married_terminal`, but only where the wife consents:
-    her own value in the marriage has to beat the value of staying single.
-    Where it does not, the gated edge routes her to `single_terminal` with her
-    education carried across.
+    `single` may move at age 0 into the two-member `married` as its member `f`,
+    whose counterparty `m` compares with the value of `partner`. Both consent
+    only where each one's married value strictly beats the own outside value.
 
-    Hand computation, wage $\\{1, 2\\}$ by education and $\\beta = 0.95$:
+    Hand computation, wage $\\{1, 2\\}$ by education and $\beta = 0.95$:
 
-    - `married_terminal`, both payoffs increasing in `work`, so work wins:
-      $V^f = (3, 6)$ and $V^m = (1, 2)$ by education.
-    - `single_terminal`: $V = (2, 7)$ by education.
-    - Consent, $V^f > V^{single}$: $3 > 2$ holds at low education, $6 > 7$
-      fails at high, so $\\bar{W}^f = (3, 7)$.
-    - `single` at period 0, work again optimal: $V = (1 + 0.95 \\cdot 3,
-      2 + 0.95 \\cdot 7) = (3.85, 8.65)$.
+    - `married` then `married_terminal`, both payoffs increasing in `work`, so work
+      wins: $V^f = 3 w (1 + 0.95) = (5.85, 11.7)$ and $V^m = (1.95, 3.9)$.
+    - `single` without its exit: $V = w + 0.95 (2 + 10 e) = (2.9, 13.4)$.
+    - `partner`: $V = -10 + 0.95 (2 + 10 e) = (-8.1, 1.4)$, so he always consents.
+    - She consents where $5.85 > 2.9$, at low education, and not where
+      $11.7 < 13.4$, at high: the low subject moves, the high one stays.
 
     Returns:
         The model.
 
     """
-    single_law = ByAge(
-        cases={0: {"married_terminal": StochasticTransition(func=_certain_transition)}}
-    )
-    single_participation = {
-        "married_terminal": ParticipationCheck(
-            predicate=_consent_gate,
-            reads={
-                "V_target_f": ParticipationRead(
-                    regime="married_terminal",
-                    stakeholder="f",
-                    kind="Participating",
-                    projection={"education": _identity_education},
-                ),
-                "V_single_ref": ParticipationRead(
-                    regime="single_terminal",
-                    kind="Raw",
-                    projection={"education": _identity_education},
-                ),
-            },
-            routes={
-                "f": StakeholderRoute(
-                    target_stakeholder="f",
-                    fallback=ProjectedRegimeValue(
-                        regime="single_terminal",
-                        projection={"education": _identity_education},
-                    ),
-                )
-            },
-        )
-    }
     single = Regime(
         states={"education": DiscreteGrid(category_class=Education)},
         state_transitions={"education": fixed_transition("education")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _single_utility},
+        exit=Exit(
+            targets={
+                "self": ExitTarget(
+                    regime="married",
+                    role="f",
+                    projection={"education": _identity_education},
+                )
+            },
+            rule=Consent(
+                counterparty=Counterparty(
+                    regime="partner",
+                    role="m",
+                    projection={"education": _identity_education},
+                )
+            ),
+        ),
     )
     single_terminal = Regime(
         states={"education": DiscreteGrid(category_class=Education)},
@@ -289,21 +278,29 @@ def _make_consent_model() -> Model:
             )
         },
     )
+    married = married_terminal.replace(
+        state_transitions={"education": fixed_transition("education")}
+    )
+    partner = Regime(
+        states={"education": DiscreteGrid(category_class=Education)},
+        state_transitions={"education": fixed_transition("education")},
+        functions={"utility": _partner_utility},
+    )
     return Model(
         regimes={
             "single": single,
             "single_terminal": single_terminal,
+            "married": married,
             "married_terminal": married_terminal,
+            "partner": partner,
         },
-        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=ConsentRegimeId,
-        initial_nodes={0: "single"},
+        initial_nodes={0: ("single", "partner")},
         edges={
-            "single": Transition(
-                targets={"married_terminal": 0, "single_terminal": 0},
-                law=single_law,
-                participation=single_participation,
-            )
+            "single": {"single_terminal": 0},
+            "married": {"married_terminal": 0},
+            "partner": {"single_terminal": 0},
         },
     )
 
@@ -313,19 +310,19 @@ def _wage(education: DiscreteState) -> FloatND:
     return jnp.where(education == Education.low, 1.0, 2.0)
 
 
-def _certain_transition(age: FloatND) -> FloatND:
-    """Regime transition probability: the marriage edge is offered every period."""
-    return jnp.ones_like(age, dtype=float)
-
-
 def _single_utility(*, education: DiscreteState, work: DiscreteAction) -> FloatND:
     """A single woman earns her wage when she works and nothing otherwise."""
     return _wage(education) * work
 
 
 def _single_terminal_utility(education: DiscreteState) -> FloatND:
-    """The outside option, steep in education: 2 at the low level, 7 at the high."""
-    return 2.0 + 5.0 * education
+    """The outside option, steep in education: 2 at the low level, 12 at the high."""
+    return 2.0 + 10.0 * education
+
+
+def _partner_utility(education: DiscreteState) -> FloatND:
+    """The counterparty's single flow, low enough that he always consents."""
+    return -10.0 + 0.0 * education
 
 
 def _married_utility_f(*, education: DiscreteState, work: DiscreteAction) -> FloatND:
@@ -339,10 +336,5 @@ def _married_utility_m(*, education: DiscreteState, work: DiscreteAction) -> Flo
 
 
 def _identity_education(education: DiscreteState) -> DiscreteState:
-    """Education is carried unchanged into the fallback regime."""
+    """Education is carried unchanged into the regime the exit reads or enters."""
     return education
-
-
-def _consent_gate(*, V_target_f: FloatND, V_single_ref: FloatND) -> BoolND:
-    """The wife marries only when the marriage beats staying single."""
-    return V_target_f > V_single_ref

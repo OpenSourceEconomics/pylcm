@@ -144,7 +144,7 @@ def _regime_transition_admission_errors(  # noqa: C901, PLR0912, PLR0915
         ),
         "transition output must use first selected subject device": (
             "output_sharding = simulation_value_sharding("
-            "stored_sharding=jax.sharding.SingleDeviceSharding("
+            "stored_sharding=jax.sharding.make_single_device_sharding("
             "memory.subject_devices[0]), devices=(memory.subject_devices[0],))"
         ),
         "transition compiler reservation must govern admission": (

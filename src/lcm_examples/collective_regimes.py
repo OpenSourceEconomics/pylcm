@@ -1,48 +1,36 @@
 """Small collective-regime models for the documentation.
 
-The first model isolates the household's shared argmax with stakeholder-specific
+The first model isolates the household's shared argmax with member-specific
 values, declared as a single `CollectiveUtility`. The second adds same-period outside
-options through a current `Exit` participation rule, and a `ParticipationCheck`
-that reads actual participating-policy support. The participation thresholds
-allow slack without deducting it from the single payoff on dissolution. The
-state and action spaces remain hand-checkable.
+options through the household's own `Exit`: either partner can leave, a partner
+exactly indifferent leaves, and a partner who leaves pays a divorce cost, as in the
+Eckstein-Keane-Lifshitz model. The state and action spaces remain hand-checkable.
 
-The participation check belongs to the incoming married edge. Its admitted branch
-is the continuing collective regime; each stakeholder's fallback is that
-stakeholder's own singleton regime.
+The household that dissolves is the regime that decides: the married household
+lands in `married_with_participation`, whose exit compares each member's value of
+staying, at every household action, with that member's own single regime minus the
+divorce cost, and keeps the best action both accept. Where no action is accepted,
+both partners leave in that period.
 """
-
-from collections.abc import Mapping
-from typing import ClassVar
 
 import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
-    AgeRange,
-    ByAge,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
-    ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
-    StochasticTransition,
-    Transition,
     categorical,
     fixed_transition,
 )
 from lcm.execution import ExecutionConfig
-from lcm.exits import Exit, ExitTarget, RuleResult
+from lcm.exits import Exit, ExitTarget, Unilateral
 from lcm.typing import (
-    BoolND,
     ContinuousState,
     DiscreteAction,
     FloatND,
-    IntND,
     ScalarInt,
 )
 from lcm_examples import with_lottery_contraction
@@ -112,8 +100,8 @@ def _next_shared_wage(work: DiscreteAction) -> ContinuousState:
 def get_shared_decision_model() -> Model:
     """Build a two-period collective model with one shared labor choice.
 
-    Equal stakeholder weights select one household action. The value function keeps
-    both stakeholders' values at that common argmax.
+    Equal member weights select one household action. The value function keeps
+    both members' values at that common argmax.
     """
     shared_utility = CollectiveUtility(
         utilities={"f": _shared_utility_f, "m": _shared_utility_m}
@@ -140,10 +128,6 @@ def get_shared_decision_model() -> Model:
         initial_nodes={0: "couple"},
         description="A shared household labor choice.",
     )
-
-
-def _probability_one(age: FloatND) -> FloatND:
-    return jnp.ones_like(age, dtype=float)
 
 
 def _identity_wage(wage: ContinuousState) -> ContinuousState:
@@ -186,56 +170,12 @@ def _single_m_value(wage: ContinuousState) -> FloatND:
     return 1.0 + 0.0 * wage
 
 
-def _participation_f(
-    *,
-    Q_f: FloatND,
-    V_single_f_ref: FloatND,
-) -> BoolND:
-    return Q_f >= V_single_f_ref - 0.5
+def _divorce_cost_f(wage: ContinuousState) -> FloatND:
+    return -0.5 + 0.0 * wage
 
 
-def _participation_m(
-    *,
-    Q_m: FloatND,
-    V_single_m_ref: FloatND,
-) -> BoolND:
-    return Q_m >= V_single_m_ref - 0.2
-
-
-class _ParticipationRule:
-    """Choose one common action satisfying both participation thresholds."""
-
-    reads_outside_values: ClassVar[bool] = True
-
-    def __call__(
-        self,
-        *,
-        Q_f: FloatND,
-        Q_m: FloatND,
-        exit_payoffs: Mapping[str, Mapping[str, FloatND]],
-        alternative_ids: IntND,
-        pareto_weights: Mapping[str, FloatND],
-    ) -> RuleResult:
-        q_f, q_m = Q_f.reshape(-1), Q_m.reshape(-1)
-        outside = exit_payoffs["dissolve"]
-        kept = (
-            jnp.isfinite(q_f)
-            & jnp.isfinite(q_m)
-            & _participation_f(Q_f=q_f, V_single_f_ref=outside["f"])
-            & _participation_m(Q_m=q_m, V_single_m_ref=outside["m"])
-        )
-        # Mask zero-weight members before multiplying ordinary-infeasible -inf.
-        objective = pareto_weights["f"] * jnp.where(
-            pareto_weights["f"] == 0, 0.0, q_f
-        ) + pareto_weights["m"] * jnp.where(pareto_weights["m"] == 0, 0.0, q_m)
-        stay = jnp.argmax(jnp.where(kept, objective, -jnp.inf))
-        return RuleResult(
-            action=alternative_ids[jnp.where(jnp.any(kept), stay, q_f.size)]
-        )
-
-
-def _has_policy_support(target_support: BoolND) -> BoolND:
-    return target_support
+def _divorce_cost_m(wage: ContinuousState) -> FloatND:
+    return -0.2 + 0.0 * wage
 
 
 def get_dissolution_model(
@@ -245,11 +185,10 @@ def get_dissolution_model(
 ) -> Model:
     """Build a three-period collective model with participation and dissolution.
 
-    At wage two, neither household action satisfies both participation constraints.
-    The participation check reads the couple's participating policy support on
-    landing, and routes each stakeholder to their own singleton fallback where it
-    is empty. `lottery_contraction` is passed to every regime's `GridSearch`
-    solver.
+    At wage two, neither household action satisfies both participation constraints,
+    so the household's exit sends each member to her or his own single regime in
+    period 1, paying the divorce cost. `lottery_contraction` is passed to every
+    regime's `GridSearch` solver.
     """
     single_f = Regime(
         states={"wage": _DISSOLUTION_WAGE_GRID},
@@ -268,61 +207,22 @@ def get_dissolution_model(
                 utilities={"f": _participation_utility_f, "m": _participation_utility_m}
             )
         },
-        exits={
-            "dissolve": Exit(
-                targets={
-                    "f": ExitTarget(
-                        regime="single_f", projection={"wage": _identity_wage}
-                    ),
-                    "m": ExitTarget(
-                        regime="single_m", projection={"wage": _identity_wage}
-                    ),
-                },
-                rule=_ParticipationRule(),
-            )
-        },
-    )
-    # The scheduled target is the continuing couple; support is queried only
-    # after landing there, before the household or its fallback acts.
-    married_law = ByAge(
-        cases={
-            AgeRange(exclusive_stop=1): {
-                "married_with_participation": StochasticTransition(
-                    func=_probability_one
-                )
-            }
-        }
-    )
-    married_participation = {
-        "married_with_participation": ParticipationCheck(
-            predicate=_has_policy_support,
-            reads={
-                "target_support": ParticipationRead(
-                    regime="married_with_participation",
-                    stakeholder="f",
-                    kind="Participating",
-                    field="support",
+        exit=Exit(
+            targets={
+                "f": ExitTarget(
+                    regime="single_f",
                     projection={"wage": _identity_wage},
-                )
-            },
-            routes={
-                "f": StakeholderRoute(
-                    target_stakeholder="f",
-                    fallback=ProjectedRegimeValue(
-                        regime="single_f",
-                        projection={"wage": _identity_wage},
-                    ),
+                    utility_adjustment=_divorce_cost_f,
                 ),
-                "m": StakeholderRoute(
-                    target_stakeholder="m",
-                    fallback=ProjectedRegimeValue(
-                        regime="single_m",
-                        projection={"wage": _identity_wage},
-                    ),
+                "m": ExitTarget(
+                    regime="single_m",
+                    projection={"wage": _identity_wage},
+                    utility_adjustment=_divorce_cost_m,
                 ),
             },
-        )
-    }
+            rule=Unilateral(tie="leave"),
+        ),
+    )
     married = Regime(
         states={"wage": _DISSOLUTION_WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
@@ -344,7 +244,7 @@ def get_dissolution_model(
     )
     return Model(
         edges={
-            "married": Transition(law=married_law, participation=married_participation),
+            "married": {"married_with_participation": 0},
             "married_with_participation": {"married_terminal": 1},
         },
         regimes=with_lottery_contraction(
@@ -360,7 +260,6 @@ def get_dissolution_model(
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=DissolutionRegimeId,
         initial_nodes={0: "married"},
-        description="Participation constraints and a participation check dissolution "
-        "decision.",
+        description="Participation constraints and a unilateral dissolution decision.",
         execution_config=execution_config,
     )

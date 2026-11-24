@@ -7,20 +7,26 @@ separate component of a compiled program's identity and is not represented here,
 so a consumer keying a compiled executable on this signature carries that
 component alongside it.
 
-Typed incoming queries wrap that grouping signature with their exact date.
-Their stored-reference checks inspect the bound read and support directly.
+A typed exit query wraps that grouping signature with its exact date.
 """
 
 from collections.abc import Hashable
 from typing import cast
 
-import numpy as np
+import jax.numpy as jnp
 
-from _lcm.policy_queries import QueryKind, _PolicyQueryKernel
-from tests.solution.test_dcegm_age_specialized_function import _twin
-from tests.solution.test_gated_edge_reference_age_specialized_axes import (
-    _build_model as _build_participation_model,
+from lcm import (
+    AgeGrid,
+    ByAge,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    StochasticTransition,
+    Transition,
+    categorical,
 )
+from lcm.typing import ContinuousState, FloatND, ScalarInt
+from tests.solution.test_dcegm_age_specialized_function import _twin
 from tests.test_models.deterministic.regression import get_model
 
 _N_PERIODS = 5
@@ -92,33 +98,6 @@ def test_signatures_are_hashable() -> None:
     assert isinstance(hash(tuple(regime.solution.period_signatures.values())), int)
 
 
-def test_participation_references_bind_their_dated_stored_support() -> None:
-    """The represented index read uses its actual landing date and grid."""
-    regime = _build_participation_model()._regimes["saver"]
-    for source_period, expected in ((0, [0.0, 4.0, 8.0]), (1, [0.0, 2.0, 4.0])):
-        kernel = regime.solution.period_kernels[source_period]
-        assert isinstance(kernel, _PolicyQueryKernel)
-        plan = kernel.root_context.participation_queries[source_period]["account"]
-        assert plan.period == source_period + 1
-        represented = [
-            node
-            for node in plan.queries.definitions.values()
-            if node.read.kind is QueryKind.INTEGRATED_FULL
-        ]
-        assert len(represented) == 1
-        node = represented[0]
-        assert node.read.target == "index"
-        assert node.read.period == plan.period
-        assert len(node.operand_value_reads) == 1
-        stored = node.operand_value_reads[0].target
-        assert (stored.regime, stored.period) == ("index", plan.period)
-        dated = node.context.period_to_regime_v_interp
-        assert dated is not None
-        np.testing.assert_array_equal(
-            dated[plan.period]["index"].continuous_states["level"].to_jax(), expected
-        )
-
-
 def test_a_regime_declaring_no_gated_edge_has_no_gated_component() -> None:
     """A regime with no gated edge contributes `None` in the gated slot."""
     regime = get_model(n_periods=_N_PERIODS)._regimes["working_life"]
@@ -128,11 +107,9 @@ def test_a_regime_declaring_no_gated_edge_has_no_gated_component() -> None:
 
 def test_a_source_period_losing_a_target_gets_its_own_decision_component() -> None:
     """Losing the self target splits the underlying decision grouping."""
-    regime = _build_participation_model()._regimes["saver"]
+    regime = _build_saver_model()._regimes["saver"]
     for period in (0, 1):
-        kernel = regime.solution.period_kernels[period]
-        assert isinstance(kernel, _PolicyQueryKernel)
-        graph = kernel.root_context.solution_reachability
+        graph = regime.solution.reachability
         assert graph.has_edge(period=period, source="saver", target="account")
         assert graph.has_edge(period=period, source="saver", target="saver") is (
             period == 0
@@ -141,3 +118,60 @@ def test_a_source_period_losing_a_target_gets_its_own_decision_component() -> No
     assert _component(signature=signatures[0], name="decision") != _component(
         signature=signatures[1], name="decision"
     )
+
+
+@categorical(ordered=False)
+class _SaverRegimeId:
+    saver: ScalarInt
+    account: ScalarInt
+
+
+def _build_saver_model() -> Model:
+    """Build a saver that may stay at age 0 and must open the account at age 1."""
+    saver_law = ByAge(
+        cases={
+            0: {
+                "saver": StochasticTransition(func=_probability_of_staying_put),
+                "account": StochasticTransition(func=_probability_of_opening),
+            },
+            1: {"account": StochasticTransition(func=_probability_of_opening)},
+        }
+    )
+    return Model(
+        regimes={
+            "saver": Regime(
+                state_transitions={"balance": {"account": _entry_balance}},
+                functions={"utility": _no_payoff},
+            ),
+            "account": Regime(
+                states={"balance": LinSpacedGrid(start=0.0, stop=4.0, n_points=2)},
+                functions={"utility": _balance_payoff},
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
+        regime_id_class=_SaverRegimeId,
+        initial_nodes={0: "saver"},
+        edges={
+            "saver": Transition(targets={"saver": 0, "account": (0, 1)}, law=saver_law)
+        },
+    )
+
+
+def _probability_of_staying_put(age: FloatND) -> FloatND:
+    return jnp.where(age < 1.0, 1.0, 0.0)
+
+
+def _probability_of_opening(age: FloatND) -> FloatND:
+    return jnp.where(age < 1.0, 0.0, 1.0)
+
+
+def _entry_balance() -> ContinuousState:
+    return jnp.asarray(4.0)
+
+
+def _no_payoff() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def _balance_payoff(balance: ContinuousState) -> FloatND:
+    return balance

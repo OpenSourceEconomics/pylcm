@@ -7,10 +7,9 @@ ready, and how to delete a buffer without leaving a deleted array inside the
 rolling input mappings.
 
 It also turns one period's nodes into a ready list: `plan_period_waves` groups
-the period's dispatch units into waves such that a unit is ready only once
-every same-period reference it reads has already dispatched, and units join
-one wave only while their device sets stay pairwise disjoint — the boundary
-that lets independent nodes dispatch back to back instead of one at a time.
+the period's dispatch units into waves, and units join one wave only while their
+device sets stay pairwise disjoint — the boundary that lets independent nodes
+dispatch back to back instead of one at a time.
 """
 
 import dataclasses
@@ -440,17 +439,15 @@ class DispatchUnit:
 def plan_period_waves(
     *,
     nodes: Sequence[ScheduledNode],
-    same_period_dependencies: Mapping[RegimeName, Sequence[RegimeName]],
     device_sets: Mapping[RegimeName, frozenset[int]],
 ) -> tuple[tuple[DispatchUnit, ...], ...]:
     """Group one period's nodes into waves of concurrently dispatchable units.
 
     The programs of one regime form one unit, in the order given, since a kernel
-    dispatches its own programs. A unit is ready when every regime it reads at
-    this period has been dispatched in an earlier wave. Ready units join one
-    wave while their device sets are pairwise disjoint; a unit whose devices a
-    wave already uses starts the next wave. Order within a wave, and among
-    waves, follows the order of `nodes`, so declaration order breaks ties.
+    dispatches its own programs. Units join one wave while their device sets are
+    pairwise disjoint; a unit whose devices a wave already uses starts the next
+    wave. Order within a wave, and among waves, follows the order of `nodes`, so
+    declaration order breaks ties.
     """
     periods = {node.period for node in nodes}
     if len(periods) > 1:
@@ -475,13 +472,6 @@ def plan_period_waves(
         wave: list[DispatchUnit] = []
         used_devices: set[int] = set()
         for regime in remaining:
-            references = [
-                reference
-                for reference in same_period_dependencies.get(regime, ())
-                if reference in units
-            ]
-            if any(reference not in dispatched for reference in references):
-                continue
             if regime not in device_sets:
                 msg = f"No device set was declared for regime {regime!r}."
                 raise ExecutionPlanningError(msg)
@@ -490,12 +480,6 @@ def plan_period_waves(
                 continue
             wave.append(units[regime])
             used_devices |= devices
-        if not wave:
-            msg = (
-                "Same-period reads form a cycle among regimes "
-                f"{tuple(remaining)!r}; no unit is ready."
-            )
-            raise ExecutionPlanningError(msg)
         dispatched.update(unit.regime for unit in wave)
         remaining = [regime for regime in remaining if regime not in dispatched]
         waves.append(tuple(wave))

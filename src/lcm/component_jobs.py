@@ -48,7 +48,11 @@ import _lcm
 import lcm
 from _lcm import version as _version
 from _lcm.egm.upper_envelope._exact_affine.ffi import _installed_native_directory
-from _lcm.engine import PeriodRegimeSimulationData, placed_devices_for_ids
+from _lcm.engine import (
+    PERSISTED_FIELD_NAMES,
+    PeriodRegimeSimulationData,
+    placed_devices_for_ids,
+)
 from _lcm.persistence.solution import (
     _require_exact_dict,
     _require_exact_list,
@@ -1054,13 +1058,14 @@ def _data_leaves(
     leaves: list[tuple[LeafAddress, ValueND]] = []
     for field in fields(PeriodRegimeSimulationData):
         value = getattr(data, field.name)
+        name = PERSISTED_FIELD_NAMES.get(field.name, field.name)
         if isinstance(value, Mapping):
             leaves.extend(
-                ((regime, int(period), field.name, str(key)), leaf)
+                ((regime, int(period), name, str(key)), leaf)
                 for key, leaf in value.items()
             )
         else:
-            leaves.append(((regime, int(period), field.name, None), value))
+            leaves.append(((regime, int(period), name, None), value))
     return tuple(leaves)
 
 
@@ -1379,7 +1384,7 @@ def _reference_shardings(
         )
         return MappingProxyType(
             {
-                address: jax.sharding.SingleDeviceSharding(host)
+                address: jax.sharding.make_single_device_sharding(host)
                 for address in template.leaves
             }
         )
@@ -1429,7 +1434,7 @@ def _leaf_layout(
     position = {device: index for index, device in enumerate(devices)}
     if not sharding.device_set <= set(devices):
         return {"kind": "outside_selection"}
-    if isinstance(sharding, jax.sharding.SingleDeviceSharding):
+    if jax.sharding.is_single_device_sharding(sharding):
         (device,) = sharding.device_set
         return {
             "kind": "single_device",
@@ -1474,7 +1479,7 @@ def _sharding_from_layout(
         msg = f"Memory kind {memory_kind!r} is not a string."
         raise ValueError(msg)
     if layout.get("kind") == "single_device":
-        return jax.sharding.SingleDeviceSharding(
+        return jax.sharding.make_single_device_sharding(
             devices[_device_position(value=layout["device"], devices=devices)],
             memory_kind=memory_kind,
         )
@@ -1543,7 +1548,7 @@ def _validate_raw_fields(
                 for field_name in (
                     "V_arr",
                     "in_regime",
-                    "own_stakeholder",
+                    PERSISTED_FIELD_NAMES["own_member"],
                     "nested_policy_fallback",
                 )
             )
@@ -1565,15 +1570,15 @@ def _validate_raw_fields(
         for (name, period, field_name, _), leaf in panel.leaves.items():
             regime = regimes[name]
             trailing = (
-                (len(regime.stakeholders),)
-                if field_name == "V_arr" and regime.stakeholders is not None
+                (len(regime.member_axis),)
+                if field_name == "V_arr" and regime.member_axis is not None
                 else ()
             )
             dtype = (
                 np.dtype(value_dtypes[(period, name)])
                 if field_name == "V_arr"
                 else np.dtype(np.int32)
-                if field_name == "own_stakeholder"
+                if field_name == PERSISTED_FIELD_NAMES["own_member"]
                 else np.dtype(np.bool_)
                 if field_name in {"in_regime", "nested_policy_fallback"}
                 else None
@@ -1584,7 +1589,7 @@ def _validate_raw_fields(
                 msg = (
                     f"Raw field {(name, period, field_name)!r} has shape "
                     f"{leaf.shape!r} and dtype {leaf.dtype!s}, incompatible with "
-                    "the model's subject and stakeholder axes or field dtype."
+                    "the model's subject and member axes or field dtype."
                 )
                 raise SolutionIntegrityError(msg)
 
@@ -1599,7 +1604,9 @@ def _rebuild_data(
     """
     values: dict[str, ValueND | MappingProxyType[str, ValueND]] = {}
     for field in fields(PeriodRegimeSimulationData):
-        keyed = fields_by_name.get(field.name, {})
+        keyed = fields_by_name.get(
+            PERSISTED_FIELD_NAMES.get(field.name, field.name), {}
+        )
         values[field.name] = (
             keyed[None]
             if None in keyed

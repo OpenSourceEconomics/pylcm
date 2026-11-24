@@ -1,6 +1,6 @@
 """What `CollectiveUtility` promises about the bodies it names.
 
-A household names its stakeholders once, in the `utilities` keys, and that
+A household names its members once, in the `utilities` keys, and that
 order is the order every published array carries. A body may be written there,
 may vary by phase, or may be left to arrive from the model level — and the last
 of those is what lets one model mix collective and singleton regimes without
@@ -52,27 +52,27 @@ class RegimeId:
 
 
 def _u_f(*, wealth: ContinuousState, work: DiscreteAction) -> FloatND:
-    """The first stakeholder's flow utility, mildly averse to working."""
+    """The first member's flow utility, mildly averse to working."""
     return jnp.log(wealth) - 0.1 * work
 
 
 def _u_m(*, wealth: ContinuousState, work: DiscreteAction) -> FloatND:
-    """The second stakeholder's flow utility, mildly averse to working."""
+    """The second member's flow utility, mildly averse to working."""
     return 0.5 * jnp.log(wealth) - 0.1 * work
 
 
 def _u_m_simulate(*, wealth: ContinuousState, work: DiscreteAction) -> FloatND:
-    """The second stakeholder's flow utility as simulation realizes it."""
+    """The second member's flow utility as simulation realizes it."""
     return 0.25 * jnp.log(wealth) - 0.1 * work
 
 
 def _u_f_terminal(wealth: ContinuousState) -> FloatND:
-    """The first stakeholder's terminal payoff."""
+    """The first member's terminal payoff."""
     return jnp.log(wealth)
 
 
 def _u_m_terminal(wealth: ContinuousState) -> FloatND:
-    """The second stakeholder's terminal payoff."""
+    """The second member's terminal payoff."""
     return 0.5 * jnp.log(wealth)
 
 
@@ -88,7 +88,7 @@ def _couple(
     )
 
 
-def test_a_none_body_takes_the_utility_already_present_under_its_name():
+def test_a_none_body_takes_the_utility_already_present_under_its_name() -> None:
     """`utilities={"f": None}` means f's utility is the regime's `utility_f`."""
     regime = _couple(
         functions={
@@ -100,7 +100,7 @@ def test_a_none_body_takes_the_utility_already_present_under_its_name():
     assert regime.decomposed_functions["utility_f"] is _u_f
 
 
-def test_a_none_body_may_still_arrive_from_the_model_level():
+def test_a_none_body_may_still_arrive_from_the_model_level() -> None:
     """A delegated body supplied by the model reaches the household that named it.
 
     Completeness is a property of the merged regime, so a bare `Regime` whose
@@ -131,8 +131,8 @@ def test_a_none_body_may_still_arrive_from_the_model_level():
     assert model.user_regimes["couple"].decomposed_functions["utility_f"] is _u_f
 
 
-def test_a_none_body_with_nothing_to_delegate_to_is_refused_by_name():
-    """A stakeholder left undeclared everywhere names the entry that is missing."""
+def test_a_none_body_with_nothing_to_delegate_to_is_refused_by_name() -> None:
+    """A member left undeclared everywhere names the entry that is missing."""
     couple = _couple(
         functions={"utility": CollectiveUtility(utilities={"f": None, "m": _u_m})}
     )
@@ -155,8 +155,8 @@ def test_a_none_body_with_nothing_to_delegate_to_is_refused_by_name():
         )
 
 
-def test_the_utilities_keys_fix_the_stakeholder_order():
-    """Stakeholder order follows the declaration, not the `functions` order."""
+def test_the_utilities_keys_fix_the_member_order() -> None:
+    """Member order follows the declaration, not the `functions` order."""
     regime = _couple(
         functions={
             "utility_m": _u_m,
@@ -164,10 +164,10 @@ def test_the_utilities_keys_fix_the_stakeholder_order():
         }
     )
 
-    assert regime.stakeholders == ("f", "m")
+    assert regime.member_axis == ("f", "m")
 
 
-def test_a_stakeholders_utility_may_differ_between_the_two_phases():
+def test_a_members_utility_may_differ_between_the_two_phases() -> None:
     """A `Phased` body declares what solve prices and what simulation realizes.
 
     Written as the FIRST entry: the declaration's own annotation is what has to
@@ -182,15 +182,13 @@ def test_a_stakeholders_utility_may_differ_between_the_two_phases():
     assert regime.decomposed_functions["utility_m"] is body
 
 
-def test_a_household_with_no_stakeholders_is_refused_where_it_is_written():
+def test_a_household_with_no_members_is_refused_where_it_is_written() -> None:
     """`utilities={}` names no household, and the declaration says so itself."""
-    with pytest.raises(
-        RegimeInitializationError, match=r"(?i)at least one stakeholder"
-    ):
+    with pytest.raises(RegimeInitializationError, match=r"(?i)at least one member"):
         CollectiveUtility(utilities={})
 
 
-def test_a_phased_stakeholder_utility_solves_and_simulates_its_own_variant():
+def test_a_phased_member_utility_solves_and_simulates_its_own_variant() -> None:
     """The two phases of a `Phased` body reach the engine as declared."""
     couple = _couple(
         functions={
@@ -223,7 +221,51 @@ def test_a_phased_stakeholder_utility_solves_and_simulates_its_own_variant():
         log_level="off",
     ).values
 
-    # Stakeholder m's period-0 value is her solve utility plus the discounted
+    # Member m's period-0 value is her solve utility plus the discounted
     # terminal one, at wealth held fixed: 0.5*log(w) + 0.9*0.5*log(w).
     expected = 0.5 * jnp.log(jnp.asarray([1.0, 2.0, 3.0])) * 1.9
     assert jnp.allclose(solved[0]["couple"][..., 1], expected)
+
+
+def _single(*, utility: UserFunction) -> Regime:
+    """A regime of the miniature that declares a plain utility function."""
+    return Regime(
+        states={"wealth": _WEALTH},
+        state_transitions={"wealth": fixed_transition("wealth")},
+        actions={"work": DiscreteGrid(category_class=Work)},
+        functions={"utility": utility},
+    )
+
+
+def test_a_plain_utility_declares_the_single_member_self() -> None:
+    """A regime with a plain utility function has exactly one member, `"self"`."""
+    assert _single(utility=_u_f).members == ("self",)
+
+
+def test_a_plain_utility_declares_no_member_axis() -> None:
+    """A regime with a plain utility function carries no member axis."""
+    assert _single(utility=_u_f).member_axis is None
+
+
+def test_a_household_declares_its_utilities_keys_as_members() -> None:
+    """A household's members are its `utilities` keys, in the order written."""
+    regime = _couple(
+        functions={"utility": CollectiveUtility(utilities={"m": _u_m, "f": _u_f})}
+    )
+
+    assert regime.members == ("m", "f")
+
+
+def test_a_households_member_axis_is_its_members() -> None:
+    """A household's member axis names its members in the order written."""
+    regime = _couple(
+        functions={"utility": CollectiveUtility(utilities={"m": _u_m, "f": _u_f})}
+    )
+
+    assert regime.member_axis == ("m", "f")
+
+
+def test_a_household_member_named_self_is_refused_where_it_is_written() -> None:
+    """`"self"` is the single member of a plain utility, so no household names it."""
+    with pytest.raises(RegimeInitializationError, match=r"'self'"):
+        CollectiveUtility(utilities={"self": _u_f, "m": _u_m})

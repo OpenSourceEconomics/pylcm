@@ -1,41 +1,48 @@
-"""A marriage market: consent to marry, participate, or dissolve.
+"""A marriage market: singles marry under mutual consent, couples dissolve unilaterally.
 
-Three things a single decision maker never does happen here, and each is one
-declaration:
+Two partners, her (`f`) and him (`m`), differ only in income, $I_f > I_m$. Every
+regime chooses a consumption share $s$ of its wealth, so consumption $c = s\\,w$ is
+affordable everywhere and a regime's value moves smoothly between wealth nodes.
 
-- a household of two takes ONE consumption decision, and each partner's own
-  value at that common choice is published — `CollectiveUtility`;
-- the household stays only where each partner meets their same-period outside
-  option, with the declared participation slack — a current `Exit` rule;
-- a single marries only under mutual consent, and a couple whose feasible set
-  is empty dissolves back to two singles — a `ParticipationCheck` after the
-  scheduled landing and before its action.
+Single $i$ at wealth $w$:
 
-Dissolution reads the continuing couple's actual participating-policy support;
-each partner's fallback is her or his own single regime. Formation compares
-the target's common participating policy with each single's Raw policy at the
-landing. The participation slack changes willingness to stay, while a partner
-who leaves receives the full single payoff. Initial households obey the same
-current dissolution rule as later participation checks.
+$$
+u_i(c) = \\log c, \\qquad w' = (1 + r)(w - c) + I_i .
+$$
 
-The partners differ only in income. Alone, each keeps their own; married, the
-household pools both and splits consumption evenly. Her income is the higher
-one, so for her the marriage premium has to outweigh giving up part of it, and
-it does so only once the household is rich enough that income matters less
-than wealth: participation rules out the poorest households, through her.
+Couple at household wealth $W$, one common choice, each partner's own value:
 
-Consumption is chosen as a share of wealth, which keeps every choice
-affordable everywhere. A household's value then moves smoothly between grid
-nodes, so a couple between two nodes it can occupy can occupy that state too.
+$$
+u_{\\mathrm{couple}, i}(c) = \\log(c / 2) + \\mu, \\qquad
+W' = (1 + r)(W - c) + I_f + I_m .
+$$
 
-Everything is log utility over consumption with a fixed marriage premium, so
-the model is small, has no free structure, and scales along its grid knobs —
-`n_periods`, `wealth_n_points` and `consumption_n_points` — which is what makes
-it usable as a benchmark workload as well as a worked example.
+Moves within a period, each the `Exit` of the regime that decides:
+
+- a single meets a partner with probability $p$ (the current shock `meet_i`; no
+  meeting at the first age). Meeting, she or he moves into the couple only if both
+  consent (`Consent`): each partner's couple value, with the couple's own rule for
+  staying applied, strictly exceeds staying single. The partner met holds the same
+  savings, so the couple starts at $W = 2(w - I_i) + I_f + I_m$; the counterparty
+  compares with its own single value at $W / 2$. A refused single keeps its own
+  wealth $w$.
+- a couple dissolves if either partner prefers to leave (`Unilateral`, an exactly
+  indifferent partner leaves): partner $i$ compares the couple's value with her or
+  his single value at $W / 2$ minus the divorce cost.
+
+Her income is the higher one, so for her the marriage premium $\\mu$ has to outweigh
+giving up part of it, and it does so only once the household is rich enough that
+income matters less than wealth: her outside option, not his, rules out the poorest
+matches.
+
+Everything is log utility over consumption with a fixed marriage premium, so the
+model is small, has no free structure, and scales along its grid knobs —
+`n_periods`, `wealth_n_points` and `consumption_n_points` — which is what makes it
+usable as a benchmark workload as well as a worked example.
 """
 
 from collections.abc import Callable, Mapping
-from typing import ClassVar, Literal
+from typing import Literal
 
 import jax.numpy as jnp
 
@@ -43,17 +50,16 @@ from lcm import (
     AgeGrid,
     ByAge,
     CollectiveUtility,
+    Consent,
+    Counterparty,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
-    ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     categorical,
 )
-from lcm.exits import Exit, ExitTarget, RuleResult
+from lcm.exits import Exit, ExitTarget, Unilateral
+from lcm.shocks import Discrete, ShockGroup
 from lcm.transition import StochasticTransition, Transition
 from lcm.typing import (
     BoolND,
@@ -75,7 +81,7 @@ WEALTH_MAX = 20.0
 
 # Income she receives every period, single or married. Higher than his, so
 # living alone keeps all of it while the household splits the pooled income
-# evenly: her outside option is the one participation can rule out.
+# evenly: hers is the outside option that rules out the poorest matches.
 INCOME_F = 3.0
 
 # Income he receives every period, single or married.
@@ -95,6 +101,14 @@ class RegimeId:
     single_m: ScalarInt
     single_f_terminal: ScalarInt
     single_m_terminal: ScalarInt
+
+
+@categorical(ordered=False)
+class Meet:
+    """Whether a single meets a partner this period."""
+
+    no: ScalarInt
+    yes: ScalarInt
 
 
 def get_model(
@@ -131,50 +145,6 @@ def get_model(
     )
     last_age = n_periods - 1
     probability = _transition_probabilities(last_age=last_age)
-    source_ages = jnp.arange(last_age, dtype=float)
-    staying_can_arrive = bool(jnp.any(probability["stays_married"](source_ages) > 0))
-    meeting_can_arrive = bool(jnp.any(probability["meets_a_partner"](source_ages) > 0))
-
-    couple_law = _until_last_age(
-        {
-            "couple": StochasticTransition(func=probability["stays_married"]),
-            "couple_terminal": StochasticTransition(
-                func=probability["reaches_last_age"]
-            ),
-        },
-        terminal="couple_terminal",
-        last_age=last_age,
-    )
-    couple_participation = {
-        "couple": ParticipationCheck(
-            predicate=_has_policy_support,
-            reads={
-                "target_support": ParticipationRead(
-                    regime="couple",
-                    stakeholder="f",
-                    kind="Participating",
-                    field="support",
-                    projection={"wealth": _identity_wealth},
-                )
-            },
-            routes={
-                "f": StakeholderRoute(
-                    target_stakeholder="f",
-                    fallback=ProjectedRegimeValue(
-                        regime="single_f",
-                        projection={"wealth": _half_of_couple_wealth},
-                    ),
-                ),
-                "m": StakeholderRoute(
-                    target_stakeholder="m",
-                    fallback=ProjectedRegimeValue(
-                        regime="single_m",
-                        projection={"wealth": _half_of_couple_wealth},
-                    ),
-                ),
-            },
-        )
-    }
     couple = Regime(
         states={"wealth": couple_wealth},
         state_transitions={"wealth": _next_couple_wealth},
@@ -185,21 +155,17 @@ def get_model(
                 utilities={"f": _couple_utility_f, "m": _couple_utility_m}
             ),
         },
-        exits={
-            "dissolve": Exit(
-                targets={
-                    "f": ExitTarget(
-                        regime="single_f",
-                        projection={"wealth": _half_of_couple_wealth},
-                    ),
-                    "m": ExitTarget(
-                        regime="single_m",
-                        projection={"wealth": _half_of_couple_wealth},
-                    ),
-                },
-                rule=_ParticipationRule(),
-            )
-        },
+        exit=Exit(
+            targets={
+                member: ExitTarget(
+                    regime=f"single_{member}",
+                    projection={"wealth": _half_of_couple_wealth},
+                    utility_adjustment=_divorce_cost,
+                )
+                for member in ("f", "m")
+            },
+            rule=Unilateral(tie="leave"),
+        ),
     )
     couple_terminal = Regime(
         states={"wealth": couple_wealth},
@@ -214,166 +180,48 @@ def get_model(
             ),
         },
     )
-    single_f_law = _until_last_age(
-        {
-            "couple": StochasticTransition(func=probability["meets_a_partner"]),
-            "single_f": StochasticTransition(func=probability["meets_nobody"]),
-            "single_f_terminal": StochasticTransition(
-                func=probability["reaches_last_age"]
-            ),
-        },
-        terminal="single_f_terminal",
-        last_age=last_age,
-    )
-    single_f_participation = {
-        "couple": ParticipationCheck(
-            predicate=_mutual_consent,
-            routes={
-                "her": StakeholderRoute(
-                    target_stakeholder="f",
-                    fallback=ProjectedRegimeValue(
-                        regime="single_f",
-                        projection={"wealth": _half_of_couple_wealth},
-                    ),
-                )
-            },
-            reads={
-                "V_target_f": ParticipationRead(
-                    regime="couple",
-                    stakeholder="f",
-                    kind="Participating",
-                    projection={"wealth": _identity_wealth},
-                ),
-                "V_target_m": ParticipationRead(
-                    regime="couple",
-                    stakeholder="m",
-                    kind="Participating",
-                    projection={"wealth": _identity_wealth},
-                ),
-                "V_alone_f": ParticipationRead(
-                    regime="single_f",
-                    kind="Raw",
-                    projection={"wealth": _half_of_couple_wealth},
-                ),
-                "V_alone_m": ParticipationRead(
-                    regime="single_m",
-                    kind="Raw",
-                    projection={"wealth": _half_of_couple_wealth},
-                ),
-            },
-        )
-    }
-    single_f = Regime(
-        states={"wealth": wealth},
-        # Marrying pools two people's wealth, so the coordinate the couple's
-        # grid is entered at is not the one her own regime would carry
-        # forward. A law that ignored that would land every bride at the
-        # bottom of the couple's grid, where the household is infeasible and
-        # the participation check refuses for reasons that are an artifact.
-        state_transitions={
-            "wealth": {
-                "couple": _pooled_wealth,
-                "single_f": _next_single_wealth_f,
-                "single_f_terminal": _next_single_wealth_f,
-            }
-        },
-        actions={"consumption_share": consumption_share},
-        functions={"consumption": _consumption, "utility": _single_utility},
-    )
-    single_f_terminal = _single_terminal(
-        wealth=wealth, consumption_share=consumption_share
-    )
-    # Spelled out rather than derived from `single_f_law`: his law names his own
-    # regimes and enters the household in his own role.
-    single_m_law = _until_last_age(
-        {
-            "couple": StochasticTransition(func=probability["meets_a_partner"]),
-            "single_m": StochasticTransition(func=probability["meets_nobody"]),
-            "single_m_terminal": StochasticTransition(
-                func=probability["reaches_last_age"]
-            ),
-        },
-        terminal="single_m_terminal",
-        last_age=last_age,
-    )
-    single_m_participation = {
-        "couple": ParticipationCheck(
-            predicate=_mutual_consent,
-            routes={
-                "his": StakeholderRoute(
-                    target_stakeholder="m",
-                    fallback=ProjectedRegimeValue(
-                        regime="single_m",
-                        projection={"wealth": _half_of_couple_wealth},
-                    ),
-                )
-            },
-            reads={
-                "V_target_f": ParticipationRead(
-                    regime="couple",
-                    stakeholder="f",
-                    kind="Participating",
-                    projection={"wealth": _identity_wealth},
-                ),
-                "V_target_m": ParticipationRead(
-                    regime="couple",
-                    stakeholder="m",
-                    kind="Participating",
-                    projection={"wealth": _identity_wealth},
-                ),
-                "V_alone_f": ParticipationRead(
-                    regime="single_f",
-                    kind="Raw",
-                    projection={"wealth": _half_of_couple_wealth},
-                ),
-                "V_alone_m": ParticipationRead(
-                    regime="single_m",
-                    kind="Raw",
-                    projection={"wealth": _half_of_couple_wealth},
-                ),
-            },
-        )
-    }
-    single_m = Regime(
-        states={"wealth": wealth},
-        state_transitions={
-            "wealth": {
-                "couple": _pooled_wealth,
-                "single_m": _next_single_wealth_m,
-                "single_m_terminal": _next_single_wealth_m,
-            }
-        },
-        actions={"consumption_share": consumption_share},
-        functions={"consumption": _consumption, "utility": _single_utility},
-    )
+    meeting = (1.0 - MEETING_PROBABILITY, MEETING_PROBABILITY)
     return Model(
         edges={
-            "couple": Transition(
-                law=couple_law,
-                participation=couple_participation if staying_can_arrive else {},
-            ),
-            "single_f": Transition(
-                law=single_f_law,
-                participation=single_f_participation if meeting_can_arrive else {},
-            ),
-            "single_m": Transition(
-                law=single_m_law,
-                participation=single_m_participation if meeting_can_arrive else {},
-            ),
+            regime: Transition(
+                law=_until_last_age(
+                    {
+                        regime: StochasticTransition(func=probability["continues"]),
+                        f"{regime}_terminal": StochasticTransition(
+                            func=probability["reaches_last_age"]
+                        ),
+                    },
+                    terminal=f"{regime}_terminal",
+                    last_age=last_age,
+                )
+            )
+            for regime in ("couple", "single_f", "single_m")
         },
         regimes=with_lottery_contraction(
             regimes={
                 "couple": couple,
                 "couple_terminal": couple_terminal,
-                "single_f": single_f,
-                "single_m": single_m,
-                "single_f_terminal": single_f_terminal,
+                "single_f": _single(
+                    member="f", wealth=wealth, consumption_share=consumption_share
+                ),
+                "single_m": _single(
+                    member="m", wealth=wealth, consumption_share=consumption_share
+                ),
+                "single_f_terminal": _single_terminal(
+                    wealth=wealth, consumption_share=consumption_share
+                ),
                 "single_m_terminal": _single_terminal(
                     wealth=wealth, consumption_share=consumption_share
                 ),
             },
             lottery_contraction=lottery_contraction,
         ),
+        shocks={
+            f"meeting_{member}": ShockGroup(
+                shocks={f"meet_{member}": Discrete(categories=Meet, probs=meeting)}
+            )
+            for member in ("f", "m")
+        },
         ages=AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y"),
         regime_id_class=RegimeId,
         initial_nodes={0: ("couple", "single_f", "single_m")},
@@ -388,7 +236,7 @@ def get_params(
     discount_factor: float = 0.95,
     marriage_premium: float = 0.3,
     interest_rate: float = 0.03,
-    participation_slack: float = 0.0,
+    divorce_cost: float = 0.0,
 ) -> dict[str, UserParamsNode]:
     """Return the params dict `get_model()`'s model takes.
 
@@ -397,8 +245,8 @@ def get_params(
         marriage_premium: Additive flow gain from being in the household, in
             utils, identical for both partners.
         interest_rate: Return on wealth carried forward.
-        participation_slack: How far below the outside option a partner will
-            still stay. Zero is the strict participation constraint.
+        divorce_cost: Utils a partner gives up on leaving the household, which
+            also lowers the outside option the partner compares with staying.
 
     Returns:
         Dict of per-regime parameter mappings.
@@ -410,7 +258,12 @@ def get_params(
             "utility_f": {"marriage_premium": marriage_premium},
             "utility_m": {"marriage_premium": marriage_premium},
             "next_wealth": {"interest_rate": interest_rate},
-            "exits": {"dissolve": {"rule": {"slack": participation_slack}}},
+            "exit": {
+                "targets": {
+                    member: {"utility_adjustment": {"divorce_cost": divorce_cost}}
+                    for member in ("f", "m")
+                }
+            },
         },
         "couple_terminal": {},
         "single_f": {
@@ -438,9 +291,9 @@ def get_initial_conditions(
 
     Returns:
         Dict of the `wealth`, `age` and `regime_id` columns `simulate()` takes.
-        No `own_stakeholder`: the whole cohort starts in a singleton regime, so
+        No `own_member`: the whole cohort starts in a singleton regime, so
         nobody occupies a household role yet, and each subject is given one by
-        the route it takes on entering the couple.
+        the exit it takes into the couple.
 
     """
     is_woman = jnp.arange(n_subjects) % 2 == 0
@@ -453,6 +306,49 @@ def get_initial_conditions(
             model.regime_names_to_ids["single_m"],
         ).astype(jnp.int32),
     }
+
+
+def _single(
+    *,
+    member: Literal["f", "m"],
+    wealth: LinSpacedGrid,
+    consumption_share: LinSpacedGrid,
+) -> Regime:
+    """Build single `member`'s regime, with formation as a consented exit."""
+    spouse = "m" if member == "f" else "f"
+    return Regime(
+        states={"wealth": wealth},
+        state_transitions={
+            "wealth": _next_single_wealth_f if member == "f" else _next_single_wealth_m
+        },
+        actions={"consumption_share": consumption_share},
+        functions={"consumption": _consumption, "utility": _single_utility},
+        shocks=(f"meeting_{member}",),
+        exit=Exit(
+            targets={
+                "self": ExitTarget(
+                    regime="couple",
+                    role=member,
+                    projection={
+                        "wealth": _pooled_from_f if member == "f" else _pooled_from_m
+                    },
+                )
+            },
+            rule=Consent(
+                counterparty=Counterparty(
+                    regime=f"single_{spouse}",
+                    role=spouse,
+                    projection={
+                        "wealth": _half_pooled_from_f
+                        if member == "f"
+                        else _half_pooled_from_m
+                    },
+                )
+            ),
+            available=_meets_f if member == "f" else _meets_m,
+            observes=(f"meet_{member}",),
+        ),
+    )
 
 
 def _log_utility(consumption: FloatND) -> FloatND:
@@ -500,26 +396,10 @@ def _next_single_wealth_m(
     return (1.0 + interest_rate) * (wealth - consumption) + INCOME_M
 
 
-def _pooled_wealth(
-    *, wealth: ContinuousState, consumption: FloatND, interest_rate: float
-) -> ContinuousState:
-    """Household wealth on entry: two partners' savings and incomes, pooled.
-
-    The partner met is taken to hold the entrant's savings, so the household
-    starts with twice those savings plus both incomes, whichever of the two
-    enters it.
-    """
-    return 2.0 * (1.0 + interest_rate) * (wealth - consumption) + INCOME_F + INCOME_M
-
-
 def _next_couple_wealth(
     *, wealth: ContinuousState, consumption: FloatND, interest_rate: float
 ) -> ContinuousState:
     return (1.0 + interest_rate) * (wealth - consumption) + INCOME_F + INCOME_M
-
-
-def _identity_wealth(wealth: ContinuousState) -> ContinuousState:
-    return wealth
 
 
 def _half_of_couple_wealth(wealth: ContinuousState) -> ContinuousState:
@@ -527,63 +407,51 @@ def _half_of_couple_wealth(wealth: ContinuousState) -> ContinuousState:
     return 0.5 * wealth
 
 
-def _participation_f(*, Q_f: FloatND, V_alone_f: FloatND, slack: float) -> BoolND:
-    """She stays where the household is worth at least her outside option."""
-    return Q_f >= V_alone_f - slack
+def _pooled(*, wealth: ContinuousState, own_income: float) -> ContinuousState:
+    """Household wealth of a match: both partners' savings and both incomes.
+
+    The partner met holds the same savings `wealth - own_income`. The result is
+    clipped from below to the couple's lowest node, which only singles poorer
+    than their own income reach.
+    """
+    pooled = 2.0 * (wealth - own_income) + INCOME_F + INCOME_M
+    return jnp.maximum(pooled, 2.0 * WEALTH_MIN)
 
 
-def _participation_m(*, Q_m: FloatND, V_alone_m: FloatND, slack: float) -> BoolND:
-    """He stays on the same terms."""
-    return Q_m >= V_alone_m - slack
+def _pooled_from_f(wealth: ContinuousState) -> ContinuousState:
+    return _pooled(wealth=wealth, own_income=INCOME_F)
 
 
-def _mutual_consent(
-    *,
-    V_target_f: FloatND,
-    V_target_m: FloatND,
-    V_alone_f: FloatND,
-    V_alone_m: FloatND,
-) -> BoolND:
-    """Both partners must prefer the household; either one can refuse."""
-    return (V_target_f > V_alone_f) & (V_target_m > V_alone_m)
+def _pooled_from_m(wealth: ContinuousState) -> ContinuousState:
+    return _pooled(wealth=wealth, own_income=INCOME_M)
 
 
-class _ParticipationRule:
-    """Choose one common action satisfying both participation thresholds."""
-
-    reads_outside_values: ClassVar[bool] = True
-
-    def __call__(
-        self,
-        *,
-        Q_f: FloatND,
-        Q_m: FloatND,
-        exit_payoffs: Mapping[str, Mapping[str, FloatND]],
-        alternative_ids: IntND,
-        pareto_weights: Mapping[str, FloatND],
-        slack: float,
-    ) -> RuleResult:
-        q_f, q_m = Q_f.reshape(-1), Q_m.reshape(-1)
-        outside = exit_payoffs["dissolve"]
-        kept = (
-            jnp.isfinite(q_f)
-            & jnp.isfinite(q_m)
-            & _participation_f(Q_f=q_f, V_alone_f=outside["f"], slack=slack)
-            & _participation_m(Q_m=q_m, V_alone_m=outside["m"], slack=slack)
-        )
-        # Mask zero-weight members before multiplying ordinary-infeasible -inf.
-        objective = pareto_weights["f"] * jnp.where(
-            pareto_weights["f"] == 0, 0.0, q_f
-        ) + pareto_weights["m"] * jnp.where(pareto_weights["m"] == 0, 0.0, q_m)
-        stay = jnp.argmax(jnp.where(kept, objective, -jnp.inf))
-        return RuleResult(
-            action=alternative_ids[jnp.where(jnp.any(kept), stay, q_f.size)]
-        )
+def _half_pooled_from_f(wealth: ContinuousState) -> ContinuousState:
+    """The partner's single coordinate when she proposes: half the pooled wealth."""
+    return jnp.maximum(0.5 * _pooled_from_f(wealth), WEALTH_MIN)
 
 
-def _has_policy_support(target_support: BoolND) -> BoolND:
-    """The couple continues wherever its actual feasible set is not empty."""
-    return target_support
+def _half_pooled_from_m(wealth: ContinuousState) -> ContinuousState:
+    """The partner's single coordinate when he proposes: half the pooled wealth."""
+    return jnp.maximum(0.5 * _pooled_from_m(wealth), WEALTH_MIN)
+
+
+def _meets(*, meet: IntND, age: FloatND) -> BoolND:
+    """A single can marry after meeting a partner, from the second age on."""
+    return (meet == Meet.yes) & (age >= 1)
+
+
+def _meets_f(*, meet_f: IntND, age: FloatND) -> BoolND:
+    return _meets(meet=meet_f, age=age)
+
+
+def _meets_m(*, meet_m: IntND, age: FloatND) -> BoolND:
+    return _meets(meet=meet_m, age=age)
+
+
+def _divorce_cost(divorce_cost: float) -> FloatND:
+    """A partner who leaves gives up `divorce_cost` utils of the single payoff."""
+    return jnp.asarray(-divorce_cost)
 
 
 # keyword-only-exempt: primary-argument=law
@@ -610,7 +478,7 @@ def _single_terminal(
 def _transition_probabilities(
     *, last_age: int
 ) -> dict[str, Callable[[FloatND], FloatND]]:
-    """Build the four age-dependent transition probabilities of one model.
+    """Build the two age-dependent transition probabilities of one model.
 
     Every non-terminal regime is solved up to `last_age` and hands its rows to
     its own terminal regime there, so the probabilities need the age at which
@@ -621,29 +489,15 @@ def _transition_probabilities(
         last_age: The age at which the terminal regimes take over.
 
     Returns:
-        Dict of the four probability functions, keyed by what each one says:
-        `meets_a_partner`, `meets_nobody`, `stays_married`, `reaches_last_age`.
+        Dict of the two probability functions, keyed by what each one says:
+        `continues` (the regime carries on) and `reaches_last_age`.
 
     """
 
-    def _before_last(*, age: FloatND, probability: float) -> FloatND:
-        return jnp.where(age < last_age - 1, probability, 0.0)
-
-    def meets_a_partner(age: FloatND) -> FloatND:
-        return _before_last(age=age, probability=MEETING_PROBABILITY)
-
-    def meets_nobody(age: FloatND) -> FloatND:
-        return _before_last(age=age, probability=1.0 - MEETING_PROBABILITY)
-
-    def stays_married(age: FloatND) -> FloatND:
-        return _before_last(age=age, probability=1.0)
+    def continues(age: FloatND) -> FloatND:
+        return jnp.where(age < last_age - 1, 1.0, 0.0)
 
     def reaches_last_age(age: FloatND) -> FloatND:
         return jnp.where(age < last_age - 1, 0.0, 1.0)
 
-    return {
-        "meets_a_partner": meets_a_partner,
-        "meets_nobody": meets_nobody,
-        "stays_married": stays_married,
-        "reaches_last_age": reaches_last_age,
-    }
+    return {"continues": continues, "reaches_last_age": reaches_last_age}

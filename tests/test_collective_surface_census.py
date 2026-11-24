@@ -1,7 +1,7 @@
 """Which test modules exercise the collective / gated-edge surface, and how far.
 
-A module that declares a `CollectiveUtility`, a `ValueDependentConstraint` or a
-`Gate` can cover the feature at either of two altitudes.
+A module that declares a `CollectiveUtility` or a `Gate` can cover the feature
+at either of two altitudes.
 Most drive it through `Model`, so the public route the documentation describes
 is what runs. The rest call the engine directly — `process_regimes`, a bare
 `solve`, `route_gated_edges` — which is the right altitude for pinning a
@@ -39,12 +39,13 @@ _ENGINE_LEVEL_MODULES = frozenset(
         "tests/regime_building/test_collective_extended_real.py",
         "tests/regime_building/test_decomposed_views.py",
         "tests/regime_building/test_gate_reads_value_error.py",
-        "tests/regime_building/test_same_period_ref_process_state_interpolation.py",
-        "tests/regime_building/test_same_period_ref_projection_free_params.py",
+        "tests/regime_building/test_gated_edge_arg_provenance.py",
         "tests/regime_building/test_simulate_gate_param_and_leg_selection.py",
+        "tests/regime_building/test_simulate_guards.py",
         "tests/regime_building/test_terminal_collective_solve.py",
         "tests/regime_building/test_with_engine_functions.py",
         "tests/simulation/test_leg_projector_vmap.py",
+        "tests/test_collective_robustness_pins.py",
     }
 )
 
@@ -65,12 +66,10 @@ def _reaches_public_model(*, source: PythonSource) -> bool:
 
 
 #: What a module writes when it exercises the collective / gated-edge surface.
-#: There is one vocabulary: a regime says who its stakeholders are, what a
-#: value-reading constraint is, and where a value-dependent transition routes,
-#: each in the slot it already has.
+#: There is one vocabulary: a regime says who its members are, and a transition
+#: where a value-dependent move routes, each in the slot it already has.
 _DECLARATIONS = (
     "CollectiveUtility",
-    "ValueDependentConstraint",
     "Gate",
 )
 
@@ -108,7 +107,7 @@ def _census() -> tuple[frozenset[str], frozenset[str]]:
     return frozenset(reaching), frozenset(not_reaching)
 
 
-def test_sources_are_read_as_utf_8_whatever_the_platform_default_is():
+def test_sources_are_read_as_utf_8_whatever_the_platform_default_is() -> None:
     """The census decodes every source as UTF-8, not as the locale's codec.
 
     House style puts literal `—`, `→` and `μ` in source files, and a platform
@@ -130,7 +129,7 @@ def test_sources_are_read_as_utf_8_whatever_the_platform_default_is():
     assert set(recorded) == {"utf-8"}
 
 
-def test_module_names_are_posix_whatever_the_platform_separator_is():
+def test_module_names_are_posix_whatever_the_platform_separator_is() -> None:
     """A module's census name uses `/`, so the pinned set is platform-independent.
 
     The pinned set is written with forward slashes. A name built from the
@@ -145,14 +144,14 @@ def test_module_names_are_posix_whatever_the_platform_separator_is():
     )
 
 
-def test_the_engine_level_set_is_exactly_the_pinned_one():
+def test_the_engine_level_set_is_exactly_the_pinned_one() -> None:
     """No module joins or leaves the below-`Model` set without saying so here."""
     _reaching, not_reaching = _census()
 
     assert not_reaching == _ENGINE_LEVEL_MODULES
 
 
-def test_most_of_the_surface_is_covered_through_the_public_route():
+def test_most_of_the_surface_is_covered_through_the_public_route() -> None:
     """The engine-level set is the minority, not the way the feature is tested."""
     reaching, not_reaching = _census()
 
@@ -164,14 +163,15 @@ def test_most_of_the_surface_is_covered_through_the_public_route():
     [
         ("CollectiveUtility(utilities={})", True),
         ("lcm.CollectiveUtility(utilities={})", True),
-        ("ValueDependentConstraint(predicate=p)", True),
         ("Gate(predicate=g)", True),
-        ('"""A docstring naming CollectiveUtility and stakeholders."""', False),
+        ('"""A docstring naming CollectiveUtility and members."""', False),
         ("# CollectiveUtility(utilities={}) commented out\nx = 1", False),
         ("collective_utility = 1", False),
     ],
 )
-def test_the_census_reads_syntax_not_text(*, source: PythonSource, expected: bool):
+def test_the_census_reads_syntax_not_text(
+    *, source: PythonSource, expected: bool
+) -> None:
     """The detector answers both ways, so a negative census means something."""
     assert _exercises_the_surface(source) is expected
 
@@ -187,20 +187,19 @@ def test_the_census_reads_syntax_not_text(*, source: PythonSource, expected: boo
 )
 def test_reaching_model_is_a_call_not_a_mention(
     *, source: PythonSource, expected: bool
-):
+) -> None:
     """A public route calls `Model`."""
     assert _reaches_public_model(source=source) is expected
 
 
 #: What a regime's declarations and its law decompose into. A model author never
-#: writes one: `stakeholders`, `pareto_objective`, `value_constraints` and
-#: `same_period_refs` are read off a regime, `gated_edges` off the law the model
-#: binds for it, and `GatedEdge` is the engine's own form of an edge.
+#: writes one: `members`, `member_axis` and `pareto_objective` are read off a
+#: regime, `gated_edges` off the law the model binds for it, and `GatedEdge` is the
+#: engine's own form of an edge.
 _DECOMPOSED_NAMES = (
-    "stakeholders",
+    "members",
+    "member_axis",
     "pareto_objective",
-    "value_constraints",
-    "same_period_refs",
     "gated_edges",
 )
 
@@ -220,7 +219,8 @@ def _writes_a_decomposed_name(source: PythonSource) -> list[str]:
                 called = getattr(node.args[0], "id", None) or getattr(
                     node.args[0], "attr", None
                 )
-            if called in _ENGINE_CONSTRUCTORS:
+            # A `CompositeState` names its own, unrelated `members`.
+            if called in _ENGINE_CONSTRUCTORS or called == "CompositeState":
                 continue
             written += [kw.arg for kw in node.keywords if kw.arg in _DECOMPOSED_NAMES]
         elif isinstance(node, ast.FunctionDef):
@@ -251,14 +251,11 @@ _ENGINE_CONSTRUCTORS = frozenset(
     ("source", "expected"),
     [
         (
-            (
-                "partial(q_and_f_module.get_Q_and_F_terminal_collective, "
-                'stakeholders=("a",))'
-            ),
+            ('partial(q_and_f_module.get_Q_and_F_terminal_collective, members=("a",))'),
             [],
         ),
-        ('Regime(stakeholders=("a",))', ["stakeholders"]),
-        ('partial(Regime, stakeholders=("a",))', ["stakeholders"]),
+        ('Regime(members=("a",))', ["members"]),
+        ('partial(Regime, member_axis=("a",))', ["member_axis"]),
     ],
 )
 def test_partial_binding_preserves_the_engine_vocabulary_boundary(
@@ -270,7 +267,7 @@ def test_partial_binding_preserves_the_engine_vocabulary_boundary(
 
 #: Modules that build or directly exercise the ENGINE form rather than the
 #: author form, and so write the engine vocabulary on purpose. One replaces
-#: `stakeholders` on a canonical regime the solver already produced, one mocks a
+#: `member_axis` on a canonical regime the solver already produced, one mocks a
 #: canonical regime outright, and others unit-test lowered GridSearch reducers,
 #: provider context and mandatory bound integrity at the household kernel owner.
 #: No exempt write reaches `Regime.__init__`, so none is a second way to
@@ -285,7 +282,7 @@ _ENGINE_VOCABULARY_MODULES = frozenset(
 )
 
 
-def test_no_test_writes_what_a_declaration_decomposes_to():
+def test_no_test_writes_what_a_declaration_decomposes_to() -> None:
     """There is one way to write a collective regime, and it is the economics.
 
     A test that constructed the decomposed form would be pinning a second
@@ -306,7 +303,7 @@ def test_no_test_writes_what_a_declaration_decomposes_to():
     assert offenders == {}
 
 
-def test_the_engine_vocabulary_exemption_is_still_earned():
+def test_the_engine_vocabulary_exemption_is_still_earned() -> None:
     """An exempt module that stops writing the engine's vocabulary leaves the list."""
     unearned = sorted(
         module

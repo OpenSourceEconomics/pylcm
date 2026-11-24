@@ -1,10 +1,10 @@
 """Integration tests for the NON-terminal collective-regime solve.
 
-Extends the terminal machinery with per-stakeholder continuation values: a
-non-terminal `Regime(stakeholders=("f", "m"))` computes
-`Q^s = u^s + beta * E[V'^s]` per stakeholder, argmaxes the household
+Extends the terminal machinery with per-member continuation values: a
+non-terminal `Regime(members=("f", "m"))` computes
+`Q^s = u^s + beta * E[V'^s]` per member, argmaxes the household
 scalarization `O = sum_s lambda_s Q^s` over the feasible actions, and reads off
-each stakeholder's OWN `Q^s` at that shared argmax. No gated edges here; those
+each member's OWN `Q^s` at that shared argmax. No gated edges here; those
 are covered by `test_gated_edges_collective_solve.py`.
 
 The economics mirror the work/leisure setup of
@@ -149,7 +149,7 @@ def _couple_laws() -> RegimeLaws:
     )
 
 
-def test_nonterminal_collective_regime_solves_with_continuation():
+def test_nonterminal_collective_regime_solves_with_continuation() -> None:
     """Kernel-level: finalize -> process -> backward induction, two periods."""
     laws = _couple_laws()
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
@@ -200,24 +200,24 @@ def test_nonterminal_collective_regime_solves_with_continuation():
     V_terminal = solution[1]["couple_terminal"]
     V_0 = solution[0]["couple"]
 
-    # Both V arrays carry the trailing stakeholder axis: (wage grid = 2) x (S = 2).
+    # Both V arrays carry the trailing member axis: (wage grid = 2) x (S = 2).
     assert V_terminal.shape == (2, 2)
     assert V_0.shape == (2, 2)
 
     np.testing.assert_allclose(np.asarray(V_terminal), _EXPECTED_V_TERMINAL, rtol=1e-6)
     np.testing.assert_allclose(np.asarray(V_0), _EXPECTED_V_PERIOD_0, rtol=1e-6)
 
-    # Per-stakeholder values genuinely differ (not the scalarization).
+    # Per-member values genuinely differ (not the scalarization).
     assert not np.allclose(np.asarray(V_0[:, 0]), np.asarray(V_0[:, 1]))
 
     # The continuation flips the argmax at the low wage: the myopic (terminal)
-    # household choice there is leisure, whose period-0 stakeholder values would
+    # household choice there is leisure, whose period-0 member values would
     # be (30 + 0.95*30, 0 + 0.95*0) = (58.5, 0). The solved V is the work
     # branch's (46, 92) instead.
     assert not np.allclose(np.asarray(V_0[0]), [58.5, 0.0])
 
 
-def test_nonterminal_collective_full_model_solve_matches_kernel_level():
+def test_nonterminal_collective_full_model_solve_matches_kernel_level() -> None:
     """Model-level: the same two regimes through public Model(...) + solve()."""
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     model = Model(
@@ -257,8 +257,8 @@ def _next_mood(mood: DiscreteState) -> FloatND:  # noqa: ARG001
     return jnp.array([0.5, 0.5])
 
 
-def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder():
-    """A Markov state's expectation is taken per stakeholder slice.
+def test_nonterminal_collective_stochastic_state_expectation_is_per_member() -> None:
+    """A Markov state's expectation is taken per member slice.
 
     Adds an IID binary `mood` state (probabilities 1/2 each) whose realization
     enters ONLY the wife's felicity (`+ 5 * mood`). Hand computation on top of
@@ -267,7 +267,7 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
     Terminal V (mood shifts u_f additively, so argmax is unchanged):
       V(m, wage=8)  = (30 + 5m, 0)      V(m, wage=40) = (40 + 5m, 80)
 
-    Period 0: E over mood' hits the stakeholder slices differently —
+    Period 0: E over mood' hits the member slices differently —
     E[V'_f](wage') = base_f(wage') + 2.5 while E[V'_m](wage') is unchanged:
       (m, wage=8) : leisure Q=(30+5m+0.95*32.5, 0)=(60.875+5m, 0)   O=30.4375+2.5m
                     work    Q=(8+5m+0.95*42.5, 16+76)=(48.375+5m, 92) O=70.1875+2.5m
@@ -356,7 +356,7 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
     V_terminal = solution[1]["couple_terminal"]
     V_0 = solution[0]["couple"]
 
-    # (mood = 2) x (wage grid = 2) x (stakeholders = 2).
+    # (mood = 2) x (wage grid = 2) x (members = 2).
     assert V_terminal.shape == (2, 2, 2)
     assert V_0.shape == (2, 2, 2)
 
@@ -376,10 +376,10 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
     np.testing.assert_allclose(np.asarray(V_0), expected_period_0, rtol=1e-6)
 
 
-def test_collective_model_simulates_end_to_end_via_public_model_api():
+def test_collective_model_simulates_end_to_end_via_public_model_api() -> None:
     """A collective regime simulates end to end through the public model API.
 
-    The full recomputed-argmax mechanics (both stakeholders tracked, values
+    The full recomputed-argmax mechanics (both members tracked, values
     matching the hand computation above) are covered in depth by
     `tests/regime_building/test_collective_regime_simulate.py`; this pin just
     confirms the PUBLIC `Model.simulate()` path — auto-solving, then
@@ -411,7 +411,7 @@ def test_collective_model_simulates_end_to_end_via_public_model_api():
     )
 
 
-def test_nonterminal_collective_regime_with_singleton_target_is_rejected():
+def test_nonterminal_collective_regime_with_singleton_target_is_rejected() -> None:
     """Routing a collective regime toward a singleton target needs a gated edge."""
 
     def _utility_single(wage: ContinuousState) -> FloatND:
@@ -443,7 +443,7 @@ def test_nonterminal_collective_regime_with_singleton_target_is_rejected():
     )
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
-    with pytest.raises(NotImplementedError, match="identical `stakeholders`"):
+    with pytest.raises(NotImplementedError, match="identical `members`"):
         process_regimes(
             prepared_structure=build_prepared_structure(
                 user_regimes=finalize_regimes(
@@ -471,7 +471,7 @@ def test_nonterminal_collective_regime_with_singleton_target_is_rejected():
         )
 
 
-def test_collective_regime_with_taste_shocks_is_rejected():
+def test_collective_regime_with_taste_shocks_is_rejected() -> None:
     """EV1 taste shocks on a collective regime are out of scope."""
     with pytest.raises(NotImplementedError, match="taste shocks"):
         Regime(
@@ -487,7 +487,7 @@ def test_collective_regime_with_taste_shocks_is_rejected():
         )
 
 
-def test_collective_regime_with_certainty_equivalent_is_rejected():
+def test_collective_regime_with_certainty_equivalent_is_rejected() -> None:
     """A nonlinear certainty equivalent on a collective regime is out of scope."""
     with pytest.raises(NotImplementedError, match="certainty equivalent"):
         Regime(

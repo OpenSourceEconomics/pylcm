@@ -755,9 +755,7 @@ def test_host_storage_routes_dissolutions_as_device_storage_does() -> None:
             "regime_id": jnp.array(
                 [model.regime_names_to_ids["married"]] * 3, dtype=jnp.int32
             ),
-            "own_stakeholder": jnp.full(
-                3, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
-            ),
+            "own_member": jnp.full(3, model.member_names_to_ids["f"], dtype=jnp.int32),
         }
         solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
         panels.append(
@@ -2019,9 +2017,9 @@ def test_several_chunks_find_each_later_period_loaded_before_it_starts(
         period: int,
         starting_periods: Int1D,
         initial_regime_ids: Int1D,
-        initial_own_stakeholder: Int1D,
+        initial_own_member: Int1D,
         regime_ids: Int1D,
-        own_stakeholder: Int1D,
+        own_member: Int1D,
         memory: SimulationMemory | None = None,
     ) -> tuple[Int1D, Int1D]:
         step_period[0] = period
@@ -2029,9 +2027,9 @@ def test_several_chunks_find_each_later_period_loaded_before_it_starts(
             period=period,
             starting_periods=starting_periods,
             initial_regime_ids=initial_regime_ids,
-            initial_own_stakeholder=initial_own_stakeholder,
+            initial_own_member=initial_own_member,
             regime_ids=regime_ids,
-            own_stakeholder=own_stakeholder,
+            own_member=own_member,
             memory=memory,
         )
 
@@ -2211,9 +2209,7 @@ def test_several_chunks_report_dissolutions_in_the_device_order() -> None:
             "regime_id": jnp.array(
                 [model.regime_names_to_ids["married"]] * 3, dtype=jnp.int32
             ),
-            "own_stakeholder": jnp.full(
-                3, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
-            ),
+            "own_member": jnp.full(3, model.member_names_to_ids["f"], dtype=jnp.int32),
         }
         results.append(
             model.simulate(

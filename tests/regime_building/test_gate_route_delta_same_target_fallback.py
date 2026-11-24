@@ -19,10 +19,10 @@ from lcm import (
     Gate,
     IrregSpacedGrid,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
 )
@@ -89,7 +89,7 @@ def _same_target_fallback_model() -> Model:
                     "target": Gate(
                         predicate=_always_closed,
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="target", projection={"x": _half_x}
                                 )
@@ -124,7 +124,9 @@ _PARAMS = {
 }
 
 
-def test_a_closed_gate_publishes_the_projected_state_into_its_own_target_regime():
+def test_a_closed_gate_publishes_the_projected_state_into_its_own_target_regime() -> (
+    None
+):
     """A closed gate whose fallback IS its own target must still project.
 
     Candidate x is 1 (the ordinary transition's landing); the closed gate's

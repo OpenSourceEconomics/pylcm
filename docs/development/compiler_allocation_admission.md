@@ -41,13 +41,20 @@ once, where a model binds its devices, as
 
 `B_effective = min(B_requested, min over selected devices d of (L_d - ceil(f * L_d)))`
 
-with `L_d` the device's observed allocator pool limit (`memory_stats()["bytes_limit"]`)
-and `f` the `ExecutionConfig.device_memory_headroom_fraction`, which defaults to `0.15`.
-A request of `None` stays unbudgeted and applies no pool-derived cap; public model
-construction still reads each visible device's pool statistics once. A device whose
-backend reports no pool limit contributes no cap, and taking the minimum means a request
-already below the capped limit is never reduced a second time, so no margin is applied
-twice.
+with `L_d` the device's allocator pool limit and `f` the
+`ExecutionConfig.device_memory_headroom_fraction`, which defaults to `0.15`. A request
+of `None` stays unbudgeted and applies no pool-derived cap; public model construction
+still reads each visible device's pool statistics once. A device whose backend reports
+no pool limit contributes no cap, and taking the minimum means a request already below
+the capped limit is never reduced a second time, so no margin is applied twice.
+
+`L_d` is the largest contiguous region of the pool. A pool fixed at a share of the
+device (`XLA_CLIENT_MEM_FRACTION`) reports that region as
+`memory_stats()["bytes_limit"]`. Without the variable, a preallocating JAX reserves
+three quarters of the device and grows the pool in further regions; it then reports the
+size the pool may grow to, and `L_d` is three quarters of the reported figure. One
+buffer is served from one region, so the bytes of later regions do not extend what a
+single compiled program can allocate.
 
 The fraction moves the ceiling and nothing else: every compiler reservation, residency
 figure and admission inequality is unchanged, and `f = 0.0` reproduces admission against

@@ -162,7 +162,7 @@ def _exercise_copy(  # noqa: PLR0915 -- one real transfer/dispatch/lifetime witn
     shared: bool = False,
 ) -> None:
     original = jax.device_put(
-        jnp.arange(8.0), jax.sharding.SingleDeviceSharding(jax.devices()[0])
+        jnp.arange(8.0), jax.sharding.make_single_device_sharding(jax.devices()[0])
     )
     required = jax.NamedSharding(jax.make_mesh((1,), ("destination",)), jax.P(None))
     output_template = jax.device_put(jnp.zeros_like(original), required)

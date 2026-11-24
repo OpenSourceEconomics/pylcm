@@ -134,7 +134,7 @@ class InvalidAdditionalTargetsError(PyLCMError):
 class InvalidFunctionOutputError(PyLCMError):
     """Raised when a user function returns a value of the wrong kind.
 
-    A predicate (constraint, gate, participation or exit availability) returns a
+    A predicate (constraint, gate or exit availability) returns a
     Boolean, a discrete state's law an integer code, and a utility, continuous
     law or probability a number. Only the returned dtype is checked.
     """
@@ -162,8 +162,7 @@ class GateReadsValueError(RegimeInitializationError):
     """Raised when a `Gate` predicate reads a value of its target regime.
 
     A gate routes on the target's states and parameters. A move decided by
-    comparing values is an `Exit` of the source regime, or a `ParticipationCheck`
-    when the comparison is made on landing.
+    comparing values is an `Exit` of the regime that decides.
     """
 
 

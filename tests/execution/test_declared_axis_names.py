@@ -129,7 +129,6 @@ def _program_axis_names(*, programs: SimulationPrograms) -> frozenset[str]:
             programs.policy_rank,
             programs.exit_full,
             programs.exit_participating,
-            *programs.participation_families,
         )
         for program in family.values()
         for name in program.requirements.axis_names

@@ -106,7 +106,7 @@ def test_unit_profile_uses_real_merged_carrier_descriptors() -> None:
     regimes = model._runtime_regimes_for_shape(compile_batch_size=2)
     runtime = next(iter(regimes.values())).simulation.programs.executor
     assert isinstance(runtime, SimulationRuntime)
-    layout = jax.sharding.SingleDeviceSharding(runtime.subject_devices[0])
+    layout = jax.sharding.make_single_device_sharding(runtime.subject_devices[0])
     before = MappingProxyType(
         {
             name: MappingProxyType(

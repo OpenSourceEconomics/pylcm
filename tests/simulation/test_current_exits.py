@@ -1,5 +1,6 @@
 """Current exits choose with caller information and act once after revelation."""
 
+import math
 from functools import partial
 from types import MappingProxyType
 from typing import Unpack, cast
@@ -9,13 +10,22 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jax.extend.core import ClosedJaxpr, Jaxpr
 from numpy.testing import assert_array_almost_equal
 from pandas.testing import assert_frame_equal
 
+from _lcm.current_iid import _draw_base_value
+from _lcm.execution.workspace_planning import BOOTSTRAP_TILE_WIDTH_CAP
 from _lcm.params.edges import regime_kernel_params
 from _lcm.regime_building import processing
 from _lcm.simulation.chunk_profiles import profile_simulation_chunk
-from _lcm.simulation.exits import ExitRoute, route_original_subjects
+from _lcm.simulation.exits import (
+    ExitRoute,
+    OriginalExitOutput,
+    ParticipatingExitOutput,
+    _BatchedExitDecision,
+    route_original_subjects,
+)
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.random_address import (
     RandomAddress,
@@ -40,14 +50,13 @@ from lcm import (
     Periods,
     Phased,
     Regime,
-    RuleResult,
     categorical,
 )
 from lcm.exceptions import (
     InvalidSimulationInputError,
     ShockDeclarationError,
 )
-from lcm.exits import ExitRule
+from lcm.exits import ExitRule, Unilateral
 from lcm.shocks import (
     BaseInnovations,
     Discrete,
@@ -59,14 +68,10 @@ from lcm.shocks import (
 )
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import BoolND, FloatND, IntND, RegimeName, ScalarInt
-from tests.conftest import DECIMAL_PRECISION
+from tests.conftest import DECIMAL_PRECISION, assert_agrees_to_ulp
 from tests.simulation._callback_types import HostDispatch, RuntimeDispatch
 from tests.simulation.test_aot_collective_and_gated import _capture_compiled_dispatches
-from tests.simulation.test_current_iid_overrides import (
-    _participation_initial,
-    _participation_model,
-)
-from tests.solution.test_public_exit_queries import _household, _rule_model, _StrictRule
+from tests.solution.test_public_exit_queries import _household, _rule_model
 
 
 @categorical(ordered=False)
@@ -84,13 +89,6 @@ class _Binary:
 @categorical(ordered=False)
 class _OnlySource:
     source: ScalarInt
-
-
-@categorical(ordered=False)
-class _ThreeRegimes:
-    source: ScalarInt
-    target: ScalarInt
-    unread: ScalarInt
 
 
 @categorical(ordered=False)
@@ -220,20 +218,18 @@ def test_mover_rows_publish_original_current_shocks(
                 functions={"utility": _source_shock_flow},
                 shocks=("innovation",),
                 state_transitions={"wealth": _shock_location} if n_periods > 1 else {},
-                exits={
-                    "leave": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="target",
-                                projection={"wealth": _project_shock_wealth}
-                                if target_reads_shock
-                                else {},
-                            )
-                        },
-                        rule="unilateral",
-                        available=_first_period,
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="target",
+                            projection={"wealth": _project_shock_wealth}
+                            if target_reads_shock
+                            else {},
+                        )
+                    },
+                    rule=Unilateral(),
+                    available=_first_period,
+                ),
             ),
             "target": Regime(
                 states={"wealth": LinSpacedGrid(start=0, stop=20, n_points=3)}
@@ -362,35 +358,6 @@ def test_exit_source_observations_keep_discrete_codes_and_labels(
     assert frame.loc[frame["subject_id"] == 2, "source__offer"].isna().all()
 
 
-@pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_participation_fallback_rows_keep_the_observed_current_shock() -> None:
-    """Rejected entry rows retain the low offer used by their participation check."""
-    frame = (
-        _participation_model(observed=True)
-        .simulate(
-            params={"discount_factor": 0.5},
-            initial_conditions=_participation_initial(),
-            shock_paths={
-                "offer": PhysicalValues(
-                    values=jnp.asarray([[1, 0], [0, 1], [1, 0]], dtype=jnp.int32)
-                )
-            },
-            seed=17,
-            log_level="off",
-            runtime_checks=False,
-        )
-        .to_dataframe(use_categorical_codes=True)
-    )
-    landed = frame.loc[frame["period"] == 1].sort_values("subject_id")
-    np.testing.assert_array_equal(
-        landed["regime_name"], ["fallback", "target", "fallback"]
-    )
-    assert_array_almost_equal(
-        landed["value"], [4.0, 4.0, 2.0], decimal=DECIMAL_PRECISION
-    )
-    np.testing.assert_array_equal(landed["offer"], [0, 1, 0])
-
-
 def _target(*, offer: ScalarInt, choice: ScalarInt) -> FloatND:
     return offer + choice * (2.0 * offer - 1.0)
 
@@ -416,19 +383,17 @@ def _hidden_offer_model(
             "source": Regime(
                 functions={"utility": _stay},
                 shocks=("unused",) if permit_unused else (),
-                exits={
-                    "leave": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="target",
-                                projection={},
-                                utility_adjustment=_adjustment,
-                            )
-                        },
-                        rule="unilateral",
-                        observes=("offer",) if observed else (),
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="target",
+                            projection={},
+                            utility_adjustment=_adjustment,
+                        )
+                    },
+                    rule=Unilateral(),
+                    observes=("offer",) if observed else (),
+                ),
             ),
             "target": Regime(
                 functions={"utility": _target},
@@ -569,18 +534,16 @@ def _dated_override_model() -> Model:
             ),
             "source": Regime(
                 functions={"utility": _stay},
-                exits={
-                    "leave": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="target",
-                                projection={},
-                                utility_adjustment=_adjustment,
-                            )
-                        },
-                        rule="unilateral",
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="target",
+                            projection={},
+                            utility_adjustment=_adjustment,
+                        )
+                    },
+                    rule=Unilateral(),
+                ),
             ),
             "target": Regime(
                 functions={"utility": _target},
@@ -703,12 +666,10 @@ def test_target_only_correlated_physical_frame_uses_mapped_producer(
         regimes={
             "source": Regime(
                 functions={"utility": _stay},
-                exits={
-                    "leave": Exit(
-                        targets={"self": ExitTarget(regime="target", projection={})},
-                        rule="unilateral",
-                    )
-                },
+                exit=Exit(
+                    targets={"self": ExitTarget(regime="target", projection={})},
+                    rule=Unilateral(),
+                ),
             ),
             "target": Regime(
                 functions={"utility": _correlated_override_utility},
@@ -797,17 +758,15 @@ def test_shared_physical_override_transports_recovered_base_to_changed_law() -> 
                 states={"location": LinSpacedGrid(start=0, stop=1, n_points=2)},
                 functions={"utility": _shared_source_flow},
                 shocks=("shared",),
-                exits={
-                    "leave": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="target",
-                                projection={"location": _mapped_location},
-                            )
-                        },
-                        rule="unilateral",
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="target",
+                            projection={"location": _mapped_location},
+                        )
+                    },
+                    rule=Unilateral(),
+                ),
             ),
             "target": Regime(
                 states={"location": LinSpacedGrid(start=10, stop=11, n_points=2)},
@@ -1086,8 +1045,8 @@ def test_simulated_formation_uses_mapped_lag_and_fresh_consent(
             frame[["value_f", "value_m"]], 6.0, decimal=DECIMAL_PRECISION
         )
         np.testing.assert_array_equal(
-            frame["own_stakeholder"],
-            model._regimes["couple"].stakeholder_names_to_ids["f"],
+            frame["own_member"],
+            model._regimes["couple"].member_names_to_ids["f"],
         )
         np.testing.assert_array_equal(frame["married_last_period"], 0)
         np.testing.assert_array_equal(frame["action"], 1)
@@ -1125,9 +1084,9 @@ def test_simulated_formation_keeps_nested_mapped_lagged_outside_states() -> None
 @pytest.mark.coverage(
     backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
 )
-def test_hidden_destination_taste_acts_after_custom_exit_without_repricing() -> None:
+def test_hidden_destination_taste_acts_after_strict_exit_without_repricing() -> None:
     """Source prices log4, commits, then target draws its own unshocked action."""
-    model = _rule_model(rule=_StrictRule(), target_taste=True)
+    model = _rule_model(rule=Unilateral(tie="leave"), target_taste=True)
     solution = model.solve(params={}, log_level="off", runtime_checks=False)
     assert_array_almost_equal(
         solution.values[0]["single_f"], np.log(4.0), decimal=DECIMAL_PRECISION
@@ -1184,12 +1143,10 @@ def test_source_taste_keeps_dissolution_as_fallback_in_public_replay(
                 actions={"choice": DiscreteGrid(values=jnp.asarray([0, 1]))},
                 functions={"utility": _choice_value},
                 taste_shocks=ExtremeValueTasteShocks(),
-                exits={
-                    "leave": Exit(
-                        targets={"self": ExitTarget(regime="target", projection={})},
-                        rule="unilateral",
-                    )
-                },
+                exit=Exit(
+                    targets={"self": ExitTarget(regime="target", projection={})},
+                    rule=Unilateral(),
+                ),
             ),
             "target": Regime(functions={"utility": _two if fallback else _solve_flow}),
         },
@@ -1235,18 +1192,16 @@ def test_source_taste_freezes_one_consent_choice_before_target_action() -> None:
                 actions={"choice": DiscreteGrid(values=jnp.asarray([0, 1]))},
                 functions={"utility": _double_choice},
                 taste_shocks=ExtremeValueTasteShocks(),
-                exits={
-                    "marry": Exit(
-                        targets={
-                            "self": ExitTarget(regime="target", role="f", projection={})
-                        },
-                        rule=Consent(
-                            counterparty=Counterparty(
-                                regime="counterparty", role="m", projection={}
-                            )
-                        ),
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(regime="target", role="f", projection={})
+                    },
+                    rule=Consent(
+                        counterparty=Counterparty(
+                            regime="counterparty", role="m", projection={}
+                        )
+                    ),
+                ),
             ),
             "counterparty": Regime(functions={"utility": _zero}),
             "target": Regime(
@@ -1301,8 +1256,8 @@ def test_source_taste_freezes_one_consent_choice_before_target_action() -> None:
         frame.loc[moved, "value_m"], 1.0, decimal=DECIMAL_PRECISION
     )
     np.testing.assert_array_equal(
-        frame.loc[moved, "own_stakeholder"],
-        model._regimes["target"].stakeholder_names_to_ids["f"],
+        frame.loc[moved, "own_member"],
+        model._regimes["target"].member_names_to_ids["f"],
     )
 
 
@@ -1338,17 +1293,6 @@ def _return_fee() -> float:
     return -0.5
 
 
-class _RouteOnce:
-    """Choose an available current move without recursive outside-policy pricing."""
-
-    reads_outside_values = False
-
-    def __call__(self, *, period: ScalarInt, alternative_ids: IntND) -> RuleResult:
-        return RuleResult(
-            action=jnp.where(period == 0, alternative_ids[-1], alternative_ids[0])
-        )
-
-
 def _opposing_model(*, rule: ExitRule, reverse: bool = False) -> Model:
     grid = LinSpacedGrid(start=0, stop=100, n_points=3)
     regimes = {
@@ -1356,37 +1300,33 @@ def _opposing_model(*, rule: ExitRule, reverse: bool = False) -> Model:
             functions={"utility": _x_flow},
             states={"x": grid},
             state_transitions={"x": _next_x},
-            exits={
-                "outward": Exit(
-                    targets={
-                        "self": ExitTarget(
-                            regime="target",
-                            projection={"y": _into_target},
-                            utility_adjustment=_adjustment,
-                        )
-                    },
-                    rule=rule,
-                    available=_first_period,
-                )
-            },
+            exit=Exit(
+                targets={
+                    "self": ExitTarget(
+                        regime="target",
+                        projection={"y": _into_target},
+                        utility_adjustment=_adjustment,
+                    )
+                },
+                rule=rule,
+                available=_first_period,
+            ),
         ),
         "target": Regime(
             functions={"utility": _y_flow},
             states={"y": grid},
             state_transitions={"y": _next_y},
-            exits={
-                "inward": Exit(
-                    targets={
-                        "self": ExitTarget(
-                            regime="source",
-                            projection={"x": _into_source},
-                            utility_adjustment=_return_fee,
-                        )
-                    },
-                    rule=rule,
-                    available=_first_period,
-                )
-            },
+            exit=Exit(
+                targets={
+                    "self": ExitTarget(
+                        regime="source",
+                        projection={"x": _into_source},
+                        utility_adjustment=_return_fee,
+                    )
+                },
+                rule=rule,
+                available=_first_period,
+            ),
         ),
         "source_done": Regime(functions={"utility": _x_flow}, states={"x": grid}),
         "target_done": Regime(functions={"utility": _y_flow}, states={"y": grid}),
@@ -1403,107 +1343,26 @@ def _opposing_model(*, rule: ExitRule, reverse: bool = False) -> Model:
     )
 
 
-def test_reciprocal_unilateral_exits_refuse_the_public_participating_cycle() -> None:
-    """Reciprocal outside pricing cannot recursively price itself."""
-    with pytest.raises(ValueError, match="Policy query cycle"):
-        _opposing_model(rule="unilateral")
+def test_reciprocal_unilateral_exits_read_each_other_s_problem() -> None:
+    """Each regime leaves from its lowest cell for the other's problem value.
 
-
-@pytest.mark.coverage(
-    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
-)
-@pytest.mark.parametrize("reverse", [False, True])
-def test_opposing_public_exits_advance_only_the_final_actor(*, reverse: bool) -> None:
-    """Original occupants move once, pay once, then use final scheduled laws."""
-    model = _opposing_model(rule=_RouteOnce(), reverse=reverse)
-    params = {"discount_factor": 0.0}
-    solution = model.solve(params=params, log_level="off", runtime_checks=False)
-    frame = model.simulate(
-        params=params,
-        solution=solution,
-        initial_conditions={
-            "period": jnp.zeros(2, dtype=jnp.int32),
-            "regime_id": jnp.asarray([0, 1], dtype=jnp.int32),
-            "x": jnp.asarray([2.0, 0.0]),
-            "y": jnp.asarray([0.0, 6.0]),
-        },
-        seed=17,
-        log_level="off",
-        runtime_checks=False,
-    ).to_dataframe(use_categorical_codes=True)
-    entry = frame.query("period == 0").sort_values("subject_id")
-    final = frame.query("period == 1").sort_values("subject_id")
-    np.testing.assert_array_equal(entry["regime_name"], ["target", "source"])
-    np.testing.assert_array_equal(final["regime_name"], ["target_done", "source_done"])
-    assert_array_almost_equal(entry["y"].iloc[0], 11.0, decimal=DECIMAL_PRECISION)
-    assert_array_almost_equal(entry["x"].iloc[1], 23.0, decimal=DECIMAL_PRECISION)
-    assert_array_almost_equal(final["y"].iloc[0], 13.0, decimal=DECIMAL_PRECISION)
-    assert_array_almost_equal(final["x"].iloc[1], 24.0, decimal=DECIMAL_PRECISION)
-    assert_array_almost_equal(entry["value"], [10.75, 22.5], decimal=DECIMAL_PRECISION)
-    assert_array_almost_equal(final["value"], [13.0, 24.0], decimal=DECIMAL_PRECISION)
-
-
-class _StayWithoutOutside:
-    """The target's custom Full rule does not constrain its Participating policy."""
-
-    reads_outside_values = False
-
-    def __call__(self, *, alternative_ids: jax.Array) -> RuleResult:
-        return RuleResult(action=alternative_ids[0])
+    With discount factor 0.5, a stay is worth `x + 0.5 * (x + 1)` in the source and
+    `y + 0.5 * (y + 2)` in the target, capped at 100 next period. At x = 0 the
+    target's problem at y = 10 is worth 16, less the fee 0.25; at y = 0 the source's
+    problem at x = 20 is worth 30.5, less the fee 0.5. Every other cell stays.
+    """
+    solution = _opposing_model(rule=Unilateral()).solve(
+        params={"discount_factor": 0.5}, log_level="off", runtime_checks=False
+    )
+    assert_array_almost_equal(
+        np.stack((solution.values[0]["source"], solution.values[0]["target"])),
+        [[15.75, 75.5, 150.0], [30.0, 76.0, 150.0]],
+        decimal=DECIMAL_PRECISION,
+    )
 
 
 def _two() -> float:
     return 2.0
-
-
-@pytest.mark.coverage(
-    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
-)
-def test_incoming_participating_actor_does_not_create_an_original_full_query() -> None:
-    """A destination's unread custom outside option creates no extra query context."""
-    model = Model(
-        regimes={
-            "source": Regime(
-                functions={"utility": _solve_flow},
-                exits={
-                    "leave": Exit(
-                        targets={"self": ExitTarget(regime="target", projection={})},
-                        rule="unilateral",
-                    )
-                },
-            ),
-            "target": Regime(
-                functions={"utility": _two},
-                exits={
-                    "unread": Exit(
-                        targets={"self": ExitTarget(regime="unread", projection={})},
-                        rule=_StayWithoutOutside(),
-                    )
-                },
-            ),
-            "unread": Regime(functions={"utility": _two}),
-        },
-        n_periods=1,
-        regime_id_class=_ThreeRegimes,
-        initial_nodes=InitialNodes(by_period={0: "source"}),
-        edges={},
-    )
-    solution = model.solve(params={}, log_level="off", runtime_checks=False)
-    assert set(solution.values[0]) == {"source"}
-    assert not model._regimes["unread"].simulation.Q_and_F
-    frame = model.simulate(
-        params={},
-        solution=solution,
-        initial_conditions={
-            "period": jnp.zeros(1, dtype=jnp.int32),
-            "regime_id": jnp.zeros(1, dtype=jnp.int32),
-        },
-        seed=17,
-        log_level="off",
-        runtime_checks=False,
-    ).to_dataframe(use_categorical_codes=True)
-    np.testing.assert_array_equal(frame["regime_name"], "target")
-    assert_array_almost_equal(frame["value"], 2.0, decimal=DECIMAL_PRECISION)
 
 
 def _solve_flow() -> float:
@@ -1527,12 +1386,10 @@ def test_public_exit_replay_uses_simulation_phase_helper_closure() -> None:
         regimes={
             "source": Regime(
                 functions={"utility": _solve_flow},
-                exits={
-                    "leave": Exit(
-                        targets={"self": ExitTarget(regime="target", projection={})},
-                        rule="unilateral",
-                    )
-                },
+                exit=Exit(
+                    targets={"self": ExitTarget(regime="target", projection={})},
+                    rule=Unilateral(),
+                ),
             ),
             "target": Regime(
                 functions={
@@ -1592,3 +1449,126 @@ def test_forward_query_context_retains_actual_simulation_q_and_helpers() -> None
     assert_array_almost_equal(
         context.functions["utility"](), 2.0, decimal=DECIMAL_PRECISION
     )
+
+
+_SCALE = 3.0
+
+# Subject counts below, at and just above one block of subjects evaluated together,
+# and one spanning three blocks with a padded remainder.
+_SUBJECT_COUNTS = (
+    BOOTSTRAP_TILE_WIDTH_CAP - 1,
+    BOOTSTRAP_TILE_WIDTH_CAP,
+    BOOTSTRAP_TILE_WIDTH_CAP + 1,
+    2 * BOOTSTRAP_TILE_WIDTH_CAP + 2,
+)
+
+
+def _branching_subject(
+    *,
+    x: FloatND,
+    threefry_key: jax.Array,
+    rbg_key: jax.Array,
+    empty: FloatND,
+    scale: FloatND,
+) -> ParticipatingExitOutput:
+    """One subject whose untaken branch is undefined: a log of a negative number.
+
+    `empty` is a per-subject array without elements, such as a roster no subject
+    fills; it is read and published with nothing but its shape.
+    """
+    taken = x > 0
+    value = jax.lax.cond(taken, lambda: jnp.log(x) * scale, lambda: -x) + jnp.sum(empty)
+    physical = {
+        "uniform": _draw_base_value(key=threefry_key, uniform=True),
+        "normal": _draw_base_value(key=rbg_key, uniform=False),
+    }
+    answer = (value, taken.astype(jnp.int32), taken, ~taken, jnp.ones((), jnp.int32))
+    frame = (physical, {}, {}, {}, {}, {}, taken, {})
+    return answer, frame, {"value": value, "empty": empty * scale}
+
+
+def _published(
+    output: OriginalExitOutput | ParticipatingExitOutput,
+) -> dict[str, jax.Array]:
+    answer, frame = output[0], output[1]
+    return {
+        "decision_value": jnp.asarray(answer[0]),
+        "action_index": jnp.asarray(answer[1]),
+        "support": jnp.asarray(answer[2]),
+        "uniform": jnp.asarray(frame[0]["uniform"]),
+        "normal": jnp.asarray(frame[0]["normal"]),
+    }
+
+
+def _subject_rows(*, n_subjects: int, rbg: bool) -> dict[str, jax.Array]:
+    threefry = jax.random.split(jax.random.key(0), n_subjects)
+    return {
+        "x": jnp.linspace(-1.0, 1.0, n_subjects),
+        "threefry_key": threefry,
+        # A key implementation other than threefry carries the scalar-dispatch axis.
+        "rbg_key": (
+            jax.random.split(jax.random.key(1, impl="rbg"), n_subjects)[:, None]
+            if rbg
+            else threefry
+        ),
+        "empty": jnp.zeros((n_subjects, 0)),
+    }
+
+
+def _decide_batched(rows: dict[str, jax.Array]) -> dict[str, jax.Array]:
+    decision = _BatchedExitDecision(body=_branching_subject)
+    return _published(jax.vmap(partial(decision, scale=jnp.asarray(_SCALE)))(**rows))
+
+
+def _decide_one_subject(row: dict[str, jax.Array]) -> dict[str, jax.Array]:
+    return _published(_branching_subject(**row, scale=jnp.asarray(_SCALE)))
+
+
+def _decide_one_by_one(rows: dict[str, jax.Array]) -> dict[str, jax.Array]:
+    return jax.lax.map(_decide_one_subject, rows)
+
+
+def _scan_lengths(*, jaxpr: Jaxpr) -> list[int]:
+    """Return the trip count of every scan in a jaxpr and in its nested jaxprs."""
+    lengths = []
+    for equation in jaxpr.eqns:
+        if equation.primitive.name == "scan":
+            lengths.append(int(equation.params["length"]))
+        for param in equation.params.values():
+            for inner in param if isinstance(param, tuple) else (param,):
+                if isinstance(inner, ClosedJaxpr):
+                    lengths.extend(_scan_lengths(jaxpr=inner.jaxpr))
+                elif isinstance(inner, Jaxpr):
+                    lengths.extend(_scan_lengths(jaxpr=inner))
+    return lengths
+
+
+@pytest.mark.parametrize("n_subjects", _SUBJECT_COUNTS)
+def test_exit_decision_loops_over_blocks_not_subjects(n_subjects: int) -> None:
+    """Batched subjects run vectorized in blocks; no loop steps once per subject."""
+    rows = _subject_rows(n_subjects=n_subjects, rbg=False)
+    traced = jax.make_jaxpr(_decide_batched)(rows)
+    assert max(_scan_lengths(jaxpr=traced.jaxpr), default=1) <= math.ceil(
+        n_subjects / BOOTSTRAP_TILE_WIDTH_CAP
+    )
+
+
+@pytest.mark.parametrize("output", ["action_index", "support", "uniform", "normal"])
+@pytest.mark.parametrize("n_subjects", _SUBJECT_COUNTS)
+def test_exit_decision_choices_and_draws_match_one_subject_at_a_time(
+    *, n_subjects: int, output: str
+) -> None:
+    """Branch choices and both key implementations' draws are each subject's own."""
+    rows = _subject_rows(n_subjects=n_subjects, rbg=True)
+    got = jax.jit(_decide_batched)(rows)[output]
+    expected = jax.jit(_decide_one_by_one)(rows)[output]
+    np.testing.assert_array_equal(got, expected)
+
+
+@pytest.mark.parametrize("n_subjects", _SUBJECT_COUNTS)
+def test_exit_decision_values_match_one_subject_at_a_time(n_subjects: int) -> None:
+    """The taken branch's value reaches each subject; the untaken branch's never."""
+    rows = _subject_rows(n_subjects=n_subjects, rbg=True)
+    got = jax.jit(_decide_batched)(rows)["decision_value"]
+    expected = jax.jit(_decide_one_by_one)(rows)["decision_value"]
+    assert_agrees_to_ulp(got=got, expected=expected, n_ulp=4)

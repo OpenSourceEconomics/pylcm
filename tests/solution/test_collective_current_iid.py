@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 from fractions import Fraction
+from typing import cast
 from unittest.mock import patch
 
 import jax
@@ -34,6 +35,7 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import ExecutionPlanningError, RegimeInitializationError
+from lcm.exits import Unilateral
 from lcm.shocks import Discrete, Normal, ShockGroup, UserNodes
 from lcm.solver_api import SolutionResult
 from lcm.typing import FloatND, IntND, ScalarInt
@@ -119,18 +121,16 @@ def _model(
                 )
             },
             shocks=("innovation",),
-            exits={
-                "divorce": Exit(
-                    targets={
-                        "f": ExitTarget(regime="single_f", projection={}),
-                        "m": ExitTarget(regime="single_m", projection={}),
-                    },
-                    rule="unilateral",
-                    available=None if available else _unavailable,
-                )
-            }
+            exit=Exit(
+                targets={
+                    "f": ExitTarget(regime="single_f", projection={}),
+                    "m": ExitTarget(regime="single_m", projection={}),
+                },
+                rule=Unilateral(),
+                available=None if available else _unavailable,
+            )
             if exits
-            else {},
+            else None,
             constraints={"ordinary": _empty} if empty else {},
         ),
         "single_f": Regime(functions={"utility": _outside}),
@@ -261,27 +261,25 @@ def _household_model() -> Model:
             },
             shocks=("wage",),
             state_transitions={"experience": _next_experience},
-            exits={
-                "marry": Exit(
-                    targets={
-                        "self": ExitTarget(
-                            regime="couple",
-                            role=member,
-                            projection={
-                                "experience_f": _experience,
-                                "experience_m": _experience,
-                            },
-                        )
-                    },
-                    rule=Consent(
-                        counterparty=Counterparty(
-                            regime="single_m" if member == "f" else "single_f",
-                            role="m" if member == "f" else "f",
-                            projection={"experience": _experience},
-                        )
-                    ),
-                )
-            },
+            exit=Exit(
+                targets={
+                    "self": ExitTarget(
+                        regime="couple",
+                        role=member,
+                        projection={
+                            "experience_f": _experience,
+                            "experience_m": _experience,
+                        },
+                    )
+                },
+                rule=Consent(
+                    counterparty=Counterparty(
+                        regime="single_m" if member == "f" else "single_f",
+                        role="m" if member == "f" else "f",
+                        projection={"experience": _experience},
+                    )
+                ),
+            ),
         )
         for member in ("f", "m")
     }
@@ -299,46 +297,43 @@ def _household_model() -> Model:
             },
             state_transitions={"experience_f": _next_f, "experience_m": _next_m},
             shocks=("wage",),
-            exits={
-                "divorce": Exit(
-                    targets={
-                        "f": ExitTarget(
-                            regime="single_f",
-                            projection={"experience": _experience_f},
-                        ),
-                        "m": ExitTarget(
-                            regime="single_m",
-                            projection={"experience": _experience_m},
-                        ),
-                    },
-                    rule="unilateral",
-                )
-            },
+            exit=Exit(
+                targets={
+                    "f": ExitTarget(
+                        regime="single_f",
+                        projection={"experience": _experience_f},
+                    ),
+                    "m": ExitTarget(
+                        regime="single_m",
+                        projection={"experience": _experience_m},
+                    ),
+                },
+                rule=Unilateral(),
+            ),
         ),
     }
     for name, regime in tuple(regimes.items()):
         regimes[f"{name}_terminal"] = replace(
             regime,
             state_transitions={},
-            exits={
-                key: replace(
-                    declaration,
-                    targets={
-                        member: replace(target, regime=f"{target.regime}_terminal")
-                        for member, target in declaration.targets.items()
-                    },
-                    rule=replace(
-                        declaration.rule,
-                        counterparty=replace(
-                            declaration.rule.counterparty,
-                            regime=f"{declaration.rule.counterparty.regime}_terminal",
-                        ),
-                    )
-                    if isinstance(declaration.rule, Consent)
-                    else declaration.rule,
+            exit=None
+            if regime.exit is None
+            else replace(
+                regime.exit,
+                targets={
+                    member: replace(target, regime=f"{target.regime}_terminal")
+                    for member, target in regime.exit.targets.items()
+                },
+                rule=replace(
+                    regime.exit.rule,
+                    counterparty=replace(
+                        regime.exit.rule.counterparty,
+                        regime=f"{regime.exit.rule.counterparty.regime}_terminal",
+                    ),
                 )
-                for key, declaration in regime.exits.items()
-            },
+                if isinstance(regime.exit.rule, Consent)
+                else regime.exit.rule,
+            ),
         )
     return Model(
         regimes=regimes,
@@ -414,8 +409,8 @@ def _check_household_replay(
                 * 8,
                 jnp.int32,
             ),
-            "own_stakeholder": jnp.asarray(
-                [-1, model.stakeholder_names_to_ids["m"]] * 8, jnp.int32
+            "own_member": jnp.asarray(
+                [-1, model.member_names_to_ids["m"]] * 8, jnp.int32
             ),
             "experience": jnp.zeros(size, jnp.int32),
             "experience_f": jnp.asarray([0, 1] * 8, jnp.int32),
@@ -552,15 +547,13 @@ def test_collective_prices_hidden_target_policy_with_original_joint_law(
                     )
                 },
                 shocks=("innovation", "joint") if observed else ("innovation",),
-                exits={
-                    "divorce": Exit(
-                        targets={
-                            member: ExitTarget(regime=f"single_{member}", projection={})
-                            for member in ("f", "m")
-                        },
-                        rule="unilateral",
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        member: ExitTarget(regime=f"single_{member}", projection={})
+                        for member in ("f", "m")
+                    },
+                    rule=Unilateral(),
+                ),
             ),
             **{
                 f"single_{member}": Regime(
@@ -634,7 +627,7 @@ def test_collective_current_shocks_replay_same_original_subject_and_role() -> No
     model = _model(exits=True, enable_jit=True, width=1)
     solution = model.solve(params={}, log_level="off", runtime_checks=False)
     ids = model.regime_names_to_ids
-    roles = model.stakeholder_names_to_ids
+    roles = model.member_names_to_ids
     frame = (
         model.simulate(
             params={},
@@ -643,7 +636,7 @@ def test_collective_current_shocks_replay_same_original_subject_and_role() -> No
                 "period": jnp.zeros(8, jnp.int32),
                 "wealth": jnp.zeros(8),
                 "regime_id": jnp.full(8, ids["couple"], jnp.int32),
-                "own_stakeholder": jnp.asarray([roles["f"], roles["m"]] * 4, jnp.int32),
+                "own_member": jnp.asarray([roles["f"], roles["m"]] * 4, jnp.int32),
             },
             seed=17,
             log_level="off",
@@ -739,12 +732,10 @@ def test_formation_shares_both_current_offers_at_mapped_marital_history(
         **base.user_regimes,
         "single_f": replace(
             source,
-            exits={
-                "marry": replace(
-                    source.exits["marry"],
-                    observes=("offer_f", "offer_m") if observed else ("offer_f",),
-                )
-            },
+            exit=replace(
+                cast("Exit", source.exit),
+                observes=("offer_f", "offer_m") if observed else ("offer_f",),
+            ),
         ),
         "couple": replace(
             base.user_regimes["couple"],
@@ -809,7 +800,7 @@ def test_collective_current_policy_preserves_names_under_reversed_declarations()
     """Reordering regimes and members keeps named values and one joint action."""
     model = _model(exits=True, enable_jit=True, width=3, reverse=True)
     solution = model.solve(params={}, log_level="off", runtime_checks=False)
-    members = model._regimes["couple"].stakeholders
+    members = model._regimes["couple"].member_axis
     assert members == ("m", "f")
     for member, expected in (("f", [4.0, 4.0, 8.0]), ("m", [4.0, 4.0, 4.0])):
         assert_array_almost_equal(
@@ -827,9 +818,8 @@ def test_collective_current_policy_preserves_names_under_reversed_declarations()
                 "regime_id": jnp.full(
                     8, model.regime_names_to_ids["couple"], jnp.int32
                 ),
-                "own_stakeholder": jnp.asarray(
-                    [model.stakeholder_names_to_ids[member] for member in ("f", "m")]
-                    * 4,
+                "own_member": jnp.asarray(
+                    [model.member_names_to_ids[member] for member in ("f", "m")] * 4,
                     jnp.int32,
                 ),
             },

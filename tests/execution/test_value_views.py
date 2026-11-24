@@ -69,7 +69,7 @@ def _device() -> jax.Device:
 
 
 def _single() -> jax.sharding.Sharding:
-    return jax.sharding.SingleDeviceSharding(_device())
+    return jax.sharding.make_single_device_sharding(_device())
 
 
 def _named() -> jax.sharding.Sharding:

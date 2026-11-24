@@ -80,13 +80,8 @@ class MockRegime(UserRegime):
         # Match UserRegime's defaults for fields MockRegime callers don't touch
         object.__setattr__(self, "derived_categoricals", MappingProxyType({}))
         object.__setattr__(self, "joint_transitions", MappingProxyType({}))
-        object.__setattr__(self, "exits", MappingProxyType({}))
+        object.__setattr__(self, "exit", None)
         object.__setattr__(self, "description", "")
-        # `value_constraints` / `same_period_refs` use
-        # default_factory on the real dataclass, so no class-level fallback
-        # exists — set them here.
-        object.__setattr__(self, "value_constraints", MappingProxyType({}))
-        object.__setattr__(self, "same_period_refs", MappingProxyType({}))
 
     # keyword-only-exempt: primary-argument=phase
     def get_all_functions(

@@ -164,9 +164,9 @@ def test_membership_activation_preserves_rows_outside_their_entry_period(
     inputs = {
         "starting_periods": jnp.asarray([0, 2, 1, 2], dtype=jnp.int32),
         "initial_regime_ids": jnp.asarray([1, 2, 3, 4], dtype=jnp.int32),
-        "initial_own_stakeholder": jnp.asarray([5, 6, 7, 8], dtype=jnp.int32),
+        "initial_own_member": jnp.asarray([5, 6, 7, 8], dtype=jnp.int32),
         "regime_ids": jnp.asarray([11, 12, 13, 14], dtype=jnp.int32),
-        "own_stakeholder": jnp.asarray([21, 22, 23, 24], dtype=jnp.int32),
+        "own_member": jnp.asarray([21, 22, 23, 24], dtype=jnp.int32),
     }
     originals = {name: np.asarray(value).copy() for name, value in inputs.items()}
     devices = (jax.devices()[0],)
@@ -183,7 +183,7 @@ def test_membership_activation_preserves_rows_outside_their_entry_period(
     )
     empty_regimes, empty_roles = initialize_subject_membership(
         initial_regime_ids=inputs["initial_regime_ids"],
-        initial_own_stakeholder=inputs["initial_own_stakeholder"],
+        initial_own_member=inputs["initial_own_member"],
         memory=memory,
     )
     np.testing.assert_array_equal(empty_regimes, [-(2**31)] * 4)
@@ -194,7 +194,7 @@ def test_membership_activation_preserves_rows_outside_their_entry_period(
         )
         for actual, old_name, initial_name in (
             (regimes, "regime_ids", "initial_regime_ids"),
-            (roles, "own_stakeholder", "initial_own_stakeholder"),
+            (roles, "own_member", "initial_own_member"),
         ):
             expected = [
                 initial if entry == period else old

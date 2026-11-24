@@ -16,7 +16,7 @@ Five boundary conditions on the collective-regimes forward-simulation path
   roles, rather than the first declared leg's for the whole population.
 - `to_dataframe()` on a result where every populated regime is collective
   (no scalar `value` column anywhere): builds the frame from the
-  per-stakeholder value columns.
+  per-member value columns.
 - A STATELESS collective regime's simulated `V_arr` / argmax index: carries
   the subject axis that a stateful collective or a stateless singleton
   regime always carries.
@@ -35,9 +35,10 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.engine import Regime as EngineRegime
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.finalize import finalize_regimes
-from _lcm.regime_building.gated_edges import ResolvedStakeholderRoute
+from _lcm.regime_building.gated_edges import ResolvedMemberRoute
 from _lcm.regime_building.Q_and_F import ResolvedProjectedRegimeValue
 from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
@@ -49,6 +50,7 @@ from _lcm.simulation.gated_routing import (
 )
 from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
+from _lcm.typing import FlatRegimeParams, PeriodToRegimeToVArr, RegimeNamesToIds
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
@@ -59,11 +61,9 @@ from lcm import (
     LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
-    Model,
-    ParticipationCheck,
+    MemberRoute,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
@@ -76,13 +76,12 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     FloatND,
+    Int1D,
     RegimeName,
     ScalarInt,
 )
 from tests.conftest import bind_laws
 from tests.regime_building.test_collective_regime_simulate import (
-    _dissolution_laws,
-    _make_dissolution_regimes,
     _solve_and_process,
     _solve_dissolution,
 )
@@ -97,15 +96,12 @@ class Work:
     work: ScalarInt  # code 1
 
 
-def test_target_absent_at_next_period_is_still_a_legitimate_no_op():
+def test_target_absent_at_next_period_is_still_a_legitimate_no_op() -> None:
     """Negative control: the TARGET (not a reference) missing at period+1 stays
     a silent no-op -- the legitimate repeating/one-shot boundary case, which
-    the missing-reference guard must leave alone. Mirrors
-    the occupied boundary in the public counterpart
-    `test_repeating_participation_boundary.py`,
-    `test_public_repeating_participation_stops_at_the_sources_last_supported_date`.
-    This kernel control supplies an empty `period_to_regime_to_V_arr` for
-    period+1 (no target, hence no references either), which must not raise.
+    the missing-reference guard must leave alone. This kernel control supplies
+    an empty `period_to_regime_to_V_arr` for period+1 (no target, hence no
+    references either), which must not raise.
     """
     _ages, regimes, _ids, flat_params, solution = _solve_dissolution()
     married = regimes["married"]
@@ -210,15 +206,15 @@ def _shared_fallback_laws() -> dict[RegimeName, RegimeLawDeclaration | Transitio
                 "married_ir": Gate(
                     predicate=_always_open,
                     routes={
-                        "f": StakeholderRoute(
-                            target_stakeholder="f",
+                        "f": MemberRoute(
+                            target_member="f",
                             fallback=ProjectedRegimeValue(
                                 regime="single_shared",
                                 projection={"wage": _identity_wage},
                             ),
                         ),
-                        "m": StakeholderRoute(
-                            target_stakeholder="m",
+                        "m": MemberRoute(
+                            target_member="m",
                             fallback=ProjectedRegimeValue(
                                 regime="single_shared",
                                 projection={"wage": _reverse_wage},
@@ -233,7 +229,7 @@ def _shared_fallback_laws() -> dict[RegimeName, RegimeLawDeclaration | Transitio
     }
 
 
-def test_two_legs_sharing_a_fallback_regime_is_rejected_at_construction():
+def test_two_legs_sharing_a_fallback_regime_is_rejected_at_construction() -> None:
     """Two legs of one edge sharing a fallback regime are rejected at build.
 
     Accepting the model would let `single_shared`'s stored state come out
@@ -253,108 +249,6 @@ def test_two_legs_sharing_a_fallback_regime_is_rejected_at_construction():
         )
 
 
-@categorical(ordered=False)
-class _SharedFallbackId:
-    married: ScalarInt
-    married_ir: ScalarInt
-    single_shared: ScalarInt
-
-
-def _never_arrives(wage: ContinuousState) -> BoolND:
-    return wage < 0.0
-
-
-def test_two_participation_routes_sharing_a_fallback_regime_each_land_their_own_row():
-    """Participation routes may share a fallback: each member lands at its projection.
-
-    A participation check's fallback landing is keyed by the route a row's role selects,
-    not written per fallback regime, so the guard a gated edge needs does not apply.
-    With the participation check always rejected, `f` lands in `single_shared` at its
-    wage and `m` at `4 - wage`, in solve and in simulation.
-    """
-    routes = {
-        "f": StakeholderRoute(
-            target_stakeholder="f",
-            fallback=ProjectedRegimeValue(
-                regime="single_shared", projection={"wage": _identity_wage}
-            ),
-        ),
-        "m": StakeholderRoute(
-            target_stakeholder="m",
-            fallback=ProjectedRegimeValue(
-                regime="single_shared", projection={"wage": _reverse_wage}
-            ),
-        ),
-    }
-    model = Model(
-        regimes=_make_shared_fallback_regimes(),
-        edges={
-            "married": Transition(
-                law=ByAge(
-                    cases={
-                        AgeRange(exclusive_stop=1): {
-                            "married_ir": StochasticTransition(func=_prob_one)
-                        }
-                    }
-                ),
-                targets={"married_ir": 0, "single_shared": 0},
-                participation={
-                    "married_ir": ParticipationCheck(
-                        predicate=_never_arrives, routes=routes
-                    )
-                },
-            )
-        },
-        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
-        regime_id_class=_SharedFallbackId,
-        initial_nodes={0: "married"},
-    )
-    params = {"discount_factor": 1.0}
-    solution = model.solve(params=params, log_level="off")
-    np.testing.assert_array_equal(
-        solution.values[0]["married"], [[1.0, 3.0], [2.0, 2.0], [3.0, 1.0]]
-    )
-    frame = model.simulate(
-        params=params,
-        solution=solution,
-        initial_conditions={
-            "age": jnp.zeros(4),
-            "wage": jnp.array([1.0, 1.0, 2.0, 2.0]),
-            "own_stakeholder": jnp.array([0, 1, 0, 1], dtype=jnp.int32),
-            "regime_id": jnp.full(4, _SharedFallbackId.married, dtype=jnp.int32),
-        },
-        seed=0,
-        log_level="off",
-    ).to_dataframe()
-    landed = frame.loc[frame["period"] == 1].sort_values("subject_id")
-    assert landed["regime_name"].tolist() == ["single_shared"] * 4
-    np.testing.assert_array_equal(landed["wage"], [1.0, 3.0, 2.0, 2.0])
-
-
-def test_dissolution_fixture_has_distinct_fallbacks_and_still_constructs():
-    """Negative control: `_make_dissolution_regimes` (single_f / single_m,
-    DISTINCT fallback regimes) is exactly the EKL-shaped topology and must
-    keep constructing without the new guard firing.
-    """
-    ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
-    regimes_dict = _make_dissolution_regimes()
-    laws = _dissolution_laws()
-    married_participation = bind_laws({"married": laws["married"]})[
-        "married"
-    ].participation["married_ir"]
-    fallback_regimes = [
-        route.solve_fallback.regime for route in married_participation.routes.values()
-    ]
-    assert len(fallback_regimes) == len(set(fallback_regimes))
-    # Must not raise.
-    _solve_and_process(
-        regimes_dict=regimes_dict,
-        laws=laws,
-        ages=ages,
-        regime_names=list(regimes_dict),
-    )
-
-
 # Which leg a row follows, and where both of that leg's branches leave it, is
 # read per row from the role the row carries.
 
@@ -371,32 +265,34 @@ _REGIME_IDS = MappingProxyType(
 )
 
 
-def _leg(source_stakeholder: str | None) -> ResolvedStakeholderRoute:
-    """One leg sending its stakeholder home to that stakeholder's own regime."""
-    return ResolvedStakeholderRoute(
-        route=str(source_stakeholder),
-        source_stakeholder=source_stakeholder,
+def _leg(source_member: str | None) -> ResolvedMemberRoute:
+    """One leg sending its member home to that member's own regime."""
+    return ResolvedMemberRoute(
+        route=str(source_member),
+        source_member=source_member,
         target_component_index=None,
-        target_stakeholder=source_stakeholder,
+        target_member=source_member,
         fallback=ResolvedProjectedRegimeValue(
-            regime=f"single_{source_stakeholder}",
+            regime=f"single_{source_member}",
             projection={},
-            stakeholder_index=None,
+            member_index=None,
         ),
     )
 
 
-def _outcomes(*, legs, roles):
+def _outcomes(
+    *, legs: tuple[ResolvedMemberRoute, ...], roles: list[int]
+) -> tuple[Int1D, Int1D, Int1D]:
     """Read the per-row outcomes of `legs` for a cohort carrying `roles`."""
     return _per_row_leg_outcomes(
         legs=legs,
-        own_stakeholder=jnp.asarray(roles, dtype=jnp.int32),
+        own_member=jnp.asarray(roles, dtype=jnp.int32),
         regime_names_to_ids=_REGIME_IDS,
         role_ids=_ROLE_IDS,
     )
 
 
-def test_each_row_falls_back_to_the_regime_of_the_leg_it_owns():
+def test_each_row_falls_back_to_the_regime_of_the_leg_it_owns() -> None:
     """A mixed cohort reads one fallback regime per row, not one per call.
 
     The wife's leg lands in `single_f` and the husband's in `single_m`, so a
@@ -413,13 +309,14 @@ def test_each_row_falls_back_to_the_regime_of_the_leg_it_owns():
     )
 
 
-def test_a_row_keeps_its_role_on_the_open_branch_and_drops_it_on_the_closed_one():
-    """The open branch leaves the row a stakeholder; the closed branch does not.
+def test_a_row_keeps_its_role_on_the_open_branch_and_drops_it_on_the_closed_one(
+) -> None:  # fmt: skip
+    """The open branch leaves the row a member; the closed branch does not.
 
     The legs above stay collective when the gate opens and land in singleton
     regimes when it closes, so the two branches' roles differ — and a row
     still carrying a role after moving into a singleton regime would follow a
-    stakeholder's leg the next time an edge routes it.
+    member's leg the next time an edge routes it.
     """
     _fallback_id, open_role, closed_role = _outcomes(
         legs=(_leg("f"), _leg("m")), roles=[_ROLE_IDS["f"], _ROLE_IDS["m"]]
@@ -431,7 +328,7 @@ def test_a_row_keeps_its_role_on_the_open_branch_and_drops_it_on_the_closed_one(
     np.testing.assert_array_equal(np.asarray(closed_role), [NO_ROLE, NO_ROLE])
 
 
-def test_a_singleton_sources_sole_leg_answers_for_every_row():
+def test_a_singleton_sources_sole_leg_answers_for_every_row() -> None:
     """A role-less leg is every row's own, whatever role the rows carry.
 
     This is what keeps per-row selection scoped to collective sources: a
@@ -503,7 +400,13 @@ def _all_collective_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition
     }
 
 
-def _solve_all_collective():
+def _solve_all_collective() -> tuple[
+    AgeGrid,
+    MappingProxyType[RegimeName, EngineRegime],
+    RegimeNamesToIds,
+    MappingProxyType[RegimeName, FlatRegimeParams],
+    PeriodToRegimeToVArr,
+]:
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     regimes_dict = _make_all_collective_regimes()
     regimes, regime_names_to_ids = _solve_and_process(
@@ -533,8 +436,8 @@ def _solve_all_collective():
     return ages, regimes, regime_names_to_ids, flat_params, solution
 
 
-def test_to_dataframe_all_collective_result_has_no_scalar_value_column():
-    """An all-collective result's dataframe has per-stakeholder value columns.
+def test_to_dataframe_all_collective_result_has_no_scalar_value_column() -> None:
+    """An all-collective result's dataframe has per-member value columns.
 
     Every populated regime here is collective, so `_process_regime` never writes
     a scalar `value` column and `_reorder_columns` must not name one.
@@ -546,8 +449,8 @@ def test_to_dataframe_all_collective_result_has_no_scalar_value_column():
             "wage": jnp.array([8.0, 40.0]),
             "age": jnp.array([0.0, 0.0]),
             "regime_id": jnp.array([0, 0], dtype=jnp.int32),
-            "own_stakeholder": jnp.full(
-                2, regimes["couple"].stakeholder_names_to_ids["f"], dtype=jnp.int32
+            "own_member": jnp.full(
+                2, regimes["couple"].member_names_to_ids["f"], dtype=jnp.int32
             ),
         }
     )
@@ -601,12 +504,12 @@ def _stateless_collective_laws() -> dict[RegimeName, RegimeLawDeclaration | Tran
     }
 
 
-def test_stateless_collective_regime_simulate_carries_subject_axis():
+def test_stateless_collective_regime_simulate_carries_subject_axis() -> None:
     """A stateless collective regime's simulated V_arr carries the subject axis.
 
     `argmax_and_max_Q_over_a` has no per-subject state array to vmap over, so it
-    returns a single `(n_stakeholders,)` V_arr and a 0-d argmax index. Those must
-    be broadcast to the subject axis: `V_arr` is `(n_subjects, n_stakeholders)`
+    returns a single `(n_members,)` V_arr and a 0-d argmax index. Those must
+    be broadcast to the subject axis: `V_arr` is `(n_subjects, n_members)`
     and every subject's own values/actions round-trip correctly.
     """
     ages = AgeGrid(start=0, inclusive_stop=1, step="Y")
@@ -635,9 +538,9 @@ def test_stateless_collective_regime_simulate_carries_subject_axis():
         {
             "age": jnp.zeros(n_subjects),
             "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
-            "own_stakeholder": jnp.full(
+            "own_member": jnp.full(
                 n_subjects,
-                regimes["stateless_couple"].stakeholder_names_to_ids["f"],
+                regimes["stateless_couple"].member_names_to_ids["f"],
                 dtype=jnp.int32,
             ),
         }
@@ -662,7 +565,7 @@ def test_stateless_collective_regime_simulate_carries_subject_axis():
     assert period_0.in_regime.shape == (n_subjects,)
 
 
-def test_stateless_collective_without_any_action_finalizes():
+def test_stateless_collective_without_any_action_finalizes() -> None:
     """A collective regime needs no action at all to be complete.
 
     The household argmax runs over whatever action product the regime declares,
@@ -693,7 +596,7 @@ def test_stateless_collective_without_any_action_finalizes():
     assert dict(finalized["couple"].actions) == {}
 
 
-def test_stateful_collective_regime_simulate_shape_is_byte_identical():
+def test_stateful_collective_regime_simulate_shape_is_byte_identical() -> None:
     """Regression pin: a STATEFUL collective regime (has its own state axis,
     e.g. `_make_couple_regimes`'s `wage`) already carries the subject axis
     from its per-subject state arrays, and the stateless-collective branch
@@ -705,8 +608,8 @@ def test_stateful_collective_regime_simulate_shape_is_byte_identical():
             "wage": jnp.array([8.0, 40.0]),
             "age": jnp.array([0.0, 0.0]),
             "regime_id": jnp.array([0, 0], dtype=jnp.int32),
-            "own_stakeholder": jnp.full(
-                2, regimes["couple"].stakeholder_names_to_ids["f"], dtype=jnp.int32
+            "own_member": jnp.full(
+                2, regimes["couple"].member_names_to_ids["f"], dtype=jnp.int32
             ),
         }
     )

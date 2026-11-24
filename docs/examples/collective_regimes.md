@@ -6,20 +6,19 @@ title: Collective regimes
 
 Two small household models. The first isolates the shared argmax: one action, two
 members who value it differently. The second adds what makes a household more than a
-joint utility function — a participation rule reading each partner's outside option in
-the *same* period, and a participation check on landing routing each partner somewhere
-different when the household ends. Both use two- and three-point grids and one binary
-action, so every value below can be recomputed by hand; the grids are curated for
-exposition and tests, not calibrated.
+joint utility function — an exit whose rule reads each partner's outside option in the
+*same* period and sends each partner somewhere different when the household ends. Both
+use two- and three-point grids and one binary action, so every value below can be
+recomputed by hand; the grids are curated for exposition and tests, not calibrated.
 
 [View source on GitHub](https://github.com/OpenSourceEconomics/pylcm/blob/main/src/lcm_examples/collective_regimes.py)
 
 ## Shared decision: one action, two values
 
-The household chooses work or leisure at a wage of 8 or 40. Stakeholder `f` gains 30
-from leisure and consumes her wage when working; stakeholder `m` values consumption
-twice as strongly and gets nothing from leisure. One `CollectiveUtility` declares both,
-and its keys are the regime's stakeholders in the order written:
+The household chooses work or leisure at a wage of 8 or 40. Member `f` gains 30 from
+leisure and consumes her wage when working; member `m` values consumption twice as
+strongly and gets nothing from leisure. One `CollectiveUtility` declares both, and its
+keys are the regime's members in the order written:
 
 ```python
 couple = Regime(
@@ -34,7 +33,7 @@ couple = Regime(
 )
 ```
 
-No `objective` is declared, so the stakeholders carry equal weight. The couple's only
+No `objective` is declared, so the members carry equal weight. The couple's only
 outgoing edge, `edges={"couple": {"couple_terminal": 0}}`, is its whole transition law.
 
 ```python
@@ -65,30 +64,31 @@ The second model runs three ages. `married` decides at age 0;
 outside options, terminal from age 1 on. The wage is fixed at 1, 2, or 3 and never
 moves, so the wage node alone decides the outcome. `f` alone is worth 5.5 at the middle
 node and 1.5 elsewhere; `m` alone is worth 1 everywhere. At age 1 each partner compares
-their own action value against that same-period outside option. The comparison is the
-rule of a participation `Exit`, which also says where each partner goes when no common
-action passes it:
+their own action value against that same-period outside option, net of a divorce cost of
+0.5 for `f` and 0.2 for `m`. The regime's `Exit` names where each partner goes and the
+rule that decides:
 
 ```python
-def participation_f(*, Q_f, V_single_f_ref):
-    return Q_f >= V_single_f_ref - 0.5
-
-
-exits = {
-    "dissolve": Exit(
-        targets={
-            "f": ExitTarget(regime="single_f", projection={"wage": identity_wage}),
-            "m": ExitTarget(regime="single_m", projection={"wage": identity_wage}),
-        },
-        rule=ParticipationRule(),  # keeps actions passing both partners' thresholds
-    )
-}
+exit = Exit(
+    targets={
+        "f": ExitTarget(
+            regime="single_f",
+            projection={"wage": identity_wage},
+            utility_adjustment=divorce_cost_f,  # -0.5
+        ),
+        "m": ExitTarget(
+            regime="single_m",
+            projection={"wage": identity_wage},
+            utility_adjustment=divorce_cost_m,  # -0.2
+        ),
+    },
+    rule=Unilateral(tie="leave"),  # stay only if both strictly prefer it
+)
 ```
 
-At wages 1 and 3 some action clears both thresholds. At the middle node `f`'s outside
-option jumps to 5.5, so her threshold demands 5.0 and the best the household can offer
-her is 4 — no action clears both, the household dissolves, and each partner is paid
-their single value:
+At wages 1 and 3 some action beats both outside options. At the middle node `f`'s
+outside option jumps to 5.5 - 0.5 = 5.0, and the best the household can offer her is 4,
+so the household dissolves and each partner gets their single value net of the cost:
 
 ```python
 from lcm_examples.collective_regimes import get_dissolution_model
@@ -104,70 +104,30 @@ solution.values[1]["married_with_participation"]
 
 ```text
 [[2.  1. ]
- [5.5 1. ]
+ [5.  0.8]
  [6.  3. ]]
 ```
 
-`married` reaches age 1 through a `ParticipationCheck` keyed by
-`married_with_participation` — the branch where the decision is **open** and the couple
-keeps going. Its predicate reads, on landing, whether the couple's participating policy
-has support at that wage. Each stakeholder's route names the role they take inside the
-surviving couple and the singleton value they fall back to when the decision shuts. The
-law reaches `married_with_participation` from age 0 only.
+`married` reaches `married_with_participation` at age 1 through a plain edge, and the
+decision to dissolve is that regime's own exit:
 
 ```python
 edges = {
-    "married": Transition(
-        law=ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "married_with_participation": StochasticTransition(
-                        func=probability_one
-                    )
-                }
-            }
-        ),
-        participation={
-            "married_with_participation": ParticipationCheck(
-                predicate=has_policy_support,
-                reads={
-                    "target_support": ParticipationRead(
-                        regime="married_with_participation",
-                        stakeholder="f",
-                        kind="Participating",
-                        field="support",
-                        projection={"wage": identity_wage},
-                    )
-                },
-                routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_f",
-                            projection={"wage": identity_wage},
-                        ),
-                    ),
-                    # ... and the mirror image for m into single_m
-                },
-            )
-        },
-    ),
+    "married": {"married_with_participation": 0},
     "married_with_participation": {"married_terminal": 1},
 }
 ```
 
-Keying this edge by `single_f` would send both partners into `single_f` whenever the
-household survives, which is why the key is the couple; see
-[the open-branch rule](../user_guide/collective_regimes.md#the-key-is-always-the-open-branch).
-`married` produces no flow utility of its own, so its value is the routed continuation
-discounted at 0.95: `(1.9, 0.95)` at wage 1 and `(5.7, 2.85)` at wage 3, against `f`'s
-fallback `0.95 × 5.5 = 5.225` at the middle node.
+`married` produces no flow utility of its own, so its value is the continuation
+discounted at 0.95: `(1.9, 0.95)` at wage 1, `(5.7, 2.85)` at wage 3, and at the middle
+node the dissolved values net of the divorce cost,
+`(0.95 × 5.0, 0.95 × 0.8) = (4.75, 0.76)`.
 
 ## Simulating one role at a time
 
-Stakeholder identity is per subject. Every subject here starts inside a collective
-regime, so each declares a role in `initial_conditions`, and that role decides which
-fallback its row takes if the household dissolves:
+Member identity is per subject. Every subject here starts inside a collective regime, so
+each declares a role in `initial_conditions`, and that role decides which exit target
+its row takes if the household dissolves:
 
 ```python
 import jax.numpy as jnp
@@ -176,9 +136,7 @@ initial_conditions = {
     "wage": jnp.array([1.0, 2.0, 3.0]),
     "age": jnp.zeros(3),
     "regime_id": jnp.full(3, model.regime_names_to_ids["married"], dtype=jnp.int32),
-    "own_stakeholder": jnp.full(
-        3, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
-    ),
+    "own_member": jnp.full(3, model.member_names_to_ids["f"], dtype=jnp.int32),
 }
 
 result = model.simulate(
@@ -193,23 +151,23 @@ result.to_dataframe()
 ```
 
 ```text
-   subject_id  period                 regime_name own_stakeholder  value  value_f  value_m  wage     work  age
+   subject_id  period                 regime_name own_member  value  value_f  value_m  wage     work  age
 0           0       0                     married               f    NaN    1.900     0.95   1.0  leisure    0
 1           0       1  married_with_participation               f    NaN    2.000     1.00   1.0     work    1
 2           0       2            married_terminal               f    NaN    0.000     0.00   1.0  leisure    2
-3           1       0                     married               f    NaN    5.225     0.95   2.0  leisure    0
-4           1       1                    single_f             NaN    5.5      NaN      NaN   2.0      NaN    1
+3           1       0                     married               f    NaN    4.750     0.76   2.0  leisure    0
+4           1       1                    single_f             NaN    5.0      NaN      NaN   2.0      NaN    1
 5           2       0                     married               f    NaN    5.700     2.85   3.0  leisure    0
 6           2       1  married_with_participation               f    NaN    6.000     3.00   3.0     work    1
 7           2       2            married_terminal               f    NaN    0.000     0.00   3.0  leisure    2
 ```
 
 The middle-wage subject leaves for `single_f` at age 1; the other two stay. Collective
-rows publish one value column per stakeholder and carry their role in `own_stakeholder`;
-singleton rows publish the scalar `value` and hold no role. A cohort has a fixed size,
-so a dissolving row does not split into two linked rows — it follows the route belonging
-to the role it carries. Seed a second cohort with `model.stakeholder_names_to_ids["m"]`
-to watch the same wage nodes from the other side.
+rows publish one value column per member and carry their role in `own_member`; singleton
+rows publish the scalar `value` and hold no role. A cohort has a fixed size, so a
+dissolving row does not split into two linked rows — it follows the route belonging to
+the role it carries. Seed a second cohort with `model.member_names_to_ids["m"]` to watch
+the same wage nodes from the other side.
 
 ## Structure
 

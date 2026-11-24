@@ -12,8 +12,10 @@ A singleton regime also publishes `action_values`, the dense decision that
 additionally returns, from the one kernel evaluation it maximizes over, the
 action values, their feasibility, the flow utility and the certainty-equivalent
 continuation. With taste shocks it publishes the EV1 decision's conditional
-values and choice probabilities in place of a drawn action. Only policy lookup
-dispatches it, so it compiles only when requested.
+values and choice probabilities in place of a drawn action. A household with
+taste shocks publishes it too, with its decider's conditional values and choice
+probabilities, one value per member and no parts. Only policy lookup dispatches
+it, so it compiles only when requested.
 
 Every family tiles the subject axis, so the engine owns the width each body runs
 at. A decision whose solve counterpart streams its action product declares that
@@ -51,6 +53,7 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.output_layout import OutputRoleLeaf, StateAxesLeading
 from _lcm.regime_building.argmax import argmax_and_max
+from _lcm.regime_building.collective import ParetoWeights
 from _lcm.regime_building.decoupled import (
     DECOUPLED_LOOKUP_OUTPUT_ROLES,
     DECOUPLED_TASTE_SHOCK_LOOKUP_OUTPUT_ROLES,
@@ -93,8 +96,10 @@ from _lcm.simulation.program_types import (
     subject_axis,
 )
 from _lcm.simulation.taste_shock_lookup import (
+    HOUSEHOLD_TASTE_SHOCK_LOOKUP_OUTPUT_ROLES,
     TASTE_SHOCK_LOOKUP_OUTPUT_ROLES,
     TasteShockLookup,
+    build_household_taste_shock_lookup,
 )
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION, HardMaxResult
 from _lcm.solution.action_streaming import build_streaming_max_Q_over_a
@@ -200,7 +205,7 @@ def build_simulation_programs(
         _fail_if_the_streamed_reduction_is_wrong(
             regime_name=context.regime_name,
             has_taste_shocks=context.has_taste_shocks,
-            stakeholders=context.stakeholders,
+            member_axis=context.member_axis,
         )
     action_width_keyword = _select_action_width_keyword(context=context)
 
@@ -228,15 +233,17 @@ def build_simulation_programs(
     )
 
     # The dense decision with its parts, even where the decision streams: same
-    # reads and subject tiling, no reduced action axis. A household argmax
-    # publishes no such parts. A taste-shock regime applies the solve's EV1
-    # reduction to its simulation decision, which draws nothing.
+    # reads and subject tiling, no reduced action axis. A taste-shock regime
+    # applies the solve's EV1 reduction to its simulation decision, which draws
+    # nothing. A household's lookup without taste shocks is its decision itself.
     action_value_bodies: dict[int, Callable[..., PytreeValue]] = {}
     action_value_roles: dict[int, tuple[str, ...]] = {}
     action_values: dict[int, CoreProgram] = {}
     space = context.state_action_space
     lookup_subject_arg_names = tuple(space.states)
-    for period in decision if context.stakeholders is None else ():
+    for period in (
+        decision if context.member_axis is None or context.has_taste_shocks else ()
+    ):
         kernel = Q_and_F_functions[period]
         declared_lookup_subject_names = (
             *lookup_subject_arg_names,
@@ -248,15 +255,26 @@ def build_simulation_programs(
         )
         group = id(kernel)
         if group not in action_value_bodies:
-            body, action_value_roles[group] = _lookup_body_and_roles(
-                Q_and_F=kernel,
-                has_taste_shocks=context.has_taste_shocks,
-                n_discrete_action_axes=len(space.discrete_actions),
-            )
-            action_value_bodies[group] = _SubjectTiled(
-                func=_decision_with_action_parts(
+            if context.member_axis is None:
+                body, action_value_roles[group] = _lookup_body_and_roles(
+                    Q_and_F=kernel,
+                    has_taste_shocks=context.has_taste_shocks,
+                    n_discrete_action_axes=len(space.discrete_actions),
+                )
+                lookup = _decision_with_action_parts(
                     Q_and_F=kernel, action_names=space.action_names, body=body
-                ),
+                )
+            else:
+                action_value_roles[group] = HOUSEHOLD_TASTE_SHOCK_LOOKUP_OUTPUT_ROLES
+                lookup = build_household_taste_shock_lookup(
+                    Q_and_F=kernel,
+                    action_names=space.action_names,
+                    n_discrete_action_axes=len(space.discrete_actions),
+                    member_axis=context.member_axis,
+                    pareto_weights=cast("ParetoWeights", context.pareto_weights),
+                )
+            action_value_bodies[group] = _SubjectTiled(
+                func=lookup,
                 subject_arg_names=declared_lookup_subject_names,
                 n_bound_records=len(runtime_bound_specs(function=kernel)),
             )
@@ -679,8 +697,8 @@ class _GateRouteArguments(TypedDict):
     new_subject_regime_ids: Int1D
     subjects_in_regime: Bool1D
     flat_params: FlatParams
-    own_stakeholder: Int1D
-    new_own_stakeholder: Int1D
+    own_member: Int1D
+    new_own_member: Int1D
     fold_age: FoldAge
 
 
@@ -689,8 +707,8 @@ _GATE_ROUTE_SUBJECT_ARG_NAMES = (
     "next_states",
     "new_subject_regime_ids",
     "subjects_in_regime",
-    "own_stakeholder",
-    "new_own_stakeholder",
+    "own_member",
+    "new_own_member",
 )
 
 
@@ -771,8 +789,8 @@ class _GateRouteBody:
             new_subject_regime_ids=arguments["new_subject_regime_ids"],
             subjects_in_regime=arguments["subjects_in_regime"],
             flat_params=arguments["flat_params"],
-            own_stakeholder=arguments["own_stakeholder"],
-            new_own_stakeholder=arguments["new_own_stakeholder"],
+            own_member=arguments["own_member"],
+            new_own_member=arguments["new_own_member"],
             fold_age=arguments["fold_age"],
             subject_width=cast("int | None", kwargs[SUBJECT_WIDTH_KEYWORD]),
         )
@@ -782,7 +800,7 @@ def _fail_if_the_streamed_reduction_is_wrong(
     *,
     regime_name: RegimeName,
     has_taste_shocks: bool,
-    stakeholders: tuple[str, ...] | None,
+    member_axis: tuple[str, ...] | None,
 ) -> None:
     """Refuse a streamed decision whose reduction is not the exact hard max.
 
@@ -791,16 +809,16 @@ def _fail_if_the_streamed_reduction_is_wrong(
     exact hard max and a period's two phases cannot disagree about the winner.
     That mirror is sound only for a regime whose action reduction *is* that hard
     max. A taste shock adds a per-subject Gumbel term to the choice and a
-    collective utility reduces the household over its stakeholders; either one
+    collective utility reduces the household over its members; either one
     makes the streamed body answer a different question than the regime asks, so
     the mismatch is refused here rather than left to the classifier's ordering.
     """
-    if not (has_taste_shocks or stakeholders is not None):
+    if not (has_taste_shocks or member_axis is not None):
         return
     reduction = (
         "taste shocks draw a per-subject Gumbel term"
         if has_taste_shocks
-        else "a collective utility reduces over stakeholders"
+        else "a collective utility reduces over members"
     )
     msg = (
         f"Regime {regime_name!r} would declare a streamed simulation "
@@ -845,7 +863,6 @@ def _decision_value_reads(
         regime_name=context.regime_name,
         period=period,
         target_regimes=target_regimes,
-        same_period_ref_regimes=context.same_period_ref_regimes,
         edge_reference_regimes=_edge_reference_regimes_for_targets(
             context=context, target_regimes=target_regimes
         ),

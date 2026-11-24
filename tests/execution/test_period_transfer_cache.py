@@ -28,13 +28,13 @@ from lcm.exceptions import ExecutionPlanningError
 
 
 def _shardings() -> tuple[jax.sharding.Sharding, jax.sharding.Sharding]:
-    # A `NamedSharding` stored layout copied onto a `SingleDeviceSharding` source
-    # layout classifies as `COPY_TO_SOURCE_LAYOUT` even on one device, since the
+    # A `NamedSharding` stored layout copied onto a single-device source layout
+    # classifies as `COPY_TO_SOURCE_LAYOUT` even on one device, since the
     # catalogue keys on the layout *kind*, not the device count; two identical
-    # `SingleDeviceSharding` instances would instead classify as `ALIGNED_LOCAL`.
+    # single-device shardings would instead classify as `ALIGNED_LOCAL`.
     mesh = jax.sharding.Mesh(np.asarray(jax.devices()), ("device",))
     stored_sharding = jax.sharding.NamedSharding(mesh=mesh, spec=jax.P())
-    source_sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    source_sharding = jax.sharding.make_single_device_sharding(jax.devices()[0])
     return stored_sharding, source_sharding
 
 

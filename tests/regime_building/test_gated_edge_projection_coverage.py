@@ -7,13 +7,11 @@ need different coordinates of the regime it names:
   a per-subject row there. The row occupies every state the regime carries in
   simulation, carried states (`Phased(solve=..., simulate=Grid)`) included, so
   the projection owes a landing point on each of them.
-- a GATE REFERENCE only READS that regime's value function. Its axes are the
-  regime's solve states, and a carried state is none of them, so a coordinate
-  on one would have nothing to index.
+- the solve-side reader only READS that regime's value function, whose axes are
+  the regime's solve states.
 
-Both properties are pinned on the same reference regime, `fallback`, which
-carries `career` in simulation but solves on `wage` alone: the projection that
-the leg owes is exactly the one the gate reference may not declare.
+The leg's property is pinned on the reference regime `fallback`, which carries
+`career` in simulation but solves on `wage` alone.
 
 A state whose grid is declared with `AgeSpecializedGrid` is a state its regime
 carries in simulation like any other — the marker says only that the grid's
@@ -42,13 +40,11 @@ from lcm import (
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     Phased,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
@@ -96,7 +92,7 @@ class AgeSpecializedRegimeId:
     annuity: ScalarInt
 
 
-def test_leg_fallback_projection_must_cover_a_carried_state_of_its_regime():
+def test_leg_fallback_projection_must_cover_a_carried_state_of_its_regime() -> None:
     """A leg's fallback projection owes a coordinate on the regime's `career`.
 
     `fallback` carries `career` per subject once simulation runs, so a leg
@@ -107,31 +103,17 @@ def test_leg_fallback_projection_must_cover_a_carried_state_of_its_regime():
     with pytest.raises(
         ModelInitializationError, match=re.escape("(['career', 'wage']); got ['wage']")
     ):
-        _build_model(fallback_projects_career=False, gate_ref_projects_career=False)
+        _build_model(fallback_projects_career=False)
 
 
-def test_gate_ref_projection_must_cover_only_the_reference_value_functions_axes():
-    """A gate reference may not project a state its regime does not solve on.
-
-    The gate reads `fallback`'s value function, whose only axis is `wage` —
-    `career` has no axis there to index. Supplying a coordinate for it is
-    rejected at model build, naming `wage` alone as what the reference needs.
-    """
-    with pytest.raises(
-        ModelInitializationError,
-        match=re.escape("(['wage']); got ['career', 'wage']"),
-    ):
-        _build_model(fallback_projects_career=True, gate_ref_projects_career=True)
-
-
-def test_fallback_covering_a_carried_state_and_read_covering_solve_states_solves():
-    """The fallback owes `career`, the read must not name it, and both hold here.
+def test_fallback_covering_a_carried_state_solves() -> None:
+    """The fallback owes `career`, and supplying it builds, solves and simulates.
 
     Gate open at wage 2 (src_exit pays 0), closed at wage 1 (fallback pays the
     wage), so src's value is `wage + 0.5 * (1, 0)`. A subject routed to the
     fallback lands with career `2 * wage`.
     """
-    model = _build_model(fallback_projects_career=True, gate_ref_projects_career=False)
+    model = _build_model(fallback_projects_career=True)
     solution = model.solve(params={"discount_factor": 0.5}, log_level="off")
     np.testing.assert_array_equal(solution.values[0]["src"], [1.5, 2.0])
     frame = model.simulate(
@@ -150,7 +132,8 @@ def test_fallback_covering_a_carried_state_and_read_covering_solve_states_solves
     np.testing.assert_array_equal(landed["career"].iloc[:1], [2.0])
 
 
-def test_leg_fallback_projection_must_cover_an_age_specialized_state_of_its_regime():
+def test_leg_fallback_projection_must_cover_an_age_specialized_state_of_its_regime(
+) -> None:  # fmt: skip
     """A leg's fallback projection owes a coordinate on an age-varying state.
 
     `annuity` holds `principal` on a grid whose ceiling moves with age. That
@@ -164,7 +147,7 @@ def test_leg_fallback_projection_must_cover_an_age_specialized_state_of_its_regi
         _build_age_specialized_model(fallback_projects_principal=False)
 
 
-def test_leg_fallback_projection_covering_an_age_specialized_state_builds():
+def test_leg_fallback_projection_covering_an_age_specialized_state_builds() -> None:
     """A projection onto an age-varying state is a complete one.
 
     Supplying the coordinate the previous test says is owed leaves nothing
@@ -175,7 +158,7 @@ def test_leg_fallback_projection_covering_an_age_specialized_state_builds():
     assert set(model.regime_names_to_ids) == {"src", "src_exit", "annuity"}
 
 
-def test_same_period_ref_reader_names_the_state_a_short_projection_omits():
+def test_same_period_ref_reader_names_the_state_a_short_projection_omits() -> None:
     """A reader built below `Model` refuses a short projection by name.
 
     `Model` rejects an incomplete projection before any kernel is built, so a
@@ -202,7 +185,7 @@ def test_same_period_ref_reader_names_the_state_a_short_projection_omits():
         )
 
 
-def test_fallback_state_projector_names_the_state_a_short_projection_omits():
+def test_fallback_state_projector_names_the_state_a_short_projection_omits() -> None:
     """A projector built below `Model` refuses a short projection by name.
 
     The simulate-side projector owes a coordinate on every state a routed row
@@ -233,7 +216,7 @@ def _short_ref() -> ResolvedProjectedRegimeValue:
     return ResolvedProjectedRegimeValue(
         regime="annuity",
         projection=MappingProxyType({}),
-        stakeholder_index=None,
+        member_index=None,
     )
 
 
@@ -285,7 +268,7 @@ def _build_age_specialized_model(*, fallback_projects_principal: bool) -> Model:
                     "src_exit": Gate(
                         predicate=_wage_gate,
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="annuity", projection=projection
                                 )
@@ -301,15 +284,12 @@ def _build_age_specialized_model(*, fallback_projects_principal: bool) -> Model:
     )
 
 
-def _build_model(
-    *, fallback_projects_career: bool, gate_ref_projects_career: bool
-) -> Model:
+def _build_model(*, fallback_projects_career: bool) -> Model:
     """Build the source-and-fallback model at the given projection coverage.
 
     Args:
         fallback_projects_career: Whether the leg's fallback projection supplies
             a coordinate for the carried `career` state.
-        gate_ref_projects_career: Whether the gate reference's projection does.
 
     Returns:
         The built model.
@@ -318,9 +298,6 @@ def _build_model(
     fallback_projection = {"wage": _identity_wage}
     if fallback_projects_career:
         fallback_projection["career"] = _project_career
-    gate_ref_projection = {"wage": _identity_wage}
-    if gate_ref_projects_career:
-        gate_ref_projection["career"] = _project_career
 
     src = Regime(
         states={"wage": _WAGE},
@@ -362,22 +339,15 @@ def _build_model(
                         }
                     }
                 ),
-                participation={
-                    "src_exit": ParticipationCheck(
-                        predicate=_gate,
+                gates={
+                    "src_exit": Gate(
+                        predicate=_wage_gate,
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection=fallback_projection,
                                 )
-                            )
-                        },
-                        reads={
-                            "V_fallback_ref": ParticipationRead(
-                                kind="IntegratedFull",
-                                regime="fallback",
-                                projection=gate_ref_projection,
                             )
                         },
                     )
@@ -396,13 +366,8 @@ def _prob_one(age: FloatND) -> FloatND:
     return jnp.ones_like(age, dtype=float)
 
 
-def _gate(*, V_fallback_ref: FloatND, wage: ContinuousState) -> BoolND:
-    """The edge stays open above a wage, reading the fallback's value too."""
-    return (wage > _GATE_THRESHOLD) | (V_fallback_ref < 0.0)
-
-
 def _wage_gate(wage: ContinuousState) -> BoolND:
-    """The edge stays open above a wage, reading no other regime's value."""
+    """The edge stays open above a wage."""
     return wage > _GATE_THRESHOLD
 
 

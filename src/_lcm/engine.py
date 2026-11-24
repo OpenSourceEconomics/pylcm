@@ -586,8 +586,8 @@ class SolutionPhase:
     )
     """Whether the solve kernels count this regime's raw raise-rule landings.
 
-    Set for a regime whose value constraints or gated edges decide, only once
-    values are known, which actions and branches reach a landing. The kernel
+    Set for a regime whose gated edges decide, only once values are known,
+    which branches reach a landing. The kernel
     counts those landings in the pass that takes the maximum, so the
     transition preflight leaves the regime alone.
     """
@@ -743,7 +743,7 @@ def resolve_phase_process_grids(
                 action_partitions=phase.action_partitions,
             )
             required = (
-                jax.sharding.SingleDeviceSharding(devices[0])
+                jax.sharding.make_single_device_sharding(devices[0])
                 if plan is None
                 else jax.sharding.NamedSharding(plan.mesh, jax.sharding.PartitionSpec())
             )
@@ -1513,20 +1513,20 @@ class Regime:
     are user-granular or absent.
     """
 
-    stakeholders: tuple[str, ...] | None = None
-    """Ordered stakeholder names for a collective regime, or `None` (singleton).
+    member_axis: tuple[str, ...] | None = None
+    """Ordered member names for a collective regime, or `None` (singleton).
 
     When set, the regime's value-function array carries a
-    trailing length-`len(stakeholders)` axis: the backward-induction V topology
+    trailing length-`len(members)` axis: the backward-induction V topology
     appends it so the zero template and the roll match the collective kernel's
-    stakeholder-valued output.
+    member-valued output.
     """
 
-    stakeholder_names_to_ids: MappingProxyType[str, int] = MappingProxyType({})
-    """The model's role vocabulary: every regime's stakeholder names, as codes.
+    member_names_to_ids: MappingProxyType[str, int] = MappingProxyType({})
+    """The model's role vocabulary: every regime's member names, as codes.
 
     One vocabulary for the whole model, carried on every regime, so a role
-    survives the move between regimes that name their stakeholders differently
+    survives the move between regimes that name their members differently
     and a simulated row can carry it as an integer. `NO_ROLE` is what a row in
     a singleton regime carries — it occupies no household's role.
     """
@@ -1540,16 +1540,6 @@ class Regime:
     kernel — at the value of the period the source lands in. The rolled V
     mapping already carries that array; these names are what pick it out and
     thread each reference regime's OWN grid params beside it.
-    """
-
-    same_period_ref_regimes: tuple[RegimeName, ...] = ()
-    """Regimes whose SAME-period V this regime's solve kernel reads, or empty.
-
-    Non-empty only for a collective regime declaring
-    `same_period_refs`. The backward-induction loop orders each period's active
-    regimes topologically by these edges (references solved first) and passes
-    the referenced regimes' freshly solved V arrays into this regime's kernel
-    call. Empty for every other regime — the default path is unchanged.
     """
 
     gated_edges: MappingProxyType[RegimeName, ResolvedGatedEdge] = MappingProxyType({})
@@ -1818,7 +1808,7 @@ def place_template_on_regime_devices[Template](
     )
     state_order = tuple(states)
     replicated = (
-        jax.sharding.SingleDeviceSharding(devices[0])
+        jax.sharding.make_single_device_sharding(devices[0])
         if plan is None
         else jax.NamedSharding(plan.mesh, jax.P())
     )
@@ -1903,7 +1893,7 @@ def _distribute_states_to_devices(
 
 
 #: Highest rank a simulated value array can carry: the subject axis, plus at
-#: most one trailing stakeholder axis for a collective regime.
+#: most one trailing member axis for a collective regime.
 _MAX_SIMULATED_V_RANK = 2
 
 
@@ -1922,9 +1912,9 @@ class PeriodRegimeSimulationData:
     """Value function array for all subjects at this period.
 
     Shape `(n_subjects,)` for a singleton regime; `(n_subjects,
-    n_stakeholders)` for a collective regime — each stakeholder's own
+    n_members)` for a collective regime — each member's own
     value at the household's shared argmax, mirroring the solve-side V's
-    trailing stakeholder axis.
+    trailing member axis.
 
     The grid-argmax value: where the off-grid policy read replaces the
     continuous action, this value belongs to the pre-replacement gridded
@@ -1941,11 +1931,11 @@ class PeriodRegimeSimulationData:
     in_regime: Bool1D
     """Boolean mask indicating which subjects are in this regime at this period."""
 
-    own_stakeholder: Int1D
+    own_member: Int1D
     """The role each subject occupies here, as a code in the model's role
-    vocabulary (`Regime.stakeholder_names_to_ids`).
+    vocabulary (`Regime.member_names_to_ids`).
 
-    A row in a collective regime carries the stakeholder it IS — the wife's row
+    A row in a collective regime carries the member it IS — the wife's row
     her role, the husband's his — which is what decides the leg it follows when
     the household ends. A row in a singleton regime occupies no role and carries
     `NO_ROLE`.
@@ -1970,7 +1960,7 @@ class PeriodRegimeSimulationData:
         """Check `V_arr` against the per-subject axis every other field carries.
 
         `V_arr` is rank-polymorphic so a collective regime can publish one value
-        per stakeholder, which means its annotation admits any rank and cannot
+        per member, which means its annotation admits any rank and cannot
         state the agreement the record depends on: a leading subject axis
         matching `in_regime`, and at most one trailing role axis. A `V_arr` that
         disagrees misaligns every value in the simulated frame against the
@@ -1992,7 +1982,7 @@ class PeriodRegimeSimulationData:
         if not 1 <= len(V_shape) <= _MAX_SIMULATED_V_RANK:
             msg = (
                 f"V_arr must be a per-subject value array, optionally with a "
-                f"trailing stakeholder axis for a collective regime, so its "
+                f"trailing member axis for a collective regime, so its "
                 f"rank is 1 or 2; got shape {V_shape}."
             )
             raise ValueError(msg)
@@ -2020,8 +2010,17 @@ jax.tree_util.register_dataclass(
         "states",
         "shocks",
         "in_regime",
-        "own_stakeholder",
+        "own_member",
         "nested_policy_fallback",
     ),
     meta_fields=(),
+)
+
+#: Names under which `PeriodRegimeSimulationData` fields are written to saved
+#: simulation results and component-job fragments, where they differ from the
+#: field name. `own_member` keeps the literal `own_stakeholder` until the
+#: single-member and household engine paths merge, so files saved for any model
+#: keep their format.
+PERSISTED_FIELD_NAMES: MappingProxyType[str, str] = MappingProxyType(
+    {"own_member": "own_stakeholder"}
 )

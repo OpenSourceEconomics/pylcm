@@ -228,9 +228,6 @@ class _ProcessArguments(TypedDict, closed=True):
 
 class _WaveArguments(TypedDict, closed=True):
     nodes: Sequence[scheduler.ScheduledNode]
-    same_period_dependencies: Mapping[
-        scheduler.RegimeName, Sequence[scheduler.RegimeName]
-    ]
     device_sets: Mapping[scheduler.RegimeName, frozenset[int]]
 
 
@@ -1091,7 +1088,7 @@ def test_the_single_device_regime_takes_the_idle_device() -> None:
     )
     value = solution.values[1]["retired"]
 
-    assert value.sharding == jax.sharding.SingleDeviceSharding(jax.devices()[3])
+    assert value.sharding == jax.sharding.make_single_device_sharding(jax.devices()[3])
 
 
 @_skip_pytest_parallel
@@ -1803,8 +1800,8 @@ def test_pruned_transfer_destinations_remain_budgeted_before_dispatch(
     """Device3 originals and distinct device2 copies survive compiler pruning."""
     payload = 1024 * 1024
     dtype = jnp.zeros(()).dtype
-    stored = jax.sharding.SingleDeviceSharding(jax.devices()[3])
-    required = jax.sharding.SingleDeviceSharding(jax.devices()[2])
+    stored = jax.sharding.make_single_device_sharding(jax.devices()[3])
+    required = jax.sharding.make_single_device_sharding(jax.devices()[2])
     source = jax.device_put(np.full(payload // dtype.itemsize, -3, dtype=dtype), stored)
     lowering_value = jax.device_put(source, required)
     address = ValueArtifactAddress(

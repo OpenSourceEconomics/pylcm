@@ -208,8 +208,8 @@ The `Model` constructor validates:
 - At least one terminal regime must be provided; terminal-only starts need no
   non-terminal regime.
 - Names that become parameter-path segments — regime, state, action, function,
-  constraint, stakeholder, route and gate-reference names, and the parameter arguments
-  of model functions — cannot contain `__` (reserved separator) and cannot start or end
+  constraint, member, route and gate-reference names, and the parameter arguments of
+  model functions — cannot contain `__` (reserved separator) and cannot start or end
   with `_`. `edges` is reserved: it names the root of the edge parameters, so no regime,
   function or function argument may take it.
 - `regime_id_class` fields must exactly match the `regimes` dict keys.

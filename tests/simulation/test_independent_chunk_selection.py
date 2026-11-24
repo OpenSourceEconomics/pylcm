@@ -287,7 +287,7 @@ def test_independent_actual_profiles_reject_larger_and_recheck_live_owner(
     whole-model shape/lifetime coverage lives in the public cohort tests.
     """
     device = jax.devices()[0]
-    layout = jax.sharding.SingleDeviceSharding(device)
+    layout = jax.sharding.make_single_device_sharding(device)
     grid = jax.device_put(jnp.asarray([1.0, 3.0, 7.0]), layout)
     originals = jax.device_put(jnp.zeros(256, dtype=jnp.int32), layout)
     operations = ProfiledSimulationOperations()

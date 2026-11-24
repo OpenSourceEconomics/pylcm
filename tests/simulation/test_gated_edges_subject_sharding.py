@@ -14,8 +14,8 @@ initializes a backend.
 
 import json
 import subprocess
-import sys
 from pathlib import Path
+from shutil import which
 from typing import TypedDict
 
 import jax
@@ -34,7 +34,7 @@ _REPO_ROOT = Path(__file__).parent.parent.parent
 #: Devices the child process runs on, and the subject partitions they take.
 _N_DEVICES = 4
 
-#: Subjects simulated, split over both stakeholder legs of the gated edge.
+#: Subjects simulated, split over both member legs of the gated edge.
 _N_SUBJECTS = 8
 
 
@@ -47,14 +47,14 @@ class _GatedReport(TypedDict):
 
 def _initial_conditions(*, model: Model) -> UserInitialConditions:
     """Seed both legs of the edge across the gated model's wage grid."""
-    roles = model.stakeholder_names_to_ids
+    roles = model.member_names_to_ids
     return {
         "wage": jnp.asarray([1.0, 2.0, 3.0, 2.0, 1.0, 3.0, 2.0, 1.0]),
         "age": jnp.zeros(_N_SUBJECTS),
         "regime_id": jnp.full(
             _N_SUBJECTS, model.regime_names_to_ids["married"], dtype=jnp.int32
         ),
-        "own_stakeholder": jnp.asarray(
+        "own_member": jnp.asarray(
             [roles["f"], roles["m"]] * (_N_SUBJECTS // 2), dtype=jnp.int32
         ),
     }
@@ -161,8 +161,10 @@ def _run_in_four_device_process(*, entry_point: str) -> _GatedReport:
         "sys.stdout.write('@@' + json.dumps("
         f"entry(decimal={tests.conftest.DECIMAL_PRECISION!r})) + '@@')"
     )
-    completed = subprocess.run(  # noqa: S603
-        [sys.executable, "-c", code],
+    pixi = which("pixi")
+    assert pixi is not None, "The isolated topology check requires the Pixi runner."
+    completed = subprocess.run(  # noqa: S603 - fixed source on the locked project runner
+        [pixi, "run", "--locked", "-e", "tests-cpu", "python", "-c", code],
         capture_output=True,
         text=True,
         check=False,

@@ -1,7 +1,10 @@
 """Concrete raw operands and selected replay occurrences in one regime unit."""
 
+from collections.abc import Mapping
+
 import jax.numpy as jnp
 import pytest
+from jax import Array
 
 from _lcm.egm.published_policy import NBEGMGridPolicy
 from _lcm.simulation.period_inputs import (
@@ -9,24 +12,29 @@ from _lcm.simulation.period_inputs import (
     unit_value_reads,
 )
 from lcm.solver_api import SIMULATION_POLICY, ActionOutput
-from tests.regime_building.test_collective_regime_simulate import _solve_dissolution
+from tests.regime_building.test_collective_regime_simulate import (
+    _solve_dissolution,
+    _Solved,
+)
 
 
 @pytest.fixture(scope="module")
-def dissolution():
-    """A solved participation check, whose couple dissolves at the middle wage."""
+def dissolution() -> _Solved:
+    """A solved dissolution model, whose couple dissolves at the middle wage."""
     return _solve_dissolution()
 
 
 @pytest.mark.parametrize("external", [False, True])
 def test_selected_external_reader_omits_unused_legacy_policy_occurrences(
     *,
-    dissolution,
+    dissolution: _Solved,
     external: bool,
 ) -> None:
     _, regimes, _, _, values = dissolution
 
-    def reader(*, states, fallback_actions):
+    def reader(
+        *, states: Mapping[str, Array], fallback_actions: Mapping[str, Array]
+    ) -> ActionOutput:
         del states
         return ActionOutput(actions=fallback_actions)
 

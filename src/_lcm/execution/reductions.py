@@ -90,8 +90,8 @@ class ReductionSemantics(ReductionDeclaration, Protocol):
     - the hard maxes take the block's `values`, its `feasible` mask and its
       canonical global `action_ids`, and break a tie toward the smallest global
       identity, which is what makes them exact under any partition;
-    - the collective one takes the block's `objectives` and `stakeholder_values`
-      alongside those, and reads every stakeholder at the one identity the
+    - the collective one takes the block's `objectives` and `member_values`
+      alongside those, and reads every member at the one identity the
       household objective selects;
     - the smoothed one takes `values` and the `scale` its exponential mass is
       rescaled by;
@@ -102,7 +102,7 @@ class ReductionSemantics(ReductionDeclaration, Protocol):
     `bind(*, subnormal_is_accounted_for)` for the weighted expectation — and the
     bound object then takes only the block. A family whose state carries an extra
     trailing axis names its own template: the collective reduction initializes
-    from a `stakeholder_template` where the others take a `value_template`.
+    from a `member_template` where the others take a `value_template`.
     """
 
     def initialize(self, **template: FloatND) -> PytreeValue:

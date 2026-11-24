@@ -218,8 +218,8 @@ def gate_route_arguments(
     new_subject_regime_ids: PytreeValue | ShapeDtypePytree,
     subjects_in_regime: PytreeValue | ShapeDtypePytree,
     flat_params: PytreeValue | ShapeDtypePytree,
-    own_stakeholder: PytreeValue | ShapeDtypePytree,
-    new_own_stakeholder: PytreeValue | ShapeDtypePytree,
+    own_member: PytreeValue | ShapeDtypePytree,
+    new_own_member: PytreeValue | ShapeDtypePytree,
     fold_age: PytreeValue | ShapeDtypePytree,
 ) -> dict[ReferenceName, PytreeValue | ShapeDtypePytree]:
     """Bind realized-state gate operands and the current carrier."""
@@ -229,7 +229,7 @@ def gate_route_arguments(
         "new_subject_regime_ids": new_subject_regime_ids,
         "subjects_in_regime": subjects_in_regime,
         "flat_params": flat_params,
-        "own_stakeholder": own_stakeholder,
-        "new_own_stakeholder": new_own_stakeholder,
+        "own_member": own_member,
+        "new_own_member": new_own_member,
         "fold_age": fold_age,
     }

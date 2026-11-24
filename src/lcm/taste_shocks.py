@@ -47,10 +47,14 @@ class ExtremeValueTasteShocks:
 
     At least one discrete action is required. The implemented solver routes are
     `GridSearch` and `DCEGM`. The declaration is rejected for `NEGM`, `NBEGM`,
-    and `NNBEGM`; for collective regimes; on a source regime with a
+    and `NNBEGM`; for a household unless exactly one member has a positive
+    Pareto weight, and for a household with an `exit` or whose decision another
+    regime's exit reads; on a source regime with a
     `Gate`; and together with a nonlinear certainty equivalent. These
     combinations are rejected during `Regime` declaration or `Model`
-    construction, before solve, rather than silently dropping the shocks.
+    construction, before solve, rather than silently dropping the shocks; only
+    a Pareto weight declared as a function is checked when the model is solved,
+    at every cell of the regime's grid.
 
     The shocks are mean-zero. For location-0 shocks, add
     `scale * lcm.EULER_GAMMA` to the utility of every action in each regime

@@ -58,6 +58,7 @@ from _lcm.model_graph import (
     ModelGraph,
     bind_edge_laws,
     collect_declared_transitions,
+    complete_role_fallbacks,
     demanded_exit_function_paths,
     naming_cells_without_edges,
     prepare_graph,
@@ -322,7 +323,6 @@ from _lcm.typing import (
     InitialConditions,
     ParamsLeaf,
     ParamsTemplate,
-    PeriodToRegimeToParticipationSurfaces,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
     PytreeByPeriod,
@@ -354,7 +354,6 @@ from _lcm.value_grid_inputs import (
 from _lcm.variables import carried_state_grids, from_regime, get_grids
 from lcm._solver_api.authority import _ArrayCopier
 from lcm._solver_api.contract import ArtifactContractValue
-from lcm._solver_api.entries import _LazyEntry
 from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.composite_state import CompositeState
@@ -513,7 +512,6 @@ type _ResolvedSolution = tuple[
     PeriodToRegimeToVArr,
     PeriodToRegimeToSimulationPolicy,
     _PeriodToRegimeToReplayReader,
-    PeriodToRegimeToParticipationSurfaces,
 ]
 
 
@@ -576,7 +574,7 @@ class _PickledModel(TypedDict):
         MappingProxyType[RegimeName, MappingProxyType[ReferenceName, str]]
     ]
     _regimes: NotRequired[MappingProxyType[RegimeName, Regime]]
-    stakeholder_names_to_ids: MappingProxyType[str, int]
+    member_names_to_ids: MappingProxyType[str, int]
     enable_jit: bool
     simulation_output_dtypes: MappingProxyType[str, pd.CategoricalDtype]
     _model_structure_fingerprint: NotRequired[str]
@@ -606,7 +604,6 @@ def _simulation_programs(
             programs.policy_prepare,
             programs.exit_full,
             programs.exit_participating,
-            *programs.participation_families,
         ):
             yield from family.values()
 
@@ -994,14 +991,14 @@ class Model:
     regime_names_to_ids: RegimeNamesToIds
     """Immutable mapping from regime names to integer indices."""
 
-    stakeholder_names_to_ids: MappingProxyType[str, int]
-    """Immutable mapping from stakeholder names to integer role codes.
+    member_names_to_ids: MappingProxyType[str, int]
+    """Immutable mapping from member names to integer role codes.
 
     One vocabulary for the whole model, covering every collective regime's
-    stakeholders, so a role means the same thing wherever it is read. Empty for
+    members, so a role means the same thing wherever it is read. Empty for
     a model with no collective regime. This is the vocabulary
-    `initial_conditions["own_stakeholder"]` is written in, and the one the
-    published `own_stakeholder` column is labelled from."""
+    `initial_conditions["own_member"]` is written in, and the one the
+    published `own_member` column is labelled from."""
 
     @property
     def user_regimes(self) -> MappingProxyType[RegimeName, FinalizedUserRegime]:
@@ -1547,7 +1544,6 @@ class Model:
                 name: bind_regime_law(
                     transition,
                     gated_edges=prepared_graph.laws[name].gated_edges,
-                    participation=prepared_graph.laws[name].participation,
                 )
                 for name, transition in demanded_transitions.items()
             }
@@ -1584,6 +1580,9 @@ class Model:
             ages=self._time,
             active_periods_by_regime=schedules.context_periods_by_regime,
         )
+        # A `Transition.roles` gate falls back to its target at the identity, over
+        # the states pruning and the post-decision split leave the target.
+        laws = complete_role_fallbacks(laws=laws, regimes=pruned_regimes)
         # Removal is regime-local; initialization preserves names another regime keeps.
         self._post_decision_state_names = frozenset(
             name for unread in post_decision_states.values() for name in unread
@@ -1861,8 +1860,8 @@ class Model:
             axis_widths_by_regime=self._execution.axis_widths_by_regime,
             solve_programs=_solve_programs(regimes=self._regimes),
         )
-        self.stakeholder_names_to_ids = next(
-            (regime.stakeholder_names_to_ids for regime in self._regimes.values()),
+        self.member_names_to_ids = next(
+            (regime.member_names_to_ids for regime in self._regimes.values()),
             MappingProxyType({}),
         )
         self.enable_jit = prepared.enable_jit
@@ -2229,7 +2228,7 @@ class Model:
             _shock_registry=self._shock_registry,
             _params_template=self._params_template,
             _param_name_candidates=self._param_name_candidates,
-            stakeholder_names_to_ids=self.stakeholder_names_to_ids,
+            member_names_to_ids=self.member_names_to_ids,
             enable_jit=self.enable_jit,
             simulation_output_dtypes=self.simulation_output_dtypes,
         )
@@ -3431,7 +3430,6 @@ class Model:
             engine_view.values,  # noqa: PD011
             engine_view.simulation_policies,
             external_readers,
-            engine_view.participation_surfaces,
         )
 
     def _consume_foreign_solution(
@@ -3463,9 +3461,6 @@ class Model:
                         f"{self._execution.device_memory_cap_note()}"
                     )
             self._fail_if_another_instances_result(solution=solution)
-        participation_surfaces = _materialize_participation_surfaces(
-            surfaces=solution._participation_surfaces  # noqa: SLF001
-        )
         solution = self._snapshot_solution_envelope(
             solution=solution, array_copier=array_copier, native_values=native_values
         )
@@ -3520,7 +3515,6 @@ class Model:
             values,
             policies,
             external_readers,
-            participation_surfaces,
         )
 
     def _check_solution_result_structure(
@@ -4406,7 +4400,7 @@ class Model:
             period not in self._regimes[name].simulation.exit_queries
             or self._regimes[name].simulation.exit_queries[period].full is None
             for name, declaration in self._user_regimes.items()
-            if declaration.exits
+            if declaration.exit is not None
             for period in self._regimes[name].simulation.programs.decision
             if (self._time.exact_values[period], name) in self._graph.visited_nodes
         ):
@@ -4495,10 +4489,10 @@ class Model:
                 or `PhysicalValues` entry vector. Its tag applies at each row's
                 actual entry period, before fresh draws in subsequent periods.
                 A subject starting in a COLLECTIVE regime that can reach a
-                value-dependent transition declaring more than one route --- its
-                own, or one further along --- also needs an `"own_stakeholder"`
+                gated transition declaring more than one route --- its
+                own, or one further along --- also needs an `"own_member"`
                 entry naming the role it occupies, as an integer code from the
-                model's role vocabulary (`model.stakeholder_names_to_ids`):
+                model's role vocabulary (`model.member_names_to_ids`):
                 which partner a row is decides which regime it enters when the
                 household dissolves. A collective start that can never arrive at
                 such a transition needs no entry.
@@ -4729,7 +4723,6 @@ class Model:
                         period_to_regime_to_V_arr,
                         period_to_regime_to_sim_policy,
                         period_to_regime_to_replay_reader,
-                        participation_surfaces,
                     ) = self._resolve_solution_result(
                         solution=solution,
                         flat_params=flat_params,
@@ -4741,7 +4734,6 @@ class Model:
                 period_to_regime_to_V_arr = None
                 period_to_regime_to_sim_policy = None
                 period_to_regime_to_replay_reader = None
-                participation_surfaces = None
             with solve_phase(name="simulation_inputs", logger=log, call_id=call_id):
                 if entry_allocations is not None:
                     entry_allocations.update_solution(
@@ -4750,7 +4742,6 @@ class Model:
                             period_to_regime_to_V_arr,
                             period_to_regime_to_sim_policy,
                             period_to_regime_to_replay_reader,
-                            participation_surfaces,
                         ),
                     )
                 initial_conditions = split_initial_conditions(
@@ -4925,7 +4916,6 @@ class Model:
                 period_to_regime_to_V_arr = MappingProxyType({})
                 period_to_regime_to_sim_policy = MappingProxyType({})
                 period_to_regime_to_replay_reader = MappingProxyType({})
-                participation_surfaces = MappingProxyType({})
             elif solution is None:
                 solve_params = (
                     flat_params
@@ -4964,7 +4954,6 @@ class Model:
                         period_to_regime_to_V_arr,
                         period_to_regime_to_sim_policy,
                         period_to_regime_to_replay_reader,
-                        participation_surfaces,
                     ) = self._resolve_solution_result(
                         solution=solution,
                         flat_params=flat_params,
@@ -4977,7 +4966,6 @@ class Model:
                     period_to_regime_to_V_arr is None
                     or period_to_regime_to_sim_policy is None
                     or period_to_regime_to_replay_reader is None
-                    or participation_surfaces is None
                 ):
                     raise AssertionError(
                         "Simulation solution inputs were not resolved."
@@ -4989,7 +4977,6 @@ class Model:
                             period_to_regime_to_V_arr,
                             period_to_regime_to_sim_policy,
                             period_to_regime_to_replay_reader,
-                            participation_surfaces,
                         ),
                     )
                     entry_allocations.publish(stage="initial", tree=initial_conditions)
@@ -5034,7 +5021,6 @@ class Model:
                         flat_params=flat_params,
                         values=period_to_regime_to_V_arr,
                         policies=period_to_regime_to_sim_policy,
-                        participation_surfaces=participation_surfaces,
                         ages=self._time,
                         initial_conditions=initial_conditions,
                         regime_names_to_ids=self.regime_names_to_ids,
@@ -5096,7 +5082,6 @@ class Model:
                 period_to_regime_to_V_arr=period_to_regime_to_V_arr,
                 period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
                 period_to_regime_to_replay_reader=period_to_regime_to_replay_reader,
-                participation_surfaces=participation_surfaces,
                 ages=self._time,
                 simulation_output_dtypes=self.simulation_output_dtypes,
                 seed=seed,
@@ -5350,6 +5335,14 @@ class Model:
             `Qc`. A discrete action declared with `values` is returned as a plain
             array of those numbers; a category-class action as its codes.
 
+            In a household with taste shocks, the member with the positive
+            Pareto weight decides. `Qc` is that member's own conditional value,
+            the choice probabilities are a softmax of it, and every member shares
+            the continuous actions attaining it. The value has a trailing member
+            axis in member order: the decider's smoothed maximum, and every other
+            member's mean action value at those actions under the decider's
+            choice probabilities.
+
             With a `Decoupled` Koopmans aggregator the actions maximize the
             objective and the value is the value profile there. With taste shocks,
             the continuous actions maximize the objective within each discrete
@@ -5363,6 +5356,8 @@ class Model:
                 taste shocks has no feasible action, as `simulate` refuses it. A
                 regime without actions returns the value negative infinity there
                 instead.
+            UnsupportedOperationError: An active renegotiating exit needs changed
+                current states and routed destinations; use `simulate` instead.
 
         """
         self._check_identity_runtime()
@@ -5378,6 +5373,7 @@ class Model:
         _fail_if_policy_lookup_unsupported(
             regime=regime,
             regime_name=regime_name,
+            period=period,
             solver=self._user_regimes[regime_name].solver,
             keep_intermediates=keep_intermediates,
         )
@@ -5534,7 +5530,7 @@ class Model:
         )
         if allocations is not None:
             allocations.update_solution(solution=solution, resolved_inputs=resolved)
-        V_arrs, sim_policies, replay_readers, _ = resolved
+        V_arrs, sim_policies, replay_readers = resolved
         if self._owned_component_values(solution=solution) is not None:
             # A block-major result keeps its values on the host; its value
             # store assembles each value the lookup reads, when it reads it.
@@ -6675,10 +6671,20 @@ def _fail_if_policy_lookup_unsupported(
     *,
     regime: Regime,
     regime_name: RegimeName,
+    period: int,
     solver: Solver,
     keep_intermediates: tuple[Intermediate, ...],
 ) -> None:
     """Raise when policy lookup cannot reproduce the regime's simulated decision."""
+    exit_plan = regime.simulation.exit_queries.get(period)
+    if exit_plan is not None and exit_plan.full is not None:
+        queries = exit_plan.full
+        if queries.definitions[queries.root].state_updates:
+            raise UnsupportedOperationError(
+                "Renegotiating exits require the routed simulate decision; "
+                "policy lookup cannot return changed states and "
+                "separation destinations."
+            )
     if regime.simulation.current_iid_draw_plan is not None:
         raise UnsupportedOperationError(
             "Current IID policy queries require an explicit observation or "
@@ -6698,7 +6704,7 @@ def _fail_if_policy_lookup_unsupported(
             "the choice probabilities of its solve."
         )
         raise InvalidSimulationInputError(msg)
-    if keep_intermediates and regime.stakeholders is not None:
+    if keep_intermediates and regime.member_axis is not None:
         msg = (
             "Policy lookup keeps intermediates for singleton regimes only; "
             f"{regime_name!r} is a collective regime."
@@ -6974,10 +6980,8 @@ def _validate_sharded_state_capability(
                 regime=regime, sharded_state=name
             )
             or type(regime.solver) is not GridSearch
-            or regime.stakeholders is not None
+            or regime.member_axis is not None
             or laws[regime_name].gated_edges
-            or regime.value_constraints
-            or regime.same_period_refs
             or regime.taste_shocks is not None
             or isinstance(regime.koopmans_aggregator, Decoupled)
         ):
@@ -7400,39 +7404,6 @@ def _map_lookup_arrays(
 def _leading_rows(*, array: jax.Array, n_rows: int) -> jax.Array:
     """Return the leading `n_rows` rows of `array`."""
     return array[:n_rows]
-
-
-def _materialize_participation_surfaces(
-    *, surfaces: Mapping[int, Mapping[RegimeName, Mapping[str, FloatND | _LazyEntry]]]
-) -> PeriodToRegimeToParticipationSurfaces:
-    """Load a result's stored participation surfaces, which participation replay reads.
-
-    A surface the result does not carry stays absent: participation replay refuses where
-    it would read one.
-    """
-    # ponytail: surfaces load eagerly outside the budgeted copier; route them
-    # through `array_copier` if they ever rival a value function in size.
-    return MappingProxyType(
-        {
-            period: MappingProxyType(
-                {
-                    regime: MappingProxyType(
-                        {
-                            name: cast(
-                                "FloatND",
-                                surface.materialize()
-                                if isinstance(surface, _LazyEntry)
-                                else surface,
-                            )
-                            for name, surface in by_name.items()
-                        }
-                    )
-                    for regime, by_name in by_regime.items()
-                }
-            )
-            for period, by_regime in surfaces.items()
-        }
-    )
 
 
 def _exact_envelope_capacity_hint(*, solver: Solver | None) -> str:

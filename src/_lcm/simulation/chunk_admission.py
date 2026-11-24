@@ -58,7 +58,6 @@ from _lcm.solution.host_values import (
 from _lcm.time import TimeAxis
 from _lcm.typing import (
     FlatParams,
-    PeriodToRegimeToParticipationSurfaces,
     RegimeName,
     RegimeNamesToIds,
     SimulationPolicy,
@@ -157,9 +156,6 @@ def prepare_simulation_chunks(
     log_level: LogLevel,
     runtime_checks: bool = True,
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
-    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType(
-        {}
-    ),
     process_grid_resolver: ProcessGridResolver | None = None,
     max_compilation_workers: int | None = None,
     group_sizes: tuple[int, ...] | None = None,
@@ -198,7 +194,6 @@ def prepare_simulation_chunks(
                     initial_conditions,
                     values,
                     ages.values,
-                    participation_surfaces,
                 )
             ),
         )
@@ -247,7 +242,6 @@ def prepare_simulation_chunks(
         # placement; reading values kept off the device would copy them.
         values=planning_stand_in(values),
         policies=planning_stand_in(policies),
-        participation_surfaces=participation_surfaces,
         ages=ages,
         initial_conditions=initial_conditions,
         regime_names_to_ids=regime_names_to_ids,
@@ -392,9 +386,6 @@ def _simulation_chunk_profile_key(
     call_inputs: SimulationCallInputs,
     values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None,
-    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType(
-        {}
-    ),
     ages: TimeAxis,
     initial_conditions: Mapping[str, jax.Array],
     regime_names_to_ids: RegimeNamesToIds,
@@ -435,7 +426,7 @@ def _simulation_chunk_profile_key(
       that leaves every covered shape untouched (extremely unlikely given how
       regimes are constructed) would not be distinguished by this key.
     """
-    version = 4  # bump when any component below changes meaning
+    version = 5  # bump when any component below changes meaning
     key_version = ("chunk-profile-key", version)
     program_identity = (
         tuple(sorted(regimes)),
@@ -456,7 +447,6 @@ def _simulation_chunk_profile_key(
                 for space in call_inputs.base_state_action_spaces.values()
             )
         ),
-        _abstract_value_key(value=participation_surfaces),
         _abstract_value_key(value=values),
         _abstract_value_key(value=initial_conditions),
         _abstract_value_key(value=ages.values),
@@ -515,7 +505,6 @@ class _ChunkProfiler:
     resident: Mapping[jax.Device, int]
     devices: tuple[jax.Device, ...]
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None
-    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType({})
     max_compilation_workers: int | None = None
     group_sizes: tuple[int, ...] | None = None
     current_iid_override_schema: CurrentIIDOverrideSchema = ()
@@ -580,7 +569,6 @@ class _ChunkProfiler:
             "regimes": self.regimes,
             "values": self.values,
             "policies": self.policies,
-            "participation_surfaces": self.participation_surfaces,
             "ages": self.ages,
             "initial_conditions": self.initial_conditions,
             "regime_names_to_ids": self.regime_names_to_ids,

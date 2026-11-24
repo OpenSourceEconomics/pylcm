@@ -1,8 +1,9 @@
-"""Every route of a participation check projects from the household's original landing.
+"""Every route of a gate projects from the household's original landing.
 
-A collective source decides its participation check in `a` with two routes: `f` falls
-back to `a` itself at a projected coordinate, `m` falls back to the singleton `b` at its
-own coordinate. Rows landing where `a` has no policy support take their own route. The
+A collective source gates its edge into `a` with two routes: `f` falls back to `a`
+itself at a projected coordinate, `m` falls back to the singleton `b` at its own
+coordinate. The gate closes where `a` has no feasible action, and rows landing there
+take their own route. The
 `m` route must read the state the household arrived with, not the state the `f` route
 just wrote back into `a`, so the outcome does not depend on the order the routes or the
 regimes are declared in.
@@ -19,15 +20,15 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
+    MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
 )
+from lcm.result import SimulationResult
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND, ScalarInt
 
@@ -79,10 +80,6 @@ def _feasible(*, x: DiscreteState) -> BoolND:
     return x != 1
 
 
-def _has_policy_support(*, target_support: BoolND) -> BoolND:
-    return target_support
-
-
 def _certain(*, x: DiscreteState) -> FloatND:
     return 1.0 + 0.0 * x
 
@@ -96,7 +93,7 @@ _PARAMS = {
 
 def _build_model(
     *,
-    stakeholder_order: tuple[str, ...],
+    member_order: tuple[str, ...],
     regime_order: tuple[str, ...],
     self_destination: int,
     enable_jit: bool,
@@ -109,7 +106,7 @@ def _build_model(
             state_transitions={"x": _identity},
             functions={
                 "utility": CollectiveUtility(
-                    utilities=dict.fromkeys(stakeholder_order, _source_utility)
+                    utilities=dict.fromkeys(member_order, _source_utility)
                 )
             },
         ),
@@ -130,24 +127,15 @@ def _build_model(
         edges={
             "source": Transition(
                 law=ByAge(cases={0: {"a": StochasticTransition(func=_certain)}}),
-                participation={
-                    "a": ParticipationCheck(
-                        predicate=_has_policy_support,
-                        reads={
-                            "target_support": ParticipationRead(
-                                regime="a",
-                                stakeholder="f",
-                                kind="Participating",
-                                field="support",
-                                projection={"x": _identity},
-                            )
-                        },
+                gates={
+                    "a": Gate(
+                        predicate=_feasible,
                         routes={
-                            "f": StakeholderRoute(
-                                target_stakeholder="f",
+                            "f": MemberRoute(
+                                target_member="f",
                                 fallback=ProjectedRegimeValue(
                                     regime="a",
-                                    stakeholder="f",
+                                    member="f",
                                     projection={
                                         "x": _to_high
                                         if self_destination == 2
@@ -155,8 +143,8 @@ def _build_model(
                                     },
                                 ),
                             ),
-                            "m": StakeholderRoute(
-                                target_stakeholder="m",
+                            "m": MemberRoute(
+                                target_member="m",
                                 fallback=ProjectedRegimeValue(
                                     regime="b", projection={"x": _identity}
                                 ),
@@ -197,9 +185,9 @@ def _simulate(
     coordinates: tuple[int, ...],
     roles: tuple[str, ...],
     runtime_checks: bool,
-):
+) -> SimulationResult:
     solution = model.solve(params=_PARAMS, log_level="off")
-    role_ids = model.stakeholder_names_to_ids
+    role_ids = model.member_names_to_ids
     return model.simulate(
         params=_PARAMS,
         solution=solution,
@@ -209,7 +197,7 @@ def _simulate(
             "regime_id": jnp.full(
                 len(coordinates), model.regime_names_to_ids["source"], jnp.int32
             ),
-            "own_stakeholder": jnp.asarray(
+            "own_member": jnp.asarray(
                 [role_ids[role] for role in roles], dtype=jnp.int32
             ),
         },
@@ -219,7 +207,7 @@ def _simulate(
     )
 
 
-def _period_one_panel(*, result) -> list[tuple[int, str, int, int]]:
+def _period_one_panel(*, result: SimulationResult) -> list[tuple[int, str, int, int]]:
     panel = result.to_dataframe(use_categorical_codes=True)
     rows = panel.loc[panel["period"] == 1].sort_values("subject_id")
     return list(
@@ -233,14 +221,14 @@ def _period_one_panel(*, result) -> list[tuple[int, str, int, int]]:
     )
 
 
-@pytest.mark.parametrize("stakeholder_order", [("f", "m"), ("m", "f")])
+@pytest.mark.parametrize("member_order", [("f", "m"), ("m", "f")])
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
 @pytest.mark.parametrize("runtime_checks", [False, True], ids=["unchecked", "checked"])
 def test_each_leg_projects_from_the_original_target_state(
-    *, stakeholder_order: tuple[str, ...], enable_jit: bool, runtime_checks: bool
-):
+    *, member_order: tuple[str, ...], enable_jit: bool, runtime_checks: bool
+) -> None:
     model = _build_model(
-        stakeholder_order=stakeholder_order,
+        member_order=member_order,
         regime_order=("source", "a", "b"),
         self_destination=2,
         enable_jit=enable_jit,
@@ -257,7 +245,7 @@ def test_each_leg_projects_from_the_original_target_state(
 
 
 @pytest.mark.parametrize(
-    ("stakeholder_order", "regime_order", "self_destination", "reverse_rows"),
+    ("member_order", "regime_order", "self_destination", "reverse_rows"),
     [
         (("f", "m"), ("source", "a", "b"), 2, False),
         (("m", "f"), ("source", "a", "b"), 2, False),
@@ -267,15 +255,15 @@ def test_each_leg_projects_from_the_original_target_state(
 )
 def test_declaration_and_row_orders_leave_the_panel_unchanged(
     *,
-    stakeholder_order: tuple[str, ...],
+    member_order: tuple[str, ...],
     regime_order: tuple[str, ...],
     self_destination: int,
     reverse_rows: bool,
-):
+) -> None:
     coordinates = _COORDINATES[::-1] if reverse_rows else _COORDINATES
     roles = _ROLES[::-1] if reverse_rows else _ROLES
     model = _build_model(
-        stakeholder_order=stakeholder_order,
+        member_order=member_order,
         regime_order=regime_order,
         self_destination=self_destination,
         enable_jit=True,

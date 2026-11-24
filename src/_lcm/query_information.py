@@ -5,7 +5,10 @@ information axes remain transient native outputs until their actual caller
 selects a policy; only the occupant root integrates into a durable value bank.
 """
 
+import functools
+import hashlib
 import inspect
+import json
 import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -14,6 +17,7 @@ from typing import NoReturn, cast
 import jax
 import jax.numpy as jnp
 import numpy as np
+from scipy.stats import qmc
 
 from _lcm.current_iid import (
     CURRENT_IID_ARGUMENT,
@@ -25,26 +29,37 @@ from _lcm.current_iid import (
     NodeOperands,
 )
 from _lcm.policy_queries import (
+    _DRAWS,
     _ROW_BATCH,
+    _STEP_LANES,
+    OutsideTable,
     PolicyAnswer,
     QueryKind,
     QueryNode,
     StayTable,
 )
-from _lcm.probability import is_represented_zero
+from _lcm.probability import (
+    exact_product,
+    is_represented_zero,
+    scaled_exact_product,
+)
 from _lcm.shock_registry import ShockBinding
+from _lcm.simulation.random_address import inverse_cdf_index
 from _lcm.typing import PytreeValue, QAndFKwargs
 from _lcm.utils.counts import sum_counts
 from _lcm.utils.dispatchers import vary_carry_like_body
+from _lcm.utils.functools import call_with_declared_arguments
 from _lcm.zero_safe import factored_weighted_term
 from lcm.exceptions import RegimeInitializationError
 from lcm.shocks import (
     Discrete,
     Law,
     LogNormal,
+    MonteCarlo,
     NodeSet,
     Normal,
     NormalMixture,
+    QuasiMonteCarlo,
     ShockGroupName,
     ShockName,
     Uniform,
@@ -55,13 +70,166 @@ type SourceStates = Mapping[str, FloatND | IntND]
 type Frames = Mapping[str, CurrentIIDDrawFrame]
 type QueryArguments = Mapping[str, PytreeValue]
 type Dependencies = Mapping[str, PolicyAnswer]
+# The node of each shock group a frame enumerates, per row of the frame.
+type Codes = Mapping[ShockGroupName, IntND]
+# Each ancestor's codes at the row its descendants are evaluated for, by query key.
+type FrameCodes = Mapping[str, Codes]
 
 
 def support_size(*, node: QueryNode, period: int) -> int:
     """Return the declared finite row count without materializing physical draws."""
     plan = node.context.current_iid_plans.get(period)
     size = 1 if plan is None else plan.indices.shape[0]
+    if node.sample is not None:
+        return size * draw_rows(node=node)
     return size * math.prod(node.observation_counts)
+
+
+def draw_rows(*, node: QueryNode) -> int:
+    """Rows a drawn query gives each kept row: its samples, and one more that
+    carries the mass where no exit is available when its draws avoid that mass.
+    """
+    rule = cast("tuple[MonteCarlo | QuasiMonteCarlo, tuple[int, ...]]", node.sample)[0]
+    return rule.n + (node.draw_condition is not None)
+
+
+def default_chunk_size(*, definitions: Mapping[str, QueryNode]) -> int:
+    """Return the source cells per chunk that fill one step with the widest query.
+
+    A step holds chunk-times-row-batch lanes. A graph whose widest query has few
+    rows fills that step only with more cells, so its chunk grows until the
+    widest query's rows times the chunk reach the lane target. A chunk is never
+    narrower than the row batch floor. A stored outside read gathers its value
+    instead of evaluating its rows, so its rows do not count.
+    """
+    rows = max(
+        support_size(node=node, period=node.read.period)
+        for node in definitions.values()
+        if node.outside_value is None
+    )
+    # ponytail: the padded last position of a wider chunk can pass int32 where a
+    # 64-cell chunk's would not; cap the chunk by the source count if that bites.
+    return max(_ROW_BATCH, _STEP_LANES // rows)
+
+
+@functools.cache
+def _uniforms(
+    *, rule: MonteCarlo | QuasiMonteCarlo, period: int, owner: str, dimension: int
+) -> np.ndarray:
+    """One point of the unit cube per sample, fixed by the rule, period and owner."""
+    encoded = json.dumps(
+        ("pylcm-exit-query-rule", 1, rule.seed, period, owner),
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode()
+    generator = np.random.Generator(
+        np.random.PCG64(int.from_bytes(hashlib.sha256(encoded).digest(), "big"))
+    )
+    uniforms = (
+        generator.random((rule.n, dimension))
+        if isinstance(rule, MonteCarlo)
+        else qmc.Sobol(d=dimension, scramble=True, bits=52, rng=generator).random_base2(
+            m=rule.n.bit_length() - 1
+        )
+    )
+    # A uniform that rounds to one in single precision selects no cell.
+    return np.minimum(uniforms, np.nextafter(np.float32(1), np.float32(0)))
+
+
+def sample_uniforms(*, node: QueryNode) -> np.ndarray:
+    """A drawn query's points: one column per drawn group, then per observation.
+
+    The row that carries the mass without an available exit gets the cube's
+    centre; its value is the stay value, which reads no drawn axis.
+    """
+    rule, kept = cast(
+        "tuple[MonteCarlo | QuasiMonteCarlo, tuple[int, ...]]", node.sample
+    )
+    plan = node.context.current_iid_plans.get(node.read.period)
+    groups = 0 if plan is None else len(plan.bindings)
+    uniforms = _uniforms(
+        rule=rule,
+        period=node.read.period,
+        owner=node.read.target,
+        dimension=sum(column not in kept for column in range(groups))
+        + len(node.observation_sources),
+    )
+    if node.draw_condition is None:
+        return uniforms
+    return np.concatenate([uniforms, np.full((1, uniforms.shape[1]), 0.5)])
+
+
+def _draw(*, weights: FloatND, uniform: FloatND) -> tuple[IntND, FloatND]:
+    """Draw one node of a group per uniform, in proportion to its mass.
+
+    Args:
+        weights: The group's factors, one row per factor, over its nodes.
+        uniform: Points of the unit interval, one per draw.
+
+    Returns:
+        The drawn node and the factor that scales its own mass to the group's
+        total, zero for a group without mass.
+    """
+    # ponytail: one comparison per node and draw; search the cumulative masses
+    # if a group's node count ever dominates.
+    # The masses share one power of two, which keeps them normal whatever their
+    # size and changes neither their ratios nor which of them are zero.
+    mass, _ = scaled_exact_product(weights)
+    total = jnp.sum(mass)
+    row = inverse_cdf_index(
+        probabilities=mass / jnp.where(total > 0, total, 1.0),
+        uniform=jnp.asarray(uniform, mass.dtype),
+    )
+    drawn = mass[row]
+    return row, jnp.where(drawn > 0, total / jnp.where(drawn > 0, drawn, 1.0), 0.0)
+
+
+def _draw_available(
+    *, weights: FloatND, available: BoolND, uniform: FloatND
+) -> tuple[IntND, FloatND]:
+    """Draw among a group's available nodes, then add one node for the rest.
+
+    Args:
+        weights: The group's factors, one row per factor, over its nodes.
+        available: Whether an exit is available at each node.
+        uniform: Points of the unit interval, one per draw.
+
+    Returns:
+        The drawn nodes followed by the unavailable node of largest mass, and
+        the factors that scale each one's own mass to the available total and,
+        for the last, to the unavailable total; zero where that total is zero.
+    """
+    row, scale = _draw(
+        weights=jnp.concatenate([weights, available[None].astype(weights.dtype)]),
+        uniform=uniform,
+    )
+    rest, _ = scaled_exact_product(
+        jnp.concatenate([weights, (~available)[None].astype(weights.dtype)])
+    )
+    node = jnp.argmax(rest).astype(row.dtype)
+    mass = rest[node]
+    rest_scale = jnp.where(
+        mass > 0, jnp.sum(rest) / jnp.where(mass > 0, mass, 1.0), 0.0
+    )
+    return jnp.append(row, node), jnp.append(scale, rest_scale)
+
+
+def _exit_available(
+    *,
+    predicate: Callable[..., PytreeValue],
+    arguments: QAndFKwargs,
+    physical: Mapping[ShockName, FloatND | IntND],
+) -> BoolND:
+    """Whether the exit is available at each node of one group's realisation."""
+
+    def at_node(shocks: Mapping[ShockName, FloatND | IntND]) -> BoolND:
+        return jnp.asarray(
+            call_with_declared_arguments(
+                function=predicate, operands={**arguments, **shocks}
+            )
+        ).astype(bool)
+
+    return jax.vmap(at_node)(dict(physical))
 
 
 def _has_local_information(*, node: QueryNode, period: int) -> bool:
@@ -99,6 +267,100 @@ def _row(*, frame: CurrentIIDDrawFrame, row: jax.Array) -> CurrentIIDDrawFrame:
         valid=frame.valid[row],
         information_available={
             name: value[row] for name, value in frame.information_available.items()
+        },
+    )
+
+
+def _physical_row(
+    *, frame: CurrentIIDDrawFrame, row: IntND
+) -> Mapping[ShockName, FloatND | IntND]:
+    """The physical shocks of one row of `frame`."""
+    return {name: value[row] for name, value in frame.physical.items()}
+
+
+def _map_product(
+    *,
+    point: Callable[[Mapping[ShockName, FloatND | IntND], IntND], PolicyAnswer],
+    physical: Mapping[ShockName, FloatND | IntND],
+    groups: tuple[tuple[int, tuple[ShockName, ...]], ...],
+    size: int,
+) -> PolicyAnswer:
+    """Evaluate `point` at every row of a product of groups, one lane map per group.
+
+    The rows are the product of the groups in declared order, the last varying
+    fastest. A group's shock is read off its own axis of that product, so it varies
+    only in its group's map. The answers come back flattened in row order.
+    """
+    from _lcm.policy_queries import map_lanes  # noqa: PLC0415
+
+    counts = tuple(count for count, _ in groups)
+    strides = tuple(math.prod(counts[axis + 1 :]) for axis in range(len(counts)))
+    owner = {
+        shock: axis for axis, (_, members) in enumerate(groups) for shock in members
+    }
+
+    def at_codes(codes: tuple[IntND, ...]) -> PolicyAnswer:
+        shocks = {
+            name: value.reshape((*counts, *value.shape[1:]))[
+                tuple(
+                    codes[axis] if axis == owner[name] else 0
+                    for axis in range(len(counts))
+                )
+            ]
+            for name, value in physical.items()
+        }
+        row = sum(
+            (code * stride for code, stride in zip(codes, strides, strict=True)),
+            start=jnp.asarray(0, jnp.int32),
+        )
+        return point(shocks, row)
+
+    def level(codes: tuple[IntND, ...]) -> PolicyAnswer:
+        if len(codes) == len(counts):
+            return at_codes(codes)
+        return map_lanes(
+            function=lambda code: level((*codes, code)),
+            operands=jnp.arange(counts[len(codes)], dtype=jnp.int32),
+        )
+
+    return jax.tree.map(
+        lambda leaf: leaf.reshape((size, *leaf.shape[len(counts) :])), level(())
+    )
+
+
+def _hold(
+    *,
+    lane: CurrentIIDDrawFrame,
+    first: CurrentIIDDrawFrame,
+    shocks: frozenset[ShockName],
+    groups: frozenset[ShockGroupName],
+) -> CurrentIIDDrawFrame:
+    """Take from another row what a descendant reads of the named shocks.
+
+    A descendant reads a shock's value directly, or copies it as an observation:
+    then it reads the held base, whether the observation is active, and the
+    producing law's parameters and inputs.
+    """
+    return lane._replace(
+        physical={**lane.physical, **{name: first.physical[name] for name in shocks}},
+        held_bases={
+            **lane.held_bases,
+            **{name: first.held_bases[name] for name in shocks},
+        },
+        information_available={
+            **lane.information_available,
+            **{
+                name: first.information_available[name]
+                for name in shocks & lane.information_available.keys()
+            },
+        },
+        source_params={
+            **lane.source_params,
+            **{name: first.source_params[name] for name in groups},
+        },
+        source_inputs={
+            **lane.source_inputs,
+            **{name: first.source_inputs[name] for name in groups},
         },
     )
 
@@ -289,6 +551,105 @@ def _pinned_rows(
     )
 
 
+# A shock group's rows of a query's factor stack and, when the group is pinned,
+# one support row per node of the group.
+type _FactorColumn = tuple[np.ndarray, np.ndarray | None]
+
+
+def representative_columns(
+    *, name: str, definitions: Mapping[str, QueryNode]
+) -> tuple[_FactorColumn, ...] | None:
+    """The factor layout that lets `name` weight its representatives alone.
+
+    A group contributes its node weights and one factor per categorical shock, in
+    plan order. A pinned group's support rows hold every other group at its first
+    node, so they list the group's nodes once each. None keeps every row: the
+    query has no pinned group, or it crosses its rows with observation axes.
+    """
+    node = definitions[name]
+    plan = node.context.current_iid_plans.get(node.read.period)
+    pinned = _pinned_columns(name=name, definitions=definitions)
+    # ponytail: a query with observation axes weights every row; give those
+    # axes their own factor layout if such a query's rows ever dominate.
+    if plan is None or not pinned or node.observation_sources:
+        return None
+    return _factor_layout(plan=plan, pinned=pinned)
+
+
+def _factor_layout(
+    *, plan: CurrentIIDPlan, pinned: tuple[int, ...]
+) -> tuple[_FactorColumn, ...]:
+    """Each plan group's rows of the factor stack, and support rows of `pinned` ones.
+
+    A group contributes its node weights and one factor per categorical shock, in
+    plan order. The support rows of a group in `pinned` hold every other group at
+    its first node, so they list the group's nodes once each.
+    """
+    sizes = tuple(nodes.weights.size for _, _, nodes in plan.bindings)
+    columns = []
+    first = 0
+    for column, (_, binding, _) in enumerate(plan.bindings):
+        count = 1 + sum(
+            isinstance(law, Discrete) for law in binding.group.shocks.values()
+        )
+        stride = math.prod(sizes[column + 1 :])
+        columns.append(
+            (
+                np.arange(first, first + count),
+                np.arange(sizes[column]) * stride if column in pinned else None,
+            )
+        )
+        first += count
+    return tuple(columns)
+
+
+def representative_factors(
+    *,
+    factors: FloatND,
+    columns: tuple[_FactorColumn, ...],
+    representatives: IntND,
+) -> tuple[FloatND, IntND]:
+    """Factors of each representative row and the number of present rows it stands for.
+
+    The rows a representative stands for cross every node of the pinned groups
+    and share its answer, so their weighted terms sum to the answer times the
+    product, over the pinned groups, of the group's mass: the sum over its nodes
+    of the exact product of the node's factors. Each mass enters as one factor,
+    with no normalization. A row is present when none of its factors is a
+    represented zero.
+
+    Args:
+        factors: One row per factor of the query's shock groups, over all rows.
+        columns: The layout from `representative_columns`.
+        representatives: The representative rows.
+
+    Returns:
+        The factors over the representatives, a pinned group reduced to its mass,
+        and each representative's count of present rows.
+
+    """
+    if factors.shape[0] != sum(rows.size for rows, _ in columns):
+        msg = (
+            f"The factor stack has {factors.shape[0]} rows; the shock groups "
+            f"declare {sum(rows.size for rows, _ in columns)}."
+        )
+        raise RegimeInitializationError(msg)
+    terms = []
+    copies = jnp.ones(representatives.shape, jnp.int32)
+    for rows, nodes in columns:
+        if nodes is None:
+            kept = factors[rows][:, representatives]
+            terms.extend(kept)
+            copies *= jnp.all(~is_represented_zero(kept), axis=0)
+        else:
+            group = factors[rows][:, nodes]
+            terms.append(
+                jnp.broadcast_to(jnp.sum(exact_product(group)), representatives.shape)
+            )
+            copies *= sum_counts(counts=jnp.all(~is_represented_zero(group), axis=0))
+    return jnp.stack(terms), copies
+
+
 # A shock of one query's information frame, named by the query's key.
 type _FrameCell = tuple[str, ShockName]
 
@@ -390,6 +751,32 @@ def _copied_cells(
     )
 
 
+def _observation_reads(
+    *,
+    key: str,
+    definitions: Mapping[str, QueryNode],
+    groups: frozenset[ShockGroupName] | None = None,
+) -> frozenset[_FrameCell] | None:
+    """Frame cells that realise a query's observed shock groups; None if unknown.
+
+    The projection and guard of each producer of an observed group map the
+    states its law reads and decide whether the observation exists.
+    """
+    cells: frozenset[_FrameCell] = frozenset()
+    for group, producers in definitions[key].observation_aliases.items():
+        if groups is not None and group not in groups:
+            continue
+        for producer in producers:
+            for part in (
+                _projection_reads(key=producer, definitions=definitions),
+                _guard_reads(key=producer, definitions=definitions),
+            ):
+                if part is None:
+                    return None
+                cells |= part
+    return cells
+
+
 def _reads(
     *,
     key: str,
@@ -397,19 +784,10 @@ def _reads(
     states: frozenset[str] | None,
     copies: bool = True,
 ) -> frozenset[_FrameCell] | None:
-    node = definitions[key]
     parts = [
         _projection_reads(key=key, definitions=definitions, states=states),
         _guard_reads(key=key, definitions=definitions),
-        *(
-            reads
-            for producers in node.observation_aliases.values()
-            for producer in producers
-            for reads in (
-                _projection_reads(key=producer, definitions=definitions),
-                _guard_reads(key=producer, definitions=definitions),
-            )
-        ),
+        _observation_reads(key=key, definitions=definitions),
     ]
     if any(part is None for part in parts):
         return None
@@ -487,14 +865,51 @@ def read_columns(
             if part is None:
                 return every
             pending.extend(part)
+    seen = _closed_reads(pending=pending, ancestor=ancestor, definitions=definitions)
+    if seen is None:
+        return every
+    return frozenset(shock for owner, shock in seen if owner == ancestor) & every
+
+
+def _closed_reads(
+    *, pending: list[_FrameCell], ancestor: str, definitions: Mapping[str, QueryNode]
+) -> set[_FrameCell] | None:
+    """Frame cells that fix the given ones, followed up to an ancestor's frame.
+
+    - A cell of a frame below the ancestor follows the parent cell it copies
+      and what fixes its frame (`_frame_determinants`).
+    - A shock the ancestor observes follows what realises that observation in
+      the ancestor's frame (`_observation_reads`).
+
+    None when one of these is not attributable.
+    """
     seen: set[_FrameCell] = set()
     expanded: set[str] = set()
+    top = definitions[ancestor]
+    observed = {
+        shock: group
+        for shock, (group, _, is_observed) in (
+            _parent_sources(parent=top, definitions=definitions).items()
+            if top.observation_sources
+            else ()
+        )
+        if is_observed
+    }
     while pending:
         cell = pending.pop()
         if cell in seen:
             continue
         seen.add(cell)
         owner = cell[0]
+        if owner == ancestor and cell[1] in observed:
+            realising = _observation_reads(
+                key=ancestor,
+                definitions=definitions,
+                groups=frozenset({observed[cell[1]]}),
+            )
+            if realising is None:
+                return None
+            pending.extend(realising)
         if owner == ancestor or ancestor not in definitions[owner].ancestors:
             continue
         pending.extend(
@@ -507,9 +922,87 @@ def read_columns(
         expanded.add(owner)
         determinants = _frame_determinants(key=owner, definitions=definitions)
         if determinants is None:
-            return every
+            return None
         pending.extend(determinants)
-    return frozenset(shock for owner, shock in seen if owner == ancestor) & every
+    return seen
+
+
+def continuation_columns(
+    *, name: str, ancestor: str, definitions: Mapping[str, QueryNode]
+) -> frozenset[ShockName] | None:
+    """Shocks of an ancestor's frame that fix a query's continuation and its guards.
+
+    The continuation reaches the ancestor's frame through:
+    - the query's projection, which maps its states;
+    - the query's own frame shocks its continuation names, whose values the
+      frame may copy from the ancestor;
+    - the guards of the query and of every query between the two, which decide
+      whether it runs at all.
+
+    A shock the ancestor observes brings the shocks that realise the observation
+    with it. None when a read is not attributable.
+    """
+    node = definitions[name]
+    reads = getattr(
+        node.context.Q_and_F_functions[node.read.period], "continuation_reads", None
+    )
+    chain = node.ancestors
+    parts = (
+        _projection_reads(key=name, definitions=definitions),
+        *(
+            _guard_reads(key=step, definitions=definitions)
+            for step in (*chain[chain.index(ancestor) + 1 :], name)
+        ),
+    )
+    if reads is None or any(part is None for part in parts):
+        return None
+    seen = _closed_reads(
+        pending=[
+            *(
+                (name, shock)
+                for shock in _frame_shocks(key=name, definitions=definitions) & reads
+            ),
+            *(
+                cell
+                for part in cast("tuple[frozenset[_FrameCell], ...]", parts)
+                for cell in part
+            ),
+        ],
+        ancestor=ancestor,
+        definitions=definitions,
+    )
+    if seen is None:
+        return None
+    return frozenset(shock for owner, shock in seen if owner == ancestor)
+
+
+def continuation_members(
+    *, name: str, ancestor: str, rows: np.ndarray, definitions: Mapping[str, QueryNode]
+) -> tuple[tuple[ShockName, ...], np.ndarray] | None:
+    """Equal groups of an ancestor's rows that share a query's continuation.
+
+    Returns the ancestor shocks that fix the continuation (`continuation_columns`)
+    and, per group, the positions in `rows` that agree on all of them. None when
+    the rows do not group: the shocks are not attributable, every row differs,
+    or the groups differ in size.
+    """
+    columns = continuation_columns(
+        name=name, ancestor=ancestor, definitions=definitions
+    )
+    if columns is None:
+        return None
+    shocks = tuple(sorted(columns))
+    codes = _support_codes(key=ancestor, definitions=definitions, shocks=shocks)[rows]
+    groups, sizes = (
+        (np.zeros(rows.size, dtype=np.int64), np.asarray([rows.size]))
+        if not shocks
+        else np.unique(codes, axis=0, return_inverse=True, return_counts=True)[1:]
+    )
+    # ponytail: equal groups only, as a product support gives; ragged groups
+    # would need padded lanes.
+    if sizes.size == rows.size or np.any(sizes != sizes[0]):
+        return None
+    return shocks, np.argsort(groups.ravel(), kind="stable").reshape((sizes.size, -1))
 
 
 def _shock_codes(
@@ -538,6 +1031,8 @@ def _support_codes(
     """Per support row of a query, the node code of each named frame shock."""
     node = definitions[key]
     plan = _plan(node=node)
+    if node.sample is not None:
+        return _drawn_codes(key=key, definitions=definitions, shocks=shocks)
     extents = (1 if plan is None else plan.indices.shape[0], *node.observation_counts)
     bindings = _bindings(node=node, definitions=definitions, period=node.read.period)
     own = () if plan is None else plan.bindings
@@ -573,6 +1068,53 @@ def _support_codes(
         columns.append(np.broadcast_to(codes.reshape(shape), extents).ravel())
     if not columns:
         return np.zeros((math.prod(extents), 0), dtype=np.int64)
+    return np.stack(columns, axis=1)
+
+
+def _drawn_codes(
+    *, key: str, definitions: Mapping[str, QueryNode], shocks: tuple[ShockName, ...]
+) -> np.ndarray:
+    """Per row of a drawn query, a code of each named frame shock.
+
+    A kept group's shock has its node code. A drawn group's shock is named by
+    its sample and an observed shock by its row.
+    """
+    node = definitions[key]
+    _, kept = cast("tuple[MonteCarlo | QuasiMonteCarlo, tuple[int, ...]]", node.sample)
+    plan = _plan(node=node)
+    own = () if plan is None else plan.bindings
+    size = 1 if plan is None else plan.indices.shape[0]
+    draws = draw_rows(node=node)
+    bindings = _bindings(node=node, definitions=definitions, period=node.read.period)
+    columns = []
+    for shock in shocks:
+        position = next(
+            (
+                position
+                for position, (_, binding, _) in enumerate(own)
+                if shock in binding.group.shocks
+            ),
+            None,
+        )
+        if position in kept:
+            _, binding, nodes = own[position]
+            codes = _shock_codes(binding=binding, nodes=nodes, shock=shock)
+            rows = np.asarray(cast("CurrentIIDPlan", plan).indices)[:, position]
+            columns.append(np.repeat(codes[rows], draws))
+        elif position is not None:
+            # ponytail: two samples that draw one node stay apart; merge them
+            # if draws ever coincide often enough to matter.
+            columns.append(np.tile(np.arange(draws), size))
+        elif any(
+            shock in bindings[group].group.shocks for group in node.observation_sources
+        ):
+            # ponytail: name an observation by its sample where its law reads
+            # no kept group; its rows then repeat across the kept rows.
+            columns.append(np.arange(size * draws))
+        else:
+            raise ValueError(f"Shock {shock!r} is not in query {key!r}'s frame.")
+    if not columns:
+        return np.zeros((size * draws, 0), dtype=np.int64)
     return np.stack(columns, axis=1)
 
 
@@ -689,6 +1231,37 @@ class InformationQueryCell:
     root_frame: CurrentIIDDrawFrame | None = None
     row_batch: int = _ROW_BATCH
     """Support rows evaluated together per step."""
+    kept: tuple[int, ...] = ()
+    """Plan columns whose groups the answer keeps as axes instead of integrating.
+
+    The answer then holds one value and one support flag per node of each kept
+    group, in plan order: the value integrates the other groups at that node, with
+    the kept groups reduced to their mass, and is NaN at a node that fails its
+    integrity check. Only a query without ancestors, draws or observation axes keeps
+    groups.
+    """
+    outside: OutsideTable | None = None
+    """The table a stored outside read gathers its value from, instead of
+    evaluating its destination's problem; None for every other query."""
+
+    def __post_init__(self) -> None:
+        """Refuse kept groups on a query whose rows are not its plan's product.
+
+        A plan whose unavailable nodes collapse into one is not, and its standing
+        rows are weighted by each unavailable node only on the integrating route.
+        """
+        if self.kept and (
+            self.node.ancestors
+            or self.node.sample is not None
+            or self.node.observation_sources
+            or _plan(node=self.node) is None
+            or self.node.available_nodes is not None
+        ):
+            raise ValueError(
+                f"Query {self.name!r} keeps plan groups as axes, which needs a plan "
+                "and no ancestors, draws, observation axes or collapsed unavailable "
+                "nodes."
+            )
 
     def _size(self, *, name: str, node: QueryNode) -> int:
         return (
@@ -756,55 +1329,157 @@ class InformationQueryCell:
             mapped.append(at if theirs is None else jnp.asarray(theirs[1])[at])
         return tuple(mapped)
 
-    def _map_support(
+    def _map_own(
         self,
         *,
-        point: Callable[[IntND, IntND], PolicyAnswer],
+        point: Callable[[Mapping[ShockName, FloatND | IntND], IntND], PolicyAnswer],
+        frame: CurrentIIDDrawFrame,
+    ) -> PolicyAnswer:
+        """Evaluate each distinct own row once: one answer per representative.
+
+        `point` takes the row's physical shocks and its position. When the own rows
+        are the whole product of independent shock groups, each group runs in its
+        own lane map, so a term reading only some groups is computed over those
+        groups' nodes alone.
+        """
+        from _lcm.policy_queries import map_lanes  # noqa: PLC0415
+
+        pinned = self._pinned(name=self.name)
+        size = self._axis(name=self.name, node=self.node)
+        positions = jnp.arange(size, dtype=jnp.int32)
+        if pinned is None:
+            product = self._product_groups(frame=frame, size=size)
+            if product is not None:
+                return _map_product(
+                    point=point, physical=frame.physical, groups=product, size=size
+                )
+            return map_lanes(
+                function=lambda row: point(_physical_row(frame=frame, row=row), row),
+                operands=positions,
+                batch_size=self.row_batch,
+            )
+        representatives = pinned[0]
+        return map_lanes(
+            function=lambda position: point(
+                _physical_row(frame=frame, row=representatives[position]), position
+            ),
+            operands=positions,
+            batch_size=self.row_batch,
+        )
+
+    def _product_groups(
+        self, *, frame: CurrentIIDDrawFrame, size: int
+    ) -> tuple[tuple[int, tuple[ShockName, ...]], ...] | None:
+        """Each independent group's count of enumerated nodes and its shocks, if the
+        own rows are their whole product in declared order and fit one step; else
+        `None`.
+
+        Drawn rows, observation axes and the realised root are not such a product.
+        A group whose unavailable nodes collapse into one (`QueryNode.available_nodes`)
+        counts its available nodes and that one.
+        """
+        plan = self.node.context.current_iid_plans.get(self.node.read.period)
+        if (
+            plan is None
+            or len(plan.bindings) < 2  # noqa: PLR2004 - one group is already one map
+            or self.node.sample is not None
+            or self.node.observation_sources
+            or self.name == self.realised_root
+        ):
+            return None
+        indices = np.asarray(plan.indices)
+        groups = tuple(
+            (int(np.unique(indices[:, column]).size), tuple(binding.group.shocks))
+            for column, (_, binding, _) in enumerate(plan.bindings)
+        )
+        shocks = {shock for _, members in groups for shock in members}
+        if (
+            math.prod(count for count, _ in groups) != size
+            or size > self.row_batch
+            or not frame.physical.keys() <= shocks
+        ):
+            return None
+        return groups
+
+    def _map_ancestor(
+        self,
+        *,
+        point: Callable[
+            [IntND, IntND, Callable[[CurrentIIDDrawFrame], CurrentIIDDrawFrame]],
+            PolicyAnswer,
+        ],
+        frame: CurrentIIDDrawFrame,
         name: str,
         node: QueryNode,
-        spread: bool,
     ) -> PolicyAnswer:
-        """Evaluate each distinct support row once, at its row and its axis position.
+        """Evaluate this query once per entry it keeps along one ancestor.
 
-        With `spread`, the answers are spread over every copy; otherwise they keep
-        one entry per representative, the axis a descendant's answer carries. An
-        ancestor's rows that this query reads alike share one entry, evaluated
-        at the class's first row.
+        An entry is a representative row of the ancestor, or the first row of a
+        class this query reads alike. `point` takes the entry's row, its
+        position and a function that replaces part of the row's frame.
+
+        Entries that agree on every shock fixing the continuation
+        (`continuation_members`) run as one group of lanes that takes those
+        shocks from its first entry (`_hold`). Nothing that follows from them
+        alone then varies across the group, so the group computes it once.
         """
         from _lcm.policy_queries import map_lanes  # noqa: PLC0415
 
         pinned = self._pinned(name=name)
-        classes = None if spread else self._classes(name=self.name, ancestor=name)
-        if classes is not None:
-            first = classes[0]
-            rows = jnp.asarray(
-                first
-                if pinned is None
-                else cast(
-                    "tuple[np.ndarray, np.ndarray]",
-                    _pinned_rows(name=name, definitions=self.definitions),
-                )[0][first],
-                dtype=jnp.int32,
+        classes = self._classes(name=self.name, ancestor=name)
+        rows = (
+            np.arange(self._size(name=name, node=node))
+            if pinned is None
+            else cast(
+                "tuple[np.ndarray, np.ndarray]",
+                _pinned_rows(name=name, definitions=self.definitions),
+            )[0]
+        )
+        rows = rows if classes is None else rows[classes[0]]
+        # A stored read computes nothing per entry that a group could share.
+        split = (
+            None
+            if name == self.realised_root or self.outside is not None
+            else continuation_members(
+                name=self.name, ancestor=name, rows=rows, definitions=self.definitions
             )
+        )
+        at_rows = jnp.asarray(rows, dtype=jnp.int32)
+        if split is None:
             return map_lanes(
-                function=lambda position: point(rows[position], position),
-                operands=jnp.arange(first.size, dtype=jnp.int32),
+                function=lambda position: point(
+                    at_rows[position], position, lambda lane: lane
+                ),
+                operands=jnp.arange(rows.size, dtype=jnp.int32),
                 batch_size=self.row_batch,
             )
-        positions = jnp.arange(self._axis(name=name, node=node), dtype=jnp.int32)
-        if pinned is None:
+        shocks, members = split
+        sources = _parent_sources(parent=node, definitions=self.definitions)
+        groups = frozenset(sources[shock][0] for shock in shocks)
+
+        def group(positions: IntND) -> PolicyAnswer:
+            first = _row(frame=frame, row=at_rows[positions[0]])
             return map_lanes(
-                function=lambda row: point(row, row),
+                function=lambda position: point(
+                    at_rows[position],
+                    position,
+                    lambda lane: _hold(
+                        lane=lane, first=first, shocks=frozenset(shocks), groups=groups
+                    ),
+                ),
                 operands=positions,
                 batch_size=self.row_batch,
             )
-        representatives, gather = pinned
-        answers = map_lanes(
-            function=lambda position: point(representatives[position], position),
-            operands=positions,
-            batch_size=self.row_batch,
+
+        grouped = map_lanes(
+            function=group,
+            operands=jnp.asarray(members, dtype=jnp.int32),
+            batch_size=max(1, self.row_batch // members.shape[1]),
         )
-        return jax.tree.map(lambda leaf: leaf[gather], answers) if spread else answers
+        entry = jnp.asarray(np.argsort(members.ravel()), dtype=jnp.int32)
+        return jax.tree.map(
+            lambda leaf: leaf.reshape((rows.size, *leaf.shape[2:]))[entry], grouped
+        )
 
     def __call__(
         self, *, live: BoolND, source: SourceStates, dependencies: Dependencies
@@ -813,6 +1488,7 @@ class InformationQueryCell:
         return self._ancestors(
             position=0,
             frames={},
+            codes={},
             indices=(),
             live=live,
             source=source,
@@ -850,6 +1526,94 @@ class InformationQueryCell:
         }
         return _query_availability(node=node, available=available)
 
+    def _law_arguments(
+        self,
+        *,
+        node: QueryNode,
+        fixed: QueryArguments,
+        source: SourceStates,
+        frames: Frames,
+        guard: BoolND,
+    ) -> QAndFKwargs:
+        """The operands a query's shock laws read: its arguments and mapped states."""
+        from _lcm.policy_queries import (  # noqa: PLC0415
+            _PHYSICAL_CONTEXTS,
+            _PROJECTION,
+            _mapped_query_states,
+        )
+
+        available = {
+            **(
+                self.projection_operands
+                if node is self.node
+                else cast("QueryArguments", fixed[_PROJECTION])
+            ),
+            **source,
+            "period": fixed["period"],
+            "age": fixed["age"],
+            _PHYSICAL_CONTEXTS: {
+                name: frame.physical for name, frame in frames.items()
+            },
+        }
+        mapped = _mapped_query_states(node=node, available=available, guard=guard)
+        return cast("QAndFKwargs", {**fixed, **mapped})
+
+    def _collapse_unavailable(
+        self,
+        *,
+        factors: FloatND,
+        source: SourceStates,
+        frames: Frames,
+        guard: BoolND,
+    ) -> tuple[FloatND, np.ndarray]:
+        """Factor each row of this query's one unavailable node as every such node.
+
+        The collapsed group's law runs once over all its nodes at the cell. Each
+        row of the node standing for the unavailable ones (`_standing_rows`) keeps
+        the other groups' factors and takes, once per unavailable node, that
+        node's factors of the group: the factors the full enumeration gives the
+        row of that node. No mass is summed before it meets the value, so a mass
+        below the normal range keeps its share and its rows their count.
+
+        Returns:
+            The factors of the standing rows, one trailing entry per unavailable
+            node, and the standing rows.
+
+        """
+        node = self.node
+        plan = cast("CurrentIIDPlan", _plan(node=node))
+        column, available = cast("tuple[int, tuple[bool, ...]]", node.available_nodes)
+        group, _, nodes = plan.bindings[column]
+        site = CurrentIIDPlan(
+            bindings=(plan.bindings[column],),
+            indices=jnp.arange(nodes.weights.size, dtype=jnp.int32)[:, None],
+        )
+        _, weights = site.realise_information_nodes(
+            arguments=self._law_arguments(
+                node=node, fixed=self.fixed, source=source, frames=frames, guard=guard
+            ),
+            group_params={
+                group: cast("AdmittedGroupParams", self.fixed[CURRENT_IID_ARGUMENT])[
+                    group
+                ]
+            },
+            node_operands={
+                group: cast("NodeOperands", self.fixed[CURRENT_IID_NODES_ARGUMENT])[
+                    group
+                ]
+            },
+            indices=site.indices,
+        )
+        rest = weights[:, ~np.asarray(available)]
+        rows = _factor_layout(plan=plan, pinned=())[column][0]
+        standing = np.repeat(
+            _standing_rows(node=node), math.prod(node.observation_counts)
+        )
+        columns = np.flatnonzero(standing)
+        at_standing = factors[:, columns, None]
+        stack = jnp.broadcast_to(at_standing, (*at_standing.shape[:2], rest.shape[1]))
+        return stack.at[rows].set(rest[:, None, :].astype(factors.dtype)), columns
+
     def _realise(
         self,
         *,
@@ -858,13 +1622,15 @@ class InformationQueryCell:
         source: SourceStates,
         frames: Frames,
         guard: BoolND,
-    ) -> tuple[CurrentIIDDrawFrame, FloatND]:
-        from _lcm.policy_queries import (  # noqa: PLC0415
-            _PHYSICAL_CONTEXTS,
-            _PROJECTION,
-            _mapped_query_states,
-        )
+    ) -> tuple[CurrentIIDDrawFrame, FloatND, Codes]:
+        """Realise a query's frame, its factors and the node each row realises.
 
+        A row names, for each own group, the node of the group's plan its row index
+        or draw selects, and for each observed group the producer's node it meets.
+        A group the frame copies from its caller is named by the frame's own row
+        index, which need not be the node of the caller's values it holds. A
+        realised root holds realised shocks, not nodes, and names none.
+        """
         key = next(
             name for name, candidate in self.definitions.items() if candidate is node
         )
@@ -901,32 +1667,31 @@ class InformationQueryCell:
                     if name in observed
                 },
             )
-            return _batch_metadata(frame=frame, size=1), jnp.ones((1, 1))
-        available = {
-            **(
-                self.projection_operands
-                if node is self.node
-                else cast("QueryArguments", fixed[_PROJECTION])
-            ),
-            **source,
-            "period": fixed["period"],
-            "age": fixed["age"],
-            _PHYSICAL_CONTEXTS: {
-                name: frame.physical for name, frame in frames.items()
-            },
-        }
-        mapped = _mapped_query_states(node=node, available=available, guard=guard)
+            return _batch_metadata(frame=frame, size=1), jnp.ones((1, 1)), {}
+        arguments = self._law_arguments(
+            node=node, fixed=fixed, source=source, frames=frames, guard=guard
+        )
         plan = node.context.current_iid_plans.get(node.read.period)
         parent = node.ancestors[-1] if node.ancestors else None
         previous = None if parent is None else frames[parent]
-        if plan is None:
-            frame, factors = _empty_frame(), jnp.ones((1, 1))
+        draws = None
+        if node.sample is not None:
+            frame, factors, codes, draws = self._drawn(
+                node=node,
+                plan=plan,
+                fixed=fixed,
+                arguments=arguments,
+            )
+        elif plan is None:
+            frame, factors, codes = _empty_frame(), jnp.ones((1, 1)), {}
         else:
+            indices = cast("IntND", fixed[CURRENT_IID_ROWS_ARGUMENT])
+            codes = _plan_codes(plan=plan, indices=indices)
             frame, factors = plan.realise_information_nodes(
-                arguments=cast("QAndFKwargs", {**fixed, **mapped}),
+                arguments=arguments,
                 group_params=cast("AdmittedGroupParams", fixed[CURRENT_IID_ARGUMENT]),
                 node_operands=cast("NodeOperands", fixed[CURRENT_IID_NODES_ARGUMENT]),
-                indices=cast("IntND", fixed[CURRENT_IID_ROWS_ARGUMENT]),
+                indices=indices,
                 observation=previous,
                 observed=frozenset(
                     node.read.price_information
@@ -946,13 +1711,106 @@ class InformationQueryCell:
                 if plan is None
                 else _batch_metadata(frame=frame, size=factors.shape[1]),
                 factors,
+                codes,
             )
         return self._observations(
             node=node,
             primary=_batch_metadata(frame=frame, size=factors.shape[1]),
             factors=factors,
+            codes=codes,
             source=source,
             frames=frames,
+            draws=draws,
+        )
+
+    def _drawn(
+        self,
+        *,
+        node: QueryNode,
+        plan: CurrentIIDPlan | None,
+        fixed: QueryArguments,
+        arguments: QAndFKwargs,
+    ) -> tuple[CurrentIIDDrawFrame, FloatND, Codes, tuple[FloatND, ...]]:
+        """Cross a drawn query's kept rows with one draw of every other own group.
+
+        Row `kept * n + sample` holds kept row `kept` and sample `sample`; every
+        kept row sees the same draws. Each drawn group adds the factor that
+        scales its node's mass to the group total, and one more factor holds
+        the sample weight. Also returns the node of each own group every row
+        realises, and one uniform per observation axis and row.
+
+        Under a draw condition (`QueryNode.draw_condition`) that group is drawn
+        among the nodes where an exit is available, and a last sample per kept
+        row stands for the rest of its mass at full sample weight.
+        """
+        rule, kept = cast(
+            "tuple[MonteCarlo | QuasiMonteCarlo, tuple[int, ...]]", node.sample
+        )
+        bindings = () if plan is None else plan.bindings
+        drawn = tuple(column for column in range(len(bindings)) if column not in kept)
+        uniforms = cast("FloatND", fixed[_DRAWS])
+        size = 1 if plan is None else plan.indices.shape[0]
+        draws = draw_rows(node=node)
+        scales = [
+            jnp.ones(draws, uniforms.dtype)
+            .at[: rule.n]
+            .set(jnp.full(rule.n, 1 / rule.n, uniforms.dtype))
+        ]
+        if plan is None:
+            frame, factors, codes = _empty_frame(), jnp.stack(scales), {}
+        else:
+            params = cast("AdmittedGroupParams", fixed[CURRENT_IID_ARGUMENT])
+            operands = cast("NodeOperands", fixed[CURRENT_IID_NODES_ARGUMENT])
+            indices = jnp.repeat(plan.indices, draws, axis=0)
+            for position, column in enumerate(drawn):
+                group, _, nodes = bindings[column]
+                site = CurrentIIDPlan(
+                    bindings=(bindings[column],),
+                    indices=jnp.arange(nodes.weights.size, dtype=jnp.int32)[:, None],
+                )
+                # ponytail: the group's law runs here and again below at the
+                # drawn rows; share one realisation if it ever shows in a trace.
+                site_frame, weights = site.realise_information_nodes(
+                    arguments=arguments,
+                    group_params={group: params[group]},
+                    node_operands={group: operands[group]},
+                    indices=site.indices,
+                )
+                row, scale = (
+                    _draw(weights=weights, uniform=uniforms[:, position])
+                    if column != node.draw_condition
+                    else _draw_available(
+                        weights=weights,
+                        available=_exit_available(
+                            predicate=cast(
+                                "Callable[..., PytreeValue]", node.exit_availability
+                            ),
+                            arguments=arguments,
+                            physical=site_frame.physical,
+                        ),
+                        uniform=uniforms[: rule.n, position],
+                    )
+                )
+                indices = indices.at[:, column].set(jnp.tile(row, size))
+                scales.append(scale)
+            frame, factors = plan.realise_information_nodes(
+                arguments=arguments,
+                group_params=params,
+                node_operands=operands,
+                indices=indices,
+            )
+            factors = jnp.concatenate(
+                [factors, jnp.tile(jnp.stack(scales).astype(factors.dtype), (1, size))]
+            )
+            codes = _plan_codes(plan=plan, indices=indices)
+        return (
+            frame,
+            factors,
+            codes,
+            tuple(
+                jnp.tile(uniforms[:, len(drawn) + axis], size)
+                for axis in range(len(node.observation_sources))
+            ),
         )
 
     def _observations(
@@ -961,24 +1819,37 @@ class InformationQueryCell:
         node: QueryNode,
         primary: CurrentIIDDrawFrame,
         factors: FloatND,
+        codes: Codes,
         source: SourceStates,
         frames: Frames,
-    ) -> tuple[CurrentIIDDrawFrame, FloatND]:
+        draws: tuple[FloatND, ...] | None = None,
+    ) -> tuple[CurrentIIDDrawFrame, FloatND, Codes]:
+        """Cross the primary rows with every observation row, or with `draws`.
+
+        `draws` holds one uniform per primary row for each observation axis;
+        each row then meets the one observation row its uniforms select. Each
+        row names its primary row's nodes and the observed node it meets.
+        """
         key = next(
             name for name, candidate in self.definitions.items() if candidate is node
         )
         extents = (factors.shape[1], *node.observation_counts)
 
-        def point(flat: IntND) -> tuple[CurrentIIDDrawFrame, FloatND]:
-            rows = jnp.unravel_index(flat, extents)
+        def point(flat: IntND) -> tuple[CurrentIIDDrawFrame, FloatND, Codes]:
+            rows = (
+                jnp.unravel_index(flat, extents)
+                if draws is None
+                else (flat, *(draw[flat] for draw in draws))
+            )
             frame = _row(frame=primary, row=rows[0])
             terms = [factors[:, rows[0]]]
+            named = {group: code[rows[0]] for group, code in codes.items()}
             for axis, (group, producer) in enumerate(
                 node.observation_sources.items(), start=1
             ):
                 target = self.definitions[producer]
                 fixed = self.information_arguments[producer]
-                chosen, weights = self._observer_row(
+                chosen, weights, named[group] = self._observer_row(
                     observer=node,
                     target=target,
                     group=group,
@@ -1018,16 +1889,18 @@ class InformationQueryCell:
                     },
                 )
                 terms.append(weights)
-            return frame, jnp.concatenate(terms)
+            return frame, jnp.concatenate(terms), named
 
         from _lcm.policy_queries import map_lanes  # noqa: PLC0415
 
-        frame, weights = map_lanes(
+        frame, weights, named = map_lanes(
             function=point,
-            operands=jnp.arange(math.prod(extents), dtype=jnp.int32),
+            operands=jnp.arange(
+                math.prod(extents) if draws is None else extents[0], dtype=jnp.int32
+            ),
             batch_size=self.row_batch,
         )
-        return frame, weights.T
+        return frame, weights.T, named
 
     def _observer_row(
         self,
@@ -1036,15 +1909,21 @@ class InformationQueryCell:
         target: QueryNode,
         group: ShockGroupName,
         fixed: QueryArguments,
-        row: IntND,
+        row: IntND | FloatND,
         observed: frozenset[str],
         source: SourceStates,
         frames: Frames,
-    ) -> tuple[CurrentIIDDrawFrame, FloatND]:
-        """An unavailable observation yields the neutral representative.
+    ) -> tuple[CurrentIIDDrawFrame, FloatND, IntND]:
+        """The observed group's node at `row`: its frame, weights and node index.
 
-        Its settlement and law run only on a discarded batch lane, reading the
-        producer's stand-in state rather than an unusable projection.
+        An unavailable observation yields the neutral representative, which
+        names node zero. Its settlement and law run only on a discarded batch
+        lane, reading the producer's stand-in state rather than an unusable
+        projection.
+
+        A floating `row` is a uniform: the group's node is drawn with it, and
+        the weights gain the factor that scales the node's mass to the group
+        total.
         """
         from _lcm.current_iid import (  # noqa: PLC0415
             law_informativeness,
@@ -1069,6 +1948,7 @@ class InformationQueryCell:
             },
         }
 
+        drawn = jnp.issubdtype(row.dtype, jnp.floating)
         active = _observation_available(
             node=observer,
             group=group,
@@ -1077,7 +1957,7 @@ class InformationQueryCell:
             available=available,
         )
 
-        def produce() -> tuple[CurrentIIDDrawFrame, FloatND]:
+        def produce() -> tuple[CurrentIIDDrawFrame, FloatND, IntND]:
             mapped = _observation_inputs(
                 node=observer,
                 group=group,
@@ -1120,19 +2000,28 @@ class InformationQueryCell:
             identity = binding.group._has_identity_correlation(  # noqa: SLF001 - shared exact represented-matrix proof
                 params=params
             )
+            if drawn:
+                at, scale = _draw(weights=weights, uniform=row)
+                chosen_weights = jnp.concatenate([weights[:, at], scale[None]])
+            else:
+                at, chosen_weights = row, weights[:, row]
             chosen = _row(
                 frame=_batch_metadata(frame=produced, size=nodes.weights.size),
-                row=row,
+                row=at,
             )
-            return chosen._replace(
-                valid=chosen.valid & (identity | jnp.all(mask) | ~jnp.any(mask)),
-                information_available={
-                    name: jnp.asarray(a=True) for name in chosen.physical
-                },
-            ), weights[:, row]
+            return (
+                chosen._replace(
+                    valid=chosen.valid & (identity | jnp.all(mask) | ~jnp.any(mask)),
+                    information_available={
+                        name: jnp.asarray(a=True) for name in chosen.physical
+                    },
+                ),
+                chosen_weights,
+                jnp.asarray(at, jnp.int32),
+            )
 
         def prototype_fields() -> tuple[tuple[PytreeValue, ...], FloatND]:
-            frame, weights = produce()
+            frame, weights, _ = produce()
             return tuple(frame), weights
 
         prototype = jax.eval_shape(prototype_fields)
@@ -1145,13 +2034,17 @@ class InformationQueryCell:
         )
         # Inactive support is a single numerical no-information representative;
         # it does not consult an unsafe target law to obtain a probability mass.
+        # Every drawn row is its own sample of that representative.
         neutral_weights = (
             jnp.ones_like(neutral_weights)
+            if drawn
+            else jnp.ones_like(neutral_weights)
             .at[0]
             .set((row == 0).astype(neutral_weights.dtype))
         )
         neutral = vary_carry_like_body(
-            body=lambda _carry: produce(), carry=(neutral_frame, neutral_weights)
+            body=lambda _carry: produce(),
+            carry=(neutral_frame, neutral_weights, jnp.zeros((), jnp.int32)),
         )
         return jax.lax.cond(active, produce, lambda: neutral)
 
@@ -1160,6 +2053,7 @@ class InformationQueryCell:
         *,
         position: int,
         frames: Frames,
+        codes: FrameCodes,
         indices: tuple[IntND, ...],
         live: BoolND,
         source: SourceStates,
@@ -1168,6 +2062,7 @@ class InformationQueryCell:
         if position == len(self.node.ancestors):
             return self._own(
                 frames=frames,
+                codes=codes,
                 indices=indices,
                 live=live,
                 source=source,
@@ -1182,31 +2077,40 @@ class InformationQueryCell:
         )
 
         def admitted() -> PolicyAnswer:
-            frame, factors = self._realise(
+            frame, factors, named = self._realise(
                 node=node, fixed=fixed, source=source, frames=frames, guard=guard
             )
             if not _has_local_information(node=node, period=node.read.period):
                 return self._ancestors(
                     position=position + 1,
                     frames={**frames, name: frame},
+                    codes={**codes, name: named},
                     indices=indices,
                     live=live,
                     source=source,
                     dependencies=dependencies,
                 )
 
-            # keyword-only-exempt: library-callback=_map_support
-            def point(row: IntND, at: IntND) -> PolicyAnswer:
+            # keyword-only-exempt: library-callback=_map_ancestor
+            def point(
+                row: IntND,
+                at: IntND,
+                hold: Callable[[CurrentIIDDrawFrame], CurrentIIDDrawFrame],
+            ) -> PolicyAnswer:
                 return self._ancestors(
                     position=position + 1,
-                    frames={**frames, name: _row(frame=frame, row=row)},
+                    frames={**frames, name: hold(_row(frame=frame, row=row))},
+                    codes={
+                        **codes,
+                        name: {group: code[row] for group, code in named.items()},
+                    },
                     indices=(*indices, at),
                     live=live,
                     source=source,
                     dependencies=dependencies,
                 )
 
-            answers = self._map_support(point=point, name=name, node=node, spread=False)
+            answers = self._map_ancestor(point=point, frame=frame, name=name, node=node)
             present = jnp.all(~is_represented_zero(factors), axis=0)
             pinned = self._pinned(name=name)
             # A representative's landings count once per present row it stands
@@ -1248,14 +2152,15 @@ class InformationQueryCell:
         from _lcm.policy_queries import _query_landing_checks  # noqa: PLC0415
 
         members = self.node.value_shape
+        kept = self._kept_shape()
         return (
-            jnp.full((*dimensions, *members), -jnp.inf),
+            jnp.full((*dimensions, *kept, *members), -jnp.inf),
             jnp.full(
                 (*dimensions, self._size(name=self.name, node=self.node)),
                 -1,
                 jnp.int32,
             ),
-            jnp.zeros(dimensions, jnp.bool_),
+            jnp.zeros((*dimensions, *kept), jnp.bool_),
             jnp.ones(dimensions, jnp.bool_),
             jnp.zeros(
                 (*dimensions, len(_query_landing_checks(node=self.node))), jnp.int32
@@ -1334,34 +2239,73 @@ class InformationQueryCell:
         self,
         *,
         frames: Frames,
+        codes: FrameCodes,
         indices: tuple[IntND, ...],
         live: BoolND,
         source: SourceStates,
         dependencies: Dependencies,
     ) -> PolicyAnswer:
+        """Price this query's own rows below the ancestor rows `frames` selects.
+
+        `codes` names, for each ancestor, the node of every group its selected
+        row realises. A stored outside read gathers its value from its table at
+        those nodes and realises no rows of its own.
+        """
         from _lcm.policy_queries import _PHYSICAL_CONTEXTS, _query_cell  # noqa: PLC0415
 
+        if self.outside is not None:
+            from _lcm.outside_values import read_outside_value  # noqa: PLC0415
+
+            answer = read_outside_value(
+                node=self.node,
+                table=self.outside,
+                live=live,
+                available={
+                    **self.projection_operands,
+                    **source,
+                    "period": self.fixed["period"],
+                    "age": self.fixed["age"],
+                    _PHYSICAL_CONTEXTS: {
+                        name: frame.physical for name, frame in frames.items()
+                    },
+                },
+                codes=codes,
+            )
+            return (
+                answer[0],
+                jnp.full((self._size(name=self.name, node=self.node),), -1, jnp.int32),
+                answer[2],
+                answer[3],
+                answer[4],
+            )
         guard = live & self._available(
             node=self.node, fixed=self.fixed, source=source, frames=frames
         )
 
         def admitted() -> PolicyAnswer:
-            frame, factors = self._realise(
+            frame, factors, _ = self._realise(
                 node=self.node,
                 fixed=self.fixed,
                 source=source,
                 frames=frames,
                 guard=guard,
             )
+            unavailable = None
+            if self.node.available_nodes is not None:
+                unavailable = self._collapse_unavailable(
+                    factors=factors, source=source, frames=frames, guard=guard
+                )
 
             stay = self._stay(frame=frame, frames=frames, live=live, source=source)
 
-            # keyword-only-exempt: library-callback=_map_support
-            def point(row: IntND, at: IntND) -> PolicyAnswer:
+            # keyword-only-exempt: library-callback=_map_own
+            def point(
+                shocks: Mapping[ShockName, FloatND | IntND], at: IntND
+            ) -> PolicyAnswer:
                 local = _has_local_information(
                     node=self.node, period=self.node.read.period
                 )
-                physical = {} if not local else _row(frame=frame, row=row).physical
+                physical = shocks if local else {}
                 projected = {
                     name: (
                         answer[0][index],
@@ -1399,23 +2343,43 @@ class InformationQueryCell:
                     else jax.tree.map(lambda leaf: leaf[stay[1][at]], stay[0]),
                 )
 
-            answers = self._map_support(
-                point=point, name=self.name, node=self.node, spread=True
+            answers = self._map_own(point=point, frame=frame)
+            if self.kept:
+                return self._kept_answer(answers=answers, factors=factors, frame=frame)
+            pinned = self._pinned(name=self.name)
+            columns = (
+                None
+                if pinned is None
+                else representative_columns(
+                    name=self.name, definitions=self.definitions
+                )
             )
+            if pinned is not None and columns is None:
+                answers = jax.tree.map(lambda leaf: leaf[pinned[1]], answers)
             values, actions, support, valid, landings = answers
-            expanded = jnp.broadcast_to(
-                factors.reshape((*factors.shape, *((1,) * (values.ndim - 1)))),
-                (factors.shape[0], *values.shape),
-            )
-            present = jnp.all(~is_represented_zero(factors), axis=0)
+            if pinned is None or columns is None:
+                copies = jnp.all(~is_represented_zero(factors), axis=0).astype(
+                    jnp.int32
+                )
+            else:
+                factors, copies = representative_factors(
+                    factors=factors, columns=columns, representatives=pinned[0]
+                )
+                actions = actions[pinned[1]]
+            per_row = factors.reshape((*factors.shape, *((1,) * (values.ndim - 1))))
+            terms = factored_weighted_term(factors=per_row, values=values)
+            if unavailable is not None:
+                terms, copies = _with_unavailable_nodes(
+                    terms=terms, copies=copies, values=values, unavailable=unavailable
+                )
             return (
-                jnp.sum(
-                    factored_weighted_term(factors=expanded, values=values), axis=0
-                ),
+                jnp.sum(terms, axis=0),
                 actions,
-                jnp.all(~present | support),
+                jnp.all((copies == 0) | support),
                 jnp.all(frame.valid) & jnp.all(valid),
-                sum_counts(counts=jnp.where(present[:, None], landings, 0), axis=0),
+                sum_counts(
+                    counts=_scaled_counts(counts=landings, copies=copies), axis=0
+                ),
             )
 
         absent = vary_carry_like_body(
@@ -1423,6 +2387,118 @@ class InformationQueryCell:
             carry=self._absent(position=len(self.node.ancestors)),
         )
         return jax.lax.cond(guard, admitted, lambda: absent)
+
+    def _kept_shape(self) -> tuple[int, ...]:
+        """The node count of each kept group, in plan order."""
+        if not self.kept:
+            return ()
+        bindings = cast("CurrentIIDPlan", _plan(node=self.node)).bindings
+        return tuple(int(bindings[column][2].weights.size) for column in self.kept)
+
+    def _kept_answer(
+        self, *, answers: PolicyAnswer, factors: FloatND, frame: CurrentIIDDrawFrame
+    ) -> PolicyAnswer:
+        """Integrate each node of the kept groups over the rows realising it.
+
+        The rows of one kept node cross every node of the other groups, in row
+        order. Their weighted terms take the other groups' factors at each row and
+        each kept group's mass once, as a pinned group's representatives do. Every
+        row's landings count once.
+
+        Integrity is per kept node: a node any of whose rows fails its check, and
+        every node when the frame's law fails, is NaN. The integrity flag stays true,
+        as a scalar like the absent branch's.
+        """
+        plan = cast("CurrentIIDPlan", _plan(node=self.node))
+        values, actions, support, valid, landings = answers
+        rows = _kept_rows(plan=plan, kept=self.kept)
+        weights, copies = representative_factors(
+            factors=factors,
+            columns=_factor_layout(plan=plan, pinned=self.kept),
+            representatives=jnp.asarray(rows.ravel(), jnp.int32),
+        )
+        at = jnp.asarray(rows, jnp.int32)
+        terms = factored_weighted_term(
+            factors=weights.reshape(
+                (weights.shape[0], *rows.shape, *((1,) * (values.ndim - 1)))
+            ),
+            values=values[at],
+        )
+        shape = self._kept_shape()
+        integrity = jnp.all((frame.valid & valid)[at], axis=1).reshape(
+            (*shape, *((1,) * (values.ndim - 1)))
+        )
+        present = jnp.all(~is_represented_zero(factors), axis=0).astype(jnp.int32)
+        return (
+            jnp.where(
+                integrity,
+                jnp.sum(terms, axis=1).reshape((*shape, *values.shape[1:])),
+                jnp.nan,
+            ),
+            actions,
+            jnp.all((copies.reshape(rows.shape) == 0) | support[at], axis=1).reshape(
+                shape
+            ),
+            jnp.asarray(a=True),
+            sum_counts(counts=_scaled_counts(counts=landings, copies=present), axis=0),
+        )
+
+
+def _kept_rows(*, plan: CurrentIIDPlan, kept: tuple[int, ...]) -> np.ndarray:
+    """The plan rows realising each node of the kept groups, one line per node.
+
+    Lines follow the kept groups' nodes in plan order, the last varying fastest;
+    each line lists its rows in row order. The rows are the plan's full product, so
+    every node is realised by equally many rows.
+    """
+    indices = np.asarray(plan.indices)
+    sizes = tuple(int(plan.bindings[column][2].weights.size) for column in kept)
+    codes = np.ravel_multi_index(tuple(indices[:, list(kept)].T), sizes)
+    return np.argsort(codes, kind="stable").reshape(math.prod(sizes), -1)
+
+
+def _with_unavailable_nodes(
+    *,
+    terms: FloatND,
+    copies: IntND,
+    values: FloatND,
+    unavailable: tuple[FloatND, np.ndarray],
+) -> tuple[FloatND, IntND]:
+    """Each standing row's weighted term and copies, summed over the unavailable
+    nodes it stands for (`InformationQueryCell._collapse_unavailable`).
+
+    Each node's term is the full enumeration's term of its row, so the row's
+    value meets each node's factors as they are, and the row counts once per
+    node present. The weighting sees one row per standing row and node.
+    """
+    stack, rows = unavailable
+    nodes = stack.shape[2]
+    per_node = stack.reshape((stack.shape[0], -1, *((1,) * (values.ndim - 1))))
+    weighted = factored_weighted_term(
+        factors=per_node, values=jnp.repeat(values[rows], nodes, axis=0)
+    )
+    present = jnp.all(~is_represented_zero(stack), axis=0)
+    return (
+        terms.at[rows].set(
+            jnp.sum(weighted.reshape((rows.size, nodes, *values.shape[1:])), axis=1)
+        ),
+        copies.at[rows].set(sum_counts(counts=present, axis=1)),
+    )
+
+
+def _standing_rows(*, node: QueryNode) -> np.ndarray:
+    """Whether each plan row of a query realises the node standing for the nodes
+    where its exit is unavailable (`QueryNode.available_nodes`)."""
+    column, available = cast("tuple[int, tuple[bool, ...]]", node.available_nodes)
+    plan = cast("CurrentIIDPlan", _plan(node=node))
+    return ~np.asarray(available)[np.asarray(plan.indices)[:, column]]
+
+
+def _plan_codes(*, plan: CurrentIIDPlan, indices: IntND) -> Codes:
+    """Each plan group's node at every row of `indices`, one column per group."""
+    return {
+        group: indices[:, column] for column, (group, _, _) in enumerate(plan.bindings)
+    }
 
 
 def _scaled_counts(*, counts: IntND, copies: IntND) -> IntND:

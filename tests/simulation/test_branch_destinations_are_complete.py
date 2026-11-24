@@ -11,6 +11,8 @@ different roles: the miniature below sends the wife's closed branch into a
 declares — and the husband's into a singleton, where he occupies none.
 """
 
+from types import MappingProxyType
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -21,14 +23,15 @@ from lcm import (
     CollectiveUtility,
     Gate,
     IrregSpacedGrid,
+    MemberRoute,
     Model,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
 )
+from lcm.result import SimulationResult
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 
@@ -74,16 +77,16 @@ def _make_model() -> Model:
         "household_next": Gate(
             predicate=_prosperous_enough,
             routes={
-                "f": StakeholderRoute(
-                    target_stakeholder="f",
+                "f": MemberRoute(
+                    target_member="f",
                     fallback=ProjectedRegimeValue(
                         regime="care_pair",
-                        stakeholder="carer",
+                        member="carer",
                         projection={"wage": _identity_wage},
                     ),
                 ),
-                "m": StakeholderRoute(
-                    target_stakeholder="m",
+                "m": MemberRoute(
+                    target_member="m",
                     fallback=ProjectedRegimeValue(
                         regime="lodging",
                         projection={"wage": _identity_wage},
@@ -145,18 +148,18 @@ _PARAMS = {
 }
 
 
-def _simulate(*, wage: float):
+def _simulate(*, wage: float) -> tuple[SimulationResult, MappingProxyType[str, int]]:
     """Two rows — the wife and the husband of one household — at `wage`."""
     model = _make_model()
     solution = model.solve(params=_PARAMS, log_level="off")
-    roles = model.stakeholder_names_to_ids
+    roles = model.member_names_to_ids
     result = model.simulate(
         params=_PARAMS,
         initial_conditions={
             "wage": jnp.full(2, wage),
             "age": jnp.zeros(2),
             "regime_id": jnp.full(2, model.regime_names_to_ids["household"]),
-            "own_stakeholder": jnp.asarray([roles["f"], roles["m"]], dtype=jnp.int32),
+            "own_member": jnp.asarray([roles["f"], roles["m"]], dtype=jnp.int32),
         },
         solution=solution,
         log_level="off",
@@ -165,7 +168,7 @@ def _simulate(*, wage: float):
     return result, roles
 
 
-def test_the_role_vocabulary_spans_every_regimes_stakeholders() -> None:
+def test_the_role_vocabulary_spans_every_regimes_members() -> None:
     """One vocabulary covers `f`, `m`, `carer` and `ward` with distinct codes.
 
     Two collective regimes naming different roles have to remain
@@ -174,8 +177,8 @@ def test_the_role_vocabulary_spans_every_regimes_stakeholders() -> None:
     """
     model = _make_model()
 
-    assert set(model.stakeholder_names_to_ids) == {"f", "m", "carer", "ward"}
-    assert len(set(model.stakeholder_names_to_ids.values())) == 4
+    assert set(model.member_names_to_ids) == {"f", "m", "carer", "ward"}
+    assert len(set(model.member_names_to_ids.values())) == 4
 
 
 def test_a_closed_branch_leaves_each_row_in_its_own_legs_regime() -> None:
@@ -191,17 +194,17 @@ def test_a_closed_branch_leaves_each_row_in_its_own_legs_regime() -> None:
 
 
 def test_a_closed_branch_gives_a_row_its_destinations_own_role() -> None:
-    """She becomes the `carer`, and he becomes nobody's stakeholder.
+    """She becomes the `carer`, and he becomes nobody's member.
 
     Her closed destination is collective under a vocabulary neither the source
     nor the open target uses, so the role she carries afterwards can come only
-    from the leg's own `fallback.stakeholder`. His is a singleton, so the role
+    from the leg's own `fallback.member`. His is a singleton, so the role
     he carries is the no-role sentinel rather than the `m` he arrived with.
     """
     result, roles = _simulate(wage=1.0)
 
-    assert int(result.raw_results["care_pair"][1].own_stakeholder[0]) == roles["carer"]
-    assert int(result.raw_results["lodging"][1].own_stakeholder[1]) == NO_ROLE
+    assert int(result.raw_results["care_pair"][1].own_member[0]) == roles["carer"]
+    assert int(result.raw_results["lodging"][1].own_member[1]) == NO_ROLE
 
 
 def test_an_open_branch_gives_a_row_the_targets_own_role() -> None:
@@ -212,6 +215,6 @@ def test_an_open_branch_gives_a_row_the_targets_own_role() -> None:
         np.asarray(result.raw_results["household_next"][1].in_regime), [True, True]
     )
     np.testing.assert_array_equal(
-        np.asarray(result.raw_results["household_next"][1].own_stakeholder),
+        np.asarray(result.raw_results["household_next"][1].own_member),
         [roles["f"], roles["m"]],
     )

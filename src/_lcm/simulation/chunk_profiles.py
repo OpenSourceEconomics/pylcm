@@ -82,11 +82,6 @@ from _lcm.simulation.membership import (
     _empty_subject_membership,
 )
 from _lcm.simulation.operand_placement import subject_operand_sharding
-from _lcm.simulation.participation_routing import record_participation_entries
-from _lcm.simulation.participation_values import (
-    is_participation_surface,
-    stored_participation_surface,
-)
 from _lcm.simulation.program_arguments import gate_route_arguments
 from _lcm.simulation.programs import forward_regimes_by_period
 from _lcm.simulation.random import (
@@ -123,7 +118,6 @@ from _lcm.transition_checks import (
 )
 from _lcm.typing import (
     FlatParams,
-    PeriodToRegimeToParticipationSurfaces,
     RegimeName,
     RegimeNamesToIds,
     ShapeDtypePytree,
@@ -139,7 +133,7 @@ type _FiniteRankOutput = tuple[
 ]
 
 # Output descriptors of a gate route: the per-regime state delta, the routed regime
-# ids and the routed stakeholder roles.
+# ids and the routed member roles.
 type _GateRouteOutput = tuple[
     Mapping[str, ShapeDtypePytree], jax.ShapeDtypeStruct, jax.ShapeDtypeStruct
 ]
@@ -166,9 +160,6 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     log_level: LogLevel,
     runtime_checks: bool = True,
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
-    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType(
-        {}
-    ),
     max_compilation_workers: int | None = None,
     group_sizes: tuple[int, ...] | None = None,
     current_iid_override_schema: CurrentIIDOverrideSchema = (),
@@ -222,7 +213,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
             (n_subjects, *array.shape[1:]), array.dtype, sharding=subject
         )
         for name, array in initial_conditions.items()
-        if name not in {"regime_id", "own_stakeholder"}
+        if name not in {"regime_id", "own_member"}
     }
     # These full-population products outlive every chunk. Setup's compiler peak
     # still includes its temporary age-validity summaries.
@@ -304,9 +295,9 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
             function=_empty_subject_membership,
             arguments={
                 "initial_regime_ids": subject_int,
-                "initial_own_stakeholder": subject_int,
+                "initial_own_member": subject_int,
             },
-            subject_arg_names=("initial_regime_ids", "initial_own_stakeholder"),
+            subject_arg_names=("initial_regime_ids", "initial_own_member"),
             subject_outputs=True,
         ),
     )
@@ -333,16 +324,16 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     "period": scalar_int,
                     "starting_periods": subject_int,
                     "initial_regime_ids": subject_int,
-                    "initial_own_stakeholder": subject_int,
+                    "initial_own_member": subject_int,
                     "regime_ids": regime_ids,
-                    "own_stakeholder": own_roles,
+                    "own_member": own_roles,
                 },
                 subject_arg_names=(
                     "starting_periods",
                     "initial_regime_ids",
-                    "initial_own_stakeholder",
+                    "initial_own_member",
                     "regime_ids",
-                    "own_stakeholder",
+                    "own_member",
                 ),
                 subject_outputs=True,
             ),
@@ -360,12 +351,9 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
             states=carrier,
             regime_ids=regime_ids,
             roles=own_roles,
-            entered_through=regime_ids,
-            source_roles=own_roles,
             regime_names_to_ids=regime_names_to_ids,
             flat_params=flat_params,
             values=values,
-            surfaces=participation_surfaces,
             ages=ages,
             key=key,
             taste_key=taste_key,
@@ -627,7 +615,6 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 regimes=forward_regimes[period],
                 values=values,
                 policies=policies,
-                participation_surfaces=participation_surfaces,
                 period=period,
                 devices=devices,
             ),
@@ -825,7 +812,6 @@ def _profile_next_subjects(
                 },
                 subject_arg_names=("codes", "subjects", "new_regime_ids"),
             )
-    drawn_arrival_ids = new_ids
     carrier = cast("Mapping[str, Mapping[str, jax.ShapeDtypeStruct]]", advanced)
     if period in regime.simulation.programs.gate_route:
         shared = simulation_value_sharding(
@@ -859,8 +845,8 @@ def _profile_next_subjects(
                 new_subject_regime_ids=new_ids,
                 subjects_in_regime=mask,
                 flat_params=abstract_tree(tree=flat_params, sharding=shared),
-                own_stakeholder=own_roles,
-                new_own_stakeholder=own_roles,
+                own_member=own_roles,
+                new_own_member=own_roles,
                 fold_age=age,
             ),
             period=period,
@@ -907,30 +893,6 @@ def _profile_next_subjects(
                     int(regime_names_to_ids[target]) for target in route_delta
                 ),
             },
-            subject_outputs=True,
-        )
-    participation_targets = tuple(
-        target
-        for target in names
-        if period + 1 in regimes[target].simulation.exit_queries
-        and name in regimes[target].simulation.exit_queries[period + 1].participation
-    )
-    if participation_targets:
-        inventory.operation(
-            function=record_participation_entries,
-            arguments={
-                "drawn_ids": drawn_arrival_ids,
-                "routed_ids": new_ids,
-                "holders": mask,
-                "entries": new_ids,
-            },
-            static_arguments={
-                "source_id": int(regime_names_to_ids[name]),
-                "target_ids": tuple(
-                    int(regime_names_to_ids[target]) for target in participation_targets
-                ),
-            },
-            subject_arg_names=("drawn_ids", "routed_ids", "holders", "entries"),
             subject_outputs=True,
         )
     carrier = _profile_clip_next_states(
@@ -1051,7 +1013,7 @@ def _profile_population_roles(
     scalar_int: jax.ShapeDtypeStruct,
 ) -> jax.ShapeDtypeStruct:
     """Profile the existing supplied-role vocabulary and collective-role checks."""
-    if "own_stakeholder" not in initial_conditions:
+    if "own_member" not in initial_conditions:
         return cast(
             "jax.ShapeDtypeStruct",
             inventory.operation(
@@ -1061,7 +1023,7 @@ def _profile_population_roles(
                 subject_outputs=True,
             ),
         )
-    role_ids = next(iter(regimes.values())).stakeholder_names_to_ids
+    role_ids = next(iter(regimes.values())).member_names_to_ids
     roles, _ = cast(
         "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]",
         inventory.operation(
@@ -1074,14 +1036,14 @@ def _profile_population_roles(
         ),
     )
     for regime in regimes.values():
-        if regime.stakeholders is not None:
+        if regime.member_axis is not None:
             inventory.operation(
                 function=population_operations.role_mismatch,
                 arguments={
                     "roles": roles,
                     "regime_ids": full_int,
                     "regime_id": scalar_int,
-                    "role_ids": tuple(scalar_int for _ in regime.stakeholders),
+                    "role_ids": tuple(scalar_int for _ in regime.member_axis),
                 },
                 subject_arg_names=("roles", "regime_ids"),
             )
@@ -1116,7 +1078,9 @@ def _profile_outer_storage(  # noqa: C901, PLR0912
     """
     devices = inventory.runtime.subject_devices
     scalar = jax.ShapeDtypeStruct(
-        (), np.dtype(np.int32), sharding=jax.sharding.SingleDeviceSharding(devices[0])
+        (),
+        np.dtype(np.int32),
+        sharding=jax.sharding.make_single_device_sharding(devices[0]),
     )
     population_columns = {}
     padded_inputs: dict[jax.Device, int] = {}
@@ -1197,7 +1161,8 @@ def _profile_outer_storage(  # noqa: C901, PLR0912
                 local = cast(
                     "jax.ShapeDtypeStruct",
                     abstract_tree(
-                        tree=leaf, sharding=jax.sharding.SingleDeviceSharding(host)
+                        tree=leaf,
+                        sharding=jax.sharding.make_single_device_sharding(host),
                     ),
                 )
                 leaf = final_inventory.operation(
@@ -1215,7 +1180,9 @@ def _profile_outer_storage(  # noqa: C901, PLR0912
                         "rows": jax.ShapeDtypeStruct(
                             (original_population,),
                             np.dtype(np.int32),
-                            sharding=jax.sharding.SingleDeviceSharding(executing[0]),
+                            sharding=jax.sharding.make_single_device_sharding(
+                                executing[0]
+                            ),
                         ),
                     },
                     subject_arg_names=("array",),
@@ -1380,9 +1347,6 @@ def _period_copy_reservation(
     period: int,
     devices: tuple[jax.Device, ...],
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None = None,
-    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType(
-        {}
-    ),
 ) -> dict[jax.Device, int]:
     """Reserve declared nonaligned copies once per period/address/ordered layout."""
     policy_sources = _policy_read_sources(
@@ -1398,7 +1362,6 @@ def _period_copy_reservation(
             regime.simulation.programs.gate_route,
             regime.simulation.programs.exit_full,
             regime.simulation.programs.exit_participating,
-            *regime.simulation.programs.participation_families,
         )
         if period in family
         for read in family[period].requirements.value_reads
@@ -1417,7 +1380,6 @@ def _period_copy_reservation(
             read=read,
             values=values,
             policy_sources=policy_sources,
-            participation_surfaces=participation_surfaces,
         )
         required = simulation_value_sharding(
             stored_sharding=source.sharding, devices=devices
@@ -1517,21 +1479,11 @@ def _retained_read_source(
     read: ValueRead,
     values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
     policy_sources: Mapping[ValueArtifactAddress, jax.Array | jax.ShapeDtypeStruct],
-    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType(
-        {}
-    ),
 ) -> jax.Array | jax.ShapeDtypeStruct:
     """Resolve only the declared value and finite-policy storage classes.
 
     A value kept off the device arrives as its shape on the device placement.
     """
-    if is_participation_surface(address=read.target):
-        return cast(
-            "jax.Array",
-            stored_participation_surface(
-                address=read.target, surfaces=participation_surfaces
-            ),
-        )
     if read.target.kind is ValueArtifactKind.REGIME_VALUE:
         return values[read.target.period][read.target.regime]
     if (

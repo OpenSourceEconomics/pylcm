@@ -139,9 +139,9 @@ def initial_conditions_from_dataframe(  # noqa: C901, PLR0912
 
     Returns:
         Immutable mapping of state names (plus `"regime_id"`, and
-        `"own_stakeholder"` where the frame carries it) to JAX arrays. The
+        `"own_member"` where the frame carries it) to JAX arrays. The
         `"regime_id"` entry contains integer codes derived from the
-        `"regime_name"` column via `regime_names_to_ids`; `"own_stakeholder"`
+        `"regime_name"` column via `regime_names_to_ids`; `"own_member"`
         carries role codes derived from that column's labels.
 
     Raises:
@@ -173,7 +173,7 @@ def initial_conditions_from_dataframe(  # noqa: C901, PLR0912
         raise ValueError(msg)
 
     state_columns = {
-        col for col in df.columns if col not in {"regime_name", "own_stakeholder"}
+        col for col in df.columns if col not in {"regime_name", "own_member"}
     }
     _validate_state_columns(
         state_columns=state_columns,
@@ -182,9 +182,7 @@ def initial_conditions_from_dataframe(  # noqa: C901, PLR0912
     )
 
     n_subjects = len(df)
-    state_cols = [
-        col for col in df.columns if col not in {"regime_name", "own_stakeholder"}
-    ]
+    state_cols = [col for col in df.columns if col not in {"regime_name", "own_member"}]
 
     # Pre-allocate result arrays (NaN default surfaces bugs for missing states)
     result_arrays: dict[str, np.ndarray] = {
@@ -261,7 +259,7 @@ def initial_conditions_from_dataframe(  # noqa: C901, PLR0912
             result_arrays[col][nan_mask] = MISSING_CAT_CODE
 
     initial_conditions: dict[
-        StateName | Literal["regime_id", "own_stakeholder"], Float1D | Int1D
+        StateName | Literal["regime_id", "own_member"], Float1D | Int1D
     ] = {
         col: _write_pandas_array(
             value=arr,
@@ -286,9 +284,9 @@ def initial_conditions_from_dataframe(  # noqa: C901, PLR0912
         name="initial_conditions.regime_id",
         array_writer=array_writer,
     )
-    if "own_stakeholder" in df.columns:
-        initial_conditions["own_stakeholder"] = _role_codes_from_labels(
-            labels=df["own_stakeholder"],
+    if "own_member" in df.columns:
+        initial_conditions["own_member"] = _role_codes_from_labels(
+            labels=df["own_member"],
             user_regimes=user_regimes,
             array_writer=array_writer,
         )
@@ -302,14 +300,14 @@ def _role_codes_from_labels(
     user_regimes: Mapping[RegimeName, UserRegime],
     array_writer: CanonicalArrayWriter | None = None,
 ) -> Int1D:
-    """Convert an `own_stakeholder` label column back to role codes.
+    """Convert an `own_member` label column back to role codes.
 
     A published frame names roles the way the model declares them and leaves
     the entry missing for a row occupying none, so the inverse reads a missing
     entry as the no-role sentinel rather than as a failed lookup.
 
     Args:
-        labels: The frame's `own_stakeholder` column, as labels.
+        labels: The frame's `own_member` column, as labels.
         user_regimes: Mapping of regime names to user-provided `Regime`
             instances, the source of the role vocabulary.
         array_writer: Optional owner admitting the role-code device upload.
@@ -318,18 +316,18 @@ def _role_codes_from_labels(
         One role code per row.
 
     Raises:
-        ValueError: A label names no stakeholder any regime declares.
+        ValueError: A label names no member any regime declares.
     """
     role_ids = build_role_vocabulary(
-        {name: regime.stakeholders for name, regime in user_regimes.items()}
+        {name: regime.member_axis for name, regime in user_regimes.items()}
     )
     text = labels.astype("string")
     named = text.notna()
     unknown = sorted(set(text[named]) - set(role_ids))
     if unknown:
         msg = (
-            f"Invalid stakeholder names in the 'own_stakeholder' column: "
-            f"{unknown}. Valid stakeholders: {sorted(role_ids)}."
+            f"Invalid member names in the 'own_member' column: "
+            f"{unknown}. Valid members: {sorted(role_ids)}."
         )
         raise ValueError(msg)
     codes = np.full(len(text), NO_ROLE, dtype=np.int32)
@@ -337,7 +335,7 @@ def _role_codes_from_labels(
     return _write_pandas_array(
         value=codes,
         dtype=np.dtype(np.int32),
-        name="initial_conditions.own_stakeholder",
+        name="initial_conditions.own_member",
         array_writer=array_writer,
     )
 
@@ -817,9 +815,7 @@ def _edge_param_periods(
                 for target, selector in declaration.targets.items()
             }
         )
-        is_gate = len(slot) > 1 and (
-            slot[0] in declaration.gates or slot[0] in declaration.participation
-        )
+        is_gate = len(slot) > 1 and slot[0] in declaration.gates
         for period in periods:
             if period >= ages.n_periods - 1:
                 continue

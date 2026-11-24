@@ -153,7 +153,7 @@ def _rebuilt(
 
 
 def _collective(**config: Unpack[_ExecutionOptions]) -> Model:
-    model, _ = collective_fixtures.make_two_stakeholder_model()
+    model, _ = collective_fixtures.make_two_member_model()
     return _rebuilt(
         model=model,
         regime_id_class=collective_fixtures.CoupleRegimeId,

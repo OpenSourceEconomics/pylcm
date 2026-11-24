@@ -82,8 +82,8 @@ short form an agent needs before editing.
     laws of motion). `Model.edges` accepts `Phased`, each phase with its own
     `Transition` laws; a `Transition` law may itself be `Phased` with matching forms.
     Ordinary per-target mappings may have different target sets. Each phase
-    supplies probabilities and handoffs for its own edges; gated value-dependent
-    targets retain shared gates, routes and references.
+    supplies probabilities and handoffs for its own edges; gated targets retain
+    shared gates and routes.
   - `states` accept `Phased(solve=callable, simulate=Grid)` — the carried state: derived
     (no grid axis) during backward induction, a genuine seeded-and-evolved state in
     simulation, with its law of motion in the regular `state_transitions` slot. All

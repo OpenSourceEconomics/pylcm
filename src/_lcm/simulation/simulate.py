@@ -63,8 +63,6 @@ from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.regime_building.Q_and_F import (
     EDGE_REF_PARAMS_ARG,
     EDGE_REF_V_ARG,
-    SAME_PERIOD_PARAMS_ARG,
-    SAME_PERIOD_V_ARG,
     _get_feasibility,
 )
 from _lcm.simulation import chunk_operations, population_operations
@@ -105,7 +103,7 @@ from _lcm.simulation.gated_routing import (
 )
 from _lcm.simulation.host_operations import _HeldObject
 from _lcm.simulation.initial_conditions import (
-    _initial_own_stakeholder,
+    _initial_own_member,
     build_initial_states,
     physical_state_at_row,
     trim_pad_from_raw_results,
@@ -120,7 +118,6 @@ from _lcm.simulation.memory import (
     run_simulation_producer,
 )
 from _lcm.simulation.operand_placement import place_simulation_arguments
-from _lcm.simulation.participation_routing import record_participation_entries
 from _lcm.simulation.period_inputs import (
     GATE_FOLD,
     GATE_ROUTE,
@@ -215,7 +212,6 @@ from _lcm.typing import (
     FlatParams,
     FlatRegimeParams,
     InitialConditions,
-    PeriodToRegimeToParticipationSurfaces,
     PeriodToRegimeToSimulationPolicy,
     PRNGKeyND,
     QAndFArg,
@@ -282,9 +278,6 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
     ages: TimeAxis,
     simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     period_to_regime_to_sim_policy: PeriodToRegimeToSimulationPolicy | None = None,
-    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType(
-        {}
-    ),
     period_to_regime_to_replay_reader: _PeriodToRegimeToReplayReader = (
         MappingProxyType({})
     ),
@@ -400,7 +393,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
         initial_states = {
             k: v
             for k, v in initial_conditions.items()
-            if k not in {"regime_id", "own_stakeholder"}
+            if k not in {"regime_id", "own_member"}
         }
 
         # Forward-simulate one subject chunk at a time. Subjects are independent across
@@ -522,7 +515,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
             )
             memory.close_unit()
 
-        initial_own_stakeholder = _initial_own_stakeholder(
+        initial_own_member = _initial_own_member(
             initial_conditions=initial_conditions,
             regimes=regimes,
             regime_names_to_ids=regime_names_to_ids,
@@ -538,7 +531,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                 footprints=(
                     memory.inputs,
                     measure_buffer_footprint(
-                        tree=(initial_own_stakeholder, starting_periods)
+                        tree=(initial_own_member, starting_periods)
                     ),
                 )
             )
@@ -592,7 +585,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
             None
             if prepared_chunks is None
             else measure_buffer_footprint(
-                tree=(initial_conditions, initial_own_stakeholder, starting_periods)
+                tree=(initial_conditions, initial_own_member, starting_periods)
             )
         )
     # With values kept off the device and several chunks, every chunk runs a
@@ -631,8 +624,8 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                                 window=window,
                                 memory=memory,
                             ),
-                            initial_own_stakeholder=_population_window(
-                                array=initial_own_stakeholder,
+                            initial_own_member=_population_window(
+                                array=initial_own_member,
                                 window=window,
                                 memory=memory,
                             ),
@@ -649,7 +642,6 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                             period_to_regime_to_sim_policy=(
                                 period_to_regime_to_sim_policy
                             ),
-                            participation_surfaces=participation_surfaces,
                             period_to_regime_to_replay_reader=(
                                 period_to_regime_to_replay_reader
                             ),
@@ -731,8 +723,8 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                             window=subject_slice,
                             memory=memory,
                         ),
-                        initial_own_stakeholder=_population_window(
-                            array=initial_own_stakeholder,
+                        initial_own_member=_population_window(
+                            array=initial_own_member,
                             window=subject_slice,
                             memory=memory,
                         ),
@@ -755,7 +747,6 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                         regime_ids_to_names=regime_ids_to_names,
                         period_to_regime_to_V_arr=values,
                         period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
-                        participation_surfaces=participation_surfaces,
                         period_to_regime_to_replay_reader=(
                             period_to_regime_to_replay_reader
                         ),
@@ -1045,7 +1036,7 @@ def _initialize_chunk_state(
     *,
     initial_states: dict[StateOrActionName, Float1D | IntND],
     initial_regime_ids: Int1D,
-    initial_own_stakeholder: Int1D,
+    initial_own_member: Int1D,
     regimes: MappingProxyType[RegimeName, Regime],
     device_ids: tuple[int, ...],
     seed: int | PRNGKey,
@@ -1061,12 +1052,12 @@ def _initialize_chunk_state(
     )
     if memory is not None:
         memory.hold(tree=(states, key))
-    regime_ids, own_stakeholder = initialize_subject_membership(
+    regime_ids, own_member = initialize_subject_membership(
         initial_regime_ids=initial_regime_ids,
-        initial_own_stakeholder=initial_own_stakeholder,
+        initial_own_member=initial_own_member,
         memory=memory,
     )
-    return states, regime_ids, own_stakeholder, key
+    return states, regime_ids, own_member, key
 
 
 class SubjectChunkKwargs(TypedDict):
@@ -1090,9 +1081,8 @@ class SubjectChunkKwargs(TypedDict):
     ages: TimeAxis
     seed: int | PRNGKey
     logger: logging.Logger
-    initial_own_stakeholder: Int1D
+    initial_own_member: Int1D
     period_to_regime_to_sim_policy: NotRequired[PeriodToRegimeToSimulationPolicy | None]
-    participation_surfaces: NotRequired[PeriodToRegimeToParticipationSurfaces]
     period_to_regime_to_replay_reader: NotRequired[_PeriodToRegimeToReplayReader]
     device_ids: NotRequired[tuple[int, ...]]
     memory: NotRequired[SimulationMemory | None]
@@ -1147,11 +1137,8 @@ def _subject_chunk_periods(  # noqa: PLR0915
     ages: TimeAxis,
     seed: int | PRNGKey,
     logger: logging.Logger,
-    initial_own_stakeholder: Int1D,
+    initial_own_member: Int1D,
     period_to_regime_to_sim_policy: PeriodToRegimeToSimulationPolicy | None = None,
-    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType(
-        {}
-    ),
     period_to_regime_to_replay_reader: _PeriodToRegimeToReplayReader = (
         MappingProxyType({})
     ),
@@ -1190,7 +1177,7 @@ def _subject_chunk_periods(  # noqa: PLR0915
     axis, `None` for every code.
     The key stream is re-derived from `seed` here so the per-period carry is
     identical across chunks (it is subject-count-independent).
-    `initial_own_stakeholder`: each subject's seeded role, already sliced to
+    `initial_own_member`: each subject's seeded role, already sliced to
     this chunk. It is carried through the period loop and updated wherever a
     gated edge routes a row, so a dissolution follows the row's own leg.
     `device_ids`: the model's device ids, ascending; empty names every device
@@ -1201,7 +1188,7 @@ def _subject_chunk_periods(  # noqa: PLR0915
     chunk_inputs = prepare_simulation_chunk_inputs(
         initial_states=initial_states,
         initial_regime_ids=initial_regime_ids,
-        initial_own_stakeholder=initial_own_stakeholder,
+        initial_own_member=initial_own_member,
         starting_periods=starting_periods,
         flat_params=flat_params,
         regimes=regimes,
@@ -1213,13 +1200,13 @@ def _subject_chunk_periods(  # noqa: PLR0915
     devices = chunk_inputs.devices
     flat_params = chunk_inputs.flat_params
     initial_regime_ids = chunk_inputs.initial_regime_ids
-    initial_own_stakeholder = chunk_inputs.initial_own_stakeholder
+    initial_own_member = chunk_inputs.initial_own_member
     starting_periods = chunk_inputs.starting_periods
     base_state_action_spaces = chunk_inputs.base_state_action_spaces
-    states, subject_regime_ids, own_stakeholder, key = _initialize_chunk_state(
+    states, subject_regime_ids, own_member, key = _initialize_chunk_state(
         initial_states=initial_states,
         initial_regime_ids=initial_regime_ids,
-        initial_own_stakeholder=initial_own_stakeholder,
+        initial_own_member=initial_own_member,
         regimes=regimes,
         device_ids=device_ids,
         seed=seed,
@@ -1229,7 +1216,7 @@ def _subject_chunk_periods(  # noqa: PLR0915
     taste_key = create_taste_shock_key(
         seed=taste_shock_seed if taste_addresses else None,
         memory=memory,
-        live_inputs=(states, subject_regime_ids, own_stakeholder, key),
+        live_inputs=(states, subject_regime_ids, own_member, key),
     )
 
     simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
@@ -1251,7 +1238,7 @@ def _subject_chunk_periods(  # noqa: PLR0915
             memory.unit_inputs = (
                 states,
                 subject_regime_ids,
-                own_stakeholder,
+                own_member,
                 key,
                 taste_key,
                 source_roles,
@@ -1272,18 +1259,18 @@ def _subject_chunk_periods(  # noqa: PLR0915
         if memory is not None:
             memory.hold(tree=age)
 
-        subject_regime_ids, own_stakeholder = activate_subject_membership(
+        subject_regime_ids, own_member = activate_subject_membership(
             period=period,
             starting_periods=starting_periods,
             initial_regime_ids=initial_regime_ids,
-            initial_own_stakeholder=initial_own_stakeholder,
+            initial_own_member=initial_own_member,
             regime_ids=subject_regime_ids,
-            own_stakeholder=own_stakeholder,
+            own_member=own_member,
             memory=memory,
         )
 
         new_subject_regime_ids = subject_regime_ids
-        new_own_stakeholder = own_stakeholder
+        new_own_member = own_member
         new_entered_through = run_simulation_operation(
             memory=memory,
             function=empty_gated_entries,
@@ -1329,37 +1316,31 @@ def _subject_chunk_periods(  # noqa: PLR0915
         if memory is not None:
             memory.period_owner = owner
 
-        states, subject_regime_ids, own_stakeholder, prepared_exits = (
-            prepare_exit_period(
-                regimes=regimes,
-                period=period,
-                states=states,
-                regime_ids=subject_regime_ids,
-                roles=own_stakeholder,
-                entered_through=entered_through,
-                source_roles=source_roles,
-                regime_names_to_ids=regime_names_to_ids,
-                flat_params=flat_params,
-                ages=ages,
-                values=period_to_regime_to_V_arr,
-                surfaces=participation_surfaces,
-                owner=owner,
-                key=key,
-                subject_slice=subject_slice,
-                original_n_subjects=n_subjects
-                if original_n_subjects is None
-                else original_n_subjects,
-                memory=memory,
-                taste_key=taste_key,
-                taste_addresses=taste_addresses,
-                current_iid_overrides=current_iid_overrides,
-                process_code_reads=process_code_reads,
-            )
+        states, subject_regime_ids, own_member, prepared_exits = prepare_exit_period(
+            regimes=regimes,
+            period=period,
+            states=states,
+            regime_ids=subject_regime_ids,
+            roles=own_member,
+            regime_names_to_ids=regime_names_to_ids,
+            flat_params=flat_params,
+            ages=ages,
+            values=period_to_regime_to_V_arr,
+            owner=owner,
+            key=key,
+            subject_slice=subject_slice,
+            original_n_subjects=n_subjects
+            if original_n_subjects is None
+            else original_n_subjects,
+            memory=memory,
+            taste_key=taste_key,
+            taste_addresses=taste_addresses,
+            current_iid_overrides=current_iid_overrides,
         )
         # Current exits are simultaneous. The scheduled transition accumulators
         # start from final acting membership, after every original choice froze.
         new_subject_regime_ids = subject_regime_ids
-        new_own_stakeholder = own_stakeholder
+        new_own_member = own_member
 
         ran_this_period: list[RegimeName] = []
         for regime_name, regime in active_regimes.items():
@@ -1370,8 +1351,8 @@ def _subject_chunk_periods(  # noqa: PLR0915
                     states,
                     subject_regime_ids,
                     new_subject_regime_ids,
-                    own_stakeholder,
-                    new_own_stakeholder,
+                    own_member,
+                    new_own_member,
                     key,
                     taste_key,
                     age,
@@ -1385,9 +1366,9 @@ def _subject_chunk_periods(  # noqa: PLR0915
                 result,
                 new_states,
                 new_subject_regime_ids,
-                new_own_stakeholder,
+                new_own_member,
                 subject_regime_ids,
-                own_stakeholder,
+                own_member,
                 entered_through,
                 new_entered_through,
             ) = _simulate_regime_in_period(
@@ -1451,8 +1432,8 @@ def _subject_chunk_periods(  # noqa: PLR0915
                 )
                 if shock_paths
                 else MappingProxyType({}),
-                own_stakeholder=own_stakeholder,
-                new_own_stakeholder=new_own_stakeholder,
+                own_member=own_member,
+                new_own_member=new_own_member,
                 gated_edge_fold_age=(
                     coordinate_at(ages=ages, period=period + 1)
                     if regime.gated_edges and period + 1 < ages.n_periods
@@ -1477,7 +1458,7 @@ def _subject_chunk_periods(  # noqa: PLR0915
                     result,
                     states,
                     new_subject_regime_ids,
-                    new_own_stakeholder,
+                    new_own_member,
                     key,
                 ),
             )
@@ -1499,8 +1480,8 @@ def _subject_chunk_periods(  # noqa: PLR0915
                 states,
                 subject_regime_ids,
                 new_subject_regime_ids,
-                own_stakeholder,
-                new_own_stakeholder,
+                own_member,
+                new_own_member,
                 key,
                 taste_key,
                 original_age,
@@ -1525,10 +1506,10 @@ def _subject_chunk_periods(  # noqa: PLR0915
         # The period's final membership, after dissolution routes moved rows
         # into the regime they acted in, is where each transition starts.
         prev_regime_ids = subject_regime_ids
-        source_roles = own_stakeholder
+        source_roles = own_member
         entered_through = new_entered_through
         subject_regime_ids = new_subject_regime_ids
-        own_stakeholder = new_own_stakeholder
+        own_member = new_own_member
 
         log_regime_transition_counts(
             logger=logger,
@@ -1557,7 +1538,7 @@ def _subject_chunk_periods(  # noqa: PLR0915
             (
                 states,
                 subject_regime_ids,
-                own_stakeholder,
+                own_member,
                 key,
                 taste_key,
                 source_roles,
@@ -1725,14 +1706,11 @@ def _referenced_value_kwargs(
 ) -> dict[ReferenceName, QAndFArg]:
     """Build the value mappings one regime's kernel reads beside its own grids.
 
-    Two channels, each empty for a regime that declares nothing on it, and each
-    carrying the referenced value together with the reference regime's OWN
-    params — the split the solve-side grid-search kernel makes, so both phases
-    read one operator:
-
-    - a value constraint's same-period reference, at THIS period's value;
-    - a gated edge's leg fallbacks, read where the row
-      lands and therefore at the value of the period it lands IN.
+    One channel, empty for a regime that declares no gated edge: a gated edge's
+    leg fallbacks, read where the row lands and therefore at the value of the
+    period it lands IN. It carries the referenced value together with the
+    reference regime's OWN params — the split the solve-side grid-search kernel
+    makes, so both phases read one operator.
 
     Args:
         regime: The canonical regime being simulated.
@@ -1745,17 +1723,6 @@ def _referenced_value_kwargs(
 
     """
     kwargs: dict[ReferenceName, QAndFArg] = {}
-    if regime.same_period_ref_regimes:
-        this_period_V = period_to_regime_to_V_arr.get(period, MappingProxyType({}))
-        kwargs[SAME_PERIOD_V_ARG] = MappingProxyType(
-            {ref: this_period_V[ref] for ref in regime.same_period_ref_regimes}
-        )
-        kwargs[SAME_PERIOD_PARAMS_ARG] = MappingProxyType(
-            {
-                ref: regime_kernel_params(flat_params, regime_name=ref)
-                for ref in regime.same_period_ref_regimes
-            }
-        )
     # The same per-period set the AOT lowering consults, so a compiled
     # program's pytree and this call's arguments name the same channels — and
     # only the regimes this period's edges land in, since an edge whose target
@@ -2012,7 +1979,7 @@ def _validate_simulated_value(
             return
         # Out-of-regime subjects carry placeholder entries (their state is
         # meaningless under this regime's problem). A collective value carries a
-        # trailing stakeholder axis, so broadcast the ownership mask over it.
+        # trailing member axis, so broadcast the ownership mask over it.
         in_regime_mask = subject_ids_in_regime.reshape(
             subject_ids_in_regime.shape
             + (1,) * (value.ndim - subject_ids_in_regime.ndim)
@@ -2055,8 +2022,8 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     n_subjects: int,
     subject_slice: slice | SubjectRows,
     original_n_subjects: int | None = None,
-    own_stakeholder: Int1D,
-    new_own_stakeholder: Int1D,
+    own_member: Int1D,
+    new_own_member: Int1D,
     gated_edge_fold_age: AgeValue | None = None,
     sim_policy: (
         EGMSimPolicy | NBEGMGridPolicy | NNBEGMSimPolicy | NestedEGMSimPolicy | None
@@ -2125,10 +2092,10 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             key generation independent of how subjects are chunked.
         subject_slice: Global-index slice, or original rows, of the subjects in
             this chunk.
-        own_stakeholder: The role each subject occupies this period, as a code
+        own_member: The role each subject occupies this period, as a code
             in the model's role vocabulary. Decides which leg of a gated edge
             a row follows, and is published beside the states.
-        new_own_stakeholder: Array to populate with next period's roles, in the
+        new_own_member: Array to populate with next period's roles, in the
             same accumulate-across-regimes manner as
             `new_subject_regime_ids`.
         gated_edge_fold_age: Age corresponding to `period + 1`; threaded to
@@ -2165,7 +2132,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         - PeriodRegimeSimulationData for this regime-period
         - Updated state carrier
         - Updated new_subject_regime_ids array
-        - Updated new_own_stakeholder array
+        - Updated new_own_member array
         - Current regime membership, after any dissolution route
         - Current roles, after any dissolution route
         - Current open-branch entries, with every route taken here used up
@@ -2592,9 +2559,9 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 (
                     states,
                     subject_regime_ids,
-                    own_stakeholder,
+                    own_member,
                     new_subject_regime_ids,
-                    new_own_stakeholder,
+                    new_own_member,
                     entered_through,
                     subject_ids_in_regime,
                     empty_row,
@@ -2612,9 +2579,9 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                     states=states,
                     canonical_states=state_action_space.states,
                     subject_regime_ids=subject_regime_ids,
-                    own_stakeholder=own_stakeholder,
+                    own_member=own_member,
                     new_subject_regime_ids=new_subject_regime_ids,
-                    new_own_stakeholder=new_own_stakeholder,
+                    new_own_member=new_own_member,
                     regime_names_to_ids=regime_names_to_ids,
                     flat_params=flat_params,
                     period=period,
@@ -2737,7 +2704,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         actions=optimal_actions,
         states=states[regime_name],
         in_regime=subject_ids_in_regime,
-        own_stakeholder=own_stakeholder,
+        own_member=own_member,
         nested_policy_fallback=nested_policy_fallback,
     )
 
@@ -2820,7 +2787,6 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         # states replace it.
         if node_axis_inputs is None:
             new_subject_regime_ids = draw_next_regimes()
-        drawn_arrival_ids = new_subject_regime_ids
         # A subject's raw codes are checked against the regime it was drawn to
         # before a gate can read a value at them or reroute the subject.
         if validation_enabled(logger):
@@ -2877,7 +2843,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 name=regime_name,
                 values=period_to_regime_to_V_arr,
             )
-            route_delta, new_subject_regime_ids, new_own_stakeholder = cast(
+            route_delta, new_subject_regime_ids, new_own_member = cast(
                 "tuple[Mapping[RegimeName, GatedRouteDelta], Int1D, Int1D]",
                 execute_simulation_program(
                     programs=regime.simulation.programs,
@@ -2891,8 +2857,8 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                         new_subject_regime_ids=new_subject_regime_ids,
                         subjects_in_regime=subject_ids_in_regime,
                         flat_params=flat_params,
-                        own_stakeholder=own_stakeholder,
-                        new_own_stakeholder=new_own_stakeholder,
+                        own_member=own_member,
+                        new_own_member=new_own_member,
                         fold_age=jnp.asarray(
                             0.0 if gated_edge_fold_age is None else gated_edge_fold_age
                         ),
@@ -2931,33 +2897,6 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                     },
                     subject_outputs=True,
                 )
-        participation_targets = tuple(
-            target
-            for target in realization_targets_next_period
-            if period + 1 in regimes[target].simulation.exit_queries
-            and regime_name
-            in regimes[target].simulation.exit_queries[period + 1].participation
-        )
-        if participation_targets and new_entered_through is not None:
-            new_entered_through = run_simulation_operation(
-                memory=memory,
-                function=record_participation_entries,
-                arguments={
-                    "drawn_ids": drawn_arrival_ids,
-                    "routed_ids": new_subject_regime_ids,
-                    "holders": subject_ids_in_regime,
-                    "entries": new_entered_through,
-                },
-                static_arguments={
-                    "source_id": int(regime_names_to_ids[regime_name]),
-                    "target_ids": tuple(
-                        int(regime_names_to_ids[target])
-                        for target in participation_targets
-                    ),
-                },
-                subject_arg_names=("drawn_ids", "routed_ids", "holders", "entries"),
-                subject_outputs=True,
-            )
         states = clip_next_states(
             states=next_states,
             regimes=regimes,
@@ -2993,9 +2932,9 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         simulation_result,
         states,
         new_subject_regime_ids,
-        new_own_stakeholder,
+        new_own_member,
         subject_regime_ids,
-        own_stakeholder,
+        own_member,
         entered_through,
         new_entered_through,
     )
@@ -3015,9 +2954,9 @@ def _take_dissolution_routes(
     states: StatesPerRegime,
     canonical_states: Mapping[StateName, FloatND | IntND],
     subject_regime_ids: Int1D,
-    own_stakeholder: Int1D,
+    own_member: Int1D,
     new_subject_regime_ids: Int1D,
-    new_own_stakeholder: Int1D,
+    new_own_member: Int1D,
     regime_names_to_ids: RegimeNamesToIds,
     flat_params: FlatParams,
     period: int,
@@ -3049,9 +2988,9 @@ def _take_dissolution_routes(
         source_roles=source_roles,
         states=states,
         subject_regime_ids=subject_regime_ids,
-        own_stakeholder=own_stakeholder,
+        own_member=own_member,
         new_subject_regime_ids=new_subject_regime_ids,
-        new_own_stakeholder=new_own_stakeholder,
+        new_own_member=new_own_member,
         regime_names_to_ids=regime_names_to_ids,
         flat_params=flat_params,
         period=period,
@@ -3147,9 +3086,9 @@ def _take_dissolution_routes(
     return (
         states,
         outcome.subject_regime_ids,
-        outcome.own_stakeholder,
+        outcome.own_member,
         outcome.new_subject_regime_ids,
-        outcome.new_own_stakeholder,
+        outcome.new_own_member,
         outcome.entered_through,
         remaining,
         int(

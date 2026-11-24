@@ -1053,6 +1053,6 @@ def _copy_result(
         omissions=result.omissions,
         diagnostics=result.diagnostics,
     )
-    for name in ("_artifact_authority", "_participation_surfaces"):
-        object.__setattr__(copied, name, getattr(result, name))
+    authority = result._artifact_authority  # noqa: SLF001
+    object.__setattr__(copied, "_artifact_authority", authority)
     return copied

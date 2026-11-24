@@ -1,17 +1,17 @@
-"""Gated edge objects: state-dependent routing across stakeholder layouts.
+"""Gated edge objects: state-dependent routing across member layouts.
 
 Gated edges unlock MIXED singleton/collective regime topologies. A source
 regime declares, per target regime, a `GatedEdge`. At the END of each
 period `t`'s solve — after every period-`t` regime is solved, so their value
 arrays are still live — the engine folds, for each declared edge and each
-source stakeholder `s`, a gated continuation object on the TARGET regime's
+source member `s`, a gated continuation object on the TARGET regime's
 period-`t` grid:
 
     Wbar^s(x) = jnp.where( gate(x), V_target^{leg_s}(x), V_fallback^s(pi_s(x)) )
 
 with `gate` a boolean user function of the target's states and the edge's
 params, and `V_fallback^s` a same-period reference regime's value at a
-projection, typically the source stakeholder's own singleton regime. The
+projection, typically the source member's own singleton regime. The
 source's period `t-1` continuation then reads `Wbar` in place of the raw target
 V, threaded through the ordinary transition machinery (`next_regime_to_V_arr`).
 A gate never reads a value (`lcm.Gate`).
@@ -368,31 +368,31 @@ def _uncompiled_edge_callable(*_args: QAndFArg, **_kwargs: QAndFArg) -> NoReturn
 
 
 @dataclass(frozen=True, kw_only=True)
-class ResolvedStakeholderRoute:
-    """Engine-side form of one source-stakeholder leg of a gated edge."""
+class ResolvedMemberRoute:
+    """Engine-side form of one source-member leg of a gated edge."""
 
     route: str
     """The route's key in the cell's `routes`, which names its fallback's
     parameters under `params["edges"][source][target]["routes"]`."""
 
-    source_stakeholder: str | None
-    """Source stakeholder name, or `None` for a singleton source's single leg."""
+    source_member: str | None
+    """Source member name, or `None` for a singleton source's single leg."""
 
     target_component_index: int | None
-    """Index of the OPEN-branch value on the target V's trailing stakeholder
+    """Index of the OPEN-branch value on the target V's trailing member
     axis, or `None` for a singleton target."""
 
-    target_stakeholder: str | None = None
-    """The target regime's stakeholder as named, or `None` for a singleton
+    target_member: str | None = None
+    """The target regime's member as named, or `None` for a singleton
     target — the role a subject taking the OPEN branch carries onward."""
 
     fallback: ResolvedProjectedRegimeValue
     """The CLOSED-branch reference value the fold PRICES (regime, projection,
-    stakeholder index)."""
+    member index)."""
 
     simulate_fallback: ResolvedProjectedRegimeValue | None = None
     """The CLOSED branch a routed row actually LANDS in, when the leg declared
-    the two separately (`StakeholderRoute(fallback=Phased(...))`); `None` where one
+    the two separately (`MemberRoute(fallback=Phased(...))`); `None` where one
     reference serves both. Read `realized_fallback` rather than this field."""
 
     fallback_state_projector: Callable[..., MappingProxyType[StateName, FloatND]] = (
@@ -403,7 +403,7 @@ class ResolvedStakeholderRoute:
     Maps a target-grid-coordinate point to the fallback regime's own state
     coordinates (`build_fallback_state_projector`). Compiled at model
     processing and read only by forward simulation's value router, which needs
-    the states a routed-away stakeholder carries into its fallback regime; the
+    the states a routed-away member carries into its fallback regime; the
     solve-side fold needs the fallback's value, never its raw coordinates.
 
     Carried per leg rather than alongside the edge because the router consumes
@@ -435,8 +435,8 @@ class ResolvedGatedEdge:
     below rename its parameters to their flat source-regime names
     (`_with_qualified_params`) after the fences have read it as declared."""
 
-    legs: tuple[ResolvedStakeholderRoute, ...]
-    """One leg per source component, in SOURCE stakeholder order."""
+    legs: tuple[ResolvedMemberRoute, ...]
+    """One leg per source component, in SOURCE member order."""
 
     reference_regimes: tuple[RegimeName, ...]
     """Deduplicated real regimes whose same-period V the fold reads (the leg
@@ -836,7 +836,7 @@ class _CompiledEdgeGate:
 
     target_component_names: tuple[str, ...]
     """The target's value components, `V_target` or `V_target_<s>` in
-    stakeholder order, which the legs open onto."""
+    member order, which the legs open onto."""
 
     gate_evaluator: Callable[..., BoolND]
     """The gate predicate concatenated with the target regime's DAG nodes."""
@@ -854,7 +854,7 @@ def _compile_edge_gate(
     target_deterministic_transitions: Mapping[
         TransitionFunctionName, TransitionFunction
     ],
-    target_stakeholders: tuple[str, ...] | None,
+    target_member_axis: tuple[str, ...] | None,
     fence_contexts: _EdgeGateFenceContexts,
 ) -> _CompiledEdgeGate:
     """Compile and fence one edge's gate predicate against the target DAG.
@@ -876,7 +876,7 @@ def _compile_edge_gate(
         target_functions: The target regime's processed functions.
         target_deterministic_transitions: The target regime's merged
             deterministic `next_<state>` laws.
-        target_stakeholders: The target regime's stakeholders, or `None` for a
+        target_member_axis: The target regime's members, or `None` for a
             singleton target, which fixes the value-component names.
         fence_contexts: Labels the fences report themselves under, and whether
             the leg-fallback projections are fenced here.
@@ -894,8 +894,8 @@ def _compile_edge_gate(
         edge_target=edge.target,
     )
     target_component_names = (
-        tuple(f"V_target_{s}" for s in target_stakeholders)
-        if target_stakeholders is not None
+        tuple(f"V_target_{s}" for s in target_member_axis)
+        if target_member_axis is not None
         else ("V_target",)
     )
 
@@ -952,7 +952,7 @@ def get_edge_fold(
         TransitionFunctionName, TransitionFunction
     ],
     reference_v_info: Mapping[RegimeName, VInterpolationInfo],
-    target_stakeholders: tuple[str, ...] | None,
+    target_member_axis: tuple[str, ...] | None,
 ) -> CompiledEdgeFold:
     """Build one edge's continuation: operand surfaces plus a pointwise gate.
 
@@ -1006,7 +1006,7 @@ def get_edge_fold(
             deterministic `next_<state>` laws (used to build the target DAG; not
             directly nameable as a projection argument -- see `target_functions`).
         reference_v_info: V-interpolation info per reference regime.
-        target_stakeholders: The target regime's stakeholders, or `None`.
+        target_member_axis: The target regime's members, or `None`.
 
     Returns:
         The fold callable producing `Wbar` on the target grid.
@@ -1020,7 +1020,7 @@ def get_edge_fold(
         state_names=state_names,
         target_functions=target_functions,
         target_deterministic_transitions=target_deterministic_transitions,
-        target_stakeholders=target_stakeholders,
+        target_member_axis=target_member_axis,
         # This builder constructs the fallback readers, so it fences them; the
         # simulate-side gate evaluator has none of its own.
         fence_contexts=_EdgeGateFenceContexts(
@@ -1055,7 +1055,7 @@ def get_edge_fold(
     # Outer signature: the target state grids and the same-period value mapping.
     outer_arg_names = sorted({SAME_PERIOD_V_ARG} | set(state_names))
 
-    singleton_source = all(leg.source_stakeholder is None for leg in edge.legs)
+    singleton_source = all(leg.source_member is None for leg in edge.legs)
 
     # Only the components a leg actually opens onto become channels.
     open_component_names = {
@@ -1073,7 +1073,7 @@ def get_edge_fold(
     fold = _EdgeSurfaces(
         edge_target=edge.target,
         target_component_names=target_component_names,
-        target_stakeholders=target_stakeholders,
+        target_member_axis=target_member_axis,
         channels=channels,
         arg_names=tuple(outer_arg_names),
     )
@@ -1164,7 +1164,7 @@ def get_edge_simulate_gate_evaluator(
     target_deterministic_transitions: Mapping[
         TransitionFunctionName, TransitionFunction
     ],
-    target_stakeholders: tuple[str, ...] | None,
+    target_member_axis: tuple[str, ...] | None,
 ) -> Callable[..., BoolND]:
     """Build one edge's SIMULATE-side gate evaluator.
 
@@ -1187,7 +1187,7 @@ def get_edge_simulate_gate_evaluator(
             gate resolves target states / helper functions.
         target_deterministic_transitions: The target regime's merged
             deterministic `next_<state>` laws.
-        target_stakeholders: The target regime's stakeholders, or `None`.
+        target_member_axis: The target regime's members, or `None`.
 
     Returns:
         A callable returning the recomputed boolean gate at one realized
@@ -1216,7 +1216,7 @@ def get_edge_simulate_gate_evaluator(
         state_names=state_names,
         target_functions=target_functions,
         target_deterministic_transitions=target_deterministic_transitions,
-        target_stakeholders=target_stakeholders,
+        target_member_axis=target_member_axis,
         # No leg-fallback context: this builder constructs no fallback reader.
         # Those projections are fenced by the identical `_fence_edge_consumer`
         # inside `build_fallback_state_projector`, which processing builds for
@@ -1287,7 +1287,7 @@ def build_fallback_state_projector(
     coordinates, for the solve-side fold): the simulate-side value router
     does not need the fallback's VALUE (Wbar already folds that in) but does
     need the fallback's own STATE coordinates, to write the dissolved/rejected
-    stakeholder's next-period row into `states[fallback.regime]`. Reuses the
+    member's next-period row into `states[fallback.regime]`. Reuses the
     identical projection-function construction (the same `dag_pool` minus the
     target's carried-state imputations, the same `concatenate_functions`
     targets) so the coordinates are guaranteed consistent with whatever the
@@ -1339,7 +1339,7 @@ def build_fallback_state_projector(
 
     Args:
         ref: The leg's resolved fallback reference
-            (`ResolvedStakeholderRoute.fallback`).
+            (`ResolvedMemberRoute.fallback`).
         fallback_simulate_state_names: Simulate-phase state names of the FALLBACK
             regime (`ref.regime`) — its solve states plus its carried-only ones,
             i.e. exactly the slots a routed row occupies there.
@@ -1468,7 +1468,7 @@ def _build_landing_reader(
         # The value belongs to the period the source LANDS in, which
         # backward induction has already solved and rolled forward, so it
         # arrives on the edge-reference channel rather than the
-        # same-period one the value constraints read.
+        # same-period one the edge's fold reads.
         v_mapping_arg=EDGE_REF_V_ARG,
         params_mapping_arg=EDGE_REF_PARAMS_ARG,
     )
@@ -1489,8 +1489,8 @@ class _EdgeSurfaces:
     """The edge's target regime."""
     target_component_names: tuple[str, ...]
     """The target's value components, `V_target` or `V_target_<s>`."""
-    target_stakeholders: tuple[str, ...] | None
-    """The target regime's stakeholders, or `None`."""
+    target_member_axis: tuple[str, ...] | None
+    """The target regime's members, or `None`."""
     channels: EdgeChannels
     """Which operands become channels, and in which order."""
     arg_names: tuple[ReferenceName, ...]
@@ -1517,7 +1517,7 @@ class _EdgeSurfaces:
         for index, name in enumerate(self.target_component_names):
             target_components[name] = (
                 target_V[..., index]
-                if self.target_stakeholders is not None
+                if self.target_member_axis is not None
                 else target_V
             )
         surfaces = [target_components[name] for name in self.channels.component_names]

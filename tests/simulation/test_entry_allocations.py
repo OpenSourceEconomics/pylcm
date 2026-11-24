@@ -150,12 +150,7 @@ def _copy_resolved_values(
     original: Callable[..., model_module._ResolvedSolution],
     **arguments: Unpack[SolutionResolution],
 ) -> model_module._ResolvedSolution:
-    (
-        values,
-        policies,
-        readers,
-        surfaces,
-    ) = original(self, **arguments)
+    values, policies, readers = original(self, **arguments)
     copied = jax.tree.map(jnp.copy, values)
     jax.block_until_ready(copied)
     original_spans = measure_buffer_footprint(tree=values)
@@ -172,7 +167,6 @@ def _copy_resolved_values(
         copied,
         policies,
         readers,
-        surfaces,
     )
 
 

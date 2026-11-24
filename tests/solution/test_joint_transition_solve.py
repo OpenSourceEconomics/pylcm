@@ -21,10 +21,10 @@ from lcm import (
     IrregSpacedGrid,
     JointTransition,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -363,8 +363,8 @@ def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:
     couple_gate = Gate(
         predicate=_bdy_gate_always_open,
         routes={
-            "f": StakeholderRoute(
-                target_stakeholder="f",
+            "f": MemberRoute(
+                target_member="f",
                 fallback=ProjectedRegimeValue(
                     regime="single_terminal",
                     projection={"wealth": _bdy_identity_wealth},

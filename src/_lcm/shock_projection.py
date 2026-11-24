@@ -8,7 +8,7 @@ proved exhaustively on the complete finite code domain. Failure is conservative.
 
 import inspect
 import math
-from collections.abc import Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import fields
 from itertools import product
 from types import MappingProxyType
@@ -20,7 +20,7 @@ from dags import concatenate_functions
 
 from _lcm.grids import Grid
 from _lcm.shock_registry import ShockBinding
-from _lcm.typing import QualifiedName
+from _lcm.typing import PytreeValue, QualifiedName
 from lcm.exceptions import ShockDeclarationError
 from lcm.grids import DiscreteGrid
 from lcm.phased import Phased
@@ -35,9 +35,7 @@ from lcm.shocks import (
 )
 from lcm.typing import FunctionName, ReferenceName, RegimeName, StateName, UserFunction
 
-type QueryKindName = Literal[
-    "Raw", "Participating", "Full", "Participation", "IntegratedFull"
-]
+type QueryKindName = Literal["Raw", "Participating", "Full"]
 type OperandPath = tuple[str | int, ...]
 
 _MAX_FINITE_PROJECTION_CELLS = 4096
@@ -166,7 +164,69 @@ def _grid(value: StateEntry | None) -> Grid | None:
     return value if isinstance(value, Grid) else None
 
 
-def _preserves_input(  # noqa: C901, PLR0911 - refuse failed proof obligations
+def returned_input(
+    *, func: Callable[..., PytreeValue], dtypes: Mapping[str, np.dtype]
+) -> str | None:
+    """Name the scalar input that `func` returns unchanged, proved from its JAXpr.
+
+    The trace over abstract scalars of the given dtypes must have no equations and
+    no constants, and its one output must be an input variable of the same abstract
+    value; None otherwise.
+
+    Raises:
+        ValueError: The trace has effects, so nothing about `func` is proved.
+
+    An error raised while tracing propagates: such a callable proves nothing either.
+    """
+    names = tuple(dtypes)
+    closed = jax.make_jaxpr(
+        lambda *values: func(**dict(zip(names, values, strict=True)))
+    )(*(jax.ShapeDtypeStruct((), dtype) for dtype in dtypes.values()))
+    jaxpr = closed.jaxpr
+    if jaxpr.effects:
+        raise ValueError("A traced projection has effects.")
+    if jaxpr.eqns or jaxpr.constvars or len(jaxpr.outvars) != 1:
+        return None
+    (output,) = jaxpr.outvars
+    return next(
+        (
+            name
+            for name, variable in zip(names, jaxpr.invars, strict=True)
+            if output is variable and output.aval == variable.aval
+        ),
+        None,
+    )
+
+
+def finite_outputs(
+    *, func: Callable[..., PytreeValue], domains: Mapping[str, np.ndarray]
+) -> Iterator[tuple[Mapping[str, np.ndarray], np.ndarray]] | None:
+    """Evaluate `func` eagerly at every combination of its inputs' finite domains.
+
+    Every combination is visited, including ones that the solved population does
+    not occupy, so a property that holds at each output holds for the callable.
+    Each input is a scalar in its domain's dtype. None when the product of the
+    domain sizes exceeds the private enumeration cap. The outputs are produced
+    lazily, so a caller may stop at the first that fails its check.
+    """
+    names = tuple(domains)
+    if math.prod(len(domain) for domain in domains.values()) > (
+        _MAX_FINITE_PROJECTION_CELLS
+    ):
+        return None
+
+    def outputs() -> Iterator[tuple[Mapping[str, np.ndarray], np.ndarray]]:
+        for values in product(*domains.values()):
+            inputs = {
+                name: np.asarray(value, dtype=domains[name].dtype)
+                for name, value in zip(names, values, strict=True)
+            }
+            yield inputs, np.asarray(func(**inputs))
+
+    return outputs()
+
+
+def _preserves_input(
     *,
     state: StateName,
     func: UserFunction,
@@ -185,54 +245,32 @@ def _preserves_input(  # noqa: C901, PLR0911 - refuse failed proof obligations
         domains = {name: _grid(source_domains.get(name)) for name in names}
         if any(domain is None for domain in domains.values()):
             return False
-        abstracts = tuple(
-            jax.ShapeDtypeStruct((), domain.to_jax().dtype)
-            for domain in domains.values()
+        dtypes = {
+            name: np.dtype(domain.to_jax().dtype)
+            for name, domain in domains.items()
             if domain is not None
-        )
-        closed = jax.make_jaxpr(
-            lambda *values: composed(**dict(zip(names, values, strict=True)))
-        )(*abstracts)
-        jaxpr = closed.jaxpr
-        if jaxpr.effects:
-            return False
-        original = jaxpr.invars[names.index(state)]
-        if (
-            not jaxpr.eqns
-            and not jaxpr.constvars
-            and len(jaxpr.outvars) == 1
-            and jaxpr.outvars[0] is original
-            and jaxpr.outvars[0].aval == original.aval
-        ):
+        }
+        if returned_input(func=composed, dtypes=dtypes) == state:
             return True
         if not isinstance(grid, DiscreteGrid) or any(
             not isinstance(domain, DiscreteGrid) for domain in domains.values()
         ):
             return False
-        code_domains = tuple(
-            domain.codes
-            for domain in domains.values()
-            if isinstance(domain, DiscreteGrid)
+        outputs = finite_outputs(
+            func=composed,
+            domains={
+                name: np.asarray(domain.codes, dtype=dtypes[name])
+                for name, domain in domains.items()
+                if isinstance(domain, DiscreteGrid)
+            },
         )
-        if math.prod(map(len, code_domains)) > _MAX_FINITE_PROJECTION_CELLS:
-            return False
-        # Every possible code tuple is checked, including combinations that the
-        # solved population does not occupy. The private cap bounds build-time
-        # enumeration; direct-return proofs above do not enumerate or need it.
-        for codes in product(*code_domains):
-            inputs = {
-                name: np.asarray(code, dtype=abstract.dtype)
-                for name, code, abstract in zip(names, codes, abstracts, strict=True)
-            }
-            actual = np.asarray(composed(**inputs))
-            expected = inputs[state]
-            if (
-                actual.shape != ()
-                or actual.dtype != expected.dtype
-                or actual != expected
-            ):
-                return False
+        # The private cap bounds build-time enumeration; direct-return proofs above
+        # do not enumerate or need it.
+        return outputs is not None and all(
+            actual.shape == ()
+            and actual.dtype == inputs[state].dtype
+            and actual == inputs[state]
+            for inputs, actual in outputs
+        )
     except Exception:  # noqa: BLE001 - untraceable user projection is an unproved identity
         return False
-    else:
-        return True

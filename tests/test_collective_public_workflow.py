@@ -42,8 +42,8 @@ from tests.regime_building.test_collective_regime_simulate import (
 _EXPECTED_TEMPLATE_LEAVES = frozenset(
     {
         "married__koopmans_aggregator__discount_factor",
-        "married_ir__exits__dissolve__rule__delta_f",
-        "married_ir__exits__dissolve__rule__delta_m",
+        "married_ir__exit__targets__f__utility_adjustment__delta_f",
+        "married_ir__exit__targets__m__utility_adjustment__delta_m",
         "married_ir__koopmans_aggregator__discount_factor",
         "single_f__koopmans_aggregator__discount_factor",
         "single_m__koopmans_aggregator__discount_factor",
@@ -128,21 +128,21 @@ def _initial_conditions(model: Model) -> MappingProxyType[str, FloatND | IntND]:
             "regime_id": jnp.array(
                 [model.regime_names_to_ids["married"]] * _N_SUBJECTS, dtype=jnp.int32
             ),
-            "own_stakeholder": jnp.full(
-                _N_SUBJECTS, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
+            "own_member": jnp.full(
+                _N_SUBJECTS, model.member_names_to_ids["f"], dtype=jnp.int32
             ),
         }
     )
 
 
-def test_the_template_asks_for_exactly_the_parameters_the_model_consumes():
+def test_the_template_asks_for_exactly_the_parameters_the_model_consumes() -> None:
     """The template's leaves are the model's parameters — no more, no fewer."""
     template = _make_model().get_params_template()
 
     assert frozenset(_leaf_paths(node=template)) == _EXPECTED_TEMPLATE_LEAVES
 
 
-def test_every_template_leaf_is_a_parameter_this_test_can_name():
+def test_every_template_leaf_is_a_parameter_this_test_can_name() -> None:
     """A leaf whose name this test cannot fill would make the fill silently partial."""
     template = _make_model().get_params_template()
     leaf_names = {path.rsplit("__", 1)[-1] for path in _leaf_paths(node=template)}
@@ -150,7 +150,7 @@ def test_every_template_leaf_is_a_parameter_this_test_can_name():
     assert leaf_names <= set(_VALUES)
 
 
-def test_a_gated_edge_adds_no_branch_under_its_source():
+def test_a_gated_edge_adds_no_branch_under_its_source() -> None:
     """The source regime's template holds only the source's own functions."""
     template = _make_model().get_params_template()
 
@@ -163,21 +163,21 @@ def test_a_gated_edge_adds_no_branch_under_its_source():
     }
 
 
-def test_a_gated_edge_reading_no_parameter_adds_no_edges_branch():
+def test_a_gated_edge_reading_no_parameter_adds_no_edges_branch() -> None:
     """Edge callables that read no parameter leave `params["edges"]` out."""
     template = _make_model().get_params_template()
 
     assert "edges" not in template
 
 
-def test_a_branch_that_binds_no_parameter_is_an_empty_container():
+def test_a_branch_that_binds_no_parameter_is_an_empty_container() -> None:
     """Filling the template has to recurse: not every branch bottoms out in a leaf."""
     template = _make_model().get_params_template()
 
     assert template["married"]["next_wage"] == {}
 
 
-def test_the_filled_template_solves_to_the_same_values_as_a_flat_params_dict():
+def test_the_filled_template_solves_to_the_same_values_as_a_flat_params_dict() -> None:
     """Following the documented route publishes the same solution, bit for bit."""
     model = _make_model()
     from_template = model.solve(
@@ -196,7 +196,7 @@ def test_the_filled_template_solves_to_the_same_values_as_a_flat_params_dict():
             ), f"period {period}, regime {regime_name}"
 
 
-def test_the_documented_workflow_produces_a_frame():
+def test_the_documented_workflow_produces_a_frame() -> None:
     """Template → solve → simulate → dataframe runs at `log_level="debug"`."""
     model = _make_model()
     params = _filled_template(model)
@@ -218,7 +218,7 @@ def test_the_documented_workflow_produces_a_frame():
     }
 
 
-def test_repeated_simulation_routes_the_same_subjects():
+def test_repeated_simulation_routes_the_same_subjects() -> None:
     """Repeated calls on the same model preserve every subject's routed regime."""
     model = _make_model()
     params = _filled_template(model)

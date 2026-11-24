@@ -1,16 +1,16 @@
 """Typed current-period reads use mapped canonical action problems.
 
 The private adapter installed below is a stage fixture. Public Exit declarations
-and integrated collective publication are qualified by their own later stages.
+are qualified by their own later stages.
 """
 
 import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
-from typing import cast
+from typing import NoReturn, TypedDict, Unpack, cast
 
 import jax
 import jax.numpy as jnp
@@ -27,7 +27,6 @@ from _lcm.execution.core_program import (
 from _lcm.execution.footprint import ResidentBreakdown
 from _lcm.execution.output_layout import StateAxesLeading, resolve_output_layout
 from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
-from _lcm.participation_queries import bind_participation_query_graph
 from _lcm.policy_queries import (
     PolicyAnswer,
     QueryKind,
@@ -52,12 +51,56 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.collective import ProjectedRegimeValue, StakeholderRoute
-from lcm.participation import ParticipationCheck, ParticipationRead
 from lcm.shocks import Normal, ShockGroup, UserNodes
 from lcm.solvers import EGM, GridSearch
 from lcm.typing import BoolND, FloatND, IntND, RegimeName, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
+from tests.simulation._callback_types import WorkspacePlanning
+from tests.solution._callback_types import CompileFunctionsKwargs
+
+
+class _KernelCallKwargs(TypedDict):
+    compiled_cores: Mapping[str, Callable[..., PytreeValue]]
+    state_action_space: backward.StateActionSpace
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND]
+    next_regime_to_continuation: Mapping[RegimeName, backward.ContinuationPayload]
+    flat_params: backward.FlatParams
+    period: int
+    ages: backward.TimeAxis
+    logger: logging.Logger
+
+
+class _LowerCandidateKwargs(TypedDict):
+    layout: backward.ResolvedOutputLayout
+    donated: tuple[str, ...]
+    internal_templates: Mapping[backward.ReferenceName, backward.ShapeDtypePytree]
+
+
+class _CorePlanRecordKwargs(TypedDict):
+    triple: backward._CoreTriple
+    regime: backward.Regime
+    program: backward.ResolvedCoreProgram
+    layout: backward.ResolvedOutputLayout
+    widths: Mapping[str, int]
+    executable: jax.stages.Compiled
+    memory: backward.CompilerMemoryReservation | None
+    inventory: backward.ResidentInventory | None
+    resident_bytes: int | None
+    logger: logging.Logger
+
+
+class _CompileAndLogKwargs(TypedDict):
+    lowering_key: Hashable
+    low: jax.stages.Lowered
+    label: str
+    log_kernel_memory: bool
+    logger: logging.Logger
+    phase: str | None
+
+
+class _NarrowClosureKwargs(TypedDict):
+    regimes: MappingProxyType[RegimeName, backward.Regime]
+    error: backward._CellBudgetError
 
 
 def _identity(wealth: FloatND) -> FloatND:
@@ -115,27 +158,22 @@ def test_query_cycles_and_foreign_full_reads_refuse() -> None:
         )
 
 
-def test_integrated_value_reader_is_only_a_participation_comparison_operand() -> None:
-    """A represented Full payload cannot become a policy/support dependency."""
+def test_participating_query_reading_a_participating_query_refuses() -> None:
+    """A rule for staying reads problem values only, never another rule for staying."""
     reads = {
-        "participation": _read(kind=QueryKind.PARTICIPATION, target="target"),
-        "stored": _read(kind=QueryKind.INTEGRATED_FULL, target="target"),
+        "couple_participating": _read(kind=QueryKind.PARTICIPATING, target="couple"),
+        "single_participating": _read(kind=QueryKind.PARTICIPATING, target="single"),
+        "single_raw": _read(kind=QueryKind.RAW, target="single"),
     }
-    assert demanded_query_order(
-        reads=reads,
-        dependencies={"participation": ("stored",), "stored": ()},
-        roots=("participation",),
-    ) == ("stored", "participation")
-    with pytest.raises(ValueError, match="Only a participation comparison"):
+    with pytest.raises(ValueError, match="Participating query 'single_participating'"):
         demanded_query_order(
-            reads={
-                **reads,
-                "participation": replace(
-                    reads["participation"], kind=QueryKind.PARTICIPATING
-                ),
+            reads=reads,
+            dependencies={
+                "couple_participating": ("single_participating",),
+                "single_participating": ("single_raw",),
+                "single_raw": (),
             },
-            dependencies={"participation": ("stored",), "stored": ()},
-            roots=("participation",),
+            roots=("couple_participating",),
         )
 
 
@@ -189,7 +227,7 @@ _CONTEXTS: dict[str, SolverBuildContext] = {}
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _source_binding(record_testsuite_property) -> None:
+def _source_binding(record_testsuite_property: Callable[[str, str], None]) -> None:
     """Bind native receipts to this worktree and the actually imported runtime."""
     assert (
         Path(lcm.__file__).resolve().parents[2] == Path(__file__).resolve().parents[2]
@@ -375,115 +413,6 @@ def _native_model(
     return model
 
 
-def test_participation_consumer_uses_boolean_rule_and_source_owned_answer_shape() -> (
-    None
-):
-    """A singleton participation check in a household does not rerun the argmax."""
-    _native_model(enable_jit=False)
-
-    def decide(*, target: PolicyAnswer, outside: PolicyAnswer) -> PolicyAnswer:
-        accept = (target[0][0] > 0.75) & target[2]
-        return (
-            jnp.where(accept, target[0][0], outside[0]),
-            jnp.asarray(-1, jnp.int32),
-            jnp.where(accept, target[2], outside[2]),
-            target[3] & outside[3],
-            jnp.zeros((0,), dtype=jnp.int32),
-        )
-
-    node = QueryNode(
-        read=_read(kind=QueryKind.PARTICIPATION, target="target"),
-        context=_CONTEXTS["target"],
-        inputs={"target": "part", "outside": "outside"},
-        operand_builder=lambda _context: {},
-        decision=decide,
-        answer_shape=(),
-    )
-    answer = queries._query_cell(
-        jnp.asarray(a=True),
-        {"wealth": jnp.asarray(0.5)},
-        {
-            "target": (
-                jnp.asarray([0.5, 2.0]),
-                jnp.asarray(0, jnp.int32),
-                jnp.asarray(a=True),
-                jnp.asarray(a=True),
-                jnp.zeros((0,), dtype=jnp.int32),
-            ),
-            "outside": (
-                jnp.asarray(-2.0),
-                jnp.asarray(0, jnp.int32),
-                jnp.asarray(a=True),
-                jnp.asarray(a=True),
-                jnp.zeros((0,), dtype=jnp.int32),
-            ),
-        },
-        node=node,
-        period=0,
-        fixed={"period": jnp.asarray(0), "age": jnp.asarray(0)},
-        projection_operands={},
-    )
-    np.testing.assert_array_equal(np.asarray(answer[0]), -2.0)
-    assert bool(answer[2])
-    assert bool(answer[3])
-
-
-def test_bound_participation_strict_hurdle_uses_one_household_participating_tuple() -> (
-    None
-):
-    """An exact threshold can reject a target even when a member's fallback is worse."""
-    model = _native_model(enable_jit=False)
-    declaration = ParticipationCheck(
-        predicate=lambda benchmark: benchmark > 2.0,
-        reads={
-            "benchmark": ParticipationRead(
-                regime="target",
-                projection={"wealth": _identity},
-                stakeholder="f",
-                kind="Participating",
-            )
-        },
-        routes={
-            member: StakeholderRoute(
-                target_stakeholder=member,
-                fallback=ProjectedRegimeValue(
-                    regime="root",
-                    projection={"wealth": _identity},
-                    stakeholder=member,
-                ),
-            )
-            for member in ("f", "m")
-        },
-    )
-    plan = bind_participation_query_graph(
-        contexts=_CONTEXTS,
-        canonical_regimes=model._regimes,
-        source="root",
-        target="target",
-        period=0,
-        phase="solve",
-        declaration=declaration,
-    )
-    arguments = plan.queries.arguments(
-        context=CoreBuildContext(
-            state_action_space=_CONTEXTS["target"].state_action_space,
-            next_regime_to_V_arr={},
-            next_regime_to_continuation={},
-            flat_params={},
-            period=0,
-            ages=model._time,
-        )
-    )
-    answer = plan.queries(
-        states={"wealth": jnp.asarray(0.5)},
-        arguments=cast("Mapping[str, Mapping[str, PytreeValue]]", arguments),
-    )
-    np.testing.assert_array_equal(answer[0], [0.5, 3.5])
-    assert int(answer[1]) == 1
-    assert bool(answer[2])
-    assert bool(answer[3])
-
-
 @pytest.mark.parametrize("enable_jit", [False, True])
 def test_native_query_selects_one_mapped_target_tuple(*, enable_jit: bool) -> None:
     """A mapped target tie selects action zero before the root participation test."""
@@ -592,7 +521,7 @@ def test_one_raw_answer_feeds_both_readers_in_one_loop() -> None:
 
 
 def test_native_query_bank_is_owned_and_published_by_native_programs(
-    *, monkeypatch
+    *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The chunk loop's bank has declared storage and compiled write/read owners."""
     model = _native_model(enable_jit=True)
@@ -606,11 +535,18 @@ def test_native_query_bank_is_owned_and_published_by_native_programs(
     calls = []
     invoke = type(kernel).__call__
 
-    def record(*, name, compiled, arguments):
+    def record(
+        *,
+        name: str,
+        compiled: Callable[..., PytreeValue],
+        arguments: Mapping[str, PytreeValue],
+    ) -> PytreeValue:
         calls.append(name)
         return compiled(**arguments)
 
-    def observe(self, **arguments):
+    def observe(
+        self: queries._PolicyQueryKernel, **arguments: Unpack[_KernelCallKwargs]
+    ) -> queries.KernelOutput:
         cores = arguments["compiled_cores"]
         arguments["compiled_cores"] = {
             name: lambda _name=name, _compiled=compiled, **kwargs: record(
@@ -628,13 +564,20 @@ def test_native_query_bank_is_owned_and_published_by_native_programs(
     )
 
 
-def test_query_period_compiles_only_its_dispatched_programs(*, monkeypatch) -> None:
+def test_query_period_compiles_only_its_dispatched_programs(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A query period lowers its bank, its chunk loop and its publication only."""
     model = _native_model(enable_jit=True)
     lowered = []
     lower = backward._lower_resolved_candidate
 
-    def record(*, resolved, label, **kwargs):
+    def record(
+        *,
+        resolved: backward.ResolvedCoreProgram,
+        label: str,
+        **kwargs: Unpack[_LowerCandidateKwargs],
+    ) -> jax.stages.Lowered:
         if label.startswith("root "):
             lowered.append(resolved.name)
         return lower(resolved=resolved, label=label, **kwargs)
@@ -650,11 +593,18 @@ def _solve_counting_dispatches(*, model: Model) -> tuple[list[str], FloatND]:
     calls = []
     invoke = type(kernel).__call__
 
-    def record(*, name, compiled, arguments):
+    def record(
+        *,
+        name: str,
+        compiled: Callable[..., PytreeValue],
+        arguments: Mapping[str, PytreeValue],
+    ) -> PytreeValue:
         calls.append(name)
         return compiled(**arguments)
 
-    def observe(self, **arguments):
+    def observe(
+        self: queries._PolicyQueryKernel, **arguments: Unpack[_KernelCallKwargs]
+    ) -> queries.KernelOutput:
         cores = arguments["compiled_cores"]
         arguments["compiled_cores"] = {
             name: lambda _name=name, _compiled=compiled, **kwargs: record(
@@ -703,12 +653,12 @@ def test_query_chunk_width_keeps_values_bitwise(*, enable_jit: bool) -> None:
 
 
 def test_compiler_budget_selects_a_complete_smaller_common_chunk(
-    *, monkeypatch
+    *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A refused graph is rebuilt before execution with one smaller shared domain."""
     records = []
 
-    def record(**fields):
+    def record(**fields: Unpack[_CorePlanRecordKwargs]) -> None:
         records.append(fields)
 
     monkeypatch.setattr(backward, "_log_core_plan_record", record)
@@ -748,7 +698,7 @@ def test_compiler_budget_selects_a_complete_smaller_common_chunk(
 
 @pytest.mark.parametrize("failure", ["exception", "status"])
 def test_failed_query_chunks_never_publish_and_drain(
-    *, monkeypatch, failure: str
+    *, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
     """A failed chunk loop or reader status publishes no value bank and drains."""
     model = _native_model(enable_jit=True)
@@ -757,22 +707,24 @@ def test_failed_query_chunks_never_publish_and_drain(
     invoke = type(kernel).__call__
     close = queries.PendingSolveWork.close
 
-    def drain(self):
+    def drain(self: queries.PendingSolveWork) -> None:
         events.append("drain")
         return close(self)
 
-    def observe(self, **arguments):
+    def observe(
+        self: queries._PolicyQueryKernel, **arguments: Unpack[_KernelCallKwargs]
+    ) -> queries.KernelOutput:
         cores = dict(arguments["compiled_cores"])
         chunks = cores["_chunks"]
 
-        def reject(**kwargs):
+        def reject(**kwargs: PytreeValue) -> queries._ChunkOutput:
             events.append("chunks")
             if failure == "exception":
                 raise RuntimeError("seeded query reader failure")
-            bank, statuses, totals = chunks(**kwargs)
+            bank, statuses, totals = cast("queries._ChunkOutput", chunks(**kwargs))
             return bank, statuses.at[-1].set(False), totals
 
-        def publish(**kwargs):
+        def publish(**kwargs: FloatND) -> NoReturn:
             del kwargs
             pytest.fail("A failed reader must never publish.")
 
@@ -788,18 +740,37 @@ def test_failed_query_chunks_never_publish_and_drain(
     assert events == ["chunks", "drain"]
 
 
-def test_query_closure_narrows_by_halving_the_chunk() -> None:
-    """Narrowing halves the common chunk and refuses below one source cell."""
+def _lanes_per_step(kernel: queries._PolicyQueryKernel) -> int:
+    """Source cells times support rows that one step of the chunk loop evaluates."""
+    chunks = cast("queries._QueryChunks", kernel.programs["_chunks"].function)
+    return kernel.chunk_size * max(core.row_batch for core in chunks.cores.values())
+
+
+def test_query_closure_narrows_its_step_down_to_one_cell_of_minimal_rows() -> None:
+    """Each narrowing halves the lanes a step evaluates.
+
+    The chunk halves down to one source cell, then the support rows per step halve
+    down to `_ROW_BATCH`. A kernel at both floors refuses to narrow.
+    """
     kernel = (
         _native_model(enable_jit=True, chunk_size=2)
         ._regimes["root"]
         .solution.period_kernels[0]
     )
-    assert isinstance(kernel, queries._PolicyQueryKernel)
-    narrowed = kernel.narrow_workspace()
-    assert isinstance(narrowed, queries._PolicyQueryKernel)
-    assert narrowed.chunk_size == 1
-    assert narrowed.narrow_workspace() is None
+    steps = []
+    while isinstance(kernel, queries._PolicyQueryKernel):
+        steps.append((kernel.chunk_size, _lanes_per_step(kernel)))
+        kernel = kernel.narrow_workspace()
+    assert kernel is None
+    lanes = queries._STEP_LANES
+    assert steps == [
+        (2, lanes),
+        *(
+            (1, lanes >> k)
+            for k in range(1, (lanes // queries._ROW_BATCH).bit_length())
+        ),
+    ]
+    assert steps[-1] == (1, queries._ROW_BATCH)
 
 
 @pytest.mark.parametrize(
@@ -840,7 +811,7 @@ def test_narrowed_chunk_with_an_unchanged_bank_compiles_its_own_program(
     records = []
     log_record = backward._log_core_plan_record
 
-    def record(**kwargs):
+    def record(**kwargs: Unpack[_CorePlanRecordKwargs]) -> None:
         records.append(kwargs)
         return log_record(**kwargs)
 
@@ -864,12 +835,16 @@ def test_narrowed_chunk_with_an_unchanged_bank_compiles_its_own_program(
     )
 
 
-def test_exhausted_common_chunk_refuses_without_dispatch(*, monkeypatch) -> None:
+def test_exhausted_common_chunk_refuses_without_dispatch(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A genuine fixed bank floor cannot be hidden by narrowing a query chunk."""
     model = _native_model(enable_jit=True, chunk_size=2, budget=1)
     kernel = model._regimes["root"].solution.period_kernels[0]
 
-    def forbidden(self, **kwargs):
+    def forbidden(
+        self: queries._PolicyQueryKernel, **kwargs: Unpack[_KernelCallKwargs]
+    ) -> NoReturn:
         del self, kwargs
         pytest.fail("An exhausted native closure must not execute.")
 
@@ -910,7 +885,7 @@ def _vector_keep(*, q: FloatND, outside: PolicyAnswer) -> jax.Array:
 
 
 def test_query_kept_set_requires_one_scalar_per_action() -> None:
-    """A stakeholder-shaped predicate must never become an extra action axis."""
+    """A member-shaped predicate must never become an extra action axis."""
     model = _native_model(enable_jit=True)
     original = model._regimes["root"]
     kernel = original.solution.period_kernels[0]
@@ -1027,7 +1002,7 @@ def _finite_heavy_outside(*, q: FloatND, outside: PolicyAnswer) -> jax.Array:
     )
 
 
-def _fanout_kernel(*, model: Model, chunk_size: int = 2):
+def _fanout_kernel(*, model: Model, chunk_size: int = 2) -> queries._PolicyQueryKernel:
     original = model._regimes["root"]
     initial = original.solution.period_kernels[0]
     assert isinstance(initial, queries._PolicyQueryKernel)
@@ -1082,7 +1057,7 @@ def test_each_budget_narrowing_names_its_refused_cell(
     records = []
     log_record = backward._log_core_plan_record
 
-    def record(**kwargs):
+    def record(**kwargs: Unpack[_CorePlanRecordKwargs]) -> None:
         records.append(kwargs)
         return log_record(**kwargs)
 
@@ -1122,17 +1097,25 @@ def test_one_planning_pass_narrows_every_refused_cell(
     plan = backward.plan_workspace
     compile_all = backward._compile_all_functions
 
-    def refuse_first_two_selections(**kwargs):
+    def refuse_first_two_selections(
+        **kwargs: Unpack[WorkspacePlanning[jax.stages.Compiled]],
+    ) -> backward.WorkspacePlan[jax.stages.Compiled]:
         if len(refusals) < 2:
             refusals.append(len(passes))
             raise backward.WorkspaceBudgetError("refused")
         return plan(**kwargs)
 
-    def count_passes(**kwargs):
+    def count_passes(
+        **kwargs: Unpack[CompileFunctionsKwargs],
+    ) -> backward._CompiledPrograms:
         passes.append(len(passes))
         return compile_all(**kwargs)
 
-    def keep_kernel(*, regimes, error):
+    def keep_kernel(
+        *,
+        regimes: MappingProxyType[RegimeName, backward.Regime],
+        error: backward._CellBudgetError,
+    ) -> MappingProxyType[RegimeName, backward.Regime]:
         narrowed.append(error.triple[:2])
         return regimes
 
@@ -1608,7 +1591,9 @@ def test_information_mesh_neutral_branch_keeps_axes_and_runtime_guard(
     assert not any(events.values()), "Abstract type alignment must not run callbacks."
     answer = jax.block_until_ready(compiled(inputs))
     jax.effects_barrier()
-    dimensions = (2,) if ancestor else ()
+    # The target reads none of the parent's shocks, so the parent's two rows form
+    # one class and the answer keeps one entry for it.
+    dimensions = (1,) if ancestor else ()
     assert tuple(leaf.shape for leaf in answer) == (
         (2, *dimensions),
         (2, *dimensions, 2),
@@ -1623,7 +1608,8 @@ def test_information_mesh_neutral_branch_keeps_axes_and_runtime_guard(
         jnp.bool_,
         jnp.int32,
     )
-    assert all(leaf.sharding.spec == jax.P("X") for leaf in answer)
+    # JAX places an output without elements replicated, whatever its out spec.
+    assert all(leaf.sharding.spec == jax.P("X") for leaf in answer if leaf.size)
     np.testing.assert_array_equal(answer[0][1], np.full(dimensions, 2.0))
     np.testing.assert_array_equal(answer[1][1], np.zeros((*dimensions, 2), np.int32))
     np.testing.assert_array_equal(answer[2][1], np.ones(dimensions, bool))
@@ -1673,7 +1659,7 @@ def test_information_mesh_unavailable_observation_keeps_producer_unexecuted(
     )
 
     def local(wealth: FloatND) -> tuple[FloatND, BoolND, FloatND]:
-        frame, weights = cell._observer_row(
+        frame, weights, _ = cell._observer_row(
             observer=observer,
             target=producer,
             group="innovation",
@@ -1728,7 +1714,7 @@ def test_budget_narrowing_retries_reuse_executables_already_compiled(
     records = []
     log_record = backward._log_core_plan_record
 
-    def record(**kwargs):
+    def record(**kwargs: Unpack[_CorePlanRecordKwargs]) -> None:
         records.append(kwargs)
         return log_record(**kwargs)
 
@@ -1742,7 +1728,9 @@ def test_budget_narrowing_retries_reuse_executables_already_compiled(
     compiled_keys = []
     compile_and_log = backward._compile_and_log
 
-    def count(**kwargs):
+    def count(
+        **kwargs: Unpack[_CompileAndLogKwargs],
+    ) -> tuple[Hashable, jax.stages.Compiled]:
         compiled_keys.append(kwargs["lowering_key"])
         return compile_and_log(**kwargs)
 
@@ -1750,7 +1738,9 @@ def test_budget_narrowing_retries_reuse_executables_already_compiled(
     narrowings = []
     narrow = backward._narrow_native_closure
 
-    def observe(**kwargs):
+    def observe(
+        **kwargs: Unpack[_NarrowClosureKwargs],
+    ) -> MappingProxyType[RegimeName, backward.Regime]:
         narrowings.append(kwargs["error"].triple)
         return narrow(**kwargs)
 
@@ -1769,7 +1759,7 @@ def test_budget_refusal_logs_the_resident_split_of_its_busiest_device(
     records = []
     log_record = backward._log_core_plan_record
 
-    def record(**kwargs):
+    def record(**kwargs: Unpack[_CorePlanRecordKwargs]) -> None:
         records.append(kwargs)
         return log_record(**kwargs)
 

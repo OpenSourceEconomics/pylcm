@@ -274,7 +274,6 @@ def test_two_cores_of_one_regime_form_a_single_dispatch_unit() -> None:
             ScheduledNode(period=0, regime="acting", program="main"),
             ScheduledNode(period=0, regime="acting", program="replay"),
         ),
-        same_period_dependencies=MappingProxyType({"acting": ()}),
         device_sets=MappingProxyType({"acting": frozenset({0})}),
     )
 
@@ -565,7 +564,7 @@ def test_period_transfer_scratch_counts_pending_copy_occurrences(
     other_layout = dataclasses.replace(
         transfer,
         source=dataclasses.replace(transfer.source, argument="other", path=()),
-        source_sharding=jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+        source_sharding=jax.sharding.make_single_device_sharding(jax.devices()[0]),
         kind=ValueTransferKind.COPY_TO_SOURCE_LAYOUT,
     )
     aligned = dataclasses.replace(

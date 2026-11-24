@@ -17,6 +17,7 @@ from typing_extensions import TypedDict
 
 from _lcm.continuation import ContinuationPayload
 from _lcm.engine import StateActionSpace
+from _lcm.policy_queries import OUTSIDE_PROGRAM
 from _lcm.time import TimeAxis
 from _lcm.typing import (
     FlatParams,
@@ -106,6 +107,7 @@ def _kernel(
         "streamed": execution_disposition == "planned",
         "execution_disposition": execution_disposition,
         "disposition_reason": disposition_reason,
+        "outside_programs": [],
         "collective": collective,
         "has_taste_shocks": has_taste_shocks,
     }
@@ -622,6 +624,25 @@ def test_query_metadata_uses_the_full_root_without_action_streaming() -> None:
         "streamed": False,
         "execution_disposition": "planned",
         "disposition_reason": None,
+        "outside_programs": [],
+    }
+
+
+def test_query_metadata_names_the_stored_outside_table_programs() -> None:
+    """A reader's table programs belong to its graph and are named in its row."""
+    kernel = _full_metadata_kernel()
+    for label in ("single_m", "single_f"):
+        kernel.programs[OUTSIDE_PROGRAM + label] = _metadata_program(
+            disposition="dense", action_reduction=True
+        )
+    assert _kernel_execution_metadata(kernel) == {
+        "streamed": False,
+        "execution_disposition": "planned",
+        "disposition_reason": None,
+        "outside_programs": [
+            OUTSIDE_PROGRAM + "single_f",
+            OUTSIDE_PROGRAM + "single_m",
+        ],
     }
 
 
@@ -654,6 +675,7 @@ def test_query_metadata_preserves_the_sole_main_action_reduction() -> None:
         "streamed": True,
         "execution_disposition": "planned",
         "disposition_reason": None,
+        "outside_programs": [],
     }
 
 
@@ -672,7 +694,7 @@ def test_query_metadata_does_not_unwrap_an_unknown_custody_lookalike() -> None:
 
 
 def test_collective_scenario_constructs_public_query_metadata(tmp_path: Path) -> None:
-    """A public household exposes Full graphs and declared exits/participation."""
+    """A public household exposes Full graphs and the declared exits."""
     code = """
 import sys
 from math import prod
@@ -695,7 +717,6 @@ sys.path.insert(0, str(target_src))
 lcm, version_shim = _import_lcm_with_version_shim(target_src=target_src)
 assert lcm.__version__ == version_shim["version"]
 
-from _lcm.participation_publication import _BorrowedParticipationKernel
 from _lcm.policy_queries import QueryKind, _PolicyQueryKernel
 
 spec = SCENARIOS["collective-gs-vd"]
@@ -704,8 +725,6 @@ assert isinstance(params, dict)
 query_sites = set()
 for name, regime in model._regimes.items():
     for period, kernel in regime.solution.period_kernels.items():
-        if type(kernel) is _BorrowedParticipationKernel:
-            kernel = kernel.base
         if isinstance(kernel, _PolicyQueryKernel):
             assert kernel.definitions[kernel.root].read.kind is QueryKind.FULL
             query_sites.add((name, period))
@@ -714,13 +733,12 @@ assert query_regimes
 assert ("couple", 1) in query_sites
 routes = _route_metadata(model)
 _assert_scenario_identity(spec=spec, routes=routes)
-exit_owners = {name for name, regime in model.user_regimes.items() if regime.exits}
-participation_owners = {
-    name for name, transition in model.declared_transitions["solve"].items()
-    if transition.participation
+exit_owners = {
+    name for name, regime in model.user_regimes.items() if regime.exit is not None
 }
-assert exit_owners and participation_owners
-assert (exit_owners | participation_owners) <= set(routes["gs_vd_regimes"])
+# Dissolution is the couple's exit, formation each single's consent exit.
+assert exit_owners == {"couple", "single_f", "single_m"}
+assert exit_owners <= set(routes["gs_vd_regimes"])
 query_rows = [
     row for row in routes["kernels"]
     if (row["regime"], row["period"]) in query_sites

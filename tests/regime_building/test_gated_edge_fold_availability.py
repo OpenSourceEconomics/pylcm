@@ -22,7 +22,7 @@ import pytest
 from _lcm.regime_building.gated_edges import (
     CompiledEdgeFold,
     ResolvedGatedEdge,
-    ResolvedStakeholderRoute,
+    ResolvedMemberRoute,
     edge_may_fold_at_period,
     source_reads_folded_wbar,
 )
@@ -56,12 +56,12 @@ def _edge(
         # to the protocol on the modeller's behalf.
         gate=cast("ConstraintFunction", _gate),
         legs=tuple(
-            ResolvedStakeholderRoute(
+            ResolvedMemberRoute(
                 route=f"leg_{index}",
-                source_stakeholder=None,
+                source_member=None,
                 target_component_index=None,
                 fallback=ResolvedProjectedRegimeValue(
-                    regime=fallback, projection={}, stakeholder_index=None
+                    regime=fallback, projection={}, member_index=None
                 ),
             )
             for index, fallback in enumerate(fallbacks)
@@ -75,19 +75,21 @@ def _edge(
     )
 
 
-def test_source_reads_folded_wbar_when_the_source_is_covered_one_period_earlier():
+def test_source_reads_folded_wbar_when_the_source_is_covered_one_period_earlier() -> (
+    None
+):
     """A folded ``Wbar`` is read exactly when the source is covered at `t - 1`."""
     assert source_reads_folded_wbar(source_active_periods=(0, 1), fold_period=1) is True
 
 
-def test_source_does_not_read_a_wbar_folded_at_the_targets_earliest_period():
+def test_source_does_not_read_a_wbar_folded_at_the_targets_earliest_period() -> None:
     """A self-loop target's earliest active period has no source one period earlier."""
     assert (
         source_reads_folded_wbar(source_active_periods=(0, 1), fold_period=0) is False
     )
 
 
-def test_edge_does_not_fold_when_its_target_is_unsolved():
+def test_edge_does_not_fold_when_its_target_is_unsolved() -> None:
     """An edge whose target was not solved this period keeps the value already held."""
     assert (
         edge_may_fold_at_period(
@@ -101,7 +103,7 @@ def test_edge_does_not_fold_when_its_target_is_unsolved():
     )
 
 
-def test_edge_does_not_fold_at_a_period_without_a_compiled_fold():
+def test_edge_does_not_fold_at_a_period_without_a_compiled_fold() -> None:
     """A period where no gated case owes a fold keeps the value already held."""
     assert (
         edge_may_fold_at_period(
@@ -115,7 +117,7 @@ def test_edge_does_not_fold_at_a_period_without_a_compiled_fold():
     )
 
 
-def test_edge_folds_when_its_target_and_every_reference_are_solved():
+def test_edge_folds_when_its_target_and_every_reference_are_solved() -> None:
     """An edge folds once the target and every reference regime are solved."""
     assert (
         edge_may_fold_at_period(
@@ -129,7 +131,7 @@ def test_edge_folds_when_its_target_and_every_reference_are_solved():
     )
 
 
-def test_edge_does_not_fold_when_an_unread_periods_reference_is_unsolved():
+def test_edge_does_not_fold_when_an_unread_periods_reference_is_unsolved() -> None:
     """An unsolved reference is a boundary no-op where no source reads the ``Wbar``."""
     assert (
         edge_may_fold_at_period(
@@ -143,7 +145,7 @@ def test_edge_does_not_fold_when_an_unread_periods_reference_is_unsolved():
     )
 
 
-def test_edge_with_an_unsolved_reference_at_a_read_period_is_rejected():
+def test_edge_with_an_unsolved_reference_at_a_read_period_is_rejected() -> None:
     """An unsolved reference whose ``Wbar`` a source reads rejects the model."""
     with pytest.raises(ModelInitializationError, match="src_fallback"):
         edge_may_fold_at_period(
@@ -155,7 +157,7 @@ def test_edge_with_an_unsolved_reference_at_a_read_period_is_rejected():
         )
 
 
-def test_rejection_names_every_unsolved_reference_regime():
+def test_rejection_names_every_unsolved_reference_regime() -> None:
     """The rejection names all unsolved references, not just the first."""
     with pytest.raises(ModelInitializationError, match=r"'fb'.*'ref'|'ref'.*'fb'"):
         edge_may_fold_at_period(

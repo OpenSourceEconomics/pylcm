@@ -1,18 +1,16 @@
-"""Declarations a regime makes about collective and value-dependent choice.
+"""Declarations a regime makes about collective choice.
 
-Six objects, each declared inside a slot that already exists:
+Five objects, each declared inside a slot that already exists:
 `CollectiveUtility` and its `ParetoObjective` in a regime's
-`functions["utility"]`, a `ValueDependentConstraint` in its `constraints`, and a
-`Gate` with stakeholder routes in the `gates` of the source's `Transition` in
-`Model(edges=...)`.
-`ProjectedRegimeValue` is the common reference used by the last two — a
-reading of another regime's value in the same period.
+`functions["utility"]`, and a `Gate` with member routes in the `gates` of the
+source's `Transition` in `Model(edges=...)`. `ProjectedRegimeValue` is the
+reference a route's fallback names — a reading of another regime's value in the
+period a gated row lands in.
 """
 
 import inspect
 from collections.abc import Mapping
-from dataclasses import dataclass, field
-from types import MappingProxyType
+from dataclasses import dataclass
 from typing import Literal
 
 from beartype import beartype
@@ -28,10 +26,10 @@ from lcm.typing import UserFunction
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
 class ParetoObjective:
-    r"""The household's Pareto scalarization of its stakeholders' action values.
+    r"""The household's Pareto scalarization of its members' action values.
 
     A collective regime takes one action for everybody, and this declares how
-    the stakeholders' action values are traded off in taking it:
+    the members' action values are traded off in taking it:
 
     ```{math}
         a^*(x) = \arg\max_{a\,:\,F(x,a)} \sum_s \lambda_s(x)\, Q^s(x, a),
@@ -39,16 +37,16 @@ class ParetoObjective:
     ```
 
     Declaring it rather than writing the sum as an ordinary function is what
-    lets the engine own what a Pareto weight means: one per stakeholder, finite
+    lets the engine own what a Pareto weight means: one per member, finite
     and non-negative, with a strictly positive total, normalized cell by cell,
-    and multiplied in zero-safely — so a stakeholder carrying no weight cannot
+    and multiplied in zero-safely — so a member carrying no weight cannot
     decide the household's choice through an admissible `-inf` of her own.
 
     Omit it (the regime's default) for equal weights.
     """
 
     weights: Mapping[str, UserFunction | float]
-    r"""One weight $\lambda_s$ per stakeholder, keyed by stakeholder name.
+    r"""One weight $\lambda_s$ per member, keyed by member name.
 
     A `float` is a constant. A callable is a function of the regime's STATES
     and of `period` / `age`; every other argument it names becomes a free
@@ -68,7 +66,7 @@ class ParetoObjective:
       weights sum to one wherever the objective is evaluated and a
       state-dependent declaration keeps one scale across the grid.
     - `"none"` uses the declared weights as they stand. The scalarization is
-      then not on the stakeholders' own scale, and comparing values across
+      then not on the members' own scale, and comparing values across
       cells whose totals differ compares different objectives.
     """
 
@@ -89,35 +87,22 @@ class ParetoObjective:
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
 class ProjectedRegimeValue:
-    """Another regime's CURRENT-period value, read at mapped state coordinates.
+    """Another regime's value in the period a gated row lands in.
 
-    The reference regime is solved earlier in the same period — the solver
-    orders each period's active regimes topologically by these declarations —
-    and its value function is interpolated at the projected coordinates with
-    the machinery the continuation uses, but on the current period's arrays.
-    Reading the current period rather than the continuation is what a
-    within-period participation constraint needs: a couple's period-$t$
-    decision is checked against the values its members would have as singles in
-    that same period $t$.
-
-    Where the declaration sits fixes what its projection may read:
-
-    - inside `ValueDependentConstraint.references` it projects from the
-      DECLARING regime's state cell, receives that regime's `period` / `age`,
-      and may introduce no free parameters;
-    - inside a `Gate` route's `fallback` it projects from the TARGET regime's
-      grid, receives that target fold's `period` / `age`, and its free
-      arguments are collected as that edge's own parameters.
+    Declared as a `Gate` route's `fallback`. The reference regime's value
+    function in the target's period — already solved when the source decides —
+    is interpolated at the projected coordinates with the machinery the
+    continuation uses. The projection maps the TARGET regime's grid onto the
+    reference regime's states, receives that target fold's `period` / `age`,
+    and its free arguments are collected as that edge's own parameters.
     """
 
     regime: RegimeName
-    """Name of the reference regime whose same-period value is read.
+    """Name of the reference regime whose value is read.
 
-    Must be another regime of the model, active in every period the declaring
-    regime is active. No transition edge between the two is required — a
-    reference read works across otherwise unconnected regime "islands", which
-    is what lets a constraint compare this regime's value against a regime it
-    never transitions into.
+    Must be another regime of the model, active in every period the gated
+    target is reached. No transition edge into it is required — a reference read
+    works across otherwise unconnected regime "islands".
     """
 
     projection: Mapping[StateName, UserFunction]
@@ -127,11 +112,11 @@ class ProjectedRegimeValue:
     on continuous axes, lookup on discrete axes.
     """
 
-    stakeholder: str | None = None
-    """Which stakeholder's value to read from a collective reference regime.
+    member: str | None = None
+    """Which member's value to read from a collective reference regime.
 
     Required when the reference regime is collective (its value carries a
-    stakeholder axis); must be `None` when it is a singleton.
+    member axis); must be `None` when it is a singleton.
     """
 
     def __post_init__(self) -> None:
@@ -143,30 +128,33 @@ class ProjectedRegimeValue:
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
 class CollectiveUtility:
-    """A collective regime's stakeholders and how their values are traded off.
+    """A collective regime's members and how their values are traded off.
 
     Declared as the regime's `functions={"utility": CollectiveUtility(...)}`,
     which is what makes the regime collective: the `utilities` keys ARE its
-    stakeholders, in insertion order, and that order fixes the trailing
-    stakeholder axis of the regime's value function and of every published
+    members, in insertion order, and that order fixes the trailing
+    member axis of the regime's value function and of every published
     array.
 
     The household takes one action for everybody. It maximizes `objective`
-    over the feasible actions and reads off each stakeholder's own action value
+    over the feasible actions and reads off each member's own action value
     at that common choice.
 
     The declaration stays in the regime's raw `functions["utility"]` slot.
-    Construction derives `stakeholders` and `pareto_objective`, while the
-    engine reads `Regime.decomposed_functions`. That view emits every
+    Construction derives `members`, `member_axis` and `pareto_objective`,
+    while the engine reads `Regime.decomposed_functions`. That view emits every
     nondelegated body and any delegated body already supplied; model
-    finalization requires one `utility_<s>` entry per stakeholder after
+    finalization requires one `utility_<s>` entry per member after
     model-level declarations are merged.
     """
 
     utilities: Mapping[str, UserFunction | Phased | None]
-    """One flow-utility per stakeholder, keyed by stakeholder name.
+    """One flow-utility per member, keyed by member name.
 
-    Three ways to name a stakeholder's utility, and the keys are the household
+    `"self"` is not a valid key: it names the single member of a regime
+    declared with a plain utility function.
+
+    Three ways to name a member's utility, and the keys are the household
     either way:
 
     - a function — the ordinary case;
@@ -174,17 +162,17 @@ class CollectiveUtility:
       one simulation realizes;
     - `None` — the body arrives from elsewhere, under the regime's own
       `utility_<s>` entry. That is what lets a model declare a common utility
-      at the model level and still name its households here; a stakeholder left
+      at the model level and still name its households here; a member left
       undeclared in both places is an error naming the entry that is missing.
     """
 
     objective: ParetoObjective | None = None
-    """How the stakeholders' action values are scalarized into the household's.
+    """How the members' action values are scalarized into the household's.
 
     `None` (the default) weights them equally. A `ParetoObjective` declares the
     weights, and declaring them rather than writing the sum as an ordinary
     function is what lets the engine own what a Pareto weight means — one per
-    stakeholder, finite and non-negative, with a strictly positive total,
+    member, finite and non-negative, with a strictly positive total,
     normalized cell by cell, and multiplied in zero-safely.
     """
 
@@ -192,7 +180,13 @@ class CollectiveUtility:
         if not self.utilities:
             raise RegimeInitializationError(
                 "A `CollectiveUtility` declares a household, so it needs at "
-                "least one stakeholder: `utilities` may not be empty."
+                "least one member: `utilities` may not be empty."
+            )
+        if "self" in self.utilities:
+            raise RegimeInitializationError(
+                "A `CollectiveUtility` may not name a member 'self': that name "
+                "is reserved for the single member of a regime declared with a "
+                "plain utility function. Name the household's members otherwise."
             )
         object.__setattr__(
             self, "utilities", ensure_containers_are_immutable(self.utilities)
@@ -201,55 +195,19 @@ class CollectiveUtility:
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
-class ValueDependentConstraint:
-    """A feasibility constraint that may read values, not only states.
-
-    Declared inside the regime's `constraints`, beside the ordinary callables,
-    so there is one constraint slot rather than two. The regime's mask is the
-    AND of both kinds, and a cell whose mask is empty holds no viable
-    household.
-
-    A participation constraint is the motivating case: a couple's cell is
-    feasible only where each partner is at least as well off inside the
-    household as at the outside option that partner's own regime offers in the
-    same period.
-    """
-
-    predicate: UserFunction
-    """Returns `True` where the cell is feasible.
-
-    May read `Q_<s>` for each stakeholder of the declaring regime, each key of
-    this constraint's OWN `references`, and ordinary states, actions,
-    functions and parameters.
-    """
-
-    references: Mapping[str, ProjectedRegimeValue] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
-    """The same-period reference values `predicate` reads, keyed by the name
-    each one enters the predicate under."""
-
-    def __post_init__(self) -> None:
-        object.__setattr__(
-            self, "references", ensure_containers_are_immutable(self.references)
-        )
-
-
-@beartype(conf=REGIME_CONF)
-@dataclass(frozen=True, kw_only=True)
-class StakeholderRoute:
-    """Where one source stakeholder goes on each branch of a gated transition.
+class MemberRoute:
+    """Where one source member goes on each branch of a gated transition.
 
     A route owns four destinations, and simulation carries all four: the open
     branch's regime (the transition's own key) and role
-    (`target_stakeholder`), and the closed branch's regime and role
-    (`fallback.regime` and `fallback.stakeholder`). A row landing in a
+    (`target_member`), and the closed branch's regime and role
+    (`fallback.regime` and `fallback.member`). A row landing in a
     singleton regime carries no role.
     """
 
     fallback: ProjectedRegimeValue | Phased[ProjectedRegimeValue, ProjectedRegimeValue]
-    """The gate-closed branch: a reference regime's same-period value at a
-    projection from the TARGET regime's grid.
+    """The gate-closed branch: a reference regime's value in the landing period,
+    at a projection from the TARGET regime's grid.
 
     A bare `ProjectedRegimeValue` is both what the branch is worth and where it
     puts a row. `Phased(solve=..., simulate=...)` separates them, because what
@@ -270,8 +228,8 @@ class StakeholderRoute:
     regime name, so its type cannot carry which form that one route declared.
     """
 
-    target_stakeholder: str | None = None
-    """The gate-open branch's role — one of the target's stakeholders, or
+    target_member: str | None = None
+    """The gate-open branch's role — one of the target's members, or
     `None` for a singleton target."""
 
     @property
@@ -309,16 +267,16 @@ class Gate:
 
     **The key is always the GATE-OPEN target** — the regime a row enters when
     the predicate is true; each route's fallback is where the closed branch
-    sends that stakeholder.
+    sends that member.
 
     This is what unlocks mixed singleton/collective topologies — a singleton
     regime reaching a collective one, a collective regime routing per
-    stakeholder into singleton ones. A raw transition between regimes of
-    different stakeholder structure stays rejected.
+    member into singleton ones. A raw transition between regimes of
+    different member structure stays rejected.
 
     A gate never reads a value. A move decided by comparing values is an `Exit`
-    declared in the source regime's `exits=`, or a `ParticipationCheck` in the
-    `Transition`'s `participation` when the comparison is made on landing.
+    of the regime that decides: formation is an `Exit` with a `Consent` rule on
+    the source, dissolution the household's own exit.
     """
 
     predicate: UserFunction
@@ -332,8 +290,8 @@ class Gate:
     selected with a strict `where`, in which every nonzero value is true.
     """
 
-    routes: Mapping[str, StakeholderRoute]
-    """One route per SOURCE stakeholder, keyed by stakeholder name.
+    routes: Mapping[str, MemberRoute]
+    """One route per SOURCE member, keyed by member name.
 
     A singleton source declares exactly one route, under any key.
     """
@@ -363,12 +321,9 @@ class Gate:
                 f"The gate predicate reads {value_operands}, a value of its "
                 "target regime. A gate routes on the target's states and "
                 "parameters only. Declare a move decided by comparing values "
-                "in the current period as an `Exit` in the source regime's "
-                "`exits=`, priced at the target's participating policy. Keep "
-                "a comparison made on landing in the next period at that "
-                "landing date with a `ParticipationCheck` in the `Transition`'s "
-                "`participation`, which reads values through explicit "
-                "`ParticipationRead`s."
+                "as an `Exit` of the regime that decides: formation as an "
+                "`Exit` with a `Consent` rule on the source regime, dissolution "
+                "as the household regime's own `Exit`."
             )
             raise GateReadsValueError(msg)
         object.__setattr__(self, "routes", ensure_containers_are_immutable(self.routes))

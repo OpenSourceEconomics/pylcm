@@ -181,12 +181,12 @@ _PROFILED_HELPER_MUTATIONS = {
     "simulation_pandas:role_writer_omitted": (
         "src/_lcm/pandas_utils.py",
         (
-            '            labels=df["own_stakeholder"],\n'
+            '            labels=df["own_member"],\n'
             "            user_regimes=user_regimes,\n"
             "            array_writer=array_writer,"
         ),
         (
-            '            labels=df["own_stakeholder"],\n'
+            '            labels=df["own_member"],\n'
             "            user_regimes=user_regimes,\n"
             "            array_writer=None,"
         ),
@@ -809,11 +809,11 @@ _COMBINED_INPUT_MUTATIONS = {
             "                states,\n"
             "                subject_regime_ids,\n"
             "                new_subject_regime_ids,\n"
-            "                own_stakeholder,"
+            "                own_member,"
         ),
         (
             "                states,\n                (),\n                (),\n"
-            "                own_stakeholder,"
+            "                own_member,"
         ),
     ),
     "chunk_diagnostics:profiled_nonfinite_bypassed": (
@@ -1007,7 +1007,10 @@ _EAGER_PLACEMENT_MUTATIONS = {
     "eager_internal:producer_layout_replaced": (
         "src/_lcm/execution/eager_core.py",
         "                sharding=value.sharding,",
-        "                sharding=jax.sharding.SingleDeviceSharding(jax.devices()[0]),",
+        (
+            "                sharding="
+            "jax.sharding.make_single_device_sharding(jax.devices()[0]),"
+        ),
     ),
     "eager_internal:selected_templates_omitted": (
         "src/_lcm/solution/backward_induction.py",
@@ -1368,7 +1371,7 @@ def test_donation_argument_adapter_is_in_the_reviewed_source_inventory(
     *,
     source: RepositoryRelativePath,
     clean_corridor_sources: tuple[RepositoryRelativePath, ...],
-):
+) -> None:
     """The sole-marginal adapter and its installation are independently sealed."""
     assert source in clean_corridor_sources
 
@@ -1548,7 +1551,7 @@ def test_live_simulation_program_sources_are_certified(
     *,
     source: RepositoryRelativePath,
     clean_corridor_sources: tuple[RepositoryRelativePath, ...],
-):
+) -> None:
     """Declaration, argument binding, resolution, and dispatch are live obligations."""
     assert source in clean_corridor_sources
 
@@ -1584,7 +1587,7 @@ def test_program_mutation_is_rejected_after_byte_seals_are_refreshed(
     clean_corridor_sources: tuple[RepositoryRelativePath, ...],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     """Each transport defect fails its own semantic corridor after byte resealing."""
     root = Path(__file__).parents[1]
     sources = clean_corridor_sources

@@ -115,7 +115,7 @@ regime carries **in simulation**, and an age-specialized state is one of those l
 other:
 
 ```python
-StakeholderRoute(
+MemberRoute(
     fallback=ProjectedRegimeValue(
         regime="annuity",
         # `annuity` holds `principal` on an `AgeSpecializedGrid`. The projection
@@ -124,10 +124,6 @@ StakeholderRoute(
     )
 )
 ```
-
-A `ValueDependentConstraint` reference projection instead owes one coordinate per state
-of the reference regime's *value function*, i.e. its solve states. The two sets differ
-only by the states a regime carries in simulation alone.
 
 ## Before using it
 

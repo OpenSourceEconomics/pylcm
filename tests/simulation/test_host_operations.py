@@ -301,7 +301,7 @@ def test_constant_membership_outputs_keep_the_actual_ordered_subject_layout() ->
         roles = jax.device_put(np.arange(10, 16, dtype=np.int32), sharding)
         expected = initialize_subject_membership(
             initial_regime_ids=regimes,
-            initial_own_stakeholder=roles,
+            initial_own_member=roles,
         )
         memory = SimulationMemory(
             budget_bytes=2**24,
@@ -312,7 +312,7 @@ def test_constant_membership_outputs_keep_the_actual_ordered_subject_layout() ->
         )
         actual = initialize_subject_membership(
             initial_regime_ids=regimes,
-            initial_own_stakeholder=roles,
+            initial_own_member=roles,
             memory=memory,
         )
         for output, direct in zip(actual, expected, strict=True):

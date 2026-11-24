@@ -45,7 +45,7 @@ def expected_V_rank(*, regime: Regime) -> int:
     Single source of truth for the rank: the topology below builds V to it.
 
     - One axis per solve state.
-    - One trailing stakeholder axis when the regime is collective.
+    - One trailing member axis when the regime is collective.
 
     Args:
         regime: Canonical regime whose stored value function is being sized.
@@ -55,7 +55,7 @@ def expected_V_rank(*, regime: Regime) -> int:
 
     """
     n_state_axes = len(regime.solution.state_names)
-    return n_state_axes + (1 if regime.stakeholders is not None else 0)
+    return n_state_axes + (1 if regime.member_axis is not None else 0)
 
 
 def placed_V_sharding(
@@ -84,7 +84,7 @@ def placed_V_sharding(
     """
     if sharding_plan is not None:
         return sharding_plan.V_arr_sharding(state_order)
-    return jax.sharding.SingleDeviceSharding(devices[0])
+    return jax.sharding.make_single_device_sharding(devices[0])
 
 
 def _get_regime_V_shapes_and_shardings(
@@ -126,11 +126,11 @@ def _get_regime_V_shapes_and_shardings(
         state_order: tuple[StateName, ...] = tuple(state_action_space.states)
         shape = tuple(len(v) for v in state_action_space.states.values())
         # A collective regime's V carries a trailing
-        # stakeholder axis, so the zero template and the roll must too. The
-        # sharding plan spans the state axes only; the trailing stakeholder
+        # member axis, so the zero template and the roll must too. The
+        # sharding plan spans the state axes only; the trailing member
         # axis is replicated.
-        if regime.stakeholders is not None:
-            shape = (*shape, len(regime.stakeholders))
+        if regime.member_axis is not None:
+            shape = (*shape, len(regime.member_axis))
         assert len(shape) == expected_V_rank(regime=regime), (  # noqa: S101
             f"regime {regime_name!r}: V topology built rank {len(shape)}, "
             f"while the rank rule states {expected_V_rank(regime=regime)}"

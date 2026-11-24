@@ -415,7 +415,7 @@ def _stage_channels(snapshot: dict, regimes: dict, nodes: dict) -> tuple[dict[st
         pattern = ("continuous" if step == 1 or len(residues) > 1 else f"stage_{step}_{next(iter(residues))}")
         patterns[name] = pattern
         if name not in terminal:
-            payload = {key: declaration.get(key) for key in ("states", "actions", "functions", "constraints", "koopmans_aggregator", "certainty_equivalent", "stakeholders", "__routing_owner")}
+            payload = {key: declaration.get(key) for key in ("states", "actions", "functions", "constraints", "koopmans_aggregator", "certainty_equivalent", "member_axis", "__routing_owner")}
             signatures[pattern].add(digest(_semantic_shape(payload)))
     keys = {pattern: digest(sorted(items))[:12] for pattern, items in signatures.items()}
     channels = {}
@@ -470,9 +470,9 @@ def adapt_snapshot(snapshot: dict[str, Any], *, name: str = "Constructed pylcm m
                 return fields(value).get('regime') not in nodes
             return any(query_only_reference(child) for child in value.values())
         return isinstance(value, list) and any(query_only_reference(child) for child in value)
-    if any(query_only_reference(fields(raw).get(key, {}))
+    if any(query_only_reference(fields(raw).get(key) or {})
            for raw in snapshot['user_regimes'].values()
-           for key in ('same_period_refs', 'value_constraints', 'exits', 'constraints')):
+           for key in ('exit',)):
         raise ModelAdapterError('Legacy scalar adapter cannot represent policy-query owners; use find_regimes(native_snapshot) production normalization')
     ages = sorted({a for aa in nodes.values() for a in aa})
     lanes = _lanes(nodes)
@@ -564,7 +564,7 @@ def adapt_snapshot(snapshot: dict[str, Any], *, name: str = "Constructed pylcm m
                 outputs[operator + "_dependencies"] = expression(value)
         if snapshot.get("shocks"):
             outputs["shock_distribution_dependencies"] = expression(snapshot["shocks"])
-        special = {key: declaration.get(key) for key in ("stakeholders", "same_period_refs", "value_constraints", "joint_transitions", "exits")
+        special = {key: declaration.get(key) for key in ("member_axis", "joint_transitions", "exit")
                    if declaration.get(key)}
         if special or regime in protected_value_routes:
             # Until each value/read/joint route is lowered, retaining all local
@@ -623,7 +623,7 @@ def adapt_snapshot(snapshot: dict[str, Any], *, name: str = "Constructed pylcm m
             replacements[parameter] = alias
             scalar_replacements[parameter] = alias
             external.add(alias)
-        role = {"actor": "individual" if not declaration.get("stakeholders") else "collective:" + repr(declaration["stakeholders"]),
+        role = {"actor": "individual" if not declaration.get("member_axis") else "collective:" + repr(declaration["member_axis"]),
                 "observations": ["original graph information"], "commitments": ["original action timing"],
                 "discount_boundary": "one original graph period"}
         program = {"id": regime, "when": "age in " + repr(nodes[regime]),

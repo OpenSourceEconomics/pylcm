@@ -20,7 +20,7 @@ def simulation_value_sharding(
     if not devices:
         raise ValueError("Simulation value placement requires at least one device.")
     if len(devices) == 1:
-        return jax.sharding.SingleDeviceSharding(devices[0])
+        return jax.sharding.make_single_device_sharding(devices[0])
     if (
         isinstance(stored_sharding, jax.NamedSharding)
         and tuple(stored_sharding.mesh.devices.flat) == devices

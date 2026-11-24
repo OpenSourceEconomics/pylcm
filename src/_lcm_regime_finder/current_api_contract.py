@@ -11,7 +11,7 @@ import functools
 from inspect import Signature
 from types import CodeType, FunctionType, MappingProxyType, ModuleType, UnionType
 from typing import TypeAliasType
-from .callable_identity import _code_digest
+from .callable_identity import _code_digest, note_lost_source
 from .records import JSONValue
 
 NATIVE_INPUT_TYPES = frozenset({
@@ -28,13 +28,19 @@ NATIVE_SCHEDULE_TYPES = frozenset(name for name in NATIVE_INPUT_TYPES
     if name.startswith(('_lcm.regime_building.schedules.', '_lcm.regime_building.transition_support.'))
     or name == 'lcm.transition.StochasticTransition')
 
-_PARTICIPATION_FILE = "19cc45ca193a562403f57f5d96525cf1e68641bef68abc3d4f4f6ea352d8301a"
+_TRANSITION_FILE = 'bb5e00b64d0334ff661ca35cd04c8b291d22017640f5e355fb05ed6cb4e238ca'
+# Schedule files whose `_PeriodDispatch` and `_ProbabilityConstant` are identical.
+# The second counts every period a gated source reads in `gated_source_periods`.
+_SCHEDULES_FILES = (
+    'b9b26eacf800b5be94f84ba493e4f4686b9ac5b81610303a2ac38b8a1bee8d27',
+    '942e052249b47aaf489e1539e68d6d688fd5cc72210704a0506e4d003a66df77',
+)
 _AUTHORITIES = {
     '_lcm.regime_building.schedules._PeriodDispatch': (
         ('e20e034a51b1280119819b4215d3e19cbae960e7f1baba2c10ea731e1b94b4f7',
          ('a6d5b3e9a861607d4e77f1b686e54ef817811db3b30dc8dbe474fd433ca6c64e',)),
         ('7342ffcf01253290e261e7b4e19cd1dab5194b70b526ab28f08f47159a62dc71',
-         ('b9b26eacf800b5be94f84ba493e4f4686b9ac5b81610303a2ac38b8a1bee8d27',)),
+         _SCHEDULES_FILES),
     ),
     '_lcm.regime_building.schedules._Constant': (
         'fe6981c389240bef8b46ba9708461d971ccae11c7196c488181ae7327eeb09f3',
@@ -42,17 +48,15 @@ _AUTHORITIES = {
     ),
     '_lcm.regime_building.schedules._ProbabilityConstant': (
         '6fa244c9f417ab0ad7bdf9b4d8c9d93f7dadeef8a4eb61c3f3dbe8baa36bb38d',
-        ('b9b26eacf800b5be94f84ba493e4f4686b9ac5b81610303a2ac38b8a1bee8d27',),
+        _SCHEDULES_FILES,
     ),
     '_lcm.regime_building.transition_support._SupportedStochasticTransition': (
         '495ece700e7d79617a84d5de87e1d7242db8b72aeffc1aae76cf995b19f35080',
         ('40b09a4e739186e8e0cbbd7b0f249309e198b4183ed5465facc20c3d5411d690',),
     ),
     'lcm.transition.StochasticTransition': (
-        ('747f4a807c304c2fc207a401d351d0bcd67804d0ecc6eaf5e9ced52676c59585',
-         ('bee97101a92d339e52e930066ac63b88158ca786f3d63cbb562d129ea10c1383',)),
-        ('a5abf1139bbcd62bccf43d2531ecd849532da5712519cfdebe005e3fa46970d8',
-         ('12e409188007d10443b59c25db287487d24971dd1036b2d115a353d84e3df9c6',)),
+        'a5abf1139bbcd62bccf43d2531ecd849532da5712519cfdebe005e3fa46970d8',
+        (_TRANSITION_FILE,),
     ),
     'lcm.temporal._TemporalDecorator': (
         'c73722027a1fcdf9b30823e45e5e6111f3b05aa44045505fbab2a6abae4a92ad',
@@ -60,7 +64,7 @@ _AUTHORITIES = {
     ),
     '_lcm.regime_building.value_adapter.ValueAdapter': (
         ('bc46eb4aa3919573fa3252f4521a3c01f14ca6b5ff62e31e7c93b34f3ea21718',
-         ('9a35754dd0bdb1b32a82d583f8bdefd0a253bb088e9d581dd41c47afe72ff7ba',)),
+         ('bcfc407bc416489188d2e259c9b9f8927e5d3d73562dc7a3e5ba7536ec95d35b',)),
         ('46d796380a1afe65bf0c94fe9264db510394599c4a34f2adcfd949e94849c5b5',
          ('030fdfaf3842033b43ba4544c9f245c14e44ad24633f352b746100751f0f8e32',)),
     ),
@@ -76,30 +80,17 @@ _AUTHORITIES = {
         '8a528a29ed7f27c87d1bebd2de6fe42276af2cedc8d986758ef2cc8988f57e4f',
         ('17dcfe8cc029b7160ab93846ad05d942b08f57162b7ec0eefc25105d020926a8',),
     ),
-    "lcm.participation.ParticipationRead": (
-        "4d036ef554fa2b2e93e8b1f8da3366c701700c4e439006944674570d37e0d428",
-        (_PARTICIPATION_FILE,),
-    ),
-    "lcm.participation.ParticipationCheck": (
-        "44c8bb9ec6f04e6e31bd557fe5f58bfbbcb3bb5d8d2ccfedd0e86ba38c38fd36",
-        (_PARTICIPATION_FILE,),
-    ),
+    # The finder reads `targets`, `law`, `gates` and `arrivals` of this class;
+    # `validate_original_types` refuses a non-empty `roles`.
     "lcm.transition.Transition": (
-        "46088bb83593235ee33e56c2f0b92a29ba51396e91d38467dac62058008c2245",
-        (
-            "587518f47dc4909c070ffd72e161cec0be134919a7d89f480976e6c1b0d1c496",
-            # Specialization types changed in the same file. Transition is identical.
-            "bee97101a92d339e52e930066ac63b88158ca786f3d63cbb562d129ea10c1383",
-            # `StochasticTransition` converts its output and the age-specialized
-            # types are constrained in the same file. Transition is identical.
-            "12e409188007d10443b59c25db287487d24971dd1036b2d115a353d84e3df9c6",
-        ),
+        "19ba1410538e08c95e5b289ffc1591702faeab1f6d5b230dd6237a28de4ae926",
+        (_TRANSITION_FILE,),
     ),
 }
 
 _NATIVE_CALL_SOURCES = MappingProxyType({
     '_lcm.regime_building.value_adapter.ValueAdapter': frozenset({
-        ('9a35754dd0bdb1b32a82d583f8bdefd0a253bb088e9d581dd41c47afe72ff7ba',
+        ('bcfc407bc416489188d2e259c9b9f8927e5d3d73562dc7a3e5ba7536ec95d35b',
          '9f680db35e88630edd31b3d42d0abaebd3e82e72fa11aa07d9292a4c6dacca55'),
         ('030fdfaf3842033b43ba4544c9f245c14e44ad24633f352b746100751f0f8e32',
          '991053e32d97e7ea21bf0cb93648389d63d2cb6133e858de90074786457ed618'),
@@ -124,21 +115,21 @@ _TEMPORAL_CODE_CONTRACT = 'source-bound-native-temporal-template/v1'
 _SCHEDULE_CALLS = MappingProxyType({
     '_lcm.regime_building.schedules._PeriodDispatch': frozenset({
         ('a6d5b3e9a861607d4e77f1b686e54ef817811db3b30dc8dbe474fd433ca6c64e', '1bd55955bb84d7c82e795f10fb7af96251135a20d696fc6e1b45eda0483f5c5e'),
-        ('b9b26eacf800b5be94f84ba493e4f4686b9ac5b81610303a2ac38b8a1bee8d27', 'eafb6be26a9b656e4b328b329e5f477d0583afe6e0868504616bedd39692d843'),
+        *((file, 'eafb6be26a9b656e4b328b329e5f477d0583afe6e0868504616bedd39692d843')
+          for file in _SCHEDULES_FILES),
     }),
     '_lcm.regime_building.schedules._Constant': frozenset({
         ('a6d5b3e9a861607d4e77f1b686e54ef817811db3b30dc8dbe474fd433ca6c64e', '704df376d94dc6edb0d84f0902332f4c2f7ffd0813b85be19506ef538701ee1b'),
     }),
     '_lcm.regime_building.schedules._ProbabilityConstant': frozenset({
-        ('b9b26eacf800b5be94f84ba493e4f4686b9ac5b81610303a2ac38b8a1bee8d27', 'a505af976343ae3f8570648b9c1239d616c3f98ec1118f9180f60cfc552d703e'),
+        *((file, 'a505af976343ae3f8570648b9c1239d616c3f98ec1118f9180f60cfc552d703e')
+          for file in _SCHEDULES_FILES),
     }),
     '_lcm.regime_building.transition_support._SupportedStochasticTransition': frozenset({
-        ('bee97101a92d339e52e930066ac63b88158ca786f3d63cbb562d129ea10c1383', 'fc55c08981c08230b0817359225f8e0c4d3b87d4213897ce87d896dc45bc8f21'),
-        ('12e409188007d10443b59c25db287487d24971dd1036b2d115a353d84e3df9c6', 'e42c57e95f9bd898a5daa6b6fbf5340a88ffc7a29765c66d577f71fd39febd31'),
+        (_TRANSITION_FILE, 'e42c57e95f9bd898a5daa6b6fbf5340a88ffc7a29765c66d577f71fd39febd31'),
     }),
     'lcm.transition.StochasticTransition': frozenset({
-        ('bee97101a92d339e52e930066ac63b88158ca786f3d63cbb562d129ea10c1383', 'fc55c08981c08230b0817359225f8e0c4d3b87d4213897ce87d896dc45bc8f21'),
-        ('12e409188007d10443b59c25db287487d24971dd1036b2d115a353d84e3df9c6', 'e42c57e95f9bd898a5daa6b6fbf5340a88ffc7a29765c66d577f71fd39febd31'),
+        (_TRANSITION_FILE, 'e42c57e95f9bd898a5daa6b6fbf5340a88ffc7a29765c66d577f71fd39febd31'),
     }),
 })
 
@@ -210,7 +201,8 @@ def inspect_authority(cls: type[object]) -> dict[str, JSONValue] | None:
             return None
         file_bytes = Path(filename).read_bytes().replace(b"\r\n", b"\n")
         file_hash = hashlib.sha256(file_bytes).hexdigest()
-    except (TypeError, OSError):
+    except (TypeError, OSError) as error:
+        note_lost_source(name, error)
         return None
     return {"module": cls.__module__, "qualname": cls.__qualname__,
             "source_sha256": hashlib.sha256(source.encode()).hexdigest(),
@@ -241,7 +233,8 @@ def inspect_native_input_authority(value: object, raw: object) -> dict[str, JSON
         return None
     try:
         source = textwrap.dedent(inspect.getsource(raw)).strip()
-    except (OSError, TypeError):
+    except (OSError, TypeError) as error:
+        note_lost_source(name + '.__call__', error)
         return None
     if not matches_native_call(name=name, authority=authority, source=source,
                                file_sha256=authority['file_sha256']):
@@ -395,7 +388,8 @@ def inspect_source_bound_function(
         if len(matches) != 1 or not _native_constant_equal(authored.__code__, matches[0]):
             return None
         return authored
-    except (OSError, TypeError, ValueError, SyntaxError, RecursionError):
+    except (OSError, TypeError, ValueError, SyntaxError, RecursionError) as error:
+        note_lost_source(module_name + '.' + qualname, error)
         return None
 
 
@@ -539,7 +533,7 @@ def inspect_native_first_array_return(
         return None
     try:
         source = Path(filename).read_bytes().replace(b'\r\n', b'\n')
-        if hashlib.sha256(source).hexdigest() != '92bd61b989e1259c67723f8d98e55f8e6b2a5fd4e4f42c9e017a63f80cd1c248':
+        if hashlib.sha256(source).hexdigest() != 'a1c756ad5c8e2049cdfe0026ac2716b427781b2cd80ac6d8f821b7ed6bb69289':
             return None
         evaluator = _native_array_alias_evaluator(alias, native_typing, source, filename, name='ValueND', dtype_name='Shaped')
         if evaluator is None:
@@ -564,7 +558,8 @@ def inspect_native_first_array_return(
         if not isinstance(expanded_hint, UnionType):
             return None
         return original_hint, expanded_hint
-    except (OSError, TypeError, ValueError, SyntaxError, RecursionError):
+    except (OSError, TypeError, ValueError, SyntaxError, RecursionError) as error:
+        note_lost_source('lcm.typing.ValueND', error)
         return None
 
 
@@ -654,11 +649,11 @@ def inspect_native_schedule_authority(value: object, raw: object) -> dict[str, J
         for key in ('zip', 'range', 'len'):
             if vars(module).get(key, getattr(builtins, key)) is not getattr(builtins, key):
                 return None
-        if name.endswith('._PeriodDispatch') and file_sha256 == 'b9b26eacf800b5be94f84ba493e4f4686b9ac5b81610303a2ac38b8a1bee8d27':
+        if name.endswith('._PeriodDispatch') and file_sha256 in _SCHEDULES_FILES:
             if inspect_source_bound_function(vars(module).get('_read'), module_name=owner.__module__,
                     qualname='_read', file_sha256=file_sha256) is None:
                 return None
-    elif file_sha256 == '12e409188007d10443b59c25db287487d24971dd1036b2d115a353d84e3df9c6':
+    elif file_sha256 == _TRANSITION_FILE:
         dtypes = sys.modules.get('_lcm.dtypes')
         if dtypes is None:
             return None
@@ -681,7 +676,8 @@ def inspect_native_schedule_authority(value: object, raw: object) -> dict[str, J
                 return None
     try:
         source = textwrap.dedent(inspect.getsource(authored)).strip()
-    except (OSError, TypeError):
+    except (OSError, TypeError) as error:
+        note_lost_source(name + '.__call__', error)
         return None
     result: dict[str, JSONValue] = {
         'class_source': authority,
@@ -784,21 +780,23 @@ def inspect_temporal_input_authority(
             'temporal_names': [name for name in names if isinstance(name, str)],
         }
         return MappingProxyType(authority), target, signature
-    except (AttributeError, OSError, TypeError, ValueError):
+    except (AttributeError, OSError, TypeError, ValueError) as error:
+        note_lost_source('lcm.temporal._TemporalDecorator.__call__', error)
         return None
 
 
 def validate_original_types(value):
-    """Refuse a modern spelling without the corresponding original source."""
+    """Refuse a modern spelling without the corresponding original source, and `roles`."""
     if isinstance(value, dict):
         name = value.get("type", "")
         if value.get("kind") not in ("dataclass", "object") or not isinstance(name, str):
             name = ""
-        modern = name.rsplit(".", 1)[-1] in {"ParticipationRead", "ParticipationCheck"}
-        modern_transition = name.rsplit(".", 1)[-1] == "Transition" and bool(value.get("fields", {}).get("participation"))
-        if modern or modern_transition:
-            if not matches_authority(name=name, observed=value.get("canonical_type_source")):
-                raise ValueError("Current participation declaration lacks verified canonical class source: " + name)
+        if name.rsplit(".", 1)[-1] == "Transition" and value.get("fields", {}).get("roles"):
+            raise ValueError(
+                "A declaration spec is read before `Transition.roles` is lowered into its "
+                "gate, so the regime finder does not read `roles`. Analyze the constructed "
+                "Model, whose bound law carries each role as its always-open gate, or "
+                "declare that gate under `gates`.")
         for child in value.values():
             validate_original_types(child)
     elif isinstance(value, list):
@@ -811,9 +809,9 @@ def gate_maps(data, *names):
     for name in names:
         values = data.get(name, {})
         if not isinstance(values, dict):
-            raise ValueError("A transition participation/gate mapping is not captured")
+            raise ValueError("A transition gate mapping is not captured")
         if result.keys() & values.keys():
-            raise ValueError("A scheduled target has conflicting gate/participation declarations")
+            raise ValueError("A scheduled target has conflicting gate/arrival declarations")
         result.update(values)
     return result
 
@@ -834,7 +832,7 @@ def inspect_native_floatnd_alias(value: object) -> dict[str, JSONValue] | None:
     try:
         source, file_hash = _source_file(filename)
         _, array_hash = _source_file(array_filename)
-        if (file_hash not in {'92bd61b989e1259c67723f8d98e55f8e6b2a5fd4e4f42c9e017a63f80cd1c248',
+        if (file_hash not in {'a1c756ad5c8e2049cdfe0026ac2716b427781b2cd80ac6d8f821b7ed6bb69289',
                              '5335c3c4cdfdcc48c231bd7ba3e44285d93be331242d77404d7778f977fe6c99'}
                 or array_hash != 'e63908f56c995f24cbed97d9ba820c8b5fd98bc0301dfb4095cde3ab7d5dd1e4'):
             return None
@@ -863,7 +861,8 @@ def inspect_native_floatnd_alias(value: object) -> dict[str, JSONValue] | None:
         return {'contract': 'source-bound-native-floatnd-alias/v1', 'alias': 'lcm.typing.FloatND',
                 'typing_file_sha256': file_hash, 'array_module_sha256': array_hash,
                 'array_type': 'jax.Array', 'dtype': 'jaxtyping.Float', 'shape': '...'}
-    except (OSError, TypeError, ValueError, AttributeError, SyntaxError, RecursionError):
+    except (OSError, TypeError, ValueError, AttributeError, SyntaxError, RecursionError) as error:
+        note_lost_source('lcm.typing.FloatND', error)
         return None
 
 

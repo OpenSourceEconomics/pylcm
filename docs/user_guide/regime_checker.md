@@ -85,7 +85,9 @@ readability.
 
 - the source check passed;
 - every point of the curve is exact in the searched family;
-- the independent layout check passed.
+- the independent layout check passed: with its own code, it derived the lanes and every
+  block's cost, periods, states, actions and fibres from the kept coordinates, and they
+  agree with the report.
 
 The status is `UNRESOLVED` when a source premise remains open, or when the curve is
 `RESTRICTED`. A restricted curve merged some status lanes it could not prove mergeable,
@@ -101,14 +103,32 @@ The family, the counts and the exactness rules are those of the paper's Suppleme
 The checker follows the model's declared functions, constraints and conditional laws. A
 state is kept wherever a current calculation reads it, or a calculation in a successor
 period needs it. A state that is absent from current utility can still affect an offer
-probability or a future state, and it is kept for that reason. Every layout of the
-family solves the same decision problem on the coordinates it keeps.
+probability or a future state, and it is kept for that reason. An exit's availability is
+such a calculation: the source check binds each exit to the dependency graph as the
+model declares it, so a report in which an exit no longer reads the states its
+availability reads fails the check. Every layout of the family solves the same decision
+problem on the coordinates it keeps.
 
 These checks are relative to the captured declarations and to the model's pure-function
 contracts. The checker does not prove that arbitrary Python functions carry their
 intended economic meaning, or that the recursion has finite values and attained maxima.
 Those remain premises of the model. Several decisions can belong to one economic
 interval; see [economic time and computational periods](period_time.md).
+
+### Collective models
+
+In a model with collective regimes, the checker holds to these rules:
+
+- A collective regime pools only with regimes that have the same members, so never with
+  a single-agent regime.
+- Regimes pool only when their exits are equal: the same rule, tie, comparison,
+  renegotiation and settlement, the same targets with the same roles, the same observed
+  shocks and the same availability.
+- Work and storage count one action value and one stored value per member, as the solve
+  computes them.
+- The state an exit's `Renegotiate` moves stays in its regime whole: it is kept in every
+  period and never split into status lanes, because renegotiation compares the stay
+  values at its codes within the period.
 
 ### Which layout is recommended?
 

@@ -19,6 +19,20 @@ from tests.regime_finder.test_declaration_ingestion import (
 from tests.regime_finder.test_model_adapter import snapshot, function, grid
 
 
+def exit_reading(**targets: JSONValue) -> dict[str, JSONValue]:
+    """An exit declaration whose targets the regime reads as policy queries."""
+    return {
+        "kind": "dataclass",
+        "type": "lcm.Exit",
+        "fields": {
+            "available": None,
+            "observes": [],
+            "targets": targets,
+            "rule": {"kind": "dataclass", "type": "lcm.Unilateral", "fields": {}},
+        },
+    }
+
+
 def policy_snapshot() -> dict[str, JSONValue]:
     raw = snapshot()
     raw["user_regimes"]["query_partner"] = {
@@ -43,8 +57,8 @@ def policy_snapshot() -> dict[str, JSONValue]:
         },
     }
     raw["user_regimes"]["unused_owner"] = deepcopy(raw["user_regimes"]["query_partner"])
-    raw["user_regimes"]["original"]["fields"]["same_period_refs"] = {
-        "partner_price": {
+    raw["user_regimes"]["original"]["fields"]["exit"] = exit_reading(
+        partner_price={
             "kind": "dataclass",
             "type": "lcm.ProjectedRegimeValue",
             "fields": {
@@ -59,7 +73,7 @@ def policy_snapshot() -> dict[str, JSONValue]:
                 },
             },
         }
-    }
+    )
     return raw
 
 
@@ -241,12 +255,14 @@ def test_nested_query_owners_and_phases_are_separate() -> None:
             "user_regimes",
             "original",
             "fields",
-            "same_period_refs",
+            "exit",
+            "fields",
+            "targets",
             "partner_price",
         )
     )
     json_member(nested, "fields")["regime"] = "unused_owner"
-    partner["same_period_refs"] = {"nested": nested}
+    partner["exit"] = exit_reading(nested=nested)
     normalized, analysis, checked = _check_analysis(raw)
     assert ({q["regime"] for q in json_entries(normalized, "query_owners")}) == (
         {"query_partner", "unused_owner"}

@@ -186,7 +186,7 @@ def test_abstract_host_operands_cannot_bypass_placement_guards(
 ) -> None:
     """Preparation refuses a leaf that physical dispatch would still need to place."""
     device = jax.devices()[0]
-    sharding = jax.sharding.SingleDeviceSharding(device)
+    sharding = jax.sharding.make_single_device_sharding(device)
     value = (
         jnp.ones(3, dtype=jnp.int32)
         if invalid == "concrete"
@@ -225,26 +225,26 @@ def test_abstract_host_operands_cannot_bypass_placement_guards(
     assert not operations.cache
 
 
-def _entry_argument_metadata(value: ArgumentTree) -> Hashable:
+def _argument_metadata(value: ArgumentTree) -> Hashable:
     """Compare named leaf metadata separately from compiler container structure."""
     if isinstance(value, Mapping):
-        return tuple(
-            (name, _entry_argument_metadata(value[name])) for name in sorted(value)
-        )
+        return tuple((name, _argument_metadata(value[name])) for name in sorted(value))
     if isinstance(value, tuple | list):
-        return tuple(_entry_argument_metadata(item) for item in value)
+        return tuple(_argument_metadata(item) for item in value)
     if value is None:
         return None
     assert isinstance(value, jax.Array | jax.ShapeDtypeStruct)
-    return value.shape, str(value.dtype), value.weak_type, value.sharding
+    # A typed PRNG key array carries no weak type; its abstract stand-in reads False.
+    weak_type = getattr(value, "weak_type", False)
+    return value.shape, str(value.dtype), weak_type, value.sharding
 
 
 @pytest.mark.slow
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_profiled_participation_entry_reuses_actual_dispatch_key(  # noqa: PLR0915 - keep one real profile-to-dispatch witness together
+def test_profiled_exit_program_reuses_actual_dispatch_key(  # noqa: PLR0915 - keep one real profile-to-dispatch witness together
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A real entry dispatch reuses the exact profiled executable and report."""
+    """A real exit dispatch reuses the exact profiled executable and report."""
     model = household.get_model(
         n_periods=3,
         wealth_n_points=3,
@@ -288,7 +288,7 @@ def test_profiled_participation_entry_reuses_actual_dispatch_key(  # noqa: PLR09
             assert jax.tree.leaves(information)
             abstract = abstract_tree(
                 tree=information,
-                sharding=jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+                sharding=jax.sharding.make_single_device_sharding(jax.devices()[0]),
             )
             assert jax.tree.structure(abstract) == jax.tree.structure(information)
             produced_information.append(True)
@@ -305,7 +305,7 @@ def test_profiled_participation_entry_reuses_actual_dispatch_key(  # noqa: PLR09
         self: SimulationRuntime, **call: Unpack[RuntimePreparation]
     ) -> CompiledSimulationProgram:
         program = call["program"]
-        if planning[0] and program.name.startswith("simulate_participation_entry:"):
+        if planning[0] and program.name == "simulate_exit_full":
             with monkeypatch.context() as guard:
                 guard.setattr(jax, "device_put", _forbid_allocation)
                 guard.setattr(
@@ -316,7 +316,7 @@ def test_profiled_participation_entry_reuses_actual_dispatch_key(  # noqa: PLR09
                 compiled = prepare(self, **call)
         else:
             compiled = prepare(self, **call)
-        if planning[0] and program.name.startswith("simulate_participation_entry:"):
+        if planning[0] and program.name == "simulate_exit_full":
             assert isinstance(compiled.executable, jax.stages.Compiled)
             assert compiled.memory is not None
             assert compiled.memory.records
@@ -326,7 +326,7 @@ def test_profiled_participation_entry_reuses_actual_dispatch_key(  # noqa: PLR09
             record = (
                 cast("tuple[Hashable, ...]", keys[0]),
                 compiled,
-                _entry_argument_metadata(call["arguments"]),
+                _argument_metadata(call["arguments"]),
             )
             assert identity not in profiles or profiles[identity] == record
             profiles[identity] = record
@@ -341,15 +341,11 @@ def test_profiled_participation_entry_reuses_actual_dispatch_key(  # noqa: PLR09
         widths: Mapping[str, int],
         abstract_inputs: bool = False,
     ) -> CompiledSimulationProgram:
-        if (
-            not planning[0]
-            and not checked
-            and program.name.startswith("simulate_participation_entry:")
-        ):
+        if not planning[0] and not checked and program.name == "simulate_exit_full":
             assert profiles
             identity = id(self), id(program.function), tuple(widths.items())
             assert identity in profiles, (
-                "Real entry needs its same-runtime/function/width profile"
+                "Real exit needs its same-runtime/function/width profile"
             )
             profiled_key, profiled, metadata = profiles[identity]
             assert n_subjects == 4
@@ -364,7 +360,7 @@ def test_profiled_participation_entry_reuses_actual_dispatch_key(  # noqa: PLR09
             finite = wealth[np.isfinite(wealth)]
             assert finite.size
             assert np.unique(finite).size > 1
-            assert _entry_argument_metadata(program.arguments) == metadata
+            assert _argument_metadata(program.arguments) == metadata
             key = cast(
                 "tuple[Hashable, ...]",
                 _simulation_lowering_key(
@@ -385,7 +381,7 @@ def test_profiled_participation_entry_reuses_actual_dispatch_key(  # noqa: PLR09
             }
             cached = self.cache.get(key)
             assert cached is profiled, (
-                f"Profiled entry missing at actual dispatch: {program.name}; "
+                f"Profiled exit missing at actual dispatch: {program.name}; "
                 f"holders={np.asarray(holders).tolist()}; "
                 f"different argument trees={differences}"
             )

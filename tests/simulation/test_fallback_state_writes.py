@@ -18,7 +18,7 @@ Two properties of that write are pinned here.
   simulation runs, so a household entering that regime needs a landing point on
   it exactly as it does on the regime's solved states.
 
-The model is the same household throughout: `married` is a two-stakeholder
+The model is the same household throughout: `married` is a two-member
 regime whose consent gate keeps the higher-wage households together and sends
 the lowest-wage one to `single_f` (the wife's regime, whose leg the simulated
 cohort follows) and `single_m` (the husband's).
@@ -31,6 +31,7 @@ import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.certainty_equivalent import LinearExpectation
+from _lcm.engine import Regime as EngineRegime
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_law import RegimeLawDeclaration
@@ -39,7 +40,8 @@ from _lcm.simulation.gated_routing import (
     substitute_gated_edge_continuations,
 )
 from _lcm.solution.backward_induction import solve
-from _lcm.typing import StatesPerRegime
+from _lcm.solution.contract import BackwardInductionResult
+from _lcm.typing import FlatRegimeParams, RegimeNamesToIds, StatesPerRegime
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeGrid,
@@ -49,16 +51,17 @@ from lcm import (
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     Phased,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
 )
 from lcm.koopmans_aggregation import LinearAggregator
+from lcm.result import SimulationResult
 from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
@@ -122,7 +125,7 @@ class RegimeId:
     single_m_terminal: ScalarInt
 
 
-def test_gate_open_household_keeps_the_wifes_fallback_slot_it_never_entered():
+def test_gate_open_household_keeps_the_wifes_fallback_slot_it_never_entered() -> None:
     """Only a household the consent gate turned away is given a wife's regime.
 
     The three households enter the edge at wages 1, 2 and 3, and the gate
@@ -137,7 +140,9 @@ def test_gate_open_household_keeps_the_wifes_fallback_slot_it_never_entered():
     )
 
 
-def test_gate_open_household_keeps_the_husbands_fallback_slot_it_never_entered():
+def test_gate_open_household_keeps_the_husbands_fallback_slot_it_never_entered() -> (
+    None
+):
     """Every leg of the edge writes the households the gate turned away.
 
     The husband's leg owns a fallback regime of its own and is subject to the
@@ -151,7 +156,9 @@ def test_gate_open_household_keeps_the_husbands_fallback_slot_it_never_entered()
     )
 
 
-def test_dissolving_household_starts_its_fallback_regime_at_the_projected_career():
+def test_dissolving_household_starts_its_fallback_regime_at_the_projected_career() -> (
+    None
+):
     """A dissolving wife enters `single_f` at the career her leg projects.
 
     `single_f` declares `career` as a carried state — imputed while the regime
@@ -212,8 +219,8 @@ def _route_three_households() -> StatesPerRegime:
             ),
         }
     )
-    own_stakeholder = jnp.full(
-        n_households, married.stakeholder_names_to_ids["f"], dtype=jnp.int32
+    own_member = jnp.full(
+        n_households, married.member_names_to_ids["f"], dtype=jnp.int32
     )
     routed_states, _routed_ids, _routed_roles, _closed_masks = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
@@ -228,13 +235,13 @@ def _route_three_households() -> StatesPerRegime:
         ),
         subjects_in_regime=jnp.ones(n_households, dtype=bool),
         flat_params=flat_params,
-        own_stakeholder=own_stakeholder,
-        new_own_stakeholder=own_stakeholder,
+        own_member=own_member,
+        new_own_member=own_member,
     )
     return routed_states
 
 
-def _simulate_three_households():
+def _simulate_three_households() -> SimulationResult:
     """Solve and simulate the model whose `single_f` carries a career state."""
     married = _make_laws(carrying_fallback=True)["married"]
     assert isinstance(married, Transition)
@@ -264,8 +271,8 @@ def _simulate_three_households():
             "regime_id": jnp.full(
                 n_households, model.regime_names_to_ids["married"], dtype=jnp.int32
             ),
-            "own_stakeholder": jnp.full(
-                n_households, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
+            "own_member": jnp.full(
+                n_households, model.member_names_to_ids["f"], dtype=jnp.int32
             ),
         }
     )
@@ -278,7 +285,14 @@ def _simulate_three_households():
     )
 
 
-def _solve_kernel_level(*, carrying_fallback: bool):
+def _solve_kernel_level(
+    *, carrying_fallback: bool
+) -> tuple[
+    MappingProxyType[RegimeName, EngineRegime],
+    RegimeNamesToIds,
+    MappingProxyType[RegimeName, FlatRegimeParams],
+    BackwardInductionResult,
+]:
     """Compile and solve the model, returning the pieces the router needs."""
     regimes_dict = _make_regimes(carrying_fallback=carrying_fallback)
     declared = _make_laws(carrying_fallback=carrying_fallback)
@@ -426,14 +440,14 @@ def _make_laws(
                 "married_terminal": Gate(
                     predicate=_consent_gate,
                     routes={
-                        "f": StakeholderRoute(
-                            target_stakeholder="f",
+                        "f": MemberRoute(
+                            target_member="f",
                             fallback=ProjectedRegimeValue(
                                 regime="single_f", projection=wife_projection
                             ),
                         ),
-                        "m": StakeholderRoute(
-                            target_stakeholder="m",
+                        "m": MemberRoute(
+                            target_member="m",
                             fallback=ProjectedRegimeValue(
                                 regime="single_m",
                                 projection={"wage": _identity_wage},

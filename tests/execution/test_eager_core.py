@@ -69,7 +69,7 @@ def test_eager_scalar_keeps_dtype_weak_type_and_original_tree(*, kind: str) -> N
         "strong_float": jnp.asarray(3.0, dtype=jnp.float32),
         "strong_int": jnp.asarray(3, dtype=jnp.int32),
     }[kind]
-    target = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    target = jax.sharding.make_single_device_sharding(jax.devices()[0])
     returned: list[PytreeValue] = []
 
     def body(*, scalar: jax.Array) -> PytreeValue:
@@ -98,7 +98,7 @@ def test_eager_scalar_keeps_dtype_weak_type_and_original_tree(*, kind: str) -> N
 def test_eager_partial_keeps_fixed_array_and_static_width() -> None:
     source = jnp.asarray([1.0, 2.0, 4.0])
     fixed = jnp.asarray([3.0, 5.0, 7.0])
-    target = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    target = jax.sharding.make_single_device_sharding(jax.devices()[0])
 
     def body(*, value: jax.Array, offset: jax.Array, width: int) -> jax.Array:
         assert width == 2
@@ -123,7 +123,7 @@ def test_eager_partial_keeps_fixed_array_and_static_width() -> None:
 
 
 def test_eager_adapter_drops_runtime_owners_between_calls() -> None:
-    target = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    target = jax.sharding.make_single_device_sharding(jax.devices()[0])
     source = jax.device_put(jnp.arange(4, dtype=jnp.int32), target)
     source_ref = weakref.ref(source)
     adapter = make_eager_core(
@@ -147,7 +147,7 @@ def test_eager_adapter_drops_runtime_owners_between_calls() -> None:
 
 
 def test_eager_exception_does_not_retain_runtime_owners() -> None:
-    target = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    target = jax.sharding.make_single_device_sharding(jax.devices()[0])
 
     def body(*, value: jax.Array) -> NoReturn:
         assert value.shape == (4,)
@@ -172,7 +172,7 @@ def test_eager_exception_does_not_retain_runtime_owners() -> None:
 
 
 def test_repeated_original_does_not_hide_an_invalid_second_descriptor() -> None:
-    target = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    target = jax.sharding.make_single_device_sharding(jax.devices()[0])
     source = jnp.asarray(1.0, dtype=jnp.float32)
 
     def forbidden[Ignored](**_arguments: Ignored) -> NoReturn:
@@ -202,13 +202,15 @@ def test_eager_builder_refuses_missing_abstract_layout(*, concrete: bool) -> Non
             program=eager_program(
                 function=lambda value: value, arguments={"value": argument}
             ),
-            execution_sharding=jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+            execution_sharding=jax.sharding.make_single_device_sharding(
+                jax.devices()[0]
+            ),
         )
 
 
 @pytest.mark.parametrize("change", ["shape", "dtype", "weak_type"])
 def test_eager_input_metadata_mismatch_fails_before_body(*, change: str) -> None:
-    target = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    target = jax.sharding.make_single_device_sharding(jax.devices()[0])
     source = jnp.asarray(1.0, dtype=jnp.float32)
     shape = (1,) if change == "shape" else ()
     dtype = jnp.int32 if change == "dtype" else jnp.float32
@@ -233,7 +235,7 @@ def test_eager_input_metadata_mismatch_fails_before_body(*, change: str) -> None
 
 def test_internal_eager_inputs_keep_identity_and_release_runtime_owners() -> None:
     """Missing abstract sharding does not allocate or retain a producer output."""
-    target = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    target = jax.sharding.make_single_device_sharding(jax.devices()[0])
     source = jax.device_put(jnp.arange(4, dtype=jnp.int32), target)
     source_ref = weakref.ref(source)
     adapter = make_eager_core(
@@ -252,7 +254,7 @@ def test_internal_eager_inputs_keep_identity_and_release_runtime_owners() -> Non
 @pytest.mark.parametrize("change", ["shape", "dtype", "weak_type"])
 def test_internal_eager_metadata_corruption_stops_before_body(*, change: str) -> None:
     """The lack of template sharding never weakens numerical metadata checks."""
-    target = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    target = jax.sharding.make_single_device_sharding(jax.devices()[0])
     source = jax.device_put(jnp.asarray(2.0, dtype=jnp.float32), target)
 
     def forbidden(*, produced: jax.Array) -> NoReturn:
@@ -279,7 +281,7 @@ def test_internal_eager_builder_requires_exact_abstract_declared_inputs(
     *, invalid: str
 ) -> None:
     """Only declared producer inputs may carry layout-free abstract metadata."""
-    target = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    target = jax.sharding.make_single_device_sharding(jax.devices()[0])
     template = jax.ShapeDtypeStruct((), jnp.float32)
     templates = {"produced": template}
     program = internal_eager_program(function=lambda produced: produced)

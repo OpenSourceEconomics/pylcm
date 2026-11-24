@@ -7,6 +7,7 @@ from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
+    ValueRead,
 )
 from _lcm.execution.output_layout import VALUE
 from _lcm.execution.value_transfer import (
@@ -30,7 +31,6 @@ def _kernel(
     *,
     target_regimes: tuple[str, ...] = (),
     edge_target_regimes: tuple[str, ...] = (),
-    same_period_ref_regimes: tuple[str, ...] = (),
     edge_reference_regimes: tuple[str, ...] = (),
 ) -> _GridSearchPeriodKernel:
     """Build a period-3 adapter whose access declarations need no JAX execution."""
@@ -40,7 +40,6 @@ def _kernel(
             period=3,
             target_regimes=target_regimes,
             edge_target_regimes=edge_target_regimes,
-            same_period_ref_regimes=same_period_ref_regimes,
             edge_reference_regimes=edge_reference_regimes,
         )
     )
@@ -56,7 +55,7 @@ def _kernel(
     return _GridSearchPeriodKernel(_core_programs=MappingProxyType({"main": program}))
 
 
-def _accesses(kernel: _GridSearchPeriodKernel):
+def _accesses(kernel: _GridSearchPeriodKernel) -> tuple[ValueRead, ...]:
     """Read exact value inputs through the sole native declaration."""
     return kernel.core_programs()["main"].requirements.value_reads
 
@@ -91,18 +90,6 @@ def test_declares_gated_continuation_in_place_of_raw_target_value() -> None:
     assert access.target.target_regime == "couple"
     assert access.source.channel is ValueInputChannel.NEXT_REGIME_VALUE
     assert access.source.path == ("couple",)
-
-
-def test_declares_exact_same_period_reference_value_access() -> None:
-    """A value constraint reads its reference regime at the source period."""
-    (access,) = _accesses(_kernel(same_period_ref_regimes=("single",)))
-
-    assert access.target.kind is ValueArtifactKind.REGIME_VALUE
-    assert access.target.period == 3
-    assert access.target.regime == "single"
-    assert access.source.source_period == 3
-    assert access.source.channel is ValueInputChannel.SAME_PERIOD_VALUE
-    assert access.source.path == ("single",)
 
 
 def test_declares_exact_next_period_edge_reference_value_access() -> None:

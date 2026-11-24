@@ -73,10 +73,10 @@ class ResultMetadata:
     ]
     """Immutable mapping of (regime_name, var_name) to per-regime categories."""
 
-    regime_to_stakeholders: MappingProxyType[RegimeName, tuple[str, ...] | None] = (
+    regime_to_member_axis: MappingProxyType[RegimeName, tuple[str, ...] | None] = (
         MappingProxyType({})
     )
-    """Immutable mapping of regime names to their ordered stakeholder names.
+    """Immutable mapping of regime names to their ordered member names.
 
     `None` for a singleton regime. Captured at `SimulationResult.__init__` time
     (when `regimes` is always fully populated) so `to_dataframe` can tell a
@@ -87,15 +87,15 @@ class ResultMetadata:
     The default is empty, so a saved artifact whose metadata payload carries no
     such mapping still loads. Every regime then reads as a singleton, which is
     the only reading available; a regime whose recorded value does carry a
-    stakeholder axis is reported by `_lcm.simulation.result_dataframe`, naming
+    member axis is reported by `_lcm.simulation.result_dataframe`, naming
     this field, instead of being published under a wrong column layout.
     """
 
-    stakeholder_names_to_ids: MappingProxyType[str, int] = MappingProxyType({})
-    """The model's role vocabulary: every stakeholder name, as a code.
+    member_names_to_ids: MappingProxyType[str, int] = MappingProxyType({})
+    """The model's role vocabulary: every member name, as a code.
 
     One mapping for the whole model rather than one per regime, so the
-    `own_stakeholder` column means the same thing in every row and a role can
+    `own_member` column means the same thing in every row and a role can
     be compared across regimes. Empty for a model with no collective regime,
     and for a saved artifact whose metadata payload predates the field — the
     column is then published as raw codes rather than labels.
@@ -237,11 +237,11 @@ def _compute_metadata(
                 grid.categories if values is None else values
             )
 
-    regime_to_stakeholders: dict[RegimeName, tuple[str, ...] | None] = {
-        regime_name: regime.stakeholders for regime_name, regime in regimes.items()
+    regime_to_member_axis: dict[RegimeName, tuple[str, ...] | None] = {
+        regime_name: regime.member_axis for regime_name, regime in regimes.items()
     }
-    stakeholder_names_to_ids = next(
-        (regime.stakeholder_names_to_ids for regime in regimes.values()),
+    member_names_to_ids = next(
+        (regime.member_names_to_ids for regime in regimes.values()),
         MappingProxyType({}),
     )
 
@@ -262,8 +262,8 @@ def _compute_metadata(
         discrete_categories=MappingProxyType(discrete_categories),
         discrete_ordered=MappingProxyType(discrete_ordered),
         regime_discrete_categories=MappingProxyType(regime_discrete_categories),
-        regime_to_stakeholders=MappingProxyType(regime_to_stakeholders),
-        stakeholder_names_to_ids=stakeholder_names_to_ids,
+        regime_to_member_axis=MappingProxyType(regime_to_member_axis),
+        member_names_to_ids=member_names_to_ids,
         regime_to_joint_normals=MappingProxyType(
             {name: _output_joint_laws(regime) for name, regime in regimes.items()}
         ),

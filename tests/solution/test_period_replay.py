@@ -17,7 +17,7 @@ import re
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Never, TypedDict, Unpack
+from typing import Never, NotRequired, TypedDict, Unpack
 
 import cloudpickle
 import jax
@@ -31,13 +31,16 @@ from jaxlib import (
 )
 
 from _lcm.engine import Regime
+from _lcm.execution.core_program import CoreProgram
 from _lcm.execution.output_layout import PlannedCore
 from _lcm.execution.workspace_planning import _tiled_bootstrap_cap, bootstrap_width
+from _lcm.params.edges import regime_kernel_params
 from _lcm.solution import backward_induction, period_replay, public_period_capture
+from _lcm.typing import PytreeValue
 from lcm import AgeGrid, ExecutionConfig, LinSpacedGrid, Model
 from lcm.persistence import PeriodCapture, load_period_capture, replay_period
 from lcm.solver_api import ArtifactKey, ResultRetention
-from lcm.typing import RegimeName
+from lcm.typing import FloatND, RegimeName
 from tests.regime_building.test_gated_edges_collective_solve import (
     EKLRegimeId,
     _make_full_topology_regimes,
@@ -104,7 +107,9 @@ _FULL_TOPOLOGY_EDGES = {
 }
 
 
-def _solve_capturing(*, monkeypatch, tmp_path, target: CaptureSelection | None):
+def _solve_capturing(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, target: CaptureSelection | None
+) -> tuple[Model, Mapping[int, Mapping[RegimeName, FloatND]]]:
     """Solve the discrete toy, optionally capturing one regime-period."""
     if target is None:
         monkeypatch.delenv("LCM_CAPTURE_PERIOD", raising=False)
@@ -125,13 +130,17 @@ def _solve_capturing(*, monkeypatch, tmp_path, target: CaptureSelection | None):
     return model, solution
 
 
-def test_no_capture_is_written_without_the_target(*, monkeypatch, tmp_path):
+def test_no_capture_is_written_without_the_target(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """The instrument costs nothing until a regime-period is named."""
     _solve_capturing(monkeypatch=monkeypatch, tmp_path=tmp_path, target=None)
     assert list(tmp_path.iterdir()) == []
 
 
-def test_exactly_the_named_regime_period_is_captured(*, monkeypatch, tmp_path):
+def test_exactly_the_named_regime_period_is_captured(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Naming one regime-period writes one capture, not one per period."""
     _solve_capturing(
         monkeypatch=monkeypatch, tmp_path=tmp_path, target="working_life@1"
@@ -140,12 +149,15 @@ def test_exactly_the_named_regime_period_is_captured(*, monkeypatch, tmp_path):
     assert captures == ["working_life@1"]
 
 
-def test_a_capture_names_the_regime_period_and_age_it_holds(*, monkeypatch, tmp_path):
+def test_a_capture_names_the_regime_period_and_age_it_holds(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """The capture is self-describing, so a directory of them can be read."""
     model, _ = _solve_capturing(
         monkeypatch=monkeypatch, tmp_path=tmp_path, target="working_life@1"
     )
     replay = replay_period(directory=tmp_path / "working_life@1")
+    assert model.ages is not None
     assert (replay.regime_name, replay.period, replay.age) == (
         "working_life",
         1,
@@ -154,8 +166,8 @@ def test_a_capture_names_the_regime_period_and_age_it_holds(*, monkeypatch, tmp_
 
 
 def test_replay_reproduces_the_value_function_of_the_full_solve(
-    *, monkeypatch, tmp_path
-):
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Re-running the captured kernel gives back the array the solve produced.
 
     This is what makes the harness usable as a stand-in for the full run: the
@@ -174,8 +186,8 @@ def test_replay_reproduces_the_value_function_of_the_full_solve(
 
 
 def test_replay_does_not_recapture_when_the_selector_remains_set(
-    *, monkeypatch, tmp_path
-):
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Replay reads a selected capture without writing into its directory."""
     _, solution = _solve_capturing(
         monkeypatch=monkeypatch, tmp_path=tmp_path, target="working_life@1"
@@ -193,7 +205,9 @@ def test_replay_does_not_recapture_when_the_selector_remains_set(
     )
 
 
-def test_replay_runs_one_kernel_and_no_others(*, monkeypatch, tmp_path, caplog):
+def test_replay_runs_one_kernel_and_no_others(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     """Replay does not re-solve the periods above the captured one."""
     _solve_capturing(
         monkeypatch=monkeypatch, tmp_path=tmp_path, target="working_life@1"
@@ -210,7 +224,9 @@ def test_replay_runs_one_kernel_and_no_others(*, monkeypatch, tmp_path, caplog):
     assert len(executed) == 1
 
 
-def test_an_unknown_regime_period_is_refused(*, monkeypatch, tmp_path):
+def test_an_unknown_regime_period_is_refused(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """A target that never runs produces no capture rather than an empty one."""
     _solve_capturing(
         monkeypatch=monkeypatch, tmp_path=tmp_path, target="working_life@99"
@@ -219,7 +235,9 @@ def test_an_unknown_regime_period_is_refused(*, monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("target", ["working_life", "working_life@", "@1", "x@y"])
-def test_a_malformed_target_is_rejected_loudly(*, monkeypatch, tmp_path, target):
+def test_a_malformed_target_is_rejected_loudly(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, target: CaptureSelection
+) -> None:
     """A typo in the target must not read as "nothing to capture"."""
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", target)
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
@@ -230,8 +248,8 @@ def test_a_malformed_target_is_rejected_loudly(*, monkeypatch, tmp_path, target)
 
 
 def test_a_malformed_target_is_rejected_before_kernel_compilation(
-    *, monkeypatch, tmp_path
-):
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Capture selection is validated before solve kernels are compiled."""
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", "working_life")
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
@@ -253,8 +271,8 @@ def test_a_malformed_target_is_rejected_before_kernel_compilation(
 
 
 def test_a_gated_edge_source_replays_to_the_value_the_solve_published(
-    *, monkeypatch, tmp_path
-):
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """A regime whose continuation reads a gated edge replays to the solved `V_arr`.
 
     The source's kernel does not read its target's raw value function: it reads the
@@ -271,7 +289,7 @@ def test_a_gated_edge_source_replays_to_the_value_the_solve_published(
         regime_id_class=EKLRegimeId,
         initial_nodes={0: ("single_f", "single_m")},
     )
-    params = {"discount_factor": 0.95, "delta_f": 0.5, "delta_m": 0.2}
+    params = {"discount_factor": 0.95}
     solution = model.solve(params=params, log_level="off").values
 
     replay = replay_period(directory=tmp_path / "single_f@0")
@@ -282,6 +300,13 @@ def test_a_gated_edge_source_replays_to_the_value_the_solve_published(
     )
 
 
+class _SelectProgramsKwargs(TypedDict):
+    graph: Mapping[str, CoreProgram]
+    retain_replay: bool
+    selected_artifact_keys: frozenset[ArtifactKey]
+    collect_continuation_read_counts: NotRequired[bool]
+
+
 @pytest.mark.parametrize(
     ("retention", "retain_replay"),
     [
@@ -290,8 +315,12 @@ def test_a_gated_edge_source_replays_to_the_value_the_solve_published(
     ],
 )
 def test_replay_lowers_the_scope_the_solve_dispatched(
-    *, monkeypatch, tmp_path, retention, retain_replay
-):
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    retention: ResultRetention,
+    retain_replay: bool,
+) -> None:
     """A replay selects the programs the captured solve dispatched for the regime.
 
     The solve dispatches a regime's replay-scoped programs only when the retention
@@ -311,7 +340,9 @@ def test_replay_lowers_the_scope_the_solve_dispatched(
     observed: list[tuple[bool, frozenset[ArtifactKey]]] = []
     real_select = period_replay.select_programs
 
-    def record_select(**kwargs):
+    def record_select(
+        **kwargs: Unpack[_SelectProgramsKwargs],
+    ) -> MappingProxyType[str, CoreProgram]:
         observed.append((kwargs["retain_replay"], kwargs["selected_artifact_keys"]))
         return real_select(**kwargs)
 
@@ -349,7 +380,11 @@ def test_is_period_capture_payload_names_a_missing_key(key: str) -> None:
         period_replay._is_period_capture_payload(payload)
 
 
-def _rewrite_capture(*, directory, mutate):
+def _rewrite_capture(
+    *,
+    directory: Path,
+    mutate: Callable[[dict[str, CaptureFixtureValue]], CaptureFixtureValue | None],
+) -> None:
     """Load, mutate, and rewrite one capture payload."""
     path = directory / period_replay._PAYLOAD_NAME
     with path.open("rb") as stream:
@@ -360,8 +395,8 @@ def _rewrite_capture(*, directory, mutate):
 
 
 def test_a_capture_records_the_tile_widths_the_solve_dispatched(
-    *, monkeypatch, tmp_path
-):
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """The captured widths are the bootstrap widths of the unbudgeted solve."""
     model, _ = _solve_capturing(
         monkeypatch=monkeypatch, tmp_path=tmp_path, target="working_life@1"
@@ -372,9 +407,10 @@ def test_a_capture_records_the_tile_widths_the_solve_dispatched(
 
     regime = model._regimes["working_life"]
     space = regime.solution.state_action_space(
-        regime_params=model._process_params(get_params(n_periods=_N_PERIODS))[
-            "working_life"
-        ]
+        regime_params=regime_kernel_params(
+            model._process_params(get_params(n_periods=_N_PERIODS)),
+            regime_name="working_life",
+        )
     )
     action_extent = math.prod(space.actions_grid_shapes)
     cell_extent = math.prod(nodes.size for nodes in space.states.values())
@@ -389,7 +425,9 @@ def test_a_capture_records_the_tile_widths_the_solve_dispatched(
     }
 
 
-def test_a_capture_without_tile_widths_is_refused(*, monkeypatch, tmp_path):
+def test_a_capture_without_tile_widths_is_refused(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Replay never plans widths itself, so a capture must state them."""
     _solve_capturing(
         monkeypatch=monkeypatch, tmp_path=tmp_path, target="working_life@1"
@@ -412,8 +450,12 @@ def test_a_capture_without_tile_widths_is_refused(*, monkeypatch, tmp_path):
     ids=["nonpositive-width", "wrong-core-names"],
 )
 def test_malformed_captured_tile_widths_are_refused(
-    *, monkeypatch, tmp_path, widths, error
-):
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    widths: dict[str, dict[str, int]],
+    error: type[Exception],
+) -> None:
     _solve_capturing(
         monkeypatch=monkeypatch, tmp_path=tmp_path, target="working_life@1"
     )
@@ -707,7 +749,9 @@ def test_an_ungated_regime_in_a_gated_edge_model_replays_bit_for_bit(
 _ATTRIBUTE_BACKEND_CONFIG = re.compile(r"backend_config=(\{[A-Za-z_]\w* = [^}]*\})")
 
 
-def _optimized_hlo_text(func, *args) -> str:
+def _optimized_hlo_text(
+    func: Callable[[jax.Array], PytreeValue], *args: jax.Array
+) -> str:
     """Print a jitted function's optimized HLO with the capture print options."""
     options = _hlo.HloPrintOptions.canonical()
     options.canonicalize_computations = True
@@ -728,7 +772,7 @@ def _optimized_hlo_text(func, *args) -> str:
     ],
 )
 def test_optimized_hlo_identity_retains_attribute_backend_configuration(
-    *, func
+    *, func: Callable[[jax.Array], PytreeValue]
 ) -> None:
     """Attribute-dictionary backend configurations survive canonicalization intact.
 

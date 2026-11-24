@@ -127,7 +127,7 @@ class _Case:
 
 def _case(*, axis: int, code: int, cells: int, shared: bool) -> _Case:
     device = jax.devices()[0]
-    sharding = jax.sharding.SingleDeviceSharding(device)
+    sharding = jax.sharding.make_single_device_sharding(device)
     dtype = np.dtype("float64" if jax.config.jax_enable_x64 else "float32")
     shape = (3, cells) if axis == 0 else (cells, 3)
     names = ("pref_type", "assets") if axis == 0 else ("assets", "pref_type")

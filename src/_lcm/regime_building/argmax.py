@@ -146,17 +146,27 @@ _paired_max_no_derivative = without_derivative(_paired_max)
 
 
 def _float_order_key(values: FloatND) -> _FloatBitsND:
-    """Protect reversible integer keys once, before any reduction or tie comparison.
+    """Encode floats as reversible integer keys for the paired reduction.
 
     Keys order represented IEEE values, with `-0` at -1 and `+0` at 0.
     Decoding the winning key preserves subnormal bits without a float accumulator.
+
+    The paired reduction over the last axis is the keys' only reader. Over more
+    than one element the compiler computes the keys inside that reduction, so one
+    evaluation of the values both picks the winner and becomes the published
+    maximum. Over a single element the compiler replaces the reduction by separate
+    elementwise programs for the maximum and for the identity, each of which would
+    evaluate the values' producer on its own; an optimization barrier then holds
+    the keys in one array that both programs read.
     """
     if values.dtype.itemsize not in (2, 4, 8):
         msg = f"Use 16-, 32- and 64-bit IEEE floats; got {values.dtype}."
         raise ValueError(msg)
     integer = jnp.dtype(f"int{values.dtype.itemsize * 8}")
     bits = jax.lax.bitcast_convert_type(values, integer)
-    return jax.lax.optimization_barrier(_reverse_negative_bits(bits))
+    if values.shape[-1:] == (1,):
+        return jax.lax.optimization_barrier(_reverse_negative_bits(bits))
+    return _reverse_negative_bits(bits)
 
 
 def _reverse_negative_bits(bits: _FloatBitsND) -> _FloatBitsND:
@@ -180,7 +190,7 @@ def _float_keys_equal(*, left: _FloatBitsND, right: _FloatBitsND) -> BoolND:
 def _reduce_float_keys(
     *, keys: _FloatBitsND, ids: IntND, initial_key: _FloatBitsND, infinity_key: int
 ) -> tuple[_FloatBitsND, IntND]:
-    """Reduce protected keys once, then let a finite initial value compete."""
+    """Reduce the keys once, then let a finite initial value compete."""
     no_id = jnp.asarray(NO_ID, dtype=jnp.int32)
     choose = partial(_larger_float_key_then_smaller_id, infinity_key=infinity_key)
     best = jax.lax.reduce(

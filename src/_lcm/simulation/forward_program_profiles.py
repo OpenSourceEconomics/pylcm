@@ -20,8 +20,6 @@ from _lcm.params.edges import regime_kernel_params
 from _lcm.regime_building.Q_and_F import (
     EDGE_REF_PARAMS_ARG,
     EDGE_REF_V_ARG,
-    SAME_PERIOD_PARAMS_ARG,
-    SAME_PERIOD_V_ARG,
 )
 from _lcm.simulation.current_iid_overrides import (
     CurrentIIDOverrideSchema,
@@ -248,16 +246,6 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             {**next_values, **cast("Mapping[RegimeName, ShapeDtypePytree]", folded)}
         )
     references = {}
-    if regime.same_period_ref_regimes:
-        references[SAME_PERIOD_V_ARG] = MappingProxyType(
-            {ref: values[period][ref] for ref in regime.same_period_ref_regimes}
-        )
-        references[SAME_PERIOD_PARAMS_ARG] = MappingProxyType(
-            {
-                ref: regime_kernel_params(flat_params, regime_name=ref)
-                for ref in regime.same_period_ref_regimes
-            }
-        )
     edge_references = regime.simulation.edge_reference_regimes_by_period.get(period)
     if edge_references is not None:
         references[EDGE_REF_V_ARG] = MappingProxyType(

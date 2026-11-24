@@ -1,9 +1,10 @@
-"""Bind public exits to the canonical scalar policy-query decision."""
+"""Bind a regime's exit to the canonical scalar policy-query decision."""
 
+import hashlib
 import inspect
 import math
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from itertools import product
 from types import MappingProxyType
 from typing import cast
@@ -14,23 +15,36 @@ import numpy as np
 from dags import concatenate_functions, with_signature
 from dags.signature import rename_arguments
 from dags.tree import qname_from_tree_path
-from jax.core import Tracer
 
 from _lcm.current_iid import CurrentIIDPlan
 from _lcm.engine import Regime
-from _lcm.exits import exit_functions, exits_for_phase
+from _lcm.exits import compares_at_optimum, exit_for_phase, exit_functions
+from _lcm.off_grid import clip_projection, projected_grid_rules
+from _lcm.outside_values import UnalignedOutsideRead, align_outside_read
 from _lcm.policy_queries import (
     _PHYSICAL_CONTEXTS,
     _TASTE,
+    OutsideValueRead,
     PolicyAnswer,
     QueryKind,
     QueryNode,
     QueryRead,
     _PolicyQueryKernel,
+    _QueryChunks,
     _taste_stay_roster,
     build_policy_query_kernel,
+    gated_query_targets,
+)
+from _lcm.query_information import default_chunk_size
+from _lcm.renegotiation import (
+    ClippedDefault,
+    FixedNode,
+    FixedSettlement,
+    RenegotiationQueries,
+    SettlementQueries,
 )
 from _lcm.solution.contract import SolverBuildContext
+from _lcm.solution.grid_search import GridSearch
 from _lcm.typing import PytreeValue, QualifiedName
 from _lcm.utils.functools import (
     ComposedProjection,
@@ -40,18 +54,37 @@ from _lcm.utils.functools import (
     call_with_declared_arguments as _call,
 )
 from lcm.exceptions import RegimeInitializationError, UnsupportedOperationError
-from lcm.exits import Consent, Exit, ExitRole, RuleResult
+from lcm.exits import (
+    Consent,
+    Exit,
+    ExitRole,
+    MutualConsent,
+    Settlement,
+    Unilateral,
+)
 from lcm.grids import DiscreteGrid
 from lcm.shocks import Discrete, ShockGroupName, ShockName, _fingerprint
 from lcm.typing import (
     BoolND,
     FloatND,
+    IntND,
     Phase,
     ReferenceName,
     RegimeName,
     StateName,
     UserFunction,
 )
+
+# Whether the solve's exit graphs mark the outside reads proved aligned. Read once per
+# lowering when the model is built; simulation and participation graphs never mark
+# them.
+_READ_STORED_OUTSIDE_VALUES: bool = True
+
+# Whether the solve's enumerated exit choices evaluate the nodes where the exit is
+# available and one node for all the others (`_bind_available_nodes`), instead of
+# every node. Read once per lowering when the model is built; simulation and
+# participation graphs always enumerate every node.
+_COLLAPSE_UNAVAILABLE_NODES: bool = True
 
 
 def _predicate(
@@ -70,198 +103,364 @@ def _predicate(
 class _ExitReducer:
     """One scalar rule shared by solve and actual subject replay.
 
-    Target values are already evaluated at one common Participating action.
-    This reducer never maximizes the destination again to manufacture consent.
+    Target values are already evaluated at one common action: of the target's Raw
+    problem, or of the formed couple's Participating policy under consent. This
+    reducer never maximizes the destination again to manufacture consent.
     """
 
     kind: QueryKind
     """The source policy problem being answered."""
     members: tuple[ExitRole, ...]
     """Canonical source tuple order, or self for a singleton."""
-    exits: Mapping[str, Exit]
-    """Exactly the current phase's public declarations."""
-    targets: Mapping[ReferenceName, Mapping[ExitRole, tuple[str, int | None]]]
-    """Exit/member to producer operand and destination stakeholder index."""
-    adjustments: Mapping[str, Mapping[str, Callable[..., PytreeValue]]]
+    declaration: Exit | None
+    """The regime's one exit in the current phase, or None if the query reads none."""
+    targets: Mapping[ExitRole, tuple[str, int | None]]
+    """Member to producer operand and destination member index."""
+    adjustments: Mapping[ExitRole, Callable[..., PytreeValue]]
     """Source-context utility adjustments, evaluated once in each payoff."""
-    availability: Mapping[str, Callable[..., PytreeValue]]
-    """Source-context predicates; absent predicates mean available."""
-    rules: Mapping[str, Callable[..., PytreeValue]]
-    """Canonically bound custom rule callables."""
-    consent_reads: Mapping[str, tuple[str, str, str, int | None]]
+    available: Callable[..., PytreeValue] | None
+    """Source-context predicate; None means available."""
+    consent_read: tuple[str, str, str, int | None] | None
     """Own Raw, counterparty Raw, couple producer and counterparty tuple index."""
     weights: Callable[..., Mapping[str, FloatND]] | None
     """Canonical source Pareto evaluator; singleton objective has weight one."""
     n_actions: int
-    """Flattened canonical stay product, preceding stable exit IDs."""
+    """Flattened canonical stay product; the exit takes the next ID."""
     n_discrete_action_axes: int = 0
     """A source EV1 component belongs to a discrete combination, not a continuous ID."""
+    renegotiation: RenegotiationQueries | None = None
+    """Raw policies across a declared discrete state, before applying participation."""
+    settlement: SettlementQueries | None = None
+    """Outside reads at each candidate settlement of a mutual-consent exit."""
 
     def __post_init__(self) -> None:
         """Keep declaration containers immutable and IDs inside their native width."""
-        if not 0 < self.n_actions <= jnp.iinfo(jnp.int32).max - len(self.exits):
+        if not 0 < self.n_actions < jnp.iinfo(jnp.int32).max:
             raise RegimeInitializationError(
                 "Exit alternatives must fit stable int32 IDs."
             )
         for name in ("targets", "adjustments"):
-            object.__setattr__(
-                self,
-                name,
-                MappingProxyType(
-                    {
-                        key: MappingProxyType(dict(value))
-                        for key, value in getattr(self, name).items()
-                    }
-                ),
-            )
-        for name in ("exits", "availability", "rules", "consent_reads"):
             object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
 
-    def _payoffs(
-        self, *, operands: Mapping[ReferenceName, PytreeValue]
-    ) -> tuple[dict[str, dict[str, FloatND]], dict[str, BoolND], BoolND]:
-        payoffs = {}
-        availability = {}
-        valid = jnp.asarray(a=True)
-        for name, declaration in self.exits.items():
-            active = (
-                jnp.asarray(a=True)
-                if name not in self.availability
-                else _predicate(function=self.availability[name], operands=operands)
-            )
-            availability[name] = active
-            member_values = {}
-            for member in declaration.targets:
-                if member not in self.targets[name]:
-                    member_values[member] = jnp.asarray(-jnp.inf)
-                    continue
-                key, index = self.targets[name][member]
-                answer = cast("PolicyAnswer", operands[key])
-                value = answer[0] if index is None else answer[0][index]
-                if member in self.adjustments.get(name, {}):
-                    adjustment = jax.lax.cond(
-                        active,
-                        lambda helper=self.adjustments[name][member]: _call(
-                            function=helper, operands=operands
-                        ),
-                        lambda: jnp.asarray(0.0),
+    def exits(
+        self,
+    ) -> dict[
+        int,
+        tuple[
+            Mapping[ExitRole, tuple[str, int | None]],
+            Mapping[ExitRole, Callable[..., PytreeValue]],
+        ],
+    ]:
+        """Each exit ID with its members' reads and adjustments.
+
+        The exit at the default takes the ID after the stay actions; a separation
+        at candidate settlement `k` takes the `k`-th ID after that.
+        """
+        exits = {self.n_actions: (self.targets, self.adjustments)}
+        if self.settlement is not None:
+            exits.update(
+                {
+                    self.n_actions + 1 + index: pair
+                    for index, pair in enumerate(
+                        zip(
+                            self.settlement.targets,
+                            self.settlement.adjustments,
+                            strict=True,
+                        )
                     )
-                    if adjustment.shape != ():
-                        raise ValueError("Exit utility adjustment must be scalar.")
-                    value = value + adjustment
-                member_values[member] = value
-                valid &= ~active | (answer[3] & ~jnp.isnan(value))
-            payoffs[name] = member_values
-        return payoffs, availability, valid
+                }
+            )
+        return exits
+
+    def _payoffs(
+        self,
+        *,
+        operands: Mapping[ReferenceName, PytreeValue],
+        targets: Mapping[ExitRole, tuple[str, int | None]] | None = None,
+        adjustments: Mapping[ExitRole, Callable[..., PytreeValue]] | None = None,
+    ) -> tuple[dict[str, FloatND], BoolND, dict[str, BoolND]]:
+        """Each member's outside payoff, by default at the exit's own reads.
+
+        Also returns whether each member's payoff is resolved: true where the exit
+        is not available or the member has no read, else the read's status and a
+        payoff that is not NaN.
+        """
+        targets = self.targets if targets is None else targets
+        adjustments = self.adjustments if adjustments is None else adjustments
+        declaration = cast("Exit", self.declaration)
+        active = (
+            jnp.asarray(a=True)
+            if self.available is None
+            else _predicate(function=self.available, operands=operands)
+        )
+        resolved = {}
+        payoffs = {}
+        for member in declaration.targets:
+            if member not in targets:
+                payoffs[member] = jnp.asarray(-jnp.inf)
+                resolved[member] = jnp.asarray(a=True)
+                continue
+            key, index = targets[member]
+            answer = cast("PolicyAnswer", operands[key])
+            value = answer[0] if index is None else answer[0][index]
+            if member in adjustments:
+                adjustment = jnp.where(
+                    active,
+                    cast(
+                        "FloatND",
+                        _call(function=adjustments[member], operands=operands),
+                    ),
+                    0.0,
+                )
+                if adjustment.shape != ():
+                    raise ValueError("Exit utility adjustment must be scalar.")
+                value = value + adjustment
+            payoffs[member] = value
+            resolved[member] = ~active | (answer[3] & ~jnp.isnan(value))
+        return payoffs, active, resolved
 
     def keep(self, **operands: PytreeValue) -> BoolND:
-        """Apply weak dissolution thresholds before the common stay argmax."""
+        """Apply built-in dissolution thresholds before the common stay argmax.
+
+        A member is willing to stay when its stay value is above its exit payoff,
+        or equal to it when the rule's `tie` is `"stay"`.
+        """
+        rule = None if self.declaration is None else self.declaration.rule
+        if compares_at_optimum(rule):
+            return jnp.asarray(a=True)
+        if not isinstance(rule, Unilateral | MutualConsent):
+            return jnp.asarray(a=True)
         q = cast("FloatND", operands["q"])
-        payoffs, availability, _ = self._payoffs(operands=operands)
-        keep = jnp.asarray(a=True)
-        for name, declaration in self.exits.items():
-            if declaration.rule not in ("unilateral", "mutual"):
-                continue
-            threshold = jnp.stack(
-                tuple(payoffs[name][member] for member in self.members)
-            )
-            member_q = q[None] if self.members == ("self",) else q
-            comparisons = member_q >= threshold
-            willing = (
-                jnp.all(comparisons)
-                if declaration.rule == "unilateral"
-                else jnp.any(comparisons)
-            )
-            keep &= ~availability[name] | willing
-        return keep
+        payoffs, active, _ = self._payoffs(operands=operands)
+        threshold = jnp.stack(tuple(payoffs[member] for member in self.members))
+        member_q = q[None] if self.members == ("self",) else q
+        comparisons = (
+            member_q >= threshold if rule.tie == "stay" else member_q > threshold
+        )
+        willing = (
+            jnp.all(comparisons)
+            if isinstance(rule, Unilateral)
+            else jnp.any(comparisons)
+        )
+        return ~active | willing
 
     def __call__(self, **operands: PytreeValue) -> PolicyAnswer:
         """Route weak dissolution or strict consent, preserving common tuple/ID."""
         stay = cast("PolicyAnswer", operands["answer"])
-        payoffs, availability, valid = self._payoffs(operands=operands)
-        result = (*stay[:3], stay[3] & valid, stay[4])
-        custom = tuple(self.rules.values())
-        if custom:
-            return self._custom(
-                operands=operands,
-                payoffs=payoffs,
-                availability=availability,
-                valid=result[3],
+        payoffs, active, resolved = self._payoffs(operands=operands)
+        valid = jnp.all(jnp.stack((*resolved.values(), stay[3])))
+        if self.renegotiation is not None:
+            return self._renegotiated(
+                operands=operands, payoffs=payoffs, active=active, valid=valid
+            )
+        if compares_at_optimum(cast("Exit", self.declaration).rule):
+            return self._at_optimum(
+                operands=operands, payoffs=payoffs, active=active, valid=valid
             )
         if _TASTE in operands and self.kind is QueryKind.FULL:
             return self._full_taste(
-                operands=operands,
-                payoffs=payoffs,
-                availability=availability,
-                valid=result[3],
+                operands=operands, payoffs=payoffs, active=active, valid=valid
             )
-        for offset, (name, declaration) in enumerate(self.exits.items()):
-            eligible, integrity = self._eligible(
-                name=name,
-                operands=operands,
-                payoffs=payoffs,
-                availability=availability,
+        eligible, integrity = self._eligible(
+            operands=operands, payoffs=payoffs, active=active
+        )
+        move = eligible & (self.kind is QueryKind.FULL)
+        if not isinstance(cast("Exit", self.declaration).rule, Consent):
+            move &= ~stay[2]
+        value = jnp.stack(tuple(payoffs[member] for member in self.members))
+        if self.members == ("self",):
+            value = value[0]
+        return (
+            jnp.where(move, value, stay[0]),
+            jnp.where(move, self.n_actions, stay[1]).astype(jnp.int32),
+            stay[2] | move,
+            valid & integrity,
+            stay[4],
+        )
+
+    def _renegotiated(
+        self,
+        *,
+        operands: Mapping[ReferenceName, PytreeValue],
+        payoffs: Mapping[str, FloatND],
+        active: BoolND,
+        valid: BoolND,
+    ) -> PolicyAnswer:
+        adjustment = cast("RenegotiationQueries", self.renegotiation)
+        outside = jnp.stack(tuple(payoffs[member] for member in self.members))
+        index, kept = adjustment.select(
+            arguments=operands, outside=outside, active=active
+        )
+        raw = tuple(
+            cast("PolicyAnswer", operands[name]) for name in adjustment.operands
+        )
+        value = jnp.stack(tuple(answer[0] for answer in raw))[index]
+        action = jnp.stack(tuple(answer[1] for answer in raw))[index]
+        eligible, integrity = self._eligible(
+            operands=operands, payoffs=payoffs, active=active
+        )
+        move = eligible & ~kept & (self.kind is QueryKind.FULL)
+        return (
+            jnp.where(move, outside, jnp.where(kept, value, -jnp.inf)),
+            jnp.where(move, self.n_actions, jnp.where(kept, action, -1)).astype(
+                jnp.int32
+            ),
+            kept | move,
+            valid & integrity & jnp.all(jnp.stack(tuple(answer[3] for answer in raw))),
+            cast("PolicyAnswer", operands["answer"])[4],
+        )
+
+    def _at_optimum(
+        self,
+        *,
+        operands: Mapping[ReferenceName, PytreeValue],
+        payoffs: Mapping[str, FloatND],
+        active: BoolND,
+        valid: BoolND,
+    ) -> PolicyAnswer:
+        """Compare each member's value at the unconstrained optimum with its exit.
+
+        The stay answer is the household optimum, since `keep` masks no action. A
+        member is willing to stay when that value is above its exit payoff, or
+        equal to it when the rule's `tie` is `"stay"`; no feasible action leaves
+        every member unwilling. Under a settlement the outside values are those at
+        the default, and a pair in which exactly one member refuses separates where
+        the settlement selects: at the default under the default's exit ID, or at a
+        candidate under that candidate's. A candidate's outside value must be
+        resolved only where the selection reads it.
+        """
+        stay = cast("PolicyAnswer", operands["answer"])
+        rule = cast("Unilateral | MutualConsent", cast("Exit", self.declaration).rule)
+        collective = self.members != ("self",)
+        inside = stay[0] if collective else stay[0][None]
+        outside = jnp.stack(tuple(payoffs[member] for member in self.members))
+        willing = (inside >= outside if rule.tie == "stay" else inside > outside) & (
+            stay[2]
+        )
+        stays = jnp.all(willing) if isinstance(rule, Unilateral) else jnp.any(willing)
+        identifier = jnp.asarray(self.n_actions)
+        settles = jnp.asarray(a=False)
+        eligible, integrity = self._eligible(
+            operands=operands, payoffs=payoffs, active=active
+        )
+        if self.settlement is not None:
+            candidates = tuple(
+                self._payoffs(operands=operands, targets=targets, adjustments=paid)
+                for targets, paid in zip(
+                    self.settlement.targets, self.settlement.adjustments, strict=True
+                )
             )
-            valid &= integrity
-            move = eligible & (self.kind is QueryKind.FULL)
-            if not isinstance(declaration.rule, Consent):
-                move &= ~stay[2]
-            value = jnp.stack(tuple(payoffs[name][member] for member in self.members))
-            if self.members == ("self",):
-                value = value[0]
-            result = (
-                jnp.where(move, value, result[0]),
-                jnp.where(move, self.n_actions + offset, result[1]).astype(jnp.int32),
-                result[2] | move,
-                result[3] & valid,
-                stay[4],
+            # Row 0 is the default and row `1 + k` candidate `k`, so a row's exit ID
+            # is `n_actions` plus its index.
+            settled = jnp.stack(
+                (
+                    outside,
+                    *(
+                        jnp.stack(tuple(payoff[member] for member in self.members))
+                        for payoff, _, _ in candidates
+                    ),
+                )
             )
-        return result
+            nearest, settles, decided = self.settlement.select(
+                inside=inside,
+                willing=willing,
+                outside=settled,
+                resolved=jnp.stack(
+                    tuple(
+                        jnp.stack(tuple(checked[member] for member in self.members))
+                        for _, _, checked in candidates
+                    )
+                ),
+                supported=jnp.stack(
+                    (
+                        eligible,
+                        *(
+                            jnp.all(
+                                jnp.stack(
+                                    tuple(
+                                        cast("PolicyAnswer", operands[key])[2]
+                                        for key, _ in targets.values()
+                                    )
+                                )
+                            )
+                            for targets in self.settlement.targets
+                        ),
+                    )
+                ),
+                default=cast(
+                    "FloatND",
+                    _call(function=self.settlement.default, operands=operands),
+                ),
+            )
+            settles &= active
+            valid &= decided
+            outside = jnp.where(settles, settled[nearest], outside)
+            identifier = jnp.where(settles, self.n_actions + nearest, identifier)
+        kept = jnp.where(active, stays & ~settles, stay[2])
+        move = (settles | (eligible & ~kept)) & (self.kind is QueryKind.FULL)
+        value = jnp.where(move, outside, jnp.where(kept, inside, -jnp.inf))
+        return (
+            value if collective else value[0],
+            jnp.where(move, identifier, jnp.where(kept, stay[1], -1)).astype(jnp.int32),
+            kept | move,
+            valid & integrity,
+            stay[4],
+        )
+
+    def updated_state(self, **operands: PytreeValue) -> FloatND | IntND:
+        """Carry the selected stay coordinate alongside its action and value."""
+        adjustment = cast("RenegotiationQueries", self.renegotiation)
+        payoffs, active, _ = self._payoffs(operands=operands)
+        index, kept = adjustment.select(
+            arguments=operands,
+            outside=jnp.stack(tuple(payoffs[member] for member in self.members)),
+            active=active,
+        )
+        return jnp.where(kept, index, cast("IntND", operands[adjustment.state]))
 
     def _eligible(
         self,
         *,
-        name: str,
         operands: Mapping[ReferenceName, PytreeValue],
-        payoffs: Mapping[str, Mapping[str, FloatND]],
-        availability: Mapping[str, BoolND],
+        payoffs: Mapping[str, FloatND],
+        active: BoolND,
     ) -> tuple[BoolND, BoolND]:
         """Share exit support and strict common-policy consent across taste routes."""
-        if isinstance(self.exits[name].rule, Consent):
-            if name not in self.consent_reads:
+        if isinstance(cast("Exit", self.declaration).rule, Consent):
+            if self.consent_read is None:
                 return jnp.asarray(a=False), jnp.asarray(a=True)
-            own_key, other_key, couple_key, other_index = self.consent_reads[name]
+            own_key, other_key, couple_key, other_index = self.consent_read
             own = cast("PolicyAnswer", operands[own_key])
             other = cast("PolicyAnswer", operands[other_key])
             couple = cast("PolicyAnswer", operands[couple_key])
             other_value = couple[0] if other_index is None else couple[0][other_index]
             return (
-                availability[name]
+                active
                 & couple[2]
-                & (payoffs[name]["self"] > own[0])
+                & (payoffs["self"] > own[0])
                 & (other_value > other[0]),
-                ~availability[name] | (own[3] & other[3] & couple[3]),
+                ~active | (own[3] & other[3] & couple[3]),
             )
         support = jnp.all(
             jnp.stack(
                 tuple(
                     cast("PolicyAnswer", operands[operand])[2]
-                    for operand, _ in self.targets[name].values()
+                    for operand, _ in self.targets.values()
                 )
                 or (jnp.asarray(a=False),)
             )
         )
-        return availability[name] & support, jnp.asarray(a=True)
+        return active & support, jnp.asarray(a=True)
 
     def _full_taste(
         self,
         *,
         operands: Mapping[ReferenceName, PytreeValue],
-        payoffs: Mapping[str, Mapping[str, FloatND]],
-        availability: Mapping[str, BoolND],
+        payoffs: Mapping[str, FloatND],
+        active: BoolND,
         valid: BoolND,
     ) -> PolicyAnswer:
-        """Append exit components to the source's canonical discrete taste roster."""
+        """Append the exit component to the source's canonical discrete taste roster."""
         from _lcm.logsum import logsum_and_softmax  # noqa: PLC0415
         from _lcm.regime_building.max_Q_over_a import (  # noqa: PLC0415
             draw_taste_shock_noise,
@@ -272,25 +471,18 @@ class _ExitReducer:
             feasible=cast("BoolND", operands["feasible"]),
             n_discrete=self.n_discrete_action_axes,
         )
-        eligible = []
         kept = jnp.any(cast("BoolND", operands["feasible"]))
-        for name in self.exits:
-            allowed, integrity = self._eligible(
-                name=name,
-                operands=operands,
-                payoffs=payoffs,
-                availability=availability,
-            )
-            if not isinstance(self.exits[name].rule, Consent):
-                allowed &= ~kept
-            eligible.append(allowed)
-            valid &= integrity
-        exit_values = jnp.stack(tuple(payoffs[name]["self"] for name in self.exits))
+        eligible, integrity = self._eligible(
+            operands=operands, payoffs=payoffs, active=active
+        )
+        if not isinstance(cast("Exit", self.declaration).rule, Consent):
+            eligible &= ~kept
+        valid &= integrity
         values = jnp.concatenate(
-            (stay_values, jnp.where(jnp.stack(eligible), exit_values, -jnp.inf))
+            (stay_values, jnp.where(eligible, payoffs["self"], -jnp.inf)[None])
         )
         identifiers = jnp.concatenate(
-            (stay_ids, self.n_actions + jnp.arange(len(self.exits), dtype=jnp.int32))
+            (stay_ids, jnp.asarray([self.n_actions], dtype=jnp.int32))
         )
         taste = cast("Mapping[str, FloatND]", operands[_TASTE])
         scale = taste["scale"]
@@ -305,107 +497,12 @@ class _ExitReducer:
         else:
             chosen = jnp.argmax(values)
             value, _ = logsum_and_softmax(values=values, scale=scale, axes=(0,))
-        supported = kept | jnp.any(jnp.stack(eligible))
+        supported = kept | eligible
         return (
             value,
             jnp.where(supported, identifiers[chosen], -1).astype(jnp.int32),
             supported,
             valid & jnp.isfinite(scale) & (scale > 0) & ~jnp.isnan(value),
-            cast("PolicyAnswer", operands["answer"])[4],
-        )
-
-    def _custom(
-        self,
-        *,
-        operands: Mapping[ReferenceName, PytreeValue],
-        payoffs: Mapping[str, Mapping[str, FloatND]],
-        availability: Mapping[str, BoolND],
-        valid: BoolND,
-    ) -> PolicyAnswer:
-        """Validate the authored global ID before any narrowing integer cast."""
-        q = cast("FloatND", operands["q"])
-        feasible = cast("BoolND", operands["feasible"])
-        weights = (
-            {"self": jnp.asarray(1.0)}
-            if self.weights is None
-            else _call(function=self.weights, operands=operands)
-        )
-        member_q = (
-            {"self": q}
-            if self.members == ("self",)
-            else {member: q[..., index] for index, member in enumerate(self.members)}
-        )
-        all_ids = jnp.arange(self.n_actions + len(self.exits), dtype=jnp.int32)
-        arguments = {
-            **operands,
-            **{
-                f"Q_{member}": jnp.where(feasible, value, -jnp.inf)
-                for member, value in member_q.items()
-            },
-            "exit_payoffs": payoffs,
-            "availability": availability,
-            "alternative_ids": all_ids,
-            "pareto_weights": weights,
-        }
-        returned = _call(function=next(iter(self.rules.values())), operands=arguments)
-        if not isinstance(returned, RuleResult):
-            raise TypeError("A custom exit rule must return RuleResult.")
-        supplied_id = returned.action
-        if isinstance(supplied_id, jax.Array | Tracer):
-            chosen = supplied_id
-        else:
-            # Host int64 payloads can narrow in jnp.asarray when x64 is off.
-            # Admission precedes that boundary, including zero-dimensional arrays.
-            host_id = np.asarray(supplied_id)
-            if host_id.shape != () or host_id.dtype.kind not in "iu":
-                raise ValueError(
-                    "RuleResult.action must be a scalar integer global ID."
-                )
-            if not 0 <= int(host_id) < self.n_actions + len(self.exits):
-                raise ValueError(
-                    "RuleResult.action is not a known global alternative ID."
-                )
-            chosen = jnp.asarray(int(host_id), dtype=jnp.int32)
-        if chosen.shape != () or chosen.dtype.kind not in "iu":
-            raise ValueError("RuleResult.action must be a scalar integer global ID.")
-        # Check in the authored integer width: 2**32 must not become valid ID 0.
-        known = (chosen >= 0) & (chosen < all_ids.size)
-        safe_id = jnp.where(known, chosen, 0).astype(jnp.int32)
-        flat_q = q.reshape(
-            (self.n_actions,)
-            + (() if self.members == ("self",) else (len(self.members),))
-        )
-        eligible = []
-        for name in self.exits:
-            allowed, integrity = self._eligible(
-                name=name,
-                operands=operands,
-                payoffs=payoffs,
-                availability=availability,
-            )
-            eligible.append(allowed)
-            valid &= integrity
-        allowed = jnp.concatenate((feasible.reshape(-1), jnp.stack(eligible)))
-        exit_values = jnp.stack(
-            tuple(
-                jnp.stack(tuple(payoffs[name][member] for member in self.members))
-                for name in self.exits
-            )
-        )
-        if self.members == ("self",):
-            exit_values = exit_values[:, 0]
-        values = jnp.concatenate((flat_q, exit_values), axis=0)
-        admitted = known & allowed[safe_id]
-        # A Participating read has no exit alternative: selecting an exit means
-        # its kept stay policy is empty, rather than recursive Full routing.
-        support = admitted & (
-            (safe_id < self.n_actions) | (self.kind is QueryKind.FULL)
-        )
-        return (
-            jnp.where(support, values[safe_id], -jnp.inf),
-            jnp.where(support, safe_id, -1),
-            support,
-            valid & admitted,
             cast("PolicyAnswer", operands["answer"])[4],
         )
 
@@ -479,11 +576,7 @@ class _Available:
     def __call__(self, **operands: PytreeValue) -> BoolND:
         active = jnp.asarray(a=True)
         for predicate in self.predicates:
-            active = jax.lax.cond(
-                active,
-                lambda helper=predicate: _predicate(function=helper, operands=operands),
-                lambda: jnp.asarray(a=False),
-            )
+            active &= _predicate(function=predicate, operands=operands)
         return active
 
 
@@ -524,6 +617,13 @@ class _QueryGraphBuilder:
     """Transient graph under construction; frozen by the caller on completion."""
     keys: list[str] = field(default_factory=list)
     """Construction-local identities reserved before recursive descent."""
+    outside_reads: dict[str, tuple[RegimeName, str]] = field(default_factory=dict)
+    """Reads of a destination's problem: the exit's source and the member priced.
+
+    The targets of every exit that needs no consent, at any depth, and a consent
+    exit's counterparty. A consent target and the reads of the source's own
+    problem are not outside reads.
+    """
 
     def bound(
         self,
@@ -574,8 +674,14 @@ class _QueryGraphBuilder:
         ancestors: tuple[str, ...] = (),
         price_information: frozenset[str] = frozenset(),
         source_projection: Mapping[StateName, Callable[..., PytreeValue]] | None = None,
+        exit_source: RegimeName | None = None,
     ) -> str:
-        """Bind a demanded typed read and reject genuine recursive policy cycles."""
+        """Bind a demanded typed read and reject genuine recursive policy cycles.
+
+        With `exit_source`, the read is the landing of that regime's exit, and each
+        projected state follows its destination grid's `off_grid` rule in this
+        period (`ProjectedGridRule`).
+        """
         from _lcm.model_graph import _exit_is_statically_unavailable  # noqa: PLC0415
 
         if kind not in {QueryKind.RAW, QueryKind.PARTICIPATING, QueryKind.FULL}:
@@ -591,41 +697,51 @@ class _QueryGraphBuilder:
             )
         key = f"query_{len(self.keys)}"
         self.keys.append(key)
-        declaration = context.user_regimes_at(period=self.period)[owner]
-        exits = exits_for_phase(exits=declaration.exits, phase=self.phase)
-        if (
-            kind is QueryKind.FULL
-            and context.has_taste_shocks
-            and any(callable(item.rule) for item in exits.values())
+        axes = self.canonical_regimes[owner].solution.period_state_axes
+        grid_rules = (
+            ()
+            if exit_source is None
+            else projected_grid_rules(
+                source=exit_source,
+                target=owner,
+                states=tuple(projection),
+                grids=context.grids,
+                nodes={
+                    **context.state_action_space.states,
+                    **({} if axes is None else axes.get(self.period, {})),
+                },
+            )
+        )
+        projection = clip_projection(projection=projection, rules=grid_rules)
+        declaration = exit_for_phase(
+            declaration=context.user_regimes_at(period=self.period)[owner].exit,
+            phase=self.phase,
+        )
+        if kind is QueryKind.RAW or (
+            kind is QueryKind.PARTICIPATING
+            and declaration is not None
+            and isinstance(declaration.rule, Consent)
         ):
-            raise UnsupportedOperationError(
-                "Source Full EV1 does not integrate an arbitrary custom exit selector."
-            )
-        _validate_custom_rules(exits=exits)
-        if kind is QueryKind.RAW:
-            exits = {}
-        elif kind is QueryKind.PARTICIPATING:
-            exits = {
-                name: declaration
-                for name, declaration in exits.items()
-                if not isinstance(declaration.rule, Consent)
-                and (
-                    not callable(declaration.rule) or declaration._reads_outside_values  # noqa: SLF001 - frozen declaration metadata
-                )
-            }
-        inactive = {
-            name
-            for name, declaration in exits.items()
-            if _exit_is_statically_unavailable(
-                predicate=declaration.available,
-                period=self.period,
-                ages=context.ages,
-            )
-        }
+            declaration = None
+        inactive = declaration is not None and _exit_is_statically_unavailable(
+            predicate=declaration.available, period=self.period, ages=context.ages
+        )
+        # Only the solved occupant draws; simulation realises its shocks.
+        rule = (
+            declaration.nodes
+            if declaration is not None
+            and not inactive
+            and kind is QueryKind.FULL
+            and not ancestors
+            and self.phase == "solve"
+            else None
+        )
         functions = {
             path: self.bound(owner=owner, path=path, function=function)
-            for path, function in exit_functions(exits=exits, phase=self.phase).items()
-            if path[1] not in inactive or path[-1] in {"available", "rule"}
+            for path, function in exit_functions(
+                declaration=declaration, phase=self.phase
+            ).items()
+            if not inactive or path[-1] == "available"
         }
         physical_names = {
             shock
@@ -646,10 +762,7 @@ class _QueryGraphBuilder:
             }
         )
         policy_information = physical_inputs | frozenset(
-            shock
-            for name, declaration in exits.items()
-            if name not in inactive
-            for shock in declaration.observes
+            () if declaration is None or inactive else declaration.observes
         )
         current_plan = context.current_iid_plans.get(self.period)
         if current_plan is not None:
@@ -676,13 +789,13 @@ class _QueryGraphBuilder:
             context = replace(
                 context, current_iid_plans=MappingProxyType({self.period: plan})
             )
-        inputs, reducer = self._expand_exits(
+        inputs, reducer = self._expand_exit(
             kind=kind,
             owner=owner,
             projection=projection,
             guards=guards,
             ancestry=(*ancestry, (kind, owner)),
-            exits=exits,
+            declaration=declaration,
             functions=functions,
             source_key=key,
             ancestors=(*ancestors, key),
@@ -732,33 +845,65 @@ class _QueryGraphBuilder:
             context=context,
             inputs=inputs,
             own_raw=(
-                inputs[next(iter(reducer.consent_reads.values()))[0]]
-                if len(reducer.consent_reads) == 1
-                else None
+                None
+                if reducer.consent_read is None
+                else inputs[reducer.consent_read[0]]
             ),
-            participation=keep if exits else None,
-            decision=decide if exits else None,
+            participation=None if declaration is None else keep,
+            decision=None if declaration is None else decide,
+            state_updates={}
+            if reducer.renegotiation is None
+            else {
+                reducer.renegotiation.state: with_signature(
+                    reducer.updated_state, args=list(names), enforce=False
+                )
+            },
+            gated_channels={
+                target: (
+                    (None,)
+                    if self.contexts[target].member_axis is None
+                    else tuple(
+                        index
+                        for index, member in enumerate(
+                            self.contexts[target].member_axis or ()
+                        )
+                        if any(
+                            route.target_member == member
+                            for route in context.laws[owner]
+                            .gated_edges[target]
+                            .legs.values()
+                        )
+                    )
+                )
+                for target in gated_query_targets(context=context, period=self.period)
+            },
             available=_guard(guards),
             ancestors=ancestors,
             source_projection=cast(
                 "Mapping[StateName, UserFunction]",
                 projection if source_projection is None else source_projection,
             ),
-            exit_targets={
-                reducer.n_actions + offset: {
-                    member: inputs[operand]
-                    for member, (operand, _) in reducer.targets[name].items()
+            exit_targets={}
+            if declaration is None
+            else {
+                identifier: {
+                    member: inputs[operand] for member, (operand, _) in targets.items()
                 }
-                for offset, name in enumerate(exits)
+                for identifier, (targets, _) in reducer.exits().items()
             },
-            exit_adjustments={
-                reducer.n_actions + offset: reducer.adjustments[name]
-                for offset, name in enumerate(exits)
+            exit_adjustments={}
+            if declaration is None
+            else {
+                identifier: adjustments
+                for identifier, (_, adjustments) in reducer.exits().items()
             },
+            sample=None if rule is None else (rule, ()),
+            exit_availability=reducer.available,
+            grid_rules=grid_rules,
         )
         return key
 
-    def _expand_exits(  # noqa: C901, PLR0915 - bind one exit's target/consent topology together
+    def _expand_exit(
         self,
         *,
         kind: QueryKind,
@@ -766,7 +911,7 @@ class _QueryGraphBuilder:
         projection: Mapping[StateName, Callable[..., PytreeValue]],
         guards: tuple[Callable[..., PytreeValue], ...],
         ancestry: tuple[tuple[QueryKind, str], ...],
-        exits: Mapping[str, Exit],
+        declaration: Exit | None,
         functions: Mapping[tuple[str, ...], Callable[..., PytreeValue]],
         source_key: str,
         ancestors: tuple[str, ...],
@@ -783,15 +928,12 @@ class _QueryGraphBuilder:
         inputs = {}
         targets = {}
         adjustments = {}
-        availability = {}
-        rules = {}
-        consent_reads = {}
-        child_ancestry = ancestry
-        for exit_index, (name, declaration) in enumerate(exits.items()):
-            prefix = ("exits", name)
-            predicate = functions.get((*prefix, "available"))
-            if predicate is not None:
-                availability[name] = predicate
+        consent_read = None
+        predicate = None
+        renegotiation = None
+        settlement = None
+        if declaration is not None:
+            predicate = functions.get(("exit", "available"))
             child_guards = guards + (
                 ()
                 if predicate is None
@@ -804,147 +946,102 @@ class _QueryGraphBuilder:
                     ),
                 )
             )
-            targets[name] = {}
-            adjustments[name] = {}
-            if _exit_is_statically_unavailable(
+            if not _exit_is_statically_unavailable(
                 predicate=declaration.available,
                 period=self.period,
                 ages=context.ages,
             ):
-                if callable(declaration.rule):
-                    rules[name] = functions[*prefix, "rule"]
-                continue
-            for member, target in declaration.targets.items():
-                if not isinstance(target.projection, Mapping):
-                    raise TypeError("Exit query requires phase-resolved projections.")
-                target_projection = {
-                    state: _compose(
-                        projection=projection,
-                        function=functions[
-                            *prefix, "targets", member, "projection", state
-                        ],
-                        source=source_key,
-                        physical_names=physical_names,
-                    )
-                    for state in target.projection
-                }
-                operand = f"exit_{exit_index}_{member}"
-                producer = self.make(
-                    kind=QueryKind.PARTICIPATING,
-                    owner=target.regime,
-                    projection=target_projection,
-                    guards=child_guards,
-                    ancestry=child_ancestry,
-                    role=target.role or "",
-                    ancestors=ancestors,
-                    price_information=policy_information
-                    | frozenset(declaration.observes),
-                    source_projection={
-                        state: functions[
-                            *prefix, "targets", member, "projection", state
-                        ]
-                        for state in target.projection
-                    },
+                settle = (
+                    declaration.rule.settle
+                    if isinstance(declaration.rule, MutualConsent)
+                    else None
                 )
-                inputs[operand] = producer
-                destination_members = self.contexts[target.regime].stakeholders
-                index = (
+                default = (
                     None
-                    if destination_members is None
-                    else destination_members.index(target.role)
-                )
-                targets[name][member] = (operand, index)
-                adjustment = functions.get(
-                    (*prefix, "targets", member, "utility_adjustment")
-                )
-                if adjustment is not None:
-                    adjustments[name][member] = adjustment
-            if callable(declaration.rule):
-                rules[name] = functions[*prefix, "rule"]
-            if isinstance(declaration.rule, Consent):
-                _validate_consent_context(
-                    contexts=self.contexts, source=owner, declaration=declaration
-                )
-                target = declaration.targets["self"]
-                counterparty = declaration.rule.counterparty
-                if not isinstance(counterparty.projection, Mapping):
-                    raise TypeError(
-                        "Counterparty query requires a phase-resolved projection."
+                    if settle is None
+                    else self._settlement_default(
+                        settle=settle, declaration=declaration, functions=functions
                     )
-                own_operand, other_operand = (
-                    f"own_raw_{exit_index}",
-                    f"counterparty_raw_{exit_index}",
                 )
-                inputs[own_operand] = self.make(
-                    kind=QueryKind.RAW,
+                inputs, targets, adjustments, consent_read = self._exit_reads(
                     owner=owner,
-                    projection=projection,
-                    guards=child_guards,
-                    ancestry=child_ancestry,
-                    ancestors=ancestors,
-                    price_information=policy_information,
-                    source_projection={
-                        state: with_signature(
-                            NamedOperand(name=state),
-                            args=[state],
-                            enforce=False,
-                        )
-                        for state in context.state_action_space.state_names
-                    },
-                )
-                inputs[other_operand] = self.make(
-                    kind=QueryKind.RAW,
-                    owner=counterparty.regime,
-                    projection={
-                        state: _compose(
+                    declaration=declaration,
+                    projection=projection
+                    if settle is None or default is None
+                    else {
+                        **projection,
+                        settle.name: _compose(
                             projection=projection,
-                            function=functions[
-                                *prefix, "counterparty", "projection", state
-                            ],
+                            function=default,
                             source=source_key,
                             physical_names=physical_names,
-                        )
-                        for state in counterparty.projection
+                        ),
                     },
                     guards=child_guards,
-                    ancestry=child_ancestry,
+                    ancestry=ancestry,
+                    functions=functions,
+                    source_key=source_key,
                     ancestors=ancestors,
-                    price_information=policy_information
-                    | frozenset(declaration.observes),
-                    source_projection={
-                        state: functions[*prefix, "counterparty", "projection", state]
-                        for state in counterparty.projection
-                    },
+                    policy_information=policy_information,
+                    physical_names=physical_names,
                 )
-                couple_operand = targets[name]["self"][0]
-                participating = self.nodes[inputs[couple_operand]]
-                hidden = participating.read.policy_information - (
-                    policy_information | frozenset(declaration.observes)
-                )
-                if hidden:
-                    raise RegimeInitializationError(
-                        f"Consent exit {owner}.{name} cannot form a target policy "
-                        f"requiring unobserved decision information {sorted(hidden)!r}."
+                if settle is not None and default is not None:
+                    settled, adjustments, settlement = self._settlement_reads(
+                        settle=settle,
+                        default=default,
+                        targets=targets,
+                        adjustments=adjustments,
+                        owner=owner,
+                        declaration=declaration,
+                        projection=projection,
+                        guards=child_guards,
+                        ancestry=ancestry,
+                        functions=functions,
+                        source_key=source_key,
+                        ancestors=ancestors,
+                        policy_information=policy_information,
+                        physical_names=physical_names,
                     )
-                destination_members = self.contexts[target.regime].stakeholders
-                consent_reads[name] = (
-                    own_operand,
-                    other_operand,
-                    couple_operand,
-                    None
-                    if destination_members is None
-                    else destination_members.index(counterparty.role),
-                )
-        members = context.stakeholders or ("self",)
+                    inputs.update(settled)
+                if (
+                    isinstance(declaration.rule, Unilateral)
+                    and declaration.rule.renegotiate is not None
+                ):
+                    state = declaration.rule.renegotiate.state
+                    nodes = context.state_action_space.states[state]
+                    names = []
+                    for index in range(nodes.size):
+                        operand = f"_lcm_renegotiate_{index}"
+                        names.append(operand)
+                        inputs[operand] = self.make(
+                            kind=QueryKind.RAW,
+                            owner=owner,
+                            projection={
+                                **projection,
+                                state: FixedNode(value=index),
+                            },
+                            guards=guards,
+                            ancestry=ancestry,
+                            ancestors=ancestors,
+                            price_information=policy_information,
+                        )
+                    renegotiation = RenegotiationQueries(
+                        state=state,
+                        n_nodes=nodes.size,
+                        operands=tuple(names),
+                        tie=declaration.rule.tie,
+                    )
+        members = context.members
         reducer = _ExitReducer(
             kind=kind,
             members=members,
-            exits=MappingProxyType(dict(exits)),
+            declaration=declaration,
             targets=targets,
             adjustments=adjustments,
-            availability=availability,
-            rules=rules,
-            consent_reads=consent_reads,
+            available=predicate,
+            consent_read=consent_read,
+            renegotiation=renegotiation,
+            settlement=settlement,
             weights=None
             if context.pareto_weights is None
             else context.pareto_weights.compute,
@@ -958,6 +1055,297 @@ class _QueryGraphBuilder:
         )
         return inputs, reducer
 
+    def _exit_reads(
+        self,
+        *,
+        owner: RegimeName,
+        declaration: Exit,
+        projection: Mapping[StateName, Callable[..., PytreeValue]],
+        guards: tuple[Callable[..., PytreeValue], ...],
+        ancestry: tuple[tuple[QueryKind, str], ...],
+        functions: Mapping[tuple[str, ...], Callable[..., PytreeValue]],
+        source_key: str,
+        ancestors: tuple[str, ...],
+        policy_information: frozenset[str],
+        physical_names: frozenset[str],
+    ) -> tuple[
+        dict[str, str],
+        dict[ExitRole, tuple[str, int | None]],
+        dict[ExitRole, Callable[..., PytreeValue]],
+        tuple[str, str, str, int | None] | None,
+    ]:
+        """Expand an available exit's benchmarks and, for consent, its Raw reads."""
+        context = self.contexts[owner]
+        prefix = ("exit",)
+        inputs = {}
+        targets = {}
+        adjustments = {}
+        consent_read = None
+        for member, target in declaration.targets.items():
+            if not isinstance(target.projection, Mapping):
+                raise TypeError("Exit query requires phase-resolved projections.")
+            target_projection = {
+                state: _compose(
+                    projection=projection,
+                    function=functions[*prefix, "targets", member, "projection", state],
+                    source=source_key,
+                    physical_names=physical_names,
+                )
+                for state in target.projection
+            }
+            operand = f"exit_{member}"
+            # A subject moves at most once per period, so a target is read as its
+            # problem, without its own exit. A formed couple keeps its rule for
+            # staying, whose outside values are again problems.
+            producer = self.make(
+                kind=QueryKind.PARTICIPATING
+                if isinstance(declaration.rule, Consent)
+                else QueryKind.RAW,
+                owner=target.regime,
+                projection=target_projection,
+                guards=guards,
+                ancestry=ancestry,
+                role=target.role or "",
+                ancestors=ancestors,
+                price_information=policy_information | frozenset(declaration.observes),
+                source_projection={
+                    state: functions[*prefix, "targets", member, "projection", state]
+                    for state in target.projection
+                },
+                exit_source=owner,
+            )
+            inputs[operand] = producer
+            if not isinstance(declaration.rule, Consent):
+                self.outside_reads[producer] = (owner, f"member {member!r}")
+            destination_members = self.contexts[target.regime].member_axis
+            index = (
+                None
+                if destination_members is None
+                else destination_members.index(target.role)
+            )
+            targets[member] = (operand, index)
+            adjustment = functions.get(
+                (*prefix, "targets", member, "utility_adjustment")
+            )
+            if adjustment is not None:
+                adjustments[member] = adjustment
+        if isinstance(declaration.rule, Consent):
+            _validate_consent_context(
+                contexts=self.contexts, source=owner, declaration=declaration
+            )
+            target = declaration.targets["self"]
+            counterparty = declaration.rule.counterparty
+            if not isinstance(counterparty.projection, Mapping):
+                raise TypeError(
+                    "Counterparty query requires a phase-resolved projection."
+                )
+            inputs["own_raw"] = self.make(
+                kind=QueryKind.RAW,
+                owner=owner,
+                projection=projection,
+                guards=guards,
+                ancestry=ancestry,
+                ancestors=ancestors,
+                price_information=policy_information,
+                source_projection={
+                    state: with_signature(
+                        NamedOperand(name=state),
+                        args=[state],
+                        enforce=False,
+                    )
+                    for state in context.state_action_space.state_names
+                },
+            )
+            inputs["counterparty_raw"] = self.make(
+                kind=QueryKind.RAW,
+                owner=counterparty.regime,
+                projection={
+                    state: _compose(
+                        projection=projection,
+                        function=functions[
+                            *prefix, "counterparty", "projection", state
+                        ],
+                        source=source_key,
+                        physical_names=physical_names,
+                    )
+                    for state in counterparty.projection
+                },
+                guards=guards,
+                ancestry=ancestry,
+                ancestors=ancestors,
+                price_information=policy_information | frozenset(declaration.observes),
+                source_projection={
+                    state: functions[*prefix, "counterparty", "projection", state]
+                    for state in counterparty.projection
+                },
+                exit_source=owner,
+            )
+            self.outside_reads[inputs["counterparty_raw"]] = (owner, "the counterparty")
+            couple_operand = targets["self"][0]
+            participating = self.nodes[inputs[couple_operand]]
+            hidden = participating.read.policy_information - (
+                policy_information | frozenset(declaration.observes)
+            )
+            if hidden:
+                raise RegimeInitializationError(
+                    f"The consent exit of {owner} cannot form a target policy "
+                    f"requiring unobserved decision information {sorted(hidden)!r}."
+                )
+            destination_members = self.contexts[target.regime].member_axis
+            consent_read = (
+                "own_raw",
+                "counterparty_raw",
+                couple_operand,
+                None
+                if destination_members is None
+                else destination_members.index(counterparty.role),
+            )
+        return inputs, targets, adjustments, consent_read
+
+    def _settlement_default(
+        self,
+        *,
+        settle: Settlement,
+        declaration: Exit,
+        functions: Mapping[tuple[str, ...], Callable[..., PytreeValue]],
+    ) -> Callable[..., PytreeValue]:
+        """Bind the source-context default, clipped to the candidates' range."""
+        shocks = {
+            shock
+            for context in self.contexts.values()
+            for plan in context.current_iid_plans.values()
+            if plan is not None
+            for shock in plan.physical_names
+        } | set(declaration.observes)
+        if settle.name in shocks:
+            raise RegimeInitializationError(
+                f"Settlement {settle.name!r} has the name of a shock."
+            )
+        points = _settlement_points(settle)
+        function = functions["exit", "settle", "default"]
+        return with_signature(
+            ClippedDefault(function=function, low=points[0], high=points[-1]),
+            args=list(inspect.signature(function).parameters),
+            enforce=False,
+        )
+
+    def _settlement_reads(
+        self,
+        *,
+        settle: Settlement,
+        default: Callable[..., PytreeValue],
+        targets: Mapping[ExitRole, tuple[str, int | None]],
+        adjustments: Mapping[ExitRole, Callable[..., PytreeValue]],
+        owner: RegimeName,
+        declaration: Exit,
+        projection: Mapping[StateName, Callable[..., PytreeValue]],
+        guards: tuple[Callable[..., PytreeValue], ...],
+        ancestry: tuple[tuple[QueryKind, str], ...],
+        functions: Mapping[tuple[str, ...], Callable[..., PytreeValue]],
+        source_key: str,
+        ancestors: tuple[str, ...],
+        policy_information: frozenset[str],
+        physical_names: frozenset[str],
+    ) -> tuple[
+        dict[str, str], dict[ExitRole, Callable[..., PytreeValue]], SettlementQueries
+    ]:
+        """Read each member's outside value at every candidate settlement.
+
+        A member whose projection does not read the settlement keeps its read at
+        the default; only its adjustment changes with the candidate. Returns the
+        candidate reads, the adjustments at the default and the candidates' rule.
+        """
+        moving = {
+            member: target
+            for member, target in declaration.targets.items()
+            if any(
+                _reads(
+                    function=functions["exit", "targets", member, "projection", state],
+                    name=settle.name,
+                )
+                for state in cast("Mapping[StateName, UserFunction]", target.projection)
+            )
+        }
+        inputs = {}
+        node_targets = []
+        node_adjustments = []
+        points = _settlement_points(settle)
+        for index, point in enumerate(points):
+            fixed = with_signature(FixedSettlement(value=point), args=[], enforce=False)
+            node = dict(targets)
+            if moving:
+                reads, moved, _, _ = self._exit_reads(
+                    owner=owner,
+                    declaration=replace(declaration, targets=moving),
+                    projection={**projection, settle.name: fixed},
+                    guards=guards,
+                    ancestry=ancestry,
+                    functions=functions,
+                    source_key=source_key,
+                    ancestors=ancestors,
+                    policy_information=policy_information,
+                    physical_names=physical_names,
+                )
+                for member, (operand, slot) in moved.items():
+                    key = f"_lcm_settle_{index}_{member}"
+                    inputs[key] = reads[operand]
+                    node[member] = (key, slot)
+            node_targets.append(MappingProxyType(node))
+            node_adjustments.append(
+                MappingProxyType(
+                    {
+                        member: _bind_settlement(
+                            function=adjustment,
+                            name=settle.name,
+                            helper=fixed,
+                            source=source_key,
+                        )
+                        for member, adjustment in adjustments.items()
+                    }
+                )
+            )
+        return (
+            inputs,
+            {
+                member: _bind_settlement(
+                    function=adjustment,
+                    name=settle.name,
+                    helper=default,
+                    source=source_key,
+                )
+                for member, adjustment in adjustments.items()
+            },
+            SettlementQueries(
+                points=points,
+                default=default,
+                targets=tuple(node_targets),
+                adjustments=tuple(node_adjustments),
+                tie=cast("MutualConsent", declaration.rule).tie,
+            ),
+        )
+
+
+def _settlement_points(settle: Settlement) -> tuple[float, ...]:
+    """The candidate settlements in the working float format, as host scalars."""
+    return tuple(float(point) for point in np.asarray(settle.candidates.to_jax()))
+
+
+def _reads(*, function: Callable[..., PytreeValue], name: ReferenceName) -> bool:
+    return name in inspect.signature(function).parameters
+
+
+def _bind_settlement(
+    *,
+    function: Callable[..., PytreeValue],
+    name: ReferenceName,
+    helper: Callable[..., PytreeValue],
+    source: ReferenceName,
+) -> Callable[..., PytreeValue]:
+    """Evaluate a source-context callback at the settlement `helper` gives."""
+    if not _reads(function=function, name=name):
+        return function
+    return _compose(projection={name: helper}, function=function, source=source)
+
 
 def bind_exit_query_graph(
     *,
@@ -967,8 +1355,19 @@ def bind_exit_query_graph(
     period: int,
     phase: Phase = "solve",
     kind: QueryKind = QueryKind.FULL,
+    stored_outside_reads: bool = False,
+    value_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
+    collapse_unavailable_nodes: bool = False,
 ) -> tuple[Mapping[str, QueryNode], str]:
-    """Bind demanded public reads after every actual canonical context exists."""
+    """Bind demanded public reads after every actual canonical context exists.
+
+    With `stored_outside_reads`, each outside read proved aligned carries its
+    `OutsideValueRead`, and an outside read of a problem solved without grid search
+    is refused. `value_periods_by_regime` names the periods each regime is solved
+    in; without it, a regime is solved in each of its active periods. With
+    `collapse_unavailable_nodes`, the root enumerates only the nodes where its exit
+    is available, and one more (`_bind_available_nodes`).
+    """
     aliases = {
         (owner, name): f"_lcm_exit_operand_{index}"
         for index, (owner, name) in enumerate(
@@ -994,7 +1393,308 @@ def bind_exit_query_graph(
     )
     _bind_observation_sources(nodes=builder.nodes, period=period)
     _validate_query_projection_bindings(nodes=builder.nodes, period=period)
+    _bind_sample(nodes=builder.nodes, root=root_key)
+    if collapse_unavailable_nodes:
+        _bind_available_nodes(nodes=builder.nodes, root=root_key)
+    if stored_outside_reads:
+        _bind_outside_reads(
+            nodes=builder.nodes,
+            outside_reads=builder.outside_reads,
+            canonical_regimes=canonical_regimes,
+            value_periods_by_regime={
+                name: regime.active_periods
+                for name, regime in canonical_regimes.items()
+            }
+            if value_periods_by_regime is None
+            else value_periods_by_regime,
+        )
     return MappingProxyType(builder.nodes), root_key
+
+
+def _bind_outside_reads(
+    *,
+    nodes: dict[str, QueryNode],
+    outside_reads: Mapping[str, tuple[RegimeName, str]],
+    canonical_regimes: Mapping[RegimeName, Regime],
+    value_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
+) -> None:
+    """Mark the outside reads proved aligned; refuse reads of non-grid-search problems.
+
+    A problem solved on an endogenous grid publishes no stored array and cannot be
+    evaluated at a point, so no outside read of it is admitted.
+    """
+    for key, (source, member) in outside_reads.items():
+        alignment = align_outside_read(
+            key=key,
+            definitions=nodes,
+            canonical_regimes=canonical_regimes,
+            value_periods_by_regime=value_periods_by_regime,
+        )
+        node = nodes[key]
+        _fail_if_endogenous_grid_read(
+            node=node, alignment=alignment, source=source, member=member
+        )
+        if isinstance(alignment, OutsideValueRead):
+            nodes[key] = replace(node, outside_value=alignment)
+
+
+def _fail_if_endogenous_grid_read(
+    *,
+    node: QueryNode,
+    alignment: OutsideValueRead | UnalignedOutsideRead,
+    source: RegimeName,
+    member: str,
+) -> None:
+    """Refuse an outside read of a problem solved without grid search."""
+    target = node.read.target
+    solver = node.context.user_regimes_at(period=node.read.period)[target].solver
+    if isinstance(solver, GridSearch):
+        return
+    # A solver bound to its regime subclasses the public configuration it names.
+    name = next(
+        cls.__name__ for cls in type(solver).__mro__ if not cls.__name__.startswith("_")
+    )
+    read = f"The outside value of {member} in the exit of {source!r} reads {target!r}"
+    if isinstance(alignment, UnalignedOutsideRead):
+        raise UnsupportedOperationError(
+            f"{read}, whose {name} solver cannot be evaluated at a point, at a "
+            f"projected state that is not provably a grid point ({alignment.reason}). "
+            f"Put the projected states on the grid of {target!r}."
+        )
+    raise UnsupportedOperationError(
+        "Stored outside values of an endogenous-grid problem are not produced yet. "
+        f"{read}, solved with the {name} solver, at points of its grid."
+    )
+
+
+def acting_kinds(
+    *,
+    contexts: Mapping[RegimeName, SolverBuildContext],
+    readers: tuple[tuple[RegimeName, Mapping[str, QueryNode], str, int], ...],
+) -> Mapping[tuple[RegimeName, int], QueryKind]:
+    """Return the problem each mover acts in: the one its move was priced at.
+
+    Each reader is a moving source, its simulated query graph, the graph's root and
+    its period. A destination entered in one period both by moves priced at its
+    Participating policy and by moves priced at its Raw problem is refused, unless
+    the two coincide because a Participating read drops the destination's exit.
+    """
+    moves: dict[tuple[RegimeName, int], dict[QueryKind, set[RegimeName]]] = {}
+    for source, definitions, root, period in readers:
+        for targets in definitions[root].exit_targets.values():
+            for query in targets.values():
+                read = definitions[query].read
+                moves.setdefault((read.target, period), {}).setdefault(
+                    read.kind, set()
+                ).add(source)
+    for (owner, period), kinds in moves.items():
+        if len(kinds) > 1 and _participating_read_keeps_exit(
+            context=contexts[owner], owner=owner, period=period
+        ):
+            readings = "; ".join(
+                f"{kind.value} after {', '.join(map(repr, sorted(sources)))}"
+                for kind, sources in sorted(kinds.items())
+            )
+            raise RegimeInitializationError(
+                f"Regime {owner!r} is entered in period {period} by moves priced at "
+                f"different problems ({readings}). A regime with an available exit "
+                "that needs no consent cannot be entered in one period both by "
+                "consent, which reads it with its exit, and by another exit, which "
+                "reads it without."
+            )
+    return MappingProxyType(
+        {
+            key: QueryKind.PARTICIPATING
+            if QueryKind.PARTICIPATING in kinds
+            else QueryKind.RAW
+            for key, kinds in moves.items()
+        }
+    )
+
+
+def _participating_read_keeps_exit(
+    *, context: SolverBuildContext, owner: RegimeName, period: int
+) -> bool:
+    """Whether a simulated Participating read of a regime differs from its Raw one.
+
+    A Participating read applies the regime's exit, unless that exit needs consent or
+    is unavailable at every state of the period; a Raw read never applies it.
+    """
+    from _lcm.model_graph import _exit_is_statically_unavailable  # noqa: PLC0415
+
+    declaration = exit_for_phase(
+        declaration=context.user_regimes_at(period=period)[owner].exit,
+        phase="simulate",
+    )
+    return (
+        declaration is not None
+        and not isinstance(declaration.rule, Consent)
+        and not _exit_is_statically_unavailable(
+            predicate=declaration.available, period=period, ages=context.ages
+        )
+    )
+
+
+def _bind_sample(*, nodes: dict[str, QueryNode], root: str) -> None:
+    """Keep the root's stay-read groups as a product; every other axis is drawn.
+
+    A stay problem whose shock reads are not attributable keeps every own group.
+    A root with nothing left to draw integrates over its full product. When the
+    root's exit is available only on some nodes of one drawn group, that group
+    is drawn among those nodes (`QueryNode.draw_condition`).
+    """
+    from _lcm.query_information import _frame_shocks, stay_read_shocks  # noqa: PLC0415
+
+    node = nodes[root]
+    if node.sample is None:
+        return
+    plan = node.context.current_iid_plans.get(node.read.period)
+    bindings = () if plan is None else plan.bindings
+    shocks = stay_read_shocks(name=root, definitions=nodes)
+    kept = tuple(
+        position
+        for position, (_, binding, _) in enumerate(bindings)
+        if shocks is None or shocks & binding.group.shocks.keys()
+    )
+    if len(kept) == len(bindings) and not node.observation_sources:
+        nodes[root] = replace(node, sample=None)
+        return
+    context = node.context
+    if plan is not None:
+        indices = jnp.asarray(
+            tuple(
+                product(
+                    *(
+                        range(support.weights.size if position in kept else 1)
+                        for position, (_, _, support) in enumerate(bindings)
+                    )
+                )
+            ),
+            dtype=jnp.int32,
+        )
+        context = replace(
+            context,
+            current_iid_plans=MappingProxyType(
+                {node.read.period: replace(plan, indices=indices)}
+            ),
+        )
+    nodes[root] = replace(
+        node,
+        context=context,
+        sample=(node.sample[0], kept),
+        draw_condition=_draw_condition(
+            predicate=node.exit_availability,
+            frame_shocks=_frame_shocks(key=root, definitions=nodes),
+            groups=tuple(
+                frozenset(binding.group.shocks) if position not in kept else None
+                for position, (_, binding, _) in enumerate(bindings)
+            ),
+        ),
+    )
+
+
+def _draw_condition(
+    *,
+    predicate: Callable[..., PytreeValue] | None,
+    frame_shocks: frozenset[ShockName],
+    groups: tuple[frozenset[ShockName] | None, ...],
+) -> int | None:
+    """The drawn plan position whose shocks alone decide the exit's availability.
+
+    `groups` holds each drawn position's shocks and `None` for a kept one. None
+    when the exit is always available, when its predicate reads no shock, or when
+    the shocks it reads are not all in one drawn group.
+    """
+    reads = (
+        frozenset()
+        if predicate is None
+        else frozenset(inspect.signature(predicate).parameters) & frame_shocks
+    )
+    owners = [
+        position
+        for position, shocks in enumerate(groups)
+        if shocks is not None and reads <= shocks
+    ]
+    return owners[0] if reads and len(owners) == 1 else None
+
+
+def _bind_available_nodes(*, nodes: dict[str, QueryNode], root: str) -> None:
+    """Enumerate the root's exit choice at the nodes where its exit is available.
+
+    It applies when the root enumerates its rows, renegotiates nothing, and its
+    exit's predicate reads only discrete shocks of one group that its stay problem
+    ignores (`_draw_condition`). The group's nodes then carry fixed codes, so where
+    the exit is available is known now. Where it is not, the row's value is the
+    stay value whatever the node, so the plan keeps the available nodes and the
+    first unavailable one, which stands for all of them
+    (`QueryNode.available_nodes`). A predicate true at every node changes nothing.
+    """
+    from _lcm.query_information import (  # noqa: PLC0415
+        _exit_available,
+        _frame_shocks,
+        stay_read_shocks,
+    )
+
+    node = nodes[root]
+    predicate = node.exit_availability
+    plan = node.context.current_iid_plans.get(node.read.period)
+    shocks = stay_read_shocks(name=root, definitions=nodes)
+    if (
+        predicate is None
+        or plan is None
+        or shocks is None
+        or node.sample is not None
+        or node.state_updates
+    ):
+        return
+    column = _draw_condition(
+        predicate=predicate,
+        frame_shocks=_frame_shocks(key=root, definitions=nodes),
+        groups=tuple(
+            None
+            if shocks & binding.group.shocks.keys()
+            else frozenset(binding.group.shocks)
+            for _, binding, _ in plan.bindings
+        ),
+    )
+    if column is None:
+        return
+    _, binding, support = plan.bindings[column]
+    names = tuple(inspect.signature(predicate).parameters)
+    if not all(isinstance(binding.group.shocks.get(name), Discrete) for name in names):
+        return
+    available = np.asarray(
+        _exit_available(
+            predicate=predicate,
+            arguments={},
+            physical={name: support.discrete_codes[name] for name in names},
+        ),
+        dtype=bool,
+    )
+    if available.all():
+        return
+    kept = (*np.flatnonzero(available).tolist(), int(np.flatnonzero(~available)[0]))
+    indices = jnp.asarray(
+        tuple(
+            product(
+                *(
+                    kept if position == column else range(group.weights.size)
+                    for position, (_, _, group) in enumerate(plan.bindings)
+                )
+            )
+        ),
+        dtype=jnp.int32,
+    )
+    nodes[root] = replace(
+        node,
+        context=replace(
+            node.context,
+            current_iid_plans=MappingProxyType(
+                {node.read.period: replace(plan, indices=indices)}
+            ),
+        ),
+        available_nodes=(column, tuple(available.tolist())),
+    )
 
 
 def _bind_observation_sources(*, nodes: dict[str, QueryNode], period: int) -> None:
@@ -1192,21 +1892,43 @@ def lower_exit_queries(
     canonical_regimes: Mapping[RegimeName, Regime],
     root: RegimeName,
     period: int,
+    value_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> _PolicyQueryKernel:
-    """Lower a bound Full graph into the existing native publication schedule."""
+    """Lower a bound Full graph into the existing native publication schedule.
+
+    Each destination a stored outside read takes is bound once more, as the root
+    of its own Raw graph, which the kernel tabulates.
+    """
     nodes, root_key = bind_exit_query_graph(
         contexts=contexts,
         canonical_regimes=canonical_regimes,
         root=root,
         period=period,
+        stored_outside_reads=_READ_STORED_OUTSIDE_VALUES,
+        value_periods_by_regime=value_periods_by_regime,
+        collapse_unavailable_nodes=_COLLAPSE_UNAVAILABLE_NODES,
     )
+    tables = {}
+    for node in nodes.values():
+        read = node.outside_value
+        if read is not None and read.label not in tables:
+            tables[read.label] = bind_exit_query_graph(
+                contexts=contexts,
+                canonical_regimes=canonical_regimes,
+                root=node.read.target,
+                period=period,
+                kind=QueryKind.RAW,
+            )
     root_context = contexts[root]
     kernel = build_policy_query_kernel(
         root_context=root_context,
         period=period,
         definitions=nodes,
         root=root_key,
-        chunk_size=root_context.axis_widths.get("query_cell", 64),
+        chunk_size=root_context.axis_widths.get(
+            "query_cell", default_chunk_size(definitions=nodes)
+        ),
+        outside_tables=MappingProxyType(tables),
     )
     return kernel.with_fixed_params(
         fixed_flat_params=MappingProxyType(
@@ -1224,48 +1946,86 @@ def install_exit_policy_queries(
     contexts: Mapping[RegimeName, SolverBuildContext],
     value_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> MappingProxyType[RegimeName, Regime]:
-    """Install Full roots for exits and tuple-preserving collective integration."""
-    from dataclasses import replace  # noqa: PLC0415
+    """Install Full roots for exits and tuple-preserving collective integration.
 
+    Periods of one regime whose query graphs trace the same programs run the
+    functions of the first such period and publish its period in their
+    signature, so one lowering serves all of them.
+    """
     updated = dict(canonical_regimes)
     for owner, context in contexts.items():
-        kernels = dict(canonical_regimes[owner].solution.period_kernels)
-        changed = False
+        solution = canonical_regimes[owner].solution
+        kernels = dict(solution.period_kernels)
+        # ponytail: linear scan over a regime's distinct structures; index them by
+        # a hashable digest if a regime ever carries more than a handful.
+        groups: list[
+            tuple[
+                _Structure, int, dict[tuple[str, int, int], Callable[..., PytreeValue]]
+            ]
+        ] = []
+        traced_at: dict[int, int] = {}
         for period in kernels:
             if (
                 value_periods_by_regime is not None
                 and period not in value_periods_by_regime.get(owner, ())
             ):
                 continue
-            if (
-                context.participation_queries.get(period)
-                or context.user_regimes_at(period=period)[owner].exits
-                or (
-                    context.stakeholders is not None
-                    and context.current_iid_plans.get(period) is not None
-                )
+            if context.user_regimes_at(period=period)[owner].exit is not None or (
+                context.member_axis is not None
+                and context.current_iid_plans.get(period) is not None
             ):
-                kernels[period] = lower_exit_queries(
+                kernel = lower_exit_queries(
                     contexts=contexts,
                     canonical_regimes=canonical_regimes,
                     root=owner,
                     period=period,
+                    value_periods_by_regime=value_periods_by_regime,
                 )
-                changed = True
-        if changed:
+                structure = (
+                    solution.period_signatures[period],
+                    _traced_structure(kernel=kernel),
+                )
+                first, functions = next(
+                    (
+                        (first, functions)
+                        for known, first, functions in groups
+                        if _is_same_structure(left=known, right=structure)
+                    ),
+                    (period, {}),
+                )
+                if first == period:
+                    groups.append((structure, period, functions))
+                kernels[period] = kernel.sharing(functions=functions)
+                traced_at[period] = first
+        if traced_at:
+            solver_keys = solution.solver_period_group_keys
             updated[owner] = replace(
                 canonical_regimes[owner],
                 solution=replace(
-                    canonical_regimes[owner].solution,
+                    solution,
                     period_kernels=MappingProxyType(kernels),
+                    # Grid search, the one solver a query admits, keys each period
+                    # with a law plan apart. A query kernel takes the plan's nodes
+                    # as operands and its structure holds the rest of the plan, so
+                    # the group shares one key.
+                    solver_period_group_keys=MappingProxyType(
+                        {
+                            period: solver_keys[traced_at.get(period, period)]
+                            for period in solver_keys
+                        }
+                    ),
                     period_signatures=MappingProxyType(
                         {
-                            period: (signature, "typed-exit-query", period)
+                            period: (
+                                signature,
+                                "typed-exit-query",
+                                traced_at.get(period, period),
+                            )
                             if isinstance(kernels[period], _PolicyQueryKernel)
                             else signature
-                            for period, signature in canonical_regimes[
-                                owner
-                            ].solution.period_signatures.items()
+                            for period, signature in (
+                                solution.period_signatures.items()
+                            )
                         }
                     ),
                 ),
@@ -1273,24 +2033,124 @@ def install_exit_policy_queries(
     return MappingProxyType(updated)
 
 
-def _validate_custom_rules(*, exits: Mapping[str, Exit]) -> None:
-    """A global custom choice has one authored rule, rather than rival arbiters."""
-    from _lcm.regime_building.value_adapter import ValueAdapter  # noqa: PLC0415
-    from lcm.exceptions import RegimeInitializationError  # noqa: PLC0415
+type _Structure = tuple[object, ...]  # noqa: PAN001 - a query node's fields share only object
 
-    identities = {}
-    for name, declaration in exits.items():
-        rule = declaration.rule
-        if not callable(rule):
-            continue
-        while isinstance(rule, ValueAdapter):
-            rule = rule.func
-        identities[name] = id(rule)
-    if len(set(identities.values())) > 1:
-        raise RegimeInitializationError(
-            f"Custom exits {tuple(identities)!r} must share "
-            "the same authored rule object."
-        )
+
+def _traced_structure(*, kernel: _PolicyQueryKernel) -> _Structure:
+    """Describe what the kernel's programs trace, apart from their operands.
+
+    Two periods with the same structure trace the same programs. The period,
+    its age, its draws, parameters and stored values enter as operands and stay
+    out of the structure.
+    """
+    chunks = cast("_QueryChunks", kernel.programs["_chunks"].function)
+    return (
+        kernel.root,
+        kernel.chunk_size,
+        chunks.chunks,
+        dict(chunks.raw_sources),
+        tuple(
+            (name, _node_structure(node=node))
+            for name, node in kernel.definitions.items()
+        ),
+    )
+
+
+def _is_same_structure(*, left: _Structure, right: _Structure) -> bool:
+    """Compare two structures; one that cannot be compared matches nothing."""
+    try:
+        return bool(left == right)
+    except TypeError, ValueError:
+        return False
+
+
+def _node_structure(*, node: QueryNode) -> _Structure:
+    """One node's fields, with each per-period object replaced by its sources.
+
+    - The read drops its period and keeps the names its projection writes.
+    - The context becomes `_context_structure`.
+    - A closure bound per period keeps only its presence: it is built from the
+      declaration, the closed exit and the child queries, which the context and
+      the remaining fields hold.
+    - An exit adjustment keeps its exit and member: it is bound per period from
+      the declaration and the regime's functions, which the context holds.
+    - The exit's availability predicate keeps only its presence, for the same
+      reason as an exit adjustment.
+    """
+    parts: _Structure = ()
+    for item in fields(node):
+        value = getattr(node, item.name)
+        if item.name == "read":
+            value = tuple(
+                tuple(getattr(value, part.name))
+                if part.name == "projection"
+                else getattr(value, part.name)
+                for part in fields(value)
+                if part.name != "period"
+            )
+        elif item.name == "context":
+            value = _context_structure(node=node)
+        elif item.name in {
+            "participation",
+            "decision",
+            "available",
+            "exit_availability",
+        }:
+            value = value is not None
+        elif item.name == "source_projection":
+            value = tuple(value)
+        elif item.name == "exit_adjustments":
+            value = tuple(
+                (exit_id, tuple(members)) for exit_id, members in value.items()
+            )
+        parts = (*parts, value)
+    return parts
+
+
+def _context_structure(*, node: QueryNode) -> _Structure:
+    """The node's context, with each period-keyed field read at the node's period.
+
+    A field shared by every period stands by its identity. The law plan stands by
+    its bindings and the content of its node arrays, because every period holds
+    a plan of its own.
+    """
+    from _lcm.model_graph import _exit_is_statically_unavailable  # noqa: PLC0415
+
+    context, period = node.context, node.read.period
+    declaration = context.user_regimes_at(period=period)[node.read.target]
+    plan = context.current_iid_plans.get(period)
+    return (
+        tuple(
+            id(getattr(context, item.name))
+            for item in fields(context)
+            if item.name != "current_iid_plans"
+        ),
+        id(context.Q_and_F_functions[period]),
+        id(declaration),
+        declaration.exit is not None
+        and _exit_is_statically_unavailable(
+            predicate=declaration.exit.available, period=period, ages=context.ages
+        ),
+        None
+        if plan is None
+        else (
+            tuple(
+                (name, id(binding), _content_digest(tree=nodes))
+                for name, binding, nodes in plan.bindings
+            ),
+            _content_digest(tree=plan.indices),
+        ),
+    )
+
+
+def _content_digest(*, tree: PytreeValue) -> str:
+    """Digest the shape, dtype and bytes of every array leaf."""
+    digest = hashlib.sha256()
+    for leaf in jax.tree.leaves(tree):
+        array = np.asarray(leaf)
+        digest.update(repr((array.shape, array.dtype.str)).encode())
+        digest.update(array.tobytes())
+    return digest.hexdigest()
 
 
 def _validate_consent_context(
@@ -1304,18 +2164,18 @@ def _validate_consent_context(
 
     counterparty = cast("Consent", declaration.rule).counterparty
     if (
-        contexts[source].stakeholders is not None
-        or contexts[counterparty.regime].stakeholders is not None
+        contexts[source].member_axis is not None
+        or contexts[counterparty.regime].member_axis is not None
     ):
         raise RegimeInitializationError(
             "Consent requires unambiguous singleton source "
             "and counterparty Raw channels."
         )
     target = declaration.targets["self"]
-    if set(contexts[target.regime].stakeholders or ()) != {
+    if set(contexts[target.regime].member_axis or ()) != {
         target.role,
         counterparty.role,
     }:
         raise RegimeInitializationError(
-            "Consent comparisons must cover every formation-destination stakeholder."
+            "Consent comparisons must cover every formation-destination member."
         )

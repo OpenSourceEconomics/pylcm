@@ -67,7 +67,7 @@ def _retained_source() -> jax.Array:
     dtype = jnp.zeros(()).dtype
     source = jax.device_put(
         np.full(_PAYLOAD_BYTES // dtype.itemsize, -3, dtype=dtype),
-        jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+        jax.sharding.make_single_device_sharding(jax.devices()[0]),
     )
     source.block_until_ready()
     assert source.nbytes == _PAYLOAD_BYTES

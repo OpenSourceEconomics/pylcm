@@ -19,12 +19,10 @@ from lcm import (
     DeterministicTransition,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -74,13 +72,13 @@ def below_half(y: ContinuousState) -> BoolND:
     return y < 0.5
 
 
-def gate_with_free_x(*, V_target: FloatND, x: float) -> BoolND:
-    return V_target >= x
+def gate_with_free_x(x: float) -> BoolND:
+    return jnp.asarray(1.0) >= x
 
 
-def routes() -> dict[str, StakeholderRoute]:
+def routes() -> dict[str, MemberRoute]:
     return {
-        "only": StakeholderRoute(
+        "only": MemberRoute(
             fallback=ProjectedRegimeValue(regime="fallback", projection={})
         )
     }
@@ -150,7 +148,7 @@ def coarse_gate_model(
 
 
 @pytest.mark.parametrize("kind", ["deterministic", "vector"])
-def test_parameterized_coarse_law_can_have_a_separate_gate(kind):
+def test_parameterized_coarse_law_can_have_a_separate_gate(kind: str) -> None:
     """A law over all targets and a gate each keep their own parameter slot.
 
     With the law choosing `target` for sure, the gate opens at the grid's low
@@ -179,8 +177,8 @@ def test_parameterized_coarse_law_can_have_a_separate_gate(kind):
 @pytest.mark.parametrize("include_gate", [False, True])
 @pytest.mark.parametrize("parameterized_gate", [False, True])
 def test_separate_gate_does_not_change_coarse_law_admission(
-    *, kind, include_gate, parameterized_gate
-):
+    *, kind: str, include_gate: bool, parameterized_gate: bool
+) -> None:
     """A gate, with or without parameters, adds only its own slot."""
     instance = coarse_gate_model(
         kind=kind,
@@ -194,7 +192,7 @@ def test_separate_gate_does_not_change_coarse_law_admission(
     assert leaf_paths(tree=instance.get_params_template()["edges"]) == expected
 
 
-def test_coarse_parameter_without_gate_control():
+def test_coarse_parameter_without_gate_control() -> None:
     """Without a gate, the law over all targets owns the only slot."""
     model = coarse_gate_model(kind="deterministic", include_gate=False)
     assert leaf_paths(tree=model.get_params_template()["edges"]) == {
@@ -202,7 +200,7 @@ def test_coarse_parameter_without_gate_control():
     }
 
 
-def test_gate_with_parameterless_coarse_law_control():
+def test_gate_with_parameterless_coarse_law_control() -> None:
     """A law without parameters leaves the gate's slot as the only one."""
     model = coarse_gate_model(kind="deterministic", parameterized_law=False)
     assert leaf_paths(tree=model.get_params_template()["edges"]) == {
@@ -210,7 +208,7 @@ def test_gate_with_parameterless_coarse_law_control():
     }
 
 
-def test_parameterless_gate_is_not_a_per_target_law_case():
+def test_parameterless_gate_is_not_a_per_target_law_case() -> None:
     """A gate without parameters beside a parameterized coarse law is admitted."""
     model = coarse_gate_model(kind="deterministic", parameterized_gate=False)
     assert leaf_paths(tree=model.get_params_template()["edges"]) == {
@@ -246,17 +244,7 @@ def source_name_gate_model(*, declare_pruned_source_x: bool) -> Model:
         edges={
             "src": Transition(
                 law=ByAge(cases={0: {"target": StochasticTransition(func=certain)}}),
-                participation={
-                    "target": ParticipationCheck(
-                        predicate=gate_with_free_x,
-                        reads={
-                            "V_target": ParticipationRead(
-                                kind="IntegratedFull", regime="target", projection={}
-                            )
-                        },
-                        routes=routes(),
-                    )
-                },
+                gates={"target": Gate(predicate=gate_with_free_x, routes=routes())},
             )
         },
     )
@@ -265,11 +253,11 @@ def source_name_gate_model(*, declare_pruned_source_x: bool) -> Model:
 @pytest.mark.parametrize("declare_pruned_source_x", [False, True])
 @pytest.mark.parametrize(("threshold", "expected"), [(0.5, 1.9), (1.5, 1.45)])
 def test_gate_free_param_is_not_a_source_only_declared_state(
-    *, declare_pruned_source_x, threshold, expected
-):
+    *, declare_pruned_source_x: bool, threshold: float, expected: float
+) -> None:
     """A name only the source declares stays the gate's own free parameter.
 
-    The gate opens when the target's value 1 reaches `x`, giving 1 + 0.9 * 1;
+    The gate opens when 1 reaches `x`, giving the target's 1 + 0.9 * 1;
     otherwise the fallback's 0.5 gives 1 + 0.9 * 0.5.
     """
     model = source_name_gate_model(declare_pruned_source_x=declare_pruned_source_x)

@@ -442,7 +442,7 @@ def test_invariant_dispatch_keeps_distinct_child_records(
         handwritten=False,
         invalid=False,
         budgeted=True,
-        value_aware=False,
+        household=False,
         invariant=True,
         raised=False,
     ).solve(params={"discount_factor": 1.0}, log_level="off")
@@ -501,7 +501,7 @@ def test_each_invariant_block_must_supply_declared_child_records(
         handwritten=False,
         invalid=False,
         budgeted=True,
-        value_aware=False,
+        household=False,
         invariant=True,
         raised=False,
     )

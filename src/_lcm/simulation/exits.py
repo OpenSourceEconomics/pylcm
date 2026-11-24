@@ -24,7 +24,7 @@ from _lcm.execution.core_program import (
     CoreExecutionRequirements,
     CoreProgram,
 )
-from _lcm.regime_building.collective import NO_ROLE
+from _lcm.execution.workspace_planning import BOOTSTRAP_TILE_WIDTH_CAP
 from _lcm.shock_overrides import CurrentIIDOverride, supplied_group_values
 from _lcm.shock_registry import ShockBinding, law_input_validity
 from _lcm.simulation.program_types import subject_axis
@@ -39,7 +39,7 @@ from lcm.shocks import (
     ShockName,
     Uniform,
 )
-from lcm.typing import BoolND, FloatND, IntND, ReferenceName, RegimeName
+from lcm.typing import BoolND, FloatND, IntND, ReferenceName, RegimeName, StateName
 
 if TYPE_CHECKING:
     from _lcm.engine import Regime
@@ -68,48 +68,36 @@ type OriginalExitOutput = tuple[
     Mapping[str, FloatND],
 ]
 type ParticipatingExitOutput = tuple[
-    tuple[FloatND, IntND, BoolND, BoolND, IntND], ExitFramePayload
+    tuple[FloatND, IntND, BoolND, BoolND, IntND],
+    ExitFramePayload,
+    Mapping[str, FloatND | IntND],
 ]
 
 
 @dataclass(frozen=True, kw_only=True)
-class ParticipationEntryPlan:
-    """One incoming edge's source-owned answer and actual target roles."""
-
-    queries: ScalarPolicyQueries
-    target_roles: Mapping[str, str | None]
-
-    def __post_init__(self) -> None:
-        object.__setattr__(
-            self, "target_roles", MappingProxyType(dict(self.target_roles))
-        )
-
-
-@dataclass(frozen=True, kw_only=True)
 class ExitSimulationPlan:
-    """Original Full choice and revealed destination Participating policies."""
+    """Original Full choice and revealed destination acting policies."""
 
     full: ScalarPolicyQueries | None
     """Original-source choice, priced with its prescribed caller information."""
     participating: Mapping[RegimeName, ScalarPolicyQueries]
-    """Final-regime policies after revelation; no second Full decision."""
+    """Final-regime policies after revelation; no second Full decision.
+
+    Each acts in the problem its movers were priced at: Raw after an ordinary
+    exit, Participating after consent.
+    """
     physical_names: tuple[str, ...] = ()
-    """Own physical columns consumed by this actor's Participating policy."""
+    """Own physical columns consumed by this actor's acting policy."""
     fixed_flat_params: FlatParams = MappingProxyType({})
     """All bound query-context operands, retaining their canonical namespace."""
-    participation: Mapping[RegimeName, ParticipationEntryPlan] = MappingProxyType({})
-    """Incoming-edge rules, separate from this actor's ordinary Full policy."""
 
     @property
     def final_actors(self) -> tuple[RegimeName, ...]:
-        """Direct move destinations; incoming Part actors create no Full occupants."""
+        """Direct move destinations of the original Full choice."""
         return tuple(
             dict.fromkeys(
                 queries.definitions[query].read.target
-                for queries in (
-                    *((self.full,) if self.full is not None else ()),
-                    *(entry.queries for entry in self.participation.values()),
-                )
+                for queries in ((self.full,) if self.full is not None else ())
                 for root in (queries.definitions[queries.root],)
                 for targets in root.exit_targets.values()
                 for query in targets.values()
@@ -120,9 +108,6 @@ class ExitSimulationPlan:
         """Retain a stable destination roster independent of caller mutation."""
         object.__setattr__(
             self, "participating", MappingProxyType(dict(self.participating))
-        )
-        object.__setattr__(
-            self, "participation", MappingProxyType(dict(self.participation))
         )
 
     def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> Self:
@@ -150,9 +135,9 @@ def install_exit_simulation_queries(
     query-only counterparty remains a transient reader, not a simulated occupant.
     """
     from _lcm.current_iid import CurrentIIDPlan  # noqa: PLC0415
-    from _lcm.exit_queries import bind_exit_query_graph  # noqa: PLC0415
-    from _lcm.participation_queries import (  # noqa: PLC0415
-        bind_participation_query_graph,
+    from _lcm.exit_queries import (  # noqa: PLC0415
+        acting_kinds,
+        bind_exit_query_graph,
     )
     from _lcm.policy_queries import QueryKind, ScalarPolicyQueries  # noqa: PLC0415
     from _lcm.time import coordinate_kind  # noqa: PLC0415
@@ -185,51 +170,10 @@ def install_exit_simulation_queries(
     roots = {
         (owner, period)
         for owner, period in original_actors
-        if contexts[owner].user_regimes_at(period=period)[owner].exits
-        or contexts[owner].participation_queries.get(period)
+        if contexts[owner].user_regimes_at(period=period)[owner].exit is not None
     }
     full_queries = {}
-    participation: dict[tuple[str, int], dict[str, ParticipationEntryPlan]] = {}
-    for source, context in contexts.items():
-        acting = canonical_regimes[source].simulation.programs.decision
-        for source_period, plans in context.participation_queries.items():
-            # A query-only price can need a future participation check without any
-            # subject taking that edge. Incoming Participating actors still own decision
-            # programs, even when they have no original Full policy.
-            if source_period not in acting:
-                continue
-            for target in plans:
-                period = source_period + 1
-                declaration = context.laws[source].participation[target]
-                entry = bind_participation_query_graph(
-                    contexts=contexts,
-                    canonical_regimes=canonical_regimes,
-                    source=source,
-                    target=target,
-                    period=period,
-                    phase="simulate",
-                    declaration=declaration,
-                )
-                participation.setdefault((target, period), {})[source] = (
-                    ParticipationEntryPlan(
-                        queries=entry.queries,
-                        target_roles={
-                            member: route.target_stakeholder
-                            for member, route in declaration.routes.items()
-                        },
-                    )
-                )
     actors = set(roots)
-    for (target, period), entries in participation.items():
-        actors.add((target, period))
-        actors.update(
-            (entry.queries.definitions[query].read.target, period)
-            for entry in entries.values()
-            for targets in entry.queries.definitions[
-                entry.queries.root
-            ].exit_targets.values()
-            for query in targets.values()
-        )
     for owner, period in sorted(roots):
         definitions, root = bind_exit_query_graph(
             contexts=contexts,
@@ -257,6 +201,13 @@ def install_exit_simulation_queries(
         full_queries[owner, period] = ScalarPolicyQueries(
             definitions=definitions, root=root, period=period
         )
+    kinds = acting_kinds(
+        contexts=contexts,
+        readers=tuple(
+            (owner, queries.definitions, queries.root, queries.period)
+            for (owner, _), queries in full_queries.items()
+        ),
+    )
     participating = {}
     for owner, period in sorted(actors):
         definitions, root = bind_exit_query_graph(
@@ -265,7 +216,7 @@ def install_exit_simulation_queries(
             root=owner,
             period=period,
             phase="simulate",
-            kind=QueryKind.PARTICIPATING,
+            kind=kinds.get((owner, period), QueryKind.PARTICIPATING),
         )
         participating[owner, period] = ScalarPolicyQueries(
             definitions=definitions, root=root, period=period
@@ -277,13 +228,7 @@ def install_exit_simulation_queries(
         draw = contexts[owner].current_iid_draw_plan or CurrentIIDDrawPlan(bindings={})
         uniform_bases = {
             name: isinstance(law, Uniform | Discrete)
-            for reader in (
-                queries or actor_queries,
-                *(
-                    entry.queries
-                    for entry in participation.get((owner, period), {}).values()
-                ),
-            )
+            for reader in (queries or actor_queries,)
             for node in reader.definitions.values()
             for binding in (
                 ()
@@ -297,7 +242,6 @@ def install_exit_simulation_queries(
         programs = regime.simulation.programs
         plan = ExitSimulationPlan(
             full=queries,
-            participation=participation.get((owner, period), {}),
             participating={
                 actor: query
                 for (actor, p), query in participating.items()
@@ -314,21 +258,6 @@ def install_exit_simulation_queries(
                 ),
                 programs=replace(
                     programs,
-                    participation_entry=MappingProxyType(
-                        {
-                            **programs.participation_entry,
-                            **{
-                                (period, source): exit_policy_program(
-                                    queries=entry.queries,
-                                    draw=draw,
-                                    uniform_bases=uniform_bases,
-                                    original=True,
-                                    program_name=f"simulate_participation_entry:{source}",
-                                )
-                                for source, entry in plan.participation.items()
-                            },
-                        }
-                    ),
                     exit_full=MappingProxyType(
                         {
                             **programs.exit_full,
@@ -457,7 +386,6 @@ class OriginalExitDecision:
         overrides: Mapping[ShockName, CurrentIIDOverride] = MappingProxyType({}),
     ) -> OriginalExitOutput:
         """Publish the source frame and the destination coordinates replay validates."""
-        from _lcm.policy_queries import QueryKind  # noqa: PLC0415
 
         query_arguments = {
             name: {
@@ -496,26 +424,54 @@ class OriginalExitDecision:
             group_params=group_params,
             overrides=overrides,
         )
-        answer = self.queries(states=states, arguments=query_arguments, frame=frame)
-        projections = {}
+        answer, updates = self.queries.evaluate(
+            states=states, arguments=query_arguments, frame=frame
+        )
+        projections = {self.queries.root: updates} if root.state_updates else {}
         adjustments = {}
+        # A read several exit IDs share, such as a member's read at the default of a
+        # settlement its projection ignores, lands every row taking any of them and
+        # pays the adjustment of the ID taken.
+        chosen: dict[str, BoolND] = {}
+        for identifier, targets in root.exit_targets.items():
+            for query in targets.values():
+                chosen[query] = chosen.get(query, jnp.asarray(a=False)) | (
+                    answer[1] == identifier
+                )
         for identifier, targets in root.exit_targets.items():
             for member, query in targets.items():
                 node = self.queries.definitions[query]
                 selected = answer[1] == identifier
-
-                # Every participation fallback is priced for each arriving row.
-                # Replay validates that actual mapping even when the target accepts;
-                # a neutral routing payload is not a fallback landing. Ordinary
-                # exits still evaluate only their selected destination projection.
-                project_here = (
-                    _holders
-                    if root.read.kind is QueryKind.PARTICIPATION and identifier == 1
-                    else selected
+                helper = root.exit_adjustments.get(identifier, {}).get(member)
+                operands = {
+                    **fixed,
+                    **cast("Mapping[str, PytreeValue]", fixed["_lcm_query_projection"]),
+                    **states,
+                    **frame.physical,
+                }
+                adjustments[query] = (
+                    adjustments.get(query, jnp.asarray(0.0))
+                    if helper is None
+                    else jnp.where(
+                        selected,
+                        helper(
+                            **{
+                                name: operands[name]
+                                for name in signature(helper).parameters
+                            }
+                        ),
+                        adjustments.get(query, 0.0),
+                    )
                 )
+                if query in projections:
+                    continue
 
-                # Keep inactive projections behind a scalar condition; vmap's
-                # select conversion must not be used here.
+                # An exit evaluates only its selected destination projection.
+                project_here = chosen[query]
+
+                # A subject that does not land here takes the neutral payload. Batched
+                # over subjects the condition becomes a select, so the projection is
+                # evaluated for every subject of a block and discarded where unused.
                 def project(*, query: str = query) -> dict[str, FloatND | IntND]:
                     return dict(
                         self.queries.project(
@@ -537,27 +493,6 @@ class OriginalExitDecision:
                     project_here,
                     project,
                     lambda neutral=neutral: neutral,
-                )
-                helper = root.exit_adjustments.get(identifier, {}).get(member)
-                operands = {
-                    **fixed,
-                    **cast("Mapping[str, PytreeValue]", fixed["_lcm_query_projection"]),
-                    **states,
-                    **frame.physical,
-                }
-                adjustments[query] = (
-                    jnp.asarray(0.0)
-                    if helper is None
-                    else jax.lax.cond(
-                        selected,
-                        lambda helper=helper, operands=operands: helper(
-                            **{
-                                name: operands[name]
-                                for name in signature(helper).parameters
-                            }
-                        ),
-                        lambda: jnp.asarray(0.0),
-                    )
                 )
         return answer, _frame_output(frame=frame), projections, adjustments
 
@@ -623,10 +558,10 @@ class RevealedExitDecision:
             overrides=overrides,
             produced=produced,
         )
-        return (
-            self.queries(states=states, arguments=query_arguments, frame=frame),
-            _frame_output(frame=frame),
+        answer, updates = self.queries.evaluate(
+            states=states, arguments=query_arguments, frame=frame
         )
+        return answer, _frame_output(frame=frame), updates
 
 
 def _observe_query_frame(
@@ -831,7 +766,7 @@ def _frame_output(*, frame: CurrentIIDDrawFrame) -> ExitFramePayload:
 
 
 @dataclass(frozen=True, kw_only=True)
-class _SequentialExitDecision:
+class _BatchedExitDecision:
     """Give JAX's positional batching boundary one explicit argument tree."""
 
     body: Callable[..., OriginalExitOutput | ParticipatingExitOutput]
@@ -839,20 +774,77 @@ class _SequentialExitDecision:
     def __call__(
         self, **arguments: PytreeValue
     ) -> OriginalExitOutput | ParticipatingExitOutput:
-        """Retain scalar conditions through the outer subject vmap."""
-        return jax.custom_batching.sequential_vmap(
+        """Evaluate one subject; batched, evaluate subjects in vectorized blocks."""
+        decision = jax.custom_batching.custom_vmap(
             partial(_evaluate_exit_decision, body=self.body)
-        )(arguments)
+        )
+        decision.def_vmap(partial(_evaluate_exit_decision_blocks, body=self.body))
+        return decision(arguments)
 
 
-# keyword-only-exempt: library-callback=jax.custom_batching.sequential_vmap
+# keyword-only-exempt: library-callback=jax.custom_batching.custom_vmap
 def _evaluate_exit_decision(
     arguments: Mapping[str, PytreeValue],
     *,
     body: Callable[..., OriginalExitOutput | ParticipatingExitOutput],
 ) -> OriginalExitOutput | ParticipatingExitOutput:
-    """Evaluate one canonical subject body after sequential batching."""
+    """Evaluate one canonical subject body."""
     return body(**arguments)
+
+
+# keyword-only-exempt: library-callback=jax.custom_batching.custom_vmap.def_vmap
+def _evaluate_exit_decision_blocks(
+    axis_size: int,
+    in_batched: list[PytreeValue],
+    arguments: Mapping[str, PytreeValue],
+    *,
+    body: Callable[..., OriginalExitOutput | ParticipatingExitOutput],
+) -> tuple[OriginalExitOutput | ParticipatingExitOutput, PytreeValue]:
+    """Vectorize the body over blocks of subjects and loop over the blocks.
+
+    Vectorized, the body's per-subject scalar conditions become selects: every
+    branch runs for each subject of a block and only the taken branch's result
+    reaches that subject. Draws read each subject's own key, and a key
+    implementation that needs scalar dispatch keeps its own per-subject loop.
+
+    A block holds at most `BOOTSTRAP_TILE_WIDTH_CAP` subjects, so the workspace of
+    the selects stays bounded whatever tile width the planner admits; the compiled
+    program's memory profile still decides that admission. Blocks are balanced and
+    the last one is padded with copies of the last subject, which are dropped, so
+    the body is traced once. Every reshape names its sizes, so a per-subject array
+    without elements keeps its shape through the blocks.
+    """
+    leaves, treedef = jax.tree.flatten(arguments)
+    flags = jax.tree.leaves(in_batched[0])
+    n_blocks = -(-axis_size // BOOTSTRAP_TILE_WIDTH_CAP)
+    width = -(-axis_size // n_blocks)
+    n_padding = n_blocks * width - axis_size
+
+    def evaluate_subject(
+        rows: list[PytreeValue],
+    ) -> OriginalExitOutput | ParticipatingExitOutput:
+        supplied = iter(rows)
+        merged = [
+            next(supplied) if batched else leaf
+            for leaf, batched in zip(leaves, flags, strict=True)
+        ]
+        return body(**jax.tree.unflatten(treedef, merged))
+
+    rows = [leaf for leaf, batched in zip(leaves, flags, strict=True) if batched]
+    if n_blocks == 1:
+        out = jax.vmap(evaluate_subject)(rows)
+    else:
+        blocks = [
+            jnp.concatenate([leaf, jnp.repeat(leaf[-1:], n_padding, axis=0)]).reshape(
+                n_blocks, width, *leaf.shape[1:]
+            )
+            for leaf in rows
+        ]
+        out = jax.tree.map(
+            lambda leaf: leaf.reshape(n_blocks * width, *leaf.shape[2:])[:axis_size],
+            jax.lax.map(jax.vmap(evaluate_subject), blocks),
+        )
+    return out, jax.tree.map(lambda _: True, out)
 
 
 def exit_policy_program(
@@ -861,23 +853,17 @@ def exit_policy_program(
     draw: CurrentIIDDrawPlan,
     uniform_bases: Mapping[str, bool],
     original: bool,
-    program_name: str | None = None,
 ) -> CoreProgram:
     """Declare the native subject program and every retained draw-frame leaf."""
     # Imports stay below engine construction: programs imports the engine's
     # forward declarations, while this builder runs only after contexts exist.
     from _lcm.current_iid import CORRELATION_SUPPORT_ARGUMENT  # noqa: PLC0415
-    from _lcm.simulation.participation_values import (  # noqa: PLC0415 - canonical query contexts must exist
-        participation_replay_value_reads,
-    )
     from _lcm.simulation.programs import (  # noqa: PLC0415
         _ArgumentsBoundAtDispatch,
         _SubjectTiled,
     )
 
-    name = program_name or (
-        "simulate_exit_full" if original else "simulate_exit_participating"
-    )
+    name = "simulate_exit_full" if original else "simulate_exit_participating"
     draw = _query_draw(queries=queries, draw=draw)
     body = (
         OriginalExitDecision(queries=queries, draw=draw, uniform_bases=uniform_bases)
@@ -954,24 +940,37 @@ def exit_policy_program(
             answer_roles,
             frame_roles,
             {
-                query: dict.fromkeys(
-                    queries.definitions[query].read.projection,
-                    "projected_current_state",
-                )
-                for query in targets
+                **(
+                    {
+                        queries.root: dict.fromkeys(
+                            root.state_updates, "projected_current_state"
+                        )
+                    }
+                    if root.state_updates
+                    else {}
+                ),
+                **{
+                    query: dict.fromkeys(
+                        queries.definitions[query].read.projection,
+                        "projected_current_state",
+                    )
+                    for query in targets
+                },
             },
             dict.fromkeys(targets, "source_utility_adjustment"),
         )
         if original
-        else (answer_roles, frame_roles)
+        else (
+            answer_roles,
+            frame_roles,
+            dict.fromkeys(root.state_updates, "projected_current_state"),
+        )
     )
     return CoreProgram(
         name=name,
-        # Sequential batching keeps unavailable benchmark/projection arithmetic
-        # behind scalar conditions instead of converting them to eager selects.
         function=_SubjectTiled(
             func=with_signature(
-                _SequentialExitDecision(body=body),
+                _BatchedExitDecision(body=body),
                 args=list(signature(body).parameters),
                 enforce=False,
             ),
@@ -982,9 +981,7 @@ def exit_policy_program(
         ),
         requirements=CoreExecutionRequirements(
             tiled_axes=(subject_axis(state_names=()),),
-            value_reads=participation_replay_value_reads(
-                queries=queries, core_key=name
-            ),
+            value_reads=queries.value_reads(core_key=name),
         ),
         output_roles=roles,
         disposition=CoreExecutionDisposition.PLANNED,
@@ -1006,59 +1003,6 @@ class ExitRoute(NamedTuple):
 type ExitRouteFields = tuple[RegimeName, RegimeName, int, int | None, int, str]
 
 
-def participation_entry_routes(
-    *,
-    regimes: Mapping[RegimeName, Regime],
-    target: RegimeName,
-    source: RegimeName,
-    entry: ParticipationEntryPlan,
-    first_code: int,
-) -> tuple[
-    tuple[ExitRoute, ...], tuple[tuple[int | None, int, int], ...], Mapping[str, str]
-]:
-    """Bind original roles and edge branches to immutable routing instructions."""
-    if first_code >= -1:
-        raise ValueError(
-            "Incoming participation route tags must be below empty support (-1)."
-        )
-    queries = entry.queries
-    root = queries.definitions[queries.root]
-    routes, codes, addresses = [], [], {}
-    code = first_code
-    for branch, members in root.exit_targets.items():
-        for member, query in members.items():
-            read = queries.definitions[query].read
-            address = f"{target}:{source}:{query}"
-            addresses[address] = query
-            role = (
-                None
-                if regimes[source].stakeholders is None
-                else regimes[source].stakeholder_names_to_ids[member]
-            )
-            codes.append((role, branch, code))
-            target_role = entry.target_roles[member] if branch == 0 else read.role
-            if regimes[read.target].stakeholders is not None and target_role is None:
-                raise ValueError(
-                    "A collective participation route needs its declared role."
-                )
-            routes.append(
-                ExitRoute(
-                    source=target,
-                    target=read.target,
-                    identifier=code,
-                    source_role=None,
-                    target_role=NO_ROLE
-                    if regimes[read.target].stakeholders is None
-                    else regimes[read.target].stakeholder_names_to_ids[
-                        cast("str", target_role)
-                    ],
-                    projection=address,
-                )
-            )
-            code -= 1
-    return tuple(routes), tuple(codes), MappingProxyType(addresses)
-
-
 def route_original_subjects(
     *,
     original_regime_ids: IntND,
@@ -1069,10 +1013,11 @@ def route_original_subjects(
     adjustments: Mapping[str, FloatND],
     routes: tuple[ExitRouteFields, ...],
     regime_ids: Mapping[RegimeName, IntND | int],
+    state_updates: tuple[tuple[RegimeName, str], ...] = (),
 ) -> tuple[
     IntND,
     IntND,
-    dict[RegimeName, dict[str, FloatND | IntND]],
+    MappingProxyType[RegimeName, MappingProxyType[str, FloatND | IntND]],
     BoolND,
     FloatND,
 ]:
@@ -1081,6 +1026,11 @@ def route_original_subjects(
     In particular, a row entering a regime whose original occupants leave cannot
     take that regime's exit. Its destination coordinates came from the original
     source's bound projection, before any row's state or membership was changed.
+
+    The states come back as immutable mappings in the order of `original_states`.
+    A compiled call hands a returned `dict` back with its keys sorted, while an
+    immutable mapping keeps its order, so profiled and dispatched exits publish
+    the carrier in the order the planned programs declare.
     """
     final_ids = original_regime_ids
     final_roles = original_roles
@@ -1099,4 +1049,35 @@ def route_original_subjects(
         paid = jnp.where(selected, adjustments[projection], paid)
         for name, value in projections[projection].items():
             states[target][name] = jnp.where(selected, value, states[target][name])
-    return final_ids, final_roles, states, moved, paid
+    for source, projection in state_updates:
+        retained = (original_regime_ids == regime_ids[source]) & ~moved
+        for name, value in projections[projection].items():
+            states[source][name] = jnp.where(retained, value, states[source][name])
+    return (
+        final_ids,
+        final_roles,
+        MappingProxyType(
+            {name: MappingProxyType(values) for name, values in states.items()}
+        ),
+        moved,
+        paid,
+    )
+
+
+def apply_retained_state_updates(
+    *,
+    states: Mapping[StateName, FloatND | IntND],
+    updates: Mapping[StateName, FloatND | IntND],
+    holders: BoolND,
+) -> MappingProxyType[StateName, FloatND | IntND]:
+    """Apply a final actor's selected coordinates only to its moving rows.
+
+    The states keep their incoming order through compilation, as in
+    `route_original_subjects`.
+    """
+    return MappingProxyType(
+        {
+            name: jnp.where(holders, updates[name], value) if name in updates else value
+            for name, value in states.items()
+        }
+    )

@@ -82,9 +82,9 @@ class RerouteOutcome:
 
     states: StatesPerRegime
     subject_regime_ids: Int1D
-    own_stakeholder: Int1D
+    own_member: Int1D
     new_subject_regime_ids: Int1D
-    new_own_stakeholder: Int1D
+    new_own_member: Int1D
     entered_through: Int1D
     """Open-branch entries after rerouting: every rerouted row's is used up."""
     rerouted: Bool1D
@@ -102,9 +102,9 @@ def reroute_rows_without_feasible_action(
     source_roles: Int1D,
     states: StatesPerRegime,
     subject_regime_ids: Int1D,
-    own_stakeholder: Int1D,
+    own_member: Int1D,
     new_subject_regime_ids: Int1D,
-    new_own_stakeholder: Int1D,
+    new_own_member: Int1D,
     regime_names_to_ids: RegimeNamesToIds,
     flat_params: FlatParams,
     period: int,
@@ -123,9 +123,9 @@ def reroute_rows_without_feasible_action(
             leg of the gate.
         states: The current-period state carrier.
         subject_regime_ids: Current-period regime membership.
-        own_stakeholder: Current-period roles.
+        own_member: Current-period roles.
         new_subject_regime_ids: Next-period regime membership as accumulated.
-        new_own_stakeholder: Next-period roles as accumulated.
+        new_own_member: Next-period roles as accumulated.
         regime_names_to_ids: Mapping from regime names to ids.
         flat_params: Model parameters for all regimes.
         period: The current period, which is the edge's fold period.
@@ -147,9 +147,9 @@ def reroute_rows_without_feasible_action(
         rows = empty & (entered_through == regime_names_to_ids[source_name])
         own_fallback_id, _open_role, closed_role = _per_row_leg_outcomes(
             legs=edge.legs,
-            own_stakeholder=source_roles,
+            own_member=source_roles,
             regime_names_to_ids=regime_names_to_ids,
-            role_ids=source.stakeholder_names_to_ids,
+            role_ids=source.member_names_to_ids,
         )
         for leg in edge.legs:
             projector = leg.fallback_state_projector
@@ -184,16 +184,16 @@ def reroute_rows_without_feasible_action(
         new_subject_regime_ids = jnp.where(
             rows, own_fallback_id, new_subject_regime_ids
         )
-        own_stakeholder = jnp.where(rows, closed_role, own_stakeholder)
-        new_own_stakeholder = jnp.where(rows, closed_role, new_own_stakeholder)
+        own_member = jnp.where(rows, closed_role, own_member)
+        new_own_member = jnp.where(rows, closed_role, new_own_member)
         fallback_ids = jnp.where(rows, own_fallback_id, fallback_ids)
         rerouted = rerouted | rows
     return RerouteOutcome(
         states=states,
         subject_regime_ids=subject_regime_ids,
-        own_stakeholder=own_stakeholder,
+        own_member=own_member,
         new_subject_regime_ids=new_subject_regime_ids,
-        new_own_stakeholder=new_own_stakeholder,
+        new_own_member=new_own_member,
         entered_through=jnp.where(rerouted, NO_GATED_ENTRY, entered_through),
         rerouted=rerouted,
         fallback_ids=fallback_ids,

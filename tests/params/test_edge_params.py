@@ -25,10 +25,10 @@ from lcm import (
     DeterministicTransition,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -79,7 +79,7 @@ class _WorkRetireId:
     retired: ScalarInt
 
 
-def test_coarse_law_slot_is_the_source_path():
+def test_coarse_law_slot_is_the_source_path() -> None:
     """A law choosing among all targets reads `params["edges"][source][arg]`."""
     model = _retirement_model()
     assert _leaf_paths(
@@ -89,7 +89,7 @@ def test_coarse_law_slot_is_the_source_path():
     ) == {("working", "retirement_age")}
 
 
-def test_per_target_law_slots_nest_under_their_target():
+def test_per_target_law_slots_nest_under_their_target() -> None:
     """A per-target law reads `params["edges"][source][target][arg]`."""
     model = _mortal_model()
     assert _leaf_paths(
@@ -102,7 +102,7 @@ def test_per_target_law_slots_nest_under_their_target():
     }
 
 
-def test_source_regime_template_holds_no_law_entry():
+def test_source_regime_template_holds_no_law_entry() -> None:
     """The source regime's branch names neither a target nor the law."""
     model = _mortal_model()
     assert not {"working", "dead", "next_regime"} & set(
@@ -112,7 +112,7 @@ def test_source_regime_template_holds_no_law_entry():
     )
 
 
-def test_source_without_a_law_has_no_edges_entry():
+def test_source_without_a_law_has_no_edges_entry() -> None:
     """A source declared by its edges alone owns no parameter slot."""
     model = _retirement_model()
     assert (
@@ -124,7 +124,7 @@ def test_source_without_a_law_has_no_edges_entry():
 
 
 @pytest.mark.parametrize("inclusive_stop", [62, 63, 64])
-def test_edges_template_does_not_depend_on_the_horizon(inclusive_stop):
+def test_edges_template_does_not_depend_on_the_horizon(inclusive_stop: int) -> None:
     """Every declared case of a schedule owns its slots, whatever the horizon.
 
     The early case covers the source ages before 62, the last source age exits
@@ -156,8 +156,8 @@ def test_edges_template_does_not_depend_on_the_horizon(inclusive_stop):
 
 @pytest.mark.parametrize("n_periods", [2, 3, 4])
 def test_edges_template_does_not_depend_on_how_many_edges_the_horizon_leaves(
-    n_periods,
-):
+    n_periods: int,
+) -> None:
     """A law keeps its slot when the horizon leaves its source one destination.
 
     With two periods, retirement is the working regime's only destination; with
@@ -172,7 +172,9 @@ def test_edges_template_does_not_depend_on_how_many_edges_the_horizon_leaves(
 
 
 @pytest.mark.parametrize("death_probability", [0.0, 0.5])
-def test_edges_template_does_not_depend_on_a_fixed_zero_cell(death_probability):
+def test_edges_template_does_not_depend_on_a_fixed_zero_cell(
+    death_probability: float,
+) -> None:
     """A fixed value that prunes a cell leaves the other slots unchanged."""
     model = _mortal_model(
         law={
@@ -195,8 +197,8 @@ def test_edges_template_does_not_depend_on_a_fixed_zero_cell(death_probability):
 @pytest.mark.parametrize("variable", ["x", "a"])
 @pytest.mark.parametrize("n_periods", [2, 3, 4])
 def test_variable_read_by_a_dormant_selector_is_no_edge_parameter(
-    *, variable, n_periods
-):
+    *, variable: str, n_periods: int
+) -> None:
     """A state or action a declared selector reads is never an edge parameter.
 
     With two periods the selector's case selects no age and the model drops the
@@ -212,7 +214,9 @@ def test_variable_read_by_a_dormant_selector_is_no_edge_parameter(
 
 
 @pytest.mark.parametrize("variable", ["x", "a"])
-def test_short_horizon_drops_the_variable_only_a_dormant_selector_reads(variable):
+def test_short_horizon_drops_the_variable_only_a_dormant_selector_reads(
+    variable: str,
+) -> None:
     """The variable a dormant selector reads does not stay on the regime's grid."""
     model = _dormant_selector_model(variable=variable, n_periods=2)
     assert variable in model.pruned_variables["alive"]
@@ -221,8 +225,8 @@ def test_short_horizon_drops_the_variable_only_a_dormant_selector_reads(variable
 @pytest.mark.parametrize("variable", ["x", "a"])
 @pytest.mark.parametrize("n_periods", [2, 3])
 def test_selector_parameter_alone_fills_the_edge_slots_at_every_horizon(
-    *, variable, n_periods
-):
+    *, variable: str, n_periods: int
+) -> None:
     """Supplying the selector's free parameter is all its edges require."""
     model = _dormant_selector_model(variable=variable, n_periods=n_periods)
     flat_params = model._process_params(
@@ -236,8 +240,8 @@ def test_selector_parameter_alone_fills_the_edge_slots_at_every_horizon(
 @pytest.mark.parametrize("function_level", ["regime", "model"])
 @pytest.mark.parametrize("n_periods", [2, 3])
 def test_state_read_through_a_dormant_selector_function_is_no_parameter(
-    *, function_level, n_periods
-):
+    *, function_level: str, n_periods: int
+) -> None:
     """A state a selector reads through a function stays a state at every horizon.
 
     The function's own parameter is its only slot in `alive`, and the selector's
@@ -275,8 +279,8 @@ def test_state_read_through_a_dormant_selector_function_is_no_parameter(
     ],
 )
 def test_selector_reading_a_function_solves_with_only_declared_parameters(
-    *, function_level, n_periods, expected
-):
+    *, function_level: str, n_periods: int, expected: list[float]
+) -> None:
     """The function's parameter and the selector's cutoff are all a solve needs."""
     model = _dormant_scored_selector_model(
         function_level=function_level, n_periods=n_periods
@@ -298,7 +302,7 @@ def test_selector_reading_a_function_solves_with_only_declared_parameters(
     )
 
 
-def test_target_state_a_gate_reads_is_no_edge_parameter():
+def test_target_state_a_gate_reads_is_no_edge_parameter() -> None:
     """A gate reads the target's state off its grid; only its threshold is a slot."""
     model = _gated_on_target_state_model()
     assert _leaf_paths(
@@ -308,7 +312,7 @@ def test_target_state_a_gate_reads_is_no_edge_parameter():
     ) == {("src", "target", "predicate", "threshold")}
 
 
-def test_gate_on_a_target_state_routes_by_that_state():
+def test_gate_on_a_target_state_routes_by_that_state() -> None:
     """Below the threshold the row enters the target, above it the fallback.
 
     Each regime pays its utility once: 1 + 0.9 * 1 into the target and
@@ -349,7 +353,7 @@ def test_gate_on_a_target_state_routes_by_that_state():
         pytest.param({"survival_probability": 0.9}, id="model-level"),
     ],
 )
-def test_each_resolution_level_fills_the_engine_slot(params):
+def test_each_resolution_level_fills_the_engine_slot(params: UserParams) -> None:
     """The value reaches the engine under the joined declaration path."""
     model = _mortal_model()
     flat_params = model._process_params({"discount_factor": 0.95, **params})
@@ -361,7 +365,7 @@ def test_each_resolution_level_fills_the_engine_slot(params):
     ) == (pytest.approx(0.9))
 
 
-def test_engine_edge_namespace_holds_exactly_the_template_slots():
+def test_engine_edge_namespace_holds_exactly_the_template_slots() -> None:
     """`flat_params["edges"][source]` keys are the source's slots, joined."""
     model = _mortal_model()
     flat_params = model._process_params(
@@ -373,7 +377,7 @@ def test_engine_edge_namespace_holds_exactly_the_template_slots():
     }
 
 
-def test_source_regime_flat_params_hold_no_law_key():
+def test_source_regime_flat_params_hold_no_law_key() -> None:
     """The source regime's flat params carry its own functions' parameters only."""
     model = _mortal_model()
     flat_params = model._process_params(
@@ -382,7 +386,7 @@ def test_source_regime_flat_params_hold_no_law_key():
     assert not [key for key in flat_params["working"] if "survival_probability" in key]
 
 
-def test_value_at_two_levels_is_ambiguous():
+def test_value_at_two_levels_is_ambiguous() -> None:
     """A slot filled at the source level and the model level is refused."""
     model = _mortal_model()
     with pytest.raises(InvalidNameError, match="Ambiguous"):
@@ -395,7 +399,7 @@ def test_value_at_two_levels_is_ambiguous():
         )
 
 
-def test_edges_level_without_a_source_is_unknown():
+def test_edges_level_without_a_source_is_unknown() -> None:
     """`params["edges"][arg]` is not a resolution level."""
     model = _mortal_model()
     with pytest.raises(InvalidParamsError, match="edges__survival_probability"):
@@ -417,7 +421,9 @@ def test_edges_level_without_a_source_is_unknown():
         ),
     ],
 )
-def test_law_parameter_under_the_source_regime_names_the_edges_path(regime_params):
+def test_law_parameter_under_the_source_regime_names_the_edges_path(
+    regime_params: UserParams,
+) -> None:
     """A law parameter written under its source regime is refused with its path."""
     model = _mortal_model()
     with pytest.raises(
@@ -427,7 +433,7 @@ def test_law_parameter_under_the_source_regime_names_the_edges_path(regime_param
         model._process_params({"discount_factor": 0.95, "working": regime_params})
 
 
-def test_fixed_params_follow_the_declaration_path():
+def test_fixed_params_follow_the_declaration_path() -> None:
     """A law parameter fixed at its path leaves no slot to supply at solve time."""
     model = _mortal_model(
         fixed_params={"edges": {"working": {"survival_probability": 0.9}}}
@@ -457,7 +463,9 @@ def test_fixed_params_follow_the_declaration_path():
         ),
     ],
 )
-def test_solution_does_not_depend_on_the_level_supplying_a_law_value(params):
+def test_solution_does_not_depend_on_the_level_supplying_a_law_value(
+    params: UserParams,
+) -> None:
     """The same value reaches the same law from every level, so values agree exactly."""
     model = _mortal_model()
     reference = model.solve(
@@ -489,13 +497,15 @@ def _edges_name_identity(wealth: ContinuousState) -> FloatND:
         ),
     ],
 )
-def test_edges_is_reserved_as_a_regime_and_function_name(*, regime_name, functions):
+def test_edges_is_reserved_as_a_regime_and_function_name(
+    *, regime_name: RegimeName, functions: Mapping[str, UserFunction]
+) -> None:
     """`edges` names the edge namespace, so no regime or function may take it."""
     with pytest.raises(InvalidNameError, match="edges"):
         _named_model(regime_name=regime_name, functions=functions)
 
 
-def test_edges_is_reserved_as_an_argument_name():
+def test_edges_is_reserved_as_an_argument_name() -> None:
     """A function argument named `edges` would be a parameter of that name."""
     with pytest.raises(InvalidNameError, match="edges"):
         _named_model(
@@ -504,7 +514,7 @@ def test_edges_is_reserved_as_an_argument_name():
         )
 
 
-def test_law_argument_named_like_a_target_is_rejected():
+def test_law_argument_named_like_a_target_is_rejected() -> None:
     """A law argument may not share its name with a regime."""
     with pytest.raises(InvalidNameError, match="dead"):
         _mortal_model(
@@ -515,7 +525,7 @@ def test_law_argument_named_like_a_target_is_rejected():
         )
 
 
-def test_kernel_params_refuse_a_key_both_the_regime_and_its_edges_hold():
+def test_kernel_params_refuse_a_key_both_the_regime_and_its_edges_hold() -> None:
     """A source's kernels cannot bind one key from two namespaces."""
     flat_params = MappingProxyType(
         {
@@ -529,7 +539,7 @@ def test_kernel_params_refuse_a_key_both_the_regime_and_its_edges_hold():
         regime_kernel_params(flat_params, regime_name="working")
 
 
-def test_invalid_law_argument_name_is_reported_at_its_edges_path():
+def test_invalid_law_argument_name_is_reported_at_its_edges_path() -> None:
     """An argument name the path grammar refuses is reported where its slot lives."""
     with pytest.raises(
         InvalidNameError, match=r"params\['edges'\]\['working'\]\['dead'\]"
@@ -542,7 +552,7 @@ def test_invalid_law_argument_name_is_reported_at_its_edges_path():
         )
 
 
-def test_parametrized_coarse_case_beside_per_target_cases_is_rejected():
+def test_parametrized_coarse_case_beside_per_target_cases_is_rejected() -> None:
     """A law over all targets with parameters cannot share a source with cells.
 
     Its parameters would sit at `params["edges"][source][arg]`, the level that
@@ -935,7 +945,7 @@ def _gated_on_target_state_model() -> Model:
                     "target": Gate(
                         predicate=_below_threshold,
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback", projection={}
                                 )

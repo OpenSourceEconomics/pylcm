@@ -24,10 +24,10 @@ from lcm import (
     ByAge,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -178,7 +178,7 @@ def _build_model() -> Model:
         "account": Gate(
             predicate=_balance_clears_the_floor,
             routes={
-                "only": StakeholderRoute(
+                "only": MemberRoute(
                     fallback=ProjectedRegimeValue(
                         regime="annuity",
                         projection={"principal": _principal_from_balance},

@@ -504,7 +504,7 @@ def _age_specialized_model() -> Model:
     def feasible(*, consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
         return consumption <= wealth
 
-    def cap_of_age(age: float):
+    def cap_of_age(age: float) -> Callable[..., BoolND]:
         def wealth_cap(
             *, consumption: ContinuousAction, wealth: ContinuousState
         ) -> BoolND:
@@ -720,7 +720,7 @@ def test_collective_start_without_roles_is_rejected_like_simulate(method: str) -
             seed=0,
         )
     with pytest.raises(
-        InvalidInitialConditionsError, match="own_stakeholder"
+        InvalidInitialConditionsError, match="own_member"
     ) as from_method:
         getattr(model, method)(initial_conditions=initial, params=DISSOLUTION_PARAMS)
 

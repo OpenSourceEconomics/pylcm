@@ -31,7 +31,6 @@ from _lcm.time import ModelTime, TimeAxis, coordinate_kind
 from _lcm.typing import EconFunctionArg, PytreeValue, StateName
 from lcm.collective import Gate
 from lcm.exceptions import RegimeInitializationError
-from lcm.participation import ParticipationCheck
 from lcm.phased import Phased
 from lcm.typing import (
     AgeLabel,
@@ -226,9 +225,11 @@ class Transition:
     outgoing edge; the edge is the law there. It must select every age with more
     than one. With derived targets, an age no case selects has no edge.
 
-    `gates` makes the transition into a target value-dependent: the law still
+    `gates` makes the transition into a target state-dependent: the law still
     supplies the probability of reaching it, and the target's `Gate` decides
-    whether a row stays there or takes its route's fallback.
+    whether a row stays there or takes its route's fallback. `roles` is the
+    plain edge from a singleton source into a collective target: it names the
+    member the arriving row becomes.
     """
 
     targets: Mapping[RegimeName, AgeSelector | PeriodSelector] | None = None
@@ -248,12 +249,23 @@ class Transition:
     gates: Mapping[RegimeName, Gate] = field(
         default_factory=lambda: MappingProxyType({})
     )
-    """One `Gate` per value-dependent destination, keyed by that destination."""
+    """One `Gate` per gated destination, keyed by that destination."""
 
-    participation: Mapping[RegimeName, ParticipationCheck] = field(
+    roles: Mapping[RegimeName, str] = field(
         default_factory=lambda: MappingProxyType({})
     )
-    """Typed participation checks attached to actual scheduled incoming edges."""
+    """The member a row continues as, per collective target of a singleton source.
+
+    `roles={"couple": "f"}` declares that a row moving from this singleton source
+    into the collective target `couple` continues there as its member `f`:
+    its continuation value toward `couple` is the target's value for `f`, and a
+    simulated row entering `couple` carries the role `f`. The role holds wherever
+    the edge fires, at every age a `ByAge` case reaches the target and in both
+    phases. A row landing where the target has no feasible action raises
+    `NoFeasibleActionError`, as on any plain edge.
+
+    A target takes a role or a `Gate`, never both.
+    """
 
     def __post_init__(self) -> None:
         if self.law is None:
@@ -279,14 +291,7 @@ class Transition:
             object.__setattr__(self, "targets", MappingProxyType(dict(self.targets)))
         object.__setattr__(self, "law", snapshot_transition_containers(self.law))
         object.__setattr__(self, "gates", MappingProxyType(dict(self.gates)))
-        object.__setattr__(
-            self, "participation", MappingProxyType(dict(self.participation))
-        )
-        if self.gates.keys() & self.participation.keys():
-            raise RegimeInitializationError(
-                "A scheduled target cannot declare both a Gate and a "
-                "ParticipationCheck."
-            )
+        object.__setattr__(self, "roles", MappingProxyType(dict(self.roles)))
 
 
 @overload

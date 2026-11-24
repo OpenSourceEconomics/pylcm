@@ -1,11 +1,11 @@
 """Public exits compare actual mapped common policies, with independent anchors."""
 
 import inspect
-from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
-from typing import ClassVar, cast
+from typing import Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -33,6 +33,7 @@ from _lcm.regime_building.Q_and_F import CanonicalActionKernel, EvaluatedQAndF
 from _lcm.solution.fingerprint import _semantic_fingerprint
 from _lcm.typing import FlatParams, PytreeValue
 from lcm import (
+    AgeGrid,
     CollectiveUtility,
     Consent,
     Counterparty,
@@ -41,23 +42,44 @@ from lcm import (
     Exit,
     ExitTarget,
     InitialNodes,
+    IrregSpacedGrid,
     LinSpacedGrid,
     Model,
+    ParetoObjective,
     Regime,
     categorical,
 )
 from lcm.exceptions import (
     ExecutionPlanningError,
     InvalidParamsError,
+    OffGridStateError,
     RegimeInitializationError,
     ShockDeclarationError,
-    UnsupportedOperationError,
 )
-from lcm.exits import ExitRule
-from lcm.shocks import Discrete, Normal, PhysicalValues, ShockGroup, UserNodes
+from lcm.exits import ExitRule, Unilateral
+from lcm.shocks import (
+    Discrete,
+    GaussHermite,
+    Normal,
+    PhysicalValues,
+    Product,
+    ShockGroup,
+    UserNodes,
+)
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.transition import fixed_transition
-from lcm.typing import BoolND, FloatND, IntND, Period, ScalarInt, UserFunction
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteAction,
+    FloatND,
+    IntND,
+    OffGrid,
+    Period,
+    ScalarInt,
+    UserFunction,
+)
+from tests.conftest import DECIMAL_PRECISION
 
 
 @categorical(ordered=False)
@@ -128,29 +150,27 @@ def _household(
             "single_f": Regime(
                 states={"wealth": wealth},
                 functions={"utility": _school_single if outside_lag else _single},
-                exits={
-                    "marry": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="couple",
-                                role="f",
-                                projection={
-                                    "wealth": _wealth,
-                                    "married_last_period": _newlywed
-                                    if newlywed
-                                    else _incumbent,
-                                },
-                            )
-                        },
-                        rule=Consent(
-                            counterparty=Counterparty(
-                                regime="single_m",
-                                role="m",
-                                projection={"wealth": _wealth},
-                            )
-                        ),
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="couple",
+                            role="f",
+                            projection={
+                                "wealth": _wealth,
+                                "married_last_period": _newlywed
+                                if newlywed
+                                else _incumbent,
+                            },
+                        )
+                    },
+                    rule=Consent(
+                        counterparty=Counterparty(
+                            regime="single_m",
+                            role="m",
+                            projection={"wealth": _wealth},
+                        )
+                    ),
+                ),
             ),
             "single_m": Regime(
                 states={"wealth": wealth},
@@ -165,31 +185,25 @@ def _household(
                 functions={
                     "utility": CollectiveUtility(utilities={"f": _female, "m": _male})
                 },
-                exits={
-                    "divorce": Exit(
-                        targets={
-                            "f": ExitTarget(
-                                regime="single_f",
-                                projection={
-                                    "wealth": _school_projection
-                                    if outside_lag
-                                    else _wealth
-                                },
-                                utility_adjustment=_cost,
-                            ),
-                            "m": ExitTarget(
-                                regime="single_m",
-                                projection={
-                                    "wealth": _school_projection
-                                    if outside_lag
-                                    else _wealth
-                                },
-                                utility_adjustment=_cost,
-                            ),
-                        },
-                        rule="unilateral",
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "f": ExitTarget(
+                            regime="single_f",
+                            projection={
+                                "wealth": _school_projection if outside_lag else _wealth
+                            },
+                            utility_adjustment=_cost,
+                        ),
+                        "m": ExitTarget(
+                            regime="single_m",
+                            projection={
+                                "wealth": _school_projection if outside_lag else _wealth
+                            },
+                            utility_adjustment=_cost,
+                        ),
+                    },
+                    rule=Unilateral(),
+                ),
             ),
         },
         regime_id_class=_Household,
@@ -204,12 +218,10 @@ def _household(
         execution_config=ExecutionConfig(device_memory_bytes=None),
         fixed_params={
             "couple": {
-                "exits": {
-                    "divorce": {
-                        "targets": {
-                            "f": {"utility_adjustment": {"cost": 0.0}},
-                            "m": {"utility_adjustment": {"cost": 2.0}},
-                        }
+                "exit": {
+                    "targets": {
+                        "f": {"utility_adjustment": {"cost": 0.0}},
+                        "m": {"utility_adjustment": {"cost": 2.0}},
                     }
                 }
             }
@@ -481,21 +493,17 @@ def _offer_model(
                 states={"wealth": wealth},
                 functions={"utility": _stay_with_offer if shared else _stay},
                 shocks=("offers",) if shared else (),
-                exits={
-                    "move": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="single_m",
-                                projection={
-                                    "wealth": _opposite if flipped else _wealth
-                                },
-                                utility_adjustment=_fee,
-                            )
-                        },
-                        rule="unilateral",
-                        observes=("offer",) if observed else (),
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="single_m",
+                            projection={"wealth": _opposite if flipped else _wealth},
+                            utility_adjustment=_fee,
+                        )
+                    },
+                    rule=Unilateral(),
+                    observes=("offer",) if observed else (),
+                ),
             ),
             "single_m": Regime(
                 states={"wealth": wealth},
@@ -635,16 +643,14 @@ def test_hidden_target_taste_is_priced_at_logsum_then_drawn_when_acting() -> Non
             "single_f": Regime(
                 states={"wealth": wealth},
                 functions={"utility": _taste_stay},
-                exits={
-                    "move": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="single_m", projection={"wealth": _wealth}
-                            )
-                        },
-                        rule="unilateral",
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="single_m", projection={"wealth": _wealth}
+                        )
+                    },
+                    rule=Unilateral(),
+                ),
             ),
             "single_m": Regime(
                 states={"wealth": wealth},
@@ -732,16 +738,14 @@ def test_source_full_taste_preserves_dissolution_fallback(*, fallback: bool) -> 
                 },
                 functions={"utility": _source_taste},
                 taste_shocks=ExtremeValueTasteShocks(),
-                exits={
-                    "move": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="single_m", projection={"wealth": _wealth}
-                            )
-                        },
-                        rule="unilateral",
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="single_m", projection={"wealth": _wealth}
+                        )
+                    },
+                    rule=Unilateral(),
+                ),
             ),
             "single_m": Regime(
                 states={"wealth": wealth},
@@ -820,17 +824,15 @@ def _joint_information_model(
             "single_f": Regime(
                 states={"wealth": wealth},
                 functions={"utility": _quarter},
-                exits={
-                    "move": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="single_m", projection={"wealth": _wealth}
-                            )
-                        },
-                        rule="unilateral",
-                        observes=("x", "y") if complete else ("x",) if observed else (),
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="single_m", projection={"wealth": _wealth}
+                        )
+                    },
+                    rule=Unilateral(),
+                    observes=("x", "y") if complete else ("x",) if observed else (),
+                ),
             ),
             "single_m": Regime(
                 states={"wealth": wealth},
@@ -964,56 +966,6 @@ def test_nested_outside_projection_reads_the_already_mapped_marital_history() ->
     np.testing.assert_allclose(by_lag[1], np.broadcast_to([20.0, 4.0], by_lag[1].shape))
 
 
-@pytest.mark.parametrize("different_context", [False, True])
-def test_target_only_observation_has_an_unambiguous_producing_cdf(
-    *, different_context: bool
-) -> None:
-    """A shared observed category cannot be assigned two mapped probability laws."""
-    base = _offer_model(observed=True, state_conditioned=True)
-    source = base.user_regimes["single_f"]
-    rule = _StrictRule()
-    second = Exit(
-        targets={
-            "self": ExitTarget(
-                regime="single_m",
-                projection={"wealth": _opposite if different_context else _wealth},
-            )
-        },
-        rule=rule,
-        observes=("offer",),
-    )
-    regimes = {
-        **base.user_regimes,
-        "single_f": replace(
-            source,
-            exits={"move": replace(source.exits["move"], rule=rule), "another": second},
-        ),
-    }
-    if different_context:
-        with pytest.raises(RegimeInitializationError, match="producing law contexts"):
-            Model(
-                regimes=regimes,
-                shocks=base.shocks,
-                regime_id_class=_Singles,
-                n_periods=1,
-                edges={},
-                initial_nodes=InitialNodes(by_period={0: ("single_f",)}),
-                execution_config=ExecutionConfig(device_memory_bytes=None),
-            )
-    else:
-        result = Model(
-            regimes=regimes,
-            shocks=base.shocks,
-            regime_id_class=_Singles,
-            n_periods=1,
-            edges={},
-            initial_nodes=InitialNodes(by_period={0: ("single_f",)}),
-            execution_config=ExecutionConfig(device_memory_bytes=None),
-        ).solve(params={}, log_level="off", runtime_checks=False)
-        # The first exit pays -.25; the second pays no adjustment.
-        np.testing.assert_allclose(result.values[0]["single_f"], [0.8, 1.7])
-
-
 def _one() -> float:
     return 1.0
 
@@ -1031,12 +983,10 @@ def test_query_only_target_retains_its_genuine_next_period_value_read() -> None:
         regimes={
             "single_f": Regime(
                 functions={"utility": _one},
-                exits={
-                    "move": Exit(
-                        targets={"self": ExitTarget(regime="single_m", projection={})},
-                        rule="unilateral",
-                    )
-                },
+                exit=Exit(
+                    targets={"self": ExitTarget(regime="single_m", projection={})},
+                    rule=Unilateral(),
+                ),
             ),
             "single_m": Regime(functions={"utility": _one}),
             "couple": Regime(functions={"utility": _ten}),
@@ -1100,7 +1050,7 @@ def test_raw_counterparty_omits_unread_formation_params(*, preserve: bool) -> No
                     **({"reporter": _reporter} if preserve else {}),
                 },
                 output_only_functions=("reporter",) if preserve else (),
-                exits={"marry": ignored},
+                exit=ignored,
             ),
         },
         regime_id_class=_Household,
@@ -1111,13 +1061,13 @@ def test_raw_counterparty_omits_unread_formation_params(*, preserve: bool) -> No
         execution_config=ExecutionConfig(device_memory_bytes=None),
     )
     template = model.get_params_template()["single_m"]
-    assert "exits" not in template
+    assert "exit" not in template
     assert "unused_helper" not in template
     if preserve:
         assert template["reporter"] == {"report_toll": "FloatND"}
     else:
         assert "reporter" not in template
-    assert "marry" in model.user_regimes["single_m"].exits
+    assert model.user_regimes["single_m"].exit is not None
     assert model._model_structure_fingerprint != base._model_structure_fingerprint
     result = model.solve(
         params={"single_m": {"reporter": {"report_toll": 0.0}}} if preserve else {},
@@ -1127,32 +1077,6 @@ def test_raw_counterparty_omits_unread_formation_params(*, preserve: bool) -> No
     np.testing.assert_allclose(result.values[0]["single_f"], 6.0)
 
 
-class _StrictRule:
-    reads_outside_values: ClassVar[bool] = True
-
-    def __call__(
-        self,
-        *,
-        Q_self: FloatND,
-        exit_payoffs: Mapping[str, Mapping[str, FloatND]],
-        availability: Mapping[str, BoolND],
-        alternative_ids: IntND,
-    ) -> lcm.RuleResult:
-        outside = jnp.stack(
-            [
-                jnp.where(availability[name], value["self"], -jnp.inf)
-                for name, value in exit_payoffs.items()
-            ]
-        )
-        stay = Q_self.reshape(-1)
-        kept = stay > jnp.max(outside)
-        stay_id = jnp.argmax(jnp.where(kept, stay, -jnp.inf))
-        exit_id = stay.size + jnp.argmax(outside)
-        return lcm.RuleResult(
-            action=alternative_ids[jnp.where(jnp.any(kept), stay_id, exit_id)]
-        )
-
-
 def _strict_stay(*, action: IntND, wealth: FloatND) -> FloatND:
     return action + 0 * wealth
 
@@ -1160,23 +1084,19 @@ def _strict_stay(*, action: IntND, wealth: FloatND) -> FloatND:
 def _rule_model(
     *,
     rule: ExitRule,
-    second_rule: ExitRule | None = None,
     source_taste: bool = False,
     target_taste: bool = False,
     available: UserFunction | None = None,
 ) -> Model:
     wealth = LinSpacedGrid(start=0, stop=1, n_points=2)
     target = ExitTarget(regime="single_m", projection={"wealth": _wealth})
-    exits = {"move": Exit(targets={"self": target}, rule=rule, available=available)}
-    if second_rule is not None:
-        exits["another"] = Exit(targets={"self": target}, rule=second_rule)
     return Model(
         regimes={
             "single_f": Regime(
                 states={"wealth": wealth},
                 actions={"action": DiscreteGrid(values=jnp.asarray([0, 1]))},
                 functions={"utility": _strict_stay},
-                exits=exits,
+                exit=Exit(targets={"self": target}, rule=rule, available=available),
                 taste_shocks=ExtremeValueTasteShocks() if source_taste else None,
             ),
             "single_m": Regime(
@@ -1204,9 +1124,9 @@ def _single_tie(wealth: FloatND) -> FloatND:
     return 1.0 + 0 * wealth
 
 
-def test_strict_custom_tie_has_empty_participating_policy_and_full_exit() -> None:
+def test_strict_tie_has_empty_participating_policy_and_full_exit() -> None:
     """Strict source choice rejects the tied stay; Raw still chooses stayID1."""
-    model = _rule_model(rule=_StrictRule())
+    model = _rule_model(rule=Unilateral(tie="leave"))
     result = model.solve(params={}, log_level="off", runtime_checks=False)
     np.testing.assert_allclose(result.values[0]["single_f"], 1.0)
     kernel = model._regimes["single_f"].solution.period_kernels[0]
@@ -1248,37 +1168,12 @@ def test_strict_custom_tie_has_empty_participating_policy_and_full_exit() -> Non
         np.testing.assert_allclose(value, 1.0 if expected_support else -jnp.inf)
 
 
-def test_shared_custom_rule_is_called_over_the_global_alternative_roster() -> None:
-    """Multiple exits share one authored selector and one stable ID space."""
-    rule = _StrictRule()
-    result = _rule_model(rule=rule, second_rule=rule).solve(
-        params={}, log_level="off", runtime_checks=False
-    )
-    np.testing.assert_allclose(result.values[0]["single_f"], 1.0)
-    with pytest.raises(RegimeInitializationError, match="same authored rule object"):
-        _rule_model(rule=_StrictRule(), second_rule=_StrictRule())
-
-
-def test_custom_source_refuses_its_unsupported_ev1_integration() -> None:
-    """A general selector cannot be silently replaced by canonical logsum."""
-    with pytest.raises(
-        UnsupportedOperationError, match="arbitrary custom exit selector"
-    ):
-        _rule_model(rule=_StrictRule(), source_taste=True)
-    result = _rule_model(rule=_StrictRule(), target_taste=True).solve(
+def test_strict_exit_prices_a_hidden_target_taste_at_its_logsum() -> None:
+    """The exit compares the stay with the target's expected maximum, log 4."""
+    result = _rule_model(rule=Unilateral(tie="leave"), target_taste=True).solve(
         params={}, log_level="off", runtime_checks=False
     )
     np.testing.assert_allclose(result.values[0]["single_f"], np.log(4.0))
-
-
-@dataclass(frozen=True, kw_only=True)
-class _ReturnedRule:
-    action: PytreeValue
-    reads_outside_values: ClassVar[bool] = False
-
-    def __call__(self) -> lcm.RuleResult:
-        # Deliberately malformed public payloads exercise the native boundary.
-        return lcm.RuleResult(action=cast("int", self.action))
 
 
 def _never_available() -> bool:
@@ -1289,56 +1184,16 @@ def _vector_available() -> BoolND:
     return jnp.asarray([False, True])
 
 
-@pytest.mark.parametrize(
-    ("action", "error", "message"),
-    [
-        (True, ValueError, "scalar integer"),
-        (2**32, ValueError, "known global alternative"),
-        (7, ValueError, "known global alternative"),
-    ],
-)
-def test_custom_rule_validates_host_ids_before_active_dtype_narrowing(
-    *, action: PytreeValue, error: type[Exception], message: str
-) -> None:
-    """A host int64 ID cannot wrap to an admitted stay when x64 is disabled."""
-    with pytest.raises(error, match=message):
-        _rule_model(rule=_ReturnedRule(action=action)).solve(
-            params={}, log_level="off", runtime_checks=False
-        )
-
-
-@dataclass(frozen=True)
-class _ReturnedVectorRule:
-    reads_outside_values: ClassVar[bool] = False
-
-    def __call__(self) -> lcm.RuleResult:
-        return lcm.RuleResult(action=jnp.asarray([0], dtype=jnp.int32))
-
-
-def test_custom_rule_refuses_a_supported_integer_array_with_vector_shape() -> None:
-    with pytest.raises(ValueError, match="scalar integer"):
-        _rule_model(rule=_ReturnedVectorRule()).solve(
-            params={}, log_level="off", runtime_checks=False
-        )
-
-
-def test_custom_rule_cannot_select_an_unavailable_exit() -> None:
-    """A declared global ID still requires current support and availability."""
-    model = _rule_model(rule=_ReturnedRule(action=2), available=_never_available)
-    with pytest.raises(ExecutionPlanningError, match="unresolved numerical status"):
-        model.solve(params={}, log_level="off", runtime_checks=False)
-
-
 def test_public_availability_accepts_python_scalar_but_refuses_vector_reduction() -> (
     None
 ):
     """False is a scalar guard; a vector cannot silently become all(vector)."""
-    result = _rule_model(rule="unilateral", available=_never_available).solve(
+    result = _rule_model(rule=Unilateral(), available=_never_available).solve(
         params={}, log_level="off", runtime_checks=False
     )
     np.testing.assert_allclose(result.values[0]["single_f"], 1.0)
     with pytest.raises(ValueError, match="must be a scalar Boolean"):
-        _rule_model(rule="unilateral", available=_vector_available).solve(
+        _rule_model(rule=Unilateral(), available=_vector_available).solve(
             params={}, log_level="off", runtime_checks=False
         )
 
@@ -1368,11 +1223,13 @@ def test_formation_requires_target_policy_information_at_the_actual_choice(
     """Hidden dissolution pricing does not authorize an uninformed formation policy."""
     base = _household(newlywed=True, enable_jit=True, source_only=True)
     source = base.user_regimes["single_f"]
-    formation = replace(source.exits["marry"], observes=("offer",) if observed else ())
+    formation = replace(
+        cast("Exit", source.exit), observes=("offer",) if observed else ()
+    )
     couple = base.user_regimes["couple"]
     regimes = {
         **base.user_regimes,
-        "single_f": replace(source, exits={"marry": formation}),
+        "single_f": replace(source, exit=formation),
         "couple": replace(
             couple,
             shocks=("offers",),
@@ -1421,13 +1278,11 @@ def test_statically_false_exit_does_not_require_an_inactive_target_context() -> 
         regimes={
             "single_f": Regime(
                 functions={"utility": _one},
-                exits={
-                    "move": Exit(
-                        targets={"self": ExitTarget(regime="single_m", projection={})},
-                        rule="unilateral",
-                        available=_never_available,
-                    )
-                },
+                exit=Exit(
+                    targets={"self": ExitTarget(regime="single_m", projection={})},
+                    rule=Unilateral(),
+                    available=_never_available,
+                ),
             ),
             "single_m": Regime(functions={"utility": _one}),
         },
@@ -1452,7 +1307,7 @@ def test_false_ancestor_protects_a_poisoned_mapped_child_availability() -> None:
     """The child predicate cannot inspect sqrt(-1) after its ancestor refuses."""
     base = _household(newlywed=True, enable_jit=True, source_only=True)
     source = base.user_regimes["single_f"]
-    declaration = source.exits["marry"]
+    declaration = cast("Exit", source.exit)
     formation = replace(
         declaration,
         available=_positive,
@@ -1467,14 +1322,10 @@ def test_false_ancestor_protects_a_poisoned_mapped_child_availability() -> None:
     model = Model(
         regimes={
             **base.user_regimes,
-            "single_f": replace(source, exits={"marry": formation}),
+            "single_f": replace(source, exit=formation),
             "couple": replace(
                 couple,
-                exits={
-                    "divorce": replace(
-                        couple.exits["divorce"], available=_unsafe_available
-                    )
-                },
+                exit=replace(cast("Exit", couple.exit), available=_unsafe_available),
             ),
         },
         regime_id_class=_Household,
@@ -1486,121 +1337,6 @@ def test_false_ancestor_protects_a_poisoned_mapped_child_availability() -> None:
     )
     result = model.solve(params={}, log_level="off", runtime_checks=False)
     np.testing.assert_allclose(result.values[0]["single_f"], [5.0, 6.0])
-
-
-@pytest.mark.coverage(
-    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
-)
-@pytest.mark.parametrize("reverse", [False, True])
-def test_observed_aliases_share_the_active_producing_context(*, reverse: bool) -> None:
-    """An inactive first alias cannot hide a signal required by an active exit."""
-    base = _offer_model(observed=True, state_conditioned=True)
-    source = base.user_regimes["single_f"]
-    rule = _StrictRule()
-    model_exits = {
-        "first": replace(source.exits["move"], available=_positive, rule=rule),
-        "second": Exit(
-            targets={
-                "self": ExitTarget(regime="single_m", projection={"wealth": _wealth})
-            },
-            rule=rule,
-            observes=("offer",),
-        ),
-    }
-    if reverse:
-        model_exits = dict(reversed(tuple(model_exits.items())))
-    model = Model(
-        regimes={
-            **base.user_regimes,
-            "single_f": replace(source, exits=model_exits),
-        },
-        shocks=base.shocks,
-        regime_id_class=_Singles,
-        n_periods=1,
-        edges={},
-        initial_nodes=InitialNodes(by_period={0: ("single_f",)}),
-        execution_config=ExecutionConfig(device_memory_bytes=None),
-    )
-    result = model.solve(params={}, log_level="off", runtime_checks=False)
-    np.testing.assert_allclose(result.values[0]["single_f"], [0.8, 1.7])
-
-
-def _poison_settlement(wealth: FloatND) -> FloatND:
-    return jnp.sqrt(wealth - 1)
-
-
-def _alias_signal(*, eps: FloatND, settlement: FloatND, wealth: FloatND) -> FloatND:
-    return eps + settlement + 0 * wealth
-
-
-@pytest.mark.coverage(
-    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
-)
-@pytest.mark.parametrize("both_inactive", [False, True])
-def test_observer_aliases_skip_unrelated_inactive_settlements(
-    *, both_inactive: bool
-) -> None:
-    """The canonical alias's unsafe extra state never feeds its physical law."""
-    wealth = LinSpacedGrid(start=0, stop=1, n_points=2)
-    rule = _StrictRule()
-    model = Model(
-        regimes={
-            "single_f": Regime(
-                states={"wealth": wealth},
-                functions={"utility": _stay},
-                exits={
-                    "first": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="single_m",
-                                projection={
-                                    "wealth": _wealth,
-                                    "settlement": _poison_settlement,
-                                },
-                            )
-                        },
-                        rule=rule,
-                        observes=("eps",),
-                        available=_positive,
-                    ),
-                    "second": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="single_m",
-                                projection={"wealth": _wealth, "settlement": _zero},
-                            )
-                        },
-                        rule=rule,
-                        observes=("eps",),
-                        available=_positive if both_inactive else None,
-                    ),
-                },
-            ),
-            "single_m": Regime(
-                states={"wealth": wealth, "settlement": wealth},
-                functions={"utility": _alias_signal},
-                shocks=("signal",),
-            ),
-        },
-        shocks={
-            "signal": ShockGroup(
-                shocks={"eps": Normal(mu=0, sigma=1)},
-                nodes=UserNodes(
-                    nodes=np.asarray([[-1.0], [1.0]]),
-                    weights=np.asarray([0.5, 0.5]),
-                ),
-            )
-        },
-        regime_id_class=_Singles,
-        n_periods=1,
-        edges={},
-        initial_nodes=InitialNodes(by_period={0: ("single_f",)}),
-        execution_config=ExecutionConfig(device_memory_bytes=None),
-    )
-    result = model.solve(params={}, log_level="off", runtime_checks=False)
-    np.testing.assert_allclose(
-        result.values[0]["single_f"], [0.5 if both_inactive else 0.75, 0.75]
-    )
 
 
 def _formation_f(wealth: FloatND) -> FloatND:
@@ -1631,24 +1367,22 @@ def test_source_taste_competes_with_an_eligible_consent_formation() -> None:
                 },
                 functions={"utility": _source_taste},
                 taste_shocks=ExtremeValueTasteShocks(),
-                exits={
-                    "marry": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="couple",
-                                role="f",
-                                projection={"wealth": _wealth},
-                            )
-                        },
-                        rule=Consent(
-                            counterparty=Counterparty(
-                                regime="single_m",
-                                role="m",
-                                projection={"wealth": _wealth},
-                            )
-                        ),
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="couple",
+                            role="f",
+                            projection={"wealth": _wealth},
+                        )
+                    },
+                    rule=Consent(
+                        counterparty=Counterparty(
+                            regime="single_m",
+                            role="m",
+                            projection={"wealth": _wealth},
+                        )
+                    ),
+                ),
             ),
             "single_m": Regime(states={"wealth": wealth}, functions={"utility": _zero}),
             "couple": Regime(
@@ -1714,8 +1448,8 @@ def test_source_taste_competes_with_an_eligible_consent_formation() -> None:
     backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
 )
 @pytest.mark.parametrize("n_points", [64, 65])
-def test_custom_outside_choice_ignores_padded_query_lanes(*, n_points: int) -> None:
-    """A declared outside choice keeps every live source value on a partial chunk."""
+def test_outside_choice_ignores_padded_query_lanes(*, n_points: int) -> None:
+    """An exit keeps every live source value on a partial chunk."""
     wealth = LinSpacedGrid(start=0.0, stop=1.0, n_points=n_points)
     model = Model(
         regimes={
@@ -1725,16 +1459,14 @@ def test_custom_outside_choice_ignores_padded_query_lanes(*, n_points: int) -> N
                     "action": DiscreteGrid(values=np.asarray([0], dtype=np.int32))
                 },
                 functions={"utility": _strict_stay},
-                exits={
-                    "leave": Exit(
-                        targets={
-                            "self": ExitTarget(
-                                regime="single_m", projection={"wealth": _wealth}
-                            )
-                        },
-                        rule=_ReturnedRule(action=1),
-                    )
-                },
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="single_m", projection={"wealth": _wealth}
+                        )
+                    },
+                    rule=Unilateral(),
+                ),
             ),
             "single_m": Regime(
                 states={"wealth": wealth}, functions={"utility": _single}
@@ -1745,7 +1477,9 @@ def test_custom_outside_choice_ignores_padded_query_lanes(*, n_points: int) -> N
         initial_nodes=InitialNodes(by_period={0: ("single_f",)}),
         edges={},
         enable_jit=True,
-        execution_config=ExecutionConfig(device_memory_bytes=None),
+        execution_config=ExecutionConfig(
+            device_memory_bytes=None, axis_widths={"query_cell": 64}
+        ),
     )
     kernel = model._regimes["single_f"].solution.period_kernels[0]
     assert isinstance(kernel, _PolicyQueryKernel)
@@ -1785,6 +1519,14 @@ def _information_stay(root_draw: FloatND) -> FloatND:
     return -100.0 + root_draw
 
 
+@categorical(ordered=False)
+class _NestedHousehold:
+    single_f: ScalarInt
+    single_m: ScalarInt
+    couple: ScalarInt
+    alone_f: ScalarInt
+
+
 @pytest.mark.coverage(
     backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
 )
@@ -1792,43 +1534,69 @@ def _information_stay(root_draw: FloatND) -> FloatND:
 def test_nested_information_uses_each_ancestors_settlement_operands(
     *, fixed: bool
 ) -> None:
-    """A constant descendant map cannot supply its ancestor's shift or guard."""
+    """A constant descendant map cannot supply its ancestor's shift or guard.
+
+    The single forms a couple by consent at wealth `w + ancestor_shift`, where
+    `w >= ancestor_threshold`, and observes the couple's middle draw `m = -1, 1`.
+    Each spouse of the couple is worth `10 + w + ancestor_shift + m` and leaves for
+    a single's problem at wealth `descendant_shift`, worth `descendant_shift` once
+    its hidden mean-zero leaf draw is priced. The couple therefore forms exactly
+    where the guard holds and `10 + w + ancestor_shift + m >= descendant_shift`:
+    both spouses then strictly beat their stay values, at most 1 for the husband
+    and `-100 + root_draw` for the single. Elsewhere the single stays at
+    `-100 + root_draw`, whose mean-zero draw integrates to -100.
+    """
     wealth = LinSpacedGrid(start=0, stop=12, n_points=13)
     regimes = {
         "single_f": Regime(
             states={"wealth": LinSpacedGrid(start=0, stop=1, n_points=2)},
             functions={"utility": _information_stay},
             shocks=("root_noise",),
-            exits={
-                "move": Exit(
-                    targets={
-                        "self": ExitTarget(
-                            regime="couple",
-                            projection={"wealth": _ancestor_settlement},
-                        )
-                    },
-                    available=_ancestor_available,
-                    rule="unilateral",
-                )
-            },
+            exit=Exit(
+                targets={
+                    "self": ExitTarget(
+                        regime="couple",
+                        role="f",
+                        projection={"wealth": _ancestor_settlement},
+                    )
+                },
+                available=_ancestor_available,
+                observes=("middle_draw",),
+                rule=Consent(
+                    counterparty=Counterparty(
+                        regime="single_m", role="m", projection={"wealth": _wealth}
+                    )
+                ),
+            ),
+        ),
+        "single_m": Regime(
+            states={"wealth": wealth},
+            functions={"utility": _information_benchmark},
+            shocks=("leaf_noise",),
         ),
         "couple": Regime(
             states={"wealth": wealth},
-            functions={"utility": _information_wealth},
-            shocks=("middle_noise",),
-            exits={
-                "move": Exit(
-                    targets={
-                        "self": ExitTarget(
-                            regime="single_m",
-                            projection={"wealth": _descendant_settlement},
-                        )
-                    },
-                    rule="unilateral",
+            functions={
+                "utility": CollectiveUtility(
+                    utilities={"f": _information_wealth, "m": _information_wealth}
                 )
             },
+            shocks=("middle_noise",),
+            exit=Exit(
+                targets={
+                    "f": ExitTarget(
+                        regime="alone_f",
+                        projection={"wealth": _descendant_settlement},
+                    ),
+                    "m": ExitTarget(
+                        regime="single_m",
+                        projection={"wealth": _descendant_settlement},
+                    ),
+                },
+                rule=Unilateral(),
+            ),
         ),
-        "single_m": Regime(
+        "alone_f": Regime(
             states={"wealth": wealth},
             functions={"utility": _information_benchmark},
             shocks=("leaf_noise",),
@@ -1847,7 +1615,7 @@ def test_nested_information_uses_each_ancestors_settlement_operands(
         if runtime_model is None or fixed:
             model = Model(
                 regimes=regimes,
-                regime_id_class=_Household,
+                regime_id_class=_NestedHousehold,
                 n_periods=1,
                 initial_nodes=InitialNodes(by_period={0: "single_f"}),
                 edges={},
@@ -1882,7 +1650,7 @@ def test_nested_information_uses_each_ancestors_settlement_operands(
         descendant_node = next(
             node
             for node in kernel.definitions.values()
-            if node.read.target == "single_m"
+            if node.read.target == "alone_f"
         )
         assert ancestor_key in descendant_node.ancestors
         assert ancestor_node.available is not None
@@ -1893,14 +1661,9 @@ def test_nested_information_uses_each_ancestors_settlement_operands(
             params={} if fixed else params, log_level="off", runtime_checks=True
         )
         source_wealth = np.asarray([0.0, 1.0])
-        # The benchmark hides its mean-zero shock, so its value is descendant.
-        # A Participating middle policy must beat that benchmark at every hidden
-        # middle draw. It cannot exit to the benchmark on the root's behalf.
         middle = 10.0 + source_wealth[:, None] + shift + np.asarray([-1.0, 1.0])
-        support = np.all(middle >= descendant, axis=1)
-        expected = np.where(
-            (source_wealth >= threshold) & support, middle.mean(axis=1), -100.0
-        )
+        forms = (source_wealth[:, None] >= threshold) & (middle >= descendant)
+        expected = np.where(forms, middle, -100.0).mean(axis=1)
         np.testing.assert_allclose(solution.values[0]["single_f"], expected)
         assert np.all(np.isfinite(solution.values[0]["single_f"]))
 
@@ -1993,20 +1756,23 @@ def test_callable_exit_projection_keeps_fingerprint_admission() -> None:
 def test_own_raw_and_full_evaluate_canonical_problem_once(  # noqa: PLR0915 - keep one graph and runtime population proof together
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Identical conditional single work is shared while both callers still decide."""
+    """Identical conditional single work is shared while both callers still decide.
 
+    The couple reads the single's outside value at its point.
+    """
+    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", False)
     model = _household(
         newlywed=True, enable_jit=True, source_only=True, outside_lag=True
     )
     kernel = model._regimes["single_f"].solution.period_kernels[0]
     assert isinstance(kernel, _PolicyQueryKernel)
     root = kernel.definitions[kernel.root]
-    own_key = root.inputs["own_raw_0"]
+    own_key = root.inputs["own_raw"]
     own = kernel.definitions[own_key]
-    couple = kernel.definitions[root.inputs["exit_0_self"]]
-    outside_key = couple.inputs["exit_0_f"]
+    couple = kernel.definitions[root.inputs["exit_self"]]
+    outside_key = couple.inputs["exit_f"]
     outside = kernel.definitions[outside_key]
-    assert outside.read.kind is QueryKind.PARTICIPATING
+    assert outside.read.kind is QueryKind.RAW
     assert outside.read.target == "single_f"
     assert not outside.inputs
     assert outside_key != own_key
@@ -2057,19 +1823,12 @@ def test_own_raw_and_full_evaluate_canonical_problem_once(  # noqa: PLR0915 - ke
     def observed_eligible(
         self: exit_queries._ExitReducer,
         *,
-        name: str,
         operands: Mapping[str, PytreeValue],
-        payoffs: Mapping[str, Mapping[str, FloatND]],
-        availability: Mapping[str, BoolND],
+        payoffs: Mapping[str, FloatND],
+        active: BoolND,
     ) -> tuple[BoolND, BoolND]:
-        result = eligible(
-            self,
-            name=name,
-            operands=operands,
-            payoffs=payoffs,
-            availability=availability,
-        )
-        if name == "marry":
+        result = eligible(self, operands=operands, payoffs=payoffs, active=active)
+        if isinstance(cast("Exit", self.declaration).rule, Consent):
             jax.debug.callback(
                 lambda value: consent_calls.append(bool(value)), result[0]
             )
@@ -2157,12 +1916,10 @@ def _sharing_control_model(
                 functions={
                     "utility": _shifted_single if parameterized else _school_single
                 },
-                exits={
-                    "marry": replace(
-                        source.exits["marry"],
-                        available=_positive_wealth if guarded else None,
-                    )
-                },
+                exit=replace(
+                    cast("Exit", source.exit),
+                    available=_positive_wealth if guarded else None,
+                ),
             ),
         },
         regime_id_class=_Household,
@@ -2207,10 +1964,18 @@ def _sharing_chunk_arguments(
 @pytest.mark.parametrize("compiled", [False, True])
 @pytest.mark.parametrize("constrained", [False, True])
 def test_static_single_sharing_preserves_uninstrumented_chunks(
-    *, state_count: int, chunk_size: int, compiled: bool, constrained: bool
+    *,
+    state_count: int,
+    chunk_size: int,
+    compiled: bool,
+    constrained: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Raw sharing preserves bytes, statuses and count slots across padded chunks."""
+    """Raw sharing preserves bytes, statuses and count slots across padded chunks.
 
+    The couple reads the single's outside value at its point.
+    """
+    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", False)
     model = _sharing_control_model(state_count=state_count, constrained=constrained)
     source = model._regimes["single_f"].solution.period_kernels[0]
     assert isinstance(source, _PolicyQueryKernel)
@@ -2307,9 +2072,13 @@ def test_static_single_sharing_requires_exact_provenance(changed: str) -> None:
 def test_static_single_sharing_retains_guard_and_projection_fallback(
     *,
     guarded: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A guarded or remapped outside option keeps its own support and mapped value."""
+    """A guarded or remapped outside option keeps its own support and mapped value.
 
+    The couple reads the single's outside value at its point.
+    """
+    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", False)
     model = _sharing_control_model(guarded=guarded)
     source = model._regimes["single_f"].solution.period_kernels[0]
     assert isinstance(source, _PolicyQueryKernel)
@@ -2356,9 +2125,13 @@ def test_static_single_sharing_retains_guard_and_projection_fallback(
 )
 @pytest.mark.parametrize(("state_count", "chunk_size"), [(2, 1), (3, 2)])
 def test_static_single_sharing_reads_changed_params_and_preserves_jvp(
-    *, state_count: int, chunk_size: int
+    *, state_count: int, chunk_size: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Full and padded loops retain fresh parameters and forward/reverse directions."""
+    """Full and padded loops retain fresh parameters and forward/reverse directions.
+
+    The couple reads the single's outside value at its point.
+    """
+    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", False)
     model = _sharing_control_model(state_count=state_count, parameterized=True)
     source = model._regimes["single_f"].solution.period_kernels[0]
     assert isinstance(source, _PolicyQueryKernel)
@@ -2399,3 +2172,476 @@ def test_static_single_sharing_reads_changed_params_and_preserves_jvp(
     np.testing.assert_array_equal(tangent, np.ones(state_count, dtype=changed.dtype))
     reverse = jax.jit(jax.grad(total_value))(jnp.asarray(8.0))
     np.testing.assert_array_equal(reverse, np.asarray(state_count, dtype=changed.dtype))
+
+
+_NODES = np.array([1.0, 2.0, 3.0])
+
+
+@categorical(ordered=False)
+class RegimeId:
+    source: ScalarInt
+    pair: ScalarInt
+    alone_f: ScalarInt
+    alone_m: ScalarInt
+
+
+def _no_flow(wage: ContinuousState) -> FloatND:
+    return 0.0 * wage
+
+
+def _move_cost(move: DiscreteAction) -> FloatND:
+    return -6.5 * move
+
+
+def _keep(wage: ContinuousState) -> ContinuousState:
+    return wage
+
+
+def _moved_wage(*, wage: ContinuousState, move: DiscreteAction) -> ContinuousState:
+    return jnp.where(move == 0, wage, 1.0)
+
+
+def _wife(wage: ContinuousState) -> FloatND:
+    return (wage - 2.0) ** 2
+
+
+def _husband(wage: ContinuousState) -> FloatND:
+    return 10.0 + 0.0 * wage
+
+
+def _outside_f(wage: ContinuousState) -> FloatND:
+    return 0.5 + 0.0 * wage
+
+
+def _outside_m(wage: ContinuousState) -> FloatND:
+    return wage
+
+
+def _bend(wage: ContinuousState) -> ContinuousState:
+    """Keep wages 1 and 3 and send wage 2 to 4."""
+    return wage + 2.0 * (wage - 1.0) * (3.0 - wage)
+
+
+def _plus_five(wage: ContinuousState) -> ContinuousState:
+    return wage + 5.0
+
+
+def _not_at_two(wage: ContinuousState) -> BoolND:
+    return (wage - 2.0) ** 2 > 0.25
+
+
+def _jolted(*, wage: ContinuousState, jolt: FloatND) -> ContinuousState:
+    """Keep the wage at jolt 0; at jolt 1 send wage 2 to 4."""
+    return wage + 2.0 * jolt * (wage - 1.0) * (3.0 - wage)
+
+
+def _bonus_mean(wage: ContinuousState) -> FloatND:
+    return wage
+
+
+def _outside_m_with_bonus(*, wage: ContinuousState, bonus: FloatND) -> FloatND:
+    return wage + bonus
+
+
+def _household_model(
+    *,
+    rule: OffGrid,
+    with_move: bool = False,
+    enable_jit: bool = True,
+    projection_m: Callable[..., ContinuousState] = _bend,
+    projection_f: Callable[..., ContinuousState] = _keep,
+    available: Callable[..., BoolND] | None = None,
+    pair_shocks: tuple[str, ...] = (),
+    alone_m_shocks: tuple[str, ...] = (),
+    shocks: dict[str, ShockGroup] | None = None,
+    outside_f: Callable[..., FloatND] = _outside_f,
+    outside_m: Callable[..., FloatND] = _outside_m,
+    initial_nodes: InitialNodes | None = None,
+) -> Model:
+    """Build the household whose husband's exit lands beyond his destination grid.
+
+    A source household carries its wage into `pair`, whose wage grid has nodes 1, 2
+    and 3. In `pair` the wife's payoff `(wage - 2)**2` beats her outside option of 0.5
+    at nodes 1 and 3 but not at 2, so at wage 2 the household dissolves. The husband's
+    exit projection keeps wages 1 and 3 and sends wage 2 to 4, beyond the top node of
+    his destination `alone_m`, whose grid declares `rule`; there his payoff is the wage
+    itself. The source puts all weight on the husband. Its optional move costs 6.5 and
+    carries the household at wage 1 instead, where both spouses stay and the husband
+    gets 10.
+    """
+    grid = IrregSpacedGrid(points=_NODES)
+    source_utility = _move_cost if with_move else _no_flow
+    return Model(
+        regimes={
+            "source": Regime(
+                states={"wage": grid},
+                actions={"move": DiscreteGrid(values=jnp.array([0, 1]))}
+                if with_move
+                else {},
+                state_transitions={"wage": _moved_wage if with_move else _keep},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"f": source_utility, "m": source_utility},
+                        objective=ParetoObjective(weights={"f": 0.0, "m": 1.0}),
+                    )
+                },
+            ),
+            "pair": Regime(
+                states={"wage": grid},
+                functions={
+                    "utility": CollectiveUtility(utilities={"f": _wife, "m": _husband})
+                },
+                shocks=pair_shocks,
+                exit=Exit(
+                    targets={
+                        "f": ExitTarget(
+                            regime="alone_f", projection={"wage": projection_f}
+                        ),
+                        "m": ExitTarget(
+                            regime="alone_m", projection={"wage": projection_m}
+                        ),
+                    },
+                    rule=Unilateral(tie="leave"),
+                    available=available,
+                ),
+            ),
+            "alone_f": Regime(states={"wage": grid}, functions={"utility": outside_f}),
+            "alone_m": Regime(
+                states={"wage": IrregSpacedGrid(points=_NODES, off_grid=rule)},
+                functions={"utility": outside_m},
+                shocks=alone_m_shocks,
+            ),
+        },
+        edges={"source": {"pair": 0}},
+        shocks={} if shocks is None else shocks,
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=RegimeId,
+        initial_nodes=InitialNodes(by_age={0: "source"})
+        if initial_nodes is None
+        else initial_nodes,
+        enable_jit=enable_jit,
+    )
+
+
+_PARAMS = {
+    "source": {"koopmans_aggregator": {"discount_factor": 1.0}},
+    "pair": {},
+    "alone_f": {},
+    "alone_m": {},
+}
+
+
+def _reference(*, rule: OffGrid, with_move: bool) -> tuple[int, float, str, float]:
+    """Enumerate the source's moves at wage 2: move, value, final regime and wage.
+
+    Without a move the household reaches `pair` at wage 2 and dissolves, and the
+    husband lands at 4 or, capped by `clip_state`, at 3. The move reaches `pair` at
+    wage 1, where both spouses stay.
+    """
+    landing = 3.0 if rule == "clip_state" else 4.0
+    candidates = [(0, landing, "alone_m", landing)]
+    if with_move:
+        candidates.append((1, 10.0 - 6.5, "pair", 1.0))
+    return max(candidates, key=lambda candidate: candidate[1])
+
+
+def _solve_and_simulate(
+    *, model: Model, own_members: tuple[str, ...] = ("m",)
+) -> tuple[np.ndarray, pd.DataFrame]:
+    solution = model.solve(params=_PARAMS, log_level="off")
+    n_rows = len(own_members)
+    result = model.simulate(
+        params=_PARAMS,
+        solution=solution,
+        initial_conditions={
+            "wage": jnp.full(n_rows, 2.0),
+            "age": jnp.zeros(n_rows),
+            "regime_id": jnp.full(n_rows, model.regime_names_to_ids["source"]),
+            "own_member": jnp.asarray(
+                [model.member_names_to_ids[name] for name in own_members]
+            ),
+        },
+        seed=0,
+        log_level="off",
+    )
+    panel = result.to_dataframe(use_categorical_codes=True)
+    return np.asarray(solution.values[0]["source"]), panel
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize("rule", ["extrapolate", "clip_state", "clip_lookup"])
+@pytest.mark.parametrize("with_move", [False, True], ids=["no_move", "move"])
+@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
+def test_exit_is_priced_and_realised_under_the_destination_rule(
+    *, rule: OffGrid, with_move: bool, enable_jit: bool
+) -> None:
+    """The source's move and value, and the husband's landing, match the reference.
+
+    Under `clip_state` the dissolution is worth 3, so with a move the source pays
+    6.5 to keep the household together at value 3.5; otherwise the husband lands at
+    4 and the source keeps its wage.
+    """
+    values, panel = _solve_and_simulate(
+        model=_household_model(rule=rule, with_move=with_move, enable_jit=enable_jit)
+    )
+    first = panel.loc[panel["period"] == 0].iloc[0]
+    last = panel.loc[panel["period"] == 1].iloc[0]
+    move, value, regime, wage = _reference(rule=rule, with_move=with_move)
+    assert (
+        int(first["move"]) if with_move else 0,
+        str(last["regime_name"]),
+        round(float(values[1, 1]), DECIMAL_PRECISION),
+        round(float(last["wage"]), DECIMAL_PRECISION),
+    ) == (move, regime, value, wage)
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_clip_state_prices_the_exit_at_the_value_of_the_realised_landing() -> None:
+    """The pair's husband value at wage 2 is his `alone_m` payoff at his landing.
+
+    `alone_m` pays the wage itself, so the price equals the realised landing.
+    """
+    model = _household_model(rule="clip_state")
+    solution = model.solve(params=_PARAMS, log_level="off")
+    _, panel = _solve_and_simulate(model=model)
+    landing = float(panel.loc[panel["period"] == 1, "wage"].iloc[0])
+    np.testing.assert_array_almost_equal(
+        solution.values[1]["pair"][1, 1], landing, decimal=DECIMAL_PRECISION
+    )
+
+
+def _stored_read_and_price(*, rule: OffGrid) -> tuple[list[bool], float]:
+    """Whether `pair` reads `alone_m` from its stored table, and the price at 2.
+
+    `alone_m` is also a start in period 1, so the solve tabulates its values there.
+    """
+    model = _household_model(
+        rule=rule, initial_nodes=InitialNodes(by_age={0: "source", 1: "alone_m"})
+    )
+    kernel = cast(
+        "_PolicyQueryKernel", model._regimes["pair"].solution.period_kernels[1]
+    )
+    stored = [
+        node.outside_value is not None
+        for node in kernel.definitions.values()
+        if node.read.target == "alone_m"
+    ]
+    solution = model.solve(params=_PARAMS, log_level="off")
+    return stored, round(float(solution.values[1]["pair"][1, 1]), DECIMAL_PRECISION)
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize(
+    ("rule", "expected"),
+    [("extrapolate", ([False], 4.0)), ("clip_state", ([True], 3.0))],
+)
+def test_capped_landings_are_read_from_the_stored_destination_table(
+    *, rule: OffGrid, expected: tuple[list[bool], float]
+) -> None:
+    """Capped, every landing is a grid node, so the read gathers stored values.
+
+    Uncapped, wage 2 lands at 4, off the grid, and the read is evaluated at that
+    point instead. Either way the price is the destination's value at the landing
+    the simulation realises.
+    """
+    assert _stored_read_and_price(rule=rule) == expected
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_raise_refuses_an_active_off_grid_exit_read() -> None:
+    """At wage 2 the husband's outside read lands at 4, beyond `alone_m`'s grid."""
+    with pytest.raises(
+        OffGridStateError,
+        match=r"regime='pair', target='alone_m', period=1, state='wage', "
+        r"phase='solve'",
+    ):
+        _household_model(rule="raise").solve(params=_PARAMS, log_level="off")
+
+
+def _worse_than_staying(wage: ContinuousState) -> FloatND:
+    return -1.0 + 0.0 * wage
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_raise_refuses_an_off_grid_read_the_household_does_not_act_on() -> None:
+    """The wife always stays and so does the husband, yet his read at 4 is priced."""
+    model = _household_model(rule="raise", outside_f=_worse_than_staying)
+    with pytest.raises(OffGridStateError, match=r"target='alone_m'"):
+        model.solve(params=_PARAMS, log_level="off")
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_raise_ignores_an_off_grid_read_where_the_exit_is_unavailable() -> None:
+    """The exit is closed at wage 2, so the household stays and nothing is read."""
+    model = _household_model(rule="raise", available=_not_at_two)
+    solution = model.solve(params=_PARAMS, log_level="off")
+    np.testing.assert_array_almost_equal(
+        solution.values[1]["pair"][1], [0.0, 10.0], decimal=DECIMAL_PRECISION
+    )
+
+
+def _jolt_shocks(*, weights: tuple[float, float]) -> dict[str, ShockGroup]:
+    return {
+        "jolts": ShockGroup(
+            shocks={"jolt": Normal(mu=0.0, sigma=1.0)},
+            nodes=UserNodes(
+                nodes=np.asarray([[0.0], [1.0]]), weights=np.asarray(weights)
+            ),
+        )
+    }
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_raise_ignores_an_off_grid_read_that_carries_no_mass() -> None:
+    """Only the jolt node of weight 0 sends the husband off the grid."""
+    model = _household_model(
+        rule="raise",
+        projection_m=_jolted,
+        pair_shocks=("jolts",),
+        shocks=_jolt_shocks(weights=(1.0, 0.0)),
+    )
+    solution = model.solve(params=_PARAMS, log_level="off")
+    np.testing.assert_array_almost_equal(
+        solution.values[1]["pair"][1], [0.5, 2.0], decimal=DECIMAL_PRECISION
+    )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+def test_raise_refuses_an_off_grid_read_that_carries_mass() -> None:
+    """The same read with half its mass on the off-grid jolt node fails."""
+    model = _household_model(
+        rule="raise",
+        projection_m=_jolted,
+        pair_shocks=("jolts",),
+        shocks=_jolt_shocks(weights=(0.5, 0.5)),
+    )
+    with pytest.raises(OffGridStateError, match=r"target='alone_m'"):
+        model.solve(params=_PARAMS, log_level="off")
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize(
+    ("rule", "expected"), [("extrapolate", 8.0), ("clip_state", 6.0)]
+)
+def test_hidden_destination_law_reads_the_landing_the_exit_prices(
+    *, rule: OffGrid, expected: float
+) -> None:
+    """A bonus with mean equal to the wage makes `alone_m` worth twice the wage.
+
+    The pair does not observe the bonus, so its read integrates the bonus's law at
+    the husband's landing: 2 * 4 uncapped, 2 * 3 capped. A law read at the uncapped
+    landing beside a payoff at the capped one would give 7.
+    """
+    model = _household_model(
+        rule=rule,
+        alone_m_shocks=("bonuses",),
+        shocks={
+            "bonuses": ShockGroup(
+                shocks={"bonus": Normal(mu=_bonus_mean, sigma=1.0)},
+                nodes=Product(bonus=GaussHermite(2)),
+            )
+        },
+        outside_m=_outside_m_with_bonus,
+    )
+    solution = model.solve(params=_PARAMS, log_level="off")
+    np.testing.assert_array_almost_equal(
+        solution.values[1]["pair"][1, 1], expected, decimal=DECIMAL_PRECISION
+    )
+
+
+@categorical(ordered=False)
+class FormationId:
+    single: ScalarInt
+    incoming_m: ScalarInt
+    couple: ScalarInt
+    alone_f: ScalarInt
+    alone_m: ScalarInt
+
+
+def _single_stay(wage: ContinuousState) -> FloatND:
+    return 0.0 * wage
+
+
+def _incoming_stay() -> float:
+    return 2.0
+
+
+def _couple_f(wage: ContinuousState) -> FloatND:
+    return 1.0 + 0.0 * wage
+
+
+def _couple_m(wage: ContinuousState) -> FloatND:
+    return 3.5 + 0.0 * wage
+
+
+def _formation_model(*, rule: Literal["extrapolate", "clip_state"]) -> Model:
+    """A single woman may form a couple by consent with an incoming man.
+
+    In the couple the husband stays only where his payoff of 3.5 beats his outside
+    value in `alone_m`, read at the landing his dissolution exit projects.
+    """
+    grid = IrregSpacedGrid(points=_NODES)
+    return Model(
+        regimes={
+            "single": Regime(
+                states={"wage": grid},
+                functions={"utility": _single_stay},
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="couple", role="f", projection={"wage": _keep}
+                        )
+                    },
+                    rule=Consent(
+                        counterparty=Counterparty(
+                            regime="incoming_m", role="m", projection={}
+                        )
+                    ),
+                ),
+            ),
+            "incoming_m": Regime(functions={"utility": _incoming_stay}),
+            "couple": Regime(
+                states={"wage": grid},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"f": _couple_f, "m": _couple_m}
+                    )
+                },
+                exit=Exit(
+                    targets={
+                        "f": ExitTarget(regime="alone_f", projection={"wage": _keep}),
+                        "m": ExitTarget(regime="alone_m", projection={"wage": _bend}),
+                    },
+                    rule=Unilateral(),
+                ),
+            ),
+            "alone_f": Regime(states={"wage": grid}, functions={"utility": _outside_f}),
+            "alone_m": Regime(
+                states={"wage": IrregSpacedGrid(points=_NODES, off_grid=rule)},
+                functions={"utility": _outside_m},
+            ),
+        },
+        n_periods=1,
+        regime_id_class=FormationId,
+        initial_nodes=InitialNodes(by_period={0: "single"}),
+        edges={},
+    )
+
+
+@pytest.mark.coverage(backends=("cpu",), precisions="both")
+@pytest.mark.parametrize(
+    ("rule", "expected"),
+    [("extrapolate", [1.0, 0.0, 1.0]), ("clip_state", [1.0, 1.0, 1.0])],
+)
+def test_consent_formation_prices_the_couple_at_the_capped_dissolution_landing(
+    *, rule: Literal["extrapolate", "clip_state"], expected: list[float]
+) -> None:
+    """At wage 2 the husband's outside value is 4 uncapped and 3 capped.
+
+    Uncapped he would leave, the couple keeps no action and the single woman stays
+    single at 0. Capped he stays, both consent, and she gets her couple payoff 1.
+    """
+    solution = _formation_model(rule=rule).solve(params={}, log_level="off")
+    np.testing.assert_array_almost_equal(
+        solution.values[0]["single"], expected, decimal=DECIMAL_PRECISION
+    )

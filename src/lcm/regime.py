@@ -30,12 +30,7 @@ from _lcm.user_regime_validation import validate_regime
 from _lcm.utils.containers import ensure_containers_are_immutable
 from _lcm.utils.error_messages import path_segment_name_errors
 from lcm.certainty_equivalent import CertaintyEquivalent
-from lcm.collective import (
-    CollectiveUtility,
-    ParetoObjective,
-    ProjectedRegimeValue,
-    ValueDependentConstraint,
-)
+from lcm.collective import CollectiveUtility, ParetoObjective
 from lcm.decoupled import (
     Decoupled,
     resolve_koopmans_aggregator,
@@ -85,7 +80,7 @@ type FunctionEntry = UserFunction | Phased | CollectiveUtility | None
 
 # One `Regime.constraints` value; `None` masks a model-level constraint. `Phased`
 # passes the type check so the validator can reject it with an explanation.
-type ConstraintEntry = ConstraintLike | Phased | ValueDependentConstraint | None
+type ConstraintEntry = ConstraintLike | Phased | None
 
 
 class _SlotsBesideFunctions(TypedDict, total=False):
@@ -105,7 +100,7 @@ class _SlotsBesideFunctions(TypedDict, total=False):
     solver: _solvers.Solver
     taste_shocks: ExtremeValueTasteShocks | None
     shocks: tuple[ShockGroupName, ...]
-    exits: Mapping[str, Exit]
+    exit: Exit | None
     koopmans_aggregator: UserFunction | Phased | Decoupled | None
     certainty_equivalent: CertaintyEquivalent | None
     description: str
@@ -115,8 +110,8 @@ class RegimeReplacement(_SlotsBesideFunctions, total=False):
     """The slots `Regime.replace` may replace, each with its declared type.
 
     These are the slots a regime is constructed from. The derived slots
-    (`stakeholders`, `pareto_objective`, `value_constraints` and
-    `same_period_refs`) are read off a regime and are not among them.
+    (`members`, `member_axis` and `pareto_objective`) are read off a regime and
+    are not among them.
     """
 
     functions: Mapping[FunctionName, FunctionEntry]
@@ -218,7 +213,7 @@ class Regime:
 
     `Phased` gives each phase its own implementation. A collective regime
     declares a `CollectiveUtility` under `"utility"`; that object remains in
-    this raw mapping, while `decomposed_functions` exposes its per-stakeholder
+    this raw mapping, while `decomposed_functions` exposes its per-member
     bodies under `utility_<s>` for the engine.
     """
 
@@ -284,9 +279,14 @@ class Regime:
     The shock scale is the runtime param
     `{"taste_shocks": {"scale": ...}}` and must be strictly positive; omit
     `taste_shocks` for a hard maximum. At least one discrete action is required.
-    Taste shocks are currently supported by `GridSearch` and `DCEGM`. They are
-    rejected on a collective regime, on the source of a `Gate`, with a
-    nonlinear certainty equivalent, and with `NEGM`, `NBEGM`, or `NNBEGM`.
+    Taste shocks are currently supported by `GridSearch` and `DCEGM`. A household
+    (a `CollectiveUtility`) admits them when exactly one member has a positive
+    Pareto weight: that member decides, its value is its own smoothed maximum,
+    and every other member's value is its mean action value under the
+    decider's choice. They are rejected on a household with more than one
+    positive weight, on a household that declares an `exit` or `shocks`, or whose
+    decision another regime's exit reads, on the source of a `Gate`, with a nonlinear
+    certainty equivalent, and with `NEGM`, `NBEGM`, or `NNBEGM`.
     """
 
     koopmans_aggregator: UserFunction | Phased | Decoupled | None = None
@@ -329,127 +329,63 @@ class Regime:
     groups carry an axis and which are integrated out.
     """
 
-    exits: Mapping[str, Exit] = field(default_factory=lambda: MappingProxyType({}))
-    """Named current-period choices to mapped destination policies."""
+    exit: Exit | None = None
+    """Current-period move to mapped destination policies, before the action."""
 
     description: str = ""
     """Description of the regime."""
 
-    stakeholders: tuple[str, ...] | None = field(init=False, default=None)
-    """Names of the stakeholders whose individual values this regime carries.
+    member_axis: tuple[str, ...] | None = field(init=False, default=None)
+    """The members along the trailing value axis, or `None` for no such axis.
 
-    Derived from `CollectiveUtility.utilities`, whose keys are the
-    stakeholders in the order they are written. A model declares the household
-    in the raw `functions["utility"]` slot and reads the set back here; the
-    declaration itself is not replaced.
+    The engine's marker for a household: equal to `members` for a regime
+    declared with a `CollectiveUtility`, and `None` for a regime declared with
+    a plain utility function, whose value carries no member axis. Derived from
+    `CollectiveUtility.utilities`, whose keys are the members in the order they
+    are written.
 
-    `None` (the default) is the singleton case: the regime has one implicit
-    stakeholder and one value function. A non-`None` tuple declares a
-    *collective regime*: a couple (or other multi-party household) that solves
-    one household argmax but reads off a per-stakeholder value at that common
-    argmax, with value-aware feasibility and value-gated regime routing
-    (consent / dissolution).
+    `None` (the default) is the singleton case: the regime has the single
+    member `"self"` and one value function. A non-`None` tuple declares a
+    *collective regime*: a household, such as a couple, that solves
+    one household argmax but reads off a per-member value at that common
+    argmax, and whose exits compare each member's value (consent, dissolution).
 
     A collective regime's `decomposed_functions` view carries a
-    per-stakeholder `utility_<s>` for each stakeholder `<s>`, together with a
-    `pareto_objective`. Its solve reads off each stakeholder's own value at the
+    per-member `utility_<s>` for each member `<s>`, together with a
+    `pareto_objective`. Its solve reads off each member's own value at the
     shared household argmax, and a non-terminal one aggregates the
-    per-stakeholder continuation `Q^s = W(u^s, E[V'^s])`. A non-terminal
+    per-member continuation `Q^s = W(u^s, E[V'^s])`. A non-terminal
     collective regime's transition targets must all be collective regimes with
-    the identical `stakeholders` tuple — per-stakeholder current outside options
-    are declared by an `Exit`. EV1 taste
-    shocks, nonlinear certainty equivalents, and non-GridSearch solvers on a
-    collective regime raise `NotImplementedError`.
+    the identical `members` tuple — per-member current outside options
+    are declared by an `Exit`. EV1 taste shocks with more than one member
+    carrying a positive weight, nonlinear certainty equivalents, and
+    non-GridSearch solvers on a collective regime raise `NotImplementedError`.
 
-    A collective regime writes `-inf` where no action satisfies every
-    stakeholder's participation constraint. A participation `Exit` prices the
-    current outside alternatives; a landing `ParticipationCheck` selects its
-    route's fallback when the destination has no participating policy.
+    An `Exit` compares each member's value with its outside value in the current
+    period.
 
     Two things to know before simulating one:
 
     - The population is one fixed-size cohort of independent rows. A
       dissolution does not split a row into two independently tracked
-      households; each row records where every stakeholder would land and then
+      households; each row records where every member would land and then
       continues as one of them.
     - Every row carries its own role. `simulate` reads it from
-      `initial_conditions["own_stakeholder"]`, so one cohort may hold both partners.
+      `initial_conditions["own_member"]`, so one cohort may hold both partners.
     """
 
     pareto_objective: ParetoObjective | None = field(init=False, default=None)
-    """How this collective regime's household trades its stakeholders off.
+    """How this collective regime's household trades its members off.
 
     Derived from `CollectiveUtility.objective`.
 
-    Used only when `stakeholders is not None`: the collective solve maximizes
+    Used only when `member_axis is not None`: the collective solve maximizes
     the household scalarization `O = Σ_s λ_s Q^s` over the feasible action set.
-    When omitted (the default), equal weights `1/len(stakeholders)` are used —
+    When omitted (the default), equal weights `1/len(members)` are used —
     the symmetric-couple case, `λ = 0.5` on each partner. Declare a
-    `ParetoObjective` to weigh one stakeholder more, to let the weights depend
+    `ParetoObjective` to weigh one member more, to let the weights depend
     on a state, or to estimate them. Ignored — and must be `None` — for a
     singleton regime.
-    """
-
-    value_constraints: MappingProxyType[FunctionName, UserFunction] = field(
-        init=False, default_factory=lambda: MappingProxyType({})
-    )
-    """Value-aware feasibility predicates for a collective regime.
-
-    Derived from the `ValueDependentConstraint` entries of `constraints`,
-    which is where a model declares them — one constraint slot rather than two.
-
-    Each entry maps a constraint name to a predicate returning `True` where the
-    (state, action) combination is feasible. Unlike ordinary `constraints`
-    (which are evaluated before and independently of `Q`), a value constraint
-    is evaluated AFTER the per-stakeholder action values and may read, as named
-    arguments:
-
-    - `Q_<s>` for each stakeholder `<s>` — that stakeholder's own action value
-      `Q^s(x, a)` (felicity plus discounted continuation) at the cell;
-    - each key of `same_period_refs` — the reference regime's same-period value
-      interpolated at the projected state (e.g. the dissolved single's value);
-    - ordinary states, actions, regime functions, and parameters via the DAG
-      (a predicate's own parameter surfaces in the params template under the
-      constraint's name).
-
-    The final action mask is the AND of ordinary constraints and all value
-    constraints; the household argmax runs over the masked set. A state cell
-    whose mask is empty holds no viable household; where its members go is
-    declared by a participation `Exit` or by a `ParticipationCheck` reading the
-    household's policy support. A participation constraint takes the form
-    `Q_j >= V_single_j(pi_j(x)) - Delta_j` for each stakeholder `j`.
-
-    A TERMINAL collective regime may declare them too — a household's last
-    period is a participation decision like any other — with two differences
-    worth stating, because nothing in the arrays reveals them:
-
-    - `Q_<s>` is stakeholder `s`'s terminal payoff. There is no continuation,
-      so the value each partner weighs against the reference is what the cell
-      itself delivers.
-    - An empty feasible set has no participating policy. The participating value
-      remains `-inf`; an explicit participation `Exit` can price current outside
-      alternatives. A landing `ParticipationCheck` can read participating support
-      and choose the route's fallback. Solve publishes no dissolution flag.
-
-    Only collective regimes may declare value constraints at all: the
-    predicates read `Q_<s>`, which a singleton regime does not carry.
-    """
-
-    same_period_refs: MappingProxyType[str, ProjectedRegimeValue] = field(
-        init=False, default_factory=lambda: MappingProxyType({})
-    )
-    """Same-period cross-regime reference values read by `value_constraints`.
-
-    Derived from `ValueDependentConstraint.references`, which is where a
-    model declares them — local to the constraint that reads them.
-
-    Maps each reference-value name (the argument name under which the
-    interpolated value enters the predicates) to a `ProjectedRegimeValue` declaring
-    the reference regime, the state projection, and — for a collective
-    reference — the stakeholder. Reference regimes are solved earlier within
-    the same period (topological order; cycles are rejected at model build).
-    Only collective regimes that also declare `value_constraints` may declare
-    references.
     """
 
     def _make_field_immutable(self, *, name: str) -> None:
@@ -466,7 +402,7 @@ class Regime:
             raise RegimeInitializationError(
                 "shocks must contain unique ordinary group names."
             )
-        self._lower_value_dependent_declarations()
+        self._lower_collective_utility()
         self._fail_if_egm_solver_has_no_margin_declaration()
         # What depends on the law is validated once the model binds it from
         # `Model(edges=...)`; completeness (a `utility` entry, aggregator
@@ -483,25 +419,6 @@ class Regime:
         self._make_field_immutable(name="actions")
         self._make_field_immutable(name="constraints")
         self._make_field_immutable(name="derived_categoricals")
-        self._make_field_immutable(name="value_constraints")
-        self._make_field_immutable(name="same_period_refs")
-        self._make_field_immutable(name="exits")
-
-    def _lower_value_dependent_declarations(self) -> None:
-        """Derive the engine-facing views of the collective declarations.
-
-        `CollectiveUtility` and `ValueDependentConstraint` are declared inside
-        the slots a regime already has — `functions` and `constraints` — and
-        each one carries
-        several engine-side facts at once. Deriving those facts here, without
-        replacing the raw declarations, lets every later stage read the fields
-        and decomposed views it needs.
-
-        Nothing is derived for a regime that declares neither, so a regime
-        spelled out the long way passes through untouched.
-        """
-        self._lower_collective_utility()
-        self._lower_value_dependent_constraints()
 
     def lower_joint_normal_processes(self) -> Regime:
         """Return the regime the engine runs for its joint normal declarations.
@@ -534,6 +451,17 @@ class Regime:
         )
         return self.replace(states=states, functions=functions)
 
+    @property
+    def members(self) -> tuple[str, ...]:
+        """Names of the members whose individual values this regime carries.
+
+        Every regime has at least one member. A regime declared with a plain
+        utility function has the single member `"self"`; a household declared
+        with a `CollectiveUtility` has its `utilities` keys, in the order they
+        are written (its `member_axis`).
+        """
+        return ("self",) if self.member_axis is None else self.member_axis
+
     @cached_property
     def decomposed_functions(
         self,
@@ -541,12 +469,12 @@ class Regime:
         """`functions` with any `CollectiveUtility` taken apart.
 
         A `CollectiveUtility` under `"utility"` is replaced by one
-        `utility_<s>` entry per stakeholder, in the order the household
+        `utility_<s>` entry per member, in the order the household
         declares them — so the mapping an engine stage reads never holds a
         declaration object, whatever order the entries reached the regime in. A
-        stakeholder whose body is delegated keeps an entry the regime already
+        member whose body is delegated keeps an entry the regime already
         carries and is otherwise omitted. Model finalization merges any
-        model-level body and then validates that every stakeholder is complete.
+        model-level body and then validates that every member is complete.
 
         Deterministic and idempotent: a regime that declares no household is
         returned unchanged, and reading the view never changes the regime.
@@ -634,24 +562,21 @@ class Regime:
     def decomposed_constraints(
         self,
     ) -> MappingProxyType[FunctionName, ConstraintLike | Phased | None]:
-        """`constraints` with every `ValueDependentConstraint` taken apart.
+        """`constraints` in the form the engine evaluates.
 
-        A value-dependent constraint's predicate belongs to
-        `value_constraints` and its projections to `same_period_refs`, so what
-        this view holds is the ordinary constraints alone — the ones evaluated
-        before and independently of the action values.
-
-        Deterministic and idempotent, like `decomposed_functions`.
+        A post-decision lower bound whose bound is a function names the target
+        that publishes it. Deterministic and idempotent, like
+        `decomposed_functions`.
         """
         return decompose_constraints(self.constraints)
 
     def _lower_collective_utility(self) -> None:
-        """Derive stakeholder metadata from `functions["utility"]`."""
+        """Derive member metadata from `functions["utility"]`."""
         declaration = self.functions.get("utility")
         if not isinstance(declaration, CollectiveUtility):
             return
-        for stakeholder, utility in declaration.utilities.items():
-            entry = f"utility_{stakeholder}"
+        for member, utility in declaration.utilities.items():
+            entry = f"utility_{member}"
             # A delegated body may still arrive from the model level. Whether
             # one ever does is completeness, which the model reports once its
             # regimes are merged.
@@ -659,42 +584,14 @@ class Regime:
                 continue
             if entry in self.functions and self.functions[entry] is not utility:
                 raise RegimeInitializationError(
-                    f"The stakeholder {stakeholder!r} of this regime's "
+                    f"The member {member!r} of this regime's "
                     f"`CollectiveUtility` and the function {entry!r} would both "
-                    f"supply {stakeholder}'s utility. Declare it once, in the "
+                    f"supply {member}'s utility. Declare it once, in the "
                     "`CollectiveUtility`."
                 )
-        object.__setattr__(self, "stakeholders", tuple(declaration.utilities))
+        object.__setattr__(self, "member_axis", tuple(declaration.utilities))
         if declaration.objective is not None:
             object.__setattr__(self, "pareto_objective", declaration.objective)
-
-    def _lower_value_dependent_constraints(self) -> None:
-        """Derive predicates and references from value-dependent constraints."""
-        declarations = {
-            name: constraint
-            for name, constraint in self.constraints.items()
-            if isinstance(constraint, ValueDependentConstraint)
-        }
-        if not declarations:
-            return
-        value_constraints: dict[FunctionName, UserFunction] = {}
-        same_period_refs: dict[str, ProjectedRegimeValue] = {}
-        for name, declaration in declarations.items():
-            value_constraints[name] = declaration.predicate
-            for ref_name, reference in declaration.references.items():
-                existing = same_period_refs.get(ref_name)
-                if existing is not None and existing != reference:
-                    raise RegimeInitializationError(
-                        f"Two constraints of this regime read a reference value "
-                        f"named {ref_name!r} but declare different references "
-                        f"for it:\n  {existing}\n  {reference}\n"
-                        "One name is one reference; rename one of them."
-                    )
-                same_period_refs[ref_name] = reference
-        object.__setattr__(
-            self, "value_constraints", MappingProxyType(value_constraints)
-        )
-        object.__setattr__(self, "same_period_refs", MappingProxyType(same_period_refs))
 
     def _fail_if_egm_solver_has_no_margin_declaration(self) -> None:
         if self._accepts_margin_solver:
@@ -909,7 +806,7 @@ class Regime:
 
         Raises:
             RegimeInitializationError: If the engine mapping rewrites a
-                stakeholder's declared utility, replaces a declaration object,
+                member's declared utility, replaces a declaration object,
                 or does not reproduce what the resulting regime decomposes to.
         """
         declaration = self.functions.get("utility")
@@ -941,8 +838,8 @@ class Regime:
             return self.replace(functions=engine_functions, **other_slots)
 
         declared_bodies = {
-            f"utility_{stakeholder}": body
-            for stakeholder, body in declaration.utilities.items()
+            f"utility_{member}": body
+            for member, body in declaration.utilities.items()
             if body is not None
         }
         overlay: dict[FunctionName, UserFunction | Phased | None] = {}
@@ -958,7 +855,7 @@ class Regime:
                     raise RegimeInitializationError(
                         f"The engine mapping supplies a different body for "
                         f"{name!r}, which this regime's `CollectiveUtility` "
-                        f"declares. A stakeholder's utility is hers to declare."
+                        f"declares. A member's utility is hers to declare."
                     )
                 continue
             overlay[name] = func
@@ -986,12 +883,11 @@ class Regime:
     def replace(self, **kwargs: Unpack[RegimeReplacement]) -> Regime:
         """Replace the attributes of the regime.
 
-        Replacing a slot that carries a `CollectiveUtility` or
-        `ValueDependentConstraint` replaces the declaration itself, and the
-        stakeholders and value constraints are derived again from what the new
-        slot says. `stakeholders`, `pareto_objective`, `value_constraints` and
-        `same_period_refs` are those derived values, so naming one here is an
-        error: they are read off a regime, never written to it.
+        Replacing a slot that carries a `CollectiveUtility` replaces the
+        declaration itself, and the members are derived again from what the
+        new slot says. `members`, `member_axis` and `pareto_objective` are those
+        derived values, so naming one here is an error: they are read off a
+        regime, never written to it.
 
         Args:
             **kwargs: Keyword arguments to replace the attributes of the regime.
@@ -1011,16 +907,16 @@ class Regime:
 def decompose_functions(
     functions: Mapping[FunctionName, FunctionEntry],
 ) -> Mapping[FunctionName, UserFunction | Phased | None]:
-    """Replace a `CollectiveUtility` by one utility entry per stakeholder.
+    """Replace a `CollectiveUtility` by one utility entry per member.
 
     Args:
         functions: A regime's `functions` as declared.
 
     Returns:
         The same mapping with any `CollectiveUtility` under `"utility"`
-        replaced by one `utility_<s>` entry per stakeholder, emitted in the
+        replaced by one `utility_<s>` entry per member, emitted in the
         order the household declares them so that the result does not depend on
-        the order the entries reached the regime in. A stakeholder whose body
+        the order the entries reached the regime in. A member whose body
         is delegated keeps the entry the mapping already carries. A mapping
         declaring no household is returned unchanged, which makes the
         transformation idempotent.
@@ -1028,16 +924,14 @@ def decompose_functions(
     declaration = functions.get("utility")
     if not isinstance(declaration, CollectiveUtility):
         return cast("Mapping[FunctionName, UserFunction | Phased | None]", functions)
-    stakeholder_entries = {
-        f"utility_{stakeholder}" for stakeholder in declaration.utilities
-    }
+    member_entries = {f"utility_{member}" for member in declaration.utilities}
     decomposed: dict[FunctionName, UserFunction | Phased | None] = {
         name: cast("UserFunction | Phased | None", func)
         for name, func in functions.items()
-        if name != "utility" and name not in stakeholder_entries
+        if name != "utility" and name not in member_entries
     }
-    for stakeholder, utility in declaration.utilities.items():
-        entry = f"utility_{stakeholder}"
+    for member, utility in declaration.utilities.items():
+        entry = f"utility_{member}"
         if utility is None:
             # A delegated body that never arrived leaves no entry at all, so
             # completeness reports it by name when the model finalizes.
@@ -1053,16 +947,14 @@ def decompose_functions(
 def decompose_constraints(
     constraints: Mapping[FunctionName, ConstraintEntry],
 ) -> MappingProxyType[FunctionName, ConstraintLike | Phased | None]:
-    """Drop the value-dependent declarations from a regime's constraints.
+    """Return a regime's constraints in the form the engine evaluates.
 
     Args:
         constraints: A regime's `constraints` as declared.
 
     Returns:
-        The ordinary constraints alone — the ones evaluated before and
-        independently of the action values. A value-dependent constraint's
-        predicate belongs to `value_constraints` and its projections to
-        `same_period_refs`, so neither appears here.
+        The same constraints, with every post-decision lower bound whose bound
+        is a function naming the target `<name>_lower` that publishes it.
     """
     return MappingProxyType(
         {
@@ -1073,7 +965,6 @@ def decompose_constraints(
                 else cast("ConstraintLike | Phased | None", constraint)
             )
             for name, constraint in constraints.items()
-            if not isinstance(constraint, ValueDependentConstraint)
         }
     )
 

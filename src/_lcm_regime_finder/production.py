@@ -172,7 +172,8 @@ def original_cost(declarations, domains):
     def size(did):
         return 1 if domains[did].get('solve_axis') is False else domains[did]['size']
     cells = declarations['cells']
-    states = [prod(size(d) for d in c['states'].values()) for c in cells]
+    # A collective regime stores one value per member.
+    states = [prod(size(d) for d in c['states'].values()) * (len(c.get('member_axis') or ()) or 1) for c in cells]
     actions = [prod(size(d) for d in c['actions'].values()) for c in cells]
     return {'work': sum(s * a for s, a in zip(states, actions, strict=True)), 'storage': sum(states),
             'clarity': len({c['regime'] for c in cells})}
@@ -240,7 +241,10 @@ def analyze_production(original, *, facts_backend, limits=None, recommendation=N
     phase_started = time.perf_counter()
     try:
         layouts = search_layouts(declarations, metadata.facts, metadata.limits, metadata.guard)
-    except (TimeoutError, NotImplementedError, ValueError) as exc:
+    except NotImplementedError as exc:
+        # A layout the search cannot price; its message says why to the user.
+        layouts, error = None, str(exc)
+    except (TimeoutError, ValueError) as exc:
         layouts, error = None, type(exc).__name__ + ': ' + str(exc)
     else:
         error = None

@@ -41,6 +41,21 @@ class _ConsumerAddressInputs(TypedDict):
     path: tuple[str | int, ...]
 
 
+class _ArtifactAddressOverrides(TypedDict, total=False):
+    kind: ValueArtifactKind
+    period: int
+    regime: RegimeName
+    target_regime: RegimeName | None
+
+
+class _ConsumerAddressOverrides(TypedDict, total=False):
+    source_period: int
+    source_regime: RegimeName
+    core_key: str
+    channel: ValueInputChannel
+    path: tuple[str | int, ...]
+
+
 def _mesh() -> jax.sharding.Mesh:
     return jax.sharding.Mesh(np.asarray(jax.devices()), ("device",))
 
@@ -108,7 +123,7 @@ def test_aligned_local_validates_and_returns_the_identical_array() -> None:
 
 def test_copy_explicitly_places_value_in_the_source_layout() -> None:
     stored = _stored_value()
-    source_sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    source_sharding = jax.sharding.make_single_device_sharding(jax.devices()[0])
     transfer = resolve_value_transfer(
         target=_target(),
         source=_source(),
@@ -189,7 +204,9 @@ def test_addresses_are_immutable_and_same_artifact_can_feed_multiple_paths() -> 
         ({"target_regime": "working"}, "cannot name"),
     ],
 )
-def test_regime_value_address_fails_closed(*, kwargs, message) -> None:
+def test_regime_value_address_fails_closed(
+    *, kwargs: _ArtifactAddressOverrides, message: str
+) -> None:
     values: _ArtifactAddressInputs = {
         "kind": ValueArtifactKind.REGIME_VALUE,
         "period": 3,
@@ -219,7 +236,12 @@ def test_gated_continuation_requires_an_edge_target() -> None:
         ({"path": (-1,)}, ValueError, "negative index"),
     ],
 )
-def test_consumer_address_fails_closed(*, replacement, error, message) -> None:
+def test_consumer_address_fails_closed(
+    *,
+    replacement: _ConsumerAddressOverrides,
+    error: type[TypeError | ValueError],
+    message: str,
+) -> None:
     kwargs: _ConsumerAddressInputs = {
         "source_period": 2,
         "source_regime": "working",
@@ -259,7 +281,7 @@ def test_resolver_requires_a_concrete_sharding() -> None:
 
 def test_resolver_rejects_misclassified_or_incompatible_layouts() -> None:
     stored = _stored_value()
-    different = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    different = jax.sharding.make_single_device_sharding(jax.devices()[0])
     with pytest.raises(
         ValueError, match="is a copy_to_source_layout, not a aligned_local"
     ):
@@ -301,7 +323,9 @@ def test_resolver_rejects_misclassified_or_incompatible_layouts() -> None:
         (jnp.zeros((4,), dtype=jnp.int32), TypeError, "dtype"),
     ],
 )
-def test_apply_rejects_wrong_stored_metadata(*, value, error, message) -> None:
+def test_apply_rejects_wrong_stored_metadata(
+    *, value: jax.Array, error: type[TypeError | ValueError], message: str
+) -> None:
     transfer = _resolve_aligned()
 
     with pytest.raises(error, match=message):
@@ -313,7 +337,7 @@ def test_apply_rejects_wrong_stored_sharding() -> None:
     transfer = _resolve_aligned(value=stored)
     wrong = jax.device_put(
         jnp.arange(4, dtype=jnp.float32),
-        jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+        jax.sharding.make_single_device_sharding(jax.devices()[0]),
     )
 
     with pytest.raises(ValueError, match="stored transfer value has sharding"):
@@ -402,7 +426,7 @@ def test_resolver_rejects_incoherent_source_target_coordinates(
 
 def test_plan_rebuilds_nested_mappings_and_tuples_without_mutation() -> None:
     stored = _stored_value()
-    destination = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    destination = jax.sharding.make_single_device_sharding(jax.devices()[0])
     working = (stored,)
     inner = MappingProxyType({"unused": jnp.zeros(()), "working": working})
     arguments = MappingProxyType(
@@ -462,7 +486,7 @@ def _dataclass_plan_result[Breakpoints, Policy](
         source=_source(path=path),
         kind=ValueTransferKind.COPY_TO_SOURCE_LAYOUT,
         stored_template=stored,
-        source_sharding=jax.sharding.SingleDeviceSharding(jax.devices()[0]),
+        source_sharding=jax.sharding.make_single_device_sharding(jax.devices()[0]),
     )
     arguments = MappingProxyType(
         {
@@ -523,7 +547,7 @@ def test_a_dataclass_rebuild_moves_the_addressed_field_to_the_source_layout() ->
     assert (
         rebuilt.values.sharding,
         payload.values is stored,
-    ) == (jax.sharding.SingleDeviceSharding(jax.devices()[0]), True)
+    ) == (jax.sharding.make_single_device_sharding(jax.devices()[0]), True)
 
 
 def test_plan_rejects_a_dataclass_path_segment_that_is_not_a_field() -> None:

@@ -100,9 +100,7 @@ def dissolution(
         "wage": jnp.array([1.0, 2.0, 3.0]),
         "age": jnp.zeros(3),
         "regime_id": jnp.full(3, model.regime_names_to_ids["married"], dtype=jnp.int32),
-        "own_stakeholder": jnp.full(
-            3, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
-        ),
+        "own_member": jnp.full(3, model.member_names_to_ids["f"], dtype=jnp.int32),
     }
     return model, get_params(), initial_conditions
 

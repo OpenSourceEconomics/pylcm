@@ -36,7 +36,7 @@ def _read_value(
 
 
 def _inputs() -> tuple[MaterializedCoreProgram, ResolvedValueTransfer]:
-    sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    sharding = jax.sharding.make_single_device_sharding(jax.devices()[0])
     value = jax.ShapeDtypeStruct((3,), jnp.float32, sharding=sharding)
     target = ValueArtifactAddress(
         kind=ValueArtifactKind.REGIME_VALUE, period=1, regime="future"

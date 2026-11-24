@@ -30,7 +30,6 @@ from _lcm.typing import (
     FlatParams,
     HostArray,
     ParamsLeaf,
-    PeriodToRegimeToParticipationSurfaces,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
     RegimeName,
@@ -97,8 +96,6 @@ class OwnedSolutionView:
     """The solution authority bound to this solve."""
     generation: CanonicalModelGeneration | None = None
     """Strong ownership of the actual producing programs, including after eviction."""
-    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType({})
-    """The solve's stored participation surfaces, which participation replay reads."""
     component_values: RetainedComponentValues | None = None
     """The host retention behind a block-major result's values, else `None`.
 
@@ -400,9 +397,6 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         MappingProxyType(dict(authority.artifacts)),
     )
     object.__setattr__(
-        result, "_participation_surfaces", internal_result.participation_surfaces
-    )
-    object.__setattr__(
         result,
         "_engine_view",
         OwnedSolutionView(
@@ -428,7 +422,6 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
                 else MappingProxyType(replay)
             ),
             authority=authority,
-            participation_surfaces=internal_result.participation_surfaces,
             component_values=component_values,
             generation=generation,
         ),
@@ -539,9 +532,7 @@ def _update_digest_value(
 def _canonical_value_axis_names(*, regime: Regime) -> tuple[str, ...]:
     """Return the public names of the axes in one canonical stored value."""
     state_axes = tuple(regime.solution.state_names)
-    return (
-        (*state_axes, "stakeholder") if regime.stakeholders is not None else state_axes
-    )
+    return (*state_axes, "member") if regime.member_axis is not None else state_axes
 
 
 def _value_axes(
@@ -562,18 +553,18 @@ def _value_axes(
         states = {**states, **period_axes.get(period, {})}
     axes = []
     for index, name in enumerate(axis_names):
-        stakeholder = regime.stakeholders is not None and index == len(axis_names) - 1
-        if stakeholder:
-            if regime.stakeholders is None:
-                raise ValueError("A stakeholder value axis requires stakeholder names.")
-            coordinates = regime.stakeholders
+        member = regime.member_axis is not None and index == len(axis_names) - 1
+        if member:
+            if regime.member_axis is None:
+                raise ValueError("A member value axis requires member names.")
+            coordinates = regime.member_axis
         else:
             coordinates = tuple(np.asarray(states[name]).tolist())
         axes.append(
             AxisDescriptor(
                 name=name,
                 length=len(coordinates),
-                role=AxisRole.STAKEHOLDER if stakeholder else AxisRole.STATE,
+                role=AxisRole.MEMBER if member else AxisRole.STATE,
                 coordinates=coordinates,
             )
         )

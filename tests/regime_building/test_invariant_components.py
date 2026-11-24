@@ -50,9 +50,6 @@ from tests.regime_building.test_carried_state_through_gated_self_loop import (
 from tests.regime_building.test_carried_state_through_gated_self_loop import (
     _src_transition,
 )
-from tests.regime_building.test_same_period_ref_period_axes import (
-    _make_model as _make_same_period_ref_model,
-)
 from tests.solution.test_fixed_component_markov import (
     _interleaved_kind_health,
 )
@@ -319,12 +316,12 @@ def _pref_type(model: Model) -> InvariantComponent:
 
 
 @pytest.mark.parametrize("phase", ["solve", "simulate"])
-def test_identity_law_with_typed_terminal_is_eligible(phase):
+def test_identity_law_with_typed_terminal_is_eligible(phase: str) -> None:
     """A type preserved on every edge, terminal included, is eligible in each phase."""
     assert getattr(_pref_type(_model()), phase).eligible
 
 
-def test_identity_chain_records_every_preserving_edge():
+def test_identity_chain_records_every_preserving_edge() -> None:
     """Each solved `work` period hands the type on to both of its targets."""
     assert _pref_type(_model()).solve.preserving_edges == (
         RegimeEdge(period=0, source="work", target="dead"),
@@ -335,7 +332,7 @@ def test_identity_chain_records_every_preserving_edge():
     )
 
 
-def test_carrying_periods_follow_the_regime_coverage():
+def test_carrying_periods_follow_the_regime_coverage() -> None:
     """`work` carries the type at ages 0-2, and the typed `dead` at every age."""
     assert dict(_pref_type(_model()).solve.carrying_periods) == {
         "dead": (0, 1, 2, 3),
@@ -343,7 +340,7 @@ def test_carrying_periods_follow_the_regime_coverage():
     }
 
 
-def test_canonical_code_mapping_keeps_declared_labels():
+def test_canonical_code_mapping_keeps_declared_labels() -> None:
     """Codes and labels are the state grid's, in declaration order."""
     component = _pref_type(_model())
     assert (component.codes, component.labels) == (
@@ -352,7 +349,7 @@ def test_canonical_code_mapping_keeps_declared_labels():
     )
 
 
-def test_type_free_terminal_is_one_shared_dependency():
+def test_type_free_terminal_is_one_shared_dependency() -> None:
     """A bequest that ignores the type keeps `dead` as one shared, untyped node."""
     component = _pref_type(_model(terminal_reads_type=False))
     assert (
@@ -370,7 +367,7 @@ def test_type_free_terminal_is_one_shared_dependency():
     )
 
 
-def test_typed_terminal_keeps_its_type_specific_view():
+def test_typed_terminal_keeps_its_type_specific_view() -> None:
     """A type-dependent `dead` is a carrier read through preserving edges."""
     component = _pref_type(_model())
     assert (
@@ -382,7 +379,7 @@ def test_typed_terminal_keeps_its_type_specific_view():
     )
 
 
-def test_type_dependent_preferences_and_other_transitions_stay_eligible():
+def test_type_dependent_preferences_and_other_transitions_stay_eligible() -> None:
     """Type-dependent utility and health transitions do not couple the types."""
     assert _pref_type(_model(typed_health=True)).solve.eligible
 
@@ -401,7 +398,9 @@ _PER_TARGET_RESET = {"work": _reset_pref_type, "dead": fixed_transition("pref_ty
         ),
     ],
 )
-def test_state_without_identity_law_is_no_candidate(pref_law):
+def test_state_without_identity_law_is_no_candidate(
+    pref_law: StateTransitionEntry,
+) -> None:
     """Values never establish invariance, not even a probability-one diagonal."""
     assert "pref_type" not in _components(_model(pref_law=pref_law))
 
@@ -413,7 +412,9 @@ def test_state_without_identity_law_is_no_candidate(pref_law):
         pytest.param(_rotate_pref_type, id="cross-type"),
     ],
 )
-def test_identity_law_on_some_edges_only_is_refused(work_law):
+def test_identity_law_on_some_edges_only_is_refused(
+    work_law: Callable[[DiscreteState], DiscreteState],
+) -> None:
     """A reset or cross-type read on one carrier edge refuses the identity elsewhere."""
     pref_law = {"work": work_law, "dead": fixed_transition("pref_type")}
     refusals = _pref_type(_model(pref_law=pref_law)).solve.refusals
@@ -424,7 +425,9 @@ def test_identity_law_on_some_edges_only_is_refused(work_law):
 
 
 @pytest.mark.parametrize("drop_and_reenter", [False, True])
-def test_entry_into_a_carrier_without_binding_is_refused(drop_and_reenter):
+def test_entry_into_a_carrier_without_binding_is_refused(
+    *, drop_and_reenter: bool
+) -> None:
     """A type-free regime entering a carrier would read every type's value."""
     refusals = _pref_type(
         _entry_model(drop_and_reenter=drop_and_reenter)
@@ -432,7 +435,7 @@ def test_entry_into_a_carrier_without_binding_is_refused(drop_and_reenter):
     assert any("enters" in refusal for refusal in refusals)
 
 
-def test_phase_mismatch_is_analysed_per_phase():
+def test_phase_mismatch_is_analysed_per_phase() -> None:
     """An identity solve law with a resetting simulate law is solve-only eligible."""
     component = _pref_type(
         _model(
@@ -444,12 +447,12 @@ def test_phase_mismatch_is_analysed_per_phase():
     assert (component.solve.eligible, component.simulate.eligible) == (True, False)
 
 
-def test_initial_conditions_roots_are_preserved():
+def test_initial_conditions_roots_are_preserved() -> None:
     """Every admissible start whose regime carries the type is a simulate root."""
     assert _pref_type(_model()).initial_nodes == ((0, "dead"), (0, "work"))
 
 
-def test_generated_fixed_component_maps_groups_to_original_codes():
+def test_generated_fixed_component_maps_groups_to_original_codes() -> None:
     """The interleaved group 1 is original codes 1 and 3, not a renumbered slice."""
     model = _fixed_component_model(
         factored=True, fixed_component=(0, 1, 0, 1), law=_interleaved_kind_health
@@ -462,19 +465,12 @@ def test_generated_fixed_component_maps_groups_to_original_codes():
     ) == ("kind_health", ((0, 2), (1, 3)), True)
 
 
-def test_eligibility_does_not_depend_on_sharded_states():
+def test_eligibility_does_not_depend_on_sharded_states() -> None:
     """Sharding the type changes placement, not the structural analysis."""
     assert _pref_type(_model(sharded_states=("pref_type",))) == _pref_type(_model())
 
 
-def test_same_period_reference_is_an_unsupported_channel():
-    """A same-period value reference touching a carrier refuses the coordinate."""
-    model = _make_same_period_ref_model(later_ceiling=10.0, initial_nodes={0: "couple"})
-    refusals = _components(model)["wealth"].solve.refusals
-    assert any("same-period reference" in refusal for refusal in refusals)
-
-
-def test_gated_edge_is_an_unsupported_channel():
+def test_gated_edge_is_an_unsupported_channel() -> None:
     """A gated edge touching a carrier refuses the coordinate."""
     model = Model(
         regimes=_make_gated_self_loop_regimes(),
@@ -494,14 +490,20 @@ class _GatedRegimeId:
     src_fallback: ScalarInt
 
 
-def test_continuous_fixed_state_has_no_code_mapping():
+def test_continuous_fixed_state_has_no_code_mapping() -> None:
     """Blocking needs codes, so a continuous identity-law state is refused."""
-    model = _make_same_period_ref_model(later_ceiling=10.0, initial_nodes={0: "couple"})
-    refusals = _components(model)["wealth"].solve.refusals
+    model = Model(
+        regimes=_make_gated_self_loop_regimes(),
+        edges={"src": _src_transition()},
+        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
+        regime_id_class=_GatedRegimeId,
+        initial_nodes={0: "src"},
+    )
+    refusals = _components(model)["wage"].solve.refusals
     assert any("discrete grid" in refusal for refusal in refusals)
 
 
-def test_eligible_explicit_blocking_passes():
+def test_eligible_explicit_blocking_passes() -> None:
     """A width-one block of an eligible type is accepted before dispatch."""
     fail_if_invariant_blocking_is_unsafe(
         components=_components(_model()), block_widths={"pref_type": 1}, phase="solve"
@@ -523,8 +525,8 @@ def test_eligible_explicit_blocking_passes():
     ],
 )
 def test_unsafe_explicit_blocking_fails_before_dispatch(
-    *, model_factory: Callable[[], Model], block_widths, fragment
-):
+    *, model_factory: Callable[[], Model], block_widths: dict[str, int], fragment: str
+) -> None:
     """An unsafe request raises naming the failed condition."""
     with pytest.raises(ExecutionPlanningError, match=fragment):
         fail_if_invariant_blocking_is_unsafe(
@@ -534,7 +536,7 @@ def test_unsafe_explicit_blocking_fails_before_dispatch(
         )
 
 
-def test_unsafe_explicit_blocking_names_a_remedy():
+def test_unsafe_explicit_blocking_names_a_remedy() -> None:
     """The refusal tells the caller how to proceed without blocking."""
     with pytest.raises(ExecutionPlanningError, match="Remove"):
         fail_if_invariant_blocking_is_unsafe(
@@ -544,7 +546,7 @@ def test_unsafe_explicit_blocking_names_a_remedy():
         )
 
 
-def test_analysis_leaves_the_solution_unchanged():
+def test_analysis_leaves_the_solution_unchanged() -> None:
     """Analysing a model does not alter what it solves to."""
     params = {"discount_factor": 0.95}
     model = _model()

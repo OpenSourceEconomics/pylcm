@@ -24,8 +24,8 @@ If you have not solved the tiny model yet, start with
   categories that are combinations of characteristics.
 - [Transitions](transitions.ipynb) covers deterministic, stochastic, joint, and regime
   transitions.
-- [Households and value-dependent choice](collective_regimes.md) declares stakeholders,
-  participation, and value-gated transitions.
+- [Households and value-dependent choice](collective_regimes.md) declares members,
+  formation and dissolution as exits, and gated transitions.
 - [Age-specialized functions and grids](age_specialized.md) changes declarations over
   the lifecycle.
 - [Continuous stochastic processes](continuous_stochastic_processes.md) discretizes and

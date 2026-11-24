@@ -22,11 +22,14 @@ documentation and tests.
 | [`lcm.PeriodCandidate`](model_and_regime.md#api-period-candidate-lowering)                           | Exact primary ranked-width request                |
 | [`lcm.LoweredPeriodCandidate`](model_and_regime.md#api-period-candidate-lowering)                    | Immutable descriptors and raw unoptimized IR      |
 | [`lcm.Regime`](model_and_regime.md#api-regime)                                                       | General regime                                    |
-| [`lcm.Exit`](model_and_regime.md#api-current-exits)                                                  | Named current-period move                         |
+| [`lcm.Exit`](model_and_regime.md#api-current-exits)                                                  | The regime's current-period move                  |
 | [`lcm.ExitTarget`](model_and_regime.md#api-current-exits)                                            | Mapped destination policy and adjustment          |
 | [`lcm.Consent`](model_and_regime.md#api-current-exits)                                               | Strict formation consent                          |
 | [`lcm.Counterparty`](model_and_regime.md#api-current-exits)                                          | Counterparty Raw policy context                   |
-| [`lcm.RuleResult`](model_and_regime.md#api-current-exits)                                            | Custom rule's stable alternative ID               |
+| [`lcm.Unilateral`](model_and_regime.md#api-current-exits)                                            | Dissolution unless every member is willing        |
+| [`lcm.Renegotiate`](model_and_regime.md#api-current-exits)                                           | Directional discrete adjustment before separation |
+| [`lcm.MutualConsent`](model_and_regime.md#api-current-exits)                                         | Dissolution only if every member is unwilling     |
+| [`lcm.Settlement`](model_and_regime.md#api-current-exits)                                            | Division shifted before a mutual-consent exit     |
 | [`lcm.ExecutionConfig`](runtime_and_results.md#execution-configuration)                              | Devices, budget, sharded states, widths, donation |
 | [`lcm.InvariantBlockSchedule`](runtime_and_results.md#execution-configuration)                       | Period- or block-major invariant schedule         |
 | [`lcm.ConsumptionSavingsRegime`](consumption_savings.md#api-consumption-savings-regime)              | One liquid margin                                 |
@@ -84,36 +87,34 @@ documentation and tests.
 
 ## Transitions, phases, and structured declarations
 
-| Public name                                                                    | Canonical documentation                  |
-| ------------------------------------------------------------------------------ | ---------------------------------------- |
-| [`lcm.StochasticTransition`](transitions.md#api-state-transitions)             | Stochastic transition wrapper            |
-| [`lcm.AdditiveShockTransition`](transitions.md#api-additive-shock-transitions) | Additive continuous-state shock law      |
-| [`lcm.Transition`](transitions.md#api-regime-transitions)                      | Graph edges with their regime law        |
-| [`lcm.ParticipationCheck`](model_and_regime.md#api-participation-checks)       | Incoming edge's participation rule       |
-| [`lcm.ParticipationRead`](model_and_regime.md#api-participation-reads)         | Typed projected participation comparison |
-| [`lcm.JointTransition`](transitions.md#api-joint-transitions)                  | Shared-draw joint law                    |
-| [`lcm.ByAge`](transitions.md#api-dated-regime-transitions)                     | Numerical laws by exact source age       |
-| [`lcm.AgeRange`](transitions.md#api-dated-regime-transitions)                  | Half-open age interval                   |
-| [`lcm.ByPeriod`](transitions.md#api-dated-regime-transitions)                  | Numerical laws by source period          |
-| [`lcm.PeriodRange`](transitions.md#api-dated-regime-transitions)               | Half-open period interval                |
-| [`lcm.Periods`](transitions.md#api-dated-regime-transitions)                   | Explicit source periods                  |
-| [`lcm.DeterministicTransition`](transitions.md#api-state-transitions)          | Deterministic transition wrapper         |
-| [`lcm.deterministic_transition`](transitions.md#api-state-transitions)         | Deterministic transition decorator       |
-| [`lcm.stochastic_transition`](transitions.md#api-state-transitions)            | Stochastic transition decorator          |
-| [`lcm.fixed_transition`](transitions.md#api-state-transitions)                 | Identity law                             |
-| [`lcm.AgeSpecializedFunction`](transitions.md#api-age-specialization)          | Age-varying function                     |
-| [`lcm.AgeSpecializedGrid`](transitions.md#api-age-specialization)              | Age-varying grid                         |
-| [`lcm.PeriodSpecializedFunction`](../user_guide/period_time.md)                | Period-varying function                  |
-| [`lcm.PeriodSpecializedGrid`](../user_guide/period_time.md)                    | Period-varying grid                      |
-| [`lcm.Phased`](transitions.md#api-solve-and-simulation-phases)                 | Solve/simulate variants                  |
-| [`lcm.Condition`](conditions.md)                                               | Structured Boolean expression            |
-| [`lcm.ref`](conditions.md#api-condition-syntax)                                | Named reference                          |
-| [`lcm.implies`](conditions.md#api-condition-syntax)                            | Conditional requirement                  |
-| [`lcm.case_boundary`](case_pieces.md#api-boundary-predicate)                   | Structured case boundary                 |
-| [`lcm.piece`](case_pieces.md#api-piece-formulas)                               | Piece decorator                          |
-| [`lcm.smooth_helper`](case_pieces.md#api-piece-formulas)                       | Reviewed smooth-helper attestation       |
-| [`lcm.affine_breakpoint`](piecewise_affine.md#api-affine-breakpoint)           | Schedule breakpoint                      |
-| [`lcm.piecewise_affine`](piecewise_affine.md)                                  | Piecewise-affine schedule                |
+| Public name                                                                    | Canonical documentation             |
+| ------------------------------------------------------------------------------ | ----------------------------------- |
+| [`lcm.StochasticTransition`](transitions.md#api-state-transitions)             | Stochastic transition wrapper       |
+| [`lcm.AdditiveShockTransition`](transitions.md#api-additive-shock-transitions) | Additive continuous-state shock law |
+| [`lcm.Transition`](transitions.md#api-regime-transitions)                      | Graph edges with their regime law   |
+| [`lcm.JointTransition`](transitions.md#api-joint-transitions)                  | Shared-draw joint law               |
+| [`lcm.ByAge`](transitions.md#api-dated-regime-transitions)                     | Numerical laws by exact source age  |
+| [`lcm.AgeRange`](transitions.md#api-dated-regime-transitions)                  | Half-open age interval              |
+| [`lcm.ByPeriod`](transitions.md#api-dated-regime-transitions)                  | Numerical laws by source period     |
+| [`lcm.PeriodRange`](transitions.md#api-dated-regime-transitions)               | Half-open period interval           |
+| [`lcm.Periods`](transitions.md#api-dated-regime-transitions)                   | Explicit source periods             |
+| [`lcm.DeterministicTransition`](transitions.md#api-state-transitions)          | Deterministic transition wrapper    |
+| [`lcm.deterministic_transition`](transitions.md#api-state-transitions)         | Deterministic transition decorator  |
+| [`lcm.stochastic_transition`](transitions.md#api-state-transitions)            | Stochastic transition decorator     |
+| [`lcm.fixed_transition`](transitions.md#api-state-transitions)                 | Identity law                        |
+| [`lcm.AgeSpecializedFunction`](transitions.md#api-age-specialization)          | Age-varying function                |
+| [`lcm.AgeSpecializedGrid`](transitions.md#api-age-specialization)              | Age-varying grid                    |
+| [`lcm.PeriodSpecializedFunction`](../user_guide/period_time.md)                | Period-varying function             |
+| [`lcm.PeriodSpecializedGrid`](../user_guide/period_time.md)                    | Period-varying grid                 |
+| [`lcm.Phased`](transitions.md#api-solve-and-simulation-phases)                 | Solve/simulate variants             |
+| [`lcm.Condition`](conditions.md)                                               | Structured Boolean expression       |
+| [`lcm.ref`](conditions.md#api-condition-syntax)                                | Named reference                     |
+| [`lcm.implies`](conditions.md#api-condition-syntax)                            | Conditional requirement             |
+| [`lcm.case_boundary`](case_pieces.md#api-boundary-predicate)                   | Structured case boundary            |
+| [`lcm.piece`](case_pieces.md#api-piece-formulas)                               | Piece decorator                     |
+| [`lcm.smooth_helper`](case_pieces.md#api-piece-formulas)                       | Reviewed smooth-helper attestation  |
+| [`lcm.affine_breakpoint`](piecewise_affine.md#api-affine-breakpoint)           | Schedule breakpoint                 |
+| [`lcm.piecewise_affine`](piecewise_affine.md)                                  | Piecewise-affine schedule           |
 
 ## Temporal parameters
 
@@ -223,14 +224,13 @@ surfaces remain outside that top-level namespace:
 
 ## Collective regimes and value-dependent choice
 
-| Public name                                                                            | Canonical documentation                                  |
-| -------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| [`lcm.CollectiveUtility`](collective_regimes.md#api-collective-utility)                | One utility per stakeholder, one action                  |
-| [`lcm.ParetoObjective`](collective_regimes.md#api-pareto-objective)                    | Weighted household objective                             |
-| [`lcm.ValueDependentConstraint`](collective_regimes.md#api-value-dependent-constraint) | Constraint that reads stakeholder values                 |
-| [`lcm.Gate`](collective_regimes.md#api-gate)                                           | Value-dependent branch on the transition into one target |
-| [`lcm.StakeholderRoute`](collective_regimes.md#api-stakeholder-route)                  | One source stakeholder's route across it                 |
-| [`lcm.ProjectedRegimeValue`](collective_regimes.md#api-projected-regime-value)         | Another regime's value, projected                        |
+| Public name                                                                    | Canonical documentation                                  |
+| ------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| [`lcm.CollectiveUtility`](collective_regimes.md#api-collective-utility)        | One utility per member, one action                       |
+| [`lcm.ParetoObjective`](collective_regimes.md#api-pareto-objective)            | Weighted household objective                             |
+| [`lcm.Gate`](collective_regimes.md#api-gate)                                   | State-dependent branch on the transition into one target |
+| [`lcm.MemberRoute`](collective_regimes.md#api-member-route)                    | One source member's route across it                      |
+| [`lcm.ProjectedRegimeValue`](collective_regimes.md#api-projected-regime-value) | Another regime's value, projected                        |
 
 ## Solvers and configurations
 

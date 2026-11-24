@@ -227,9 +227,9 @@ The request is checked at model construction. It is refused, naming every reason
 - more than one state is named, or a width other than 1 is given;
 - the state is also in `sharded_states`, or no regime declares it;
 - the state's value can change, or a value read crosses its codes;
-- a non-terminal regime carrying it is not solved by `GridSearch`, declares taste
-  shocks, stakeholders, gated edges or same-period references, folds a process, reads a
-  gated-edge reference value, or carries the state on a non-discrete grid.
+- a non-terminal regime carrying it is not solved by `GridSearch`, is a collective
+  regime, declares taste shocks or gated edges, folds a process, reads a gated-edge
+  reference value, or carries the state on a non-discrete grid.
 
 A blocked regime-period cannot be captured or replayed with the period-replay tools.
 
@@ -362,9 +362,9 @@ of one, or an empty mapping, runs the ordinary route unchanged.
 The request is checked at model construction. It is refused, naming every reason, when:
 
 - it names a regime the model does not declare, or more devices than the model may use;
-- the regime is terminal, is not solved by `GridSearch`, declares taste shocks,
-  stakeholders, gated edges or same-period references, folds a process, or carries a
-  discrete sharded state;
+- the regime is terminal, is not solved by `GridSearch`, is a collective regime,
+  declares taste shocks or gated edges, folds a process, or carries a discrete sharded
+  state;
 - the action product has fewer than two actions or fewer actions than devices;
 - a fixed `action_product` width cuts the product into fewer blocks than devices.
 
@@ -397,12 +397,11 @@ states may include:
 - Carried states declared with a `LinSpacedGrid` simulation domain. Their solve
   imputation does not add a value-array dimension.
 
-Runtime state grids, other process families, mixed solvers, collective or gated routes,
-same-period references and taste shocks remain outside this route. Runtime action grids
-keep their ordinary GridSearch semantics. Process nodes retain the ordinary index-based
-continuation read; sharding does not enable process-aware off-grid interpolation.
-Additional continuous coordinates keep their named positions, so the sharded axis need
-not be trailing.
+Runtime state grids, other process families, mixed solvers, collective or gated routes
+and taste shocks remain outside this route. Runtime action grids keep their ordinary
+GridSearch semantics. Process nodes retain the ordinary index-based continuation read;
+sharding does not enable process-aware off-grid interpolation. Additional continuous
+coordinates keep their named positions, so the sharded axis need not be trailing.
 
 For example, a 24-point assets axis can use eight selected devices, with three assets
 coordinates on each device. Logical value-axis order stays unchanged. Interpolation
@@ -449,9 +448,11 @@ allocator. It takes one of three values:
 - `"device"`, the default: the budget is the smallest selected device's allocator pool
   limit, less `device_memory_headroom_fraction`. GPUs and TPUs report a pool limit, so
   there the planner picks the widest widths that fit. A CPU reports none, so on CPU the
-  default is unbudgeted. The default needs a preallocated pool, which is JAX's default:
-  without preallocation the allocator grows its pool in separate regions and the limit
-  does not promise one contiguous block. If you set
+  default is unbudgeted. A pool that may grow past its first region counts with that
+  region only, three quarters of what the device reports unless you fix the share with
+  `XLA_CLIENT_MEM_FRACTION`. The default needs a preallocated pool, which is JAX's
+  default: without preallocation the allocator grows its pool in separate regions and
+  the limit does not promise one contiguous block. If you set
   `XLA_PYTHON_CLIENT_PREALLOCATE=false` (to share a GPU on demand, say), pass an integer
   or `None`; the default is refused there unless
   `XLA_PYTHON_CLIENT_ALLOCATOR=cuda_async` is set. Processes sharing a GPU can instead

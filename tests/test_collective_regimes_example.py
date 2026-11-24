@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm.exits import RuleResult
+from lcm.exits import Unilateral
 from lcm.solver_api import ResultRetention
 from lcm_examples.collective_regimes import (
     get_dissolution_model,
@@ -14,8 +14,8 @@ from lcm_examples.collective_regimes import (
 from tests.conftest import DECIMAL_PRECISION
 
 
-def test_shared_decision_values_are_the_stakeholders_values_at_one_argmax():
-    """Both stakeholder values are read at the household's shared work choice."""
+def test_shared_decision_values_are_the_members_values_at_one_argmax() -> None:
+    """Both member values are read at the household's shared work choice."""
     model = get_shared_decision_model()
 
     solution = model.solve(params=get_params(), log_level="debug")
@@ -27,23 +27,25 @@ def test_shared_decision_values_are_the_stakeholders_values_at_one_argmax():
     )
 
 
-def test_participation_constraints_dissolve_only_the_middle_wage_cell():
-    """The source prices each actual route; dissolution pays the full outside value."""
+def test_participation_constraints_dissolve_only_the_middle_wage_cell() -> None:
+    """The source prices each actual route; dissolution pays the exit's cost."""
     model = get_dissolution_model()
     solution = model.solve(params=get_params(), log_level="debug")
 
-    # Work keeps wages one and three feasible for both partners. Wage two
-    # has no participating action and receives (5.5, 1), without subtracting
-    # the (0.5, 0.2) participation slack from either payoff.
+    # Work keeps wages one and three feasible for both partners. Wage two has
+    # no participating action, so the household's own exit moves both partners
+    # to their single regimes, (5.5, 1), and pays the divorce cost (0.5, 0.2):
+    # (5.0, 0.8).
     aaae(
         solution.values[0]["married"],
-        0.95 * np.array([[2.0, 1.0], [5.5, 1.0], [6.0, 3.0]]),
+        0.95 * np.array([[2.0, 1.0], [5.0, 0.8], [6.0, 3.0]]),
         decimal=DECIMAL_PRECISION,
     )
 
 
-def test_dissolution_routes_the_simulated_person_to_their_single_regime():
-    """The female cohort follows its own fallback route when participation fails."""
+def test_dissolution_routes_the_simulated_person_to_their_single_regime() -> None:
+    """The female cohort takes her own exit target when no household action is
+    feasible."""
     model = get_dissolution_model()
     solution = model.solve(
         params=get_params(),
@@ -60,9 +62,9 @@ def test_dissolution_routes_the_simulated_person_to_their_single_regime():
         # Every subject starts in the collective regime, so each one occupies a
         # household role from the first period on, and that role decides which
         # fallback a dissolving row takes.
-        "own_stakeholder": jnp.full(
+        "own_member": jnp.full(
             3,
-            model.stakeholder_names_to_ids["f"],
+            model.member_names_to_ids["f"],
             dtype=jnp.int32,
         ),
     }
@@ -85,8 +87,8 @@ def test_dissolution_routes_the_simulated_person_to_their_single_regime():
     )
 
 
-def test_participation_support_routes_without_retained_dissolution_artifacts():
-    """The participation policy's feasible set routes each original role directly."""
+def test_the_household_exit_routes_without_retained_dissolution_artifacts() -> None:
+    """The household's own exit routes each original role directly."""
     model = get_dissolution_model()
     params = get_params()
     solution = model.solve(
@@ -101,9 +103,7 @@ def test_participation_support_routes_without_retained_dissolution_artifacts():
             "regime_id": jnp.full(
                 3, model.regime_names_to_ids["married"], dtype=jnp.int32
             ),
-            "own_stakeholder": jnp.full(
-                3, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
-            ),
+            "own_member": jnp.full(3, model.member_names_to_ids["f"], dtype=jnp.int32),
         },
         seed=0,
         log_level="off",
@@ -115,26 +115,8 @@ def test_participation_support_routes_without_retained_dissolution_artifacts():
     )
 
 
-def test_participation_rule_preserves_a_zero_weight_members_veto():
-    """An infeasible or unwilling partner cannot be ignored in a shared choice."""
+def test_dissolution_follows_the_eckstein_keane_lifshitz_rule() -> None:
+    """Either partner can leave, and a partner exactly indifferent leaves."""
     model = get_dissolution_model()
-    rule = model.user_regimes["married_with_participation"].exits["dissolve"].rule
-    assert callable(rule)
-    cases = [
-        ([2.0, 2.0], [1.0, 1.0], {"f": 0.5, "m": 0.5}, 0),
-        ([0.5, 2.0], [100.0, 1.0], {"f": 0.0, "m": 1.0}, 1),
-        ([-np.inf, 2.0], [-np.inf, 1.0], {"f": 0.0, "m": 1.0}, 1),
-        ([0.0, 0.0], [1.0, 1.0], {"f": 0.5, "m": 0.5}, 2),
-    ]
-    for q_f, q_m, weights, expected in cases:
-        selected = rule(
-            Q_f=jnp.asarray(q_f),
-            Q_m=jnp.asarray(q_m),
-            exit_payoffs={"dissolve": {"f": jnp.asarray(1.5), "m": jnp.asarray(1.0)}},
-            alternative_ids=jnp.arange(3, dtype=jnp.int32),
-            pareto_weights={
-                name: jnp.asarray(value) for name, value in weights.items()
-            },
-        )
-        assert isinstance(selected, RuleResult)
-        assert int(selected.action) == expected
+    declaration = model.user_regimes["married_with_participation"].exit
+    assert getattr(declaration, "rule", None) == Unilateral(tie="leave")

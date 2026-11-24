@@ -16,7 +16,7 @@ from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.utils.containers import ensure_containers_are_immutable
-from lcm.collective import Gate, StakeholderRoute
+from lcm.collective import Gate, MemberRoute
 from lcm.typing import RegimeName, UserFunction
 
 
@@ -44,9 +44,9 @@ class GatedEdge:
 
     The construct that unlocks MIXED singleton/collective
     regime topologies: a singleton regime may reach a collective regime (mutual
-    consent marriage) and a collective regime may route per-stakeholder to
+    consent marriage) and a collective regime may route per-member to
     singleton regimes (dissolution) — but only THROUGH a declared gated edge. Direct
-    raw transitions between different-stakeholder regimes stay rejected.
+    raw transitions between different-member regimes stay rejected.
 
     A source regime's law carries `gated_edges` as a mapping of TARGET regime name
     to `GatedEdge`. **The key is always the GATE-OPEN target** — the regime a
@@ -55,14 +55,14 @@ class GatedEdge:
 
     A leg thus owns four facts about where its rows go, and simulation carries
     all four: the open branch's regime (the key) and role
-    (`StakeholderRoute.target_stakeholder`), and the closed branch's regime and role
-    (`fallback.regime` and `fallback.stakeholder`). A row's own role —
-    `initial_conditions["own_stakeholder"]`, published in the simulated frame —
+    (`MemberRoute.target_member`), and the closed branch's regime and role
+    (`fallback.regime` and `fallback.member`). A row's own role —
+    `initial_conditions["own_member"]`, published in the simulated frame —
     is what picks its leg, and it is updated to the branch's role as the row
     moves; a row landing in a singleton regime carries none.
 
     At the end of each period's solve, the engine folds, for
-    each declared edge and each source stakeholder `s`, a gated continuation
+    each declared edge and each source member `s`, a gated continuation
     object on the target regime's grid:
 
         Wbar^s(x) = jnp.where(gate(x), V_target^{leg_s}(x), V_fallback^s(pi_s(x)))
@@ -75,8 +75,8 @@ class GatedEdge:
       target fold's engine context (`period` / `age`); it never reads a value
       (`lcm.Gate`). Stochastic gates — a gate returning a probability in
       `(0, 1)` rather than a boolean — are not supported.
-    - `legs` — one `StakeholderRoute` per SOURCE stakeholder (keyed by source
-      stakeholder name; a singleton source declares exactly one leg under any
+    - `legs` — one `MemberRoute` per SOURCE member (keyed by source
+      member name; a singleton source declares exactly one leg under any
       key).
     - `off_grid` — what the edge promises about a landing point between the
       target's grid nodes. Both phases read the operands there and gate them
@@ -88,8 +88,8 @@ class GatedEdge:
     gate: UserFunction
     """Boolean gate on the target grid, evaluated in the target fold's context."""
 
-    legs: MappingProxyType[str, StakeholderRoute]
-    """One `StakeholderRoute` per source stakeholder.
+    legs: MappingProxyType[str, MemberRoute]
+    """One `MemberRoute` per source member.
 
     A singleton source declares exactly one, under any key.
     """

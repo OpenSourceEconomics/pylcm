@@ -1,28 +1,25 @@
-"""A CARRIED-ONLY state composes with a repeating participation check on a self-loop.
+"""A CARRIED-ONLY state composes with a repeating gate on a self-loop.
 
 The carried-state feature (`Phased(solve=impute, simulate=Grid)`,
 `tests/test_carried_states.py`) is otherwise exercised on ordinary regime
 crossings. The EKL "Career and Family Decisions" replication needs a
 simulate-only uncapped `raw_experience` accumulator living in regimes whose
-declined-marriage path is a REPEATING self-loop value decision, so the
-interaction is pinned here in isolation.
+declined-marriage path is a REPEATING self-loop, so the interaction is pinned
+here in isolation.
 
 Topology (the singleton half of EKL's `single_f`): `src` is covered over ages
-0-1 with a self-loop back to itself under a repeating participation check,
-fallback into a terminal `src_fallback`; at its last covered age the ordinary
-transition routes it to `src_exit`. The occupied-boundary counterpart is
-`test_repeating_participation_boundary.py`,
-`test_public_repeating_participation_stops_at_the_sources_last_supported_date`.
-A carried `career` state accumulates `+1` each period and is read by utility
-with a ZERO coefficient, isolating the carried-state effect on the occupied
-value and routing.
+0-1 with a self-loop back to itself under a state-only gate, fallback into a
+terminal `src_fallback`; at its last covered age the ordinary transition routes
+it to `src_exit`. A carried `career` state accumulates `+1` each period and is
+read by utility with a ZERO coefficient, isolating the carried-state effect on
+the occupied value and routing.
 
-The decision is OPEN at wage=2 (stays in `src` for the genuine self-loop repeat)
+The gate is OPEN at wage=2 (stays in `src` for the genuine self-loop repeat)
 and CLOSED at wage=1 (routed to `src_fallback`, which does not carry `career`).
 The model builds, solves and simulates with one ordinary target (`src_exit`)
 that does NOT declare the carried state, and the carried value accumulates
-through the self-loop the participation check keeps (career 20 -> 21) rather
-than being frozen or reset to its solve-phase imputation.
+through the self-loop the gate keeps (career 20 -> 21) rather than being frozen
+or reset to its solve-phase imputation.
 """
 
 import jax.numpy as jnp
@@ -33,13 +30,11 @@ from lcm import (
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     Phased,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     categorical,
     fixed_transition,
 )
@@ -58,7 +53,6 @@ from tests.conftest import DECIMAL_PRECISION
 _BETA = 0.95
 _WAGE = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)  # {1.0, 2.0}
 _CAREER = LinSpacedGrid(start=0.0, stop=30.0, n_points=4)  # carried-only range
-_REPEAT_GATE_THRESHOLD = 2.0
 
 
 @categorical(ordered=True)
@@ -106,10 +100,6 @@ def _prob_exit_boundary(age: FloatND) -> FloatND:
     return jnp.where(age < 1.0, 0.0, 1.0)
 
 
-def _repeat_gate(V_target: FloatND) -> BoolND:
-    return V_target > _REPEAT_GATE_THRESHOLD
-
-
 def _repeat_at_high_wage(wage: ContinuousState) -> BoolND:
     return wage > 1.5
 
@@ -118,8 +108,7 @@ def _src_transition() -> Transition:
     """Return `src`'s transition: a gated self-loop until age 2, then `src_exit`.
 
     `tests/regime_building/test_invariant_components.py` reads it as a gated edge
-    touching a carrier. The gate states on the wage what the public test's participation
-    check computes from the value: the repeat stays open at wage 2 only.
+    touching a carrier. The repeat stays open at wage 2 only.
     """
     exit_cell = StochasticTransition(func=_prob_exit_boundary)
     return Transition(
@@ -132,7 +121,7 @@ def _src_transition() -> Transition:
             "src": Gate(
                 predicate=_repeat_at_high_wage,
                 routes={
-                    "only": StakeholderRoute(
+                    "only": MemberRoute(
                         fallback=ProjectedRegimeValue(
                             regime="src_fallback",
                             projection={"wage": _identity_wage},
@@ -179,49 +168,14 @@ class _PublicRegimeId:
     src_fallback: ScalarInt
 
 
-def test_public_repeated_participation_carries_career_once_before_ordinary_exit() -> (
-    None
-):
-    """A self-loop the check keeps adds one career year, then exits ordinarily."""
-    exit_cell = StochasticTransition(func=_prob_exit_boundary)
+def test_gated_self_loop_carries_career_once_before_ordinary_exit() -> None:
+    """A self-loop the gate keeps adds one career year, then exits ordinarily."""
     model = Model(
         regimes=_make_regimes(),
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_PublicRegimeId,
         initial_nodes={0: "src"},
-        edges={
-            "src": Transition(
-                targets={"src": 0, "src_exit": (0, 1), "src_fallback": 0},
-                law=ByAge.until(
-                    stop_age_exclusive=2,
-                    law={
-                        "src": StochasticTransition(func=_prob_stay),
-                        "src_exit": exit_cell,
-                    },
-                    then={"src_exit": exit_cell},
-                ),
-                participation={
-                    "src": ParticipationCheck(
-                        predicate=_repeat_gate,
-                        reads={
-                            "V_target": ParticipationRead(
-                                regime="src",
-                                kind="IntegratedFull",
-                                projection={"wage": _identity_wage},
-                            )
-                        },
-                        routes={
-                            "self": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="src_fallback",
-                                    projection={"wage": _identity_wage},
-                                )
-                            )
-                        },
-                    )
-                },
-            )
-        },
+        edges={"src": _src_transition()},
     )
     assert "career" not in model.user_regimes["src_fallback"].states
     assert "career" not in model.user_regimes["src_exit"].states

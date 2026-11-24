@@ -6,7 +6,7 @@ expectation — that is what the decision was taken under — while the row a
 simulation writes has to be the realization, in the regime and at the state the
 settlement really produces.
 
-`StakeholderRoute(fallback=Phased(solve=..., simulate=...))` declares them separately:
+`MemberRoute(fallback=Phased(solve=..., simulate=...))` declares them separately:
 the solve leg is folded into `Wbar` and prices the decision, and the simulate
 leg supplies the regime, the role and the state coordinates a routed row lands
 on. A bare `ProjectedRegimeValue` is both, as before.
@@ -21,15 +21,17 @@ from lcm import (
     CollectiveUtility,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     Phased,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
 )
+from lcm.result import SimulationResult
+from lcm.solver_api import SolutionResult
 from lcm.transition import StochasticTransition
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
@@ -91,7 +93,7 @@ def _make_model() -> Model:
         "retired": Gate(
             predicate=_well_off,
             routes={
-                "only": StakeholderRoute(
+                "only": MemberRoute(
                     fallback=Phased(
                         solve=ProjectedRegimeValue(
                             regime="hardship",
@@ -99,7 +101,7 @@ def _make_model() -> Model:
                         ),
                         simulate=ProjectedRegimeValue(
                             regime="shelter",
-                            stakeholder="guest",
+                            member="guest",
                             projection={"wealth": _settled_wealth},
                         ),
                     )
@@ -163,7 +165,7 @@ _PARAMS = {
 }
 
 
-def _simulate(*, model: Model, solution):
+def _simulate(*, model: Model, solution: SolutionResult) -> SimulationResult:
     """Two subjects, one on each side of the gate."""
     return model.simulate(
         params=_PARAMS,
@@ -211,7 +213,7 @@ def test_a_routed_row_lands_in_the_simulate_legs_regime() -> None:
         _SETTLEMENT_SHARE * 1.0,
         decimal=DECIMAL_PRECISION,
     )
-    assert int(shelter.own_stakeholder[0]) == model.stakeholder_names_to_ids["guest"]
+    assert int(shelter.own_member[0]) == model.member_names_to_ids["guest"]
 
     retired = result.raw_results["retired"][1]
     np.testing.assert_array_equal(np.asarray(retired.in_regime), [False, True])

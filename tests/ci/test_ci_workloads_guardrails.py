@@ -10,8 +10,6 @@ measurement, so it is intentionally excluded here rather than silently
 compared against zero.
 """
 
-from __future__ import annotations
-
 from tests.ci import ci_workloads
 
 _NOTSLOW_INVOCATION_IDS = tuple(
@@ -53,7 +51,9 @@ def _backlog_entries() -> dict[str, ci_workloads._CeilingBacklog]:
     return {entry["file"]: entry for entry in manifest["per_test_ceiling_backlog"]}
 
 
-def test_ordinary_notslow_file_does_not_exceed_the_per_test_ceiling_on_average():
+def test_ordinary_notslow_file_does_not_exceed_the_per_test_ceiling_on_average() -> (
+    None
+):
     """A `notslow` file's mean per-test time should stay under the ceiling.
 
     This is a coarse per-FILE proxy (mean seconds per collected test in that
@@ -87,7 +87,9 @@ def test_ordinary_notslow_file_does_not_exceed_the_per_test_ceiling_on_average()
     )
 
 
-def test_the_per_test_ceiling_backlog_entries_are_still_actually_over_the_ceiling():
+def test_the_per_test_ceiling_backlog_entries_are_still_actually_over_the_ceiling() -> (
+    None
+):
     """A backlog entry whose file was fixed must be removed, not left stale."""
     manifest = ci_workloads.load_manifest()
     weights = manifest["file_weights"]
@@ -106,7 +108,7 @@ def test_the_per_test_ceiling_backlog_entries_are_still_actually_over_the_ceilin
     )
 
 
-def test_the_backlog_cannot_grow_without_a_manifest_source_note():
+def test_the_backlog_cannot_grow_without_a_manifest_source_note() -> None:
     """The backlog is capped at the six frozen-head offenders unless the
     manifest's `source` block carries a note authorizing an addition.
     """
@@ -121,7 +123,7 @@ def test_the_backlog_cannot_grow_without_a_manifest_source_note():
         )
 
 
-def test_guardrail_numbers_come_from_the_manifest_not_from_this_module():
+def test_guardrail_numbers_come_from_the_manifest_not_from_this_module() -> None:
     manifest = ci_workloads.load_manifest()
     guardrails = manifest["guardrails"]
     assert guardrails["job_payload_ceiling_minutes"] == 30
@@ -129,7 +131,7 @@ def test_guardrail_numbers_come_from_the_manifest_not_from_this_module():
     assert guardrails["ordinary_notslow_test_ceiling_seconds"] == 30
 
 
-def test_guardrail_is_not_evaluated_against_unweighted_files():
+def test_guardrail_is_not_evaluated_against_unweighted_files() -> None:
     """An unweighted file is never compared to the ceiling as if its cost were zero."""
     unweighted = set(ci_workloads.unweighted_files())
     notslow_files = set()
@@ -141,7 +143,7 @@ def test_guardrail_is_not_evaluated_against_unweighted_files():
     del notslow_files
 
 
-def test_every_invocation_stays_inside_the_payload_guardrail():
+def test_every_invocation_stays_inside_the_payload_guardrail() -> None:
     """No recorded lane's predicted payload exceeds the manifest's ceiling.
 
     The prediction is `max(total worker seconds / workers, largest single file)`
@@ -163,7 +165,7 @@ def test_every_invocation_stays_inside_the_payload_guardrail():
     )
 
 
-def test_every_invocation_records_a_predicted_payload():
+def test_every_invocation_records_a_predicted_payload() -> None:
     """A lane with no prediction is an unbudgeted lane, not a free one."""
     missing = [
         inv["id"]
@@ -173,46 +175,7 @@ def test_every_invocation_records_a_predicted_payload():
     assert not missing, f"lanes with no predicted payload: {missing}"
 
 
-def test_solution_shards_reserve_the_serial_replay_inside_the_job_budget() -> None:
-    """Parallel work and the following replay share one job's payload budget."""
-    invocations = ci_workloads.invocations()
-    ceiling = ci_workloads.guardrails()["job_payload_ceiling_minutes"]
-    for precision in (32, 64):
-        replay = ci_workloads.invocation_by_id(
-            invocation_id=f"solution-replay-fp{precision}-linux"
-        )
-        owners = [
-            invocation
-            for invocation in invocations
-            if invocation["id"].startswith("solution-shard-")
-            and invocation["environment"]["precision"] == precision
-            and set(replay["files"]).issubset(invocation["files"])
-        ]
-        assert len(owners) == 1
-        owner = owners[0]
-        weights = {
-            file_: ci_workloads.leg_weights(leg=f"fp{precision}-solution")[file_]
-            for file_ in owner["files"]
-        }
-        assert len(replay["files"]) == 1
-        replay_file = replay["files"][0]
-        measured = replay["observed_payload_seconds"]
-        assert 0 < measured <= 60 * replay["predicted_payload_minutes"]
-        # The file's summed JUnit weight includes the separately executed replay.
-        weights[replay_file] -= measured
-        assert weights[replay_file] >= 0
-        parallel_minutes = (
-            max(
-                sum(weights.values()) / owner["environment"]["workers"],
-                *weights.values(),
-            )
-            / 60
-        )
-        combined = parallel_minutes + replay["predicted_payload_minutes"]
-        assert combined <= ceiling, (owner["id"], combined, ceiling)
-
-
-def test_no_whole_file_atom_exceeds_its_lane_payload_guardrail():
+def test_no_whole_file_atom_exceeds_its_lane_payload_guardrail() -> None:
     """No single file costs more than a whole job is allowed to spend.
 
     Under `--dist loadfile` a file is indivisible, so a file above the ceiling

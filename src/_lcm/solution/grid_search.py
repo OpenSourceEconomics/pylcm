@@ -34,10 +34,7 @@ from _lcm.beartype_conf import REGIME_CONF
 
 if TYPE_CHECKING:
     from _lcm.current_iid import CurrentIIDPlan
-    from _lcm.participation_queries import ParticipationQueryPlan
 else:
-    # Participation query construction imports the engine before solver contexts finish.
-    type ParticipationQueryPlan = object
     # The innovation registry reaches this solver through the public Regime facade.
     type CurrentIIDPlan = object
 from _lcm.constraints.routes import (
@@ -99,7 +96,6 @@ from _lcm.time import TimeAxis
 from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
     FlatParams,
-    FlatRegimeParams,
     LandingCheck,
     PytreeValue,
     QAndFArg,
@@ -128,8 +124,6 @@ _CELL_WIDTH_KEYWORD = "_lcm_cell_width"
 _CORE_RUNTIME_ARG_NAMES = frozenset(
     {
         "next_regime_to_V_arr",
-        "same_period_regime_to_V_arr",
-        "same_period_regime_to_params",
         "edge_reference_regime_to_V_arr",
         "edge_reference_regime_to_params",
         "period",
@@ -200,24 +194,31 @@ class GridSearch(Solver):
     other than the drawn state itself, and no law reads the draw, so it only
     selects a slice of the target's value function. Its expectation is then the
     same at every action, and the solve takes it once per kernel call instead of
-    once per state-action candidate. `False` keeps every draw a node axis of the
-    continuation. Values agree with the per-candidate expectation to rounding
-    relative to the largest next-period value magnitude across the draws, not
-    relative to the expectation itself: with large cancelling values, either
-    summation order can lose a small term. The simulation and
-    `Model.lookup_policy` contract the same draws as the solve, except a process
-    draw whose weights read the subject's own value: a simulated value may lie
-    between the process's nodes, so this draw stays enumerated in the simulation
-    for every subject, even one on a node. With cancelling values, the simulated
-    choice can then differ from the solve's by more than a tie. A regime with a
-    gated edge or a value constraint contracts in neither phase, and the
-    internal participation and exit queries, which count their landings, keep
-    every draw enumerated.
+    once per state-action candidate. This holds in every kernel: the ordinary
+    one, the exit and consent queries that solve a regime with an exit, and a
+    collective regime's, per member. `False` keeps every draw a node
+    axis of the continuation and leaves every program unchanged. Values agree
+    with the per-candidate expectation to rounding relative to the largest
+    next-period value magnitude across the draws, not relative to the expectation
+    itself: with large cancelling values, either summation order can lose a small
+    term. The simulation and `Model.lookup_policy` contract the same draws as the
+    solve, except a process draw whose weights read the subject's own value: a
+    simulated value may lie between the process's nodes, so this draw stays
+    enumerated in the simulation for every subject, even one on a node. A query
+    evaluates its regime at projected states, so it keeps that draw enumerated in
+    the solve as well. With cancelling values, the simulated choice can differ
+    from the solve's by more than a tie where only the solve contracts it. A
+    regime with a gated edge contracts in neither phase, and a query keeps every
+    draw toward a target whose `off_grid="raise"` landings it counts.
 
-    Off by default: the table is built inside the kernel's tile loops, and on GPU
-    the compiler does not hoist it, so it is rebuilt for every cell, action and
-    subject tile. A period solved in a few wide tiles gains; one split into many
-    narrow tiles, as fixed `axis_widths` or unbudgeted widths can force, loses.
+    Off by default: the ordinary kernel builds the table inside its tile loops,
+    and on GPU the compiler does not hoist it, so it is rebuilt for every cell,
+    action and subject tile. A period solved in a few wide tiles gains; one split
+    into many narrow tiles, as fixed `axis_widths` or unbudgeted widths can force,
+    loses. A query builds each table once per call, before its loops, and so
+    trades compile time and host memory for solve time: in a model with exits
+    and collective regimes, whose queries each prepare their own tables, compile
+    time and host memory rise while each period can solve faster.
     """
 
     @property
@@ -400,7 +401,7 @@ class GridSearch(Solver):
                         MappingProxyType({name: axes[name] for name in target_regimes})
                         for axes in context.co_map_v_arr_in_axes
                     ),
-                    "stakeholders": context.stakeholders,
+                    "member_axis": context.member_axis,
                     "pareto_weights": context.pareto_weights,
                     "return_feasibility": True,
                 }
@@ -454,7 +455,7 @@ class GridSearch(Solver):
                 reducer = program_functions[q_id]
                 counted = CountedGridSearch(
                     function=cast("Callable[..., tuple[FloatND, BoolND]]", reducer),
-                    collective=context.stakeholders is not None,
+                    collective=context.member_axis is not None,
                     current_iid=current_iid_plan is not None,
                 )
                 program_functions[q_id] = with_signature(
@@ -513,10 +514,18 @@ class GridSearch(Solver):
                 ),
                 value_reads=value_reads,
             )
-            # A bound continuation needs its selected-view transfer even when
-            # all local state and action products have extent one. "Dense"
+            # A bound continuation needs its selected-view transfer, and a value
+            # placed on other devices its cross-device transfer, even when all
+            # local state and action products have extent one. "Dense"
             # arithmetic must not bypass the engine's value-read planning.
-            requires_plan = bool(requirements.axes) or bool(context.invariant_bindings)
+            requires_plan = (
+                bool(requirements.axes)
+                or bool(context.invariant_bindings)
+                or any(
+                    read.target.regime in context.regimes_on_other_devices
+                    for read in value_reads
+                )
+            )
             program = CoreProgram(
                 name="main",
                 function=program_functions[q_id],
@@ -710,7 +719,7 @@ def _classify_action_streaming(
     from _lcm.solution.landing_counts import landing_checks_of  # noqa: PLC0415
 
     action_extents = context.state_action_space.actions_grid_shapes
-    if context.has_taste_shocks and context.stakeholders is not None:
+    if context.has_taste_shocks and context.member_axis is not None:
         disposition = _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_EV1
     elif context.has_taste_shocks and not context.state_action_space.discrete_actions:
         disposition = (
@@ -718,9 +727,7 @@ def _classify_action_streaming(
         )
     elif not context.state_action_space.action_names or math.prod(action_extents) <= 1:
         disposition = _ActionStreamingDisposition.DENSE_TRIVIAL_ACTION_PRODUCT
-    elif context.co_map_state_names and (
-        context.same_period_ref_regimes or context.edge_reference_regimes
-    ):
+    elif context.co_map_state_names and context.edge_reference_regimes:
         disposition = _ActionStreamingDisposition.DENSE_CO_MAP_REFERENCE_CHANNEL
     elif any(
         has_objective_profile(Q_and_F=Q_and_F)
@@ -729,7 +736,7 @@ def _classify_action_streaming(
         disposition = _ActionStreamingDisposition.DENSE_DECOUPLED
     elif context.has_taste_shocks:
         disposition = _ActionStreamingDisposition.DENSE_EV1_NONCANONICAL
-    elif context.stakeholders is not None:
+    elif context.member_axis is not None:
         disposition = _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES
     elif any(map(landing_checks_of, context.Q_and_F_functions.values())):
         # The dense reduction sums each action's raw raise-rule landings over
@@ -768,54 +775,16 @@ def grid_search_query_inputs(
         current_iid_plan=context.current_iid_plans.get(period),
         regime_name=context.regime_name,
         target_regimes=targets,
-        same_period_ref_regimes=context.same_period_ref_regimes,
         edge_reference_regimes=references,
         edge_target_regimes=context.edge_target_regimes,
-        participation_queries=context.participation_queries.get(
-            period, MappingProxyType({})
-        ),
-        participation_surfaces=context.participation_surfaces.get(
-            period, MappingProxyType({})
-        ),
     )
     reads = _value_reads(
         regime_name=context.regime_name,
         period=period,
         target_regimes=targets,
-        same_period_ref_regimes=context.same_period_ref_regimes,
         edge_reference_regimes=references,
         edge_target_regimes=context.edge_target_regimes,
     )
-    if builder.participation_surfaces:
-        from _lcm.participation_queries import plan_surface_address  # noqa: PLC0415
-
-        # A participation target's value enters as the source's stored surface, read
-        # through the same continuation leaf an ordinary value read fills.
-        reads = tuple(
-            replace(
-                read,
-                target=plan_surface_address(
-                    plan=builder.participation_surfaces[str(read.source.path[0])]
-                ),
-            )
-            if read.source.channel is ValueInputChannel.NEXT_REGIME_VALUE
-            and read.source.path[0] in builder.participation_surfaces
-            else read
-            for read in reads
-        )
-    if builder.participation_queries:
-        from _lcm.participation_queries import (  # noqa: PLC0415
-            participation_source_value_reads,
-        )
-
-        reads = (
-            *reads,
-            *participation_source_value_reads(
-                plans=builder.participation_queries,
-                source=context.regime_name,
-                period=period,
-            ),
-        )
     return builder, reads
 
 
@@ -839,7 +808,6 @@ def _value_reads(
     regime_name: RegimeName,
     period: int,
     target_regimes: tuple[RegimeName, ...],
-    same_period_ref_regimes: tuple[RegimeName, ...],
     edge_reference_regimes: tuple[RegimeName, ...],
     edge_target_regimes: tuple[RegimeName, ...],
 ) -> tuple[ValueRead, ...]:
@@ -869,20 +837,6 @@ def _value_reads(
                 path=(target_regime,),
             )
         )
-    reads.extend(
-        _value_read(
-            regime_name=regime_name,
-            period=period,
-            target=ValueArtifactAddress(
-                kind=ValueArtifactKind.REGIME_VALUE,
-                period=period,
-                regime=reference_regime,
-            ),
-            channel=ValueInputChannel.SAME_PERIOD_VALUE,
-            path=(reference_regime,),
-        )
-        for reference_regime in same_period_ref_regimes
-    )
     reads.extend(
         _value_read(
             regime_name=regime_name,
@@ -941,46 +895,21 @@ class _GridSearchArgumentBuilder:
     """Current joint support whose group parameters are shared model operands."""
     target_regimes: tuple[RegimeName, ...]
     """The period targets whose next-period values the program reads."""
-    same_period_ref_regimes: tuple[RegimeName, ...] = ()
     edge_reference_regimes: tuple[RegimeName, ...] = ()
     edge_target_regimes: tuple[RegimeName, ...] = ()
-    participation_queries: Mapping[RegimeName, ParticipationQueryPlan] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
-    participation_surfaces: Mapping[RegimeName, ParticipationQueryPlan] = field(
-        default_factory=lambda: MappingProxyType({}),
-        metadata={"fingerprint_omit_if_default": True},
-    )
-    """Participation targets read from the source's stored participation surface, by
-    the plan whose decision that surface stores."""
 
     def __call__(
         self, context: CoreBuildContext
     ) -> Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]:
         """Return the exact kwargs shared by lowering and the runtime call."""
-        if self.participation_queries:
-            from _lcm.participation_queries import (  # noqa: PLC0415
-                ParticipationSourceArguments,
-            )
-
-            return ParticipationSourceArguments(
-                base=replace(self, participation_queries=MappingProxyType({})),
-                plans=self.participation_queries,
-            )(context)
         state_action_space = cast("StateActionSpace", context.state_action_space)
         next_regime_to_V_arr = context.next_regime_to_V_arr
         flat_params = cast("FlatParams", context.flat_params)
         ages = cast("TimeAxis", context.ages)
         raw_next_regime_to_V_arr = next_regime_to_V_arr
-        surfaces = self._participation_surface_values(context=context)
         next_regime_to_V_arr = self._with_edge_substitution(
             next_regime_to_V_arr=MappingProxyType(
-                {
-                    name: surfaces[name]
-                    if name in surfaces
-                    else raw_next_regime_to_V_arr[name]
-                    for name in self.target_regimes
-                }
+                {name: raw_next_regime_to_V_arr[name] for name in self.target_regimes}
             ),
             edge_regime_to_V_arr=context.edge_regime_to_V_arr,
         )
@@ -1005,62 +934,13 @@ class _GridSearchArgumentBuilder:
             }
             arguments[CURRENT_IID_NODES_ARGUMENT] = self.current_iid_plan.node_operands
             arguments[CURRENT_IID_ROWS_ARGUMENT] = self.current_iid_plan.indices
-        if self.same_period_ref_regimes:
-            # Only the declared references: a participation check's date carries every
-            # stored value its source reads, which is not this program's operand tree.
-            available = (
-                raw_next_regime_to_V_arr
-                if context.same_period_regime_to_V_arr is None
-                else context.same_period_regime_to_V_arr
-            )
-            reference_values = MappingProxyType(
-                {name: available[name] for name in self.same_period_ref_regimes}
-            )
-            arguments["same_period_regime_to_V_arr"] = _value_argument(reference_values)
-            arguments["same_period_regime_to_params"] = self._same_period_params(
-                flat_params=flat_params
-            )
         arguments.update(
             self._edge_reference_args(
                 next_regime_to_V_arr=raw_next_regime_to_V_arr,
                 flat_params=flat_params,
             )
         )
-        if surfaces:
-            from _lcm.participation_queries import (  # noqa: PLC0415
-                PARTICIPATION_SURFACE_ARGUMENTS,
-                surface_reader_arguments,
-            )
-
-            arguments[PARTICIPATION_SURFACE_ARGUMENTS] = surface_reader_arguments(
-                plans={name: self.participation_surfaces[name] for name in surfaces},
-                context=context,
-            )
         return MappingProxyType(arguments)
-
-    def _participation_surface_values(
-        self, *, context: CoreBuildContext
-    ) -> dict[RegimeName, ValueTemplate]:
-        """Read each surfaced participation target from its check's operands."""
-        if not self.participation_surfaces:
-            return {}
-        from _lcm.participation_queries import (  # noqa: PLC0415
-            _ParticipationBuildContext,
-            plan_surface_address,
-        )
-
-        if not isinstance(context, _ParticipationBuildContext):
-            msg = (
-                f"Regime '{self.regime_name}' reads stored participation surfaces, "
-                "which "
-                "only a participation reader's operands carry."
-            )
-            raise ExecutionPlanningError(msg)
-        return {
-            name: context.participation_values[plan_surface_address(plan=plan)]
-            for name, plan in self.participation_surfaces.items()
-            if name in self.target_regimes
-        }
 
     def _with_edge_substitution(
         self,
@@ -1114,17 +994,6 @@ class _GridSearchArgumentBuilder:
                 }
             ),
         }
-
-    def _same_period_params(
-        self, *, flat_params: FlatParams
-    ) -> MappingProxyType[RegimeName, FlatRegimeParams]:
-        """Return each same-period reference regime's own flat parameters."""
-        return MappingProxyType(
-            {
-                name: regime_kernel_params(flat_params, regime_name=name)
-                for name in self.same_period_ref_regimes
-            }
-        )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -1223,7 +1092,7 @@ class _GridSearchPeriodKernel:
             ),
         )
 
-    def __call__(  # noqa: C901 - validate native output roles before publication
+    def __call__(
         self,
         *,
         compiled_cores: Mapping[str, Callable[..., PytreeValue]],
@@ -1234,15 +1103,13 @@ class _GridSearchPeriodKernel:
         period: int,
         ages: TimeAxis,
         logger: logging.Logger,  # noqa: ARG002
-        same_period_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
         edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
     ) -> KernelOutput:
         """Evaluate the grid search and assemble the `KernelOutput`.
 
-        `same_period_regime_to_V_arr` is passed by the solve loop only for a
-        regime declaring `same_period_refs`; `edge_regime_to_V_arr` only for
-        a regime with gated edges (substituted into
-        `next_regime_to_V_arr` before the core call). Every other kernel keeps
+        `edge_regime_to_V_arr` is passed by the solve loop only for a regime
+        with gated edges (substituted into `next_regime_to_V_arr` before the
+        core call). Every other kernel keeps
         the uniform `PeriodKernel` call signature.
 
         A regime solved one invariant code at a time is handed exactly one of
@@ -1256,16 +1123,6 @@ class _GridSearchPeriodKernel:
                 space=state_action_space, binding=program.invariant_binding
             )
         argument_builder = cast("_GridSearchArgumentBuilder", program.argument_builder)
-        if (
-            argument_builder.same_period_ref_regimes
-            and same_period_regime_to_V_arr is None
-        ):
-            msg = (
-                f"Regime '{argument_builder.regime_name}' declares same_period_refs "
-                f"on {argument_builder.same_period_ref_regimes} but the solve loop "
-                "passed no same-period V arrays."
-            )
-            raise RuntimeError(msg)
         arguments = program.argument_builder(
             CoreBuildContext(
                 state_action_space=state_action_space,
@@ -1275,7 +1132,6 @@ class _GridSearchPeriodKernel:
                 period=period,
                 ages=ages,
                 edge_regime_to_V_arr=edge_regime_to_V_arr,
-                same_period_regime_to_V_arr=same_period_regime_to_V_arr,
             )
         )
         out = compiled_cores[core_key](**arguments)

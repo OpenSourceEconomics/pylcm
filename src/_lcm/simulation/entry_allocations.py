@@ -50,7 +50,6 @@ from _lcm.typing import (
     FlatRegimeParams,
     FootprintTree,
     InitialConditions,
-    PeriodToRegimeToParticipationSurfaces,
     PytreeByPeriod,
     PytreeValue,
     RegimeName,
@@ -59,7 +58,7 @@ from _lcm.typing import (
 from lcm.typing import Float1D, FloatND, Int1D
 
 # The replay inputs resolved from a solution, keyed by period and regime: values,
-# simulation policies, replay readers and participation surfaces, each `None` when
+# simulation policies and replay readers, each `None` when
 # the solution provides none; empty before any solution is resolved.
 if TYPE_CHECKING:
     type _ResolvedInputs = (
@@ -67,7 +66,6 @@ if TYPE_CHECKING:
             Mapping[int, Mapping[RegimeName, FloatND]] | None,
             Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None,
             Mapping[int, Mapping[RegimeName, PreparedReplayReader]] | None,
-            PeriodToRegimeToParticipationSurfaces | None,
         ]
         | tuple[()]
     )
@@ -393,7 +391,7 @@ class SimulationEntryAllocations:
                 result = self.process_grid_resolver(
                     spec=spec,
                     parameters={},
-                    required=jax.sharding.SingleDeviceSharding(self.devices[0]),
+                    required=jax.sharding.make_single_device_sharding(self.devices[0]),
                 )
         else:
             result = materialize_original_grid(
@@ -429,7 +427,7 @@ class SimulationEntryAllocations:
         recipe = prepare_validation_recipe(function=function, arguments=arguments)
         environment = list(recipe.initial_values)
         self._validation_stage_roots = tuple(environment)
-        required = jax.sharding.SingleDeviceSharding(self.devices[0])
+        required = jax.sharding.make_single_device_sharding(self.devices[0])
         try:
             for stage, operands, outputs in recipe.stages:
                 result = run_eager_stage(

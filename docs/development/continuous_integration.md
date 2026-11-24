@@ -82,7 +82,9 @@ commits.
 
 Completeness is enforced by that checker, not by Codecov: the combine step refuses to
 proceed unless every recorded lane delivered a non-empty report, and refuses an
-unrecorded extra artifact too. Codecov itself publishes on the single upload
+unrecorded extra artifact too. The one excused lane is the source-only certificate
+campaign on a pull request its gate skips: the checker is then told it did not run and
+requires its report to be absent. Codecov itself publishes on the single upload
 (`after_n_builds: 1`), so a missing lane would otherwise read as a coverage drop in the
 code under test rather than as a lane that never ran.
 

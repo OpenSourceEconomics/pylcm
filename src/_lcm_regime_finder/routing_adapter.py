@@ -229,15 +229,17 @@ def analyze_routing_source(source_path, api_path, config=None):
     source_regimes = scope.lookup("regimes")
     routes, records = {}, []
     for leg, route in original_routes.items():
-        if not isinstance(route, Constructed) or route.kind != "StakeholderRoute":
-            raise SourceAdapterError("Only explicit StakeholderRoute declarations are supported")
+        # `StakeholderRoute` and `target_stakeholder` spell the route in sources
+        # written before it was named `MemberRoute`.
+        if not isinstance(route, Constructed) or route.kind not in {"MemberRoute", "StakeholderRoute"}:
+            raise SourceAdapterError("Only explicit MemberRoute declarations are supported")
         fallback = route.fields.get("fallback")
         if not isinstance(fallback, Constructed) or fallback.kind != "ProjectedRegimeValue":
             raise SourceAdapterError("Phase-separated fallback declarations need a routing adapter extension")
         name = fallback.fields.get("regime")
         routes[leg] = {"solve_fallback": {"regime": name}, "simulate_fallback": {"regime": name}}
         payload = _terminal_payload(source_regimes.get(name))
-        records.append({"leg": leg, "target_stakeholder": route.fields.get("target_stakeholder"),
+        records.append({"leg": leg, "target_member": route.fields.get("target_member", route.fields.get("target_stakeholder")),
                         "fallback_regime": name,
                         "projection_coordinates": sorted(fallback.fields.get("projection", {})),
                         "routing_owner": f"{factory_name}:{json.dumps(parameters,sort_keys=True)}:{leg}",

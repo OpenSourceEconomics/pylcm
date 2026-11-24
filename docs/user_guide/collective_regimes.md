@@ -7,28 +7,28 @@ title: Households and value-dependent choice
 A single decision maker maximizes her own value. A household does not: it takes one
 action for two people, it is only viable while both of them want it, and whether it
 forms or ends depends on what each member would be worth outside it. Three declarations
-cover that, and each goes in a slot an ordinary model already has.
+cover it, and each goes in a slot an ordinary model already has.
 
-| Declaration                | Goes in                 | Says                                                                 |
-| -------------------------- | ----------------------- | -------------------------------------------------------------------- |
-| `CollectiveUtility`        | `functions["utility"]`  | who the stakeholders are, and how their action values are traded off |
-| `ValueDependentConstraint` | `constraints`           | where the cell is feasible, reading values as well as states         |
-| `Gate`                     | `Transition(gates=...)` | which branch within a target, from the landing state                 |
+| Declaration         | Goes in                 | Says                                                             |
+| ------------------- | ----------------------- | ---------------------------------------------------------------- |
+| `CollectiveUtility` | `functions["utility"]`  | who the members are, and how their action values are traded off  |
+| `Gate`              | `Transition(gates=...)` | which branch within a target, from the landing state             |
+| `Exit`              | `Regime(exit=...)`      | formation (with `Consent`) and dissolution, from compared values |
 
-`ProjectedRegimeValue` reads another regime's value in the *same* period, for a value
-constraint's comparison and for a route's fallback. A move decided by comparing values
-is not a `Gate`: it is a participation `Exit` of the source regime, or a
-`ParticipationCheck` evaluated on landing.
+`ProjectedRegimeValue` reads another regime's value in the period a gated row lands in,
+for a route's fallback. A move decided by comparing values is not a `Gate`: it is an
+`Exit` of the regime that decides. A household forms through a single's `Exit` with a
+`Consent` rule, and dissolves through the household's own `Exit`.
 
 The complete worked model is `lcm_examples.collective_household`. This page walks
 through the pieces; the exact declaration contracts are in
 [Collective regimes](../reference/collective_regimes.md), and a staged build-up of one
 is in the [collective example](../examples/collective_regimes.md).
 
-## A household with two stakeholders
+## A household with two members
 
-The `utilities` keys **are** the regime's stakeholders, in the order you write them.
-That order fixes the trailing axis of the regime's value function and of every published
+The `utilities` keys **are** the regime's members, in the order you write them. That
+order fixes the trailing axis of the regime's value function and of every published
 array, so `value_f` comes before `value_m` in the simulated frame.
 
 ```python
@@ -47,16 +47,16 @@ couple = Regime(
 ```
 
 The `CollectiveUtility` remains the raw `functions["utility"]` declaration. Pylcm
-derives the stakeholder metadata from it and gives the numerical engine a
+derives the member metadata from it and gives the numerical engine a
 `decomposed_functions` view with `utility_f` and `utility_m`; it does not replace what
 the model author wrote. Each value in `utilities` can be a callable, a
-`Phased(solve=..., simulate=...)` pair, or `None`. `None` delegates that stakeholder's
-body to a `utility_<stakeholder>` function supplied at regime or model level; successful
-model finalization guarantees that every delegated body arrived.
+`Phased(solve=..., simulate=...)` pair, or `None`. `None` delegates that member's body
+to a `utility_<member>` function supplied at regime or model level; successful model
+finalization guarantees that every delegated body arrived.
 
 The household maximizes one objective over the feasible actions and reads off each
-stakeholder's own action value `Q_s` at that common choice. Omitting `objective` weights
-the stakeholders equally. To weigh them differently, declare a `ParetoObjective`:
+member's own action value `Q_s` at that common choice. Omitting `objective` weights the
+members equally. To weigh them differently, declare a `ParetoObjective`:
 
 ```python
 from lcm import ParetoObjective
@@ -77,178 +77,362 @@ weight that varied with the choice would state a different objective per candida
 whose maximizer is a Pareto optimum of no fixed weighting.
 
 Declaring the weights rather than writing the sum as an ordinary function is what lets
-the engine own what a Pareto weight means — one per stakeholder, finite and
-non-negative, with a strictly positive total, normalized cell by cell, and multiplied in
-zero-safely. That last one matters: a stakeholder carrying zero weight may still hold an
-admissible `-inf` of her own, and `0.0 * -inf` is `NaN`, which through the argmax would
-let the wrong partner decide the household's choice.
+the engine own what a Pareto weight means — one per member, finite and non-negative,
+with a strictly positive total, normalized cell by cell, and multiplied in zero-safely.
+That last one matters: a member carrying zero weight may still hold an admissible `-inf`
+of her own, and `0.0 * -inf` is `NaN`, which through the argmax would let the wrong
+partner decide the household's choice.
 
 Normalization is `"pointwise"` by default, which rescales the declared weights to sum to
 one wherever the objective is evaluated, so a state-dependent weight cannot change the
 scale of the household's objective from cell to cell. `normalization="none"` uses the
 weights as written, for a scalarization whose level is itself meant to vary.
 
-## Participation: a constraint that reads values
+### Taste shocks when one member decides
 
-A household is feasible only where each partner is at least as well off inside it as
-alone. "Alone" is that partner's own regime, in the *same* period — not next period's
-continuation. `ProjectedRegimeValue` reads it, and `ValueDependentConstraint` compares
-against it:
+A household may declare `taste_shocks=ExtremeValueTasteShocks()` when exactly one member
+has a positive weight. That member decides, as a single with the same taste shocks
+would: its value is its own smoothed expected maximum over the discrete actions, after
+the maximum over the continuous ones. Every other member's value is the mean of its own
+action value under the decider's choice probabilities, read at the decider's best
+continuous action for each discrete one. Simulation draws the decider's choice exactly
+as a single's draw. `model.lookup_policy` returns, per discrete action, the decider's
+conditional value `Qc`, its choice probability and the continuous actions every member
+shares, and one value per member, in member order. Constant weights must give exactly
+one member a positive weight; a weight declared as a function is checked at every solve,
+at every cell of the regime's grid, so a bargaining state may hand the decision from one
+member to the other. A household with taste shocks may not declare an `exit` or
+`shocks`, and another regime's exit may not read its decision.
+
+## Dissolving in the current period: where the members compare
+
+A regime's `Exit` with `rule=Unilateral()` or `rule=MutualConsent()` decides before the
+period's action whether the household stays. `compares` says which stay values each
+member compares with its outside value (the
+[reference](../reference/model_and_regime.md#api-current-exits) has the details):
+
+- `compares="each_action"`, the default without an adjustment: every stay action is
+  tested, and the household takes its best action that passes the rule. It separates
+  only if none passes.
+- `compares="optimum"`: only the household's unconstrained optimum is tested.
+  `Unilateral` separates when any member refuses there, `MutualConsent` when every
+  member does. A household that stays acts at its optimum.
+
+A member's outside value is its destination's problem at the state the exit target's
+`projection` gives, and a member who leaves lands there. That state follows the
+destination grid's `off_grid` rule as a realised next state does: a `"clip_state"` grid
+caps it to its outer nodes for both the outside value and the landing, and a `"raise"`
+grid refuses a read outside it, even where the household then stays.
+
+Under mutual consent the members can also shift the division on separation before they
+decide. `Settlement` names it as an argument the exit's projections and utility
+adjustments read:
 
 ```python
-from lcm import ProjectedRegimeValue, ValueDependentConstraint
+from lcm import Exit, ExitTarget, LinSpacedGrid, MutualConsent, Settlement
 
 
-def participation_f(*, Q_f, V_alone_f, slack):
-    return Q_f >= V_alone_f - slack
+def wife_assets(*, wealth, share):
+    return share * wealth
 
 
-constraints = {
-    "affordable": consumption_within_wealth,
-    "participation_f": ValueDependentConstraint(
-        predicate=participation_f,
-        references={
-            "V_alone_f": ProjectedRegimeValue(
-                regime="single_f",
-                projection={"wealth": half_of_couple_wealth},
-            )
-        },
+def husband_assets(*, wealth, share):
+    return (1.0 - share) * wealth
+
+
+def equal_split():
+    return 0.5
+
+
+dissolution = Exit(
+    rule=MutualConsent(
+        settle=Settlement(
+            name="share",
+            candidates=LinSpacedGrid(start=0.0, stop=1.0, n_points=21),
+            default=equal_split,
+        )
     ),
-}
+    targets={
+        "f": ExitTarget(regime="single_f", projection={"wealth": wife_assets}),
+        "m": ExitTarget(regime="single_m", projection={"wealth": husband_assets}),
+    },
+)
 ```
 
-The predicate may read `Q_<s>` for each stakeholder, each key of its **own**
-`references`, and ordinary states, actions, functions and parameters. `projection` owes
-one entry per state of the *referenced* regime; the value is interpolated at the
-resulting coordinates. A constraint-local projection may not introduce free parameters —
-that is checked when the `Regime` is constructed, naming the reference, the projection
-and the offending argument.
+The settlement rule, with outside values evaluated at a settlement:
 
-The regime's mask is the AND of the ordinary constraints and the value-dependent ones. A
-cell whose mask is empty carries the `-inf` sentinel: there is no viable household
-there. Where its members go instead is declared on the regime as a participation `Exit`,
-or on the incoming edge as a `ParticipationCheck` reading the household's policy
-support.
+1. Each member compares its value at the optimum with its outside value at the `default`
+   settlement.
+1. If nobody wants to leave, the household stays. If both want to leave, it separates at
+   the default.
+1. If exactly one wants to leave and the other is exactly indifferent at the default,
+   the household separates at the default, provided both destinations have a feasible
+   action there: no shift is needed to compensate the indifferent member. Under
+   `tie="leave"` an indifferent member wants to leave, so this case does not arise.
+1. Otherwise, if exactly one wants to leave, the settlement moves toward the other
+   member: among the candidates on that member's side of the default (increasing values
+   favour the first member), take the nearest at which that member accepts separation.
+   The household separates there if the member who wants to leave still gains, and stays
+   otherwise. Without such a candidate it stays.
 
-A value constraint cannot excuse a discrete law that leaves its grid. Such a law sends a
-state to a code outside `0..n-1`, and an off-grid code has no value to compare with. The
-transition check therefore counts every cell the ordinary constraints allow, in the
-solve and the simulation, and raises `InvalidStateTransitionError` where a law leaves
-its grid there. When a restriction does not read a value, declare it as an ordinary
-constraint beside the value-dependent one:
+A shifted settlement is searched on the candidates only, never between them. A
+settlement needs a regime with two members. The default reads what `available` reads, at
+the decision; it is clipped to the candidates' range. A household that separates lands
+where the projections put it at the selected settlement and receives the adjustments
+evaluated there.
 
-```python
-def rest_only(*, work):
-    return work == 0
+## Renegotiating a bargaining state before dissolving
 
-
-def participation_f(*, Q_f):
-    return Q_f >= 0.0
-
-
-constraints = {
-    "rest_only": rest_only,  # value-free: an ordinary constraint
-    "participation_f": ValueDependentConstraint(predicate=participation_f),
-}
-```
-
-Written as one predicate, `(work == 0) & (Q_f >= 0.0)`, the same restriction is refused
-when only `work == 1` sends a discrete state off its grid.
-
-## Marrying and dissolving: a participation check on landing
-
-A raw transition between regimes with different stakeholder structure stays rejected —
-there is no rule that would say who the arriving row is. A `ParticipationCheck` supplies
-one. It lives on the source's edges in `Model(edges=...)`, in the `Transition`'s
-`participation`, keyed by the destination it decides on. Its `reads` name every value
-the predicate compares, each a `ParticipationRead` of a regime at projected coordinates:
+A settlement shifts what the members get if they separate. Under limited commitment the
+members shift what they get if they **stay**: a member who would rather leave is offered
+a better position inside the household. Declare that position as an ordered discrete
+state of the couple, for example a Pareto weight on a grid, and name it in
+`Unilateral(renegotiate=Renegotiate(state=...))` (the
+[reference](../reference/model_and_regime.md#api-current-exits) has the contract):
 
 ```python
 from lcm import (
-    ParticipationCheck,
-    ParticipationRead,
-    ProjectedRegimeValue,
-    StakeholderRoute,
-    StochasticTransition,
-    Transition,
+    DiscreteGrid,
+    Exit,
+    ExitTarget,
+    ParetoObjective,
+    Renegotiate,
+    Unilateral,
+    fixed_transition,
 )
 
-single_f = Regime(
-    states={"wealth": single_wealth},
-    state_transitions={"wealth": next_single_wealth},
+
+def her_weight(*, weight):
+    return weight
+
+
+def his_weight(*, weight):
+    return 1.0 - weight
+
+
+couple = Regime(
+    states={
+        "wealth": couple_wealth,
+        "weight": DiscreteGrid(values=jnp.linspace(0.1, 0.9, 9)),
+    },
+    state_transitions={
+        "wealth": next_couple_wealth,
+        "weight": fixed_transition("weight"),
+    },
     actions={"consumption": consumption},
-    functions={"utility": utility_single},
+    functions={
+        "utility": CollectiveUtility(
+            utilities={"f": her_utility, "m": his_utility},
+            objective=ParetoObjective(weights={"f": her_weight, "m": his_weight}),
+        )
+    },
+    exit=Exit(
+        rule=Unilateral(renegotiate=Renegotiate(state="weight")),
+        targets={
+            "f": ExitTarget(
+                regime="single_f", projection={"wealth": half_of_couple_wealth}
+            ),
+            "m": ExitTarget(
+                regime="single_m", projection={"wealth": half_of_couple_wealth}
+            ),
+        },
+    ),
 )
+```
 
+The state's grid order is the direction of the bargaining: moving to a higher node
+favours the first member in `utilities` (`f` here), moving to a lower node the second.
+Here the higher node is the larger weight on her utility, so the grid and the objective
+agree; the engine reads only the order of the nodes, not what the objective does with
+them.
+
+At every node of the state the household's optimum is computed ignoring the exit, with
+all other states held at their current values. Each member's value at that optimum is
+compared with the member's outside value. A member accepts a node when its value there
+is above its outside value, or equal to it under the default `tie="stay"`; `tie="leave"`
+makes an indifferent member refuse. A node at which the household has no feasible action
+is accepted by nobody. Starting from the household's current node:
+
+1. If both members accept it, the household stays there and acts at its optimum.
+1. If both refuse it, the household separates.
+1. If exactly one refuses, the state moves one node at a time toward that member. The
+   household stays at the first node both members accept, and acts at that node's
+   optimum.
+1. The walk ends in separation instead if it reaches the end of the grid first, or a
+   node the other member refuses. A node further along that both would accept does not
+   reopen the path.
+
+The outside values are those at the household's current states, its current node
+included. They are read once and do not move along the walk, so a projection that read
+the bargaining state would see the current node, not the node being tried. A household
+that separates goes where the exit's targets put it, as without renegotiation; it needs
+a feasible action in every destination, and without one the cell has no value. Where the
+exit's `available` does not hold, nothing is renegotiated and the household stays at its
+current node.
+
+The node the household stays at is its state for the rest of the period: it supplies the
+action, each member's value, and the state the laws of motion read. In a regime that
+continues, declare the bargaining state's law as `fixed_transition` so that the node
+also carries into next period; any other law, or a joint transition that updates the
+state, is refused when the model is built. A simulated row therefore shows the
+renegotiated node, both in the period it moved and in the next one.
+
+What renegotiation requires:
+
+- a regime with exactly two members;
+- a state declared on an ordered `DiscreteGrid`: a grid declared by its `values`, or by
+  a `@categorical(ordered=True)` class. An unordered or continuous state, or a name that
+  is not a state, is refused;
+- the rule `Unilateral`, comparing at the optimum: `compares` is `"optimum"` by default
+  with `renegotiate`, and `compares="each_action"` is refused.
+
+The search runs on the grid's nodes. Renegotiation does not solve for a continuous
+weight at which a member is exactly indifferent; refine the grid where that point
+matters. `model.lookup_policy` refuses a period in which the regime can renegotiate,
+because it cannot report a changed state or a separation; read the decision from
+`model.simulate`.
+
+## Regimes that differ only in their exit
+
+Couples that face the same budget, preferences and laws of motion can still differ in
+how they may end the match, one dissolving unilaterally and another only by mutual
+consent, or in where they go next period. Each is its own regime, because initial
+conditions, edges and results name regimes, and each declares its slots itself. Ordinary
+Python builds them from one definition:
+
+```python
+from lcm import Exit, ExitTarget, MutualConsent, Regime, Unilateral
+
+
+def couple(rule):
+    return Regime(
+        states={"wealth": couple_wealth},
+        state_transitions={"wealth": next_couple_wealth},
+        actions={"consumption": consumption},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": her_utility, "m": his_utility})
+        },
+        exit=Exit(
+            rule=rule,
+            targets={
+                member: ExitTarget(
+                    regime=f"single_{member}",
+                    projection={"wealth": half_of_couple_wealth},
+                )
+                for member in ("f", "m")
+            },
+        ),
+    )
+
+
+regimes = {
+    "couple_unilateral": couple(Unilateral()),
+    "couple_mutual": couple(MutualConsent()),
+    # ... the singles
+}
+```
+
+Each regime's value follows from its own exit and edges. Parameters stay per regime: the
+couple's functions appear under each regime's name in `get_params_template()`, here once
+under `couple_unilateral` and once under `couple_mutual`, and are set separately.
+
+## Entering a household in a role
+
+Where nothing is decided on landing — marriage arrives with a probability and both
+partners take it — a singleton source names the role its row continues in with `roles`:
+
+```python
 edges = {
     "single_f": Transition(
         law={
-            "couple": StochasticTransition(func=meets_a_partner),
             "single_f": StochasticTransition(func=meets_nobody),
+            "couple": StochasticTransition(func=meets_a_partner),
         },
-        participation={
-            "couple": ParticipationCheck(
-                predicate=mutual_consent,
-                routes={
-                    "her": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_f",
-                            projection={"wealth": half_of_couple_wealth},
-                        ),
-                    )
-                },
-                reads={
-                    "V_couple_f": ParticipationRead(
-                        kind="IntegratedFull", regime="couple", stakeholder="f"
-                    ),
-                    "V_couple_m": ParticipationRead(
-                        kind="IntegratedFull", regime="couple", stakeholder="m"
-                    ),
-                    "V_alone_f": ParticipationRead(
-                        kind="IntegratedFull", regime="single_f", projection=...
-                    ),
-                    "V_alone_m": ParticipationRead(
-                        kind="IntegratedFull", regime="single_m", projection=...
-                    ),
-                },
-            ),
-        },
+        roles={"couple": "f"},
     ),
     # ... the other sources' edges
 }
 ```
 
-The law names its targets, so the `Transition` derives its destinations from it: each
-key at every non-final age, and each route's fallback regime wherever its decided target
-is reached. Supplying `targets` as well is allowed only if it says exactly the same.
+The single woman's continuation toward `couple` is the couple's value for `f`, and a
+simulated row entering `couple` carries the role `f`. The edge is otherwise a plain one:
+a row landing where the household has no feasible action raises `NoFeasibleActionError`.
+To send such a row somewhere else depending on the landing state, declare a gate; to
+make the move depend on values, declare it as an exit of the regime that decides.
 
-The law and the decision are two distinct operations. The law's `"couple"` cell decides
-whether this target edge is attempted at all, like any other per-target cell. The
-decision, having arrived at the target's coordinates, says whether the row keeps that
-target or takes its route's fallback. A move decided in the current period instead — the
-household dissolving because a partner walks out now — is a participation `Exit` in the
-source's `Regime(exits=...)`; see the [migration guide](migrating_dated_regimes.md).
+## Marrying: a consented exit
+
+Without a role, a raw transition between regimes with different member structure stays
+rejected — there is no rule that would say who the arriving row is. A marriage that both
+partners must want is decided in the current period, by the single who meets a partner:
+it is an `Exit` of her regime toward the household, with a `Consent` rule.
+`lcm_examples.collective_household` declares it on each single's regime:
+
+```python
+single_f = Regime(
+    states={"wealth": wealth},
+    state_transitions={"wealth": next_single_wealth_f},
+    actions={"consumption_share": consumption_share},
+    functions={"consumption": consumption, "utility": single_utility},
+    shocks=("meeting_f",),
+    exit=Exit(
+        targets={
+            "self": ExitTarget(
+                regime="couple",
+                role="f",
+                projection={"wealth": pooled_from_f},
+            )
+        },
+        rule=Consent(
+            counterparty=Counterparty(
+                regime="single_m",
+                role="m",
+                projection={"wealth": half_pooled_from_f},
+            )
+        ),
+        available=meets_f,
+        observes=("meet_f",),
+    ),
+)
+```
+
+- The target `"self"` moves the single into `couple` as its member `f`, at the pooled
+  wealth `projection` computes from her state.
+- The `Counterparty` is the partner she meets: his own regime `single_m`, read at the
+  wealth `projection` assigns him, in the role `m` he would take in the couple.
+- `Consent` moves her only where both prefer the couple: her value as `f` in the formed
+  couple against her value of staying single, and his value as `m` against his value of
+  staying in `single_m` at the projected wealth. Both comparisons are strict.
+- `available` says when the move can be made at all — here when the meeting shock
+  `meet_f` says she met someone — and `observes` names the shocks the choice sees.
+
+The formed couple applies its own rule for staying, so a couple that would dissolve at
+once is priced as one. Dissolution is the household's own `Exit`, with `Unilateral` or
+`MutualConsent`; see
+[Dissolving in the current period](#dissolving-in-the-current-period-where-the-members-compare).
+An exit, and a consent counterparty, may name a regime that subjects are in, even one
+with an exit of its own: an exit that needs no consent reads its destination's problem,
+and a counterparty its regime's problem, without that regime's exit. No regime is needed
+only to be read.
 
 ### A gate routes on states
 
-A `Gate` in `Transition(gates=...)` takes the same `routes` as a participation check,
-but its `predicate` decides from the landing state alone: a **Boolean** function on the
-*target* regime's grid that reads ordinary target states and params and the target
-fold's `period` / `age`.
+A `Gate` in `Transition(gates=...)` decides between a target and its routes' fallbacks
+from the landing state alone: its `predicate` is a **Boolean** function on the *target*
+regime's grid that reads ordinary target states and params and the target fold's
+`period` / `age`.
 
 One `Gate` per target holds at every age the target is reached and in both phases; it is
 never wrapped in `ByAge` or `Phased`. When the source's law is `Phased`, only the law
 differs between the phases, which permits a perceived probability in solve and a
-realized probability in simulation without changing what consent means. When the edges
-are `Phased` with a `Transition` in each phase, a target reached in both carries the
-equal `Gate` in both or none. A route's `fallback` is the one part of a gate that may be
-`Phased`.
+realized probability in simulation without changing what the gate decides. When the
+edges are `Phased` with a `Transition` in each phase, a target reached in both carries
+the equal `Gate` in both or none. A route's `fallback` is the one part of a gate that
+may be `Phased`.
 
 A gate never reads a value. A predicate naming `V_target`, `V_target_<s>` or `D_target`
 raises `GateReadsValueError` when the `Gate` is declared, and a `Gate` takes no
-`references`. Write a comparison of values as a `ParticipationCheck` with named reads,
-or as an `Exit` of the source regime.
+`references`. Write a comparison of values as an `Exit` of the regime that decides.
 
 A gate must return a Boolean, such as a comparison or `True`. The requirement is not a
 build-time check: the dtype is examined where the gate is actually evaluated, so a gate
@@ -260,33 +444,28 @@ nonzero value is true, so a `0.25` would otherwise open the edge for every row.
 
 This is the rule that decides how a dissolution edge is written. A couple that stays
 together continues in the couple regime, so **that** is the key, with a predicate that
-holds where the household still has a feasible action:
+holds where the household continues — here, where its wealth stays above a floor:
 
 ```python
+def keeps_household(*, wealth: ContinuousState, wealth_floor: float) -> BoolND:
+    return wealth >= wealth_floor
+
+
 edges = {
     "couple": Transition(
         law={"couple": StochasticTransition(func=stays_married)},
-        participation={
-            "couple": ParticipationCheck(
-                predicate=has_policy_support,  # target_support
-                reads={
-                    "target_support": ParticipationRead(
-                        kind="Participating",
-                        regime="couple",
-                        stakeholder="f",
-                        field="support",
-                        projection=...,
-                    )
-                },
+        gates={
+            "couple": Gate(
+                predicate=keeps_household,
                 routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
+                    "f": MemberRoute(
+                        target_member="f",
                         fallback=ProjectedRegimeValue(
                             regime="single_f", projection=...
                         ),
                     ),
-                    "m": StakeholderRoute(
-                        target_stakeholder="m",
+                    "m": MemberRoute(
+                        target_member="m",
                         fallback=ProjectedRegimeValue(
                             regime="single_m", projection=...
                         ),
@@ -302,10 +481,10 @@ edges = {
 Keying it by `single_f` instead would send *both* partners to `single_f` whenever the
 couple stays together, because the key is where the open branch goes.
 
-The same rule holds for a `Gate`. Each route owns four destinations, and simulation
-carries all four: the open branch's regime (the key) and role (`target_stakeholder`),
-and the closed branch's regime and role (`fallback.regime` and `fallback.stakeholder`).
-A row landing in a singleton regime carries no role.
+Each route owns four destinations, and simulation carries all four: the open branch's
+regime (the key) and role (`target_member`), and the closed branch's regime and role
+(`fallback.regime` and `fallback.member`). A row landing in a singleton regime carries
+no role.
 
 ### Entering on the target's own terms
 
@@ -323,9 +502,9 @@ state_transitions = {
 }
 ```
 
-Without it every bride lands at the bottom of the couple's grid, where the household is
-infeasible — and the consent decision then shuts for a reason that is an artifact of the
-law rather than an economic decision.
+Without it every row entering the couple on this edge lands at the bottom of the
+couple's grid, where the household is infeasible. An exit needs no such law: its
+target's `projection` computes the landing state.
 
 ### Landing between grid nodes
 
@@ -340,281 +519,46 @@ falls between the target's nodes:
   target regime's grid is reached exactly, i.e. it carries no continuous state. Declare
   it where a straddled gate would be an economic error rather than an approximation.
 
-(participation-check-depth)=
-
-## Participation checks over several periods
-
-A [`ParticipationCheck`](../reference/model_and_regime.md#api-participation-checks) is a
-participation check at the date a scheduled transition lands. The transition produces
-the landing state, the check compares values there, and the row then either takes the
-target or its route's fallback. `lcm_examples.collective_household` declares two:
-
-- a **continuing couple** is re-tested every period: it stays together where its
-  participating policy still has support at the new wealth, and dissolves into two
-  singles at half the household's wealth otherwise;
-- a **new match** is checked once, on landing: the couple forms only if both partners
-  are better off in the household than single at the landing.
-
-A household choosing today has to price these checks: its savings depend on what each
-member will be worth after tomorrow's check. Tomorrow's value depends on the household's
-own choice tomorrow, which prices the check the day after, and so on to the horizon.
-Pylcm evaluates the first of these checks exactly and every later one from a stored
-table of what the check compares. This section says what that means for your results.
-
-### What is exact
-
-- **The next check, at every realized landing.** A regime choosing at date $d$ prices
-  the check at $d+1$ by rebuilding the target's action problem exactly at each landing
-  state, comparing there, and taking the branch the comparison selects. Simulation does
-  the same at each subject's realized landing, so whether a row marries, stays or
-  dissolves is decided by a comparison at that landing, never read off an interpolated
-  table of verdicts.
-- **Landings on grid nodes.** Where every landing falls on a node of the target's grid,
-  the solution is identical, bit for bit, to rebuilding every later check at its landing
-  as well. This holds on a discrete-wealth twin of the household example in both
-  precisions.
-
-The rebuilt action problem still reads its own continuation from the stored value
-function by interpolation, like every `GridSearch` problem. "Exact" means the check adds
-no approximation of its own.
-
-### What is interpolated
-
-The action problem rebuilt at $d+1$ contains the next check, at $d+2$. Pylcm does not
-rebuild that one in turn. It reads a **stored surface** instead, tabulated at every node
-of the target's grid at $d+2$. The surface does not store the verdict or the value after
-it. It stores what the check consumes, separately:
-
-- each member's value if the row takes the target (the **accept branch**) and if it
-  takes its route's fallback (the **reject branch**);
-- every operand the check compares: each declared read's value, or its policy support
-  when the read asks for `field="support"`.
-
-At a landing between nodes each of these is interpolated on its own, exactly as a value
-function is, and the check is run again on the interpolated operands at that landing.
-Each member then takes the branch the check selects there. On a node every stored entry
-is that node's own, so the read is the check the rebuild takes at that node.
-
-Policy support is a yes-or-no answer, so it is stored as an indicator, one or zero. Read
-between nodes, it counts as support where the interpolated indicator is at least one
-half: exact on nodes, and in a cell whose two ends disagree the switch falls halfway
-between them. A value read off an answer with support is the support-weighted mean of
-the supported nodes around the landing, so a node without support, whose value is
-$-\infty$, neither enters it nor makes it infinite.
-
-A check that observes realized physical information (an `observes=` on the decision)
-cannot be run again between nodes, because the realization it reads exists only at a
-node. Its surface stores the value each member holds after the check instead, integrated
-over that information at each node, and is interpolated like a value function; where
-that check switches, a member's value can jump inside the cell, with the error up to the
-jump that the next section describes for a check on support.
-
-A node whose check fails its integrity test stores `NaN` in every entry, so any value
-read from it is `NaN` as well rather than a silently wrong number.
-
-This affects a period only when
-
-- at least two participation dates lie ahead of it, so the checks follow each other, and
-- landings fall between grid nodes, which needs a continuous target state.
-
-In a four-period household model only period 0 is affected; periods 1 to 3 are
-unchanged. In a longer model every period up to the last few is.
-
-Grid nodes of today's value function are not exempt. A node's value prices landings
-tomorrow, and those generally fall between nodes of the next date's surface.
-
-Saved solutions carry the surfaces beside the value functions, so a loaded solution
-simulates exactly like the one that wrote it.
-
-### Why: the cost of rebuilding every check
-
-Rebuilding every check at its landing nests one action problem inside the next, down to
-the horizon. Each further participation date multiplies the cost of a period by roughly
-the target's number of actions times its reads and lottery nodes. In the household
-example with 10 wealth nodes and 5 consumption shares, going from three to four periods
-raised the couple's period-0 query time from 57 ms to 1048 ms on one CPU machine, and
-the four-period solve took 84.9 s with 10.9 GB peak memory.
-
-With stored surfaces each period prices exactly one check, whatever the horizon, so the
-solve grows linearly in the number of periods. The same four-period solve takes 37.0 s
-and 3.8 GB peak memory, compiling from an empty cache. A surface holds a few entries per
-node instead of one value per member (eight instead of two for the household's
-continuing couple), which is small next to the target's own value function and its
-action problem.
-
-There is no option to rebuild every check instead.
-
-### How large the error is
-
-Between two grid nodes $x_i < x_{i+1}$, a distance $h$ apart, each branch and each
-compared value is read off its own straight chord. Where the check does not switch
-inside the cell, every member's value is a smooth branch read off its chord, and its
-error is second order in $h$. What happens where the check switches, at $x^*$, depends
-on what the check compares:
-
-- **Values.** A new match forms where each partner's household value beats their single
-  value; a check may compare any declared reads. The interpolated values cross within a
-  distance of order $h^2$ of where the true ones do, so the check switches there, and
-  every member is priced on the side the check selects everywhere else. For a member who
-  triggers the switch her value has only a kink at $x^*$, and her error stays second
-  order. A member who is **overruled** — he would rather stay, she leaves — loses the
-  gap $J$ between his two branches at $x^*$: inside that band of order $h^2$ his error
-  can be as large as $J$, and outside it it is second order.
-- **Policy support.** The continuing couple stays where its feasible set is not empty.
-  Nodes know only whether they are supported, so the switch is placed halfway between a
-  supported and an unsupported node. Between that midpoint and the true $x^*$, a stretch
-  of at most $h/2$, the check takes the wrong branch and every member's error can be as
-  large as the jump in their value; refining shrinks that stretch, not the error in it.
-
-```text
- values decide: the switch is found again        support decides: the switch is put
- at the landing, from the two chords             halfway, wherever x* is in the cell
-
-  ^                 accept (his)                  ^                 accept
-  |         o-------*------------o                |         o--------------o
-  |                 :                             |                 :   :
-  |                 : J                           |                 : J : wrong side
-  |                 :                             |                 :   :
-  |  o--------------*-----o  reject               |  o--------------:---:--o  reject
-  +--+--------------+-----+---> y                 +--+--------------+---+--+---> y
-    x_i            x*   x_{i+1}                     x_i            x*  mid x_{i+1}
-```
-
-With $J$ the gap between a member's branches at $x^*$, the error at a landing $y$ is at
-most
-
-```{math}
-\underbrace{\tfrac{h^2}{8}\max|B''|}_{\text{branch } B \text{ the check selects}}
-\qquad \text{except} \qquad
-\underbrace{|J|}_{\substack{|y - x^*| = O(h^2) \text{ (values decide)} \\ |y - x^*| \le h/2 \text{ (support decides)}}}.
-```
-
-Three measurements show the pattern. All compare against rebuilding every check at its
-landing; "value after the check" is the surface the previous release stored, the value
-each member holds after the check, interpolated across the switch.
-
-**A two-member reference model** (pure Python; nine consumption shares; she leaves where
-her single value beats the household, he always prefers to stay). The largest error of a
-read at the last check, over landings in the cell holding the switch but at least $h/4$
-from it:
-
-| node spacing $h$ | value after the check | branches, decided at the landing |
-| ---------------: | --------------------: | -------------------------------: |
-|             4.75 |                  1.37 |                            0.069 |
-|             2.38 |                  0.84 |                            0.015 |
-|             1.19 |                  1.64 |                           0.0036 |
-|             0.59 |                  1.25 |                          0.00084 |
-|             0.30 |                  0.90 |                          0.00026 |
-
-His jump is 2.7. Read after the check, the error near the switch does not shrink; read
-as branches, it falls by about four for each halving of $h$. With support deciding the
-same model's check instead, neither read converges near the switch (both stay between
-0.36 and 2.0, for a jump of 1.9), as the bound above says.
-
-**A pylcm witness** (`tests/solution/test_participation_pricing_depth.py`; the same
-structure: she leaves rich households at the last check, he is overruled, and every
-period-0 node lands at the middle of a cell there). The largest error of the couple's
-period-0 values, both members, all nodes:
-
-| node spacing $h$ | value after the check | branches, decided at the landing |
-| ---------------: | --------------------: | -------------------------------: |
-|                4 |                  2.48 |                            0.048 |
-|                2 |                  2.46 |                            0.017 |
-|                1 |                  2.45 |                           0.0050 |
-|              0.5 |                  2.45 |                           0.0014 |
-
-**The household example** (four periods, three consumption shares, 64-bit), the couple's
-period-0 values for both members, whose values range from about 1.9 to 7.9:
-
-| wealth nodes | node spacing | mean error | max error |
-| -----------: | -----------: | ---------: | --------: |
-|            4 |         12.7 |      0.102 |     0.284 |
-|            6 |          7.6 |      0.116 |     0.241 |
-|           10 |          4.2 |      0.075 |     0.693 |
-|           16 |          2.5 |      0.034 |     0.548 |
-
-The only check this model reads from a surface is the continuing couple's, and support
-decides it, so storing branches changes only the nodes whose landings fall in a cell
-where support switches: no node at 4 wealth nodes, two at 6 and 16, three at 10 (where
-the second-largest error falls from 0.56 to 0.21). At 10 and 16 nodes the largest error
-is not among them; it is the same whether the surface stores branches or the value after
-the check. It comes from a decision taken on the surfaces' small smooth error near a
-threshold — the household's own choice, or the exact check at the next landing — which
-then flips and moves a member's value by a jump. Such a flip is an error in the stretch
-of wealth around a threshold, not at a fixed node: it moves as the grid is refined, and
-the mean, which falls to 0.034 at 16 nodes, is the better summary of how far the
-solution is from rebuilding every check.
-
-This is the same kind of error a `GridSearch` model already makes wherever it
-interpolates a value function: a value function is a maximum over discrete choices, with
-a kink wherever the best choice switches, and any choice made on interpolated values can
-flip near a tie.
-
-### When to care and what to do
-
-No verdict is interpolated, but the values a check compares price the checks after it,
-and so do earlier choices such as saving ahead of a later check. Both carry the
-surfaces' error. It matters most when
-
-- a participation threshold lies in a region of the state space that drives your
-  results, and
-- the check there is on policy support, or a choice is close to a tie there, so a
-  member's value can jump within the cells around it.
-
-To check and reduce it:
-
-- **Compare two resolutions.** Solve with a finer grid on the target's continuous state.
-  Differences concentrated at the few nodes around a threshold come from this
-  approximation.
-- **Put nodes where participation switches.** An `IrregSpacedGrid(points=...)` or a
-  `PiecewiseLinSpacedGrid` with a breakpoint near the threshold shrinks the cells around
-  it without paying for a finer grid everywhere (see [Grids](grids.md)). A denser grid
-  there narrows the stretch of wealth where a check on support can land on the wrong
-  side.
-- **Compare values rather than support where the economics allow it.** A check on
-  declared value reads is located to second order between nodes; a check on support only
-  to half a cell.
-
 ## Simulating: every row carries its own role
 
-Stakeholder identity is per subject, not per call. A row's role picks its route on a
-value-dependent transition; the branch it takes then sets the role it carries onward.
+Member identity is per subject, not per call. A row's role picks its route on a gated
+transition; the branch it takes then sets the role it carries onward.
 
 - A subject starting in a **singleton** regime has no role.
 - A subject starting in a **collective** regime declares one, through
-  `initial_conditions["own_stakeholder"]`, whenever a route it can still reach turns on
-  the role — that is, whenever some collective regime in the starting regime's forward
-  closure declares a value-dependent transition with more than one route. A row keeps
-  its role across an ordinary regime transition, so a two-leg transition the cohort runs
-  into later counts; one in a regime the cohort can never arrive at does not, and no
-  seed is required for it.
-- Entering a collective regime through a value-dependent transition sets the role from
-  the route's `target_stakeholder`; leaving through the closed branch sets it from the
-  fallback's `stakeholder`, or clears it for a singleton destination.
+  `initial_conditions["own_member"]`, whenever a route it can still reach turns on the
+  role — that is, whenever some regime in the starting regime's forward closure, the
+  starting regime included, declares a gated transition with more than one route or an
+  `Exit` with targets for more than one member, such as a dissolution that sends `f` to
+  `single_f` and `m` to `single_m`. A row keeps its role across an ordinary regime
+  transition, so such a transition or exit the cohort runs into later counts; one in a
+  regime the cohort can never arrive at does not, and no seed is required for it.
+- Entering a collective regime through `roles` sets the declared role, through a gated
+  transition the route's `target_member`, and through an exit the target's `role`;
+  leaving through the closed branch sets it from the fallback's `member`, or clears it
+  for a singleton destination.
 
 ```python
 initial_conditions = {
     "wealth": jnp.asarray([...]),
     "age": jnp.zeros(n_subjects),
     "regime_id": jnp.full(n_subjects, model.regime_names_to_ids["couple"], jnp.int32),
-    "own_stakeholder": jnp.asarray([model.stakeholder_names_to_ids["f"], ...]),
+    "own_member": jnp.asarray([model.member_names_to_ids["f"], ...]),
 }
 ```
 
-The role is published as an `own_stakeholder` column beside the columns that identify a
-row, carrying the stakeholder's label and missing wherever the row occupies no role. One
-cohort can therefore hold both partners, and a model whose collective regimes use
-disjoint role vocabularies — `carer` and `ward` in one, `f` and `m` in another — is
-expressible.
+The role is published as an `own_member` column beside the columns that identify a row,
+carrying the member's label and missing wherever the row occupies no role. One cohort
+can therefore hold both partners, and a model whose collective regimes use disjoint role
+vocabularies — `carer` and `ward` in one, `f` and `m` in another — is expressible.
 
 ## Parameters
 
 Everything lands where the declaration is:
 
 ```python
-template["couple"]["utility_f"]["crra"]  # a stakeholder's own utility
+template["couple"]["utility_f"]["crra"]  # a member's own utility
 template["couple"]["pareto_objective"]["weight_f"]  # the objective's free arguments
-template["couple"]["participation_f"]["slack"]  # a value constraint's predicate
 template["edges"]["single_f"]["couple"]["predicate"]["bonus"]  # one gate's predicate
 ```
 
@@ -628,3 +572,9 @@ edge's own target states — never from a union over unrelated regimes. See
 See [the resource contract](../development/collective_resource_contract.md) for the
 workloads these declarations are benchmarked on and which axis each cost is allowed to
 grow along.
+
+A simulation decides an exit for a block of subjects at once. Every projection and
+adjustment of the exit, including each settlement candidate's, is evaluated for every
+subject of the block and discarded where the subject does not take that branch. An exit
+whose projections are expensive and rarely taken therefore pays for them on every
+subject.

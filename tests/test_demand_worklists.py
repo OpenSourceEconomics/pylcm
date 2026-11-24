@@ -17,14 +17,14 @@ from _lcm.regime_building.transition_support import (
 from lcm import (
     AgeGrid,
     AgeRange,
+    AgeSpecializedGrid,
     ByAge,
+    Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -34,9 +34,6 @@ from lcm.exceptions import ModelInitializationError
 from lcm.initial_nodes import UserInitialNodes
 from lcm.phased import Phased
 from lcm.typing import AgeLabel, BoolND, ContinuousState, FloatND, RegimeName, ScalarInt
-from tests.regime_building.test_same_period_ref_period_axes import (
-    _make_model as _make_outside_option_model,
-)
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 _PARAMS = {"discount_factor": 0.9}
@@ -328,8 +325,8 @@ def _prob_one(age: FloatND) -> FloatND:
     return jnp.ones_like(age, dtype=float)
 
 
-def _gate(*, V_target: FloatND, V_reference: FloatND) -> BoolND:
-    return V_target > V_reference
+def _wealth_is_positive(wealth: ContinuousState) -> BoolND:
+    return wealth > 0.0
 
 
 def _identity(wealth: ContinuousState) -> ContinuousState:
@@ -337,6 +334,10 @@ def _identity(wealth: ContinuousState) -> ContinuousState:
 
 
 def _gated_model(*, phased_fallback: bool) -> Model:
+    """Gate the target on wealth; a closed gate lands in `fallback`.
+
+    With `phased_fallback`, the solve leg prices the closed gate at `priced`.
+    """
     fallback = (
         Phased(
             solve=ProjectedRegimeValue(
@@ -350,21 +351,10 @@ def _gated_model(*, phased_fallback: bool) -> Model:
         else ProjectedRegimeValue(regime="fallback", projection={"wealth": _identity})
     )
     law = ByAge(cases={40: {"target": StochasticTransition(func=_prob_one)}})
-    participation = {
-        "target": ParticipationCheck(
-            predicate=_gate,
-            reads={
-                name: ParticipationRead(
-                    kind="IntegratedFull",
-                    regime=regime,
-                    projection={"wealth": _identity},
-                )
-                for name, regime in (
-                    ("V_target", "target"),
-                    ("V_reference", "reference"),
-                )
-            },
-            routes={"only": StakeholderRoute(fallback=fallback)},
+    gates = {
+        "target": Gate(
+            predicate=_wealth_is_positive,
+            routes={"only": MemberRoute(fallback=fallback)},
         )
     }
     return Model(
@@ -381,75 +371,30 @@ def _gated_model(*, phased_fallback: bool) -> Model:
         edges=Phased(
             solve={
                 "source": Transition(
-                    targets={"target": 40, "priced": 40},
-                    law=law,
-                    participation=participation,
+                    targets={"target": 40, "priced": 40}, law=law, gates=gates
                 )
             },
             simulate={
                 "source": Transition(
-                    targets={"target": 40, "fallback": 40},
-                    law=law,
-                    participation=participation,
+                    targets={"target": 40, "fallback": 40}, law=law, gates=gates
                 )
             },
         )
         if phased_fallback
         else {
             "source": Transition(
-                targets={"target": 40, "fallback": 40},
-                law=law,
-                participation=participation,
+                targets={"target": 40, "fallback": 40}, law=law, gates=gates
             )
         },
     )
 
 
-def test_participation_reads_and_fallbacks_are_demanded_at_the_landing_age() -> None:
-    """The check's reference is only valued; the fallback is also a landing."""
+def test_gate_fallbacks_are_demanded_at_the_landing_age() -> None:
+    """A gate's fallback is a landing at the age its target is landed on."""
     reachability = _gated_model(phased_fallback=False).reachability
     assert (reachability.nodes, reachability.visited_nodes) == (
-        frozenset(
-            {(40, "source"), (45, "target"), (45, "reference"), (45, "fallback")}
-        ),
         frozenset({(40, "source"), (45, "target"), (45, "fallback")}),
-    )
-
-
-def test_a_phased_fallback_prices_one_regime_and_lands_in_another() -> None:
-    """The solve leg is priced only; the simulate leg is a physical landing.
-
-    The participation check prices the solve leg by a query of `priced` at the landing
-    age, so `priced` is active in the solution phase without becoming a stored node.
-    """
-    reachability = _gated_model(phased_fallback=True).reachability
-    assert (reachability.nodes, reachability.visited_nodes) == (
-        frozenset(
-            {(40, "source"), (45, "target"), (45, "reference"), (45, "fallback")}
-        ),
         frozenset({(40, "source"), (45, "target"), (45, "fallback")}),
-    )
-    assert "priced" in reachability.solution.active_regimes_by_period[1]
-    assert "priced" not in reachability.simulation.active_regimes_by_period[1]
-
-
-def test_a_local_outside_option_demands_its_island_by_value_only() -> None:
-    """A same-period reference and its own continuation are solved, not visited."""
-    reachability = _make_outside_option_model(
-        later_ceiling=10.0, initial_nodes={0: "couple"}
-    ).reachability
-    assert (reachability.nodes, reachability.visited_nodes) == (
-        frozenset(
-            {
-                (0, "couple"),
-                (1, "couple_terminal"),
-                (0, "single_f"),
-                (1, "single_f"),
-                (1, "single_f_terminal"),
-                (2, "single_f_terminal"),
-            }
-        ),
-        frozenset({(0, "couple"), (1, "couple_terminal")}),
     )
 
 
@@ -473,17 +418,48 @@ def test_simulate_visits_only_visited_pairs_with_zero_node_regimes() -> None:
     assert visited == frozenset({(0, "source"), (1, "realized"), (2, "end")})
 
 
+@categorical(ordered=False)
+class AgedId:
+    single: ScalarInt
+    single_terminal: ScalarInt
+
+
+def _is_first_age(age: float) -> bool:
+    return age < 0.5
+
+
+def _aged_wealth_grid(age: float) -> LinSpacedGrid:
+    return LinSpacedGrid(
+        start=0.0, stop=100.0 if _is_first_age(age) else 10.0, n_points=2
+    )
+
+
 def test_an_unreached_regime_with_an_age_specialized_grid_builds_and_solves() -> None:
     """An age-varying grid of a regime solved at no age needs no age to resolve."""
-    model = _make_outside_option_model(
-        later_ceiling=10.0, initial_nodes={2: "single_f_terminal"}
+    model = Model(
+        regimes={
+            "single": Regime(
+                states={
+                    "wealth": AgeSpecializedGrid(
+                        build=_aged_wealth_grid, signature=_is_first_age
+                    )
+                },
+                state_transitions={"wealth": fixed_transition("wealth")},
+                functions={"utility": _utility},
+            ),
+            "single_terminal": _terminal(),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
+        regime_id_class=AgedId,
+        initial_nodes={2: "single_terminal"},
+        edges={"single": {"single": 0, "single_terminal": 1}},
     )
     # Only the terminal root is demanded, so no regime reads a parameter.
     values = model.solve(params={}, log_level="off").values
     solved = {
         (period, name) for period, by_regime in values.items() for name in by_regime
     }
-    assert solved == {(2, "single_f_terminal")}
+    assert solved == {(2, "single_terminal")}
 
 
 def _probabilities() -> FloatND:

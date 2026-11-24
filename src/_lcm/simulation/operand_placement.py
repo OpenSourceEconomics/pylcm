@@ -21,9 +21,7 @@ from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.typing import (
     ArgumentTree,
     HostArray,
-    ParticipationQueryArguments,
     PytreeChild,
-    _unflatten_participation_arguments,
 )
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import ReferenceName, ValueND
@@ -197,7 +195,7 @@ def subject_operand_sharding(
     if not devices:
         raise ValueError("Simulation operands require explicit subject devices.")
     if len(devices) == 1:
-        return jax.sharding.SingleDeviceSharding(devices[0])
+        return jax.sharding.make_single_device_sharding(devices[0])
     mesh = jax.make_mesh(
         (len(devices),), ("X",), (jax.sharding.AxisType.Auto,), devices=devices
     )
@@ -292,22 +290,6 @@ def _place_operand_tree(
             for index, value in enumerate(tree)
         ]
         return tuple(values) if isinstance(tree, tuple) else values
-    if isinstance(tree, ParticipationQueryArguments):
-        # JAX's existing boundary accepts abstract children; the ordinary
-        # constructor deliberately accepts concrete economic operands only.
-        return _unflatten_participation_arguments(
-            metadata=None,
-            children=(
-                cast(
-                    "PytreeChild",
-                    _place_operand_tree(
-                        tree=tree.by_target,
-                        sharding=sharding,
-                        protected=_paths_below(paths=protected, segment="by_target"),
-                    ),
-                ),
-            ),
-        )
     if dataclasses.is_dataclass(tree) and not isinstance(tree, type):
         # Replay programs import the argument-name protocol from this module.
         from _lcm.simulation.policy_programs import (  # noqa: PLC0415

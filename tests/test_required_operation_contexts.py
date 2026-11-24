@@ -459,9 +459,9 @@ def _collective_regime(
 
 
 def _collective_demand_model(*, promote: bool) -> Model:
-    """The demand model with two stakeholders in every regime.
+    """The demand model with two members in every regime.
 
-    Each stakeholder of `perceived` has a phased utility whose simulate variant
+    Each member of `perceived` has a phased utility whose simulate variant
     reads `simulate_bonus`.
     """
     roots: dict[AgeSelector, str] = {0: "source"}
@@ -491,16 +491,16 @@ def _collective_demand_model(*, promote: bool) -> Model:
         (True, {"discount_factor", "backward_bonus", "simulate_bonus"}),
     ],
 )
-def test_collective_regime_owes_stakeholder_simulate_parameters_only_when_visited(
+def test_collective_regime_owes_member_simulate_parameters_only_when_visited(
     *, promote: bool, expected: set[str]
 ) -> None:
-    """A stakeholder's simulate-side utility counts only once the regime is visited."""
+    """A member's simulate-side utility counts only once the regime is visited."""
     model = _collective_demand_model(promote=promote)
     assert _leaf_names(tree=model.get_params_template()["perceived"]) == expected
 
 
-def test_value_only_collective_regime_keeps_each_stakeholders_value() -> None:
-    """Each stakeholder's source value is the plain `0.5 + 1.75 w`."""
+def test_value_only_collective_regime_keeps_each_members_value() -> None:
+    """Each member's source value is the plain `0.5 + 1.75 w`."""
     values = (
         _collective_demand_model(promote=False)
         .solve(params=_VALUE_ONLY_PARAMS, log_level="off")

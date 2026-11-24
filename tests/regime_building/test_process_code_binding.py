@@ -2,8 +2,8 @@
 
 A process state holds the value of a node, and an argument `z_code` receives that
 node's int32 position. The position belongs to the regime whose state is read:
-the declaring regime for its own functions, constraints and their projections,
-and the landing target for a gated edge's gate and fallbacks. Each
+the declaring regime for its own functions and constraints, and the landing
+target for a gated edge's gate and fallbacks. Each
 oracle below is a literal node table or payoff, never a production coordinate.
 """
 
@@ -24,17 +24,14 @@ from lcm import (
     DeterministicTransition,
     DiscreteGrid,
     Gate,
+    MemberRoute,
     Model,
     NormalIIDProcess,
-    ParticipationCheck,
-    ParticipationRead,
     Phased,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     UniformIIDProcess,
-    ValueDependentConstraint,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
@@ -45,6 +42,7 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FloatND,
+    RegimeName,
     ScalarInt,
     UserFunction,
 )
@@ -73,12 +71,6 @@ class TwoRegimes:
 
 
 @categorical(ordered=False)
-class CoupleRegime:
-    couple: ScalarInt
-    single: ScalarInt
-
-
-@categorical(ordered=False)
 class OnlyRegime:
     only: ScalarInt
 
@@ -90,7 +82,9 @@ class LandingRegime:
     fallback: ScalarInt
 
 
-def _process(*, mu: float, n_points: int = 5, sigma: float = 1.0, n_std: float = 2.0):
+def _process(
+    *, mu: float, n_points: int = 5, sigma: float = 1.0, n_std: float = 2.0
+) -> NormalIIDProcess:
     return NormalIIDProcess(
         n_points=n_points,
         gauss_hermite=False,
@@ -101,7 +95,7 @@ def _process(*, mu: float, n_points: int = 5, sigma: float = 1.0, n_std: float =
     )
 
 
-def _cubic(x):
+def _cubic[T: (float, FloatND)](x: T) -> T:
     return x * x * x + 2.0 * x + 5.0
 
 
@@ -118,15 +112,11 @@ def _wife(*, z: ContinuousState, work: DiscreteAction) -> FloatND:
 
 
 def _husband(*, z: ContinuousState, work: DiscreteAction) -> FloatND:
-    return 100.0 * (1.0 - work) + 0.0 * z
+    return 100.0 * work + 0.0 * z
 
 
 def _project_node(z_code: DiscreteState) -> ContinuousState:
     return jnp.asarray(NODES)[z_code]
-
-
-def _participates(*, Q_f: FloatND, V_ref: FloatND) -> BoolND:
-    return Q_f >= V_ref
 
 
 def _gate(z_code: DiscreteState) -> BoolND:
@@ -147,11 +137,6 @@ def _route_model(*, reverse: bool, enable_jit: bool) -> Model:
         states={"z": _process(mu=0.0)},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": CollectiveUtility(utilities={"f": _wife, "m": _husband})},
-        constraints={
-            "participation": ValueDependentConstraint(
-                predicate=_participates, references={"V_ref": reference}
-            )
-        },
     )
     single = Regime(
         states={"z": _process(mu=0.0)}, functions={"utility": _single_utility}
@@ -171,9 +156,7 @@ def _route_model(*, reverse: bool, enable_jit: bool) -> Model:
                     "married": Gate(
                         predicate=_gate,
                         routes={
-                            "only": StakeholderRoute(
-                                target_stakeholder="f", fallback=reference
-                            )
+                            "only": MemberRoute(target_member="f", fallback=reference)
                         },
                     )
                 },
@@ -192,7 +175,9 @@ def _normal_node_weights() -> tuple[float, ...]:
     return tuple(right - left for left, right in pairwise(cuts))
 
 
-def _route_values(*, reverse: bool, enable_jit: bool):
+def _route_values(
+    *, reverse: bool, enable_jit: bool
+) -> Mapping[int, Mapping[RegimeName, FloatND]]:
     params = {
         "young": {"koopmans_aggregator": {"discount_factor": 1.0}},
         "married": {},
@@ -204,20 +189,9 @@ def _route_values(*, reverse: bool, enable_jit: bool):
 
 @pytest.mark.parametrize("reverse", [False, True], ids=["source-first", "source-last"])
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
-def test_constraint_projection_reads_the_declaring_regimes_nodes(
-    *, reverse: bool, enable_jit: bool
-):
-    """At every married node, only work is feasible, worth `cubic(z) + 0.25`."""
-    values = _route_values(reverse=reverse, enable_jit=enable_jit)
-    expected = np.array([[_cubic(z) + BRACKET, 0.0] for z in NODES])
-    np.testing.assert_array_equal(values[1]["married"], expected)
-
-
-@pytest.mark.parametrize("reverse", [False, True], ids=["source-first", "source-last"])
-@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
 def test_gate_and_fallback_read_the_landing_targets_nodes(
     *, reverse: bool, enable_jit: bool
-):
+) -> None:
     """The gate opens at target positions 3 and 4, where it adds the surplus."""
     values = _route_values(reverse=reverse, enable_jit=enable_jit)
     expected = sum(
@@ -229,7 +203,7 @@ def test_gate_and_fallback_read_the_landing_targets_nodes(
     )
 
 
-def test_process_code_is_not_a_parameter_of_a_projection_or_gate():
+def test_process_code_is_not_a_parameter_of_a_projection_or_gate() -> None:
     model = _route_model(reverse=False, enable_jit=False)
     assert "z_code" not in str(model.get_params_template())
 
@@ -260,7 +234,7 @@ _GRID_CASES = [
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
 def test_one_callable_in_two_regimes_reads_each_regimes_positions(
     *, case: tuple[int, float, float, float, float], reverse: bool, enable_jit: bool
-):
+) -> None:
     count, mean_a, mean_b, sigma, n_std = case
     entries = [
         (
@@ -302,7 +276,7 @@ def _zero_utility() -> FloatND:
     return jnp.asarray(0.0)
 
 
-def test_an_age_specialized_reader_of_a_process_code_is_refused():
+def test_an_age_specialized_reader_of_a_process_code_is_refused() -> None:
     """An age-specialized function cannot read a process state's node position."""
     with pytest.raises(RegimeInitializationError, match=r"age-specialized.*z_code"):
         Model(
@@ -330,7 +304,7 @@ def test_an_age_specialized_reader_of_a_process_code_is_refused():
         )
 
 
-def test_a_foreign_continuous_process_does_not_refuse_a_local_code_read():
+def test_a_foreign_continuous_process_does_not_refuse_a_local_code_read() -> None:
     """Regime `b` draws `z` continuously but never reads its position."""
     continuous = NormalIIDProcess(
         n_points=5, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=2.0
@@ -353,7 +327,7 @@ def test_a_foreign_continuous_process_does_not_refuse_a_local_code_read():
     np.testing.assert_array_equal(values.values[0]["a"], np.arange(5, dtype=float))
 
 
-def test_phased_process_on_different_nodes_is_refused():
+def test_phased_process_on_different_nodes_is_refused() -> None:
     with pytest.raises(
         RegimeInitializationError, match="solve and simulate laws differ"
     ):
@@ -373,35 +347,19 @@ def test_phased_process_on_different_nodes_is_refused():
         )
 
 
-_COUPLE_NODES = np.array([-1.0, 0.0, 1.0])
+_WORKER_NODES = np.array([-1.0, 0.0, 1.0])
 _SURPLUS = 0.25
 
 
-def _couple_wife(*, z: ContinuousState, work: DiscreteAction) -> FloatND:
-    return z + _SURPLUS * (2.0 * work - 1.0)
+def _worker_reads_code(*, z_code: DiscreteState, work: DiscreteAction) -> FloatND:
+    return jnp.asarray(_WORKER_NODES)[z_code] + _SURPLUS * work
 
 
-def _couple_husband(*, z: ContinuousState, work: DiscreteAction) -> FloatND:
-    return 10.0 * (1.0 - work) + 0.0 * z
+def _worker_reads_value(*, z: ContinuousState, work: DiscreteAction) -> FloatND:
+    return z + _SURPLUS * work
 
 
-def _couple_node_at_code(z_code: DiscreteState) -> ContinuousState:
-    return jnp.asarray(_COUPLE_NODES)[z_code]
-
-
-def _identity(z: ContinuousState) -> ContinuousState:
-    return z
-
-
-def _value_of(z: ContinuousState) -> FloatND:
-    return z
-
-
-def _participation(*, Q_f: FloatND, V_outside: FloatND) -> BoolND:
-    return Q_f >= V_outside
-
-
-def _couple_model(
+def _worker_model(
     *,
     binding: Literal["constructor", "model_fixed", "runtime"],
     enable_jit: bool,
@@ -415,72 +373,54 @@ def _couple_model(
         n_std=1.0,
         simulated_draws="nodes",
     )
-    couple = Regime(
+    worker = Regime(
         states={"z": shock},
         actions={"work": DiscreteGrid(category_class=Work)},
-        functions={
-            "utility": CollectiveUtility(
-                utilities={"f": _couple_wife, "m": _couple_husband}
-            )
-        },
-        constraints={
-            "participation_f": ValueDependentConstraint(
-                predicate=_participation,
-                references={
-                    "V_outside": ProjectedRegimeValue(
-                        regime="single",
-                        projection={
-                            "z": _couple_node_at_code if read_code else _identity
-                        },
-                    )
-                },
-            )
-        },
+        functions={"utility": _worker_reads_code if read_code else _worker_reads_value},
     )
-    single = Regime(states={"z": shock}, functions={"utility": _value_of})
     return Model(
-        regimes={"couple": couple, "single": single},
+        regimes={"only": worker},
         edges={},
         ages=AgeGrid(exact_values=(0,)),
-        initial_nodes={0: "couple"},
-        regime_id_class=CoupleRegime,
+        initial_nodes={0: "only"},
+        regime_id_class=OnlyRegime,
         fixed_params=(
-            {name: {"z": {"sigma": 1.0}} for name in ("couple", "single")}
-            if binding == "model_fixed"
-            else {}
+            {"only": {"z": {"sigma": 1.0}}} if binding == "model_fixed" else {}
         ),
         enable_jit=enable_jit,
     )
 
 
-def _terminal_couple_values(model: Model) -> np.ndarray:
-    solution = model.solve(params={"couple": {}, "single": {}}, log_level="off")
-    return np.asarray(solution.values[0]["couple"])
+def _terminal_worker_values(model: Model) -> np.ndarray:
+    solution = model.solve(params={"only": {}}, log_level="off")
+    return np.asarray(solution.values[0]["only"])
 
 
 @pytest.mark.parametrize("binding", ["constructor", "model_fixed"])
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
 def test_fixed_process_law_reads_the_same_positions_wherever_it_is_fixed(
     *, binding: Literal["constructor", "model_fixed"], enable_jit: bool
-):
+) -> None:
     """A law fixed by `fixed_params` means what the constructor value means."""
-    model = _couple_model(binding=binding, enable_jit=enable_jit)
-    expected = np.column_stack((_COUPLE_NODES + _SURPLUS, np.zeros(3)))
-    np.testing.assert_array_equal(_terminal_couple_values(model), expected)
+    model = _worker_model(binding=binding, enable_jit=enable_jit)
+    np.testing.assert_array_equal(
+        _terminal_worker_values(model), _WORKER_NODES + _SURPLUS
+    )
 
 
-def test_model_fixed_process_law_value_projection():
-    model = _couple_model(binding="model_fixed", enable_jit=False, read_code=False)
-    expected = np.column_stack((_COUPLE_NODES + _SURPLUS, np.zeros(3)))
-    np.testing.assert_array_equal(_terminal_couple_values(model), expected)
+def test_model_fixed_process_law_value_read() -> None:
+    model = _worker_model(binding="model_fixed", enable_jit=False, read_code=False)
+    np.testing.assert_array_equal(
+        _terminal_worker_values(model), _WORKER_NODES + _SURPLUS
+    )
 
 
-def test_runtime_process_law_refuses_a_code_projection():
+def test_runtime_process_law_refuses_a_code_read() -> None:
     with pytest.raises(
         RegimeInitializationError,
         match=r"z_code.*fix the parameters of `z` at construction",
     ):
-        _couple_model(binding="runtime", enable_jit=False)
+        _worker_model(binding="runtime", enable_jit=False)
 
 
 def _authored_code_like_name(z: ContinuousState) -> FloatND:
@@ -502,7 +442,7 @@ def _only_model(functions: Mapping[str, UserFunction]) -> Model:
     )
 
 
-def test_a_function_named_like_a_process_code_is_refused():
+def test_a_function_named_like_a_process_code_is_refused() -> None:
     with pytest.raises(
         RegimeInitializationError,
         match=r"'z_code' in regime 'only'.*collides with the code",
@@ -515,12 +455,12 @@ def test_a_function_named_like_a_process_code_is_refused():
         )
 
 
-def test_utility_process_code_is_not_a_parameter():
+def test_utility_process_code_is_not_a_parameter() -> None:
     template = _only_model({"utility": _position_payoff}).get_params_template()
     assert "z_code" not in str(template)
 
 
-def test_utility_process_code_reads_positions():
+def test_utility_process_code_reads_positions() -> None:
     model = _only_model({"utility": _position_payoff})
     values = model.solve(params={"only": {}}, log_level="off").values
     np.testing.assert_array_equal(values[0]["only"], np.arange(5, dtype=float))
@@ -546,61 +486,33 @@ def _gate_without_process_read() -> BoolND:
     return jnp.ones((), dtype=bool)
 
 
-def _participation_on_landing_value(V_target: FloatND) -> BoolND:
-    return V_target > 0.0
-
-
-def _landed_z(z: ContinuousState) -> ContinuousState:
-    return z
-
-
 def _landing_model(
-    *, runtime: bool, edge: Literal["gate-read", "gate-no-read", "participation"]
+    *, runtime: bool, edge: Literal["gate-read", "gate-no-read"]
 ) -> Model:
     """Source and target carry one uniform process on nodes [-1, 0, 1].
 
     The edge is a state `Gate` whose predicate reads the landed process or reads
-    nothing, or a `ParticipationCheck` reading the target's value at the landing.
+    nothing.
     """
     shock = UniformIIDProcess(
         n_points=3, start=-1.0, stop=None if runtime else 1.0, simulated_draws="nodes"
     )
-    route = StakeholderRoute(
-        fallback=ProjectedRegimeValue(regime="fallback", projection={})
-    )
+    route = MemberRoute(fallback=ProjectedRegimeValue(regime="fallback", projection={}))
     targets = {"target": 0, "fallback": 0}
     law = ByAge(cases={0: {"target": StochasticTransition(func=_one)}})
-    transition = (
-        Transition(
-            targets=targets,
-            law=law,
-            gates={
-                "target": Gate(
-                    predicate=(
-                        _gate_on_landing_value
-                        if edge == "gate-read"
-                        else _gate_without_process_read
-                    ),
-                    routes={"only": route},
-                )
-            },
-        )
-        if edge != "participation"
-        else Transition(
-            targets=targets,
-            law=law,
-            participation={
-                "target": ParticipationCheck(
-                    predicate=_participation_on_landing_value,
-                    reads={
-                        "V_target": ParticipationRead(
-                            kind="Raw", regime="target", projection={"z": _landed_z}
-                        )
-                    },
-                    routes={"only": route},
-                )
-            },
-        )
+    transition = Transition(
+        targets=targets,
+        law=law,
+        gates={
+            "target": Gate(
+                predicate=(
+                    _gate_on_landing_value
+                    if edge == "gate-read"
+                    else _gate_without_process_read
+                ),
+                routes={"only": route},
+            )
+        },
     )
     return Model(
         regimes={
@@ -628,7 +540,7 @@ def _landing_source_values(*, model: Model, runtime: bool) -> np.ndarray:
     return np.asarray(solution.values[0]["source"])
 
 
-def test_gate_reads_the_landing_value_of_a_fixed_process():
+def test_gate_reads_the_landing_value_of_a_fixed_process() -> None:
     """The gate opens only at node 1, so `E[V] = (1 + 1 + 5) / 3`."""
     model = _landing_model(runtime=False, edge="gate-read")
     np.testing.assert_allclose(
@@ -639,18 +551,12 @@ def test_gate_reads_the_landing_value_of_a_fixed_process():
     )
 
 
-def test_gate_reading_a_runtime_process_value_at_its_landing_is_refused():
+def test_gate_reading_a_runtime_process_value_at_its_landing_is_refused() -> None:
     with pytest.raises(ModelInitializationError, match="parameterized at runtime"):
         _landing_model(runtime=True, edge="gate-read")
 
 
-def test_participation_landing_in_a_runtime_process_is_refused():
-    """A participation check enumerates the landed process by node; runtime has none."""
-    with pytest.raises(ModelInitializationError, match="parameterized at runtime"):
-        _landing_model(runtime=True, edge="participation")
-
-
-def test_gate_not_reading_a_runtime_process_keeps_it_supported():
+def test_gate_not_reading_a_runtime_process_keeps_it_supported() -> None:
     """The gate refusal is scoped to the process it reads; open, so E[V] = 5."""
     model = _landing_model(runtime=True, edge="gate-no-read")
     np.testing.assert_allclose(

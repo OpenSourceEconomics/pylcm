@@ -15,8 +15,8 @@ The three provenances an edge-side callable mixes, all in one signature:
    param the SOLVE-side fold needs from that edge namespace, so this is not a
    preference between two merges — it is what makes simulate evaluate the same
    object solve folded.
-3. Each REFERENCE regime's own interpolation grid, for a leg fallback's,
-   same-period reference's or participation read's read of that regime's V.
+3. Each REFERENCE regime's own interpolation grid, for a leg fallback's read of
+   that regime's V.
 
 Covered here:
 
@@ -34,18 +34,14 @@ Covered here:
   PARAMS resolve against the reference regime's own namespace
   (`SAME_PERIOD_PARAMS_ARG`).
 
-Value-reading gates and their references are retired in favour of
-`ParticipationCheck`; their parameter namespaces are pinned in
-`tests/params/test_gate_reads_on_the_target_domain.py`.
-
 Fixture discipline: every one of these is only a repro if the two candidate
 bindings genuinely disagree, so each fixture gives the two regimes DIFFERENT
-values for the contested name (`_PROJ_SRC_SHIFT` != `_PROJ_TARGET_SHIFT`,
-`_REF_POINTS` != `_SRC_POINTS`) and asserts the disagreement itself.
+values for the contested name (`_PROJ_SRC_SHIFT` != `_PROJ_TARGET_SHIFT`) and
+asserts the disagreement itself.
 """
 
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from inspect import signature
 from types import MappingProxyType
@@ -55,12 +51,12 @@ import numpy as np
 import pytest
 
 from _lcm.certainty_equivalent import LinearExpectation
+from _lcm.engine import Regime as InternalRegime
 from _lcm.params.edges import regime_kernel_params
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.gated_edges import (
     SOURCE_PARAMS,
-    ResolvedProjectedRegimeValue,
     _fence_edge_consumer,
     _with_qualified_params,
 )
@@ -72,10 +68,8 @@ from _lcm.regime_building.Q_and_F import (
     EDGE_REF_V_ARG,
     SAME_PERIOD_PARAMS_ARG,
     SAME_PERIOD_V_ARG,
-    _build_same_period_ref_reader,
     evaluate_projected_readers,
 )
-from _lcm.regime_building.V import create_v_interpolation_info
 from _lcm.regime_law import RegimeLawDeclaration
 from _lcm.simulation.gated_routing import (
     bind_provenance_params,
@@ -83,25 +77,28 @@ from _lcm.simulation.gated_routing import (
     substitute_gated_edge_continuations,
 )
 from _lcm.solution.backward_induction import solve
+from _lcm.typing import (
+    FlatParams,
+    FlatRegimeParams,
+    ParamsLeaf,
+    PeriodToRegimeToVArr,
+    RegimeNamesToIds,
+    StateName,
+)
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
     ByAge,
-    CollectiveUtility,
     DiscreteGrid,
     Gate,
     IrregSpacedGrid,
     LinSpacedGrid,
-    Model,
-    ParticipationCheck,
-    ParticipationRead,
+    MemberRoute,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
-    ValueDependentConstraint,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -177,7 +174,7 @@ def _process(
     regimes_dict: Mapping[str, Regime],
     laws: Mapping[RegimeName, RegimeLawDeclaration | Transition],
     ages: AgeGrid,
-):
+) -> tuple[MappingProxyType[RegimeName, InternalRegime], RegimeNamesToIds]:
     """Finalize and process the regimes under their bound laws."""
     regime_names_to_ids = MappingProxyType(
         {name: jnp.int32(i) for i, name in enumerate(regimes_dict)}
@@ -202,7 +199,13 @@ def _process(
     return regimes, regime_names_to_ids
 
 
-def _solve_fixture(*, spec: _Spec, flat_params):
+def _solve_fixture(
+    *, spec: _Spec, flat_params: FlatParams
+) -> tuple[
+    MappingProxyType[RegimeName, InternalRegime],
+    RegimeNamesToIds,
+    PeriodToRegimeToVArr,
+]:
     regimes_dict, laws = spec
     regimes, regime_names_to_ids = _process(
         regimes_dict=regimes_dict, laws=laws, ages=_AGES
@@ -220,9 +223,14 @@ def _solve_fixture(*, spec: _Spec, flat_params):
     return regimes, regime_names_to_ids, solution
 
 
-def _same_period_mappings(*, regimes, flat_params, solution):
+def _same_period_mappings(
+    *,
+    regimes: MappingProxyType[RegimeName, InternalRegime],
+    flat_params: FlatParams,
+    solution: PeriodToRegimeToVArr,
+) -> MappingProxyType[RegimeName, MappingProxyType[RegimeName, FloatND]]:
     base_state_action_spaces = {
-        name: regime.solution.state_action_space(regime_params=flat_params[name])
+        name: regime.solution.state_action_space(regime_params=flat_params[name])  # ty: ignore[invalid-argument-type]
         for name, regime in regimes.items()
     }
     _substituted, mappings = substitute_gated_edge_continuations(
@@ -250,7 +258,11 @@ _PROJ_SRC_SHIFT = 1.0
 _PROJ_TARGET_SHIFT = 9.0
 
 
-def _target_bound_call(*, func, kwargs):
+def _target_bound_call(
+    *,
+    func: Callable[..., MappingProxyType[StateName, FloatND]],
+    kwargs: Mapping[str, ParamsLeaf | FlatRegimeParams],
+) -> MappingProxyType[StateName, FloatND]:
     """A projector call bound from the TARGET namespace, for contrast.
 
     A local copy of a `_call_with_accepted_kwargs` helper of the form
@@ -306,7 +318,7 @@ def _make_projector_regimes() -> _Spec:
                 "target": Gate(
                     predicate=_always_closed_gate,
                     routes={
-                        "only": StakeholderRoute(
+                        "only": MemberRoute(
                             fallback=ProjectedRegimeValue(
                                 regime="fallback",
                                 projection={"z": _project_x_plus_shift},
@@ -334,7 +346,7 @@ def _make_projector_regimes() -> _Spec:
     return _split({"src": src, "target": target, "fallback": fallback})
 
 
-def _projector_flat_params():
+def _projector_flat_params() -> FlatParams:
     return MappingProxyType(
         {
             "src": MappingProxyType(
@@ -355,7 +367,7 @@ def _projector_flat_params():
     )
 
 
-def test_simulate_projector_equals_the_solve_folds_projected_coordinate():
+def test_simulate_projector_equals_the_solve_folds_projected_coordinate() -> None:
     """The simulate projector lands on the coordinate the solve fold projected.
 
     The fold's `Wbar` (gate closed everywhere, `V_fallback(z) = z`) IS the
@@ -372,8 +384,8 @@ def test_simulate_projector_equals_the_solve_folds_projected_coordinate():
     projector = regimes["src"].gated_edges["target"].legs[0].fallback_state_projector
 
     # The two namespaces genuinely disagree about `shift`.
-    assert float(flat_params["edges"]["src"][_PROJ_SHIFT_QNAME]) != float(
-        flat_params["target"][_PROJ_SHIFT_QNAME]
+    assert float(flat_params["edges"]["src"][_PROJ_SHIFT_QNAME]) != float(  # ty: ignore[invalid-argument-type, not-subscriptable]
+        flat_params["target"][_PROJ_SHIFT_QNAME]  # ty: ignore[invalid-argument-type]
     )
 
     # What SOLVE projected, read off the fold's own output: Wbar on the target's
@@ -389,9 +401,9 @@ def test_simulate_projector_equals_the_solve_folds_projected_coordinate():
     # router's own binding.
     target_states = {"x": jnp.array([0.0, 1.0])}
     simulated = projector(
-        **{name: target_states[name] for name in projector.arg_provenance.states},
+        **{name: target_states[name] for name in projector.arg_provenance.states},  # ty: ignore[unresolved-attribute]
         **bind_provenance_params(
-            provenance=projector.arg_provenance,
+            provenance=projector.arg_provenance,  # ty: ignore[unresolved-attribute]
             flat_params=flat_params,
             source_name="src",
             target_name="target",
@@ -418,7 +430,12 @@ def test_simulate_projector_equals_the_solve_folds_projected_coordinate():
     )
 
 
-def _same_period_wbar(*, regimes, flat_params, solution):
+def _same_period_wbar(
+    *,
+    regimes: MappingProxyType[RegimeName, InternalRegime],
+    flat_params: FlatParams,
+    solution: PeriodToRegimeToVArr,
+) -> FloatND:
     """The edge's `Wbar` at the target's own nodes, from the production fold.
 
     The substituted leaf is the edge's stacked operand channels, which the
@@ -432,7 +449,7 @@ def _same_period_wbar(*, regimes, flat_params, solution):
     )
     edge = regimes["src"].gated_edges["target"]
     target_nodes = regimes["target"].solution.state_action_space(
-        regime_params=flat_params["target"]
+        regime_params=flat_params["target"]  # ty: ignore[invalid-argument-type]
     )
     supplied = {
         **{name: jnp.asarray(grid) for name, grid in target_nodes.states.items()},
@@ -471,7 +488,7 @@ def _same_period_wbar(*, regimes, flat_params, solution):
             for reader in edge_fold.projected_readers
             for arg in reader.state_args
         },
-        other_values={
+        other_values={  # ty: ignore[invalid-argument-type]
             arg: engine_values[arg]
             for reader in edge_fold.projected_readers
             for arg in reader.other_args
@@ -488,7 +505,12 @@ def _same_period_wbar(*, regimes, flat_params, solution):
     )
 
 
-def _same_period_channels(*, regimes, flat_params, solution):
+def _same_period_channels(
+    *,
+    regimes: MappingProxyType[RegimeName, InternalRegime],
+    flat_params: FlatParams,
+    solution: PeriodToRegimeToVArr,
+) -> FloatND:
     """The edge's stacked operand channels on the target grid."""
     substituted, _mappings = substitute_gated_edge_continuations(
         regime=regimes["src"],
@@ -497,7 +519,7 @@ def _same_period_channels(*, regimes, flat_params, solution):
         period=0,
         next_regime_to_V_arr=solution[1],
         base_state_action_spaces={
-            name: regime.solution.state_action_space(regime_params=flat_params[name])
+            name: regime.solution.state_action_space(regime_params=flat_params[name])  # ty: ignore[invalid-argument-type]
             for name, regime in regimes.items()
         },
         period_to_regime_to_V_arr=solution,
@@ -506,7 +528,7 @@ def _same_period_channels(*, regimes, flat_params, solution):
     return substituted["target"]
 
 
-def test_router_writes_the_fold_consistent_fallback_state():
+def test_router_writes_the_fold_consistent_fallback_state() -> None:
     """The router writes the fold-consistent fallback state.
 
     The end of the causal chain the equality above pins: the row enters the
@@ -543,8 +565,8 @@ def test_router_writes_the_fold_consistent_fallback_state():
         ),
         subjects_in_regime=jnp.array([True]),
         flat_params=flat_params,
-        own_stakeholder=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),
-        new_own_stakeholder=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),
+        own_member=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),
+        new_own_member=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),
     )
     # Gate closed by construction -> the row goes to the fallback...
     np.testing.assert_array_equal(
@@ -556,106 +578,6 @@ def test_router_writes_the_fold_consistent_fallback_state():
     )
     assert not np.allclose(
         np.asarray(states["fallback"]["z"]), [_REALIZED_X + _PROJ_TARGET_SHIFT]
-    )
-
-
-# A REFERENCE regime's runtime irregular grid.
-
-# The reference regime's own points, and the SOURCE's identically named ones.
-# Both regimes declare a runtime-points `IrregSpacedGrid`, so both flat-param
-# mappings carry a key literally named `x__points` / `z__points`.
-_REF_POINTS = (0.0, 1.0)
-_SRC_POINTS = (0.0, 10.0)
-
-
-def _gate_ref_only(ref_v: FloatND) -> BoolND:
-    """`V_ref` read at the projected coordinate 0.6, on the REFERENCE's grid.
-
-    `V_ref(x) = x`, so on the reference's own points (0, 1) the read is 0.6 and
-    the decision OPENS; on the source's identically named (0, 10) the coordinate
-    collapses to 0.06 and it CLOSES.
-    """
-    return ref_v > 0.5
-
-
-def _project_realized(x: ContinuousState) -> FloatND:
-    return jnp.full_like(jnp.asarray(x, dtype=float), _REALIZED_X)
-
-
-@categorical(ordered=False)
-class _RefGridRegimeId:
-    src: ScalarInt
-    target: ScalarInt
-    refregime: ScalarInt
-    fallback: ScalarInt
-
-
-def _u_zero_x(x: ContinuousState) -> FloatND:
-    return 0.0 * x
-
-
-def test_participation_read_uses_the_reference_regimes_own_runtime_grid() -> None:
-    """A participation read interpolates on the REFERENCE regime's own runtime points.
-
-    The source declares an identically named runtime grid on (0, 10). Read on the
-    reference's own (0, 1), `V_ref(0.6) = 0.6` opens the decision and the source
-    earns `0.95 * V_target(0.6) = 0.57`; read on the source's points the
-    coordinate collapses to 0.06, closing it onto the zero-valued fallback.
-    """
-    grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
-    model = Model(
-        regimes={
-            "src": Regime(
-                states={"x": IrregSpacedGrid(n_points=2)},
-                state_transitions={"x": _next_x_offgrid},
-                actions={"work": DiscreteGrid(category_class=Work)},
-                functions={"utility": _u_src},
-            ),
-            "target": Regime(states={"x": grid}, functions={"utility": _u_identity}),
-            "refregime": Regime(
-                states={"x": IrregSpacedGrid(n_points=2)},
-                functions={"utility": _u_identity},
-            ),
-            "fallback": Regime(states={"x": grid}, functions={"utility": _u_zero_x}),
-        },
-        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
-        regime_id_class=_RefGridRegimeId,
-        initial_nodes={0: "src"},
-        edges={
-            "src": Transition(
-                law=ByAge(cases={0: {"target": StochasticTransition(func=_prob_one)}}),
-                participation={
-                    "target": ParticipationCheck(
-                        predicate=_gate_ref_only,
-                        reads={
-                            "ref_v": ParticipationRead(
-                                kind="IntegratedFull",
-                                regime="refregime",
-                                projection={"x": _project_realized},
-                            )
-                        },
-                        routes={
-                            "only": StakeholderRoute(
-                                fallback=ProjectedRegimeValue(
-                                    regime="fallback", projection={"x": _identity_x}
-                                )
-                            )
-                        },
-                    )
-                },
-            )
-        },
-    )
-    solution = model.solve(
-        params={
-            "discount_factor": _BETA,
-            "src": {"x": {"points": jnp.asarray(_SRC_POINTS)}},
-            "refregime": {"x": {"points": jnp.asarray(_REF_POINTS)}},
-        },
-        log_level="off",
-    )
-    np.testing.assert_allclose(
-        np.asarray(solution.values[0]["src"]), [_BETA * _REALIZED_X] * 2, rtol=1e-6
     )
 
 
@@ -686,7 +608,7 @@ def _make_fallback_grid_regimes() -> _Spec:
                 "target": Gate(
                     predicate=_always_closed_gate,
                     routes={
-                        "only": StakeholderRoute(
+                        "only": MemberRoute(
                             fallback=ProjectedRegimeValue(
                                 regime="fallback",
                                 projection={"z": _identity_x_to_z},
@@ -726,10 +648,10 @@ def _identity_x_to_z(x: ContinuousState) -> FloatND:
 _FALLBACK_POINTS = (0.0, 0.25, 1.0)
 
 
-def test_leg_fallback_reader_reads_the_fallback_regimes_own_runtime_grid():
+def test_leg_fallback_reader_reads_the_fallback_regimes_own_runtime_grid() -> None:
     """The leg-fallback reader reads the FALLBACK regime's own runtime grid.
 
-    The fourth consumer of `_build_same_period_ref_reader`, and the one that runs
+    A consumer of `_build_same_period_ref_reader`, the one that runs
     at SOLVE time inside `get_edge_fold`. With the gate closed everywhere, `Wbar`
     IS this reader's output: `V_fallback(pi(x)) = pi(x) = x`, exactly, whatever
     the fallback's grid spacing — but only if the reader interpolated on the
@@ -760,210 +682,6 @@ def test_leg_fallback_reader_reads_the_fallback_regimes_own_runtime_grid():
     # Wbar = V_fallback(x) = x on the target's {0, 1} grid — exact only because
     # the read used the fallback's own irregular points.
     np.testing.assert_allclose(wbar, [0.0, 1.0], atol=1e-6)
-
-
-# The ORDINARY same-period ref (the reader's fourth consumer, and the only one
-# that runs inside a regime's own compiled kernel).
-
-# The reference regime `single_f`'s own points, and the READING regime's
-# identically named ones. Both declare a state `wage` on a runtime irregular
-# grid, so both flat-param mappings carry a key literally named `wage__points`.
-_SINGLE_POINTS = (0.0, 10.0)
-_MARRIED_POINTS = (0.0, 1.0)
-
-
-def _u_wage(wage: ContinuousState) -> FloatND:
-    return wage
-
-
-def _u_married_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
-    return 5.0 + 0.0 * wage * work
-
-
-def _u_married_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
-    return 0.0 * wage * work
-
-
-def _ir_f(*, Q_f: FloatND, V_single_f_ref: FloatND) -> BoolND:
-    """`Q_f = 5` against the reference value read at the married node.
-
-    At the married node `wage = 1.0`, projected onto `single_f`'s own points
-    (0, 10), the read is coordinate 0.1 -> `V_single_f = 1.0`, so the constraint
-    holds and the cell is feasible. Read on the MARRIED regime's identically
-    named points (0, 1) instead, the same value lands on coordinate 1.0 ->
-    `V_single_f = 10.0`, the mask empties, and the cell publishes `V = -inf`.
-    Two very different models, one qname.
-    """
-    return Q_f >= V_single_f_ref
-
-
-def _project_wage(wage: ContinuousState) -> ContinuousState:
-    return wage
-
-
-def _make_e2_ref_grid_regimes() -> _Spec:
-    single_f = (
-        Regime(
-            states={"wage": IrregSpacedGrid(n_points=2)},
-            functions={"utility": _u_wage},
-        ),
-        None,
-    )
-    married = (
-        Regime(
-            states={"wage": IrregSpacedGrid(n_points=2)},
-            state_transitions={"wage": _identity_x_wage},
-            actions={"work": DiscreteGrid(category_class=Work)},
-            functions={
-                "utility": CollectiveUtility(
-                    utilities={"f": _u_married_f, "m": _u_married_m}
-                )
-            },
-            constraints={
-                "ir_f": ValueDependentConstraint(
-                    predicate=_ir_f,
-                    references={
-                        "V_single_f_ref": ProjectedRegimeValue(
-                            regime="single_f", projection={"wage": _project_wage}
-                        )
-                    },
-                )
-            },
-        ),
-        ByAge(
-            cases={
-                AgeRange(exclusive_stop=1): {
-                    "married_terminal": StochasticTransition(func=_prob_one)
-                }
-            }
-        ),
-    )
-    married_terminal = (
-        Regime(
-            states={"wage": IrregSpacedGrid(n_points=2)},
-            actions={"work": DiscreteGrid(category_class=Work)},
-            functions={
-                "utility": CollectiveUtility(
-                    utilities={"f": _u_married_m, "m": _u_married_m}
-                )
-            },
-        ),
-        None,
-    )
-    return _split(
-        {
-            "single_f": single_f,
-            "married": married,
-            "married_terminal": married_terminal,
-        }
-    )
-
-
-def _identity_x_wage(wage: ContinuousState) -> ContinuousState:
-    return wage
-
-
-def test_e2_same_period_ref_reads_the_reference_regimes_own_runtime_grid():
-    """A same-period ref reads the REFERENCE regime's own runtime grid.
-
-    The one consumer of `_build_same_period_ref_reader` that lives inside a
-    regime's own compiled kernel, which is why its reference-grid params could
-    not simply be added to that kernel's arguments: they belong to ANOTHER
-    regime's namespace, and the kernel is splatted with only its own. They ride
-    in `SAME_PERIOD_PARAMS_ARG` beside the same-period V arrays instead.
-
-    A missing-argument error for `__same_period_ref__wage__points` is what an
-    unsupplied prefixed param produces. This topology solves instead, and the
-    number proves WHICH namespace won: the reference regime's points, not the
-    reading regime's
-    identically named ones (which would empty the mask — the assertion below is
-    the difference between a feasible cell and a dissolved household).
-    """
-    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    regimes_dict, laws = _make_e2_ref_grid_regimes()
-    flat_params = MappingProxyType(
-        {
-            "single_f": MappingProxyType({"wage__points": jnp.asarray(_SINGLE_POINTS)}),
-            "married": MappingProxyType(
-                {
-                    "koopmans_aggregator__discount_factor": jnp.asarray(_BETA),
-                    "wage__points": jnp.asarray(_MARRIED_POINTS),
-                }
-            ),
-            "married_terminal": MappingProxyType(
-                {"wage__points": jnp.asarray(_MARRIED_POINTS)}
-            ),
-        }
-    )
-    # The two namespaces genuinely disagree about the contested qname.
-    assert not np.array_equal(
-        np.asarray(flat_params["single_f"]["wage__points"]),
-        np.asarray(flat_params["married"]["wage__points"]),
-    )
-
-    regimes, _ids = _process(regimes_dict=regimes_dict, laws=laws, ages=ages)
-    _bi_result = solve(
-        program_fingerprint="test_gated_edge_arg_provenance",
-        flat_params=flat_params,
-        ages=ages,
-        regimes=regimes,
-        logger=get_logger(log_level="off"),
-        enable_jit=False,
-    )
-    solution = _bi_result.value_functions
-
-    # V_single_f = wage on ITS OWN points (0, 10).
-    np.testing.assert_allclose(np.asarray(solution[0]["single_f"]), [0.0, 10.0])
-
-    # At married's node wage = 1.0 the reference read is 1.0 (coordinate 0.1 on
-    # single_f's points) -> `5 >= 1` holds -> feasible, V_f = 5.
-    # Had the read used married's own points, it would have been 10.0 -> `5 >=
-    # 10` fails -> empty mask -> V_f = -inf.
-    V_married = np.asarray(solution[0]["married"])
-    np.testing.assert_allclose(V_married[1, 0], 5.0)
-    assert np.isfinite(V_married[1, 0])
-
-    # The fixture is only a repro if the contested binding actually decides the
-    # outcome, so exercise the production reader itself on the SAME solved
-    # `V_single_f` and vary ONLY which regime's points resolve its grid.
-    reader = _build_same_period_ref_reader(
-        ref=ResolvedProjectedRegimeValue(
-            regime="single_f",
-            projection={"wage": _project_wage},
-            stakeholder_index=None,
-        ),
-        v_interpolation_info=create_v_interpolation_info(
-            user_regime=regimes_dict["single_f"]
-        ),
-        functions=MappingProxyType({}),
-        deterministic_transitions=MappingProxyType({}),
-    )
-    same_period_V = MappingProxyType({"single_f": solution[0]["single_f"]})
-
-    def _ref_value(points) -> float:
-        return float(
-            reader(
-                wage=jnp.asarray(1.0),
-                **{
-                    SAME_PERIOD_V_ARG: same_period_V,
-                    SAME_PERIOD_PARAMS_ARG: MappingProxyType(
-                        {
-                            "single_f": MappingProxyType(
-                                {"wage__points": jnp.asarray(points)}
-                            )
-                        }
-                    ),
-                },
-            )
-        )
-
-    assert _ref_value(_SINGLE_POINTS) == 1.0  # the reference regime's own grid
-    assert _ref_value(_MARRIED_POINTS) == 10.0  # the reading regime's — the bug
-    # ...and 10.0 is exactly the value that empties the mask (`5 >= 10` fails),
-    # so the finite solved value above is the reference regime's grid winning and
-    # nothing else.
-    assert _ref_value(_MARRIED_POINTS) > 5.0
-    assert _ref_value(_SINGLE_POINTS) <= 5.0
 
 
 # A gate or projection that names a TARGET regime function would have that
@@ -1016,7 +734,7 @@ def _make_leg_fallback_target_helper_regimes() -> _Spec:
                 "target": Gate(
                     predicate=_always_closed_gate,
                     routes={
-                        "only": StakeholderRoute(
+                        "only": MemberRoute(
                             fallback=ProjectedRegimeValue(
                                 regime="fallback",
                                 projection={"x": _project_through_target_helper},
@@ -1044,7 +762,7 @@ def _make_leg_fallback_target_helper_regimes() -> _Spec:
     return _split({"src": src, "target": target, "fallback": fallback})
 
 
-def test_leg_fallback_projection_naming_a_target_helper_is_rejected():
+def test_leg_fallback_projection_naming_a_target_helper_is_rejected() -> None:
     """A leg-fallback projection naming a target helper is refused at construction.
 
     The projection would otherwise evaluate the helper's `target_scale` from the
@@ -1202,7 +920,7 @@ def _make_own_param_named_like_target_helper_param_regimes() -> _Spec:
                 "target": Gate(
                     predicate=_gate_reads_own_target_scale,
                     routes={
-                        "only": StakeholderRoute(
+                        "only": MemberRoute(
                             fallback=ProjectedRegimeValue(
                                 regime="fallback", projection={"x": _identity_x}
                             )
@@ -1229,7 +947,7 @@ def _make_own_param_named_like_target_helper_param_regimes() -> _Spec:
     return _split({"src": src, "target": target, "fallback": fallback})
 
 
-def test_gate_param_named_like_a_target_helper_param_builds_as_a_source_param():
+def test_gate_param_named_like_a_target_helper_param_builds_as_a_source_param() -> None:
     """A gate that reads a target state and its own parameter builds, and binds that
     parameter from the source under the gate's declaration path, even though a
     target helper reads a parameter of the same name."""
@@ -1240,7 +958,7 @@ def test_gate_param_named_like_a_target_helper_param_builds_as_a_source_param():
     )
     source_qnames = sorted(
         qname
-        for namespace, qname in evaluator.arg_provenance.params.values()
+        for namespace, qname in evaluator.arg_provenance.params.values()  # ty: ignore[unresolved-attribute]
         if namespace == SOURCE_PARAMS
     )
     assert source_qnames == ["target__predicate__target_scale"]
@@ -1287,7 +1005,7 @@ def _make_threshold_shadow_regimes() -> _Spec:
                 "target": Gate(
                     predicate=_gate_reads_shadowed_threshold,
                     routes={
-                        "only": StakeholderRoute(
+                        "only": MemberRoute(
                             fallback=ProjectedRegimeValue(
                                 regime="fallback", projection={"x": _identity_x}
                             )
@@ -1314,7 +1032,7 @@ def _make_threshold_shadow_regimes() -> _Spec:
     return _split({"src": src, "target": target, "fallback": fallback})
 
 
-def test_gate_arg_shadowed_by_state_only_target_node_is_rejected():
+def test_gate_arg_shadowed_by_state_only_target_node_is_rejected() -> None:
     """A gate arg naming a STATE-ONLY target node must be rejected.
 
     The node reads only the target state `x`, yet `concatenate_functions` would
@@ -1413,7 +1131,7 @@ def _make_gate_param_aliases_target_state_regimes(
                 "target": Gate(
                     predicate=_gate_reads_x,
                     routes={
-                        "only": StakeholderRoute(
+                        "only": MemberRoute(
                             fallback=ProjectedRegimeValue(
                                 regime="fallback", projection={"x": _identity_x}
                             )
@@ -1442,8 +1160,8 @@ def _make_gate_param_aliases_target_state_regimes(
 
 @pytest.mark.parametrize("source_supplies_x_param", [False, True])
 def test_gate_reading_a_target_state_solves_beside_a_source_param_of_its_name(
-    source_supplies_x_param,
-):
+    *, source_supplies_x_param: bool
+) -> None:
     """A gate reading target state `x` solves, whatever the source's own params.
 
     With `source_supplies_x_param=True` the source utility reads a parameter
@@ -1507,7 +1225,7 @@ def _make_gated_source_regimes(gate: UserFunction) -> _Spec:
                 "target": Gate(
                     predicate=gate,
                     routes={
-                        "only": StakeholderRoute(
+                        "only": MemberRoute(
                             fallback=ProjectedRegimeValue(
                                 regime="fallback", projection={"x": _identity_x}
                             )
@@ -1570,7 +1288,7 @@ def _make_target_state_aliases_engine_v_regimes() -> _Spec:
                 "target": Gate(
                     predicate=_gate_reads_v_arg_state,
                     routes={
-                        "only": StakeholderRoute(
+                        "only": MemberRoute(
                             fallback=ProjectedRegimeValue(
                                 regime="fallback",
                                 projection={SAME_PERIOD_V_ARG: _identity_v_arg_state},
@@ -1623,7 +1341,7 @@ def test_gate_arguments_spelled_like_engine_names_are_bound_apart_from_them(
     assert set(signature(qualified).parameters) == expected
 
 
-def test_target_state_aliasing_the_engine_v_arg_is_rejected():
+def test_target_state_aliasing_the_engine_v_arg_is_rejected() -> None:
     """A target STATE named `SAME_PERIOD_V_ARG` is rejected: it would share one
     fold leaf with the engine value mapping."""
     flat_params = MappingProxyType(

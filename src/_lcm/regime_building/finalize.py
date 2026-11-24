@@ -4,7 +4,7 @@
 runs: model-level `derived_categoricals` are merged in, the model-level
 Koopmans aggregator and certainty equivalent are injected into non-terminal
 regimes that declare none, and completeness is validated (a
-`utility` entry — a per-stakeholder `utility_<s>` and at least one discrete
+`utility` entry — a per-member `utility_<s>` and at least one discrete
 action for a collective regime — state-transition coverage, no state/action
 overlap, distributed-grid rules). The result is a plain
 `lcm.regime.Regime`, still in user vocabulary — coarse laws, `Phased`
@@ -13,7 +13,7 @@ reads the user's coarseness off it.
 """
 
 import inspect
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Literal, cast, no_type_check
@@ -55,7 +55,7 @@ from lcm.consumption_savings_regime import (
 )
 from lcm.decoupled import Decoupled
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.exits import Consent, Exit, RuleResult
+from lcm.exits import Consent, Exit
 from lcm.grids import DiscreteGrid
 from lcm.phased import Phased
 from lcm.regime import ConstraintEntry, StateEntry, StateTransitionEntry
@@ -123,10 +123,10 @@ def finalize_regimes(
     # The published frame is one table over every regime, so the names its
     # collective regimes claim are reserved for all of them.
     reserved_value_columns = frozenset(
-        f"value_{stakeholder}"
+        f"value_{member}"
         for regime in user_regimes.values()
-        if regime.stakeholders is not None
-        for stakeholder in regime.stakeholders
+        if regime.member_axis is not None
+        for member in regime.member_axis
     )
     if value_grids_by_regime is None:
         value_grids_by_regime = bind_reading_regimes(
@@ -243,8 +243,8 @@ def finalize_regimes(
                 ),
             ),
             certainty_equivalent=regime_certainty_equivalent,
-            exits=_adapt_exits(
-                exits=user_regime.exits,
+            exit=_adapt_exit(
+                declaration=user_regime.exit,
                 source_grids=value_grids,
                 grids_by_regime=value_grids_by_regime,
                 adapters=adapters,
@@ -264,14 +264,16 @@ def finalize_regimes(
     return MappingProxyType(result)
 
 
-def _adapt_exits(
+def _adapt_exit(
     *,
-    exits: Mapping[str, Exit],
+    declaration: Exit | None,
     source_grids: Mapping[str, AdapterGrid],
     grids_by_regime: Mapping[RegimeName, Mapping[str, AdapterGrid]],
     adapters: AdapterMemo,
-) -> Mapping[str, Exit]:
+) -> Exit | None:
     """Decode source reads and encode only projected destination-state outputs."""
+    if declaration is None:
+        return None
 
     def adapted(function: UserFunction | None) -> UserFunction | None:
         if function is None:
@@ -308,40 +310,33 @@ def _adapt_exits(
             }
         )
 
-    result = {}
-    for name, declaration in exits.items():
-        rule = declaration.rule
-        if isinstance(rule, Consent):
-            counterparty = rule.counterparty
-            rule = replace(
-                rule,
-                counterparty=replace(
-                    counterparty,
-                    projection=projection(
-                        value=counterparty.projection, destination=counterparty.regime
-                    ),
+    rule = declaration.rule
+    if isinstance(rule, Consent):
+        counterparty = rule.counterparty
+        rule = replace(
+            rule,
+            counterparty=replace(
+                counterparty,
+                projection=projection(
+                    value=counterparty.projection, destination=counterparty.regime
                 ),
-            )
-        elif callable(rule):
-            rule = cast(
-                "Callable[..., RuleResult]", adapted(cast("UserFunction", rule))
-            )
-        result[name] = replace(
-            declaration,
-            rule=rule,
-            available=adapted(declaration.available),
-            targets={
-                role: replace(
-                    target,
-                    projection=projection(
-                        value=target.projection, destination=target.regime
-                    ),
-                    utility_adjustment=adapted(target.utility_adjustment),
-                )
-                for role, target in declaration.targets.items()
-            },
+            ),
         )
-    return MappingProxyType(result)
+    return replace(
+        declaration,
+        rule=rule,
+        available=adapted(declaration.available),
+        targets={
+            role: replace(
+                target,
+                projection=projection(
+                    value=target.projection, destination=target.regime
+                ),
+                utility_adjustment=adapted(target.utility_adjustment),
+            )
+            for role, target in declaration.targets.items()
+        },
+    )
 
 
 def _with_adapted_household(
@@ -353,7 +348,7 @@ def _with_adapted_household(
 ) -> UserRegime:
     """Return the regime whose household declares the bodies the engine runs.
 
-    A stakeholder's adapted utility is then one object in the declaration and in
+    A member's adapted utility is then one object in the declaration and in
     the engine's functions, and the Pareto weights read values.
     """
     declaration = user_regime.functions.get("utility")
