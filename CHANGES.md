@@ -32,6 +32,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   choice probabilities, at the decider's best continuous action. Simulation draws the
   decider's choice as a single's draw. A household of one member with weight 1 gives the
   single's values and draws.
+- `Model.lookup_policy` on such a household returns the decider's choice probabilities,
+  the conditional continuous actions all members share, and every member's value.
 - Constant weights with more than one positive entry are refused when the regime is
   constructed; a weight declared as a function is checked at every solve, at every cell.
   Taste shocks stay refused on a household that declares an `exit` or observes

@@ -5335,6 +5335,14 @@ class Model:
             `Qc`. A discrete action declared with `values` is returned as a plain
             array of those numbers; a category-class action as its codes.
 
+            In a household with taste shocks, the member with the positive
+            Pareto weight decides. `Qc` is that member's own conditional value,
+            the choice probabilities are a softmax of it, and every member shares
+            the continuous actions attaining it. The value has a trailing member
+            axis in member order: the decider's smoothed maximum, and every other
+            member's mean action value at those actions under the decider's
+            choice probabilities.
+
             With a `Decoupled` Koopmans aggregator the actions maximize the
             objective and the value is the value profile there. With taste shocks,
             the continuous actions maximize the objective within each discrete

@@ -96,11 +96,13 @@ would: its value is its own smoothed expected maximum over the discrete actions,
 the maximum over the continuous ones. Every other member's value is the mean of its own
 action value under the decider's choice probabilities, read at the decider's best
 continuous action for each discrete one. Simulation draws the decider's choice exactly
-as a single's draw. Constant weights must give exactly one member a positive weight; a
-weight declared as a function is checked at every solve, at every cell of the regime's
-grid, so a bargaining state may hand the decision from one member to the other. A
-household with taste shocks may not declare an `exit` or `shocks`, and another regime's
-exit may not read its decision.
+as a single's draw. `model.lookup_policy` returns, per discrete action, the decider's
+conditional value `Qc`, its choice probability and the continuous actions every member
+shares, and one value per member, in member order. Constant weights must give exactly
+one member a positive weight; a weight declared as a function is checked at every solve,
+at every cell of the regime's grid, so a bargaining state may hand the decision from one
+member to the other. A household with taste shocks may not declare an `exit` or
+`shocks`, and another regime's exit may not read its decision.
 
 ## Dissolving in the current period: where the members compare
 

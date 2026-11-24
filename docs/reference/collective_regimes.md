@@ -428,10 +428,11 @@ Each of these raises at `Regime` construction, naming the regime slot to change:
   $\sum_j P(j)\, Q^s(j, c^*(j))$, its own action value at the decider's best continuous
   action, weighted by the decider's choice probabilities $P(j)$; a discrete action of
   probability zero contributes nothing. Simulation draws the decider's choice as a
-  single's draw. Constant weights with more than one positive entry are refused here; a
-  weight declared as a function is checked at every solve, at every cell. A household
-  with taste shocks may not declare an `exit` or `shocks`, and another regime's exit may
-  not read its decision; the second is refused at model build.
+  single's draw; `Model.lookup_policy` returns $Q^d_c(j)$ as `Qc`, $P(j)$, $c^*(j)$ and
+  the member values, without a draw. Constant weights with more than one positive entry
+  are refused here; a weight declared as a function is checked at every solve, at every
+  cell. A household with taste shocks may not declare an `exit` or `shocks`, and another
+  regime's exit may not read its decision; the second is refused at model build.
 - **A nonlinear certainty equivalent.** The per-member continuation is the linear
   expectation $E[V'^s]$, so `certainty_equivalent=LinearExpectation()` is the only
   admissible declaration.
