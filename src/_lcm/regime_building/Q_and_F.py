@@ -45,6 +45,7 @@ from _lcm.probability import (
 )
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseName
+from _lcm.regime_building.collective import member_name
 from _lcm.regime_building.lottery_contraction import (
     LotteryContraction,
     LotteryContractionSource,
@@ -1239,7 +1240,7 @@ def _member_utility_name(member: str) -> FunctionName:
     A household member `<s>` reads `utility_<s>`; the member `"self"` of a
     regime declared with a plain utility function reads `utility`.
     """
-    return "utility" if member == "self" else f"utility_{member}"
+    return member_name(base="utility", member=member)
 
 
 def get_Q_and_F_terminal_collective(

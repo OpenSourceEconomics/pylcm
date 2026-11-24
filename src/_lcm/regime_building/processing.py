@@ -151,6 +151,7 @@ from _lcm.regime_building.collective import (
     ParetoWeights,
     build_pareto_weights,
     build_role_vocabulary,
+    landing_member_index,
 )
 from _lcm.regime_building.decoupled import get_decoupled_Q_over_a
 from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
@@ -2831,7 +2832,7 @@ def _attach_gated_edge_folds(
                     target_functions=target_solution.functions,
                     target_deterministic_transitions=target_deterministic_transitions,
                     reference_v_info=v_info,
-                    target_member_axis=user_regimes[target_name].member_axis,
+                    target_member_axis=_engine_member_axis(user_regimes[target_name]),
                 )
                 # Only the grid-level half is jitted here. The combiner runs
                 # inside the source's own decision kernel, which is jitted as a
@@ -2856,7 +2857,7 @@ def _attach_gated_edge_folds(
                     target_v_info=v_info[target_name],
                     target_functions=target_solution.functions,
                     target_deterministic_transitions=target_deterministic_transitions,
-                    target_member_axis=user_regimes[target_name].member_axis,
+                    target_member_axis=_engine_member_axis(user_regimes[target_name]),
                 )
             folds_by_period = expand_groups_to_periods(
                 grouped_periods=grouped_fold_periods, built_by_group=folds_by_group
@@ -3014,36 +3015,37 @@ def _resolve_gated_edge(
     """Resolve one user `GatedEdge` to its engine form.
 
     Validated already by `_fail_if_gated_edges_invalid`, so every named regime
-    and member exists. Legs are ordered by the SOURCE's member tuple
+    and member exists. Legs are ordered by the source's engine member tuple
     (a singleton source has one leg with `source_member=None`); each leg's
     OPEN-branch target component and its fallback member become trailing-
-    axis indices.
+    axis indices on the engine regime's member axis.
     """
-    target_member_axis = user_regimes[target_name].member_axis
-    source_member_axis = user_regimes[source_name].member_axis
-
-    def _member_index(*, regime_name: RegimeName, member: str | None) -> int | None:
-        regime_member_axis = user_regimes[regime_name].member_axis
-        if regime_member_axis is None:
-            return None
-        return regime_member_axis.index(cast("str", member))
+    target_member_axis = _engine_member_axis(user_regimes[target_name])
+    source_member_axis = _engine_member_axis(user_regimes[source_name])
 
     def _resolve_ref(ref: ProjectedRegimeValue) -> ResolvedProjectedRegimeValue:
         return ResolvedProjectedRegimeValue(
             regime=ref.regime,
             projection=ref.projection,
-            member_index=_member_index(regime_name=ref.regime, member=ref.member),
+            member_index=landing_member_index(
+                members=_engine_member_axis(user_regimes[ref.regime]),
+                role=ref.member,
+            ),
             member=ref.member,
         )
 
     # A collective source's legs are iterated in its member order so
     # `Wbar`'s trailing axis matches the source's member axis; a singleton
     # source has exactly one leg (keyed arbitrarily), stored with source
-    # member `None`.
+    # member `None`. The member `"self"` follows that one leg under whatever
+    # key it was declared.
     if source_member_axis is None:
         leg_order: list[tuple[str, str | None]] = [(next(iter(edge.legs)), None)]
     else:
-        leg_order = [(s, s) for s in source_member_axis]
+        leg_order = [
+            (next(iter(edge.legs)) if s == "self" and s not in edge.legs else s, s)
+            for s in source_member_axis
+        ]
 
     legs: list[ResolvedMemberRoute] = []
     for leg_key, source_member in leg_order:
@@ -3052,10 +3054,8 @@ def _resolve_gated_edge(
             ResolvedMemberRoute(
                 route=leg_key,
                 source_member=source_member,
-                target_component_index=(
-                    None
-                    if target_member_axis is None
-                    else target_member_axis.index(cast("str", leg.target_member))
+                target_component_index=landing_member_index(
+                    members=target_member_axis, role=leg.target_member
                 ),
                 target_member=leg.target_member,
                 fallback=_resolve_ref(leg.solve_fallback),

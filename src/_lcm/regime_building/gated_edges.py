@@ -57,6 +57,7 @@ from _lcm.params.edges import (
     regime_kernel_params,
 )
 from _lcm.regime_building.age_normalization import PeriodizedEconFunction
+from _lcm.regime_building.collective import member_name
 from _lcm.regime_building.Q_and_F import (
     EDGE_CHANNELS_ARG,
     EDGE_FALLBACK_ARG_PREFIX,
@@ -894,7 +895,7 @@ def _compile_edge_gate(
         edge_target=edge.target,
     )
     target_component_names = (
-        tuple(f"V_target_{s}" for s in target_member_axis)
+        tuple(member_name(base="V_target", member=s) for s in target_member_axis)
         if target_member_axis is not None
         else ("V_target",)
     )

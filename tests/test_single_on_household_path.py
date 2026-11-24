@@ -7,8 +7,10 @@ utility function as a household whose one member `"self"` carries Pareto weight
 simulated frame keeps the short names of a single.
 """
 
+import functools
 from collections.abc import Callable
 from types import MappingProxyType
+from typing import Literal
 
 import jax.numpy as jnp
 import numpy as np
@@ -17,7 +19,17 @@ import pytest
 
 from _lcm.regime_building import processing
 from _lcm.regime_building.collective import NO_ROLE
-from lcm import Model
+from lcm import (
+    DiscreteGrid,
+    Exit,
+    ExitTarget,
+    InitialNodes,
+    LinSpacedGrid,
+    Model,
+    Regime,
+)
+from lcm.execution import ExecutionConfig
+from lcm.exits import Unilateral
 from lcm.result import SimulationResult
 from lcm.solver_api import SolutionResult
 from lcm.typing import FloatND, IntND, RegimeName, UserParamsNode
@@ -26,9 +38,13 @@ from lcm_examples import (
     precautionary_savings_health,
     stochastic_volatility,
 )
+from tests import test_transition_roles as single_to_household
 from tests.conftest import assert_agrees_to_ulp
+from tests.regime_building import test_gate_shared_fallback as household_to_single
+from tests.regime_building import test_gated_edge_params_are_per_edge as single_gate
 from tests.solution.test_fingerprint_pin import _MODELS as PINNED_MODELS
 from tests.solution.test_fingerprint_pin import _pinned
+from tests.solution.test_mutual_consent_settlement import _Singleton
 from tests.test_models import taste_shocks_toy
 
 type InitialConditions = dict[str, FloatND | IntND]
@@ -114,8 +130,114 @@ def _collective_household() -> Case:
     return model, collective_household.get_params(), initial_conditions
 
 
+def _gate_single_to_single() -> Case:
+    # The gate opens at the upper landing point only.
+    model = single_gate._build_model(with_bystander=False)
+    params: dict[str, UserParamsNode] = {
+        "source": {"koopmans_aggregator": {"discount_factor": 0.5}},
+        "target": {},
+        "fallback": {},
+        "edges": {"source": {"target": {"predicate": {"marriage_bonus": 1.0}}}},
+    }
+    initial_conditions: InitialConditions = {
+        "age": jnp.full(_N_SUBJECTS, 40.0),
+        "x": jnp.linspace(0.0, 2.0, _N_SUBJECTS),
+        "regime_id": jnp.full(_N_SUBJECTS, single_gate.RegimeId.source),
+    }
+    return model, params, initial_conditions
+
+
+def _single_to_household(*, edge_form: single_to_household.EdgeForm) -> Case:
+    params: dict[str, UserParamsNode] = dict(
+        single_to_household._params(marriage_rate=0.5)
+    )
+    return (
+        single_to_household.build_model(edge_form=edge_form),
+        params,
+        dict(single_to_household.INITIAL_CONDITIONS),
+    )
+
+
+def _gate_household_to_single() -> Case:
+    # Her leg falls back to the survivor's regime; his is priced at another
+    # single in the solve and lands in hers in simulation.
+    model = household_to_single.build_model(route_form="survivor")
+    roles = model.member_names_to_ids
+    initial_conditions: InitialConditions = {
+        "regime_id": jnp.zeros(4, dtype=jnp.int32),
+        "age": jnp.zeros(4),
+        "wealth": jnp.asarray([1.0, 2.0, 3.0, 2.0]),
+        "own_member": jnp.asarray(
+            [roles["f"], roles["f"], roles["m"], roles["m"]], dtype=jnp.int32
+        ),
+    }
+    return model, dict(household_to_single.PARAMS), initial_conditions
+
+
+def _stay_utility(*, wealth: FloatND, choice: IntND) -> FloatND:
+    return choice * (wealth - 0.5)
+
+
+def _outside_utility(wealth: FloatND) -> FloatND:
+    return 1.0 + 0.0 * wealth
+
+
+def _keep_wealth(wealth: FloatND) -> FloatND:
+    return wealth
+
+
+def _single_exit(*, compares: Literal["each_action", "optimum"]) -> Case:
+    """A single leaves for another single where staying pays less than one.
+
+    The stay optimum pays `max(0, wealth - 0.5)`, so the source leaves at wealth
+    0 and 1 and stays at wealth 2, under either comparison point.
+    """
+    wealth = LinSpacedGrid(start=0.0, stop=2.0, n_points=3)
+    model = Model(
+        regimes={
+            "source": Regime(
+                states={"wealth": wealth},
+                actions={"choice": DiscreteGrid(values=jnp.asarray([0, 1]))},
+                functions={"utility": _stay_utility},
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(
+                            regime="target", projection={"wealth": _keep_wealth}
+                        )
+                    },
+                    rule=Unilateral(compares=compares),
+                ),
+            ),
+            "target": Regime(
+                states={"wealth": wealth}, functions={"utility": _outside_utility}
+            ),
+        },
+        n_periods=1,
+        regime_id_class=_Singleton,
+        initial_nodes=InitialNodes(by_period={0: ("source", "target")}),
+        edges={},
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+    )
+    initial_conditions: InitialConditions = {
+        "period": jnp.zeros(_N_SUBJECTS, dtype=jnp.int32),
+        "regime_id": jnp.zeros(_N_SUBJECTS, dtype=jnp.int32),
+        "wealth": jnp.linspace(0.0, 2.0, _N_SUBJECTS),
+    }
+    return model, {}, initial_conditions
+
+
 _CASES: dict[str, Callable[[], Case]] = {
     "collective_household": _collective_household,
+    "gate_household_to_single": _gate_household_to_single,
+    "gate_single_to_household_member_route": functools.partial(
+        _single_to_household, edge_form="hand_gate"
+    ),
+    "gate_single_to_household_roles": functools.partial(
+        _single_to_household, edge_form="roles"
+    ),
+    "gate_single_to_single": _gate_single_to_single,
+    "single_exit_each_action": functools.partial(_single_exit, compares="each_action"),
+    "single_exit_at_optimum": functools.partial(_single_exit, compares="optimum"),
     "precautionary_savings_health": _precautionary_savings_health,
     "stochastic_volatility": _stochastic_volatility,
     "taste_shocks_toy": _taste_shocks_toy,
@@ -213,10 +335,10 @@ def test_single_on_household_path_names_its_member_self(
     """The trailing value axis is the dimension `member` with coordinate `self`."""
     single = runs[name, False][0]
     solution = runs[name, True][0]
-    period = min(solution.values)
-    regime = min(
-        regime
-        for regime in single.values[period]
+    period, regime = min(
+        (period, regime)
+        for period, values in single.values.items()
+        for regime in values
         if not _is_declared_household(solution=single, period=period, regime=regime)
     )
 
@@ -272,6 +394,26 @@ def test_collective_household_cohort_forms_and_dissolves_couples(
 
     assert (previous.isin(singles) & (regime == "couple")).any()
     assert ((previous == "couple") & regime.isin(singles)).any()
+
+
+@pytest.mark.parametrize(
+    ("name", "branches"),
+    [
+        ("gate_single_to_single", {"target", "fallback"}),
+        ("single_exit_each_action", {"source", "target"}),
+        ("single_exit_at_optimum", {"source", "target"}),
+    ],
+)
+def test_compared_frames_take_both_branches(
+    *,
+    name: str,
+    branches: set[str],
+    runs: dict[tuple[str, bool], tuple[SolutionResult, SimulationResult]],
+) -> None:
+    """The compared frames hold rows down the open and the closed branch."""
+    frame = runs[name, False][1].to_dataframe()
+
+    assert branches <= set(frame["regime_name"].astype(str))
 
 
 @pytest.mark.parametrize("name", sorted(_CASES))

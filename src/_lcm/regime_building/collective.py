@@ -374,6 +374,28 @@ def role_code(*, name: str | None, role_ids: Mapping[str, int]) -> int:
     return NO_ROLE if name in (None, "self") else role_ids[name]
 
 
+def landing_member_index(
+    *, members: tuple[str, ...] | None, role: str | None
+) -> int | None:
+    """Return the member a route lands on, `None` without a member axis.
+
+    A route naming no role lands on the member `"self"`, the only member of a
+    regime declared with a plain utility function.
+    """
+    if members is None:
+        return None
+    return members.index("self" if role is None else role)
+
+
+def member_name(*, base: str, member: str) -> str:
+    """Return a member's copy of the name `base`.
+
+    `<base>_<member>`; the member `"self"` keeps `base` itself, the name a regime
+    declared with a plain utility function uses.
+    """
+    return base if member == "self" else f"{base}_{member}"
+
+
 def build_role_vocabulary(
     member_axis_by_regime: Mapping[RegimeName, tuple[str, ...] | None],
 ) -> MappingProxyType[str, int]:

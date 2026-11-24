@@ -15,6 +15,7 @@ from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.joint_normal_lowering import (
     coordinate_names,
 )
+from _lcm.regime_building.collective import member_name
 from _lcm.simulation.additional_targets import (
     _compute_targets,
     _filter_targets_for_regime,
@@ -316,7 +317,7 @@ def _split_member_value(
 
 def _member_value_column_name(member: str) -> str:
     """Name a member's value column: `value_<member>`, and `value` for `"self"`."""
-    return "value" if member == "self" else f"value_{member}"
+    return member_name(base="value", member=member)
 
 
 def _extract_period_data(

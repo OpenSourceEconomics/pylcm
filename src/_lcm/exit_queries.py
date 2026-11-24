@@ -36,6 +36,7 @@ from _lcm.policy_queries import (
     gated_query_targets,
 )
 from _lcm.query_information import default_chunk_size
+from _lcm.regime_building.collective import landing_member_index
 from _lcm.renegotiation import (
     ClippedDefault,
     FixedNode,
@@ -871,11 +872,15 @@ class _QueryGraphBuilder:
                     if self.contexts[target].member_axis is None
                     else tuple(
                         index
-                        for index, member in enumerate(
+                        for index, _ in enumerate(
                             self.contexts[target].member_axis or ()
                         )
                         if any(
-                            route.target_member == member
+                            landing_member_index(
+                                members=self.contexts[target].member_axis,
+                                role=route.target_member,
+                            )
+                            == index
                             for route in context.laws[owner]
                             .gated_edges[target]
                             .legs.values()
@@ -1126,7 +1131,7 @@ class _QueryGraphBuilder:
                 self.outside_reads[producer] = (owner, f"member {member!r}")
             targets[member] = (
                 operand,
-                _landing_member_index(
+                landing_member_index(
                     members=self.contexts[target.regime].member_axis, role=target.role
                 ),
             )
@@ -1201,12 +1206,12 @@ class _QueryGraphBuilder:
                 "own_raw",
                 "counterparty_raw",
                 couple_operand,
-                _landing_member_index(
+                landing_member_index(
                     members=self.contexts[target.regime].member_axis,
                     role=counterparty.role,
                 ),
-                _landing_member_index(members=context.member_axis, role=None),
-                _landing_member_index(
+                landing_member_index(members=context.member_axis, role=None),
+                landing_member_index(
                     members=self.contexts[counterparty.regime].member_axis, role=None
                 ),
             )
@@ -2161,19 +2166,6 @@ def _content_digest(*, tree: PytreeValue) -> str:
         digest.update(repr((array.shape, array.dtype.str)).encode())
         digest.update(array.tobytes())
     return digest.hexdigest()
-
-
-def _landing_member_index(
-    *, members: tuple[str, ...] | None, role: ExitRole | None
-) -> int | None:
-    """Return the destination member a route lands on, None without a member axis.
-
-    A route naming no role lands on the member `"self"`, the only member of a
-    destination declared with a plain utility function.
-    """
-    if members is None:
-        return None
-    return members.index("self" if role is None else role)
 
 
 def _validate_consent_context(
