@@ -527,14 +527,16 @@ transition; the branch it takes then sets the role it carries onward.
 - A subject starting in a **singleton** regime has no role.
 - A subject starting in a **collective** regime declares one, through
   `initial_conditions["own_member"]`, whenever a route it can still reach turns on the
-  role — that is, whenever some collective regime in the starting regime's forward
-  closure declares a gated transition with more than one route. A row keeps its role
-  across an ordinary regime transition, so a two-leg transition the cohort runs into
-  later counts; one in a regime the cohort can never arrive at does not, and no seed is
-  required for it.
-- Entering a collective regime through `roles` sets the declared role, and through a
-  gated transition the route's `target_member`; leaving through the closed branch sets
-  it from the fallback's `member`, or clears it for a singleton destination.
+  role — that is, whenever some regime in the starting regime's forward closure, the
+  starting regime included, declares a gated transition with more than one route or an
+  `Exit` with targets for more than one member, such as a dissolution that sends `f` to
+  `single_f` and `m` to `single_m`. A row keeps its role across an ordinary regime
+  transition, so such a transition or exit the cohort runs into later counts; one in a
+  regime the cohort can never arrive at does not, and no seed is required for it.
+- Entering a collective regime through `roles` sets the declared role, through a gated
+  transition the route's `target_member`, and through an exit the target's `role`;
+  leaving through the closed branch sets it from the fallback's `member`, or clears it
+  for a singleton destination.
 
 ```python
 initial_conditions = {

@@ -76,8 +76,9 @@ In the engine $S$, $V$ and $P$ are the `Raw`, `Full` and `Participating` policy 
 - It reads another regime of the same step as that regime's problem value, or, under
   `Consent`, as its staying value; never as its value $V$.
 - A subject moves at most once per period. An outside value is the destination's problem
-  value at the member's projected state, given the current shocks the decision observes,
-  with hidden shocks integrated and the exit's utility adjustment added.
+  value at the member's projected state under the destination grid's `off_grid` rule,
+  given the current shocks the decision observes, with hidden shocks integrated and the
+  exit's utility adjustment added.
 
 ### One mechanism for value comparisons
 
@@ -162,8 +163,9 @@ None of these is implemented:
   participation-check form. Three causes were tested on a rule-form copy at `2ac1c420a`:
   the meeting of period $t$ enters the single's value of $t$ rather than the
   continuation of $t - 1$; `Consent` compares at the single's own wealth, and a refused
-  single keeps it; the read at the landing is exact rather than an interpolation of a
-  stored value.
+  single keeps it; the participation-check form evaluates the next period's problem
+  exactly at each landing, while the rule form interpolates that period's stored value
+  between grid nodes.
 - The `bench_collective_household` benchmarks measure the rule form; their history
   breaks there.
 - A saved solution that holds participation surfaces does not load.

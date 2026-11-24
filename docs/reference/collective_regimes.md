@@ -289,7 +289,7 @@ checked at evaluation only fires once the model runs.
 | a projection covers exactly the states its position owes                                                                                                                                                               | model build                                                       | `ModelInitializationError`  |
 | a predicate or projection argument names a node of the target's own DAG                                                                                                                                                | model build                                                       | `ModelInitializationError`  |
 | `off_grid="reject"` on a target carrying a continuous state                                                                                                                                                            | model build                                                       | `ModelInitializationError`  |
-| an ungated transition between regimes of different member structure                                                                                                                                                    | model build                                                       | `NotImplementedError`       |
+| a transition between regimes of different member structure with neither a `Gate` nor, from a singleton source, a `Transition(roles=...)` entry for that target                                                         | model build                                                       | `NotImplementedError`       |
 | taste shocks on a collective regime whose decision another regime's exit reads                                                                                                                                         | model build                                                       | `UnsupportedOperationError` |
 | **the predicate's realized return dtype is Boolean**                                                                                                                                                                   | **evaluation — every `solve()`, and again in the simulate phase** | `RegimeInitializationError` |
 | a **callable** weight is finite, non-negative and positively totalled on the grid                                                                                                                                      | evaluation — every `solve()`                                      | `InvalidParamsError`        |
@@ -376,9 +376,10 @@ result = model.simulate(
 
 ### Roles are carried per row
 
-A row's own member identity is what picks its route, and it moves with the row: it is
-set from a route's `target_member` on entering a collective regime, cleared when the row
-lands in a singleton one.
+A row's own member identity is what picks its route, and it moves with the row. On
+entering a collective regime it is set from the role the move names: a route's
+`target_member`, a `Transition(roles=...)` entry, or an exit target's `role`. It is
+cleared when the row lands in a singleton regime.
 
 Seed it in `initial_conditions` under `own_member`, in the model-wide vocabulary
 `model.member_names_to_ids`:
@@ -394,10 +395,11 @@ initial_conditions = {
 The seed is demanded exactly where the answer turns on it, which is a property of the
 starting regime rather than of the model. A cohort starting in a collective regime is
 refused without it — rather than defaulted to whichever member happens to be declared
-first — when some collective regime in that regime's forward closure declares a gated
-transition with more than one route. Because a row keeps its role across an ordinary
-regime transition, the closure is what decides: a two-leg transition the cohort runs
-into later demands the seed, and one in a regime the cohort can never reach demands
+first — when some regime in that regime's forward closure, the regime itself included,
+routes by member: it declares a gated transition with more than one route, or an `Exit`
+with targets for more than one member. Because a row keeps its role across an ordinary
+regime transition, the closure is what decides: such a transition or exit the cohort
+runs into later demands the seed, and one in a regime the cohort can never reach demands
 nothing. A cohort starting in a singleton regime occupies no role and needs none. A
 declared code outside the model's role vocabulary, or one naming a role the starting
 regime does not have, is rejected as an `InvalidInitialConditionsError`.
@@ -445,9 +447,16 @@ machinery, which a DC-EGM, taste-shock or certainty-equivalent source does not h
 source restriction raises at model build, when the edge law is bound to its source,
 since a `Regime` on its own declares no edge.
 
-Finally, an ungated transition between regimes of different member structure stays
-rejected at model build. Mixed singleton/collective topologies go through a `Gate`,
-which is what lets a row change household structure without mixing values across it.
+Finally, a transition between regimes of different member structure is rejected at model
+build unless it declares, for that target, a `Gate` or, from a singleton source, a role.
+`Transition(roles={"couple": "f"})` says that a row moving from the singleton source
+into the collective target `couple` continues there as its member `f`: its continuation
+toward `couple` is the couple's value for `f`, and a simulated row entering `couple`
+carries the role `f`. A role is the always-open `Gate` whose fallback is the target
+itself in the same role, so a row landing where the target has no feasible action raises
+`NoFeasibleActionError`, as on a plain edge. A target takes a role or a `Gate`, never
+both, and a collective source takes no role. A collective source changes member
+structure through a `Gate` or through its own `Exit`.
 
 ## Derived engine views
 

@@ -601,9 +601,9 @@ def validate_off_grid_transitions(
     `log_level` is `"debug"`, runtime checks are enabled and `mandatory_only`
     is false, since each count can expand a full phase Cartesian grid.
 
-    A regime whose solve kernels count its landings is left out: its value
-    constraints or gated edges decide which landings are reached only once
-    values are known. Its realized landings are counted as simulation advances.
+    A regime whose solve kernels count its landings is left out: its gated
+    edges decide which landings are reached only once values are known. Its
+    realized landings are counted as simulation advances.
     """
     checked = (
         validation_enabled(logger)

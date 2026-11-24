@@ -300,15 +300,18 @@ df = pd.DataFrame(
   role means the same thing in every regime. It is empty for a model with no collective
   regime.
 - The entry is required for subjects who **start** in a collective regime that can reach
-  one declaring a gated transition with more than one route — its own, or one further
-  along, since a row keeps its role across an ordinary regime transition. Omitting it
-  there raises `InvalidInitialConditionsError` rather than defaulting to whichever
-  partner was declared first, and a code that is valid model-wide but names no member of
-  that regime is rejected too. A collective start that can never arrive at such a
-  transition needs no entry.
+  a regime routing by member: one declaring a gated transition with more than one route,
+  or an `Exit` with targets for more than one member, such as a dissolution that sends
+  each partner to a different regime. That regime may be the starting regime itself or
+  one further along, since a row keeps its role across an ordinary regime transition.
+  Omitting the entry there raises `InvalidInitialConditionsError` rather than defaulting
+  to whichever partner was declared first, and a code that is valid model-wide but names
+  no member of that regime is rejected too. A collective start that can never arrive at
+  such a transition or exit needs no entry.
 - A subject starting in a singleton regime occupies no role and needs no entry. It is
-  given one on entering a collective regime, from the `target_member` of the
-  `MemberRoute` it takes, and loses it again on landing in a singleton regime.
+  given one on entering a collective regime, from the role its move names (a
+  `MemberRoute`'s `target_member`, a `Transition(roles=...)` entry or an exit target's
+  `role`), and loses it again on landing in a singleton regime.
 
 See [Collective regimes](../reference/collective_regimes.md#roles-are-carried-per-row)
 for the full rules.
