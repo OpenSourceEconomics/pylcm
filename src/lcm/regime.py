@@ -279,9 +279,14 @@ class Regime:
     The shock scale is the runtime param
     `{"taste_shocks": {"scale": ...}}` and must be strictly positive; omit
     `taste_shocks` for a hard maximum. At least one discrete action is required.
-    Taste shocks are currently supported by `GridSearch` and `DCEGM`. They are
-    rejected on a collective regime, on the source of a `Gate`, with a
-    nonlinear certainty equivalent, and with `NEGM`, `NBEGM`, or `NNBEGM`.
+    Taste shocks are currently supported by `GridSearch` and `DCEGM`. A household
+    (a `CollectiveUtility`) admits them when exactly one member has a positive
+    Pareto weight: that member decides, its value is its own smoothed maximum,
+    and every other member's value is its mean action value under the
+    decider's choice. They are rejected on a household with more than one
+    positive weight, on a household that declares an `exit` or `shocks`, or whose
+    decision another regime's exit reads, on the source of a `Gate`, with a nonlinear
+    certainty equivalent, and with `NEGM`, `NBEGM`, or `NNBEGM`.
     """
 
     koopmans_aggregator: UserFunction | Phased | Decoupled | None = None
@@ -352,9 +357,9 @@ class Regime:
     per-member continuation `Q^s = W(u^s, E[V'^s])`. A non-terminal
     collective regime's transition targets must all be collective regimes with
     the identical `members` tuple — per-member current outside options
-    are declared by an `Exit`. EV1 taste
-    shocks, nonlinear certainty equivalents, and non-GridSearch solvers on a
-    collective regime raise `NotImplementedError`.
+    are declared by an `Exit`. EV1 taste shocks with more than one member
+    carrying a positive weight, nonlinear certainty equivalents, and
+    non-GridSearch solvers on a collective regime raise `NotImplementedError`.
 
     A participation `Exit` prices the current outside alternatives.
 

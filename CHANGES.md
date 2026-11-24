@@ -24,6 +24,21 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - Values, model fingerprints and saved simulation results of models without a
   `CollectiveUtility` are unchanged.
 
+### Taste shocks in a household with one decider
+
+- A household admits `taste_shocks=ExtremeValueTasteShocks()` when exactly one member has
+  a positive Pareto weight. That member decides: its value is its own smoothed expected
+  maximum, and every other member's value is its mean action value under the decider's
+  choice probabilities, at the decider's best continuous action. Simulation draws the
+  decider's choice as a single's draw. A household of one member with weight 1 gives the
+  single's values and draws.
+- Constant weights with more than one positive entry are refused when the regime is
+  constructed; a weight declared as a function is checked at every solve, at every cell.
+  Taste shocks stay refused on a household that declares an `exit` or observes
+  current-period `shocks`, and on one whose
+  decision another regime's exit reads.
+- Values of models without taste shocks in a household are unchanged.
+
 ### `ValueDependentConstraint` is removed
 
 - `ValueDependentConstraint` is gone, and with it `Regime.value_constraints` and

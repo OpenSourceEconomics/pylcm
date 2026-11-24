@@ -41,12 +41,15 @@ The ten corridors are:
 * collective simulate -> published dense ``collective_argmax_and_readout(...,
   feasibility=F_arr, ...)`` -> subject tiles -> selected decision executable;
 * taste-shock dense solve fallback -> exact mask, continuous maximum, then full
-  discrete logsum;
+  discrete logsum; in a household, the same on the decider's own values, with
+  every member read at the decider's continuous argmax and weighted zero-safely
+  by its choice probabilities;
 * taste-shock streamed reference -> ordered discrete-prefix branch hard max -> one
   dynamically bound log-sum-exp -> compiled VALUE core;
 * taste-shock simulate -> published dense exact mask, row-major continuous maximum,
   one mean-zero Gumbel draw per discrete cell, and exact flat-index reconstruction
-  -> subject tiles -> selected decision executable.
+  -> subject tiles -> selected decision executable; in a household, the same draw
+  on the decider's own values, every member read at the drawn index.
 
 The only allowed representation change is the collective split of the trailing
 member axis, exactly ``Q_arr[..., index]`` for every enumerated member.
@@ -616,7 +619,7 @@ _SOURCE_SEALS = {
     S03_PREFERENCES_SOURCE: "d7372dc905c0508a1e6a905cb2a028133e4cf867645d4dfb432e9fa95e11fc52",
     S03_SCALAR_QUERY_SOURCE: "e4365fb100910aad02e29c9d5896c027beab88ba92c06a7bc6ab188b29e43564",
     S02__LCM_EGM_OUTER_ENVELOPE_SOURCE: "26b883d7706f6fe545d6153457ac99131a286ee8d605201e66edc79d9a74920b",
-    S02_LANDING_COUNTS_SOURCE: "06ab199a7ac1a40f1af4177d64b6ffc69017343984d5c7a5d4ba650537a42140",
+    S02_LANDING_COUNTS_SOURCE: "1c1a005e267149e5db4ad37666e714e7bd5d56acea407d63c02e86abf68df979",
     S02__LCM_CONTINUATION_SOURCE: "b9793cbca0f776bebd5c0efbfd9a835fbae1a090e6ad0b12c9f27fa01c1f45a7",
     S02__LCM_EGM_BUDGET_SOURCE: "1c8fb0cbc8f9156950bea34c71c9ccce2c58ac17ec6b9f1221f8c8966f1031d2",
     S02__LCM_EGM_CARRY_SOURCE: "82ba68883e4bbffd86dee395299c2bc7846b780f31b99cb469274ec2be1943ef",
@@ -630,13 +633,13 @@ _SOURCE_SEALS = {
     POST_DECISION_BOUND_SOURCE: "4ff8b8c7b64be2395c821acb5f328765c7a9ac2c5198fd0b2be3960227837f6c",
     BOUND_PROOF_SOURCE: "b001df34cfbeff170c40f7d052de76408508e03b50395531d77122ae4279d72a",
     BOUND_NORMALIZATION_SOURCE: "7850582e96a52661443c1d5b08a5d3dde0845af2c8598094affaab2ee1fc0c88",
-    USER_REGIME_BOUND_SOURCE: "6721a25469cc05ae53ed6ddf2e6416e0f0e5f6ac0c0c7947606bb636be948ac0",
+    USER_REGIME_BOUND_SOURCE: "18e2a6afd84cdb08882eb51b55d88fd80b1ae266abb894ca1dbe25866ae8c27d",
     LIQUID_BOUND_DECLARATION_SOURCE: "751e18767bccd13540094eb5e518503c0d029faed30bf05a818c1f8c1cc01e21",
     FEASIBILITY_SOURCE: "8cb8cb1ec3da487dac2b5eec451aa4ac61d5222f565c91986c6c2ca7baed1402",
     ACTION_GRID_SOURCE: "76a059f7cc7d7e7d2a99e0ffd626ddbd76b89724d5e24f3bb10ad86501268309",
     SUPPORT_TRANSITION_CHECKS_SOURCE: "ae0b594f4f3322221675d0630cb3d9c483c57295083f0ab811ce05ea93154e29",
     SUPPORT_DIAGNOSTICS_SOURCE: "15aab27db77f3f9f9699697bc32f201a018f43b1a4653f9c3b2caee0e7ae16db",
-    SUPPORT_PRECONDITIONS_SOURCE: "51df1ba8bded1fc3c3240676dcbfd59b421b581bc38ab3d96408eed5eaf39111",
+    SUPPORT_PRECONDITIONS_SOURCE: "d621e34907d21364cdbdf99185525903e567dcf154e80a11f496875ad6e75d1b",
     SUPPORT_AUTHORITY_SOURCE: "d25dd5ef989c84bdccbd5a16c45cfa8106b1abdae2d10938e54ed029a7d7814a",
     SUPPORT_FINGERPRINT_SOURCE: "e0f7b697d8ef978e13e9d0d606afb728f9584e6ff305222552e3a70e68f17eb3",
     UNIFORM_PROCESS_GRID_SOURCE: "3cd2faf78b21b2862946ee4c12ffb79f474a43430615e952e5f1c582cc02ac5a",
@@ -698,8 +701,8 @@ _SOURCE_SEALS = {
     SIMULATION_RUNTIME_SOURCE: "0623ad63ded8ee0ae880003228814e7e300a7a4394b3abecb3f5dd27acc58009",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "a5d3827e40abd625f0a8bef92d2998a5daa965dc4b8de4526c006bd3525b5f81",
-    COLLECTIVE_SOURCE: "5a941f2d7cff8791b500af3c1336841ec360fdb1855e51e44013552fe06b550b",
-    MAX_Q_SOURCE: "f1069b38d589ba3dab59ff61d7c7f14563f39a20818436cacc1551aff408f2d4",
+    COLLECTIVE_SOURCE: "8746f1d8e4bdbb22520cc6fe90186076a371c84a885d935dc9aa1f77ca3ff96a",
+    MAX_Q_SOURCE: "31bee4145b853589fa47c65ca898189e5d89a84f662aef18fd8c7b4464c466fb",
     PROCESSING_SOURCE: "f52047d25838ade1c089913488d18f944b7bb957eee10a05c4422fdfaa3723ec",
     GRID_SEARCH_SOURCE: "a2af9168040fab5ac53bf4e60075a9e1bfdfc1cf0478e520c08f8cfa456774a5",
     CORE_PROGRAM_SOURCE: "7d8197a3d2607a3380be63408ae4cf2b8d8ebbe68b043cc3aff76bf1f5c6b78a",
@@ -2168,10 +2171,10 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SUPPORT_PRECONDITIONS_SOURCE: (
-        "2dde27fffaa89b3c7778a701e9906e7ba30a0094378cb2e08ada977d67f2003e",
+        "f24e882b8b032ac8e284eddea5111d674c1a760c93a25c2bf212dc6ef31672e4",
         {
             "check_pareto_weights": "c59b54d3349a086083b2904e0f49d2396da35debce8b339ac1923eadf263be11",
-            "_check_one_regimes_weights": "1eb8d8f9eefe3f49f32294f69c2b619404aa892fc477497704ce290facbb01ff",
+            "_check_one_regimes_weights": "7b273555d411f9277e9a63c03495b6ee020229655db89444534aeac7dfa1bbc7",
         },
     ),
     SUPPORT_TRANSITION_CHECKS_SOURCE: (
@@ -2325,7 +2328,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MAX_Q_SOURCE: (
-        "751e70188bd0a7b5350b7489000dbf8e7334d53d356124d70f41cd5e99e4b263",
+        "a680b0a998a613eb84cbac64184ba1be0c7432d96f620c09f0530f8b28ed59fd",
         {
             "get_action_partitioned_max_Q_over_a": "7e4b9b51294748528dbe9d26c80af48f4dc7ef8a8f75090e0d110d56eab6db80",
             "_ActionPartitionedMaxQOverA.__call__": "9252a1202b3781ff23df05c28e65d4585e16274e0ac6abd6bcc0c4a7dfdfdbdc",
@@ -2338,12 +2341,12 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_fail_if_full_V_streaming_route_is_unsupported": "eff5e774ca2963cee7057f704181d7de76bfc89c1c5d0e802e204324f22cc024",
             "_fail_if_streaming_co_map_layout_is_invalid": "59c06aedafc8bcbe31d7f2f7f7b7d94e1d8044bf529c6f11a05882c5bf1d7979",
             "_StreamedMaxQOverA.__call__": "3531c5e3fb0d3ad753fbeaa8279ea9f6477ed7a6430ae22d669863c7e1789d68",
-            "get_max_Q_over_a": "dfb2c2d32affb12a5a0a80bae4dbcfcc9116d91fa56fbaeb78871d791dcbb68e",
-            "get_argmax_and_max_Q_over_a": "aef0f444773b8d7242ebc25d0e3d9573e1ace4fa94bfd34380f63b7789e226a3",
+            "get_max_Q_over_a": "8330b29377975e0506db4d2522f134a2031c7e50e0ecc0c2b05db554458e6098",
+            "get_argmax_and_max_Q_over_a": "fbe4fa87c583aef693ba16d6425225dead4a4a0d26f9048da03ae04164a7cd16",
             "_HardMaxQOverA.__call__": "b98cd47e64f3477624081b21392c9ac45c06587a7759d505f26efeee1776a9dd",
             "_HardMaxArgmaxQOverA.__call__": "482e9be161b5b5103f13d6c60bfb47e2acfda5eb5a7d61f18fc77981e6fd40b1",
-            "_SmoothedMaxQOverA.__call__": "b0f96f4b687109b1ed00ce6a7bfdb20f2b726fe3973d369358e75c634cb83a16",
-            "_TasteShockArgmaxQOverA.__call__": "76e67e0e11ea6ff97a12fac34a1d7dcd3b88ad65a4ecc70c45eff17e225da395",
+            "_SmoothedMaxQOverA.__call__": "2f4dbbd9c4a656d6d0cab1f966039873cccc9747f0cf92063e460115f28b3bf3",
+            "_TasteShockArgmaxQOverA.__call__": "02e2b8a2087a2c3b08babd6a2c0396085d0408b3bad76eb9dd7481e27131740d",
             "_with_bound_summary": "b013f2b5bf18ce8760c35c94ebd4058c4340d9ab306e7b4a834fe30d4a0063e7",
         },
     ),
@@ -2714,7 +2717,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         "744cd306431e9da7a0f6df210e85796001cb0a943fb1f74dde2718c0c41f8cf7",
         {
             "landing_checks_of": "5246312411fdfca9375fdc34b38e57a15620ff2a1da81d0d5d6c67bb0a74b9d9",
-            "get_landing_counting_max_Q_over_a": "5c00d70bfc4ff5108191ebcd10a798ad663e3fb70fb52a7f02b2cc324184f168",
+            "get_landing_counting_max_Q_over_a": "78831240728eb43aef741f545f0bb42c4d044e68a11bc57690b25b4a2583f43e",
             "_LandingCountingReduction.__call__": "faeeca7757e7ca66f394f6b72e1dde7ad58ca7ebd81f73d32830a3f056a30a3b",
             "LandingCountedGridSearch.__call__": "abfef7e21c6dbd6cf9a94a5ed495dd9c73853a052cd04904ae0270b1023dbf69",
             "_feasible_landing_counts": "1ad2cc2b01dfa37959918d4aabac29875d658ffc3b21924e1c981b2769226668",
@@ -3996,7 +3999,12 @@ def _guarded_binding(
 
 
 # Construction keywords of a taste-shock max-Q kernel, in declaration order.
-_TASTE_KERNEL_FIELDS = ("Q_and_F", "n_discrete_action_axes")
+_TASTE_KERNEL_FIELDS = (
+    "Q_and_F",
+    "n_discrete_action_axes",
+    "member_axis",
+    "pareto_weights",
+)
 
 # Construction keywords of a hard-max max-Q kernel, in declaration order.
 _HARD_MAX_KERNEL_FIELDS = ("Q_and_F", "member_axis", "pareto_weights")
@@ -4235,10 +4243,6 @@ def _exact_reducer_signature_call(
     )
     if simulate:
         annotation_source = '"tuple[IntND, FloatND]"'
-    elif taste_shocks:
-        annotation_source = (
-            '"tuple[FloatND, BoolND]" if return_feasibility else "FloatND"'
-        )
     else:
         annotation_source = (
             '"tuple[FloatND, BoolND]" '
@@ -5320,6 +5324,8 @@ Q_and_F = productmap(
                 "collective_argmax_and_readout",
                 "collective_readout",
                 "dataclass",
+                "decider_choice",
+                "decider_smoothed_readout",
                 "EULER_GAMMA",
                 "inspect",
                 "jax",
@@ -5344,7 +5350,7 @@ Q_and_F = productmap(
                 "from _lcm.logsum import EULER_GAMMA, logsum_and_softmax",
                 "from _lcm.regime_building.argmax import argmax_and_max",
                 (
-                    "from _lcm.regime_building.collective import ParetoWeights, collective_argmax_and_readout, collective_readout"
+                    "from _lcm.regime_building.collective import ParetoWeights, collective_argmax_and_readout, collective_readout, decider_choice, decider_smoothed_readout"
                 ),
                 (
                     "from _lcm.solution.action_streaming import build_partitioned_streaming_max_Q_over_a, build_streaming_collective_max_Q_over_a, build_streaming_ev1_max_Q_over_a, build_streaming_max_Q_over_a"
@@ -5369,8 +5375,12 @@ Q_and_F = productmap(
                 "collective_argmax_and_readout": 1,
                 "collective_readout": 1,
                 "dataclass": 1,
+                "decider_choice": 1,
+                "decider_smoothed_readout": 1,
                 "dict": 0,
                 "draw_taste_shock_noise": 1,
+                "_household_taste_shock_draw": 1,
+                "_stacked_pareto_weights": 1,
                 "_HardMaxArgmaxQOverA": 1,
                 "_HardMaxQOverA": 1,
                 "_SmoothedMaxQOverA": 1,
@@ -5442,6 +5452,8 @@ def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
                 "__name__: ClassVar[str] = 'max_Q_over_a'",
                 "Q_and_F: ActionFunction",
                 "n_discrete_action_axes: int",
+                "member_axis: tuple[str, ...] | None",
+                "pareto_weights: ParetoWeights | None",
                 "return_feasibility: bool = False",
             ),
         ),
@@ -5480,6 +5492,8 @@ def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
                 "__name__: ClassVar[str] = 'argmax_and_max_Q_over_a'",
                 "Q_and_F: ActionFunction",
                 "n_discrete_action_axes: int",
+                "member_axis: tuple[str, ...] | None",
+                "pareto_weights: ParetoWeights | None",
             ),
         ),
         (
@@ -9436,6 +9450,19 @@ def _taste_corridor_errors(
     next_regime_to_V_arr=next_regime_to_V_arr,
     **states_actions_params,
 )
+if self.member_axis is not None:
+    values, dissolution = decider_smoothed_readout(
+        Q=Q_arr,
+        feasibility=F_arr,
+        weights=_stacked_pareto_weights(
+            pareto_weights=self.pareto_weights,
+            member_axis=self.member_axis,
+            states_actions_params=states_actions_params,
+        ),
+        n_discrete_action_axes=self.n_discrete_action_axes,
+        scale=cast("ScalarFloat", states_actions_params[TASTE_SHOCK_SCALE_PARAM]),
+    )
+    return values, dissolution
 Q_masked = jnp.where(F_arr, Q_arr, -jnp.inf)
 continuous_axes = tuple(range(self.n_discrete_action_axes, Q_arr.ndim))
 Qc = Q_masked.max(axis=continuous_axes) if continuous_axes else Q_masked
@@ -9455,6 +9482,19 @@ Q_arr, F_arr = self.Q_and_F(
     next_regime_to_V_arr=next_regime_to_V_arr,
     **states_actions_params,
 )
+if self.member_axis is not None:
+    return _household_taste_shock_draw(
+        Q_arr=Q_arr,
+        F_arr=F_arr,
+        weights=_stacked_pareto_weights(
+            pareto_weights=self.pareto_weights,
+            member_axis=self.member_axis,
+            states_actions_params=cast("QAndFKwargs", states_actions_params),
+        ),
+        n_discrete_action_axes=self.n_discrete_action_axes,
+        taste_shock_key=taste_shock_key,
+        scale=cast("FloatND", states_actions_params[TASTE_SHOCK_SCALE_PARAM]),
+    )
 Q_masked = jnp.where(F_arr, Q_arr, -jnp.inf)
 n_discrete_cells = math.prod(Q_arr.shape[:self.n_discrete_action_axes])
 n_continuous_cells = math.prod(Q_arr.shape[self.n_discrete_action_axes:])
@@ -9969,6 +10009,168 @@ return gathered[..., 0]
     return errors
 
 
+def _decider_reducer_errors(tree: ast.Module) -> list[str]:
+    """Certify the household EV1 decider choice and smoothed readout exactly.
+
+    The decider's own action values are masked by the feasibility array passed
+    by identity, maximized over the continuous actions, and log-summed over the
+    discrete ones; every member is read at the decider's continuous argmax and
+    weighted zero-safely by the decider's choice probabilities. No other
+    candidate-changing expression is admitted.
+    """
+    errors: list[str] = []
+    try:
+        choice = _definition(tree=tree, name="decider_choice")
+        readout = _definition(tree=tree, name="decider_smoothed_readout")
+    except ValueError as error:
+        return [f"decider reducer: {error}"]
+    if choice.decorator_list or readout.decorator_list:
+        errors.append("decider reducer: decorators are not allowlisted")
+    signatures = (
+        (
+            choice,
+            ("Q", "feasibility", "weights", "n_discrete_action_axes"),
+            "decider choice",
+        ),
+        (
+            readout,
+            ("Q", "feasibility", "weights", "n_discrete_action_axes", "scale"),
+            "smoothed readout",
+        ),
+    )
+    for node, names, label in signatures:
+        if not _keyword_only_signature(node=node, names=names):
+            errors.append(f"decider reducer: {label} signature changed")
+    expected_choice = r"""decider = jnp.argmax(weights > 0).astype(jnp.int32)
+n_discrete_cells = math.prod(feasibility.shape[:n_discrete_action_axes])
+n_continuous_cells = math.prod(feasibility.shape[n_discrete_action_axes:])
+flat_Q = Q.reshape(n_discrete_cells, n_continuous_cells, Q.shape[-1])
+decider_Q = jnp.where(
+    feasibility.reshape(n_discrete_cells, n_continuous_cells),
+    jnp.take(flat_Q, decider, axis=-1),
+    -jnp.inf,
+)
+continuous_argmax = jnp.argmax(decider_Q, axis=1).astype(jnp.int32)
+at_choice = jnp.take_along_axis(flat_Q, continuous_argmax[:, None, None], axis=1)
+return decider, decider_Q.max(axis=1), continuous_argmax, at_choice[:, 0, :]
+"""
+    expected_readout = r"""decider, Qc, _continuous_argmax, at_choice = decider_choice(
+    Q=Q,
+    feasibility=feasibility,
+    weights=weights,
+    n_discrete_action_axes=n_discrete_action_axes,
+)
+smoothed, probabilities = logsum_and_softmax(values=Qc, scale=scale, axes=(0,))
+probabilities = jnp.where(
+    jnp.isneginf(smoothed),
+    jnp.arange(Qc.shape[0]) == jnp.argmax(Qc),
+    probabilities,
+).astype(probabilities.dtype)
+means = jnp.sum(
+    zero_safe_weighted_term(
+        weight=probabilities[:, None],
+        value=at_choice,
+        subnormal_is_accounted_for=False,
+    ),
+    axis=0,
+)
+dissolution = ~jnp.any(feasibility)
+values = jnp.where(
+    dissolution,
+    -jnp.inf,
+    jnp.where(jnp.arange(Q.shape[-1]) == decider, smoothed, means),
+)
+return values, dissolution
+"""
+    for node, body, label in (
+        (choice, expected_choice, "decider choice"),
+        (readout, expected_readout, "smoothed readout"),
+    ):
+        if not _body_matches(node=node, expected_source=body):
+            errors.append(
+                f"decider reducer: {label} differs from the exact allowlisted flow"
+            )
+    if any(
+        isinstance(statement, ast.Assign | ast.AnnAssign | ast.AugAssign)
+        and {"decider_choice", "decider_smoothed_readout", "logsum_and_softmax"}
+        & _assigned_names(statement)
+        for statement in tree.body
+    ):
+        errors.append("decider reducer: module-level rebinding is not allowlisted")
+    return errors
+
+
+def _household_taste_kernel_helper_errors(tree: ast.Module) -> list[str]:
+    """Certify the household taste kernels' weight stack and simulated draw."""
+    errors: list[str] = []
+    try:
+        stacked = _definition(tree=tree, name="_stacked_pareto_weights")
+        draw = _definition(tree=tree, name="_household_taste_shock_draw")
+    except ValueError as error:
+        return [f"household taste helpers: {error}"]
+    if stacked.decorator_list or draw.decorator_list:
+        errors.append("household taste helpers: decorators are not allowlisted")
+    signatures = (
+        (
+            stacked,
+            ("pareto_weights", "member_axis", "states_actions_params"),
+            "weight stack",
+        ),
+        (
+            draw,
+            (
+                "Q_arr",
+                "F_arr",
+                "weights",
+                "n_discrete_action_axes",
+                "taste_shock_key",
+                "scale",
+            ),
+            "simulated draw",
+        ),
+    )
+    for node, names, label in signatures:
+        if not _keyword_only_signature(node=node, names=names):
+            errors.append(f"household taste helpers: {label} signature changed")
+    expected_stacked = r"""weights = _evaluate_pareto_weights(
+    pareto_weights=pareto_weights, states_actions_params=states_actions_params
+)
+return jnp.stack([jnp.asarray(weights[name]) for name in member_axis])
+"""
+    expected_draw = r"""decider, Qc, continuous_argmax, at_choice = decider_choice(
+    Q=Q_arr,
+    feasibility=F_arr,
+    weights=weights,
+    n_discrete_action_axes=n_discrete_action_axes,
+)
+noise = draw_taste_shock_noise(key=taste_shock_key, shape=Qc.shape, scale=scale)
+discrete_argmax = jnp.argmax(Qc + noise)
+flat_index = (
+    discrete_argmax * math.prod(F_arr.shape[n_discrete_action_axes:])
+    + continuous_argmax[discrete_argmax]
+)
+values = jnp.where(
+    jnp.arange(at_choice.shape[-1]) == decider,
+    Qc[discrete_argmax],
+    at_choice[discrete_argmax],
+)
+any_feasible = jnp.any(F_arr)
+return (
+    jnp.where(any_feasible, flat_index, -1).astype(jnp.int32),
+    jnp.where(any_feasible, values, -jnp.inf),
+)
+"""
+    for node, body, label in (
+        (stacked, expected_stacked, "weight stack"),
+        (draw, expected_draw, "simulated draw"),
+    ):
+        if not _body_matches(node=node, expected_source=body):
+            errors.append(
+                f"household taste helpers: {label} differs from the exact allowlisted flow"
+            )
+    return errors
+
+
 _CURRENT_IID_ADAPTER_CONTRACTS = _contracts(
     {
         "src/lcm/shocks.py": (
@@ -10370,6 +10572,7 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> DirectFlowReport:
         wiring_errors = _max_builder_wiring_errors(max_tree)
         streamed_builder_errors = _streamed_max_builder_errors(max_tree)
         kernel_surface_errors = _max_kernel_surface_errors(max_tree)
+        kernel_surface_errors += _household_taste_kernel_helper_errors(max_tree)
         max_errors = (
             binding_errors
             + solve_errors
@@ -10393,6 +10596,7 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> DirectFlowReport:
     collective_tree = parsed.get(COLLECTIVE_SOURCE)
     if collective_tree is not None:
         new_errors = _collective_reducer_errors(collective_tree)
+        new_errors += _decider_reducer_errors(collective_tree)
         errors.extend(new_errors)
         if new_errors:
             offending.add(COLLECTIVE_SOURCE)

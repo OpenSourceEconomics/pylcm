@@ -274,26 +274,28 @@ The enforcement point is not uniform, and the distinction is load-bearing: a rul
 checked at model build cannot be repaired by an argument to `solve`, while a rule
 checked at evaluation only fires once the model runs.
 
-| Rule                                                                                                                       | Enforced at                                                       | Exception                   |
-| -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | --------------------------- |
-| `normalization` is `"pointwise"` or `"none"`                                                                               | `ParetoObjective` construction                                    | `ValueError`                |
-| weight keys match the regime's members                                                                                     | `Regime` construction                                             | `RegimeInitializationError` |
-| a **constant** weight is finite and non-negative; the constants leave a positive total                                     | `Regime` construction                                             | `RegimeInitializationError` |
-| a gate's `predicate` reads no `V_target`, `V_target_<s>` or `D_target`                                                     | `Gate` construction                                               | `GateReadsValueError`       |
-| a gate's `predicate` is a plain callable, not a `StochasticTransition`                                                     | model build, binding the edge law to its source                   | `RegimeInitializationError` |
-| `routes` covers the source's member structure                                                                              | model build, binding the edge law to its source                   | `RegimeInitializationError` |
-| a gate sits on a target its `Transition` reaches; a target reached in both phases carries one equal `Gate` in both or none | model build                                                       | `ModelInitializationError`  |
-| taste shocks, a nonlinear certainty equivalent, or a non-`GridSearch` solver on a collective regime                        | `Regime` construction                                             | `NotImplementedError`       |
-| the same three on the SOURCE regime of a gated transition                                                                  | model build, binding the edge law to its source                   | `NotImplementedError`       |
-| a reference or fallback regime exists, and `member` matches its structure                                                  | model build                                                       | `ModelInitializationError`  |
-| a projection covers exactly the states its position owes                                                                   | model build                                                       | `ModelInitializationError`  |
-| a predicate or projection argument names a node of the target's own DAG                                                    | model build                                                       | `ModelInitializationError`  |
-| `off_grid="reject"` on a target carrying a continuous state                                                                | model build                                                       | `ModelInitializationError`  |
-| an ungated transition between regimes of different member structure                                                        | model build                                                       | `NotImplementedError`       |
-| **the predicate's realized return dtype is Boolean**                                                                       | **evaluation — every `solve()`, and again in the simulate phase** | `RegimeInitializationError` |
-| a **callable** weight is finite, non-negative and positively totalled on the grid                                          | evaluation — every `solve()`                                      | `InvalidParamsError`        |
+| Rule                                                                                                                                                                                                                   | Enforced at                                                       | Exception                   |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | --------------------------- |
+| `normalization` is `"pointwise"` or `"none"`                                                                                                                                                                           | `ParetoObjective` construction                                    | `ValueError`                |
+| weight keys match the regime's members                                                                                                                                                                                 | `Regime` construction                                             | `RegimeInitializationError` |
+| a **constant** weight is finite and non-negative; the constants leave a positive total                                                                                                                                 | `Regime` construction                                             | `RegimeInitializationError` |
+| a gate's `predicate` reads no `V_target`, `V_target_<s>` or `D_target`                                                                                                                                                 | `Gate` construction                                               | `GateReadsValueError`       |
+| a gate's `predicate` is a plain callable, not a `StochasticTransition`                                                                                                                                                 | model build, binding the edge law to its source                   | `RegimeInitializationError` |
+| `routes` covers the source's member structure                                                                                                                                                                          | model build, binding the edge law to its source                   | `RegimeInitializationError` |
+| a gate sits on a target its `Transition` reaches; a target reached in both phases carries one equal `Gate` in both or none                                                                                             | model build                                                       | `ModelInitializationError`  |
+| taste shocks (unless exactly one constant or callable weight can be positive and the regime declares no `exit` and no `shocks`), a nonlinear certainty equivalent, or a non-`GridSearch` solver on a collective regime | `Regime` construction                                             | `NotImplementedError`       |
+| the same three on the SOURCE regime of a gated transition                                                                                                                                                              | model build, binding the edge law to its source                   | `NotImplementedError`       |
+| a reference or fallback regime exists, and `member` matches its structure                                                                                                                                              | model build                                                       | `ModelInitializationError`  |
+| a projection covers exactly the states its position owes                                                                                                                                                               | model build                                                       | `ModelInitializationError`  |
+| a predicate or projection argument names a node of the target's own DAG                                                                                                                                                | model build                                                       | `ModelInitializationError`  |
+| `off_grid="reject"` on a target carrying a continuous state                                                                                                                                                            | model build                                                       | `ModelInitializationError`  |
+| an ungated transition between regimes of different member structure                                                                                                                                                    | model build                                                       | `NotImplementedError`       |
+| taste shocks on a collective regime whose decision another regime's exit reads                                                                                                                                         | model build                                                       | `UnsupportedOperationError` |
+| **the predicate's realized return dtype is Boolean**                                                                                                                                                                   | **evaluation — every `solve()`, and again in the simulate phase** | `RegimeInitializationError` |
+| a **callable** weight is finite, non-negative and positively totalled on the grid                                                                                                                                      | evaluation — every `solve()`                                      | `InvalidParamsError`        |
+| with taste shocks, exactly one member's weight is positive at every cell of the grid                                                                                                                                   | evaluation — every `solve()`                                      | `InvalidParamsError`        |
 
-The last two are the ones easily mistaken for build-time checks.
+The last three are the ones easily mistaken for build-time checks.
 
 A gate's return annotation cannot constrain what a user function returns, so the
 realized dtype is checked where the gate is evaluated. A model whose gate returns a
@@ -418,8 +420,18 @@ linked people.
 
 Each of these raises at `Regime` construction, naming the regime slot to change:
 
-- **EV1 taste shocks.** The collective argmax is the hard household maximum of the
-  Pareto-weighted objective, not a smoothed one.
+- **EV1 taste shocks with more than one decider.** A household admits taste shocks when
+  exactly one member has a positive Pareto weight, and that member decides. Its value is
+  its own smoothed expected maximum $\sigma \log \sum_j e^{Q^d_c(j)/\sigma}$ over the
+  discrete actions $j$, where $Q^d_c(j)$ is its maximum over the feasible continuous
+  actions, attained at $c^*(j)$. Every other member's value is
+  $\sum_j P(j)\, Q^s(j, c^*(j))$, its own action value at the decider's best continuous
+  action, weighted by the decider's choice probabilities $P(j)$; a discrete action of
+  probability zero contributes nothing. Simulation draws the decider's choice as a
+  single's draw. Constant weights with more than one positive entry are refused here; a
+  weight declared as a function is checked at every solve, at every cell. A household
+  with taste shocks may not declare an `exit` or `shocks`, and another regime's exit may
+  not read its decision; the second is refused at model build.
 - **A nonlinear certainty equivalent.** The per-member continuation is the linear
   expectation $E[V'^s]$, so `certainty_equivalent=LinearExpectation()` is the only
   admissible declaration.

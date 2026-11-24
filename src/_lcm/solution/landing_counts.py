@@ -151,6 +151,8 @@ def get_landing_counting_max_Q_over_a(
         _SmoothedMaxQOverA(
             Q_and_F=action_mapped,
             n_discrete_action_axes=n_discrete_action_axes,
+            member_axis=member_axis,
+            pareto_weights=pareto_weights,
             return_feasibility=True,
         )
         if has_taste_shocks

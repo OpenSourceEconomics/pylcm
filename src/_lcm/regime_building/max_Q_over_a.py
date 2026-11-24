@@ -29,6 +29,8 @@ from _lcm.regime_building.collective import (
     ParetoWeights,
     collective_argmax_and_readout,
     collective_readout,
+    decider_choice,
+    decider_smoothed_readout,
 )
 from _lcm.regime_building.Q_and_F import (
     BoundedActionOutput,
@@ -170,7 +172,9 @@ def get_max_Q_over_a(
         has_taste_shocks: Whether the regime declares EV1 taste shocks. When
             set, the hard maximum over the discrete-action axes is replaced by
             the smoothed expected maximum with the runtime scale param
-            `taste_shocks__scale`.
+            `taste_shocks__scale`; in a household, the expected maximum of the
+            member with the positive Pareto weight, every other member's value
+            read off its choice (`decider_smoothed_readout`).
         co_map_state_names: Tuple of fixed (never-transitioning) distributed state
             names, the leading axes of the value-function array. Each is mapped by an
             outer `vmap` that co-maps the matching axis of every `next_regime_to_V_arr`
@@ -233,6 +237,8 @@ def get_max_Q_over_a(
             _SmoothedMaxQOverA(
                 Q_and_F=mapped_action_kernel,
                 n_discrete_action_axes=n_discrete_action_axes,
+                member_axis=member_axis,
+                pareto_weights=pareto_weights,
                 return_feasibility=return_feasibility,
             ),
             args=[
@@ -242,7 +248,9 @@ def get_max_Q_over_a(
                 *extra_param_names,
             ],
             return_annotation=(
-                "tuple[FloatND, BoolND]" if return_feasibility else "FloatND"
+                "tuple[FloatND, BoolND]"
+                if member_axis is not None or return_feasibility
+                else "FloatND"
             ),
             enforce=False,
         )
@@ -340,15 +348,21 @@ class _SmoothedMaxQOverA:
     n_discrete_action_axes: int
     """Number of leading discrete-action axes the smoothed maximum reduces."""
 
+    member_axis: tuple[str, ...] | None
+    """Ordered member names of a household, or `None` for a singleton."""
+
+    pareto_weights: ParetoWeights | None
+    """The household's Pareto weight evaluator, or `None` for a singleton."""
+
     return_feasibility: bool = False
-    """Whether to return the empty-action-set mask beside the value."""
+    """Whether to return the empty-action-set mask beside a singleton value."""
 
     def __call__(
         self,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
     ) -> BoundedMaxOutput:
-        """Return the expected maximum over the discrete actions at this cell."""
+        """Return the expected maximum, plus the dissolution flag for a household."""
         evaluated = self.Q_and_F(
             next_regime_to_V_arr=next_regime_to_V_arr,
             **states_actions_params,
@@ -357,6 +371,26 @@ class _SmoothedMaxQOverA:
             "tuple[FloatND, BoolND]",
             evaluated.output if type(evaluated) is BoundedResult else evaluated,
         )
+        if self.member_axis is not None:
+            # Q_arr carries a trailing member axis. The member with the
+            # positive Pareto weight decides; every member's value is read off
+            # its smoothed choice, beside the dissolution flag D.
+            values, dissolution = decider_smoothed_readout(
+                Q=Q_arr,
+                feasibility=F_arr,
+                weights=_stacked_pareto_weights(
+                    pareto_weights=self.pareto_weights,
+                    member_axis=self.member_axis,
+                    states_actions_params=states_actions_params,
+                ),
+                n_discrete_action_axes=self.n_discrete_action_axes,
+                scale=cast(
+                    "ScalarFloat", states_actions_params[TASTE_SHOCK_SCALE_PARAM]
+                ),
+            )
+            return _with_bound_summary(
+                evaluated=evaluated, output=cast("MaxOutput", (values, dissolution))
+            )
         Q_masked = jnp.where(F_arr, Q_arr, -jnp.inf)
         continuous_axes = tuple(range(self.n_discrete_action_axes, Q_arr.ndim))
         Qc = Q_masked.max(axis=continuous_axes) if continuous_axes else Q_masked
@@ -371,6 +405,19 @@ class _SmoothedMaxQOverA:
         return _with_bound_summary(
             evaluated=evaluated, output=cast("MaxOutput", output)
         )
+
+
+def _stacked_pareto_weights(
+    *,
+    pareto_weights: ParetoWeights | None,
+    member_axis: tuple[str, ...],
+    states_actions_params: QAndFKwargs,
+) -> FloatND:
+    """Evaluate the household's Pareto weights at one cell, in member order."""
+    weights = _evaluate_pareto_weights(
+        pareto_weights=pareto_weights, states_actions_params=states_actions_params
+    )
+    return jnp.stack([jnp.asarray(weights[name]) for name in member_axis])
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -1174,9 +1221,10 @@ def get_argmax_and_max_Q_over_a(
             scalarization is computed once (`collective_argmax_and_readout`)
             and each member's own value is gathered at that shared
             index — mirrors the solve-side `get_max_Q_over_a` collective
-            branch so simulate recomputes the identical argmax. Mutually
-            exclusive with `has_taste_shocks` (rejected at regime
-            construction for collective regimes).
+            branch so simulate recomputes the identical argmax. With
+            `has_taste_shocks`, the member with the positive Pareto weight
+            draws the action as a single does, and each member's own value is
+            gathered at the drawn index.
         pareto_weights: The household's Pareto weight evaluator; required (and
             only used) when `member_axis` is set. Called at each cell with the
             states and parameters its declaration reads.
@@ -1216,6 +1264,8 @@ def get_argmax_and_max_Q_over_a(
             _TasteShockArgmaxQOverA(
                 Q_and_F=mapped_action_kernel,
                 n_discrete_action_axes=n_discrete_action_axes,
+                member_axis=member_axis,
+                pareto_weights=pareto_weights,
             ),
             args=[
                 "next_regime_to_V_arr",
@@ -1267,6 +1317,12 @@ class _TasteShockArgmaxQOverA:
     n_discrete_action_axes: int
     """Number of leading discrete-action axes the noisy draw chooses among."""
 
+    member_axis: tuple[str, ...] | None
+    """Ordered member names of a household, or `None` for a singleton."""
+
+    pareto_weights: ParetoWeights | None
+    """The household's Pareto weight evaluator, or `None` for a singleton."""
+
     def __call__(
         self,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
@@ -1282,6 +1338,26 @@ class _TasteShockArgmaxQOverA:
             "tuple[FloatND, BoolND]",
             evaluated.output if type(evaluated) is BoundedResult else evaluated,
         )
+        if self.member_axis is not None:
+            return _with_bound_summary(
+                evaluated=evaluated,
+                output=_household_taste_shock_draw(
+                    Q_arr=Q_arr,
+                    F_arr=F_arr,
+                    weights=_stacked_pareto_weights(
+                        pareto_weights=self.pareto_weights,
+                        member_axis=self.member_axis,
+                        states_actions_params=cast(
+                            "QAndFKwargs", states_actions_params
+                        ),
+                    ),
+                    n_discrete_action_axes=self.n_discrete_action_axes,
+                    taste_shock_key=taste_shock_key,
+                    scale=cast(
+                        "FloatND", states_actions_params[TASTE_SHOCK_SCALE_PARAM]
+                    ),
+                ),
+            )
         Q_masked = jnp.where(F_arr, Q_arr, -jnp.inf)
         n_discrete_cells = math.prod(Q_arr.shape[: self.n_discrete_action_axes])
         n_continuous_cells = math.prod(Q_arr.shape[self.n_discrete_action_axes :])
@@ -1302,6 +1378,49 @@ class _TasteShockArgmaxQOverA:
             Qc[discrete_argmax],
         )
         return _with_bound_summary(evaluated=evaluated, output=output)
+
+
+def _household_taste_shock_draw(
+    *,
+    Q_arr: FloatND,
+    F_arr: BoolND,
+    weights: FloatND,
+    n_discrete_action_axes: int,
+    taste_shock_key: Array,
+    scale: FloatND,
+) -> ArgmaxOutput:
+    """Draw a household's action as its decider's, and read every member there.
+
+    The decider is the member with the positive Pareto weight. Its draw is a
+    single's: one mean-zero Gumbel term per discrete action, added to its own
+    conditional maxima over the continuous actions. The decider publishes its
+    conditional maximum at the drawn action, as a single does, and every other
+    member its own noise-free action value there.
+    """
+    decider, Qc, continuous_argmax, at_choice = decider_choice(
+        Q=Q_arr,
+        feasibility=F_arr,
+        weights=weights,
+        n_discrete_action_axes=n_discrete_action_axes,
+    )
+    noise = draw_taste_shock_noise(key=taste_shock_key, shape=Qc.shape, scale=scale)
+    # An infeasible discrete cell stays infeasible: the noise is finite, so
+    # `-inf + noise` is still `-inf`.
+    discrete_argmax = jnp.argmax(Qc + noise)
+    flat_index = (
+        discrete_argmax * math.prod(F_arr.shape[n_discrete_action_axes:])
+        + continuous_argmax[discrete_argmax]
+    )
+    values = jnp.where(
+        jnp.arange(at_choice.shape[-1]) == decider,
+        Qc[discrete_argmax],
+        at_choice[discrete_argmax],
+    )
+    any_feasible = jnp.any(F_arr)
+    return (
+        jnp.where(any_feasible, flat_index, -1).astype(jnp.int32),
+        jnp.where(any_feasible, values, -jnp.inf),
+    )
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)

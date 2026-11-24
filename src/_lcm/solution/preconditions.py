@@ -173,6 +173,10 @@ def _check_one_regimes_weights(
         _fail_if_not_a_pareto_weighting(
             regime_name=regime_name, declared=declared, period=period
         )
+        if regime.has_taste_shocks:
+            _fail_if_not_one_decider(
+                regime_name=regime_name, declared=declared, period=period
+            )
 
 
 def _fail_if_not_a_pareto_weighting(
@@ -215,5 +219,38 @@ def _fail_if_not_a_pareto_weighting(
             "everywhere on the regime's grid, so the household scalarization "
             "is identically zero there and its argmax is undefined. Check the "
             f"'{PARETO_OBJECTIVE_ENTRY}' entry of this regime's params."
+        )
+        raise InvalidParamsError(msg)
+
+
+def _fail_if_not_one_decider(
+    *,
+    regime_name: RegimeName,
+    declared: Mapping[str, FloatND],
+    period: int,
+) -> None:
+    """Require exactly one positive weight at every cell of a taste-shock household.
+
+    Under EV1 taste shocks the household's choice is the smoothed choice of the
+    one member whose weight is positive, so a cell with two such members, or
+    none, has no decider.
+
+    Raises:
+        InvalidParamsError: If the number of members with a positive weight is
+            not one somewhere on the regime's grid.
+
+    """
+    n_positive = sum(
+        jnp.asarray(weight > 0, dtype=jnp.int32) for weight in declared.values()
+    )
+    if not bool(jnp.all(jnp.asarray(n_positive) == 1)):
+        msg = (
+            f"The Pareto weights in regime {regime_name!r} at period {period} do "
+            "not give exactly one member a positive weight everywhere on the "
+            f"regime's grid (between {int(jnp.min(n_positive))} and "
+            f"{int(jnp.max(n_positive))} members). Under EV1 taste shocks the "
+            "member with the positive weight decides, so every other member's "
+            f"weight must be 0. Check the '{PARETO_OBJECTIVE_ENTRY}' entry of "
+            "this regime's params."
         )
         raise InvalidParamsError(msg)

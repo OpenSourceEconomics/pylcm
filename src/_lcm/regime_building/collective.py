@@ -12,8 +12,14 @@ per-member `Q` arrays and the feasibility mask and returns the per-member
 `V` plus the all-infeasible flag `D` (the dissolution / empty-feasible-set marker,
 kept distinct from a numeric `-inf` that can arise on-path). The terminal and
 non-terminal solve kernels call it after building their `Q^s`.
+
+Under EV1 taste shocks a household has one decider, the member with the positive
+Pareto weight. `decider_smoothed_readout` publishes that member's smoothed expected
+maximum and every other member's mean action value under the decider's choice
+probabilities; `decider_choice` is the part the simulated draw shares with it.
 """
 
+import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -21,6 +27,7 @@ from types import MappingProxyType
 import jax.numpy as jnp
 from dags import concatenate_functions, rename_arguments, with_signature
 
+from _lcm.logsum import logsum_and_softmax
 from _lcm.regime_building.argmax import (
     _flatten_last_n_axes,
     _move_axes_to_back,
@@ -30,7 +37,14 @@ from _lcm.typing import FunctionName, ParamsLeaf, QualifiedName, RegimeName, Sta
 from _lcm.utils.functools import get_union_of_args, is_user_function
 from _lcm.zero_safe import sum_in_value_order, zero_safe_weighted_term
 from lcm.collective import ParetoObjective
-from lcm.typing import BoolND, FloatND, IntND, ReferenceName, UserFunction
+from lcm.typing import (
+    BoolND,
+    FloatND,
+    IntND,
+    ReferenceName,
+    ScalarFloat,
+    UserFunction,
+)
 
 # Up to this many members, the scalarization's reduction order is not a choice:
 # one term is returned as-is and two admit a single association. From three terms on,
@@ -150,6 +164,124 @@ def collective_readout(
         feasibility=feasibility,
         weights=weights,
         action_axes=action_axes,
+    )
+    return values, dissolution
+
+
+def decider_choice(
+    *,
+    Q: FloatND,
+    feasibility: BoolND,
+    weights: FloatND,
+    n_discrete_action_axes: int,
+) -> tuple[IntND, FloatND, IntND, FloatND]:
+    """Locate the decider and its best continuous action per discrete action.
+
+    The decider is the member whose Pareto weight is positive; the caller
+    guarantees there is exactly one. The decider's own action values are
+    maximized over the feasible continuous actions, conditional on each
+    discrete action, and every member's action value is read at that
+    conditional argmax. The member axis is the trailing axis of `Q` and is
+    handled for any length.
+
+    Args:
+        Q: Per-member action values of shape
+            `(*discrete_actions, *continuous_actions, n_members)`.
+        feasibility: Boolean mask of shape `(*discrete_actions,
+            *continuous_actions)`.
+        weights: The Pareto weights in member order, shape `(n_members,)`.
+        n_discrete_action_axes: Number of leading discrete-action axes.
+
+    Returns:
+        Tuple `(decider, Qc, continuous_argmax, at_choice)`: the decider's
+        member index; its conditional maxima over the continuous actions, one
+        per discrete-action cell in C order, `-inf` where none is feasible; the
+        flat continuous index attaining each; and each member's action value
+        there, of shape `(n_discrete_cells, n_members)`.
+    """
+    decider = jnp.argmax(weights > 0).astype(jnp.int32)
+    n_discrete_cells = math.prod(feasibility.shape[:n_discrete_action_axes])
+    n_continuous_cells = math.prod(feasibility.shape[n_discrete_action_axes:])
+    flat_Q = Q.reshape(n_discrete_cells, n_continuous_cells, Q.shape[-1])
+    decider_Q = jnp.where(
+        feasibility.reshape(n_discrete_cells, n_continuous_cells),
+        jnp.take(flat_Q, decider, axis=-1),
+        -jnp.inf,
+    )
+    continuous_argmax = jnp.argmax(decider_Q, axis=1).astype(jnp.int32)
+    at_choice = jnp.take_along_axis(flat_Q, continuous_argmax[:, None, None], axis=1)
+    return decider, decider_Q.max(axis=1), continuous_argmax, at_choice[:, 0, :]
+
+
+def decider_smoothed_readout(
+    *,
+    Q: FloatND,
+    feasibility: BoolND,
+    weights: FloatND,
+    n_discrete_action_axes: int,
+    scale: ScalarFloat,
+) -> tuple[FloatND, BoolND]:
+    r"""Read off every member's value when one member decides under EV1 shocks.
+
+    With decider $d$, conditional maxima $Q^d_c(j) = \max_c Q^d(j, c)$ over the
+    feasible continuous actions $c$ of each discrete action $j$, and
+    $c^*(j)$ attaining it:
+
+    ```{math}
+        V^d = \sigma \log \sum_j e^{Q^d_c(j) / \sigma}, \qquad
+        P(j) = \frac{e^{Q^d_c(j) / \sigma}}{\sum_k e^{Q^d_c(k) / \sigma}}, \qquad
+        V^s = \sum_j P(j)\, Q^s(j, c^*(j)) \quad (s \neq d).
+    ```
+
+    The decider's value is its expected maximum; every other member's value
+    is the mean of its own action value under the decider's choice. A
+    discrete action with probability zero contributes exactly zero, whatever
+    the member's value there. Where the decider's every feasible action is
+    worth `-inf` it takes the first discrete action with probability one, the
+    action its simulated draw takes. A cell with no feasible action publishes
+    `-inf` for every member, beside the dissolution flag `D = True`.
+
+    Args:
+        Q: Per-member action values of shape
+            `(*discrete_actions, *continuous_actions, n_members)`.
+        feasibility: Boolean mask of shape `(*discrete_actions,
+            *continuous_actions)`.
+        weights: The Pareto weights in member order, shape `(n_members,)`,
+            exactly one of them positive.
+        n_discrete_action_axes: Number of leading discrete-action axes.
+        scale: The taste-shock scale $\sigma$, strictly positive.
+
+    Returns:
+        Tuple `(V, D)`: the member values of shape `(n_members,)` and the
+        all-infeasible flag.
+    """
+    decider, Qc, _continuous_argmax, at_choice = decider_choice(
+        Q=Q,
+        feasibility=feasibility,
+        weights=weights,
+        n_discrete_action_axes=n_discrete_action_axes,
+    )
+    smoothed, probabilities = logsum_and_softmax(values=Qc, scale=scale, axes=(0,))
+    # A decider whose every feasible action is worth `-inf` has no choice
+    # probabilities; it takes the first discrete action, as its draw does.
+    probabilities = jnp.where(
+        jnp.isneginf(smoothed),
+        jnp.arange(Qc.shape[0]) == jnp.argmax(Qc),
+        probabilities,
+    ).astype(probabilities.dtype)
+    means = jnp.sum(
+        zero_safe_weighted_term(
+            weight=probabilities[:, None],
+            value=at_choice,
+            subnormal_is_accounted_for=False,
+        ),
+        axis=0,
+    )
+    dissolution = ~jnp.any(feasibility)
+    values = jnp.where(
+        dissolution,
+        -jnp.inf,
+        jnp.where(jnp.arange(Q.shape[-1]) == decider, smoothed, means),
     )
     return values, dissolution
 

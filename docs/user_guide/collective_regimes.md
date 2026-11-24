@@ -88,6 +88,20 @@ one wherever the objective is evaluated, so a state-dependent weight cannot chan
 scale of the household's objective from cell to cell. `normalization="none"` uses the
 weights as written, for a scalarization whose level is itself meant to vary.
 
+### Taste shocks when one member decides
+
+A household may declare `taste_shocks=ExtremeValueTasteShocks()` when exactly one member
+has a positive weight. That member decides, as a single with the same taste shocks
+would: its value is its own smoothed expected maximum over the discrete actions, after
+the maximum over the continuous ones. Every other member's value is the mean of its own
+action value under the decider's choice probabilities, read at the decider's best
+continuous action for each discrete one. Simulation draws the decider's choice exactly
+as a single's draw. Constant weights must give exactly one member a positive weight; a
+weight declared as a function is checked at every solve, at every cell of the regime's
+grid, so a bargaining state may hand the decision from one member to the other. A
+household with taste shocks may not declare an `exit` or `shocks`, and another regime's
+exit may not read its decision.
+
 ## Dissolving in the current period: where the members compare
 
 A regime's `Exit` with `rule=Unilateral()` or `rule=MutualConsent()` decides before the

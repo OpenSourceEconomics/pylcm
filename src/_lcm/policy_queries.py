@@ -1285,7 +1285,10 @@ def _admit_node(*, node: QueryNode, period: int) -> None:
     _fail_if_projection_incomplete(node=node, reader="A query")
     if context.has_taste_shocks and context.member_axis is not None:
         raise UnsupportedOperationError(
-            "A collective query does not declare an EV1 member-taste law."
+            f"Regime {context.regime_name!r} is a household with EV1 taste shocks "
+            "whose decision an exit rule reads. Reading a household's decision "
+            "under taste shocks is not implemented: drop `taste_shocks` on this "
+            "regime, or the exit that reads it."
         )
     if context.invariant_bindings or context.action_partitions != 1:
         raise UnsupportedOperationError(

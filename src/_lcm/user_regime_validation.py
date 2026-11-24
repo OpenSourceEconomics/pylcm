@@ -456,24 +456,17 @@ def _validate_collective_regime(regime: Regime) -> None:
     declares, which may be continuous or empty.
 
     Features the collective solve does not implement raise `NotImplementedError`:
-    EV1 taste shocks
-    (the collective argmax is the hard household maximum), a nonlinear
-    certainty equivalent (the per-member continuation is the linear
-    expectation), and any solver other than `GridSearch`.
+    EV1 taste shocks unless exactly one member can carry a positive weight
+    (`_fail_if_taste_shocks_lack_one_decider`), a nonlinear certainty
+    equivalent (the per-member continuation is the linear expectation), and any
+    solver other than `GridSearch`.
 
     Called from `Regime.__post_init__` only when `member_axis is not None`, so
     the default singleton path never reaches it.
     """
     members = cast("tuple[str, ...]", regime.member_axis)
 
-    if regime.taste_shocks is not None:
-        raise NotImplementedError(
-            "EV1 taste shocks on a collective (member-valued) regime are "
-            "not yet implemented: the collective solve takes the hard household "
-            "argmax of the Pareto-weighted objective, not a smoothed maximum. "
-            "Drop `taste_shocks` on this regime, or model the choice as a "
-            "singleton regime."
-        )
+    _fail_if_taste_shocks_lack_one_decider(regime=regime, members=members)
     # Every non-terminal regime carries a certainty equivalent, and
     # `LinearExpectation` is the expected-utility default the collective path
     # implements -- so the test is the CE's type, not whether one is attached.
@@ -499,6 +492,56 @@ def _validate_collective_regime(regime: Regime) -> None:
 
     if error_messages:
         raise RegimeInitializationError(format_messages(error_messages))
+
+
+def _fail_if_taste_shocks_lack_one_decider(
+    *, regime: Regime, members: tuple[str, ...]
+) -> None:
+    """Admit EV1 taste shocks in a household only where one member decides.
+
+    The member with the positive Pareto weight decides, and the household's
+    smoothed choice is that member's. What the declaration settles is checked
+    here:
+
+    - undeclared weights are equal, so only a household of one has one decider;
+    - constant weights must have exactly one positive entry;
+    - a weight declared as a function is admitted, and the solve checks at
+      every cell that exactly one member's weight is positive;
+    - a household that declares an `exit` or observes current-period `shocks` is
+      refused, whatever its weights.
+
+    Raises:
+        NotImplementedError: If the regime declares taste shocks and one of the
+            cases above refuses them.
+    """
+    if regime.taste_shocks is None:
+        return
+    if regime.exit is not None:
+        raise NotImplementedError(
+            "EV1 taste shocks in a household that declares an `exit` are not "
+            "implemented. Drop `taste_shocks` or the `exit` on this regime."
+        )
+    if regime.shocks:
+        raise NotImplementedError(
+            "EV1 taste shocks in a household that observes current-period "
+            "`shocks` are not implemented. Drop `taste_shocks` or the `shocks` on "
+            "this regime."
+        )
+    objective = regime.pareto_objective
+    weights: Mapping[str, UserFunction | float] = (
+        dict.fromkeys(members, 1.0 / len(members))
+        if objective is None
+        else objective.weights
+    )
+    constants = [weight for weight in weights.values() if not callable(weight)]
+    n_positive = sum(weight > 0 for weight in constants)
+    if n_positive > 1 or (len(constants) == len(weights) and n_positive != 1):
+        raise NotImplementedError(
+            "EV1 taste shocks in a household need exactly one member with a "
+            "positive Pareto weight, the member who decides; got weights "
+            f"{dict(weights)!r}. Give every other member weight 0, or drop "
+            "`taste_shocks` on this regime."
+        )
 
 
 def _members_tuple_errors(members: tuple[str, ...]) -> tuple[str, ...]:
