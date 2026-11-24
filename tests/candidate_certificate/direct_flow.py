@@ -600,7 +600,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # Source seals and corridor anchors require semantic verification of the combined
 # inventories before refresh; these inherited pins deliberately retain that gate.
 _SOURCE_SEALS = {
-    "src/_lcm/current_iid.py": "55ce77fa27ce2d785db285888a4c6262a17ed1d9d1a12ab4fb0676269336b7bf",
+    "src/_lcm/current_iid.py": "75dbc464db77f50cc04149becf95df76d05c62bfb5a72e8620b5d67c1533b2f2",
     "src/_lcm/simulation/current_iid.py": "c675e9dffaa205b4049bf4c26438a70005766c368bc69a3dbb1d6e35cb66db99",
     "src/_lcm/egm/asset_row.py": "a1754248507153a646157269741645c745b956c916821d592d009e429d97c8fe",
     "src/_lcm/egm/continuation.py": "ecea4e3e177c92abd735e9365edf0578b2dd4795fadfdca5286147123595d5f0",
@@ -703,7 +703,7 @@ _SOURCE_SEALS = {
     ARGMAX_SOURCE: "a5d3827e40abd625f0a8bef92d2998a5daa965dc4b8de4526c006bd3525b5f81",
     COLLECTIVE_SOURCE: "4e195cc97d9b7149f81979ae91867b0a3bbe2099ffec0e368eac854a625accfe",
     MAX_Q_SOURCE: "31bee4145b853589fa47c65ca898189e5d89a84f662aef18fd8c7b4464c466fb",
-    PROCESSING_SOURCE: "56185b98de67d0d44d97e0f2574a85e39bf27878f707037e482a81a808e6f61d",
+    PROCESSING_SOURCE: "7cb67bef02e42b3478112fd3fb501d95665d4f449907772c2be4c10ce673b429",
     GRID_SEARCH_SOURCE: "546e493f585718611f59dc605c50c3da9f66324a0a50f9122677c12b6cfc02d2",
     CORE_PROGRAM_SOURCE: "7d8197a3d2607a3380be63408ae4cf2b8d8ebbe68b043cc3aff76bf1f5c6b78a",
     OUTPUT_LAYOUT_SOURCE: "8c1c2da98d43d3a5b8155d01418899ecc3b99730aef73c274b3f959b8dced07b",
@@ -10361,7 +10361,7 @@ def current_iid_adapter_errors(
         (
             _CURRENT_IID_SOURCE,
             "_integrate_nodes",
-            "return jnp.sum(terms), jnp.any(support & empty), ~valid",
+            "return jnp.sum(terms, axis=0), jnp.any(support & empty), ~valid",
         ),
         (
             _CURRENT_IID_SOURCE,
@@ -17577,8 +17577,8 @@ _CURRENT_IID_ADAPTER_MUTATIONS = (
     (
         "current_iid:omit_solve_status",
         "src/_lcm/current_iid.py",
-        "return jnp.sum(terms), jnp.any(support & empty), ~valid",
-        "return jnp.sum(terms), jnp.any(support & empty), False",
+        "return jnp.sum(terms, axis=0), jnp.any(support & empty), ~valid",
+        "return jnp.sum(terms, axis=0), jnp.any(support & empty), False",
     ),
     (
         "current_iid:omit_replay_status",

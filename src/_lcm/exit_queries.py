@@ -1961,7 +1961,7 @@ def install_exit_policy_queries(
     contexts: Mapping[RegimeName, SolverBuildContext],
     value_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> MappingProxyType[RegimeName, Regime]:
-    """Install Full roots for exits and tuple-preserving collective integration.
+    """Install Full roots for the periods of regimes that declare an exit.
 
     Periods of one regime whose query graphs trace the same programs run the
     functions of the first such period and publish its period in their
@@ -1985,10 +1985,7 @@ def install_exit_policy_queries(
                 and period not in value_periods_by_regime.get(owner, ())
             ):
                 continue
-            if context.user_regimes_at(period=period)[owner].exit is not None or (
-                context.member_axis is not None
-                and context.current_iid_plans.get(period) is not None
-            ):
+            if context.user_regimes_at(period=period)[owner].exit is not None:
                 kernel = lower_exit_queries(
                     contexts=contexts,
                     canonical_regimes=canonical_regimes,

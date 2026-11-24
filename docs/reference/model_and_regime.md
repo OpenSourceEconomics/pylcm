@@ -448,8 +448,9 @@ and runtime-bound query status adapters.
 
 Collective current-IID decisions select one common action and route exits at each node,
 then integrate each member's selected value. Stored values retain the member axis and
-carry no current-shock axis. This also applies to collective regimes without exits. EV1
-taste shocks on a collective regime with an exit or with current shocks are refused; see
+carry no current-shock axis. A collective regime without an exit runs the ordinary grid
+search, integrating each member's value at the household's choice over the nodes. EV1
+taste shocks on a collective regime with an exit are refused; see
 [`ExtremeValueTasteShocks`](#api-extreme-value-taste-shocks).
 
 (api-extreme-value-taste-shocks)=

@@ -529,8 +529,7 @@ def _fail_if_taste_shocks_lack_one_decider(
     - constant weights must have exactly one positive entry;
     - a weight declared as a function is admitted, and the solve checks at
       every cell that exactly one member's weight is positive;
-    - a household that declares an `exit` or observes current-period `shocks` is
-      refused, whatever its weights.
+    - a household that declares an `exit` is refused, whatever its weights.
 
     Raises:
         NotImplementedError: If the regime declares taste shocks and one of the
@@ -542,12 +541,6 @@ def _fail_if_taste_shocks_lack_one_decider(
         raise NotImplementedError(
             "EV1 taste shocks in a household that declares an `exit` are not "
             "implemented. Drop `taste_shocks` or the `exit` on this regime."
-        )
-    if regime.shocks:
-        raise NotImplementedError(
-            "EV1 taste shocks in a household that observes current-period "
-            "`shocks` are not implemented. Drop `taste_shocks` or the `shocks` on "
-            "this regime."
         )
     objective = regime.pareto_objective
     weights: Mapping[str, UserFunction | float] = (

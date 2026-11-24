@@ -1753,11 +1753,7 @@ class _CanonicalRegimeBuilder:
         }
         if not any(
             regime.exit is not None
-            or (
-                _engine_member_axis(regime) is not None
-                and any(solution_builds[name].context.current_iid_plans.values())
-            )
-            for name, regime in self.representative_user_regimes.items()
+            for regime in self.representative_user_regimes.values()
         ):
             return declared
         from _lcm.exit_queries import install_exit_policy_queries  # noqa: PLC0415

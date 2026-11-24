@@ -124,7 +124,7 @@ one.
   That member decides: its value is its own expected maximum; every other member's value
   is the mean of its own action values under the decider's choice probabilities, at the
   decider's best continuous action. Taste shocks stay refused in a household with an
-  exit, with current-period shocks, or whose decision another regime's exit reads.
+  exit or whose decision another regime's exit reads.
 
 ## Not shipped
 

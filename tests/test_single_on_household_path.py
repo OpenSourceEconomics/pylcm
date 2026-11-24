@@ -21,6 +21,7 @@ import pytest
 from _lcm.regime_building import processing
 from _lcm.regime_building.collective import NO_ROLE, build_role_vocabulary
 from _lcm.simulation.gated_routing import _role_code
+from _lcm.solution.grid_search import _GridSearchPeriodKernel
 from _lcm_regime_finder.model_adapter import adapt_snapshot
 from _lcm_regime_finder.model_snapshot import read_model
 from _lcm_regime_finder.records import JSONValue
@@ -538,6 +539,21 @@ def test_switch_off_keeps_the_pinned_fingerprint() -> None:
     fingerprint = PINNED_MODELS["multi_regime_normal"]()._model_structure_fingerprint
 
     assert fingerprint == _pinned()["multi_regime_normal"]
+
+
+def test_switch_on_solves_a_single_with_current_shocks_by_grid_search() -> None:
+    """A single observing current-period shocks keeps its grid-search kernels."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(processing, "_SINGLE_ON_HOUSEHOLD_PATH", True)
+        model = _stochastic_volatility()[0]
+
+    kernels = model._regimes["alive"].solution.period_kernels
+
+    assert model._regimes["alive"].member_axis == ("self",)
+    assert kernels
+    assert all(
+        isinstance(kernel, _GridSearchPeriodKernel) for kernel in kernels.values()
+    )
 
 
 def test_switch_on_gives_the_engine_regime_the_member_self() -> None:

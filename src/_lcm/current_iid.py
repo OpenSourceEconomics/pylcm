@@ -779,10 +779,16 @@ class _CurrentIIDExpectation:
 def _integrate_nodes(
     *, evaluated: PytreeValue, factor_array: FloatND, valid: ScalarBool
 ) -> CurrentIIDMaxOutput:
+    """Integrate the per-node values over the node axis.
+
+    A household's values carry a trailing member axis, which each node's
+    factors broadcast against and which the integral keeps.
+    """
     values, empty = cast("tuple[FloatND, BoolND]", evaluated)
     support = jnp.all(~is_represented_zero(factor_array), axis=0)
-    terms = factored_weighted_term(factors=factor_array, values=values)
-    return jnp.sum(terms), jnp.any(support & empty), ~valid
+    factors = factor_array.reshape(factor_array.shape + (1,) * (values.ndim - 1))
+    terms = factored_weighted_term(factors=factors, values=values)
+    return jnp.sum(terms, axis=0), jnp.any(support & empty), ~valid
 
 
 # keyword-only-exempt: library-callback=jax.vmap

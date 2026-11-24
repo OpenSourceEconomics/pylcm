@@ -8,6 +8,7 @@ from unittest.mock import patch
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 from numpy.testing import assert_array_almost_equal
 
@@ -18,6 +19,7 @@ from _lcm.simulation.random_address import (
     encode_subject_row,
 )
 from _lcm.solution import backward_induction as backward
+from _lcm.solution.grid_search import _GridSearchPeriodKernel
 from lcm import (
     CollectiveUtility,
     Consent,
@@ -38,8 +40,8 @@ from lcm.exceptions import ExecutionPlanningError, RegimeInitializationError
 from lcm.exits import Unilateral
 from lcm.shocks import Discrete, Normal, ShockGroup, UserNodes
 from lcm.solver_api import SolutionResult
-from lcm.typing import FloatND, IntND, ScalarInt
-from tests.conftest import DECIMAL_PRECISION
+from lcm.typing import BoolND, FloatND, IntND, ScalarInt
+from tests.conftest import DECIMAL_PRECISION, assert_agrees_to_ulp
 from tests.solution import test_exit_reference_household as reference
 from tests.solution import test_public_exit_queries as public
 
@@ -97,7 +99,6 @@ def _empty() -> bool:
 
 def _model(
     *,
-    exits: bool,
     enable_jit: bool,
     width: int,
     zero_weight: bool = False,
@@ -128,9 +129,7 @@ def _model(
                 },
                 rule=Unilateral(),
                 available=None if available else _unavailable,
-            )
-            if exits
-            else None,
+            ),
             constraints={"ordinary": _empty} if empty else {},
         ),
         "single_f": Regime(functions={"utility": _outside}),
@@ -161,9 +160,8 @@ def _model(
 
 @pytest.mark.parametrize("enable_jit", [False, True])
 @pytest.mark.parametrize("width", [1, 3])
-@pytest.mark.parametrize("exits", [False, True])
 def test_common_policy_is_routed_before_current_node_integration(
-    *, exits: bool, enable_jit: bool, width: int
+    *, enable_jit: bool, width: int
 ) -> None:
     """Every node vetoes stay although its averaged tuple (5,5) participates."""
     q = reference._q(f=[Fraction(0), Fraction(6)], m=[Fraction(10), Fraction(2)])
@@ -183,16 +181,14 @@ def test_common_policy_is_routed_before_current_node_integration(
         )
         == 0
     )
-    model = _model(exits=exits, enable_jit=enable_jit, width=width)
+    model = _model(enable_jit=enable_jit, width=width)
     result = model.solve(params={}, log_level="off", runtime_checks=False)
     values = result.values[0]["couple"]
     assert values.shape == (3, 2)
     assert model._regimes["couple"].solution.state_names == ("wealth",)
     assert_array_almost_equal(
         values,
-        [[4.0, 4.0], [4.0, 4.0], [8.0, 4.0]]
-        if exits
-        else [[5.0, 5.0], [6.0, 6.0], [7.0, 7.0]],
+        [[4.0, 4.0], [4.0, 4.0], [8.0, 4.0]],
         decimal=DECIMAL_PRECISION,
     )
 
@@ -600,7 +596,6 @@ def test_zero_weight_member_keeps_its_veto_and_empty_stay_can_exit(
 ) -> None:
     """Zero objective weight never removes a member's participation threshold."""
     model = _model(
-        exits=True,
         enable_jit=True,
         width=1,
         zero_weight=True,
@@ -624,7 +619,7 @@ def test_zero_weight_member_keeps_its_veto_and_empty_stay_can_exit(
 
 def test_collective_current_shocks_replay_same_original_subject_and_role() -> None:
     """Fresh continuous draws route members to their own singleton destinations."""
-    model = _model(exits=True, enable_jit=True, width=1)
+    model = _model(enable_jit=True, width=1)
     solution = model.solve(params={}, log_level="off", runtime_checks=False)
     ids = model.regime_names_to_ids
     roles = model.member_names_to_ids
@@ -673,7 +668,7 @@ def test_collective_current_shocks_replay_same_original_subject_and_role() -> No
 def test_collective_native_budget_includes_member_banks() -> None:
     """The native budget includes the member payload before any query executes."""
     budget = 2**26
-    model = _model(exits=True, enable_jit=True, width=1, budget=budget)
+    model = _model(enable_jit=True, width=1, budget=budget)
     with patch.object(
         backward, "_log_core_plan_record", wraps=backward._log_core_plan_record
     ) as observed:
@@ -696,7 +691,7 @@ def test_collective_native_budget_includes_member_banks() -> None:
     for record in records:
         assert record["resident_bytes"] >= member_bank_bytes
         assert record["memory"].reservation_bytes + record["resident_bytes"] <= budget
-    refused = _model(exits=True, enable_jit=True, width=1, budget=member_bank_bytes - 1)
+    refused = _model(enable_jit=True, width=1, budget=member_bank_bytes - 1)
     kernel = refused._regimes["couple"].solution.period_kernels[0]
     with (
         patch.object(
@@ -794,11 +789,178 @@ def test_formation_shares_both_current_offers_at_mapped_marital_history(
     )
 
 
+@categorical(ordered=False)
+class _CoupleRegimes:
+    couple: ScalarInt
+    couple_terminal: ScalarInt
+
+
+def _iid_income(*, work: IntND, eps: FloatND) -> FloatND:
+    return work * (1.0 + 0.5 * eps)
+
+
+def _iid_female(*, consumption: FloatND, work: IntND, eps: FloatND) -> FloatND:
+    return jnp.log(consumption) + 1.2 * (1 - work) + 0.3 * eps * work
+
+
+def _iid_male(*, consumption: FloatND, work: IntND, eps: FloatND) -> FloatND:
+    return jnp.sqrt(consumption) - 0.2 * eps * work + 0.1 * work
+
+
+def _iid_budget(*, consumption: FloatND, wealth: FloatND, income: FloatND) -> BoolND:
+    return consumption <= wealth + income
+
+
+def _iid_next_wealth(
+    *, wealth: FloatND, consumption: FloatND, income: FloatND
+) -> FloatND:
+    return wealth + income - consumption
+
+
+def _iid_household(*, unavailable_exit: bool) -> Model:
+    """A two-member household observing a current-period shock, over two periods.
+
+    With `unavailable_exit` the household declares an exit it can never take, so
+    its values are those of the household without an exit.
+    """
+    wealth = LinSpacedGrid(start=0.5, stop=4.0, n_points=5)
+
+    def couple(*, terminal: bool) -> Regime:
+        suffix = "_terminal" if terminal else ""
+        return Regime(
+            states={"wealth": wealth},
+            actions={
+                "work": DiscreteGrid(values=jnp.asarray([0, 1])),
+                "consumption": LinSpacedGrid(start=0.1, stop=4.0, n_points=7),
+            },
+            functions={
+                "utility": CollectiveUtility(
+                    utilities={"f": _iid_female, "m": _iid_male},
+                    objective=ParetoObjective(weights={"f": 0.4, "m": 0.6}),
+                ),
+                "income": _iid_income,
+            },
+            constraints={"budget": _iid_budget},
+            state_transitions={} if terminal else {"wealth": _iid_next_wealth},
+            shocks=("innovation",),
+            exit=Exit(
+                targets={
+                    member: ExitTarget(regime=f"single_{member}{suffix}", projection={})
+                    for member in ("f", "m")
+                },
+                rule=Unilateral(),
+                available=_unavailable,
+            )
+            if unavailable_exit
+            else None,
+        )
+
+    regimes = {
+        "couple": couple(terminal=False),
+        "couple_terminal": couple(terminal=True),
+    }
+    edges = {"couple": {"couple_terminal": Periods(values=(0,))}}
+    if unavailable_exit:
+        regimes |= {
+            f"single_{member}{suffix}": Regime(functions={"utility": _outside})
+            for member in ("f", "m")
+            for suffix in ("", "_terminal")
+        }
+        edges |= {
+            f"single_{member}": {f"single_{member}_terminal": Periods(values=(0,))}
+            for member in ("f", "m")
+        }
+    return Model(
+        regimes=regimes,
+        shocks={
+            "innovation": ShockGroup(
+                shocks={"eps": Normal(mu=0, sigma=1)},
+                nodes=UserNodes(
+                    nodes=np.asarray([[-1.3], [-0.2], [0.9]]),
+                    weights=np.asarray([0.3, 0.45, 0.25]),
+                ),
+            )
+        },
+        n_periods=2,
+        regime_id_class=_HouseholdRegimes if unavailable_exit else _CoupleRegimes,
+        initial_nodes=InitialNodes(by_period={0: ("couple",)}),
+        edges=edges,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+    )
+
+
+def test_household_with_current_shocks_and_no_exit_runs_the_grid_search_kernel() -> (
+    None
+):
+    """Without an exit the household runs grid search and keeps the query values.
+
+    The reference declares an exit that is never available, which routes it
+    through the policy-query kernels; both name the same values and choices.
+    """
+    model = _iid_household(unavailable_exit=False)
+    reference = _iid_household(unavailable_exit=True)
+    assert isinstance(
+        reference._regimes["couple"].solution.period_kernels[0], _PolicyQueryKernel
+    )
+    for regime, period in (("couple", 0), ("couple_terminal", 1)):
+        assert isinstance(
+            model._regimes[regime].solution.period_kernels[period],
+            _GridSearchPeriodKernel,
+        )
+    params = {"discount_factor": 0.9}
+    solution = model.solve(params=params, log_level="off")
+    expected = reference.solve(params=params, log_level="off")
+    magnitude = max(
+        float(np.max(np.abs(expected.values[period][regime])))
+        for regime, period in (("couple", 0), ("couple_terminal", 1))
+    )
+    for regime, period in (("couple", 0), ("couple_terminal", 1)):
+        got = np.asarray(solution.values[period][regime])
+        assert got.shape == (5, 2)
+        assert_agrees_to_ulp(
+            got=got,
+            expected=np.asarray(expected.values[period][regime]),
+            n_ulp=16,
+            operand_magnitude=magnitude,
+            err_msg=f"period {period}, regime {regime!r}",
+        )
+
+    def simulate(*, household: Model, result: SolutionResult) -> pd.DataFrame:
+        roles = household.member_names_to_ids
+        return (
+            household.simulate(
+                params=params,
+                solution=result,
+                initial_conditions={
+                    "period": jnp.zeros(8, jnp.int32),
+                    "wealth": jnp.linspace(0.5, 4.0, 8),
+                    "regime_id": jnp.full(
+                        8, household.regime_names_to_ids["couple"], jnp.int32
+                    ),
+                    "own_member": jnp.asarray([roles["f"], roles["m"]] * 4, jnp.int32),
+                },
+                seed=17,
+                log_level="off",
+            )
+            .to_dataframe()
+            .sort_values(["subject_id", "period"])
+            .reset_index(drop=True)
+        )
+
+    frame = simulate(household=model, result=solution)
+    expected_frame = simulate(household=reference, result=expected)
+    assert frame["work"].nunique() == 2
+    for column in ("regime_name", "work", "consumption", "eps"):
+        np.testing.assert_array_equal(
+            frame[column].astype(str), expected_frame[column].astype(str)
+        )
+
+
 def test_collective_current_policy_preserves_names_under_reversed_declarations() -> (
     None
 ):
     """Reordering regimes and members keeps named values and one joint action."""
-    model = _model(exits=True, enable_jit=True, width=3, reverse=True)
+    model = _model(enable_jit=True, width=3, reverse=True)
     solution = model.solve(params={}, log_level="off", runtime_checks=False)
     members = model._regimes["couple"].member_axis
     assert members == ("m", "f")

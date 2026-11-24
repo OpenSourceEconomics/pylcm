@@ -28,6 +28,7 @@ from lcm import (
 )
 from lcm.exceptions import InvalidParamsError, UnsupportedOperationError
 from lcm.exits import Unilateral
+from lcm.shocks import Normal, ShockGroup, UserNodes
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import (
     BoolND,
@@ -451,12 +452,82 @@ def test_taste_shocks_in_a_household_with_an_exit_are_refused() -> None:
         )
 
 
-def test_taste_shocks_in_a_household_with_current_period_shocks_are_refused() -> None:
-    """The smoothed household reduction under an observed shock is not covered."""
+_EPS_NODES = np.asarray([-1.5, 0.5, 2.5])
+_EPS_WEIGHTS = np.asarray([0.25, 0.5, 0.25])
+
+
+def _utility_f_with_eps(*, choice: DiscreteAction, eps: FloatND) -> FloatND:
+    return jnp.where(choice == Choice.a, 1.0 + eps, 3.0)
+
+
+def _utility_m_with_eps(*, choice: DiscreteAction, eps: FloatND) -> FloatND:
+    return jnp.where(choice == Choice.a, 5.0, 1.0 - eps)
+
+
+def _couple_model_with_current_shock() -> Model:
     couple = _couple(
         objective=ParetoObjective(weights={"f": 1.0, "m": 0.0}),
-        utility_f=_utility_f_one,
-        utility_m=_utility_m_prefers_a,
+        utility_f=_utility_f_with_eps,
+        utility_m=_utility_m_with_eps,
+    ).replace(shocks=("innovation",))
+    couple_terminal = Regime(
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _terminal_zero, "m": _terminal_zero}
+            )
+        },
     )
-    with pytest.raises(NotImplementedError, match="`shocks`"):
-        couple.replace(shocks=("meeting",))
+    return Model(
+        edges={"couple": {"couple_terminal": 0}},
+        regimes={"couple": couple, "couple_terminal": couple_terminal},
+        ages=_AGES,
+        regime_id_class=RegimeId,
+        initial_nodes={0: "couple"},
+        shocks={
+            "innovation": ShockGroup(
+                shocks={"eps": Normal(mu=0, sigma=1)},
+                nodes=UserNodes(nodes=_EPS_NODES[:, None], weights=_EPS_WEIGHTS),
+            )
+        },
+    )
+
+
+def test_taste_shocks_in_a_household_with_current_period_shocks() -> None:
+    """At each shock node she decides by her logit; the values integrate over nodes.
+
+    Her value is the node-weighted mean of her log-sum over `a` (`1 + eps`) and
+    `b` (3); his is the node-weighted mean of his value under her choice
+    probabilities, 5 at `a` and `1 - eps` at `b`. Each simulated row publishes
+    both members' values at her drawn choice and its drawn `eps`.
+    """
+    model = _couple_model_with_current_shock()
+    params = _couple_params(scale=0.5)
+    q_a = 1.0 + _EPS_NODES
+    logsum = 0.5 * np.logaddexp(q_a / 0.5, 3.0 / 0.5)
+    p_a = np.exp((q_a - logsum) / 0.5)
+    expected = [
+        _EPS_WEIGHTS @ logsum,
+        _EPS_WEIGHTS @ (p_a * 5.0 + (1.0 - p_a) * (1.0 - _EPS_NODES)),
+    ]
+
+    solution = model.solve(params=params, log_level="off")
+    roles = model.member_names_to_ids
+    frame = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions={
+            "age": jnp.zeros(64),
+            "regime_id": jnp.zeros(64, dtype=jnp.int32),
+            "own_member": jnp.asarray([roles["f"], roles["m"]] * 32, dtype=jnp.int32),
+        },
+        seed=3,
+        log_level="off",
+    ).to_dataframe()
+    first = frame[frame["period"] == 0]
+    takes_a = (first["choice"].astype(str) == "a").to_numpy()
+    eps = first["eps"].to_numpy()
+
+    aaae(solution.values[0]["couple"], expected, decimal=DECIMAL_PRECISION)
+    assert 0 < takes_a.sum() < takes_a.size
+    aaae(first["value_f"], np.where(takes_a, 1.0 + eps, 3.0), decimal=DECIMAL_PRECISION)
+    aaae(first["value_m"], np.where(takes_a, 5.0, 1.0 - eps), decimal=DECIMAL_PRECISION)

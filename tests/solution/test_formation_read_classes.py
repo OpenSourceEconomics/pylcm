@@ -726,25 +726,21 @@ def test_a_caller_evaluates_its_own_stay_once_per_class_it_reads(
     problem reads its wage and taste, so it runs 6 times; the exit decision still
     runs at every row."""
     maps = _root_stay_maps(model=_model(), monkeypatch=monkeypatch)
-    # The couple's stay problem reads every couple shock.
-    assert {
-        name: math.prod(maps[name]) for name in ("single_f", "single_m", "couple")
-    } == {
+    assert {name: math.prod(maps[name]) for name in ("single_f", "single_m")} == {
         "single_f": 6,
         "single_m": 6,
-        "couple": 8,
     }
 
 
 def test_a_stay_problem_maps_each_independent_shock_on_its_own(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The couple's 8 rows are the product of three shocks of 2 nodes each.
+    """A dissolving couple's 8 rows are the product of three shocks of 2 nodes each.
 
     Its stay problem runs in one lane map per shock, so a function of one shock
     is computed at that shock's 2 nodes and not at the 8 joint rows.
     """
-    maps = _root_stay_maps(model=_model(), monkeypatch=monkeypatch)
+    maps = _root_stay_maps(model=_model(dissolution=True), monkeypatch=monkeypatch)
     assert maps["couple"] == (2, 2, 2)
 
 
@@ -779,8 +775,9 @@ def _continuation_values(
     """Continuation values computed over one solve, by the regime they belong to.
 
     A run-time callback on the continuation's result sees one element per value
-    the solve computes: a lane map that leaves the continuation's inputs alone
-    leaves the result unbatched, so its lanes share one evaluation.
+    the queries compute: a lane map that leaves the continuation's inputs alone
+    leaves the result unbatched, so its lanes share one evaluation. A regime's own
+    grid-search solve is not a query and is not counted.
     """
     seen: Counter[RegimeName] = Counter()
     targets: list[RegimeName] = []
@@ -804,6 +801,8 @@ def _continuation_values(
     def continuation(
         self: Q_and_F._ComputeCE, **kwargs: Unpack[_ContinuationKwargs]
     ) -> Q_and_F.ContinuationAggregate:
+        if not targets:
+            return call_ce(self, **kwargs)
         target = targets[-1]
         leaves, tree = jax.tree.flatten(call_ce(self, **kwargs))
 
@@ -835,7 +834,7 @@ def test_a_query_computes_its_continuation_once_per_class_that_fixes_it(
     The couple's continuation follows the offered partner, and the offer guard
     decides whether it runs: 6 classes per single state, whatever the wage and
     match supports. Each of its lanes holds 4 actions for 2 spouses, and it runs
-    in 3 x 6 lanes below each single and in 12 lanes of its own.
+    in 3 x 6 lanes below each single.
 
     A single's continuation holds 2 actions. It runs once per own state (3) and
     per offer flag as the own stay benchmark (3 x 2). As the counterparty it runs
@@ -849,7 +848,7 @@ def test_a_query_computes_its_continuation_once_per_class_that_fixes_it(
     )
     counterparty = 3 if stored else 18
     assert values == {
-        "couple": (18 + 18 + 12) * 8,
+        "couple": (18 + 18) * 8,
         "single_f": (3 + 6 + counterparty) * 2,
         "single_m": (3 + 6 + counterparty) * 2,
     }
@@ -865,11 +864,8 @@ def test_a_continuation_reading_an_observed_shock_runs_once_per_class(
     The couple carries its match shock into its terminal period, and each single
     observes that shock from the couple it may form. The offer guard and the
     offered partner realise the observation, so the continuation has
-    6 x `n_match` classes per single state. Each of the couple's own 12 lanes maps
-    its shocks one group at a time, so the continuation runs once per node of the
-    match shock it reads (`n_match`), not at every joint row (4 x `n_match`). A
-    single's counterparty continuation runs as in the model without the lasting
-    match.
+    6 x `n_match` classes per single state. A single's counterparty continuation
+    runs as in the model without the lasting match.
     """
     monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
     monkeypatch.setattr(exit_queries, "_COLLAPSE_UNAVAILABLE_NODES", False)
@@ -878,7 +874,7 @@ def test_a_continuation_reading_an_observed_shock_runs_once_per_class(
     )
     counterparty = 3 if stored else 18
     assert values == {
-        "couple": (18 * n_match + 18 * n_match + 12 * n_match) * 8,
+        "couple": (18 * n_match + 18 * n_match) * 8,
         "single_f": (3 + 6 + counterparty) * 2,
         "single_m": (3 + 6 + counterparty) * 2,
     }
