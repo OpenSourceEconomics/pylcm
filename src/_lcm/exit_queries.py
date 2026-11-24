@@ -19,6 +19,7 @@ from dags.tree import qname_from_tree_path
 from _lcm.current_iid import CurrentIIDPlan
 from _lcm.engine import Regime
 from _lcm.exits import compares_at_optimum, exit_for_phase, exit_functions
+from _lcm.off_grid import clip_projection, projected_grid_rules
 from _lcm.outside_values import UnalignedOutsideRead, align_outside_read
 from _lcm.policy_queries import (
     _PHYSICAL_CONTEXTS,
@@ -673,8 +674,14 @@ class _QueryGraphBuilder:
         ancestors: tuple[str, ...] = (),
         price_information: frozenset[str] = frozenset(),
         source_projection: Mapping[StateName, Callable[..., PytreeValue]] | None = None,
+        exit_source: RegimeName | None = None,
     ) -> str:
-        """Bind a demanded typed read and reject genuine recursive policy cycles."""
+        """Bind a demanded typed read and reject genuine recursive policy cycles.
+
+        With `exit_source`, the read is the landing of that regime's exit, and each
+        projected state follows its destination grid's `off_grid` rule in this
+        period (`ProjectedGridRule`).
+        """
         from _lcm.model_graph import _exit_is_statically_unavailable  # noqa: PLC0415
 
         if kind not in {QueryKind.RAW, QueryKind.PARTICIPATING, QueryKind.FULL}:
@@ -690,6 +697,22 @@ class _QueryGraphBuilder:
             )
         key = f"query_{len(self.keys)}"
         self.keys.append(key)
+        axes = self.canonical_regimes[owner].solution.period_state_axes
+        grid_rules = (
+            ()
+            if exit_source is None
+            else projected_grid_rules(
+                source=exit_source,
+                target=owner,
+                states=tuple(projection),
+                grids=context.grids,
+                nodes={
+                    **context.state_action_space.states,
+                    **({} if axes is None else axes.get(self.period, {})),
+                },
+            )
+        )
+        projection = clip_projection(projection=projection, rules=grid_rules)
         declaration = exit_for_phase(
             declaration=context.user_regimes_at(period=self.period)[owner].exit,
             phase=self.phase,
@@ -876,6 +899,7 @@ class _QueryGraphBuilder:
             },
             sample=None if rule is None else (rule, ()),
             exit_availability=reducer.available,
+            grid_rules=grid_rules,
         )
         return key
 
@@ -1088,6 +1112,7 @@ class _QueryGraphBuilder:
                     state: functions[*prefix, "targets", member, "projection", state]
                     for state in target.projection
                 },
+                exit_source=owner,
             )
             inputs[operand] = producer
             if not isinstance(declaration.rule, Consent):
@@ -1153,6 +1178,7 @@ class _QueryGraphBuilder:
                     state: functions[*prefix, "counterparty", "projection", state]
                     for state in counterparty.projection
                 },
+                exit_source=owner,
             )
             self.outside_reads[inputs["counterparty_raw"]] = (owner, "the counterparty")
             couple_operand = targets["self"][0]

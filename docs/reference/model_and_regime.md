@@ -294,6 +294,15 @@ remain in `Model(edges=...)`.
   destination declares, model-level ones included. Where the destination does not read a
   model-level state and pruning drops it, the projection onto it is dropped as well, as
   a law of motion toward that destination is, so the same projection builds either way.
+  A projected continuous state follows its destination grid's `off_grid` rule, as a
+  realised next state does, in the solve and in the simulation alike. Under
+  `"clip_state"` the destination's problem is priced, its shock laws read and the mover
+  landed at the state capped to the grid's outer nodes. Under `"raise"` a read the exit
+  choice evaluates outside the grid raises `OffGridStateError`, even where the household
+  then stays; a read where the exit is unavailable, or at a shock node of zero mass,
+  does not. `"extrapolate"` and `"clip_lookup"` keep the projected state. A
+  `"clip_state"` or `"raise"` grid whose points are supplied at run time is refused when
+  the model is built.
 - `Consent(counterparty=Counterparty(regime=..., role=..., projection=...))` compares
   each party's payoff at the destination's common Participating policy strictly against
   that party's Raw stay value. Equality keeps the original state. The counterparty's
@@ -407,10 +416,10 @@ the model build can prove that the read lands on the table's nodes:
 
 - the destination is solved in that period, with `GridSearch`, on a grid that is fixed
   when the model is built and not specialized to the period's age;
-- every projected state is provably a point of the destination's grid: the projection
-  returns a source state unchanged between identical grids, or each of its finitely many
-  inputs (grid points of the source's states, the period, its age, codes of a discrete
-  shock) lands on a grid point;
+- every projected state is provably a point of the destination's grid, after a
+  `"clip_state"` grid's cap: the projection returns a source state unchanged between
+  identical grids, or each of its finitely many inputs (grid points of the source's
+  states, the period, its age, codes of a discrete shock) lands on a grid point;
 - each shock group of the destination is either observed whole by the exit, on the
   destination's own nodes, or not observed at all.
 

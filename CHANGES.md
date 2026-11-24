@@ -77,6 +77,22 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - See [ADR 4](docs/adr/0004-one-noun-members-and-the-rule-of-the-deciding-regime.md)
   for what is not shipped.
 
+### An exit lands under its destination grid's `off_grid` rule
+
+- A state an `Exit` projects follows its destination grid's `off_grid` rule, as a
+  realised next state does, in the solve and in the simulation alike. Under
+  `"clip_state"` the destination's problem is priced, and the mover lands, at the state
+  capped to the grid's outer nodes. Under `"raise"` a read the exit choice evaluates
+  that lands outside the grid raises `OffGridStateError`, even where the household then
+  stays; a read where the exit is unavailable, or at a shock node of zero mass, does
+  not. `"extrapolate"`, the default, and `"clip_lookup"` keep the projected state. This
+  holds for every exit target, a consent counterparty, and the reads below a couple a
+  consent exit forms.
+- An exit that projects onto a `"clip_state"` or `"raise"` grid whose points are
+  supplied at run time is refused when the model is built.
+- Values of models whose exits land only on `"extrapolate"` or `"clip_lookup"` grids
+  are unchanged.
+
 ### A regime declares at most one exit, with a built-in rule
 
 - `Regime(exit=Exit(...))` replaces `Regime(exits={name: Exit(...)})`. The rule strings

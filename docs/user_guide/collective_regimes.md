@@ -118,6 +118,12 @@ member compares with its outside value (the
   `Unilateral` separates when any member refuses there, `MutualConsent` when every
   member does. A household that stays acts at its optimum.
 
+A member's outside value is its destination's problem at the state the exit target's
+`projection` gives, and a member who leaves lands there. That state follows the
+destination grid's `off_grid` rule as a realised next state does: a `"clip_state"` grid
+caps it to its outer nodes for both the outside value and the landing, and a `"raise"`
+grid refuses a read outside it, even where the household then stays.
+
 Under mutual consent the members can also shift the division on separation before they
 decide. `Settlement` names it as an argument the exit's projections and utility
 adjustments read:

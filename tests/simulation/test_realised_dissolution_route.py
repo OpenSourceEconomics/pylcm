@@ -129,6 +129,7 @@ def _build_model(
     execution_config: ExecutionConfig | None = None,
     fallback_grid: IrregSpacedGrid | None = None,
     fallback_projection: Callable[[ContinuousState], ContinuousState] = _identity,
+    projection_f: Callable[[ContinuousState], ContinuousState] = _identity,
 ) -> Model:
     wage_grid = IrregSpacedGrid(points=np.array([1.0, 3.0]))
     return Model(
@@ -154,7 +155,7 @@ def _build_model(
                 exit=Exit(
                     targets={
                         "f": ExitTarget(
-                            regime="alone_f", projection={"wage": _identity}
+                            regime="alone_f", projection={"wage": projection_f}
                         ),
                         "m": ExitTarget(
                             regime="alone_m",
@@ -342,19 +343,52 @@ def _simulate_at_wage_two(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "An exit projection landing off its destination grid is neither clipped "
-        "nor refused in simulation; the removed participation fallback was."
-    ),
-)
 def test_a_rerouted_state_follows_the_fallback_grid_clip_rule() -> None:
     """Wage 2 is empty in `pair`; doubled to 4, `alone_m` clips it to its top node."""
     result = _simulate_at_wage_two(model=_clip_state_fallback_model())
     panel = result.to_dataframe().query("period == 1")
     assert list(zip(panel["regime_name"], panel["wage"], strict=True)) == [
         ("alone_m", 3.0)
+    ]
+
+
+def _plus_five(wage: ContinuousState) -> ContinuousState:
+    return wage + 5.0
+
+
+def test_each_member_lands_under_its_own_destination_grid_rule() -> None:
+    """At wage 2 the wife lands uncapped at 7 and the husband capped at 3.
+
+    Her exit adds 5 on `alone_f`'s `extrapolate` grid, his doubles the wage on
+    `alone_m`'s `clip_state` grid: each landing follows its own destination's rule.
+    """
+    model = _build_model(
+        payoff_name="bowl",
+        fallback_grid=IrregSpacedGrid(
+            points=np.array([1.0, 2.0, 3.0]), off_grid="clip_state"
+        ),
+        fallback_projection=_double,
+        projection_f=_plus_five,
+    )
+    result = model.simulate(
+        params=_PARAMS,
+        initial_conditions={
+            "wage": jnp.array([2.0, 2.0]),
+            "age": jnp.zeros(2),
+            "regime_id": jnp.full(2, model.regime_names_to_ids["source"], jnp.int32),
+            "own_member": jnp.asarray(
+                [model.member_names_to_ids["f"], model.member_names_to_ids["m"]],
+                dtype=jnp.int32,
+            ),
+        },
+        solution=model.solve(params=_PARAMS, log_level="off"),
+        log_level="off",
+        seed=0,
+    )
+    panel = result.to_dataframe().query("period == 1").sort_values("subject_id")
+    assert list(zip(panel["regime_name"], panel["wage"], strict=True)) == [
+        ("alone_f", 7.0),
+        ("alone_m", 3.0),
     ]
 
 
@@ -382,13 +416,6 @@ def _bend_middle_up(wage: ContinuousState) -> ContinuousState:
     return wage + 2.0 * (wage - 1.0) * (3.0 - wage)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "An exit projection landing off its destination grid is neither clipped "
-        "nor refused in simulation; the removed participation fallback was."
-    ),
-)
 def test_an_off_grid_rerouted_state_is_refused_at_the_period_it_acts_in() -> None:
     """Wage 2 is empty in `pair` at period 1; its exit lands off `alone_m`'s grid."""
     model = _build_model(
