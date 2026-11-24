@@ -9,6 +9,7 @@ import numpy as np
 
 from _lcm.engine import Regime
 from _lcm.execution.core_program import CoreBuildContext
+from _lcm.regime_building.collective import role_code
 from _lcm.simulation.chunk_operations import _regime_mask
 from _lcm.simulation.chunk_profile_inventory import ChunkProfileInventory, abstract_tree
 from _lcm.simulation.current_iid_overrides import (
@@ -325,9 +326,10 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                         None
                         if member == "self"
                         else regime.member_names_to_ids[member],
-                        -1
-                        if destination.member_axis is None
-                        else destination.member_names_to_ids[target.role],
+                        role_code(
+                            name=target.role or None,
+                            role_ids=destination.member_names_to_ids,
+                        ),
                         address,
                     )
                 )
@@ -477,7 +479,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                         if isinstance(law, Discrete)
                     ),
                     "member_ids": tuple(
-                        regime.member_names_to_ids[member]
+                        role_code(name=member, role_ids=regime.member_names_to_ids)
                         for member in regime.member_axis
                     )
                     if regime.member_axis is not None

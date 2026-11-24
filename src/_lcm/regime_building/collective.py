@@ -365,6 +365,15 @@ PARETO_OBJECTIVE_ENTRY = "pareto_objective"
 NO_ROLE = -1
 
 
+def role_code(*, name: str | None, role_ids: Mapping[str, int]) -> int:
+    """Return the row code of a member name.
+
+    `NO_ROLE` for no member and for the member `"self"`: a row in a regime whose
+    only member is `"self"` occupies no household role.
+    """
+    return NO_ROLE if name in (None, "self") else role_ids[name]
+
+
 def build_role_vocabulary(
     member_axis_by_regime: Mapping[RegimeName, tuple[str, ...] | None],
 ) -> MappingProxyType[str, int]:

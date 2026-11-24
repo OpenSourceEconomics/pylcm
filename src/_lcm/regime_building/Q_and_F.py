@@ -1233,6 +1233,15 @@ class _TerminalQAndF:
         )
 
 
+def _member_utility_name(member: str) -> FunctionName:
+    """Name the function holding a member's utility.
+
+    A household member `<s>` reads `utility_<s>`; the member `"self"` of a
+    regime declared with a plain utility function reads `utility`.
+    """
+    return "utility" if member == "self" else f"utility_{member}"
+
+
 def get_Q_and_F_terminal_collective(
     *,
     flat_param_names: frozenset[QualifiedName],
@@ -1273,7 +1282,7 @@ def get_Q_and_F_terminal_collective(
     utilities_and_F = _get_U_and_F(
         functions=functions,
         constraints=constraints,
-        utility_names=tuple(f"utility_{member}" for member in members),
+        utility_names=tuple(map(_member_utility_name, members)),
         bound_specs=bound_specs,
     )
 
@@ -1937,7 +1946,7 @@ def get_Q_and_F_collective(
     utilities_and_F = _get_U_and_F(
         functions=functions,
         constraints=constraints,
-        utility_names=tuple(f"utility_{member}" for member in members),
+        utility_names=tuple(map(_member_utility_name, members)),
         bound_specs=bound_specs,
     )
     n_members = len(members)

@@ -116,7 +116,8 @@ def _member_value_column_names(
     the trailing axis of its value function. Regimes are walked in
     `regime_names` order and a name already contributed by an earlier regime
     keeps its first position, so two regimes sharing a member share one
-    column.
+    column. The member `"self"` publishes the ordinary `value` column, which
+    is not one of these.
 
     Args:
         regime_names: Names of all regimes in the model.
@@ -130,8 +131,8 @@ def _member_value_column_names(
     names: list[str] = []
     for regime_name in regime_names:
         for member in regime_to_member_axis.get(regime_name) or ():
-            column = f"value_{member}"
-            if column not in names:
+            column = _member_value_column_name(member)
+            if column not in names and column != "value":
                 names.append(column)
     return names
 
@@ -302,11 +303,20 @@ def _split_member_value(
     (`PeriodRegimeSimulationData.V_arr`, shape `(n_rows, n_members)`), so
     `pd.DataFrame` cannot ingest it as a single "value" column the way it does
     for a singleton regime's 1D array. Naming is deterministic:
-    `value_<member>`, one 1D column per entry of `members`, in the
+    `value_<member>` (`value` for the member `"self"`), one 1D column per
+    entry of `members`, in the
     same order as the trailing axis (fixed by `Regime.member_axis` — see
     `_lcm.regime_building.Q_and_F`).
     """
-    return {f"value_{member}": value[:, i] for i, member in enumerate(members)}
+    return {
+        _member_value_column_name(member): value[:, i]
+        for i, member in enumerate(members)
+    }
+
+
+def _member_value_column_name(member: str) -> str:
+    """Name a member's value column: `value_<member>`, and `value` for `"self"`."""
+    return "value" if member == "self" else f"value_{member}"
 
 
 def _extract_period_data(

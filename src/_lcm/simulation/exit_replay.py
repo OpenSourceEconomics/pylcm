@@ -13,7 +13,7 @@ from _lcm.current_iid import CurrentIIDDrawFrame, CurrentIIDDrawPlan
 from _lcm.engine import Regime
 from _lcm.execution.core_program import CoreBuildContext
 from _lcm.execution.value_transfer import ValueArtifactKind
-from _lcm.regime_building.collective import NO_ROLE
+from _lcm.regime_building.collective import role_code
 from _lcm.shock_registry import ShockBinding
 from _lcm.simulation.chunk_operations import regime_mask
 from _lcm.simulation.current_iid import prepare_current_iid_keys
@@ -232,9 +232,10 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                         source_role=None
                         if member == "self"
                         else regime.member_names_to_ids[member],
-                        target_role=NO_ROLE
-                        if destination.member_axis is None
-                        else destination.member_names_to_ids[target.role],
+                        target_role=role_code(
+                            name=target.role or None,
+                            role_ids=destination.member_names_to_ids,
+                        ),
                         projection=address,
                     )
                 )
@@ -414,7 +415,8 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                     if isinstance(law, Discrete)
                 ),
                 "member_ids": tuple(
-                    regime.member_names_to_ids[member] for member in regime.member_axis
+                    role_code(name=member, role_ids=regime.member_names_to_ids)
+                    for member in regime.member_axis
                 )
                 if regime.member_axis is not None
                 else (),

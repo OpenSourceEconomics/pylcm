@@ -37,7 +37,7 @@ from _lcm.processes.joint_normal_lowering import (
 )
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.age_normalization import group_periods_by_key
-from _lcm.regime_building.collective import NO_ROLE
+from _lcm.regime_building.collective import NO_ROLE, role_code
 from _lcm.regime_building.Q_and_F import _BoundFeasibility, _get_feasibility
 from _lcm.simulation import population_operations
 from _lcm.simulation.action_grids import PreflightActionGrids
@@ -1292,8 +1292,17 @@ def _initial_own_member(
         (regime.member_names_to_ids for regime in regimes.values()),
         MappingProxyType({}),
     )
+    # A row of a regime whose only member is `"self"` carries `NO_ROLE`, the
+    # code an unseeded row already has.
+    member_codes = {
+        name: tuple(
+            role_code(name=member, role_ids=role_ids) for member in regime.member_axis
+        )
+        for name, regime in regimes.items()
+        if regime.member_axis is not None
+    }
     collective_names = [
-        name for name, regime in regimes.items() if regime.member_axis is not None
+        name for name, codes in member_codes.items() if NO_ROLE not in codes
     ]
     role_routing = frozenset(
         {
@@ -1383,7 +1392,7 @@ def _initial_own_member(
     # own members is what establishes the invariant routing then keeps:
     # every row in a collective regime carries one of ITS roles, so the leg
     # selection always has a leg to find.
-    for name in collective_names:
+    for name, codes in member_codes.items():
         mismatch = run_simulation_operation(
             memory=memory,
             function=population_operations.role_mismatch,
@@ -1391,7 +1400,7 @@ def _initial_own_member(
                 "roles": own_member,
                 "regime_ids": regime_ids,
                 "regime_id": regime_names_to_ids[name],
-                "role_ids": tuple(role_ids[s] for s in regimes[name].member_axis or ()),
+                "role_ids": codes,
             },
             subject_arg_names=("roles", "regime_ids"),
         )

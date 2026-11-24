@@ -120,8 +120,11 @@ class _ExitReducer:
     """Source-context utility adjustments, evaluated once in each payoff."""
     available: Callable[..., PytreeValue] | None
     """Source-context predicate; None means available."""
-    consent_read: tuple[str, str, str, int | None] | None
-    """Own Raw, counterparty Raw, couple producer and counterparty tuple index."""
+    consent_read: tuple[str, str, str, int | None, int | None, int | None] | None
+    """Own Raw, counterparty Raw, couple producer and counterparty tuple index.
+
+    Then the member index of the own and of the counterparty Raw value.
+    """
     weights: Callable[..., Mapping[str, FloatND]] | None
     """Canonical source Pareto evaluator; singleton objective has weight one."""
     n_actions: int
@@ -429,16 +432,20 @@ class _ExitReducer:
         if isinstance(cast("Exit", self.declaration).rule, Consent):
             if self.consent_read is None:
                 return jnp.asarray(a=False), jnp.asarray(a=True)
-            own_key, other_key, couple_key, other_index = self.consent_read
+            own_key, other_key, couple_key, other_index, own_raw, other_raw = (
+                self.consent_read
+            )
             own = cast("PolicyAnswer", operands[own_key])
             other = cast("PolicyAnswer", operands[other_key])
             couple = cast("PolicyAnswer", operands[couple_key])
             other_value = couple[0] if other_index is None else couple[0][other_index]
+            own_value = own[0] if own_raw is None else own[0][own_raw]
+            other_single = other[0] if other_raw is None else other[0][other_raw]
             return (
                 active
                 & couple[2]
-                & (payoffs["self"] > own[0])
-                & (other_value > other[0]),
+                & (payoffs["self"] > own_value)
+                & (other_value > other_single),
                 ~active | (own[3] & other[3] & couple[3]),
             )
         support = jnp.all(
@@ -1072,7 +1079,7 @@ class _QueryGraphBuilder:
         dict[str, str],
         dict[ExitRole, tuple[str, int | None]],
         dict[ExitRole, Callable[..., PytreeValue]],
-        tuple[str, str, str, int | None] | None,
+        tuple[str, str, str, int | None, int | None, int | None] | None,
     ]:
         """Expand an available exit's benchmarks and, for consent, its Raw reads."""
         context = self.contexts[owner]
@@ -1117,13 +1124,12 @@ class _QueryGraphBuilder:
             inputs[operand] = producer
             if not isinstance(declaration.rule, Consent):
                 self.outside_reads[producer] = (owner, f"member {member!r}")
-            destination_members = self.contexts[target.regime].member_axis
-            index = (
-                None
-                if destination_members is None
-                else destination_members.index(target.role)
+            targets[member] = (
+                operand,
+                _landing_member_index(
+                    members=self.contexts[target.regime].member_axis, role=target.role
+                ),
             )
-            targets[member] = (operand, index)
             adjustment = functions.get(
                 (*prefix, "targets", member, "utility_adjustment")
             )
@@ -1191,14 +1197,18 @@ class _QueryGraphBuilder:
                     f"The consent exit of {owner} cannot form a target policy "
                     f"requiring unobserved decision information {sorted(hidden)!r}."
                 )
-            destination_members = self.contexts[target.regime].member_axis
             consent_read = (
                 "own_raw",
                 "counterparty_raw",
                 couple_operand,
-                None
-                if destination_members is None
-                else destination_members.index(counterparty.role),
+                _landing_member_index(
+                    members=self.contexts[target.regime].member_axis,
+                    role=counterparty.role,
+                ),
+                _landing_member_index(members=context.member_axis, role=None),
+                _landing_member_index(
+                    members=self.contexts[counterparty.regime].member_axis, role=None
+                ),
             )
         return inputs, targets, adjustments, consent_read
 
@@ -2153,6 +2163,19 @@ def _content_digest(*, tree: PytreeValue) -> str:
     return digest.hexdigest()
 
 
+def _landing_member_index(
+    *, members: tuple[str, ...] | None, role: ExitRole | None
+) -> int | None:
+    """Return the destination member a route lands on, None without a member axis.
+
+    A route naming no role lands on the member `"self"`, the only member of a
+    destination declared with a plain utility function.
+    """
+    if members is None:
+        return None
+    return members.index("self" if role is None else role)
+
+
 def _validate_consent_context(
     *,
     contexts: Mapping[RegimeName, SolverBuildContext],
@@ -2163,10 +2186,9 @@ def _validate_consent_context(
     from lcm.exceptions import RegimeInitializationError  # noqa: PLC0415
 
     counterparty = cast("Consent", declaration.rule).counterparty
-    if (
-        contexts[source].member_axis is not None
-        or contexts[counterparty.regime].member_axis is not None
-    ):
+    if contexts[source].members != ("self",) or contexts[
+        counterparty.regime
+    ].members != ("self",):
         raise RegimeInitializationError(
             "Consent requires unambiguous singleton source "
             "and counterparty Raw channels."

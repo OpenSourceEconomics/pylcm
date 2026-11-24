@@ -736,7 +736,9 @@ def _classify_action_streaming(
         disposition = _ActionStreamingDisposition.DENSE_DECOUPLED
     elif context.has_taste_shocks:
         disposition = _ActionStreamingDisposition.DENSE_EV1_NONCANONICAL
-    elif context.member_axis is not None:
+    elif context.member_axis not in (None, ("self",)):
+        # A household of the one member `"self"` is a single run on the
+        # household kernels; its solve streams where the single's does.
         disposition = _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES
     elif any(map(landing_checks_of, context.Q_and_F_functions.values())):
         # The dense reduction sums each action's raw raise-rule landings over
@@ -748,10 +750,16 @@ def _classify_action_streaming(
 
 
 def _supports_action_streaming(*, context: SolverBuildContext) -> bool:
-    """Return whether the classified route has a streamed solve program."""
+    """Return whether the route's simulation decision streams its actions.
+
+    It streams where the solve does, except in a household: the household of
+    the one member `"self"` streams its solve, but its decision is the dense
+    household argmax.
+    """
     return (
         _classify_action_streaming(context=context)
         is _ActionStreamingDisposition.STREAMED
+        and context.member_axis is None
     )
 
 

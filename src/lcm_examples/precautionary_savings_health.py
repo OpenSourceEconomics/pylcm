@@ -88,7 +88,9 @@ def next_health(
     exercise: ContinuousAction,
     labor_supply: DiscreteAction,
 ) -> ContinuousState:
-    return health * (1 + exercise - labor_supply / 2)
+    # Exercise closes part of the gap to full health and work halves health, so
+    # health stays on its grid [0, 1].
+    return (health + exercise * (1 - health)) * (1 - labor_supply / 2)
 
 
 def next_regime(*, period: int, n_periods: int) -> ScalarInt:
