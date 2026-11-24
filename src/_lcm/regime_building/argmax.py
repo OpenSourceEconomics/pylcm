@@ -228,6 +228,82 @@ def _larger_float_key_then_smaller_id(
     return key, jnp.where(valid, identity, left_id)
 
 
+def max_lexicographic_and_smallest_id(
+    *, values: tuple[FloatND, ...], ids: IntND, where: BoolND
+) -> tuple[tuple[FloatND, ...], IntND]:
+    """Return the lexicographic maximum over the last axis and its smallest id.
+
+    Elements are ranked on `values[0]`; ties go to the larger `values[1]`, then
+    `values[2]`, and so on; full ties go to the smaller `int32` id. The order is
+    total, so the winner does not depend on how the axis is split or merged.
+    Within each position a NaN ranks below every number, and `-0` and `+0` are
+    equal. An element outside `where` ranks below every element inside it.
+
+    One reduction carries the order keys of every position beside the id, so the
+    winner's values are decoded from their keys rather than gathered. They are
+    the winner's own bits, except that a NaN comes back as some NaN. Where no
+    element is inside `where`, every value is NaN and the id is `NO_ID`.
+
+    Differentiating through the reduction raises
+    `UnsupportedDifferentiationError`.
+    """
+    return _lexicographic_max_no_derivative(values, ids, where)
+
+
+# keyword-only-exempt: library-callback=jax.custom_jvp
+def _lexicographic_max(
+    values: tuple[FloatND, ...], ids: IntND, where: BoolND
+) -> tuple[tuple[FloatND, ...], IntND]:
+    """Reduce `(key, ..., key, id)` tuples over the last axis, without a derivative."""
+    no_id = jnp.asarray(NO_ID, dtype=jnp.int32)
+    keys = tuple(_ranked_key(values=value, where=where) for value in values)
+    *best_keys, best_id = jax.lax.reduce(
+        (*keys, jnp.where(where, ids, no_id)),
+        (*(_lowest_key(key.dtype) for key in keys), no_id),
+        _lexicographically_larger,
+        (ids.ndim - 1,),
+    )
+    return tuple(
+        jax.lax.bitcast_convert_type(_reverse_negative_bits(key), value.dtype)
+        for key, value in zip(best_keys, values, strict=True)
+    ), best_id
+
+
+_lexicographic_max_no_derivative = without_derivative(_lexicographic_max)
+
+
+def _ranked_key(*, values: FloatND, where: BoolND) -> _FloatBitsND:
+    """Order key of each value; NaN and elements outside `where` take the lowest."""
+    keys = _float_order_key(values)
+    infinity_key = _float_infinity_key(values.dtype)
+    is_number = (keys >= ~infinity_key) & (keys <= infinity_key)
+    return jnp.where(where & is_number, keys, _lowest_key(keys.dtype))
+
+
+def _lowest_key(dtype: np.dtype[np.generic]) -> _FloatBitsND:
+    """Return the key just below `-inf`'s; it decodes to a NaN."""
+    infinity_key = _float_infinity_key(jnp.dtype(f"float{dtype.itemsize * 8}"))
+    return jnp.asarray(~infinity_key - 1, dtype=dtype)
+
+
+# keyword-only-exempt: library-callback=jax.lax.reduce
+def _lexicographically_larger(
+    left: tuple[_FloatBitsND | IntND, ...], right: tuple[_FloatBitsND | IntND, ...]
+) -> tuple[_FloatBitsND | IntND, ...]:
+    """Keep the tuple whose first unequal key is larger, else the smaller id."""
+    right_wins = right[-1] < left[-1]
+    for left_key, right_key in zip(left[-2::-1], right[-2::-1], strict=True):
+        right_wins = jnp.where(
+            _float_keys_equal(left=left_key, right=right_key),
+            right_wins,
+            right_key > left_key,
+        )
+    return tuple(
+        jnp.where(right_wins, right_item, left_item)
+        for left_item, right_item in zip(left, right, strict=True)
+    )
+
+
 def _move_axes_to_back(
     *, a: FloatND | IntND | BoolND, axes: tuple[int, ...]
 ) -> FloatND | IntND | BoolND:

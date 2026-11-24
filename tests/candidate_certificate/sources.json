@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "76bb7d113b27aac417370b60c539b64dbdce9c5d1ce880b4f68dd4aaa3004f5d",
+  "source_inventory_sha256": "1c025b34fc1eec01048ba58966898bd9d66372e3f2f291664f08b1ac12971db8",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -330,11 +330,11 @@
     },
     {
       "path": "src/_lcm/regime_building/argmax.py",
-      "sha256": "a5d3827e40abd625f0a8bef92d2998a5daa965dc4b8de4526c006bd3525b5f81"
+      "sha256": "c7a915405c53cd07ec21d494c15a74b07a018ca60ff4ede729e5d1391a7459ee"
     },
     {
       "path": "src/_lcm/regime_building/collective.py",
-      "sha256": "4e195cc97d9b7149f81979ae91867b0a3bbe2099ffec0e368eac854a625accfe"
+      "sha256": "dab48ee21d3da79273db4e6c15d8ad11360ba18d3f58e618a11e1d2fc8e54865"
     },
     {
       "path": "src/_lcm/regime_building/decoupled.py",
@@ -554,7 +554,7 @@
     },
     {
       "path": "src/_lcm/solution/collective_action_reduction.py",
-      "sha256": "303daffcff8bee067bac8f905bbcc56e3a68e24c67302480ce9d8be63a1f991f"
+      "sha256": "9f3e60d8006a5bbc80c9b7bed17f233584951668b80758af94f15de727712ea0"
     },
     {
       "path": "src/_lcm/solution/continuation_arguments.py",

@@ -1,4 +1,4 @@
-"""Collective-regime readout: the member value gather at the household argmax.
+"""Collective-regime readout: every member's value at the household argmax.
 
 A collective regime carries one per-member action-value array `Q^s` each,
 chooses the action that maximizes a household *scalarization*
@@ -31,7 +31,7 @@ from _lcm.logsum import logsum_and_softmax
 from _lcm.regime_building.argmax import (
     _flatten_last_n_axes,
     _move_axes_to_back,
-    argmax_and_max,
+    max_lexicographic_and_smallest_id,
 )
 from _lcm.typing import FunctionName, ParamsLeaf, QualifiedName, RegimeName, StateName
 from _lcm.utils.functools import get_union_of_args, is_user_function
@@ -45,12 +45,6 @@ from lcm.typing import (
     ScalarFloat,
     UserFunction,
 )
-
-# Up to this many members, the scalarization's reduction order is not a choice:
-# one term is returned as-is and two admit a single association. From three terms on,
-# a declaration-order left fold lets an economically inert relabeling select a
-# different reduction tree, so the sum is canonicalized by contribution value instead.
-_LARGEST_ORDER_FREE_HOUSEHOLD = 2
 
 
 def collective_argmax_and_readout(
@@ -86,33 +80,29 @@ def collective_argmax_and_readout(
         raise ValueError(msg)
 
     objective = _weighted_sum(member_Q=member_Q, weights=weights)
-    argmax_flat, best = argmax_and_max(
-        a=objective, axis=action_axes, initial=-jnp.inf, where=feasibility
+    feasible = _actions_last(
+        a=jnp.broadcast_to(feasibility, objective.shape), action_axes=action_axes
     )
-    # A NaN objective at a feasible action makes `best` NaN; the members' values
-    # then publish NaN so the solve's checks see it, rather than reading them off
-    # at the index `argmax_and_max` reports for that case.
-    undefined = jnp.isnan(best)
-    # With no action axis to reduce, a cell dissolves exactly where its own single
-    # (state, action) cell is infeasible.
-    dissolution = (
-        ~jnp.any(feasibility, axis=action_axes) if action_axes else ~feasibility
+    objective = _actions_last(a=objective, action_axes=action_axes)
+    (_, *best), argmax_flat = max_lexicographic_and_smallest_id(
+        values=(
+            objective,
+            *(_actions_last(a=q, action_axes=action_axes) for q in member_Q.values()),
+        ),
+        ids=jnp.broadcast_to(
+            jnp.arange(objective.shape[-1], dtype=jnp.int32), objective.shape
+        ),
+        where=feasible,
     )
+    # A NaN objective at a feasible action has no household value: every member
+    # publishes NaN so the solve's checks see it, and the index is action zero.
+    undefined = jnp.any(feasible & jnp.isnan(objective), axis=-1)
+    dissolution = ~jnp.any(feasible, axis=-1)
     values = {
-        name: jnp.where(
-            undefined,
-            jnp.nan,
-            jnp.where(
-                dissolution,
-                -jnp.inf,
-                _gather_along_actions(
-                    q=q, argmax_flat=argmax_flat, action_axes=action_axes
-                ),
-            ),
-        )
-        for name, q in member_Q.items()
+        name: jnp.where(undefined, jnp.nan, jnp.where(dissolution, -jnp.inf, value))
+        for name, value in zip(member_Q, best, strict=True)
     }
-    return argmax_flat, values, dissolution
+    return jnp.where(undefined | dissolution, 0, argmax_flat), values, dissolution
 
 
 def collective_readout(
@@ -133,14 +123,16 @@ def collective_readout(
         \qquad V^s(x) = Q^s(x, a^*(x)).
     ```
 
-    All members share the same argmax `a*` (the joint household choice), so
-    ties are broken identically for every member — `argmax_and_max` selects
-    the first maximizer, and the gather uses that same flattened index for each
-    `Q^s`. A cell with no feasible action yields `D = True` (the dissolution /
-    empty-`F` marker); the returned `V^s` in such a cell is overwritten with the
-    `-inf` sentinel — the masked argmax is arbitrary there, so the gathered
-    `Q^s` would otherwise be an infeasible action's value — and must be routed
-    by the caller through the dissolution fallback, never read as a value.
+    All members share the same argmax `a*` (the joint household choice). Ties in
+    the objective go to the members in declared order: among its maximizers, the
+    actions the first member values most, then the second, and so on, then the
+    first action in grid order. The rule reads no position of an action, so the
+    order in which the actions are declared cannot change a value. A NaN member
+    value ranks below every number, and `-0` equals `+0`. A NaN objective at a
+    feasible action makes every `V^s` NaN. A cell with no feasible action yields
+    `D = True` (the dissolution / empty-`F` marker) and the `-inf` sentinel in
+    every `V^s`, which the caller routes through the dissolution fallback and
+    never reads as a value.
 
     Args:
         member_Q: Mapping member name -> its action-value array, each of
@@ -181,7 +173,9 @@ def decider_choice(
     guarantees there is exactly one. The decider's own action values are
     maximized over the feasible continuous actions, conditional on each
     discrete action, and every member's action value is read at that
-    conditional argmax. The member axis is the trailing axis of `Q` and is
+    conditional argmax. Ties in the decider's value go to the members in
+    declared order, then to the first continuous action, as in
+    `collective_readout`. The member axis is the trailing axis of `Q` and is
     handled for any length.
 
     Args:
@@ -195,22 +189,42 @@ def decider_choice(
     Returns:
         Tuple `(decider, Qc, continuous_argmax, at_choice)`: the decider's
         member index; its conditional maxima over the continuous actions, one
-        per discrete-action cell in C order, `-inf` where none is feasible; the
-        flat continuous index attaining each; and each member's action value
-        there, of shape `(n_discrete_cells, n_members)`.
+        per discrete-action cell in C order, `-inf` where none is feasible and
+        NaN where a feasible decider value is NaN; the flat continuous index
+        attaining each, zero in those two cases; and each member's action value
+        there, of shape `(n_discrete_cells, n_members)`, `-inf` and NaN in the
+        same two cases.
     """
     decider = jnp.argmax(weights > 0).astype(jnp.int32)
     n_discrete_cells = math.prod(feasibility.shape[:n_discrete_action_axes])
     n_continuous_cells = math.prod(feasibility.shape[n_discrete_action_axes:])
     flat_Q = Q.reshape(n_discrete_cells, n_continuous_cells, Q.shape[-1])
-    decider_Q = jnp.where(
-        feasibility.reshape(n_discrete_cells, n_continuous_cells),
-        jnp.take(flat_Q, decider, axis=-1),
-        -jnp.inf,
+    feasible = feasibility.reshape(n_discrete_cells, n_continuous_cells)
+    decider_Q = jnp.take(flat_Q, decider, axis=-1)
+    (Qc, *at_choice), continuous_argmax = max_lexicographic_and_smallest_id(
+        values=(decider_Q, *jnp.unstack(flat_Q, axis=-1)),
+        ids=jnp.broadcast_to(
+            jnp.arange(n_continuous_cells, dtype=jnp.int32), feasible.shape
+        ),
+        where=feasible,
     )
-    continuous_argmax = jnp.argmax(decider_Q, axis=1).astype(jnp.int32)
-    at_choice = jnp.take_along_axis(flat_Q, continuous_argmax[:, None, None], axis=1)
-    return decider, decider_Q.max(axis=1), continuous_argmax, at_choice[:, 0, :]
+    # A NaN decider value at a feasible action leaves the discrete cell without a
+    # value: every member publishes NaN there, at continuous action zero. A cell
+    # with no feasible action is worth `-inf` to every member.
+    undefined = jnp.any(feasible & jnp.isnan(decider_Q), axis=1)
+    infeasible = ~jnp.any(feasible, axis=1)
+    Qc = jnp.where(undefined, jnp.nan, jnp.where(infeasible, -jnp.inf, Qc))
+    at_choice = jnp.where(
+        undefined[:, None],
+        jnp.nan,
+        jnp.where(infeasible[:, None], -jnp.inf, jnp.stack(at_choice, axis=-1)),
+    )
+    return (
+        decider,
+        Qc,
+        jnp.where(undefined | infeasible, 0, continuous_argmax),
+        at_choice,
+    )
 
 
 def decider_smoothed_readout(
@@ -318,42 +332,29 @@ def _weighted_sum(
             subnormal_is_accounted_for=False,
         )
 
-    terms = [_term(name) for name in names]
-    if len(terms) <= _LARGEST_ORDER_FREE_HOUSEHOLD:
-        # Preserve the established one-/two-member arithmetic exactly.  With
-        # two terms there is no association choice, so relabeling cannot select a
-        # different reduction tree.
-        objective = terms[0]
-        for term in terms[1:]:
-            objective = objective + term
-        return objective
-
     # `members` is an ordered representation of identities, not an economic
-    # ordering of summands.  For three or more terms a declaration-order left fold
-    # can cross a strict action boundary under cancellation.  Canonicalise by the
-    # contribution VALUES, the same invariant used for the regime mixture.
-    return sum_in_value_order(values=jnp.stack(terms, axis=0), axis=0)
+    # ordering of summands: a declaration-order fold of three or more terms can
+    # cross a strict action boundary under cancellation, so the sum is taken in
+    # value order, the same invariant used for the regime mixture.
+    return sum_in_value_order(
+        values=jnp.stack([_term(name) for name in names], axis=0), axis=0
+    )
 
 
-def _gather_along_actions(
-    *, q: FloatND, argmax_flat: IntND, action_axes: tuple[int, ...]
-) -> FloatND:
-    """Gather `q` at the flattened action argmax, mirroring `argmax_and_max`.
+def _actions_last(
+    *, a: FloatND | BoolND, action_axes: tuple[int, ...]
+) -> FloatND | BoolND:
+    """Move `action_axes` to the back and flatten them into one trailing axis.
 
-    `argmax_and_max` moves `action_axes` to the back, flattens them, and argmaxes
-    the last axis, so `argmax_flat` indexes into that flattened action space with
-    the state axes as its shape. Reproduce the same layout on `q` and take along it.
-
-    With no action axis, there is one candidate per retained cell, so gathering
-    is the identity. The caller applies the dissolution mask separately.
+    The flat index is C order over the action axes, the layout `argmax_and_max`
+    reports. With no action axis, each cell is its own single candidate on a
+    trailing axis of length one.
     """
     if not action_axes:
-        return q
-
-    q_moved = _move_axes_to_back(a=q, axes=action_axes)
-    q_flat = _flatten_last_n_axes(a=q_moved, n=len(action_axes))
-    gathered = jnp.take_along_axis(q_flat, argmax_flat[..., None], axis=-1)
-    return gathered[..., 0]
+        return a[..., jnp.newaxis]
+    return _flatten_last_n_axes(
+        a=_move_axes_to_back(a=a, axes=action_axes), n=len(action_axes)
+    )
 
 
 # Template key the Pareto weights' free parameters live under.

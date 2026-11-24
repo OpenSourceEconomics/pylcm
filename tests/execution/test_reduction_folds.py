@@ -181,7 +181,11 @@ def test_logsumexp_block_fold_matches_the_dense_smoothed_maximum(
 def _dense_collective(
     *, objectives: FloatND, member_values: FloatND, feasible: BoolND
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Scan the whole axis once for the household winner and its readouts."""
+    """Scan the whole axis once for the household winner and its readouts.
+
+    Ties in the objective go to the larger value of the first member, then of
+    the second, then to the smallest identity.
+    """
     observed = np.asarray(objectives)
     own = np.asarray(member_values)
     live = np.asarray(feasible)
@@ -192,9 +196,10 @@ def _dense_collective(
         for position in range(_N_ACTIONS):
             if not live[state, position]:
                 continue
-            candidate = observed[state, position]
-            if best_identity[state] == -1 or candidate > best_objective[state]:
-                best_objective[state] = candidate
+            candidate = (observed[state, position], *own[state, position])
+            incumbent = (best_objective[state], *best_own[state])
+            if best_identity[state] == -1 or candidate > incumbent:
+                best_objective[state] = candidate[0]
                 best_identity[state] = position
                 best_own[state] = own[state, position]
     return best_objective, best_identity, best_own

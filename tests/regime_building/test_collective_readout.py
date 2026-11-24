@@ -17,6 +17,7 @@ import pytest
 from _lcm.regime_building.collective import (
     _weighted_sum,
     collective_readout,
+    decider_choice,
 )
 from lcm.typing import ScalarFloat
 
@@ -264,3 +265,45 @@ def test_nan_household_objective_at_an_infeasible_action_is_not_read() -> None:
         action_axes=(0,),
     )
     assert values["m"] == pytest.approx(2.0)
+
+
+@pytest.mark.parametrize(
+    ("q_f", "q_m"),
+    [
+        pytest.param([2.0, 2.0], [jnp.nan, 3.0], id="nan-member-value-loses"),
+        pytest.param([-0.0, 0.0], [1.0, 5.0], id="signed-zeros-tie"),
+    ],
+)
+def test_tied_objective_goes_to_the_next_member(
+    *, q_f: list[float], q_m: list[float]
+) -> None:
+    """Under a tied objective the next member decides; NaN ranks below a number."""
+    values, _ = collective_readout(
+        member_Q={"f": jnp.array(q_f), "m": jnp.array(q_m)},
+        feasibility=jnp.array([True, True]),
+        weights={"f": 1.0, "m": 0.0},
+        action_axes=(0,),
+    )
+
+    assert float(values["m"]) == q_m[1]
+    assert not bool(jnp.signbit(values["f"]))
+
+
+def test_decider_tie_over_continuous_actions_goes_to_the_members_in_order() -> None:
+    """The decider's tied continuous maximizers are ranked by the members' values.
+
+    Member `f` decides; its value ties at actions 0 and 1, where `f` is also the
+    first member, so the tie passes to `m`, who values action 1 more.
+    """
+    q = jnp.stack((jnp.array([[1.0, 1.0, 0.0]]), jnp.array([[0.0, 4.0, 9.0]])), axis=-1)
+
+    _decider, Qc, continuous_argmax, at_choice = decider_choice(
+        Q=q,
+        feasibility=jnp.ones((1, 3), dtype=bool),
+        weights=jnp.array([1.0, 0.0]),
+        n_discrete_action_axes=1,
+    )
+
+    np.testing.assert_array_equal(Qc, [1.0])
+    np.testing.assert_array_equal(continuous_argmax, [1])
+    np.testing.assert_array_equal(at_choice, [[1.0, 4.0]])

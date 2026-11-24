@@ -54,6 +54,7 @@ from lcm import (
 from lcm.shocks import Normal, ShockGroup, UserNodes
 from lcm.solvers import EGM, GridSearch
 from lcm.typing import BoolND, FloatND, IntND, RegimeName, ScalarInt
+from tests.collective_fixtures import SHARE_GRID_POINTS, make_tied_shares_model
 from tests.conftest import DECIMAL_PRECISION
 from tests.simulation._callback_types import WorkspacePlanning
 from tests.solution._callback_types import CompileFunctionsKwargs
@@ -994,6 +995,53 @@ def test_stateless_action_free_query_has_one_native_cell(*, enable_jit: bool) ->
     )
     result = model.solve(params={}, log_level="off", runtime_checks=False)
     np.testing.assert_array_equal(result.values[0]["root"], [1, 2])
+
+
+@pytest.mark.parametrize("action_order", [("a", "b"), ("b", "a")])
+def test_tied_household_query_follows_the_members_not_the_grid(
+    *, action_order: tuple[str, str]
+) -> None:
+    """A queried household breaks an objective tie by its first member's value.
+
+    Every feasible split of the unit ties at objective `1/2`; `f` is declared
+    first and values `a`, so the query answers `a = 1` with `V = (1, 0)`,
+    whichever of the two actions is declared first.
+    """
+    _CONTEXTS.clear()
+    make_tied_shares_model(action_order=action_order, solver=_CaptureGridSearch())
+    context = _CONTEXTS["couple"]
+    read = replace(
+        _read(kind=QueryKind.RAW, target="couple"),
+        projection={},
+        state_inputs=frozenset(),
+        operand_paths={},
+    )
+    scalar = queries.ScalarPolicyQueries(
+        definitions={"couple": QueryNode(read=read, context=context)},
+        root="couple",
+        period=0,
+    )
+    arguments = scalar.arguments(
+        context=CoreBuildContext(
+            state_action_space=context.state_action_space,
+            next_regime_to_V_arr={},
+            next_regime_to_continuation={},
+            flat_params={},
+            period=0,
+            ages=context.ages,
+        )
+    )
+
+    answer = scalar(
+        states={},
+        arguments=cast("Mapping[str, Mapping[str, PytreeValue]]", arguments),
+    )
+
+    shares = np.asarray(SHARE_GRID_POINTS)
+    action = np.unravel_index(int(answer[1]), (shares.size, shares.size))
+    chosen = dict(zip(action_order, shares[list(action)], strict=True))
+    np.testing.assert_array_equal(answer[0], [1.0, 0.0])
+    assert chosen == {"a": 1.0, "b": 0.0}
 
 
 def _finite_heavy_outside(*, q: FloatND, outside: PolicyAnswer) -> jax.Array:

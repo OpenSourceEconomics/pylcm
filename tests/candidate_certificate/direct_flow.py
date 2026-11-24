@@ -700,8 +700,8 @@ _SOURCE_SEALS = {
     SIMULATION_PROGRAM_TYPES_SOURCE: "cd4a05da46ed5f3a6a2484c7a78961e8488af155f0ea14c5efb3aebbeecf116a",
     SIMULATION_RUNTIME_SOURCE: "0623ad63ded8ee0ae880003228814e7e300a7a4394b3abecb3f5dd27acc58009",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
-    ARGMAX_SOURCE: "a5d3827e40abd625f0a8bef92d2998a5daa965dc4b8de4526c006bd3525b5f81",
-    COLLECTIVE_SOURCE: "4e195cc97d9b7149f81979ae91867b0a3bbe2099ffec0e368eac854a625accfe",
+    ARGMAX_SOURCE: "c7a915405c53cd07ec21d494c15a74b07a018ca60ff4ede729e5d1391a7459ee",
+    COLLECTIVE_SOURCE: "dab48ee21d3da79273db4e6c15d8ad11360ba18d3f58e618a11e1d2fc8e54865",
     MAX_Q_SOURCE: "31bee4145b853589fa47c65ca898189e5d89a84f662aef18fd8c7b4464c466fb",
     PROCESSING_SOURCE: "7cb67bef02e42b3478112fd3fb501d95665d4f449907772c2be4c10ce673b429",
     GRID_SEARCH_SOURCE: "546e493f585718611f59dc605c50c3da9f66324a0a50f9122677c12b6cfc02d2",
@@ -712,7 +712,7 @@ _SOURCE_SEALS = {
     INTERNAL_OUTPUTS_SOURCE: "e41e5581295b427e22ecb3f533281c030fec77c01cf224d1a844ae6f54fe28e1",
     ACTION_STREAMING_SOURCE: "65f38e93a3cd4681498217ef2c64d06a51dc7c7e26afd70d8fffb828194d597b",
     ACTION_REDUCTION_SOURCE: "26355ac3edf5da80a44b4f9754b71c29e8edffc68b1a7b7ac253b9bfbf749a0f",
-    COLLECTIVE_ACTION_REDUCTION_SOURCE: "303daffcff8bee067bac8f905bbcc56e3a68e24c67302480ce9d8be63a1f991f",
+    COLLECTIVE_ACTION_REDUCTION_SOURCE: "9f3e60d8006a5bbc80c9b7bed17f233584951668b80758af94f15de727712ea0",
     DISPATCHERS_SOURCE: "a78d5271fcfc7437b68bd755ce7c2b8b0b78d5f26ed00a3fb4424133725da8b2",
     FUNCTOOLS_SOURCE: "f0bac3bd822f157e43b08b2f677aca8142fa0e60e101cfd6af5a2e69327132dd",
     CONTAINERS_SOURCE: "f6b3f4590d382b2a501daebc615da5937340edcc2b390ee13c705570c57ebf9a",
@@ -2438,13 +2438,12 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         None,
         {
             "CollectiveHardMaxReduction.semantic_key": "1a2875f2b718377e51a76e0d37f1614f40f3e08b4cc730032add7a2373c5734b",
-            "CollectiveHardMaxReduction.initialize": "3b7793ed06cce76cd7bcd1ef985f835a6667d5644136fec593752d61c0402e54",
-            "CollectiveHardMaxReduction.add": "fbafd51ec2b90288f4185b7ed034c122a9216462c2d0875fa5cf3a9e0ceabcf6",
-            "CollectiveHardMaxReduction.merge": "ccd1af02fd887298d80f72cc5922358487d7f4d8991d5028d1e49e31a86b9b73",
-            "CollectiveHardMaxReduction.finalize": "0d8640a6a7750abc6af2cd798aa30c38f7eb2505d8cf7c53fbf1d70e62ffffde",
+            "CollectiveHardMaxReduction.initialize": "6c7a88755ff69e8f46ab03641ade4648b28bfba46766a4dabc184b619e9d38c9",
+            "CollectiveHardMaxReduction.add": "54fb583c1b46a958d60d9ec658c6f89c7baacffb35e5cd45233120a000aa7778",
+            "CollectiveHardMaxReduction.merge": "cddc227e233abb6cc2a54b0d452f39885d1691512465f2659590fd343b4da0b7",
+            "CollectiveHardMaxReduction.finalize": "6d404f85e6c51c262feddadfd5f0b655d9fd7c285e8cc2bc04dffc1db37759bc",
             "_validate_block_shapes": "85977e37da654459e1e4660782ccaadb7ac6f4b00267a3c3646265c91abd1824",
-            "_reduce_block": "065b978a50d5539c72d7bcff06036fe545dbf3efda87c90a697d5ddbb7c737be",
-            "_take_member_values": "c1ff0dfdc2060b4102c96a5bee66cd19ad1de04a9c2e303e7fd44680df081af3",
+            "_winner": "03fe33a57987a34e9116154649efcb36c697da5151eaeb921b8a18f4bc087948",
         },
     ),
     LOGSUMEXP_ACTION_REDUCTION_SOURCE: (
@@ -5969,8 +5968,7 @@ _COLLECTIVE_HARD_MAX_STREAMING_REDUCTION_PINS = _callable_pins(
         "CollectiveHardMaxReduction.merge",
         "CollectiveHardMaxReduction.finalize",
         "_validate_block_shapes",
-        "_reduce_block",
-        "_take_member_values",
+        "_winner",
     ),
 )
 
@@ -9688,6 +9686,13 @@ def _argmax_reducer_errors(tree: ast.Module) -> list[str]:
         float_key_order = _definition(
             tree=tree, name="_larger_float_key_then_smaller_id"
         )
+        lexicographic_max = _definition(
+            tree=tree, name="max_lexicographic_and_smallest_id"
+        )
+        lexicographic_reduce = _definition(tree=tree, name="_lexicographic_max")
+        ranked_key = _definition(tree=tree, name="_ranked_key")
+        lowest_key = _definition(tree=tree, name="_lowest_key")
+        lexicographic_order = _definition(tree=tree, name="_lexicographically_larger")
     except ValueError as error:
         return [f"argmax reducer: {error}"]
 
@@ -9762,6 +9767,41 @@ return (left == right) | both_zero
 choose = partial(_larger_float_key_then_smaller_id, infinity_key=infinity_key)
 best = jax.lax.reduce((keys, ids), (jnp.asarray(~infinity_key, dtype=keys.dtype), no_id), choose, (keys.ndim - 1,))
 return choose(best, (initial_key, no_id))
+"""
+    expected_lexicographic_max = r"""return _lexicographic_max_no_derivative(values, ids, where)
+"""
+    expected_lexicographic_reduce = r"""no_id = jnp.asarray(NO_ID, dtype=jnp.int32)
+keys = tuple(_ranked_key(values=value, where=where) for value in values)
+*best_keys, best_id = jax.lax.reduce(
+    (*keys, jnp.where(where, ids, no_id)),
+    (*(_lowest_key(key.dtype) for key in keys), no_id),
+    _lexicographically_larger,
+    (ids.ndim - 1,),
+)
+return tuple(
+    jax.lax.bitcast_convert_type(_reverse_negative_bits(key), value.dtype)
+    for key, value in zip(best_keys, values, strict=True)
+), best_id
+"""
+    expected_ranked_key = r"""keys = _float_order_key(values)
+infinity_key = _float_infinity_key(values.dtype)
+is_number = (keys >= ~infinity_key) & (keys <= infinity_key)
+return jnp.where(where & is_number, keys, _lowest_key(keys.dtype))
+"""
+    expected_lowest_key = r"""infinity_key = _float_infinity_key(jnp.dtype(f"float{dtype.itemsize * 8}"))
+return jnp.asarray(~infinity_key - 1, dtype=dtype)
+"""
+    expected_lexicographic_order = r"""right_wins = right[-1] < left[-1]
+for left_key, right_key in zip(left[-2::-1], right[-2::-1], strict=True):
+    right_wins = jnp.where(
+        _float_keys_equal(left=left_key, right=right_key),
+        right_wins,
+        right_key > left_key,
+    )
+return tuple(
+    jnp.where(right_wins, right_item, left_item)
+    for left_item, right_item in zip(left, right, strict=True)
+)
 """
     expected_move = r"""front_axes = sorted(set(range(a.ndim)) - set(axes))
 return a.transpose((*front_axes, *axes))
@@ -9843,6 +9883,54 @@ return a.transpose((*front_axes, *axes))
         )
     ):
         errors.append("argmax reducer: encoded key comparison changed")
+    lexicographic_wiring = [
+        statement
+        for statement in tree.body
+        if isinstance(statement, ast.Assign | ast.AnnAssign | ast.AugAssign)
+        and "_lexicographic_max_no_derivative" in _assigned_names(statement)
+    ]
+    if not (
+        len(lexicographic_wiring) == 1
+        and isinstance(lexicographic_wiring[0], ast.Assign)
+        and _expression_matches(
+            node=lexicographic_wiring[0].value,
+            source="without_derivative(_lexicographic_max)",
+        )
+    ):
+        errors.append(
+            "argmax reducer: the lexicographic primal is not wrapped to refuse "
+            "differentiation"
+        )
+    for helper, names, keyword_only, expected in (
+        (
+            lexicographic_max,
+            ("values", "ids", "where"),
+            True,
+            expected_lexicographic_max,
+        ),
+        (
+            lexicographic_reduce,
+            ("values", "ids", "where"),
+            False,
+            expected_lexicographic_reduce,
+        ),
+        (ranked_key, ("values", "where"), True, expected_ranked_key),
+        (lowest_key, ("dtype",), False, expected_lowest_key),
+        (lexicographic_order, ("left", "right"), False, expected_lexicographic_order),
+    ):
+        signature = (
+            _keyword_only_signature(node=helper, names=names)
+            if keyword_only
+            else _positional_signature(node=helper, names=names)
+        )
+        if (
+            helper.decorator_list
+            or not signature
+            or not _body_matches(node=helper, expected_source=expected)
+        ):
+            errors.append(
+                "argmax reducer: the lexicographic household reduction changed"
+            )
     no_id = [
         statement
         for statement in tree.body
@@ -9877,6 +9965,11 @@ return a.transpose((*front_axes, *axes))
             "_float_keys_equal",
             "_reduce_float_keys",
             "_larger_float_key_then_smaller_id",
+            "max_lexicographic_and_smallest_id",
+            "_lexicographic_max",
+            "_ranked_key",
+            "_lowest_key",
+            "_lexicographically_larger",
             "_move_axes_to_back",
             "_flatten_last_n_axes",
         }
@@ -9888,18 +9981,18 @@ return a.transpose((*front_axes, *axes))
 
 
 def _collective_reducer_errors(tree: ast.Module) -> list[str]:
-    """Certify collective scalarization, argmax, delegation, and gather exactly."""
+    """Certify collective scalarization, argmax, delegation, and layout exactly."""
     errors: list[str] = []
     try:
         argmax_node = _definition(tree=tree, name="collective_argmax_and_readout")
         readout_node = _definition(tree=tree, name="collective_readout")
         weighted = _definition(tree=tree, name="_weighted_sum")
-        gather = _definition(tree=tree, name="_gather_along_actions")
+        layout = _definition(tree=tree, name="_actions_last")
     except ValueError as error:
         return [f"collective reducer: {error}"]
 
     if any(
-        node.decorator_list for node in (argmax_node, readout_node, weighted, gather)
+        node.decorator_list for node in (argmax_node, readout_node, weighted, layout)
     ):
         errors.append("collective reducer: decorators are not allowlisted")
     signatures = (
@@ -9914,7 +10007,7 @@ def _collective_reducer_errors(tree: ast.Module) -> list[str]:
             "readout delegation",
         ),
         (weighted, ("member_Q", "weights"), "weighted scalarization"),
-        (gather, ("q", "argmax_flat", "action_axes"), "value gather"),
+        (layout, ("a", "action_axes"), "action layout"),
     )
     for node, names, label in signatures:
         if not _keyword_only_signature(node=node, names=names):
@@ -9930,28 +10023,27 @@ if set(member_Q) != set(weights):
     )
     raise ValueError(msg)
 objective = _weighted_sum(member_Q=member_Q, weights=weights)
-argmax_flat, best = argmax_and_max(
-    a=objective, axis=action_axes, initial=-jnp.inf, where=feasibility
+feasible = _actions_last(
+    a=jnp.broadcast_to(feasibility, objective.shape), action_axes=action_axes
 )
-undefined = jnp.isnan(best)
-dissolution = (
-    ~jnp.any(feasibility, axis=action_axes) if action_axes else ~feasibility
+objective = _actions_last(a=objective, action_axes=action_axes)
+(_, *best), argmax_flat = max_lexicographic_and_smallest_id(
+    values=(
+        objective,
+        *(_actions_last(a=q, action_axes=action_axes) for q in member_Q.values()),
+    ),
+    ids=jnp.broadcast_to(
+        jnp.arange(objective.shape[-1], dtype=jnp.int32), objective.shape
+    ),
+    where=feasible,
 )
+undefined = jnp.any(feasible & jnp.isnan(objective), axis=-1)
+dissolution = ~jnp.any(feasible, axis=-1)
 values = {
-    name: jnp.where(
-        undefined,
-        jnp.nan,
-        jnp.where(
-            dissolution,
-            -jnp.inf,
-            _gather_along_actions(
-                q=q, argmax_flat=argmax_flat, action_axes=action_axes
-            ),
-        ),
-    )
-    for name, q in member_Q.items()
+    name: jnp.where(undefined, jnp.nan, jnp.where(dissolution, -jnp.inf, value))
+    for name, value in zip(member_Q, best, strict=True)
 }
-return argmax_flat, values, dissolution
+return jnp.where(undefined | dissolution, 0, argmax_flat), values, dissolution
 """
     expected_readout = r"""_argmax_flat, values, dissolution = collective_argmax_and_readout(
     member_Q=member_Q,
@@ -9968,26 +10060,21 @@ def _term(name: str) -> FloatND:
         value=member_Q[name],
         subnormal_is_accounted_for=False,
     )
-terms = [_term(name) for name in names]
-if len(terms) <= _LARGEST_ORDER_FREE_HOUSEHOLD:
-    objective = terms[0]
-    for term in terms[1:]:
-        objective = objective + term
-    return objective
-return sum_in_value_order(values=jnp.stack(terms, axis=0), axis=0)
+return sum_in_value_order(
+    values=jnp.stack([_term(name) for name in names], axis=0), axis=0
+)
 """
-    expected_gather = r"""if not action_axes:
-    return q
-q_moved = _move_axes_to_back(a=q, axes=action_axes)
-q_flat = _flatten_last_n_axes(a=q_moved, n=len(action_axes))
-gathered = jnp.take_along_axis(q_flat, argmax_flat[..., None], axis=-1)
-return gathered[..., 0]
+    expected_layout = r"""if not action_axes:
+    return a[..., jnp.newaxis]
+return _flatten_last_n_axes(
+    a=_move_axes_to_back(a=a, axes=action_axes), n=len(action_axes)
+)
 """
     expected = (
         (argmax_node, expected_argmax, "household argmax/readout"),
         (readout_node, expected_readout, "solve-side delegation"),
         (weighted, expected_weighted, "pointwise weighted scalarization"),
-        (gather, expected_gather, "shared-index member gather"),
+        (layout, expected_layout, "shared action layout"),
     )
     for node, body, label in expected:
         if not _body_matches(node=node, expected_source=body):
@@ -10001,7 +10088,8 @@ return gathered[..., 0]
             "collective_argmax_and_readout",
             "collective_readout",
             "_weighted_sum",
-            "_gather_along_actions",
+            "_actions_last",
+            "max_lexicographic_and_smallest_id",
         }
         & _assigned_names(statement)
         for statement in tree.body
@@ -10013,10 +10101,11 @@ return gathered[..., 0]
 def _decider_reducer_errors(tree: ast.Module) -> list[str]:
     """Certify the household EV1 decider choice and smoothed readout exactly.
 
-    The decider's own action values are masked by the feasibility array passed
-    by identity, maximized over the continuous actions, and log-summed over the
-    discrete ones; every member is read at the decider's continuous argmax and
-    weighted zero-safely by the decider's choice probabilities. No other
+    The decider's own action values, masked by the feasibility array, are
+    maximized over the continuous actions in the one lexicographic reduction
+    that also carries every member's value, and log-summed over the discrete
+    ones; every member is read at the decider's continuous argmax and weighted
+    zero-safely by the decider's choice probabilities. No other
     candidate-changing expression is admitted.
     """
     errors: list[str] = []
@@ -10046,14 +10135,29 @@ def _decider_reducer_errors(tree: ast.Module) -> list[str]:
 n_discrete_cells = math.prod(feasibility.shape[:n_discrete_action_axes])
 n_continuous_cells = math.prod(feasibility.shape[n_discrete_action_axes:])
 flat_Q = Q.reshape(n_discrete_cells, n_continuous_cells, Q.shape[-1])
-decider_Q = jnp.where(
-    feasibility.reshape(n_discrete_cells, n_continuous_cells),
-    jnp.take(flat_Q, decider, axis=-1),
-    -jnp.inf,
+feasible = feasibility.reshape(n_discrete_cells, n_continuous_cells)
+decider_Q = jnp.take(flat_Q, decider, axis=-1)
+(Qc, *at_choice), continuous_argmax = max_lexicographic_and_smallest_id(
+    values=(decider_Q, *jnp.unstack(flat_Q, axis=-1)),
+    ids=jnp.broadcast_to(
+        jnp.arange(n_continuous_cells, dtype=jnp.int32), feasible.shape
+    ),
+    where=feasible,
 )
-continuous_argmax = jnp.argmax(decider_Q, axis=1).astype(jnp.int32)
-at_choice = jnp.take_along_axis(flat_Q, continuous_argmax[:, None, None], axis=1)
-return decider, decider_Q.max(axis=1), continuous_argmax, at_choice[:, 0, :]
+undefined = jnp.any(feasible & jnp.isnan(decider_Q), axis=1)
+infeasible = ~jnp.any(feasible, axis=1)
+Qc = jnp.where(undefined, jnp.nan, jnp.where(infeasible, -jnp.inf, Qc))
+at_choice = jnp.where(
+    undefined[:, None],
+    jnp.nan,
+    jnp.where(infeasible[:, None], -jnp.inf, jnp.stack(at_choice, axis=-1)),
+)
+return (
+    decider,
+    Qc,
+    jnp.where(undefined | infeasible, 0, continuous_argmax),
+    at_choice,
+)
 """
     expected_readout = r"""decider, Qc, _continuous_argmax, at_choice = decider_choice(
     Q=Q,
@@ -15619,30 +15723,19 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     collective_action_reduction_cases = {
         "streaming_collective_hard_max:filter_last_identity": replace_once(
             source=collective_action_reduction_source,
-            old="            feasible=jnp.broadcast_to(feasible, objectives.shape),",
+            old="        feasible = jnp.broadcast_to(feasible, objectives.shape)\n",
             new=(
-                "            feasible=jnp.broadcast_to(feasible, objectives.shape)\n"
-                "            & (jnp.broadcast_to(action_ids, objectives.shape) != 5),"
+                "        feasible = jnp.broadcast_to(feasible, objectives.shape) & (\n"
+                "            jnp.broadcast_to(action_ids, objectives.shape) != 5\n"
+                "        )\n"
             ),
             label="streamed collective hard-max feasibility",
         ),
         "streaming_collective_hard_max:ignore_right_partial": replace_once(
             source=collective_action_reduction_source,
-            old="        choose_right = right.any_feasible & (",
-            new="        choose_right = jnp.zeros_like(right.any_feasible) & (",
+            old="            where=ids != NO_ID,",
+            new="            where=(ids != NO_ID) & (jnp.arange(2) == 0),",
             label="streamed collective hard-max merge",
-        ),
-        "streaming_collective_hard_max:signed_zero_normalization_bypassed": replace_once(
-            source=collective_action_reduction_source,
-            old=(
-                "            best_objective=jnp.where(\n"
-                "                both_feasible_zero,\n"
-                "                signed_zero_max,\n"
-                "                selected_best_objective,\n"
-                "            ),"
-            ),
-            new="            best_objective=selected_best_objective,",
-            label="streamed collective hard-max signed-zero numeric normalization",
         ),
         "streaming_collective_hard_max:semantic_key_changed": replace_once(
             source=collective_action_reduction_source,
@@ -15652,20 +15745,19 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "streaming_collective_hard_max:member_gather_decoupled": replace_once(
             source=collective_action_reduction_source,
-            old="        positions=winner_position,",
-            new="        positions=jnp.zeros_like(winner_position),",
-            label="streamed collective shared-winner gather",
+            old=("        values=(objectives, *jnp.unstack(member_values, axis=-1)),"),
+            new=(
+                "        values=(\n"
+                "            objectives,\n"
+                "            *jnp.unstack(jnp.roll(member_values, 1, axis=-2), axis=-1),\n"
+                "        ),"
+            ),
+            label="streamed collective shared-winner readout",
         ),
         "streaming_collective_hard_max:winner_identity_shifted": replace_once(
             source=collective_action_reduction_source,
-            old=(
-                "    best_global_action_id = jnp.where("
-                "any_feasible_nan, 0, best_global_action_id)"
-            ),
-            new=(
-                "    best_global_action_id = jnp.where("
-                "any_feasible_nan, 0, best_global_action_id + 1)"
-            ),
+            old="        best_global_action_id=best_id,\n",
+            new="        best_global_action_id=best_id + 1,\n",
             label="streamed collective winner identity",
         ),
     }
@@ -15678,6 +15770,17 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             for name, mutated in collective_action_reduction_cases.items()
         }
     )
+    # The streamed household reduction ranks candidates with the shared
+    # lexicographic key comparison, where `-0` and `+0` are one value.
+    specs["streaming_collective_hard_max:signed_zero_normalization_bypassed"] = {
+        "path": ARGMAX_SOURCE,
+        "source": replace_once(
+            source=argmax_source,
+            old="            _float_keys_equal(left=left_key, right=right_key),\n",
+            new="            left_key == right_key,\n",
+            label="streamed collective hard-max signed-zero tie",
+        ),
+    }
 
     logsumexp_action_reduction_cases = {
         "streaming_logsumexp:filter_first_branch": replace_once(
@@ -16318,30 +16421,40 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "shared_collective:feasibility_inline_filter": replace_once(
             source=collective_source,
-            old="        a=objective, axis=action_axes, initial=-jnp.inf, where=feasibility",
-            new="        a=objective, axis=action_axes, initial=-jnp.inf,\n"
-            "        where=feasibility.reshape(-1).at[0].set(False).reshape(\n"
-            "            feasibility.shape\n"
-            "        )",
+            old=(
+                "        a=jnp.broadcast_to(feasibility, objective.shape), "
+                "action_axes=action_axes\n"
+            ),
+            new="        a=jnp.broadcast_to(\n"
+            "            feasibility.reshape(-1).at[0].set(False).reshape(\n"
+            "                feasibility.shape\n"
+            "            ),\n"
+            "            objective.shape,\n"
+            "        ),\n"
+            "        action_axes=action_axes,\n",
             label="collective feasibility inline",
         ),
         "shared_collective:action_axis_prefix": replace_once(
             source=collective_source,
-            old="        a=objective, axis=action_axes, initial=-jnp.inf, where=feasibility",
+            old="    objective = _actions_last(a=objective, action_axes=action_axes)\n",
             new=(
-                "        a=objective, axis=action_axes[:-1], initial=-jnp.inf, where=feasibility"
+                "    objective = _actions_last(a=objective, action_axes=action_axes[:-1])\n"
             ),
             label="collective action axis",
         ),
         "shared_collective:gather_next_candidate": replace_once(
             source=collective_source,
             old=(
-                "    gathered = jnp.take_along_axis(q_flat, argmax_flat[..., None], axis=-1)"
+                "            *(_actions_last(a=q, action_axes=action_axes) "
+                "for q in member_Q.values()),"
             ),
             new=(
-                "    gathered = jnp.take_along_axis(q_flat, (argmax_flat + 1)[..., None], axis=-1)"
+                "            *(\n"
+                "                jnp.roll(_actions_last(a=q, action_axes=action_axes), -1, -1)\n"
+                "                for q in member_Q.values()\n"
+                "            ),"
             ),
-            label="collective gather",
+            label="collective member readout",
         ),
         "shared_collective:early_candidate_return": replace_once(
             source=collective_source,
@@ -16357,8 +16470,11 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "shared_collective:argmax_module_shadow": replace_once(
             source=collective_source,
-            old="    argmax_and_max,\n)\n",
-            new="    argmax_and_max,\n)\n\nargmax_and_max = candidate_filter\n",
+            old="    max_lexicographic_and_smallest_id,\n)\n",
+            new=(
+                "    max_lexicographic_and_smallest_id,\n)\n\n"
+                "max_lexicographic_and_smallest_id = candidate_filter\n"
+            ),
             label="collective argmax shadow",
         ),
     }

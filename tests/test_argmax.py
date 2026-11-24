@@ -527,7 +527,15 @@ _PAIRED_REDUCTION_CALLERS = {
 
 @pytest.mark.parametrize(
     ("caller", "expected"),
-    [*((name, [1]) for name in _PAIRED_REDUCTION_CALLERS), ("second-reader", [2])],
+    [
+        *(
+            # The collective block is reduced, then merged into the accumulator
+            # by a second paired reduction over the two partial winners.
+            (name, [1, 1] if name == "collective_action_reduction" else [1])
+            for name in _PAIRED_REDUCTION_CALLERS
+        ),
+        ("second-reader", [2]),
+    ],
 )
 def test_float_order_keys_have_exactly_one_reader(
     *, caller: str, expected: list[int]

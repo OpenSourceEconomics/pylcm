@@ -311,6 +311,64 @@ def test_collective_full_V_streaming_matches_dense_with_one_household_winner(
     assert_array_equal(actual_dissolution, jnp.array([True, False, False]))
 
 
+def _tied_shares_Q_and_F(
+    *,
+    a: FloatND,
+    b: FloatND,
+    row: IntND,
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+) -> tuple[FloatND, BoolND]:
+    del row, next_regime_to_V_arr
+    return jnp.stack((a, b)), a + b == 1.0
+
+
+def _equal_weights() -> dict[str, FloatND]:
+    return {"f": jnp.asarray(0.5), "m": jnp.asarray(0.5)}
+
+
+_EQUAL_PARETO_WEIGHTS = ParetoWeights(
+    compute=_equal_weights,
+    declared=_equal_weights,
+    arg_names=(),
+    param_names=(),
+    normalization="none",
+)
+
+
+@pytest.mark.parametrize("action_order", [("a", "b"), ("b", "a")])
+@pytest.mark.parametrize("block_width", [1, 2, 7, 25])
+def test_tied_household_objective_goes_to_the_first_member_at_every_width(
+    *, action_order: tuple[ActionName, ActionName], block_width: int
+) -> None:
+    """Every feasible split ties; `f`, declared first, takes the whole unit.
+
+    Two members split one unit, `u_f = a` and `u_m = b`, under equal weights, so
+    the objective is `1/2` at all five feasible actions. The streamed value is
+    `(1, 0)` at every block width, including one that covers all 25 actions, in
+    either declaration order of the actions.
+    """
+    shares = jnp.asarray([0.0, 0.25, 0.5, 0.75, 1.0])
+    raw_streamed = get_streaming_max_Q_over_a(
+        Q_and_F=_tied_shares_Q_and_F,
+        batch_sizes={"row": 0},
+        action_names=action_order,
+        state_names=("row",),
+        member_axis=("f", "m"),
+        pareto_weights=_EQUAL_PARETO_WEIGHTS,
+    )
+    kernel = functools.partial(raw_streamed, _lcm_action_block_width=block_width)
+
+    values, dissolution = jax.jit(kernel)(
+        a=shares,
+        b=shares,
+        row=jnp.array([0], dtype=jnp.int32),
+        next_regime_to_V_arr=MappingProxyType({}),
+    )
+
+    assert_array_equal(values, jnp.array([[1.0, 0.0]]))
+    assert_array_equal(dissolution, jnp.array([False]))
+
+
 def _ev1_Q_and_F(
     *,
     first: IntND,

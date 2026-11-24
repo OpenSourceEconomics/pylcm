@@ -469,15 +469,15 @@ def test_renegotiation_is_part_of_the_durable_solution_identity() -> None:
 
 
 def _female_tradeoff(*, choice: IntND) -> FloatND:
-    return jnp.where(choice == 0, -1.0, 2.0)
-
-
-def _male_tradeoff(*, choice: IntND) -> FloatND:
     return jnp.where(choice == 0, 3.0, 0.0)
 
 
+def _male_tradeoff(*, choice: IntND) -> FloatND:
+    return jnp.where(choice == 0, -1.0, 2.0)
+
+
 def _state_weight(*, mu: IntND) -> FloatND:
-    return jnp.asarray(mu + 1, dtype=float)
+    return 2.0 ** (1 - jnp.asarray(mu, dtype=float))
 
 
 def test_renegotiation_adjusts_after_the_state_weighted_raw_choice() -> None:
@@ -494,7 +494,7 @@ def test_renegotiation_adjusts_after_the_state_weighted_raw_choice() -> None:
                     "utility": CollectiveUtility(
                         utilities={"f": _female_tradeoff, "m": _male_tradeoff},
                         objective=lcm.ParetoObjective(
-                            weights={"f": _state_weight, "m": 1.0}
+                            weights={"f": 1.0, "m": _state_weight}
                         ),
                     )
                 },
@@ -506,8 +506,9 @@ def test_renegotiation_adjusts_after_the_state_weighted_raw_choice() -> None:
         regime_id_class=_Household,
         execution_config=ExecutionConfig(device_memory_bytes=None),
     )
-    # At weights (1,1), both actions tie and Raw chooses index 0, worth (-1,3).
-    # The next node's weights (2,1) choose index 1, worth (2,0); both then accept.
+    # At `mu = 1` the weights are (1,1), both actions tie and Raw takes `f`'s best,
+    # index 0, worth (3,-1). `m` refuses, so the node moves down to `mu = 0`, whose
+    # weights (1,2) choose index 1, worth (0,2); both then accept.
     result = model.simulate(
         params={},
         solution=model.solve(params={}, log_level="off"),
@@ -519,14 +520,14 @@ def test_renegotiation_adjusts_after_the_state_weighted_raw_choice() -> None:
             "own_member": jnp.asarray(
                 [model.member_names_to_ids["f"]], dtype=jnp.int32
             ),
-            "mu": jnp.asarray([0], dtype=jnp.int32),
+            "mu": jnp.asarray([1], dtype=jnp.int32),
         },
         seed=659,
         log_level="off",
     )
     frame = result.to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(
-        frame[["mu", "choice", "value_f", "value_m"]], [[1, 1, 2, 0]]
+        frame[["mu", "choice", "value_f", "value_m"]], [[0, 1, 0, 2]]
     )
 
 

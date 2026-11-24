@@ -29,6 +29,7 @@ from lcm import (
     AgeGrid,
     CollectiveUtility,
     DiscreteGrid,
+    InitialNodes,
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
@@ -36,6 +37,7 @@ from lcm import (
     categorical,
 )
 from lcm.solver_api import KernelOutput
+from lcm.solvers import GridSearch
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -282,6 +284,56 @@ def wage_shock_nodes() -> FloatND:
     return WAGE_SHOCK.to_jax()
 
 
+# Shares the tied household of `make_tied_shares_model` chooses from.
+SHARE_GRID_POINTS = (0.0, 0.25, 0.5, 0.75, 1.0)
+
+
+@categorical(ordered=False)
+class SharesRegimeId:
+    """Regime id of `make_tied_shares_model`."""
+
+    couple: ScalarInt
+
+
+def make_tied_shares_model(
+    *, action_order: tuple[str, str], solver: GridSearch | None = None
+) -> Model:
+    """Build a one-period, stateless household whose every feasible action ties.
+
+    Two members split one unit: actions `a` and `b` on `SHARE_GRID_POINTS` with
+    `a + b == 1`, `u_f = a`, `u_m = b`, equal weights. The objective is `1/2` at
+    every feasible action, so the household's tie rule alone decides: `f`, the
+    first declared member, values `a = 1` most, which gives `V = (1, 0)` whatever
+    the order the two actions are declared in.
+
+    Args:
+        action_order: The order in which `a` and `b` are declared.
+        solver: The regime's solver; `GridSearch` when omitted.
+
+    Returns:
+        The model, whose only regime is `couple`.
+
+    """
+    grid = DiscreteGrid(values=jnp.asarray(SHARE_GRID_POINTS))
+    couple = Regime(
+        actions=dict.fromkeys(action_order, grid),
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _share_utility_f, "m": _share_utility_m}
+            )
+        },
+        constraints={"shares_sum_to_one": _shares_sum_to_one},
+        solver=GridSearch() if solver is None else solver,
+    )
+    return Model(
+        regimes={"couple": couple},
+        regime_id_class=SharesRegimeId,
+        n_periods=1,
+        initial_nodes=InitialNodes(by_period={0: ("couple",)}),
+        edges={},
+    )
+
+
 def make_couple_initial_conditions(*, n_subjects: int = 2) -> InitialConditions:
     """Build initial conditions for the collective models in this module.
 
@@ -359,6 +411,21 @@ def _stateless_utility_f(work: DiscreteAction) -> FloatND:
 def _stateless_utility_m(work: DiscreteAction) -> FloatND:
     """Husband's payoff in the stateless terminal regime: 5 for leisure, 0 for work."""
     return 5.0 * (1.0 - work)
+
+
+def _share_utility_f(a: DiscreteAction) -> FloatND:
+    """Member `f` values its own share."""
+    return a
+
+
+def _share_utility_m(b: DiscreteAction) -> FloatND:
+    """Member `m` values its own share."""
+    return b
+
+
+def _shares_sum_to_one(*, a: DiscreteAction, b: DiscreteAction) -> BoolND:
+    """The two shares exhaust one unit."""
+    return a + b == 1.0
 
 
 def _next_wage(work: DiscreteAction) -> ContinuousState:
