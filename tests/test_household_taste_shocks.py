@@ -52,7 +52,7 @@ _DISCOUNT_FACTOR = 0.95
 
 
 def _reference_household_V(
-    *, decider: str, members: tuple[str, ...], scale: float, discount_factor: float
+    *, decider: str, names: tuple[str, ...], scale: float, discount_factor: float
 ) -> np.ndarray:
     """Recompute the household's period-0 values with numpy on the same grids.
 
@@ -73,7 +73,7 @@ def _reference_household_V(
     }
     feasible = consumption[None, :] <= wealth[:, None]
     q = {}
-    for name in members:
+    for name in names:
         q[name] = np.empty((wealth.size, 2, consumption.size))
         for d in (0, 1):
             next_w = wealth[:, None] - consumption[None, :] + taste_shocks_toy.WAGE * d
@@ -88,11 +88,11 @@ def _reference_household_V(
     values = {
         decider: qc.max(axis=1) + scale * np.log(np.exp(shifted).sum(axis=1)),
     }
-    for name in members:
+    for name in names:
         if name != decider:
             at_best = np.take_along_axis(q[name], best_c[:, :, None], axis=2)[..., 0]
             values[name] = np.sum(probabilities * at_best, axis=1)
-    return np.stack([values[name] for name in members], axis=-1)
+    return np.stack([values[name] for name in names], axis=-1)
 
 
 def test_household_of_one_decider_agrees_with_the_single() -> None:
@@ -143,7 +143,7 @@ def test_household_values_match_the_numpy_reference(
         np.asarray(household.values[0]["alive"]),
         _reference_household_V(
             decider=decider,
-            members=("x", "y"),
+            names=("x", "y"),
             scale=_SCALE,
             discount_factor=_DISCOUNT_FACTOR,
         ),

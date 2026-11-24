@@ -28,7 +28,7 @@ NATIVE_SCHEDULE_TYPES = frozenset(name for name in NATIVE_INPUT_TYPES
     if name.startswith(('_lcm.regime_building.schedules.', '_lcm.regime_building.transition_support.'))
     or name == 'lcm.transition.StochasticTransition')
 
-_TRANSITION_FILE = '21377ac0c3c6776731b8e1e81df7ff946fea30d9a764f61a09d2dd0f2eb29b45'
+_TRANSITION_FILE = 'bb5e00b64d0334ff661ca35cd04c8b291d22017640f5e355fb05ed6cb4e238ca'
 # Schedule files whose `_PeriodDispatch` and `_ProbabilityConstant` are identical.
 # The second counts every period a gated source reads in `gated_source_periods`.
 _SCHEDULES_FILES = (
@@ -83,7 +83,7 @@ _AUTHORITIES = {
     # The finder reads `targets`, `law`, `gates` and `arrivals` of this class;
     # `validate_original_types` refuses a non-empty `roles`.
     "lcm.transition.Transition": (
-        "85e9189755386570441396a705374fbc715afc8e03e53d2c8ede1f7116036ec5",
+        "19ba1410538e08c95e5b289ffc1591702faeab1f6d5b230dd6237a28de4ae926",
         (_TRANSITION_FILE,),
     ),
 }
