@@ -338,9 +338,10 @@ Model(
   `params["edges"][source][target]`.
 - Member identity is **per row**: seed `initial_conditions["own_member"]`
   whenever the starting regime's forward closure contains a collective regime declaring
-  a transition with more than one route. A row keeps its role across an ordinary regime
-  transition, so a two-leg route it runs into later demands the seed, while one in a
-  regime the cohort can never reach demands nothing. It is published as an
+  a transition with more than one route or an exit with targets for more than one
+  member. A row keeps its role across an ordinary regime transition, so such a
+  transition or exit it runs into later demands the seed, while one in a regime the
+  cohort can never reach demands nothing. It is published as an
   `own_member` column, missing for singleton rows.
 - `GatedEdge`, `member_axis` and `gated_edges` are the **lowered** form these
   declarations decompose into. Write the declarations.

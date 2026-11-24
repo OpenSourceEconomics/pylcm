@@ -157,7 +157,8 @@ class SimulationPrograms:
     utility and the certainty-equivalent continuation, for policy lookup. A
     regime with taste shocks publishes, in place of the decision's pair, the
     smoothed maximum, the conditional values, the choice probabilities and the
-    conditional continuous action. Empty for a regime with members.
+    conditional continuous action. Empty for a household without taste
+    shocks.
     Compiled only when dispatched."""
 
     exit_full: MappingProxyType[int, CoreProgram] = dataclasses.field(
