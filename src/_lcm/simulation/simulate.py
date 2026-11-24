@@ -59,6 +59,7 @@ from _lcm.off_grid import count_off_grid
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
+from _lcm.regime_building.collective import landing_member_index
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.regime_building.Q_and_F import (
     EDGE_REF_PARAMS_ARG,
@@ -2343,6 +2344,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             next_regime_to_V_arr=next_regime_to_V_arr,
             referenced_value_kwargs=referenced_value_kwargs,
         )
+        V_arr = _egm_value_with_member_axis(value=V_arr, regime=regime)
     else:
         taste_shock_kwargs = {}
         if regime.has_taste_shocks:
@@ -2548,6 +2550,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             jnp.any(active_in_regime & ~policy_first[2])
         ):
             optimal_actions, V_arr, _ = policy_first
+            V_arr = _egm_value_with_member_axis(value=V_arr, regime=regime)
             nested_fallback = None
         else:
             indices_optimal_actions, V_arr, empty_row = decide(
@@ -2643,6 +2646,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 if indices_optimal_actions.ndim
                 else (),
             )
+            V_arr = _egm_member_value(value=V_arr, regime=regime)
             if policy_first is None:
                 optimal_actions, V_arr, nested_fallback = (
                     _replace_continuous_action_with_policy_read(
@@ -2676,6 +2680,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 )
                 V_arr = jnp.where(accepted, policy_value, V_arr)
                 nested_fallback = None
+            V_arr = _egm_value_with_member_axis(value=V_arr, regime=regime)
 
     # Store results for this regime-period
     # For state-less regimes (e.g., terminal regimes with no states), V_arr may be a
@@ -5479,7 +5484,10 @@ def _evaluate_canonical_Q_at_actions(
             )
         values, feasible = cast("tuple[FloatND, BoolND]", evaluated.output)
         return BoundedResult(
-            output=(jnp.asarray(values), jnp.asarray(feasible).astype(bool)),
+            output=(
+                _egm_member_value(value=jnp.asarray(values), regime=regime),
+                jnp.asarray(feasible).astype(bool),
+            ),
             bound_status=evaluated.bound_status,
             query_status=evaluated.query_status,
         )
@@ -5488,7 +5496,37 @@ def _evaluate_canonical_Q_at_actions(
             "Canonical actual-action evaluation must produce mandatory integrity."
         )
     values, feasible = evaluated
-    return jnp.asarray(values), jnp.asarray(feasible).astype(bool)
+    return (
+        _egm_member_value(value=jnp.asarray(values), regime=regime),
+        jnp.asarray(feasible).astype(bool),
+    )
+
+
+def _egm_member_value(*, value: FloatND, regime: Regime) -> FloatND:
+    """Read an endogenous-grid regime's one member's value off its member axis.
+
+    The reads of a regime solved by an endogenous-grid solver compare the value
+    of its one member: the published policy rows carry no member axis. Any other
+    regime's value is returned whole.
+    """
+    if regime.member_axis is None or regime.simulation.egm_policy_read is None:
+        return value
+    return value[
+        ...,
+        cast(
+            "int",
+            landing_member_index(
+                members=regime.member_axis, role=regime.member_axis[0]
+            ),
+        ),
+    ]
+
+
+def _egm_value_with_member_axis(*, value: FloatND, regime: Regime) -> FloatND:
+    """Give an endogenous-grid regime's read value its trailing member axis."""
+    if regime.member_axis is None or regime.simulation.egm_policy_read is None:
+        return value
+    return value[..., None]
 
 
 def _drawn_code_targets(

@@ -42,6 +42,7 @@ from _lcm.typing import (
     EconFunctionKwargs,
     EconFunctionsMapping,
     EGMCarryProducer,
+    FunctionName,
     StateName,
 )
 from _lcm.utils.functools import get_union_of_args
@@ -84,6 +85,7 @@ def _produce_stateless_carry(
 def get_terminal_wealth_carry_producer(
     *,
     functions: EconFunctionsMapping,
+    utility_name: FunctionName,
     state_name: StateName,
     discrete_state_names: tuple[StateName, ...] = (),
     passive_state_names: tuple[StateName, ...] = (),
@@ -108,6 +110,7 @@ def get_terminal_wealth_carry_producer(
     Args:
         functions: The terminal regime's processed functions (params renamed
             to qualified names).
+        utility_name: Name of the utility function of the regime's one member.
         state_name: Name of the regime's Euler state (the parent's continuous
             state, gradient and endogenous-grid axis).
         discrete_state_names: Shared discrete-state names in value-function
@@ -124,7 +127,7 @@ def get_terminal_wealth_carry_producer(
         value-function array to the terminal carry.
 
     """
-    utility_func = concatenate_felicity(functions=functions)
+    utility_func = concatenate_felicity(functions=functions, utility_name=utility_name)
     utility_extra_arg_names = tuple(
         get_union_of_args([utility_func])
         - {state_name}

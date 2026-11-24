@@ -366,6 +366,7 @@ def validate_regime(regime: Regime) -> None:
     Raises:
         RegimeInitializationError: On the first group of violated declarations.
     """
+    _fail_if_solver_cannot_solve_the_members(regime)
     if regime.member_axis is not None:
         _validate_collective_regime(regime)
     elif regime.pareto_objective is not None:
@@ -380,6 +381,24 @@ def validate_regime(regime: Regime) -> None:
     _validate_exits(regime)
     _validate_logical_consistency(regime)
     validate_law_free_phase_grammar(regime)
+
+
+def _fail_if_solver_cannot_solve_the_members(regime: Regime) -> None:
+    """Refuse a regime of several members under a solver solving one only.
+
+    Raises:
+        NotImplementedError: If the regime has more than one member and its
+            solver does not declare `supports_several_members`.
+    """
+    if (
+        len(regime.members) > 1
+        and not regime.solver.capabilities.supports_several_members
+    ):
+        raise NotImplementedError(
+            f"The {type(regime.solver).__name__} solver solves a regime with one "
+            f"member only; this regime has the members {regime.members!r}. Use a "
+            "solver that supports several members, such as `solver=GridSearch()`."
+        )
 
 
 def _validate_exits(regime: Regime) -> None:
@@ -466,9 +485,10 @@ def _validate_collective_regime(regime: Regime) -> None:
 
     Features the collective solve does not implement raise `NotImplementedError`:
     EV1 taste shocks unless exactly one member can carry a positive weight
-    (`_fail_if_taste_shocks_lack_one_decider`), a nonlinear certainty
-    equivalent (the per-member continuation is the linear expectation), and any
-    solver other than `GridSearch`.
+    (`_fail_if_taste_shocks_lack_one_decider`) and a nonlinear certainty
+    equivalent (the per-member continuation is the linear expectation). Whether
+    the solver handles the member count is checked for every regime, by
+    `_fail_if_solver_cannot_solve_the_members`.
 
     Called from `Regime.__post_init__` only when `member_axis is not None`, so
     the default singleton path never reaches it.
@@ -486,13 +506,6 @@ def _validate_collective_regime(regime: Regime) -> None:
             "per-member continuation is the linear expectation "
             "E[V'^s]. Use `certainty_equivalent=LinearExpectation()` on this "
             "regime."
-        )
-    if not isinstance(regime.solver, GridSearch):
-        raise NotImplementedError(
-            "Collective (member-valued) regimes are only implemented for "
-            "the GridSearch solver: the household argmax and per-member "
-            "value readout run over the full action product. Use "
-            "`solver=GridSearch()` for this regime."
         )
     error_messages: list[str] = []
     error_messages.extend(_members_tuple_errors(members))

@@ -49,6 +49,7 @@ def _find_unsupported_feature(
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     functions: EconFunctionsMapping,
+    utility_name: FunctionName,
     constraints: ConstraintFunctionsMapping,
     processed_constraints: ProcessedConstraintsMapping,
     stateful_targets: tuple[RegimeName, ...],
@@ -96,6 +97,7 @@ def _find_unsupported_feature(
         message = _find_unsupported_function_args(
             solver=solver,
             functions=functions,
+            utility_name=utility_name,
             constraints=constraints,
             processed_constraints=processed_constraints,
             stateful_targets=stateful_targets,
@@ -313,6 +315,7 @@ def _find_unsupported_function_args(
     *,
     solver: _BoundDCEGM,
     functions: EconFunctionsMapping,
+    utility_name: FunctionName,
     constraints: ConstraintFunctionsMapping,
     processed_constraints: ProcessedConstraintsMapping,
     stateful_targets: tuple[RegimeName, ...],
@@ -341,7 +344,7 @@ def _find_unsupported_function_args(
         {solver.continuous_state} if asset_row_mode else set()
     )
     allowed_params = flat_param_names | {"age", "period"}
-    utility_func = concatenate_felicity(functions=functions)
+    utility_func = concatenate_felicity(functions=functions, utility_name=utility_name)
     arg_requirements: list[tuple[str, frozenset[str], set[str]]] = [
         (
             "the utility function",

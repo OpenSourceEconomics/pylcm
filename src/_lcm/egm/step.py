@@ -195,6 +195,7 @@ from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.regime_building.w_dag import _get_build_W_kwargs
 from _lcm.regime_law import RegimeLaws
+from _lcm.solution.contract import one_member_utility_name
 from _lcm.solution.dcegm import (
     EGMStepBuild,
     ExactEnvelope,
@@ -215,6 +216,7 @@ from _lcm.typing import (
     EconFunctionArg,
     EconFunctionsMapping,
     EGMStepFunction,
+    FunctionName,
     QualifiedName,
     RegimeName,
     RegimeTransitionFunction,
@@ -347,6 +349,7 @@ def build_egm_step_functions(
     n_pad = compute_egm_carry_length(solver=solver)
     n_savings_nodes = int((solver.savings_grid.to_jax()).shape[0])
     own_v_info = regime_to_v_interpolation_info[regime_name]
+    utility_name = one_member_utility_name(members=user_regimes[regime_name].members)
     # Any savings-stage Euler-state read (the Euler law's residual, regime
     # transition probabilities, stochastic transition weights, non-Euler
     # laws) switches the kernel to the per-exogenous-asset-node solve; the
@@ -513,6 +516,7 @@ def build_egm_step_functions(
             user_regimes=user_regimes,
             laws=laws,
             functions=group_functions,
+            utility_name=utility_name,
             constraints=group_constraints,
             processed_constraints=processed_constraints,
             stateful_targets=stateful_targets,
@@ -556,6 +560,7 @@ def build_egm_step_functions(
             user_regimes=child_user_regimes,
             laws=laws,
             functions=group_functions,
+            utility_name=utility_name,
             koopmans_aggregator=koopmans_aggregator,
             certainty_equivalent=certainty_equivalent,
             constraints=group_constraints,
@@ -645,6 +650,7 @@ def _get_egm_step(
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     functions: EconFunctionsMapping,
+    utility_name: FunctionName,
     koopmans_aggregator: EconFunction,
     certainty_equivalent: CertaintyEquivalent | None = None,
     constraints: ConstraintFunctionsMapping,
@@ -685,6 +691,7 @@ def _get_egm_step(
         user_regimes=user_regimes,
         laws=laws,
         functions=functions,
+        utility_name=utility_name,
         koopmans_aggregator=koopmans_aggregator,
         certainty_equivalent=certainty_equivalent,
         constraints=constraints,
@@ -1268,6 +1275,7 @@ def _build_kernel_pieces(
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     functions: EconFunctionsMapping,
+    utility_name: FunctionName,
     koopmans_aggregator: EconFunction,
     certainty_equivalent: CertaintyEquivalent | None = None,
     constraints: ConstraintFunctionsMapping,
@@ -1332,7 +1340,9 @@ def _build_kernel_pieces(
         + own_passive_state_names
         + tuple(own_discrete_action_values),
         euler_axis_in_V=euler_axis_in_V,
-        utility_func=concatenate_felicity(functions=functions),
+        utility_func=concatenate_felicity(
+            functions=functions, utility_name=utility_name
+        ),
         inverse_marginal_utility_func=(
             concatenate_regime_function(
                 functions=functions, target="inverse_marginal_utility"

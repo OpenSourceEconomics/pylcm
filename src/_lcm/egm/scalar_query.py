@@ -2,7 +2,7 @@
 
 import inspect
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import NamedTuple
 
 import jax.numpy as jnp
@@ -22,7 +22,12 @@ from _lcm.solution.feasibility import (
     ContinuationReadCounts,
     shift_savings_grid,
 )
-from _lcm.typing import EconFunction, EconFunctionKwargs, EconFunctionsMapping
+from _lcm.typing import (
+    EconFunction,
+    EconFunctionKwargs,
+    EconFunctionsMapping,
+    FunctionName,
+)
 from _lcm.utils.counts import sum_counts
 from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.solver_api import ContinuationCapabilities
@@ -41,6 +46,10 @@ class ScalarEGMQueryModel:
     """Processed scalar discounting function reused by the phase."""
     offsets: Float1D
     """One source saving-offset vector, without cell or period expansion."""
+    utility_name: FunctionName = field(
+        default="utility", metadata={"fingerprint_omit_if_default": True}
+    )
+    """Name of the utility function of the regime's one member."""
 
 
 class ScalarEGMQueryResult(NamedTuple):
@@ -84,6 +93,7 @@ def build_scalar_egm_query(
         expected_side_id=model.authority.interval_side_ids[0],
         build_preferences=get_preferences_builder(
             functions=functions,
+            utility_name=model.utility_name,
             action_name=bound.action,
             scale_grid=model.offsets,
         ),

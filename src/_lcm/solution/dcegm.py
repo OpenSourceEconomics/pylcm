@@ -91,6 +91,7 @@ from _lcm.solution.feasibility import (
     QueryInputStatus,
     _unflatten_continuation_read_counts,
 )
+from _lcm.solution.member_axis import publish_member_axis
 from _lcm.time import TimeAxis
 from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
@@ -749,7 +750,7 @@ class DCEGM(OneMarginSolver):
                 ).pieces._retain_nested_feasibility,
                 retain_child_feasibility=retain_child_mask,
             )
-        return SolutionKernels(
+        kernels = SolutionKernels(
             continuation_reader_capabilities=reader_capabilities or None,
             query_input_authorities=query_slots_by_period or None,
             period_kernels=MappingProxyType(period_kernels),
@@ -766,6 +767,7 @@ class DCEGM(OneMarginSolver):
                 ),
             ),
         )
+        return publish_member_axis(kernels=kernels, member_axis=context.member_axis)
 
 
 @dataclass(frozen=True, kw_only=True)

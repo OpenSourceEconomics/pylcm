@@ -63,7 +63,7 @@ from _lcm.engine import (
 from _lcm.grids import Grid
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.reachability import PhaseReachability
-from _lcm.regime_building.collective import ParetoWeights
+from _lcm.regime_building.collective import ParetoWeights, member_name
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.time import TimeAxis
 from _lcm.transition_plans import SupportOrigin, TargetTransitionPlans
@@ -143,6 +143,16 @@ else:
     UserRegimesMapping = Mapping
     RegimeLawsMapping = Mapping
     RegimeToVInterpolationInfo = MappingProxyType
+
+
+def one_member_utility_name(*, members: tuple[str, ...]) -> FunctionName:
+    """Name of the utility function of a regime's first member.
+
+    A solver of one member reads its utility under this name: `utility` for a
+    regime declared with a plain utility function, `utility_<member>` for a
+    household of one member.
+    """
+    return member_name(base="utility", member=members[0])
 
 
 @dataclass(frozen=True, kw_only=True)

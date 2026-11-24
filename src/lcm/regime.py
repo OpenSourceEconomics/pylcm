@@ -358,8 +358,10 @@ class Regime:
     collective regime's transition targets must all be collective regimes with
     the identical `members` tuple — per-member current outside options
     are declared by an `Exit`. EV1 taste shocks with more than one member
-    carrying a positive weight, nonlinear certainty equivalents, and
-    non-GridSearch solvers on a collective regime raise `NotImplementedError`.
+    carrying a positive weight and nonlinear certainty equivalents on a
+    collective regime raise `NotImplementedError`, as does a solver that does
+    not declare `supports_several_members` on a regime with more than one
+    member.
 
     An `Exit` compares each member's value with its outside value in the current
     period.

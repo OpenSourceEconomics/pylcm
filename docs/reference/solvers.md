@@ -90,14 +90,14 @@ compile time and host memory rise while each period can solve faster.
 
 ## Execution axes
 
-| Solver       | Reduced axes                            | Tiled axes                                              | Host axes         | Host-repeated programs             | Donation candidates | EV1 taste shocks | Nonlinear CE |
-| ------------ | --------------------------------------- | ------------------------------------------------------- | ----------------- | ---------------------------------- | ------------------- | ---------------- | ------------ |
-| `GridSearch` | `action_product`                        | `cell`                                                  | —                 | —                                  | —                   | Yes              | Yes          |
-| `EGM`        | —                                       | —                                                       | —                 | —                                  | —                   | No               | No           |
-| `DCEGM`      | `stochastic_node`                       | `cell`, `savings_point`, `euler_point`, `envelope_cell` | —                 | —                                  | —                   | Yes              | No           |
-| `NBEGM`      | `stochastic_node`, `interval`, `branch` | `cell`                                                  | —                 | —                                  | `main`              | No               | Yes          |
-| `NEGM`       | `stochastic_node`, `outer_candidate`    | `cell`, `savings_point`, `euler_point`, `envelope_cell` | —                 | —                                  | —                   | No               | No           |
-| `NNBEGM`     | `stochastic_node`, `interval`, `branch` | `cell`                                                  | `outer_candidate` | `adjuster:main`, `adjuster:replay` | —                   | No               | Yes          |
+| Solver       | Reduced axes                            | Tiled axes                                              | Host axes         | Host-repeated programs             | Donation candidates | EV1 taste shocks | Nonlinear CE | Several members |
+| ------------ | --------------------------------------- | ------------------------------------------------------- | ----------------- | ---------------------------------- | ------------------- | ---------------- | ------------ | --------------- |
+| `GridSearch` | `action_product`                        | `cell`                                                  | —                 | —                                  | —                   | Yes              | Yes          | Yes             |
+| `EGM`        | —                                       | —                                                       | —                 | —                                  | —                   | No               | No           | No              |
+| `DCEGM`      | `stochastic_node`                       | `cell`, `savings_point`, `euler_point`, `envelope_cell` | —                 | —                                  | —                   | Yes              | No           | No              |
+| `NBEGM`      | `stochastic_node`, `interval`, `branch` | `cell`                                                  | —                 | —                                  | `main`              | No               | Yes          | No              |
+| `NEGM`       | `stochastic_node`, `outer_candidate`    | `cell`, `savings_point`, `euler_point`, `envelope_cell` | —                 | —                                  | —                   | No               | No           | No              |
+| `NNBEGM`     | `stochastic_node`, `interval`, `branch` | `cell`                                                  | `outer_candidate` | `adjuster:main`, `adjuster:replay` | —                   | No               | Yes          | No              |
 
 <!-- end capability tables -->
 

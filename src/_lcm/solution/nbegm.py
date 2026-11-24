@@ -179,6 +179,7 @@ from _lcm.solution.contract import (
     SolverBuildContext,
     SolverModelContext,
     _BoundLiquidMargin,
+    one_member_utility_name,
 )
 from _lcm.solution.dcegm import (
     CELL_AXIS,
@@ -210,6 +211,7 @@ from _lcm.solution.feasibility import (
     reduce_query_input_status,
     shift_savings_grid,
 )
+from _lcm.solution.member_axis import publish_member_axis
 from _lcm.solution.periodization import (
     resolve_solver_build_context,
     restrict_solver_build_context_to_period_group,
@@ -913,12 +915,15 @@ class NBEGM(OneMarginSolver):
                 self._fail_if_unsupported_ride_discrete(
                     context=context, schedule_spec=schedule_spec
                 )
-            return self._build_ride_along_kernels(
-                context=context,
-                savings_grid=savings_grid,
-                schedule_spec=schedule_spec,
-                feasibility_constraints=feasibility_constraints,
-                materializer=materializer,
+            return publish_member_axis(
+                kernels=self._build_ride_along_kernels(
+                    context=context,
+                    savings_grid=savings_grid,
+                    schedule_spec=schedule_spec,
+                    feasibility_constraints=feasibility_constraints,
+                    materializer=materializer,
+                ),
+                member_axis=context.member_axis,
             )
 
         if draws_post_decision_shocks:
@@ -934,15 +939,18 @@ class NBEGM(OneMarginSolver):
             raise UnsupportedOperationError(
                 "Owned nested NB requires its original ride-along schedule."
             )
-        return self._build_single_liquid_kernels(
-            context=context,
-            representative_context=representative_context,
-            feasibility_constraints=feasibility_constraints,
-            savings_grid=savings_grid,
-            schedule_spec=schedule_spec,
-            schedule_discrete_spec=schedule_discrete_spec,
-            is_schedule=is_schedule,
-            is_discrete=is_discrete,
+        return publish_member_axis(
+            kernels=self._build_single_liquid_kernels(
+                context=context,
+                representative_context=representative_context,
+                feasibility_constraints=feasibility_constraints,
+                savings_grid=savings_grid,
+                schedule_spec=schedule_spec,
+                schedule_discrete_spec=schedule_discrete_spec,
+                is_schedule=is_schedule,
+                is_discrete=is_discrete,
+            ),
+            member_axis=context.member_axis,
         )
 
     def _build_single_liquid_kernels(
@@ -3322,6 +3330,7 @@ def _build_nbegm_core(
     *,
     savings_grid: Float1D,
     functions: EconFunctionsMapping,
+    utility_name: FunctionName,
     consumption_action: ActionName,
     case_spec: _NBEGMCaseSpec,
     envelope_arithmetic: ComparisonArithmetic = "ordinary",
@@ -3340,6 +3349,7 @@ def _build_nbegm_core(
         savings_grid=savings_grid,
         build_preferences=get_preferences_builder(
             functions=functions,
+            utility_name=utility_name,
             action_name=consumption_action,
             scale_grid=savings_grid,
         ),
@@ -5806,7 +5816,10 @@ def _collect_nbegm_schedule_spec(
         for name in coh_args
         if name not in state_names and name not in discrete_action_names
     )
-    utility_dag = concatenate_felicity(functions=context.functions)
+    utility_dag = concatenate_felicity(
+        functions=context.functions,
+        utility_name=one_member_utility_name(members=context.members),
+    )
     # A regime whose discount factor is a DAG function (e.g. a per-preference-type
     # beta indexed by a ride-along state) exposes it as a target; absent that, the
     # default flat `koopmans_aggregator__discount_factor` param drives discounting.
@@ -6371,6 +6384,7 @@ def _build_nbegm_continuous_core(
     *,
     savings_grid: Float1D,
     functions: EconFunctionsMapping,
+    utility_name: FunctionName,
     consumption_action: ActionName,
     schedule_spec: _NBEGMScheduleSpec,
     feasibility_constraints: tuple[_NBEGMFeasibilityConstraint, ...] = (),
@@ -6390,6 +6404,7 @@ def _build_nbegm_continuous_core(
         savings_grid=savings_grid,
         build_preferences=get_preferences_builder(
             functions=functions,
+            utility_name=utility_name,
             action_name=consumption_action,
             scale_grid=savings_grid,
         ),
@@ -10163,6 +10178,7 @@ def _build_nbegm_schedule_discrete_core(
     *,
     savings_grid: Float1D,
     functions: EconFunctionsMapping,
+    utility_name: FunctionName,
     consumption_action: ActionName,
     spec: _NBEGMScheduleDiscreteSpec,
     taste_shock_scale: float,
@@ -10185,6 +10201,7 @@ def _build_nbegm_schedule_discrete_core(
         savings_grid=savings_grid,
         build_preferences=get_preferences_builder(
             functions=functions,
+            utility_name=utility_name,
             action_name=consumption_action,
             scale_grid=savings_grid,
         ),
@@ -10350,6 +10367,7 @@ def _build_nbegm_discrete_core(
     *,
     savings_grid: Float1D,
     functions: EconFunctionsMapping,
+    utility_name: FunctionName,
     consumption_action: ActionName,
     discrete_spec: _NBEGMDiscreteSpec,
     taste_shock_scale: float,
@@ -10369,6 +10387,7 @@ def _build_nbegm_discrete_core(
         savings_grid=savings_grid,
         build_preferences=get_preferences_builder(
             functions=functions,
+            utility_name=utility_name,
             action_name=consumption_action,
             scale_grid=savings_grid,
         ),
@@ -10600,6 +10619,7 @@ def _build_nbegm_single_axis_group(
         core = _build_nbegm_schedule_discrete_core(
             savings_grid=savings_grid,
             functions=context.functions,
+            utility_name=one_member_utility_name(members=context.members),
             consumption_action=solver.continuous_action,
             spec=spec,
             taste_shock_scale=0.0,
@@ -10618,6 +10638,7 @@ def _build_nbegm_single_axis_group(
         core = _build_nbegm_continuous_core(
             savings_grid=savings_grid,
             functions=context.functions,
+            utility_name=one_member_utility_name(members=context.members),
             consumption_action=solver.continuous_action,
             schedule_spec=spec,
             feasibility_constraints=resolved_feasibility_constraints,
@@ -10636,6 +10657,7 @@ def _build_nbegm_single_axis_group(
         core = _build_nbegm_discrete_core(
             savings_grid=savings_grid,
             functions=context.functions,
+            utility_name=one_member_utility_name(members=context.members),
             consumption_action=solver.continuous_action,
             discrete_spec=spec,
             taste_shock_scale=0.0,
@@ -10651,6 +10673,7 @@ def _build_nbegm_single_axis_group(
         core = _build_nbegm_core(
             savings_grid=savings_grid,
             functions=context.functions,
+            utility_name=one_member_utility_name(members=context.members),
             consumption_action=solver.continuous_action,
             case_spec=spec,
             envelope_arithmetic=solver.envelope_arithmetic,

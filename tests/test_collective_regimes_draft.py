@@ -16,8 +16,10 @@ from lcm import (
     categorical,
     fixed_transition,
 )
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime
+from lcm.solvers import DCEGM, EGM, OneMarginSolver
 from lcm.typing import (
     ContinuousAction,
     DiscreteAction,
@@ -164,3 +166,40 @@ def test_singleton_default_is_untouched() -> None:
 def test_members_is_not_a_constructor_parameter() -> None:
     """A regime's members are declared in its utility, and only there."""
     assert "member_axis" not in inspect.signature(Regime).parameters
+
+
+@pytest.mark.parametrize(
+    "solver",
+    [EGM(savings_grid=_WEALTH), DCEGM(savings_grid=_WEALTH)],
+    ids=["EGM", "DCEGM"],
+)
+def test_household_with_a_one_member_solver_is_refused(
+    solver: OneMarginSolver,
+) -> None:
+    """A solver that solves one member only refuses a household of two.
+
+    The message names the solver and the household's members.
+    """
+
+    def _utility(consumption: ContinuousAction) -> FloatND:
+        return jnp.log(consumption)
+
+    with pytest.raises(
+        NotImplementedError,
+        match=rf"{type(solver).__name__}.*\('f', 'm'\)",
+    ):
+        ConsumptionSavingsRegime(
+            states={"wealth": _WEALTH},
+            actions={"consumption": _CONSUMPTION},
+            state_transitions={"wealth": lambda wealth: wealth},
+            functions={
+                "utility": CollectiveUtility(utilities={"f": _utility, "m": _utility})
+            },
+            solver=solver,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="wealth",
+                post_decision_state="savings",
+            ),
+        )

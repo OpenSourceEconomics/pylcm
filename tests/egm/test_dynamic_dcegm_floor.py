@@ -118,6 +118,7 @@ def _build_producer(*, monkeypatch: pytest.MonkeyPatch) -> _SolveOneCombo:
                 }
             ),
         ),
+        utility_name="utility",
         koopmans_aggregator=cast("EconFunction", _aggregator),
         constraints=MappingProxyType({}),
         transitions=MappingProxyType({}),

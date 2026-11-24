@@ -80,6 +80,7 @@ from _lcm.solution.contract import (
     SolverModelContext,
     _BoundLiquidMargin,
     bind_roles,
+    one_member_utility_name,
     simulation_route,
 )
 from _lcm.solution.feasibility import (
@@ -98,6 +99,7 @@ from _lcm.solution.feasibility import (
     reduce_query_input_status,
     validate_runtime_bound_status,
 )
+from _lcm.solution.member_axis import publish_member_axis
 from _lcm.solution.periodization import (
     resolve_solver_build_context,
     solver_period_group_key,
@@ -350,7 +352,12 @@ class EGM(OneMarginSolver):
             raise ModelInitializationError(msg)
 
         utility_ancestors = _dag_ancestors(
-            functions=functions, target_func=functions["utility"]
+            functions=functions,
+            target_func=functions[
+                one_member_utility_name(
+                    members=context.user_regimes[regime_name].members
+                )
+            ],
         )
         if liquid_state in utility_ancestors:
             msg = (
@@ -694,6 +701,7 @@ class EGM(OneMarginSolver):
                     if current_model is None
                     else current_model.offsets,
                     functions=resolved.functions,
+                    utility_name=one_member_utility_name(members=context.members),
                     koopmans_aggregator=cast(
                         "EconFunction", resolved.koopmans_aggregator
                     ),
@@ -806,7 +814,7 @@ class EGM(OneMarginSolver):
                 query_input_authorities=query_slots,
                 literal_dc_resources=literal_dc_resources,
             )
-        return SolutionKernels(
+        kernels = SolutionKernels(
             query_input_authorities=query_slots_by_period or None,
             continuation_reader_capabilities=reader_capabilities or None,
             period_kernels=MappingProxyType(period_kernels),
@@ -832,6 +840,7 @@ class EGM(OneMarginSolver):
                 ),
             ),
         )
+        return publish_member_axis(kernels=kernels, member_axis=context.member_axis)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1814,6 +1823,7 @@ def _build_egm_core(
     *,
     savings_grid: Float1D,
     functions: EconFunctionsMapping,
+    utility_name: FunctionName,
     koopmans_aggregator: EconFunction,
     consumption_action: ActionName,
     declared_law: Callable[..., tuple[Float1D, Float1D]],
@@ -1847,6 +1857,7 @@ def _build_egm_core(
 
     build_preferences = get_preferences_builder(
         functions=functions,
+        utility_name=utility_name,
         action_name=consumption_action,
         scale_grid=savings_grid,
     )

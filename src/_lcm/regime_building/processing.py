@@ -261,6 +261,7 @@ from _lcm.solution.contract import (
     SolutionKernels,
     SolverBuildContext,
     SolverModelContext,
+    one_member_utility_name,
 )
 from _lcm.solution.shipped_solvers import (
     fail_if_replay_is_undeclared,
@@ -1851,6 +1852,7 @@ def _prepare_scalar_egm_query_models(
         models[name] = ScalarEGMQueryModel(
             authority=authority,
             functions=functions,
+            utility_name=one_member_utility_name(members=user_regime.members),
             koopmans_aggregator=aggregator,
             offsets=nodes - nodes[0],
         )
@@ -2032,6 +2034,7 @@ def _prepare_dcegm_query_models(
         models[name] = DCEGMQueryModel(
             authority=authority,
             functions=functions,
+            utility_name=one_member_utility_name(members=user_regime.members),
             koopmans_aggregator=aggregator,
             offsets=nodes - nodes[0],
             literal_nodes=nodes if bound.kind == "literal" else None,
@@ -2211,6 +2214,7 @@ def _prepare_nbegm_query_models(
         models[name] = NBEGMQueryModel(
             authority=authority,
             functions=functions,
+            utility_name=one_member_utility_name(members=user_regime.members),
             koopmans_aggregator=aggregator,
             offsets=nodes - nodes[0],
             literal_nodes=nodes if bound.kind == "literal" else None,
@@ -5094,12 +5098,18 @@ def _finish_solution_phase(
     period_kernels = solver_kernels.period_kernels
     continuation_spec = solver_kernels.continuation_spec
     if egm_carry_producer is not None:
+        # The parent shares the target's one member and reads that member's value.
+        user_regime = prepared.user_regimes[prepared.regime_name]
+        member_index = landing_member_index(
+            members=_engine_member_axis(user_regime), role=user_regime.members[0]
+        )
         period_kernels = MappingProxyType(
             {
                 period: _TerminalCarryPeriodKernel(
                     base=kernel,
                     carry_producer=egm_carry_producer,
                     regime_name=regime_name,
+                    member_index=member_index,
                 )
                 for period, kernel in period_kernels.items()
             }
@@ -5409,6 +5419,9 @@ class _TerminalCarryPeriodKernel:
     regime_name: RegimeName
     """Name of the terminal regime whose flat params the producer reads."""
 
+    member_index: int | None = None
+    """Index of the regime's one member on its value's trailing member axis."""
+
     def core_programs(self) -> Mapping[str, CoreProgram]:
         """Delegate the wrapped GridSearch kernel's exact native program graph."""
         if not isinstance(self.base, CoreProgramGraphAware):
@@ -5483,8 +5496,9 @@ class _TerminalCarryPeriodKernel:
                 "that continuation and cannot overwrite it."
             )
             raise RuntimeError(msg)
+        value = jnp.asarray(output.value)
         carry = self.carry_producer(
-            V_arr=jnp.asarray(output.value),
+            V_arr=value if self.member_index is None else value[..., self.member_index],
             **state_action_space.states,
             **regime_kernel_params(flat_params, regime_name=self.regime_name),
             period=jnp.int32(period),
@@ -5584,6 +5598,7 @@ def _build_egm_child_carry_producer(
             )
             producer = get_terminal_wealth_carry_producer(
                 functions=functions,
+                utility_name=one_member_utility_name(members=user_regime.members),
                 state_name=euler_state_name,
                 discrete_state_names=discrete_state_names,
                 passive_state_names=passive_state_names,

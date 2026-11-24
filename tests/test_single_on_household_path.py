@@ -38,6 +38,7 @@ from lcm.execution import ExecutionConfig
 from lcm.exits import Unilateral
 from lcm.result import SimulationResult
 from lcm.solver_api import SolutionResult
+from lcm.solvers import EGM
 from lcm.typing import FloatND, IntND, RegimeName, UserParamsNode
 from lcm_examples import (
     collective_household,
@@ -48,10 +49,19 @@ from tests import test_transition_roles as single_to_household
 from tests.conftest import assert_agrees_to_ulp
 from tests.regime_building import test_gate_shared_fallback as household_to_single
 from tests.regime_building import test_gated_edge_params_are_per_edge as single_gate
+from tests.solution import test_egm_solver as egm_closed_form
 from tests.solution.test_fingerprint_pin import _MODELS as PINNED_MODELS
 from tests.solution.test_fingerprint_pin import _pinned
 from tests.solution.test_mutual_consent_settlement import _Singleton
-from tests.test_models import taste_shocks_toy
+from tests.test_models import (
+    n_nbegm_toy,
+    nbegm_floor_toy,
+    negm_kinked_toy,
+    taste_shocks_toy,
+)
+from tests.test_models.deterministic import base as dcegm_base
+from tests.test_models.deterministic import dcegm_variants
+from tests.test_models.nbegm_common import RegimeId as NBEGMRegimeId
 
 type InitialConditions = dict[str, FloatND | IntND]
 type Case = tuple[Model, dict[str, UserParamsNode], InitialConditions]
@@ -102,6 +112,69 @@ def _taste_shocks_toy() -> Case:
     return (
         taste_shocks_toy.get_model(),
         taste_shocks_toy.get_params(scale=0.2),
+        initial_conditions,
+    )
+
+
+def _egm() -> Case:
+    model = egm_closed_form._model(
+        solver=EGM(savings_grid=egm_closed_form._SAVINGS_GRID)
+    )
+    initial_conditions: InitialConditions = {
+        "age": jnp.zeros(_N_SUBJECTS),
+        "wealth": jnp.linspace(3.0, 50.0, _N_SUBJECTS),
+        "regime_id": jnp.full(_N_SUBJECTS, egm_closed_form.RegimeId.saving),
+    }
+    return model, egm_closed_form._params(), initial_conditions
+
+
+def _dcegm() -> Case:
+    # `get_full_model` is cached; the wrapped builder makes a model under the switch.
+    model = dcegm_variants.get_full_model.__wrapped__(solver="dcegm", n_periods=3)
+    initial_conditions: InitialConditions = {
+        "age": jnp.full(_N_SUBJECTS, 40.0),
+        "wealth": jnp.linspace(10.0, 300.0, _N_SUBJECTS),
+        "regime_id": jnp.full(_N_SUBJECTS, dcegm_base.RegimeId.working_life),
+    }
+    return model, dcegm_variants.get_full_params(n_periods=3), initial_conditions
+
+
+def _negm() -> Case:
+    initial_conditions: InitialConditions = {
+        "age": jnp.full(_N_SUBJECTS, 20.0),
+        "wealth": jnp.linspace(1.0, 25.0, _N_SUBJECTS),
+        "illiquid": jnp.linspace(0.0, 20.0, _N_SUBJECTS),
+        "regime_id": jnp.full(_N_SUBJECTS, negm_kinked_toy.RegimeId.alive),
+    }
+    return (
+        negm_kinked_toy.build_model(),
+        {"discount_factor": 0.95, "alive": {}},
+        initial_conditions,
+    )
+
+
+def _nbegm() -> Case:
+    model = nbegm_floor_toy.build_model(
+        variant="nbegm", n_periods=3, n_liquid=20, n_savings=20
+    )
+    initial_conditions: InitialConditions = {
+        "age": jnp.zeros(_N_SUBJECTS),
+        "liquid": jnp.linspace(0.5, 25.0, _N_SUBJECTS),
+        "regime_id": jnp.full(_N_SUBJECTS, NBEGMRegimeId.alive),
+    }
+    return model, nbegm_floor_toy.build_params(), initial_conditions
+
+
+def _nnbegm() -> Case:
+    initial_conditions: InitialConditions = {
+        "age": jnp.full(_N_SUBJECTS, 20.0),
+        "wealth": jnp.linspace(1.0, 25.0, _N_SUBJECTS),
+        "illiquid": jnp.linspace(0.0, 15.0, _N_SUBJECTS),
+        "regime_id": jnp.full(_N_SUBJECTS, n_nbegm_toy.RegimeId.alive),
+    }
+    return (
+        n_nbegm_toy.build_model(variant="n_nbegm", n_periods=3),
+        {"discount_factor": 0.95},
         initial_conditions,
     )
 
@@ -234,6 +307,8 @@ def _single_exit(*, compares: Literal["each_action", "optimum"]) -> Case:
 
 _CASES: dict[str, Callable[[], Case]] = {
     "collective_household": _collective_household,
+    "dcegm": _dcegm,
+    "egm": _egm,
     "gate_household_to_single": _gate_household_to_single,
     "gate_single_to_household_member_route": functools.partial(
         _single_to_household, edge_form="hand_gate"
@@ -242,6 +317,9 @@ _CASES: dict[str, Callable[[], Case]] = {
         _single_to_household, edge_form="roles"
     ),
     "gate_single_to_single": _gate_single_to_single,
+    "nbegm": _nbegm,
+    "negm": _negm,
+    "nnbegm": _nnbegm,
     "single_exit_each_action": functools.partial(_single_exit, compares="each_action"),
     "single_exit_at_optimum": functools.partial(_single_exit, compares="optimum"),
     "precautionary_savings_health": _precautionary_savings_health,

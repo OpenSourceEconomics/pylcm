@@ -90,6 +90,7 @@ from _lcm.egm.validation import (
 )
 from _lcm.grids import ContinuousGrid
 from _lcm.regime_law import RegimeLaw
+from _lcm.solution.contract import one_member_utility_name
 from _lcm.solution.dcegm import _BoundDCEGM
 from _lcm.solution.negm import _BoundNEGM
 from _lcm.typing import (
@@ -495,7 +496,10 @@ def _fail_if_utility_couples_action_and_outer_margin(
     functions_without_outer = _without(
         functions=functions, names={solver.outer_post_decision}
     )
-    utility_func = concatenate_felicity(functions=functions_without_outer)
+    utility_func = concatenate_felicity(
+        functions=functions_without_outer,
+        utility_name=one_member_utility_name(members=user_regime.members),
+    )
     varied = {inner.continuous_action, solver.outer_post_decision}
     if not varied <= set(inspect.signature(utility_func).parameters):
         return

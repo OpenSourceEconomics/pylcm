@@ -30,6 +30,7 @@ import pytest
 from lcm import (
     AgeGrid,
     AgeRange,
+    CollectiveUtility,
     LinSpacedGrid,
     Model,
     categorical,
@@ -43,6 +44,8 @@ from lcm.typing import (
     ContinuousState,
     FloatND,
     ScalarInt,
+    UserFunction,
+    UserParamsNode,
 )
 
 _CRRA = 2.0
@@ -92,12 +95,13 @@ def feasible(*, wealth: ContinuousState, consumption: ContinuousAction) -> BoolN
 
 def _model(
     *,
-    solver,
-    n_consumption=200,
-    resources_func=None,
-    liquid=None,
-    utility_function=utility,
-):
+    solver: EGM | GridSearch,
+    n_consumption: int = 200,
+    resources_func: UserFunction | None = None,
+    liquid: LiquidMargin | None = None,
+    utility_function: UserFunction | CollectiveUtility = utility,
+    terminal_utility_function: UserFunction | CollectiveUtility = terminal_utility,
+) -> Model:
     """A pure consumption--saving lifecycle with no income and no kinks.
 
     `resources_func` and `liquid` let a caller vary the two declarations the
@@ -141,7 +145,7 @@ def _model(
     )
     done = Regime(
         states={"wealth": wealth_grid},
-        functions={"utility": terminal_utility},
+        functions={"utility": terminal_utility_function},
         solver=GridSearch(),
     )
     return Model(
@@ -158,20 +162,23 @@ def _model(
     )
 
 
-def _params():
+def _params(*, utility_name: str = "utility") -> dict[str, UserParamsNode]:
+    """Parameters with each regime's utility function named `utility_name`."""
     law = {"return_liquid": _RETURN, "retirement_income": 0.0}
     return {
         "saving": {
-            "utility": {"crra": _CRRA},
+            utility_name: {"crra": _CRRA},
             "koopmans_aggregator": {"discount_factor": _DISCOUNT_FACTOR},
             "saving": {"next_wealth": law},
             "done": {"next_wealth": law},
         },
-        "done": {"utility": {"crra": _CRRA}},
+        "done": {utility_name: {"crra": _CRRA}},
     }
 
 
-def _closed_form(*, wealth, periods_of_consumption):
+def _closed_form(
+    *, wealth: np.ndarray, periods_of_consumption: int
+) -> tuple[np.ndarray, np.ndarray]:
     """Analytical consumption and value with `periods_of_consumption` left."""
     gross_return = 1.0 + _RETURN
     kappa = (_DISCOUNT_FACTOR * gross_return ** (1.0 - _CRRA)) ** (1.0 / _CRRA)
@@ -184,7 +191,7 @@ def _closed_form(*, wealth, periods_of_consumption):
 
 
 @pytest.mark.parametrize("period", [0, 1, 2])
-def test_egm_value_matches_the_analytical_solution(period):
+def test_egm_value_matches_the_analytical_solution(period: int) -> None:
     """Each period's solved value equals the closed form on the unconstrained set."""
     solution = (
         _model(solver=EGM(savings_grid=_SAVINGS_GRID))
@@ -199,7 +206,7 @@ def test_egm_value_matches_the_analytical_solution(period):
     np.testing.assert_allclose(got, expected, rtol=1e-2)
 
 
-def test_egm_agrees_with_dense_grid_search():
+def test_egm_agrees_with_dense_grid_search() -> None:
     """The EGM value matches a dense brute-force solve of the same model.
 
     An independent check on the closed form: grid search never inverts an Euler
@@ -221,3 +228,32 @@ def test_egm_agrees_with_dense_grid_search():
         expected = np.asarray(brute[period]["saving"])[_UNCONSTRAINED]
         rel = np.abs(got - expected) / np.abs(expected)
         assert np.max(rel) < 1e-2
+
+
+def test_egm_solves_a_household_of_one_member_as_its_plain_utility_model() -> None:
+    """A one-member `CollectiveUtility` regime solves to its plain-utility values.
+
+    The member's value carries the trailing member axis; the endogenous-grid
+    solver reads the member's utility under its member name.
+    """
+    plain = (
+        _model(solver=EGM(savings_grid=_SAVINGS_GRID))
+        .solve(params=_params(), log_level="off")
+        .values
+    )
+    household = (
+        _model(
+            solver=EGM(savings_grid=_SAVINGS_GRID),
+            utility_function=CollectiveUtility(utilities={"alice": utility}),
+            terminal_utility_function=CollectiveUtility(
+                utilities={"alice": terminal_utility}
+            ),
+        )
+        .solve(params=_params(utility_name="utility_alice"), log_level="off")
+        .values
+    )
+    for period in (0, 1, 2):
+        np.testing.assert_array_equal(
+            np.asarray(household[period]["saving"])[..., 0],
+            np.asarray(plain[period]["saving"]),
+        )

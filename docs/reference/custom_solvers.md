@@ -16,7 +16,7 @@ adapter or automatic migration across versions is not implied.
 A solver derives from `Solver` and implements the `capabilities` property and
 `build_period_kernels` method. The shipped solvers are frozen dataclasses because they
 carry numerical configuration; a solver with no configuration needs no fields. Solver
-API version 3 requires both declarations. Between them, a solver and its kernels answer
+API version 4 requires both declarations. Between them, a solver and its kernels answer
 the following questions.
 
 - **What can this configuration execute?** `capabilities` returns frozen
@@ -24,6 +24,17 @@ the following questions.
   tiled and host axes, repeated program keys and supported preference features. A
   concrete model accepts only axes declared by its built programs; the capability
   description does not authorize additional widths or bypass structural validation.
+
+- **How many members do I solve?** A regime solves the values of its members:
+  `("self",)` for a regime declared with a plain utility function, the `utilities` keys
+  of a `CollectiveUtility` otherwise.
+  `SolverExecutionCapabilities.supports_several_members` declares whether the solver
+  solves a regime with more than one member; model construction refuses a regime with
+  several members whose solver does not. When the build context's `member_axis` is set,
+  the regime's value arrays carry a trailing axis over those members, and every program
+  publishing the value includes it: a solver of one member appends an axis of length one
+  to its value and reads its member's slice of each value array it reads. That member's
+  utility function is named `utility_<member>`, or `utility` for the member `"self"`.
 
 - **Which continuations do I read?** `required_continuation_keys` returns a frozenset of
   `ArtifactKey`. Model building checks every key against what each reachable target

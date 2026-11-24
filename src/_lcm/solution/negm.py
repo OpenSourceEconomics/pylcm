@@ -102,6 +102,7 @@ from _lcm.solution.feasibility import (
     reduce_continuation_read_counts,
     reduce_query_input_status,
 )
+from _lcm.solution.member_axis import with_member_axis
 from _lcm.time import TimeAxis
 from _lcm.typing import (
     EconFunction,
@@ -477,6 +478,8 @@ class NEGM(TwoMarginSolver):
         # is decision-independent without being replaced — and a declared
         # `next_<durable> = (1 - delta) * s_t^post-dec` is therefore the stock the
         # continuation is read at, not the raw node the outer search picked.
+        # The inner kernels publish values without the member axis; the outer
+        # programs append it.
         adjuster_context = replace(
             context,
             functions=_without_outer_post_decision(
@@ -485,6 +488,7 @@ class NEGM(TwoMarginSolver):
             ),
             flat_param_names=context.flat_param_names
             | {bound_self.outer_post_decision},
+            member_axis=None,
         )
         if query_model is not None:
             adjuster_context = replace(
@@ -583,6 +587,7 @@ class NEGM(TwoMarginSolver):
                     outer_post_decision=bound_self.outer_post_decision,
                     no_adjustment_func=no_adjustment_func,
                 ),
+                member_axis=None,
             )
             if query_model is not None:
                 keeper_context = replace(
@@ -648,6 +653,7 @@ class NEGM(TwoMarginSolver):
                             fixed_state_names=carry_row_state_names,
                         )
                     ),
+                    member_axis=context.member_axis,
                 )
                 for period, adjuster_kernel in adjuster_kernels.period_kernels.items()
             }
@@ -990,6 +996,14 @@ class _NEGMPeriodKernel:
     floor_preparation: _NestedFloorPreparation | None = None
     """Canonical current-floor preparation preceding both nested cost paths."""
 
+    member_axis: tuple[str, ...] | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """The regime's member axis, which both programs' values carry, or `None`.
+
+    The inner kernels publish values without it; `keeper` appends it and
+    `outer_sweep` reads the member's slice of the keeper's value."""
+
     _core_programs: MappingProxyType[str, CoreProgram] = field(
         init=False, repr=False, compare=False
     )
@@ -1007,8 +1021,12 @@ class _NEGMPeriodKernel:
             object.__setattr__(
                 self,
                 "_core_programs",
-                _nested_feasibility_programs(
-                    kernel=self, keeper=keeper, adjuster=adjuster
+                _with_member_axis_programs(
+                    programs=_nested_feasibility_programs(
+                        kernel=self, keeper=keeper, adjuster=adjuster
+                    ),
+                    member_axis=self.member_axis,
+                    keeper_output=_KEEPER_RESULT,
                 ),
             )
             return
@@ -1092,7 +1110,15 @@ class _NEGMPeriodKernel:
                 donation_candidates=(),
             ),
         }
-        object.__setattr__(self, "_core_programs", MappingProxyType(programs))
+        object.__setattr__(
+            self,
+            "_core_programs",
+            _with_member_axis_programs(
+                programs=programs,
+                member_axis=self.member_axis,
+                keeper_output=_KEEPER_VALUE,
+            ),
+        )
 
     def core_programs(self) -> Mapping[str, CoreProgram]:
         """Return the native graph used by eager, JIT, AOT, and replay paths."""
@@ -1220,6 +1246,31 @@ class _NEGMPeriodKernel:
             ),
         )
         return KernelOutput(value=V_arr, continuations={EGM_CONTINUATION: carry})
+
+
+def _with_member_axis_programs(
+    *,
+    programs: Mapping[str, CoreProgram],
+    member_axis: tuple[str, ...] | None,
+    keeper_output: str,
+) -> MappingProxyType[str, CoreProgram]:
+    """Publish both programs' values with the member axis.
+
+    The sweep reads the keeper's output under `keeper_output` and takes the
+    member's slice of the keeper value in it.
+    """
+    return MappingProxyType(
+        {
+            "keeper": with_member_axis(
+                program=programs["keeper"], member_axis=member_axis
+            ),
+            "outer_sweep": with_member_axis(
+                program=programs["outer_sweep"],
+                member_axis=member_axis,
+                value_input=keeper_output,
+            ),
+        }
+    )
 
 
 def _nested_feasibility_programs(

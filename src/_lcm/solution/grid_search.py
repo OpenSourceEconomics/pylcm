@@ -241,6 +241,7 @@ class GridSearch(Solver):
             host_driven_programs=(),
             supports_ev1_taste_shocks=True,
             supports_nonlinear_certainty_equivalent=True,
+            supports_several_members=True,
         )
 
     @property
