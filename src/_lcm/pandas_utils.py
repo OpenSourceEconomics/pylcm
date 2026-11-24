@@ -319,7 +319,7 @@ def _role_codes_from_labels(
         ValueError: A label names no member any regime declares.
     """
     role_ids = build_role_vocabulary(
-        {name: regime.member_axis for name, regime in user_regimes.items()}
+        {name: regime.members for name, regime in user_regimes.items()}
     )
     text = labels.astype("string")
     named = text.notna()

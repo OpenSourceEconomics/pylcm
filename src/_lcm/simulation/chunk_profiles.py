@@ -27,6 +27,7 @@ from _lcm.execution.value_transfer import (
 )
 from _lcm.grids import ContinuousGrid
 from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.regime_building.collective import NO_ROLE, role_code
 from _lcm.simulation import (
     population_operations,
 )
@@ -1035,15 +1036,20 @@ def _profile_population_roles(
             subject_arg_names=("declared",),
         ),
     )
+    # The same regimes `_initial_own_member` checks: those with no member
+    # `"self"`.
     for regime in regimes.values():
-        if regime.member_axis is not None:
+        codes = tuple(
+            role_code(name=member, role_ids=role_ids) for member in regime.members
+        )
+        if NO_ROLE not in codes:
             inventory.operation(
                 function=population_operations.role_mismatch,
                 arguments={
                     "roles": roles,
                     "regime_ids": full_int,
                     "regime_id": scalar_int,
-                    "role_ids": tuple(scalar_int for _ in regime.member_axis),
+                    "role_ids": tuple(scalar_int for _ in codes),
                 },
                 subject_arg_names=("roles", "regime_ids"),
             )

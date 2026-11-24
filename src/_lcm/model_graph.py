@@ -930,25 +930,27 @@ def _fail_if_role_invalid(
             f"{entry}, and the transition declares both a role and a `Gate` "
             f"for '{target}'. A role is the always-open gate; declare one of them."
         )
-    member_axis = regimes[source].member_axis
-    if member_axis is not None:
+    # The member `"self"` is no role: a row of its regime carries none, and a
+    # role cannot name it.
+    source_members = regimes[source].members
+    if "self" not in source_members:
         raise ModelInitializationError(
-            f"{entry}, but '{source}' is collective (members={member_axis}): "
+            f"{entry}, but '{source}' is collective (members={source_members}): "
             "each of its rows already carries a role. Route a collective source "
             "into another layout with a `Gate`."
         )
     if target not in regimes:
         return
-    target_member_axis = regimes[target].member_axis
-    if target_member_axis is None:
+    target_members = regimes[target].members
+    if "self" in target_members:
         raise ModelInitializationError(
             f"{entry}, but '{target}' is not collective: a role names one of a "
             "collective target's members. Reach a singleton target by a "
             "plain edge."
         )
-    if role not in target_member_axis:
+    if role not in target_members:
         raise ModelInitializationError(
-            f"{entry}, but the members of '{target}' are {target_member_axis}."
+            f"{entry}, but the members of '{target}' are {target_members}."
         )
 
 

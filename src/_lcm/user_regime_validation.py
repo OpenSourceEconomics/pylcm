@@ -27,6 +27,7 @@ from _lcm.constraints.processed import ConstraintLike
 from _lcm.grids import Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.regime_building.collective import member_name
 from _lcm.regime_building.phases import (
     normalize_regime_phases,
     validate_law_free_phase_grammar,
@@ -171,7 +172,7 @@ def validate_exit_targets(
                         f"{context} names unknown destination {target.regime!r}."
                     )
                 destination = regimes[target.regime]
-                if target.role not in (destination.member_axis or (None,)):
+                if target.role not in _declarable_roles(destination):
                     raise RegimeInitializationError(
                         f"{context} has invalid destination role {target.role!r}."
                     )
@@ -288,6 +289,15 @@ def _validate_settlement(*, declaration: Exit, regime: Regime) -> None:
         )
 
 
+def _declarable_roles(regime: Regime) -> tuple[str | None, ...]:
+    """Return the roles a declaration may name for a member of `regime`.
+
+    A household's members by name. The member `"self"` is no role, so a
+    declaration names it by naming none.
+    """
+    return tuple(None if member == "self" else member for member in regime.members)
+
+
 def _validate_counterparty(
     *,
     declaration: Exit,
@@ -308,8 +318,7 @@ def _validate_counterparty(
     for target in declaration.targets.values():
         destination = regimes[target.regime]
         if (
-            destination.member_axis is None
-            or counterparty.role not in destination.member_axis
+            counterparty.role not in _declarable_roles(destination)
             or counterparty.role == target.role
         ):
             raise RegimeInitializationError(
@@ -641,7 +650,7 @@ def _validate_gated_edges(*, regime: Regime, law: RegimeLaw) -> None:
     _fail_if_gated_edge_source_out_of_scope(regime)
 
     error_messages: list[str] = []
-    source_member_axis = regime.member_axis
+    source_members = regime.members
 
     for target_name, edge in law.gated_edges.items():
         prefix = f"the value-dependent transition into {target_name!r}: "
@@ -658,16 +667,17 @@ def _validate_gated_edges(*, regime: Regime, law: RegimeLaw) -> None:
         )
         if not edge.legs:
             error_messages.append(f"{prefix}must declare at least one leg.")
-        elif source_member_axis is None:
+        elif "self" in source_members:
+            # The member `"self"` declares its one leg under any key.
             if len(edge.legs) != 1:
                 error_messages.append(
                     f"{prefix}a singleton source regime must declare exactly one "
                     f"leg (got {sorted(edge.legs)})."
                 )
-        elif set(edge.legs) != set(source_member_axis):
+        elif set(edge.legs) != set(source_members):
             error_messages.append(
                 f"{prefix}the legs must be keyed by exactly the source "
-                f"members {sorted(source_member_axis)}; got "
+                f"members {sorted(source_members)}; got "
                 f"{sorted(edge.legs)}."
             )
 
@@ -1072,23 +1082,23 @@ def _validate_completeness(
     """
     error_messages: list[str] = []
 
-    if regime.member_axis is not None:
-        # A collective regime supplies a per-member `utility_<s>` in place
-        # of a single `utility`.
-        missing = [
-            s
-            for s in regime.member_axis
-            if f"utility_{s}" not in regime.decomposed_functions
-        ]
-        if missing:
-            error_messages.append(
-                "A collective regime must provide a per-member utility "
-                f"function for each member. Missing: "
-                f"{[f'utility_{s}' for s in missing]}.",
-            )
-    elif "utility" not in regime.decomposed_functions:
+    # Every member supplies its own `utility_<s>`; the member `"self"` supplies
+    # `utility`.
+    missing = [
+        name
+        for name in (
+            member_name(base="utility", member=member) for member in regime.members
+        )
+        if name not in regime.decomposed_functions
+    ]
+    if missing == ["utility"]:
         error_messages.append(
             "A 'utility' function must be provided in the functions dictionary.",
+        )
+    elif missing:
+        error_messages.append(
+            "A collective regime must provide a per-member utility "
+            f"function for each member. Missing: {missing}.",
         )
 
     error_messages.extend(

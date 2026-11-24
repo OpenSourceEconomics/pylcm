@@ -894,10 +894,11 @@ def _compile_edge_gate(
         target_deterministic_transitions=target_deterministic_transitions,
         edge_target=edge.target,
     )
-    target_component_names = (
-        tuple(member_name(base="V_target", member=s) for s in target_member_axis)
-        if target_member_axis is not None
-        else ("V_target",)
+    # A target without a member axis has the one member `"self"`, whose value
+    # component is `V_target`.
+    target_component_names = tuple(
+        member_name(base="V_target", member=member)
+        for member in target_member_axis or ("self",)
     )
 
     _fence_edge_consumer(

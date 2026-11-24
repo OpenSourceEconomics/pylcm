@@ -416,6 +416,7 @@ def _stage_channels(snapshot: dict, regimes: dict, nodes: dict) -> tuple[dict[st
         patterns[name] = pattern
         if name not in terminal:
             payload = {key: declaration.get(key) for key in ("states", "actions", "functions", "constraints", "koopmans_aggregator", "certainty_equivalent", "member_axis", "__routing_owner")}
+            payload["member_axis"] = _household_members(declaration)
             signatures[pattern].add(digest(_semantic_shape(payload)))
     keys = {pattern: digest(sorted(items))[:12] for pattern, items in signatures.items()}
     channels = {}
@@ -445,6 +446,16 @@ def _value_route_obligations(snapshot: dict, regimes: dict) -> tuple[dict[str, s
                 for fallback in references(fields(route).get("fallback")):
                     owners[fallback].add(role)
     return {name: json.dumps(sorted(roles)) for name, roles in owners.items()}, protected
+
+
+def _household_members(declaration: dict[str, Any]) -> Any:
+    """Return a household's declared members, `None` for an individual.
+
+    The one member "self" is the individual a plain utility function declares,
+    so a regime recording it reads exactly as one recording no members.
+    """
+    members = declaration.get("member_axis")
+    return None if not members or list(members) == ["self"] else members
 
 
 def adapt_snapshot(snapshot: dict[str, Any], *, name: str = "Constructed pylcm model") -> dict[str, Any]:
@@ -564,8 +575,10 @@ def adapt_snapshot(snapshot: dict[str, Any], *, name: str = "Constructed pylcm m
                 outputs[operator + "_dependencies"] = expression(value)
         if snapshot.get("shocks"):
             outputs["shock_distribution_dependencies"] = expression(snapshot["shocks"])
-        special = {key: declaration.get(key) for key in ("member_axis", "joint_transitions", "exit")
+        special = {key: declaration.get(key) for key in ("joint_transitions", "exit")
                    if declaration.get(key)}
+        if _household_members(declaration):
+            special = {"member_axis": declaration["member_axis"], **special}
         if special or regime in protected_value_routes:
             # Until each value/read/joint route is lowered, retaining all local
             # state axes is a safe advisory result, not semantic certification.
@@ -623,7 +636,7 @@ def adapt_snapshot(snapshot: dict[str, Any], *, name: str = "Constructed pylcm m
             replacements[parameter] = alias
             scalar_replacements[parameter] = alias
             external.add(alias)
-        role = {"actor": "individual" if not declaration.get("member_axis") else "collective:" + repr(declaration["member_axis"]),
+        role = {"actor": "individual" if not _household_members(declaration) else "collective:" + repr(declaration["member_axis"]),
                 "observations": ["original graph information"], "commitments": ["original action timing"],
                 "discount_boundary": "one original graph period"}
         program = {"id": regime, "when": "age in " + repr(nodes[regime]),

@@ -29,6 +29,7 @@ from _lcm.processes.joint_normal_lowering import (
     coordinate_names,
     joint_normal_declarations,
 )
+from _lcm.regime_building.collective import member_name
 from _lcm.regime_building.value_adapter import (
     AdaptableEntry,
     AdapterGrid,
@@ -121,13 +122,13 @@ def finalize_regimes(
         user_regimes=user_regimes, laws=laws, slot="certainty_equivalent"
     )
     # The published frame is one table over every regime, so the names its
-    # collective regimes claim are reserved for all of them.
+    # collective regimes claim are reserved for all of them. The member
+    # `"self"` publishes the ordinary `value` column, which reserves nothing.
     reserved_value_columns = frozenset(
-        f"value_{member}"
+        member_name(base="value", member=member)
         for regime in user_regimes.values()
-        if regime.member_axis is not None
-        for member in regime.member_axis
-    )
+        for member in regime.members
+    ) - {"value"}
     if value_grids_by_regime is None:
         value_grids_by_regime = bind_reading_regimes(
             value_grids=collect_adapter_grids(

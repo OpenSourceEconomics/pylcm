@@ -87,7 +87,7 @@ from _lcm.params.edges import (
     regime_kernel_params,
     user_path,
 )
-from _lcm.regime_building.collective import NO_ROLE
+from _lcm.regime_building.collective import role_code
 from _lcm.regime_building.gated_edges import (
     SOURCE_PARAMS,
     TARGET_PARAMS,
@@ -973,8 +973,11 @@ def _accepted_arg_names(func: _EdgeCallable) -> frozenset[str]:
 
 
 def _role_code(*, name: str | None, role_ids: Mapping[str, int]) -> int:
-    """Return the role code of a member name; `NO_ROLE` for a role-less leg."""
-    return NO_ROLE if name is None else role_ids[name]
+    """Return the role code of a member name; `NO_ROLE` for a role-less leg.
+
+    The member `"self"` occupies no role either, as `role_code` defines.
+    """
+    return role_code(name=name, role_ids=role_ids)
 
 
 def population_call(

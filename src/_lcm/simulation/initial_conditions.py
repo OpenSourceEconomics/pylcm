@@ -1292,18 +1292,19 @@ def _initial_own_member(
         (regime.member_names_to_ids for regime in regimes.values()),
         MappingProxyType({}),
     )
-    # A row of a regime whose only member is `"self"` carries `NO_ROLE`, the
-    # code an unseeded row already has.
-    member_codes = {
+    # The member `"self"` occupies no role: a row of a regime whose only member
+    # is `"self"` carries `NO_ROLE`, the code an unseeded row already has, so
+    # such a regime neither demands nor checks a role.
+    all_member_codes = {
         name: tuple(
-            role_code(name=member, role_ids=role_ids) for member in regime.member_axis
+            role_code(name=member, role_ids=role_ids) for member in regime.members
         )
         for name, regime in regimes.items()
-        if regime.member_axis is not None
     }
-    collective_names = [
-        name for name, codes in member_codes.items() if NO_ROLE not in codes
-    ]
+    member_codes = {
+        name: codes for name, codes in all_member_codes.items() if NO_ROLE not in codes
+    }
+    collective_names = list(member_codes)
     role_routing = frozenset(
         {
             name
@@ -1408,7 +1409,7 @@ def _initial_own_member(
             msg = (
                 f"Subjects starting in the collective regime {name!r} carry an "
                 "`own_member` that is not one of its members "
-                f"{regimes[name].member_axis}. Roles are model-wide codes, so "
+                f"{regimes[name].members}. Roles are model-wide codes, so "
                 "a valid code may still name a role this regime does not have."
             )
             raise InvalidInitialConditionsError(msg)

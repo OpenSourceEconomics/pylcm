@@ -397,7 +397,7 @@ def member_name(*, base: str, member: str) -> str:
 
 
 def build_role_vocabulary(
-    member_axis_by_regime: Mapping[RegimeName, tuple[str, ...] | None],
+    members_by_regime: Mapping[RegimeName, tuple[str, ...]],
 ) -> MappingProxyType[str, int]:
     """Assign one code to every role any regime of the model declares.
 
@@ -405,20 +405,21 @@ def build_role_vocabulary(
     between regimes, and comparing the role it carried in one against the roles
     another declares only means something if the codes agree. Regimes whose
     role names are disjoint therefore coexist, each simply using its own part
-    of the vocabulary.
+    of the vocabulary. The member `"self"` is no role, so a model whose
+    regimes all have the one member `"self"` has an empty vocabulary.
 
     Args:
-        member_axis_by_regime: Mapping of regime names to their member
-            tuples, or `None` for a singleton regime.
+        members_by_regime: Mapping of regime names to their member tuples.
 
     Returns:
         Immutable mapping of role name to code, in declaration order across
         regimes taken in their own order.
     """
     names: dict[str, None] = {}
-    for member_axis in member_axis_by_regime.values():
-        for name in member_axis or ():
-            names.setdefault(name, None)
+    for members in members_by_regime.values():
+        for name in members:
+            if name != "self":
+                names.setdefault(name, None)
     return MappingProxyType({name: code for code, name in enumerate(names)})
 
 

@@ -1557,6 +1557,15 @@ class Regime:
     """
 
     @property
+    def members(self) -> tuple[str, ...]:
+        """Names of the members whose values this regime carries.
+
+        A household's own members; the one member `"self"` for a regime declared
+        with a plain utility function.
+        """
+        return ("self",) if self.member_axis is None else self.member_axis
+
+    @property
     def derived_categorical_code_arrays(self) -> tuple[IntND, ...]:
         """Return the code arrays every stochastic law keeps for validation.
 

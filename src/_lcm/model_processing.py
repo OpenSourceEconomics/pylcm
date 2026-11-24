@@ -48,6 +48,7 @@ from _lcm.regime_building.broadcast import (
     root_functions,
     states_read_through_their_draw,
 )
+from _lcm.regime_building.collective import member_name
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.phases import (
@@ -627,9 +628,7 @@ def _validate_function_usage(
         direct.update(regime.derived_categoricals)
         direct.add("utility")
         direct.update(
-            ("utility",)
-            if regime.member_axis is None
-            else tuple(f"utility_{member}" for member in regime.member_axis)
+            member_name(base="utility", member=member) for member in regime.members
         )
         for phase in ("solve", "simulate"):
             functions = dict(complete.get_all_functions(phase=phase, law=laws[name]))

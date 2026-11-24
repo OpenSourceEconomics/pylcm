@@ -7,10 +7,11 @@ utility function as a household whose one member `"self"` carries Pareto weight
 simulated frame keeps the short names of a single.
 """
 
+import copy
 import functools
 from collections.abc import Callable
 from types import MappingProxyType
-from typing import Literal
+from typing import Literal, cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -18,7 +19,11 @@ import pandas as pd
 import pytest
 
 from _lcm.regime_building import processing
-from _lcm.regime_building.collective import NO_ROLE
+from _lcm.regime_building.collective import NO_ROLE, build_role_vocabulary
+from _lcm.simulation.gated_routing import _role_code
+from _lcm_regime_finder.model_adapter import adapt_snapshot
+from _lcm_regime_finder.model_snapshot import read_model
+from _lcm_regime_finder.records import JSONValue
 from lcm import (
     DiscreteGrid,
     Exit,
@@ -28,6 +33,7 @@ from lcm import (
     Model,
     Regime,
 )
+from lcm.exceptions import InvalidInitialConditionsError
 from lcm.execution import ExecutionConfig
 from lcm.exits import Unilateral
 from lcm.result import SimulationResult
@@ -463,3 +469,156 @@ def test_switch_on_gives_the_engine_regime_the_member_self() -> None:
         model = taste_shocks_toy.get_model()
 
     assert model._regimes["alive"].member_axis == ("self",)
+
+
+def _build(*, name: str, on_household_path: bool) -> Case:
+    """Build the case afresh with the switch set, without solving it."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(processing, "_SINGLE_ON_HOUSEHOLD_PATH", on_household_path)
+        return _CASES[name]()
+
+
+_GATE_CASES = (
+    "gate_household_to_single",
+    "gate_single_to_household_member_route",
+    "gate_single_to_household_roles",
+    "gate_single_to_single",
+)
+
+
+def test_role_vocabulary_gives_the_member_self_no_role() -> None:
+    """The member `"self"` is no role; a household's members are, in order."""
+    vocabulary = build_role_vocabulary(
+        {"single": ("self",), "couple": ("f", "m"), "widow": ("self",)}
+    )
+
+    assert dict(vocabulary) == {"f": 0, "m": 1}
+
+
+def test_gated_route_of_the_member_self_carries_no_role() -> None:
+    """A leg naming the member `"self"` routes a row with the no-role code."""
+    assert _role_code(name="self", role_ids={"f": 0, "m": 1}) == NO_ROLE
+
+
+@pytest.mark.parametrize("name", sorted(_CASES))
+def test_switch_on_keeps_the_params_template(name: str) -> None:
+    """A single's parameters keep their short keys, such as `utility__<name>`."""
+    single = _build(name=name, on_household_path=False)[0].get_params_template()
+
+    template = _build(name=name, on_household_path=True)[0].get_params_template()
+
+    assert template == single
+
+
+def _snapshot_records(model: Model) -> dict[str, JSONValue]:
+    """The regime finder's records of a model, without the capture's timings."""
+    records = read_model(model)
+    del records["capture_report"]
+    return records
+
+
+@pytest.mark.parametrize("name", _GATE_CASES)
+def test_switch_on_keeps_the_regime_finder_records(name: str) -> None:
+    """The regime finder records a model the same with the switch on or off."""
+    single = _snapshot_records(_build(name=name, on_household_path=False)[0])
+
+    records = _snapshot_records(_build(name=name, on_household_path=True)[0])
+
+    assert records == single
+
+
+def _adapted_without_input_digest(snapshot: dict[str, JSONValue]) -> JSONValue:
+    """The regime finder's problem for a snapshot, less the snapshot's own digest."""
+    problem = adapt_snapshot(snapshot)
+    del problem["source_adapter"]["snapshot_sha256"]
+    return problem
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["gate_household_to_single", "gate_single_to_single", "single_exit_each_action"],
+)
+def test_regime_finder_reads_a_recorded_member_self_as_an_individual(
+    name: str,
+) -> None:
+    """A regime recorded with the one member `"self"` adapts as an individual."""
+    snapshot = read_model(_build(name=name, on_household_path=False)[0])
+    with_self = copy.deepcopy(snapshot)
+    for regime in cast(
+        "dict[str, dict[str, dict[str, JSONValue]]]", with_self["user_regimes"]
+    ).values():
+        if regime["fields"].get("member_axis") is None:
+            regime["fields"]["member_axis"] = ["self"]
+
+    adapted = _adapted_without_input_digest(with_self)
+
+    assert adapted == _adapted_without_input_digest(snapshot)
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["gate_single_to_single", "single_exit_each_action", "single_exit_at_optimum"],
+)
+def test_switch_on_simulates_a_single_with_value_and_no_own_member(
+    *,
+    name: str,
+    runs: dict[tuple[str, bool], tuple[SolutionResult, SimulationResult]],
+) -> None:
+    """A model of singles publishes the column `value` and no `own_member`."""
+    columns = set(runs[name, True][1].to_dataframe().columns)
+
+    assert ("value" in columns, "own_member" in columns) == (True, False)
+
+
+def test_switch_on_names_the_gate_component_of_a_single_target_v_target() -> None:
+    """The gated edge into a single reads the target's value as `V_target`."""
+    model = _build(name="gate_single_to_single", on_household_path=True)[0]
+    folds = model._regimes["source"].gated_edges["target"].folds_by_period
+
+    assert {fold.channels.component_names for fold in folds.values()} == {("V_target",)}
+
+
+def _without_own_member(initial_conditions: InitialConditions) -> InitialConditions:
+    return {k: v for k, v in initial_conditions.items() if k != "own_member"}
+
+
+@pytest.mark.parametrize("on_household_path", [False, True])
+def test_singles_start_without_own_member(*, on_household_path: bool) -> None:
+    """Subjects that all start single need no `own_member`."""
+    model, params, initial_conditions = _build(
+        name="collective_household", on_household_path=on_household_path
+    )
+    singles = {k: v[:32] for k, v in _without_own_member(initial_conditions).items()}
+
+    model.validate_initial_conditions(initial_conditions=singles, params=params)
+
+
+@pytest.mark.parametrize("on_household_path", [False, True])
+def test_a_household_start_still_requires_own_member(
+    *, on_household_path: bool
+) -> None:
+    """Subjects starting in a couple that can dissolve must name their role."""
+    model, params, initial_conditions = _build(
+        name="collective_household", on_household_path=on_household_path
+    )
+
+    with pytest.raises(InvalidInitialConditionsError, match="need an `own_member`"):
+        model.validate_initial_conditions(
+            initial_conditions=_without_own_member(initial_conditions), params=params
+        )
+
+
+@pytest.mark.parametrize("on_household_path", [False, True])
+def test_a_single_start_is_not_checked_against_a_role(
+    *, on_household_path: bool
+) -> None:
+    """The member `"self"` is no role, so a single's row is not role-checked."""
+    model, params, initial_conditions = _build(
+        name="collective_household", on_household_path=on_household_path
+    )
+    wives = dict(initial_conditions)
+    wives["own_member"] = jnp.full_like(
+        initial_conditions["own_member"], model.member_names_to_ids["f"]
+    )
+
+    model.validate_initial_conditions(initial_conditions=wives, params=params)

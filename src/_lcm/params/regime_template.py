@@ -40,7 +40,7 @@ from _lcm.params.numeric_roles import (
 )
 from _lcm.params.temporal import validate_temporal_variants
 from _lcm.processes import _ContinuousStochasticProcess
-from _lcm.regime_building.collective import PARETO_OBJECTIVE_ENTRY
+from _lcm.regime_building.collective import PARETO_OBJECTIVE_ENTRY, member_name
 from _lcm.regime_building.gated_edges import EDGE_PERIOD_CONTEXT_ARGS
 from _lcm.regime_building.transitions import collect_state_transitions
 from _lcm.regime_law import DecomposedTransition, RegimeLaw
@@ -371,7 +371,7 @@ def _undemanded_exit_helpers(
     required = set()
     protected = (set(template_functions) - user_regime.decomposed_functions.keys()) | {
         "utility",
-        *(f"utility_{member}" for member in user_regime.member_axis or ()),
+        *(member_name(base="utility", member=member) for member in user_regime.members),
         *user_regime.output_only_functions,
         *user_regime.derived_categoricals,
         *current_iid_helpers,
@@ -903,9 +903,8 @@ def _wired_names(user_regime: UserRegime) -> frozenset[ReferenceName]:
         user_regime: User-form `Regime` instance.
 
     Returns:
-        Set of the regime's states, actions and functions, `period`, `age` and
-        `CE`, the code `<name>_code` of each discrete variable, plus a collective
-        regime's engine-wired aggregator inputs.
+        Set of the regime's states, actions and functions, `period`, `age`,
+        `CE` and `utility`, and the code `<name>_code` of each discrete variable.
 
     """
     variables = {
@@ -916,13 +915,12 @@ def _wired_names(user_regime: UserRegime) -> frozenset[ReferenceName]:
         "age",
         "CE",
     }
-    if user_regime.member_axis is not None:
-        # A collective regime carries per-member
-        # `utility_<s>` functions instead of a singleton `utility`, but the
-        # Bellman aggregator H still takes a `utility` argument — engine-wired
-        # (the stacked per-member utilities), exactly like `E_next_V` —
-        # so the name must not surface as a user-facing param.
-        variables.add("utility")
+    # `utility` never surfaces as a user-facing param. The member `"self"`
+    # names its utility function `utility`; a household carries per-member
+    # `utility_<s>` functions, but the Bellman aggregator H still takes a
+    # `utility` argument — engine-wired (the stacked per-member utilities),
+    # exactly like `E_next_V`.
+    variables.add("utility")
     # `<name>_code` reads the code of the discrete variable `<name>`.
     variables.update(
         f"{name}_code"

@@ -42,6 +42,7 @@ from _lcm.exits import exit_functions, exit_without_pruned_states
 from _lcm.processes import _ContinuousStochasticProcess, _IIDProcess
 from _lcm.reachability import PhaseName, candidate_targets_from_transition
 from _lcm.regime_building.age_specialization import resolve_node
+from _lcm.regime_building.collective import member_name
 from _lcm.regime_building.conditional_actions import (
     add_conditional_action_pins,
     bind_specialized_annotations,
@@ -723,10 +724,8 @@ def _valuation_roots(
         name: cast("UserFunction", _for_phase(value=func, phase=phase))
         for name, func in regime.decomposed_functions.items()
     }
-    utility_names = (
-        tuple(f"utility_{member}" for member in regime.member_axis)
-        if regime.member_axis is not None
-        else ("utility",)
+    utility_names = tuple(
+        member_name(base="utility", member=member) for member in regime.members
     )
     roots = {
         f"__utility__{name}": functions[name]

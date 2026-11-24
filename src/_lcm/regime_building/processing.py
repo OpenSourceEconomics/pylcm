@@ -1691,7 +1691,7 @@ class _CanonicalRegimeBuilder:
         # a simulated row's role means the same thing wherever it goes.
         member_names_to_ids = build_role_vocabulary(
             {
-                name: regime.member_axis
+                name: regime.members
                 for name, regime in self.representative_user_regimes.items()
             }
         )
@@ -3202,9 +3202,9 @@ def _fail_if_collective_regime_targets_unsupported(
     routing across member layouts (dissolution into `single_f`/`single_m`,
     marriage formation) requires a declared gated edge.
     Each returns a continuation in the original source's member layout.
-    An ordinary non-terminal transition whose reachable target declares a
-    different `member_axis` tuple is rejected here. Both-`None` (the singleton default)
-    never enters the comparison, so today's path is untouched.
+    An ordinary non-terminal transition whose reachable target declares
+    different `members` is rejected here. Two regimes whose one member is
+    `"self"` have the same members.
 
     Args:
         user_regimes: Mapping of regime names to finalized user regimes.
@@ -3224,15 +3224,13 @@ def _fail_if_collective_regime_targets_unsupported(
             target_regime = user_regimes.get(target_regime_name)
             if target_regime is None:
                 continue
-            if user_regime.member_axis is None and target_regime.member_axis is None:
-                continue
             # Declared gates return source-owned continuation values through
             # explicit member routes. Ordinary transitions still require
             # identical layouts; declaration of another target grants no
             # exemption to this one.
             if target_regime_name in laws[regime_name].gated_edges:
                 continue
-            if user_regime.member_axis != target_regime.member_axis:
+            if user_regime.members != target_regime.members:
                 msg = (
                     f"Regime '{regime_name}' (member_axis="
                     f"{user_regime.member_axis}) can reach regime "
@@ -3528,8 +3526,11 @@ def _fail_if_target_member_invalid(
     target_name: RegimeName,
     target_member: str | None,
 ) -> None:
-    """Reject an edge leg whose OPEN-branch target component is inconsistent."""
-    if target.member_axis is None:
+    """Reject an edge leg whose OPEN-branch target component is inconsistent.
+
+    A leg names the member `"self"` by naming no target member.
+    """
+    if "self" in target.members:
         if target_member is not None:
             msg = (
                 f"{leg_prefix}names target_member "
@@ -3540,14 +3541,14 @@ def _fail_if_target_member_invalid(
     elif target_member is None:
         msg = (
             f"{leg_prefix}the target regime '{target_name}' is collective "
-            f"(members={target.member_axis}); the leg must name which "
+            f"(members={target.members}); the leg must name which "
             "component the gate-open branch takes via `target_member=...`."
         )
         raise ModelInitializationError(msg)
-    elif target_member not in target.member_axis:
+    elif target_member not in target.members:
         msg = (
             f"{leg_prefix}names target_member '{target_member}', "
-            f"which is not one of the target's members {target.member_axis}."
+            f"which is not one of the target's members {target.members}."
         )
         raise ModelInitializationError(msg)
 
@@ -3586,7 +3587,8 @@ def _fail_if_ref_invalid(
             f"Known regimes: {sorted(user_regimes)}."
         )
         raise ModelInitializationError(msg)
-    if reference.member_axis is None:
+    # A reference names the member `"self"` by naming no member.
+    if "self" in reference.members:
         if ref.member is not None:
             msg = (
                 f"{prefix}names member '{ref.member}', but the "
@@ -3596,14 +3598,14 @@ def _fail_if_ref_invalid(
     elif ref.member is None:
         msg = (
             f"{prefix}the reference regime '{ref.regime}' is collective "
-            f"(members={reference.member_axis}); name whose value to read "
+            f"(members={reference.members}); name whose value to read "
             "via `member=...`."
         )
         raise ModelInitializationError(msg)
-    elif ref.member not in reference.member_axis:
+    elif ref.member not in reference.members:
         msg = (
             f"{prefix}names member '{ref.member}', not one of the "
-            f"reference regime's members {reference.member_axis}."
+            f"reference regime's members {reference.members}."
         )
         raise ModelInitializationError(msg)
     if projection_phase == "simulate":
