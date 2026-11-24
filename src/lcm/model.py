@@ -4489,7 +4489,7 @@ class Model:
                 or `PhysicalValues` entry vector. Its tag applies at each row's
                 actual entry period, before fresh draws in subsequent periods.
                 A subject starting in a COLLECTIVE regime that can reach a
-                value-dependent transition declaring more than one route --- its
+                gated transition declaring more than one route --- its
                 own, or one further along --- also needs an `"own_member"`
                 entry naming the role it occupies, as an integer code from the
                 model's role vocabulary (`model.member_names_to_ids`):

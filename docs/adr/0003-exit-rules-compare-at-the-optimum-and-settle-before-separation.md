@@ -1,6 +1,8 @@
 # 3. Exit rules may compare at the optimum and settle before separation
 
-Status: accepted on 2026-11-19. Implemented for two-member regimes with grid search.
+Status: accepted on 2026-11-19; superseded by
+[ADR 4](0004-one-noun-members-and-the-rule-of-the-deciding-regime.md), which keeps this
+record in force in full. Implemented for two-member regimes with grid search.
 
 ## Context
 

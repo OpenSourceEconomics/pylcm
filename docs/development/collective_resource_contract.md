@@ -4,10 +4,10 @@ title: Resource contract for collective and gated models
 
 # Resource contract for collective and gated models
 
-A collective regime and a value-dependent transition each buy something a singleton
-model does not have, and each costs something a singleton model does not pay. This page
-names the workloads those costs are measured on, says which axis each one is allowed to
-grow along, and states what a regression is.
+A collective regime, an exit and a gated transition each buy something a singleton model
+does not have, and each costs something a singleton model does not pay. This page names
+the workloads those costs are measured on, says which axis each one is allowed to grow
+along, and states what a regression is.
 
 It is a contract, not a report: the numbers live in the ASV history, and what is written
 down here is the *shape* each cost is allowed to have. A change that moves a level is

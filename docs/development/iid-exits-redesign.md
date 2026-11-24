@@ -147,8 +147,9 @@ Every policy query returns the values of one common selected action. `Raw`,
 `Participating` and `Full` are distinct query identities, and only a regime's own
 occupants and publication read `Full`. A consent target reads `Participating`; every
 other exit target, including a formed couple's own, reads `Raw`
-([ADR 0002](../adr/0002-regimes-share-problems-and-read-stored-outside-values.md)).
-Same-period query consumers belong to the query DAG and buffer lifetime graph.
+([ADR 0004](../adr/0004-one-noun-members-and-the-rule-of-the-deciding-regime.md)).
+Within one step a `Participating` query reads `Raw` queries only. Same-period query
+consumers belong to the query DAG and buffer lifetime graph.
 
 Ordinary feasibility precedes participation. Dissolution participation is weak,
 formation consent is strict, zero-weight members retain vetoes, and stable global action
@@ -359,16 +360,12 @@ discrete-action combination, then append one source taste component per exit in
 declaration order. The source regime's existing taste address supplies that one roster;
 continuous/global stay action IDs do not create additional independent tastes. Solve
 takes the logsum over admitted stay-combination maxima and admitted exit payoffs.
-Built-in dissolution (`unilateral` and `mutual`) admits its exit only when the kept stay
-set is empty; an exit roster position is masked otherwise. Consent admits formation only
-after its existing strict Raw comparisons pass. Simulation selects the route with the
-same source draw and publishes the selected unshocked value. Target taste remains hidden
-at the source, priced at its own logsum, then drawn at the destination address in its
-acting pass. An arbitrary custom Full selector is not generally an argmax and therefore
-has no canonical logsum integration; source EV1 with such a selector is unsupported and
-explicitly refused. This does not prevent a custom source rule from reading a
-canonically priced hidden target EV1 policy. Collective EV1 keeps its existing
-capability refusal.
+Built-in dissolution (`Unilateral` and `MutualConsent`) admits its exit only when the
+kept stay set is empty; an exit roster position is masked otherwise. Consent admits
+formation only after its existing strict Raw comparisons pass. Simulation selects the
+route with the same source draw and publishes the selected unshocked value. Target taste
+remains hidden at the source, priced at its own logsum, then drawn at the destination
+address in its acting pass. A collective regime with an exit refuses EV1 taste shocks.
 
 Keep target prescribed-policy information separate from caller pricing information.
 Additional caller knowledge does not change the target's participation policy. Evaluate

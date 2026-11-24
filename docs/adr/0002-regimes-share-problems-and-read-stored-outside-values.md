@@ -1,11 +1,8 @@
 # 2. Regimes share problems and read stored outside values
 
-Status: accepted on 2026-11-17. The engine step is implemented for the solve, except
-that each reader tabulates its destinations itself. The language step is implemented: a
-regime may hold a shared `Problem`, lowered at construction to the regime it would
-declare itself; nothing in the engine shares work between holders yet. The
-`Participating` participation read is kept until a regime's value can be read at
-observed shocks.
+Status: accepted on 2026-11-17; superseded by
+[ADR 4](0004-one-noun-members-and-the-rule-of-the-deciding-regime.md), which lists the
+sections of this record that remain in force.
 
 ## Context
 

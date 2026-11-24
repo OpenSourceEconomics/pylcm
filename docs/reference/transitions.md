@@ -97,7 +97,7 @@ and the derived targets. A law over all targets — a function, a
 `DeterministicTransition`, a full-vector `StochasticTransition`, or a `ByAge` with any
 such case — names none, so it requires `targets`.
 
-`gates={target: Gate(...)}` makes the transition into a target value-dependent: the law
+`gates={target: Gate(...)}` makes the transition into a target state-dependent: the law
 supplies the probability of reaching the target as for any other destination, and the
 target's [`Gate`](collective_regimes.md#api-gate) decides whether a row stays there or
 takes its route's fallback. One gate per target holds at every age the target is reached

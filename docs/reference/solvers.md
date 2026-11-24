@@ -127,7 +127,7 @@ internal IID node state of every regime that reads the group, `GridSearch` reade
 included, and the continuation integrates that axis with the rule's weights. Every
 shape the node-state route supports is therefore supported with `shocks=` too: several
 states, deterministic discrete states carried into the terminal, discrete actions,
-chains of endogenous-grid regimes over several dates, shocks in resources, and a
+chains of endogenous-grid regimes over several periods, shocks in resources, and a
 literal savings-grid floor. A shock that enters utility other than through resources is
 refused; see [process states in utility](#egm-process-utility). Groups read only by
 `GridSearch` regimes keep the integrated current-IID route. A plain `EGM` regime

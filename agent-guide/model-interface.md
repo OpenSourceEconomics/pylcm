@@ -264,10 +264,13 @@ booleans as array indices inside JIT. Use `jnp.int32(...)` to cast.
 
 ### Collective regimes and value-dependent choice
 
-A regime whose utility is a `CollectiveUtility` has **members** — the `utilities`
-keys, in insertion order, which fix the trailing axis of `V` and of every published
-array. Everything is declared in a slot that already exists: the regime's utility, and
-the `Transition` on its `Model(edges=...)` entry:
+Every regime has **members**: `Regime.members` is `("self",)` for a regime declared
+with a plain utility function, and the `utilities` keys of a `CollectiveUtility`, in
+insertion order, for a household; those fix the trailing axis of `V` and of every
+published array. A household may not name a member `"self"`. `Regime.member_axis` is
+the engine's household marker (`None` for a plain utility). Everything is declared in a
+slot that already exists: the regime's utility, its `exit`, and the `Transition` on its
+`Model(edges=...)` entry:
 
 ```python
 Regime(
@@ -318,8 +321,16 @@ Model(
   when the `Gate` is declared, and `Gate` takes no `references`. A move decided by
   comparing values is an `Exit` in `Regime(exit=...)` of the regime that decides:
   formation with a `Consent` rule on the single's regime, dissolution with `Unilateral`
-  or `MutualConsent` on the household's. The Boolean-dtype requirement is checked **at evaluation**, i.e. on the
-  first `solve()`, not at build.
+  or `MutualConsent` on the household's. The Boolean-dtype requirement is checked **at
+  evaluation**, i.e. on the first `solve()`, not at build.
+- An exit's payoff is the destination's problem value at the projected state, without
+  the destination's own exit; under `Consent` it is the formed household's staying
+  value. Within one step a rule read through a staying value reads problem values only;
+  a longer chain is refused. See
+  `docs/adr/0004-one-noun-members-and-the-rule-of-the-deciding-regime.md`.
+- A household admits `taste_shocks` only when exactly one member has a positive Pareto
+  weight (the decider), and not with an `exit`, with `shocks`, or when another regime's
+  exit reads its decision.
 - `ParetoObjective(weights=...)` scalarizes the household; a weight may read the
   regime's states and `period`/`age`, never an action. Its other arguments become free
   parameters under the `pareto_objective` key. Omit it for equal weights.

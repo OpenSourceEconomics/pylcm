@@ -38,7 +38,7 @@ lcm/
 ├── branch_aggregation.py ← outer branch-aggregation configuration (re-export façade)
 ├── case_piece.py        ← case_boundary, piece, piecewise_affine, affine_breakpoint
 ├── certainty_equivalent.py ← certainty-equivalent classes (re-export façade)
-├── collective.py        ← collective and value-dependent choice declarations
+├── collective.py        ← collective utility, Pareto objective and gate declarations
 ├── condition.py         ← lcm.ref and the declared-condition vocabulary
 ├── consumption_savings_regime.py ← specialized consumption-savings regime declarations
 ├── execution.py         ← ExecutionConfig

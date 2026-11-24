@@ -6,8 +6,8 @@ title: Households and value-dependent choice
 
 A single decision maker maximizes her own value. A household does not: it takes one
 action for two people, it is only viable while both of them want it, and whether it
-forms or ends depends on what each member would be worth outside it. Two declarations
-cover the household itself, and each goes in a slot an ordinary model already has.
+forms or ends depends on what each member would be worth outside it. Three declarations
+cover it, and each goes in a slot an ordinary model already has.
 
 | Declaration         | Goes in                 | Says                                                             |
 | ------------------- | ----------------------- | ---------------------------------------------------------------- |
@@ -15,10 +15,10 @@ cover the household itself, and each goes in a slot an ordinary model already ha
 | `Gate`              | `Transition(gates=...)` | which branch within a target, from the landing state             |
 | `Exit`              | `Regime(exit=...)`      | formation (with `Consent`) and dissolution, from compared values |
 
-`ProjectedRegimeValue` reads another regime's value in the *same* period, for a route's
-fallback. A move decided by comparing values is not a `Gate`: it is an `Exit` of the
-regime that decides. A household forms through a single's `Exit` with a `Consent` rule,
-and dissolves through the household's own `Exit`.
+`ProjectedRegimeValue` reads another regime's value in the period a gated row lands in,
+for a route's fallback. A move decided by comparing values is not a `Gate`: it is an
+`Exit` of the regime that decides. A household forms through a single's `Exit` with a
+`Consent` rule, and dissolves through the household's own `Exit`.
 
 The complete worked model is `lcm_examples.collective_household`. This page walks
 through the pieces; the exact declaration contracts are in
@@ -513,20 +513,20 @@ falls between the target's nodes:
 
 ## Simulating: every row carries its own role
 
-Member identity is per subject, not per call. A row's role picks its route on a
-value-dependent transition; the branch it takes then sets the role it carries onward.
+Member identity is per subject, not per call. A row's role picks its route on a gated
+transition; the branch it takes then sets the role it carries onward.
 
 - A subject starting in a **singleton** regime has no role.
 - A subject starting in a **collective** regime declares one, through
   `initial_conditions["own_member"]`, whenever a route it can still reach turns on the
   role — that is, whenever some collective regime in the starting regime's forward
-  closure declares a value-dependent transition with more than one route. A row keeps
-  its role across an ordinary regime transition, so a two-leg transition the cohort runs
-  into later counts; one in a regime the cohort can never arrive at does not, and no
-  seed is required for it.
+  closure declares a gated transition with more than one route. A row keeps its role
+  across an ordinary regime transition, so a two-leg transition the cohort runs into
+  later counts; one in a regime the cohort can never arrive at does not, and no seed is
+  required for it.
 - Entering a collective regime through `roles` sets the declared role, and through a
-  value-dependent transition the route's `target_member`; leaving through the closed
-  branch sets it from the fallback's `member`, or clears it for a singleton destination.
+  gated transition the route's `target_member`; leaving through the closed branch sets
+  it from the fallback's `member`, or clears it for a singleton destination.
 
 ```python
 initial_conditions = {

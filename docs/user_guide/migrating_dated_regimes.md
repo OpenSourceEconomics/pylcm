@@ -263,9 +263,9 @@ out. See
 ## Declare a value-dependent decision as an exit
 
 Use `Regime(exit=...)` when a subject chooses whether to leave **in the current
-period**, before its final action. The exit target is a same-period Participating policy
-problem at the declared projection. This singleton fragment prices a target without
-observing its offer:
+period**, before its final action. The payoff of leaving is the destination's problem
+value at the declared projection, without the destination's own exit. This singleton
+fragment prices a target without observing its offer:
 
 ```python
 from lcm import Exit, ExitTarget, Unilateral
@@ -308,6 +308,11 @@ A current exit declares one of the built-in rules, `Unilateral` or `MutualConsen
 `Consent` for formation. The rule decides which members are willing to stay; the
 household then takes its Pareto-weighted argmax among the kept actions.
 
+A regime declares at most one exit, as `Regime(exit=Exit(...))`; the mapping
+`Regime(exits={name: Exit(...)})` is removed. The rule strings `"unilateral"` and
+`"mutual"` are `Unilateral()` and `MutualConsent()`. Custom rule callables and
+`RuleResult` are removed, with no replacement.
+
 ### Gates route on states only
 
 Value-reading gates, `Gate.references` and the dissolution-flag artifact are removed.
@@ -327,8 +332,6 @@ See the executable declaration examples in `lcm_examples.collective_regimes` and
 [IID shock reference](../reference/shocks.md), and the
 [stochastic-process guide](continuous_stochastic_processes.md) for declarations and
 simulation draw settings.
-
-(migrating-edge-parameters)=
 
 (arrival-participation-check)=
 
@@ -355,6 +358,8 @@ These decisions have no replacement:
 # Removed: raises TypeError. Shown only to identify code that needs migrating.
 Transition(law=..., participation={"couple": ParticipationCheck(...)})
 ```
+
+(migrating-edge-parameters)=
 
 ## Move transition parameters under `edges`
 

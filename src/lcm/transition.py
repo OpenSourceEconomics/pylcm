@@ -225,7 +225,7 @@ class Transition:
     outgoing edge; the edge is the law there. It must select every age with more
     than one. With derived targets, an age no case selects has no edge.
 
-    `gates` makes the transition into a target value-dependent: the law still
+    `gates` makes the transition into a target state-dependent: the law still
     supplies the probability of reaching it, and the target's `Gate` decides
     whether a row stays there or takes its route's fallback. `roles` is the
     plain edge from a singleton source into a collective target: it names the
@@ -249,7 +249,7 @@ class Transition:
     gates: Mapping[RegimeName, Gate] = field(
         default_factory=lambda: MappingProxyType({})
     )
-    """One `Gate` per value-dependent destination, keyed by that destination."""
+    """One `Gate` per gated destination, keyed by that destination."""
 
     roles: Mapping[RegimeName, str] = field(
         default_factory=lambda: MappingProxyType({})

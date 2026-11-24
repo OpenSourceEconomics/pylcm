@@ -206,8 +206,8 @@ class MemberRoute:
     """
 
     fallback: ProjectedRegimeValue | Phased[ProjectedRegimeValue, ProjectedRegimeValue]
-    """The gate-closed branch: a reference regime's same-period value at a
-    projection from the TARGET regime's grid.
+    """The gate-closed branch: a reference regime's value in the landing period,
+    at a projection from the TARGET regime's grid.
 
     A bare `ProjectedRegimeValue` is both what the branch is worth and where it
     puts a row. `Phased(solve=..., simulate=...)` separates them, because what

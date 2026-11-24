@@ -344,11 +344,11 @@ class Regime:
     `CollectiveUtility.utilities`, whose keys are the members in the order they
     are written.
 
-    `None` (the default) is the singleton case: the regime has one implicit
-    member and one value function. A non-`None` tuple declares a
-    *collective regime*: a couple (or other multi-party household) that solves
+    `None` (the default) is the singleton case: the regime has the single
+    member `"self"` and one value function. A non-`None` tuple declares a
+    *collective regime*: a household, such as a couple, that solves
     one household argmax but reads off a per-member value at that common
-    argmax, with value-gated regime routing (consent / dissolution).
+    argmax, and whose exits compare each member's value (consent, dissolution).
 
     A collective regime's `decomposed_functions` view carries a
     per-member `utility_<s>` for each member `<s>`, together with a
@@ -361,7 +361,8 @@ class Regime:
     carrying a positive weight, nonlinear certainty equivalents, and
     non-GridSearch solvers on a collective regime raise `NotImplementedError`.
 
-    A participation `Exit` prices the current outside alternatives.
+    An `Exit` compares each member's value with its outside value in the current
+    period.
 
     Two things to know before simulating one:
 

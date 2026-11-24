@@ -278,8 +278,14 @@ required by EGM-family solvers. See
 most one exit; its parameters live under `exit`. Scheduled next-period transitions
 remain in `Model(edges=...)`.
 
-- `Exit(targets=..., rule=..., available=None, observes=())` names each source member's
-  destination. A singleton uses the key `"self"`.
+- `Exit(targets=..., rule=..., available=None, observes=(), nodes=None)` names each
+  source member's destination. A singleton uses the key `"self"`. `nodes`, a
+  `MonteCarlo` or `QuasiMonteCarlo` rule, applies when the regime is solved: every shock
+  group of the choice that the regime's own stay problem does not read, observed target
+  information included, is drawn `n` times from its law at the current state, and the
+  same draws serve every row of the groups the stay problem reads, which keep their
+  declared nodes. `None` integrates over the full product. Simulation uses the realized
+  shocks.
 - `ExitTarget(regime=..., projection=..., role=None, utility_adjustment=None)` names a
   real destination and maps its complete current state. A collective destination
   requires its member `role`. The adjustment reads source states and parameters and
@@ -433,9 +439,9 @@ and runtime-bound query status adapters.
 
 Collective current-IID decisions select one common action and route exits at each node,
 then integrate each member's selected value. Stored values retain the member axis and
-carry no current-shock axis. This also applies to collective regimes without exits.
-Collective EV1 tastes and custom source selectors combined with source EV1 tastes are
-explicitly refused.
+carry no current-shock axis. This also applies to collective regimes without exits. EV1
+taste shocks on a collective regime with an exit or with current shocks are refused; see
+[`ExtremeValueTasteShocks`](#api-extreme-value-taste-shocks).
 
 (api-extreme-value-taste-shocks)=
 
@@ -470,10 +476,16 @@ candidates and therefore need not reproduce its off-grid solve value or choice
 probabilities; see [Solvers and capabilities](solvers.md#api-dcegm).
 
 This feature requires at least one discrete action and is implemented by `GridSearch`
-and `DCEGM`. It is rejected for `NEGM`, `NBEGM`, and `NNBEGM`; on a collective regime;
-on the source regime of a gated transition; and together with a nonlinear certainty
-equivalent. These are semantic boundaries, not ignored options: the declaration is
-rejected during `Regime` declaration or `Model` construction, before solve.
+and `DCEGM`. A collective regime admits it when exactly one member has a positive Pareto
+weight; that member decides, and every other member's value is the mean of its action
+values under the decider's choice probabilities (see
+[Collective regimes](collective_regimes.md)). It is rejected for `NEGM`, `NBEGM`, and
+`NNBEGM`; on a collective regime with more than one positive weight, with an `exit` or
+with `shocks`, or whose decision another regime's exit reads; on the source regime of a
+gated transition; and together with a nonlinear certainty equivalent. These are semantic
+boundaries, not ignored options: the declaration is rejected during `Regime` declaration
+or `Model` construction, before solve, except that a weight declared as a function is
+checked at every solve.
 
 (api-euler-gamma)=
 

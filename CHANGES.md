@@ -70,8 +70,21 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   with the couple's `Unilateral` exit; its values change. Values, model fingerprints and
   saved results of models without a participation check are unchanged. A saved solution
   that holds participation surfaces no longer loads; solve the model again.
-- The `bench_collective_household` benchmarks measure the new example; their earlier
-  history measured the participation-check form.
+- The `bench_collective_household` benchmarks measure the example in this form, so
+  their history breaks here: earlier entries measured the participation-check form.
+- See [ADR 4](docs/adr/0004-one-noun-members-and-the-rule-of-the-deciding-regime.md)
+  for what is not shipped.
+
+### A regime declares at most one exit, with a built-in rule
+
+- `Regime(exit=Exit(...))` replaces `Regime(exits={name: Exit(...)})`. The rule strings
+  `"unilateral"` and `"mutual"` are `Unilateral()` and `MutualConsent()`; custom rule
+  callables and `RuleResult` are removed, with no replacement.
+- `Exit(nodes=MonteCarlo(...))` or `QuasiMonteCarlo(...)` replaces, in the solve, every
+  shock group of the exit choice that the regime's own stay problem does not read by
+  `n` draws from its law at the current state, shared by every row of the groups the
+  stay problem reads. The default `None` integrates over the full product. Simulation
+  uses the realized shocks.
 
 ### `GridSearch(lottery_contraction=True)` contracts in exits and collective regimes
 
@@ -178,6 +191,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   and one more node that carries the mass of all the others at the value of staying,
   instead of every node. Values agree with the full enumeration to rounding; simulation
   is unchanged.
+- Within one step, a rule for staying that is read through another regime's staying
+  value reads problem values only; a longer chain is refused. No shipped model has one.
 
 ### Discrete limited commitment
 
@@ -1441,7 +1456,8 @@ unchanged. The solvers keep the derivative rules they use themselves.
   itself; a consuming model admits the descriptor only when it names exactly the
   published fields with the dtypes they carry, and a restored archive reads its
   diagnostics without a model. A diagnostic omission without a descriptor is refused
-  on both save and load. The solution-format version is 2.
+  on both save and load. The solution-format version is 3; an archive of version 2 does
+  not load.
 - A result restored by `load_solution` can be saved again without a model. Its payloads
   are re-read from the archive they came from and verified against their checksums and
   descriptors before they are written to the new archive.
