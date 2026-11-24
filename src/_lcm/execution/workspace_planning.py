@@ -17,7 +17,11 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast
 
-from _lcm.execution.compiler_memory import CompilerMemoryReport, MemoryAnalyzable
+from _lcm.execution.compiler_memory import (
+    CompilerMemoryReport,
+    MemoryAnalyzable,
+    is_device_out_of_memory,
+)
 from _lcm.execution.core_program import ReducedAxis, TiledOutputAxis
 from lcm.exceptions import ExecutionPlanningError
 from lcm.execution import WidthSearchPolicy
@@ -205,6 +209,12 @@ def plan_workspace[Compiled](
     reach the budget is refused before any candidate is compiled, since no width
     could serve it.
 
+    A budgeted frontier of more than one candidate also passes over a candidate
+    whose compilation runs out of device memory, as XLA's autotuner can when it
+    places a fusion's operands on the device; when every candidate does, the
+    refusal chains XLA's error. A single candidate's compile error, and any compile
+    error that is not a device out-of-memory, propagates unchanged.
+
     ``resident_bytes_for`` may refine that lower bound for each executable, for
     example when compilation removes an argument whose owner stays live. It
     returns total external residency, never a replacement compiler peak. This
@@ -249,8 +259,16 @@ def plan_workspace[Compiled](
     least_peak: int | None = None
     least_reservation: int | None = None
     least_resident = resident
+    out_of_memory: list[Exception] = []
     for widths in candidates:
-        compiled = compile_candidate(widths)
+        compiled = _compile_unless_out_of_memory(
+            compile_candidate=compile_candidate,
+            widths=widths,
+            refusable=len(candidates) > 1,
+            out_of_memory=out_of_memory,
+        )
+        if compiled is None:
+            continue
         memory = _memory_for_candidate(
             compiled=compiled, widths=widths, memory_for=memory_for
         )
@@ -274,22 +292,17 @@ def plan_workspace[Compiled](
                 compiled=compiled,
             )
 
-    if declared_axes and all(axis.name in widths_by_axis for axis in declared_axes):
-        msg = (
-            "The explicitly requested workspace widths require "
-            f"{least_reservation} reservation bytes (raw compiler peak {least_peak}), "
-            f"exceeding the {budget}-byte budget "
-            f"with {least_resident} resident bytes at the node's position."
-        )
-    else:
-        msg = _no_candidate_fits_message(
-            budget=budget,
-            total=least_total,
-            reservation=least_reservation,
-            resident=least_resident,
-            peak=least_peak,
-        )
-    raise WorkspaceBudgetError(msg)
+    raise _no_admission_error(
+        explicit=bool(declared_axes)
+        and all(axis.name in widths_by_axis for axis in declared_axes),
+        n_candidates=len(candidates),
+        budget=budget,
+        total=least_total,
+        reservation=least_reservation,
+        resident=least_resident,
+        peak=least_peak,
+        out_of_memory=out_of_memory,
+    )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -724,6 +737,77 @@ def _resident_exhausts_budget_message(*, resident: int, budget: int) -> str:
         f"The plan keeps {resident} bytes resident at the node's position, "
         f"leaving nothing of the {budget}-byte budget for a workspace."
     )
+
+
+def _compile_unless_out_of_memory[Compiled](
+    *,
+    compile_candidate: Callable[[Mapping[str, int]], Compiled],
+    widths: Mapping[str, int],
+    refusable: bool,
+    out_of_memory: list[Exception],
+) -> Compiled | None:
+    """Compile one candidate, or record that its compile ran out of device memory.
+
+    Only a `refusable` candidate is passed over, with `None`; any other compile
+    error propagates unchanged.
+    """
+    try:
+        return compile_candidate(widths)
+    except Exception as error:
+        if not refusable or not is_device_out_of_memory(error=error):
+            raise
+        out_of_memory.append(error)
+        return None
+
+
+def _no_admission_error(
+    *,
+    explicit: bool,
+    n_candidates: int,
+    budget: int,
+    total: int | None,
+    reservation: int | None,
+    resident: int,
+    peak: int | None,
+    out_of_memory: list[Exception],
+) -> ExecutionPlanningError:
+    """Say why the frontier admitted no candidate.
+
+    A frontier none of whose candidates compiled is refused as such; otherwise the
+    cheapest compiled candidate is named. Either way the last compile that ran out
+    of device memory, if any, is the cause.
+    """
+    if total is None:
+        error = ExecutionPlanningError(
+            "Compilation itself ran out of device memory for every one of the "
+            f"{n_candidates} workspace width candidates, so none could be "
+            f"measured against the {budget}-byte budget."
+        )
+    else:
+        msg = (
+            (
+                "The explicitly requested workspace widths require "
+                f"{reservation} reservation bytes (raw compiler peak {peak}), "
+                f"exceeding the {budget}-byte budget "
+                f"with {resident} resident bytes at the node's position."
+            )
+            if explicit
+            else _no_candidate_fits_message(
+                budget=budget,
+                total=total,
+                reservation=reservation,
+                resident=resident,
+                peak=peak,
+            )
+        )
+        if out_of_memory:
+            msg += (
+                f" Compilation of {len(out_of_memory)} other candidate(s) ran out "
+                "of device memory."
+            )
+        error = WorkspaceBudgetError(msg)
+    error.__cause__ = out_of_memory[-1] if out_of_memory else None
+    return error
 
 
 def _no_candidate_fits_message(

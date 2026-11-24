@@ -7,11 +7,12 @@ are observed through a period capture, which records exactly what the solve disp
 """
 
 import math
-from collections.abc import Mapping
+import re
+from collections.abc import Collection, Hashable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType
-from typing import TypedDict
+from typing import TypedDict, Unpack
 
 import cloudpickle
 import jax
@@ -35,6 +36,7 @@ from lcm.persistence import replay_period
 from lcm.solvers import GridSearch
 from tests.conftest import assert_agrees_to_ulp
 from tests.execution.test_compiler_allocation_reservation import synthetic_memory
+from tests.solution.test_pipelined_lowering import _CompileKwargs
 from tests.test_models.deterministic.regression import (
     START_AGE,
     LaborSupply,
@@ -339,6 +341,174 @@ def test_replay_of_a_budgeted_capture_reproduces_its_value(
         np.asarray(replay.output.value),
         np.asarray(budgeted.values[0]["working_life"]),
     )
+
+
+_OUT_OF_MEMORY = "RESOURCE_EXHAUSTED: Out of memory while trying to allocate 64B"
+
+
+def _fail_compiles(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    action_widths: Collection[int],
+    error: jax.errors.JaxRuntimeError,
+) -> list[int]:
+    """Raise `error` from XLA's compile of each listed action-product width.
+
+    The error is raised where `Lowered.compile()` raises, on the compile thread, so
+    the solve sees exactly what a device that runs out of memory while compiling
+    hands it.
+
+    Returns:
+        The widths of the failed compiles, one entry per attempt.
+
+    """
+    compile_and_log = backward_induction._compile_and_log
+    attempts: list[int] = []
+
+    def failing(
+        **kwargs: Unpack[_CompileKwargs],
+    ) -> tuple[Hashable, jax.stages.Compiled]:
+        width = re.search(r"'action_product': (\d+)", kwargs["label"])
+        if width is not None and int(width.group(1)) in action_widths:
+            attempts.append(int(width.group(1)))
+            raise error
+        return compile_and_log(**kwargs)
+
+    monkeypatch.setattr(backward_induction, "_compile_and_log", failing)
+    return attempts
+
+
+def _searched_solve(*, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Solve with a budget that admits the widest action block, six."""
+    return _solve_capturing(
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path,
+        device_memory_bytes=_fixed_owner_bytes() + _ACTION_EXTENT * _BYTES_PER_ACTION,
+    )
+
+
+@pytest.mark.usefixtures("synthetic_peaks")
+def test_a_width_whose_compile_runs_out_of_memory_yields_to_the_next_ranked_width(
+    *, monkeypatch, tmp_path
+) -> None:
+    """Width six runs out of device memory while compiling; width four is solved.
+
+    Its values are the values of a solve that asks for width four explicitly.
+    """
+    explicit = _solve_capturing(
+        monkeypatch=monkeypatch,
+        tmp_path=tmp_path / "explicit",
+        device_memory_bytes=_fixed_owner_bytes() + _ACTION_EXTENT * _BYTES_PER_ACTION,
+        axis_widths={"action_product": 4},
+    )
+    _fail_compiles(
+        monkeypatch=monkeypatch,
+        action_widths={_ACTION_EXTENT},
+        error=jax.errors.JaxRuntimeError(_OUT_OF_MEMORY),
+    )
+
+    searched = _searched_solve(monkeypatch=monkeypatch, tmp_path=tmp_path)
+
+    np.testing.assert_array_equal(
+        np.asarray(searched.values[0]["working_life"]),
+        np.asarray(explicit.values[0]["working_life"]),
+    )
+
+
+@pytest.mark.usefixtures("synthetic_peaks")
+def test_a_width_whose_compile_runs_out_of_memory_is_not_dispatched(
+    *, monkeypatch, tmp_path
+) -> None:
+    """The core runs at the next-ranked width, four."""
+    _fail_compiles(
+        monkeypatch=monkeypatch,
+        action_widths={_ACTION_EXTENT},
+        error=jax.errors.JaxRuntimeError(_OUT_OF_MEMORY),
+    )
+
+    _searched_solve(monkeypatch=monkeypatch, tmp_path=tmp_path)
+
+    assert _captured_widths(tmp_path) == {"main": {"action_product": 4, "cell": 1}}
+
+
+@pytest.mark.usefixtures("synthetic_peaks")
+def test_a_width_out_of_memory_beside_other_compiles_is_compiled_once_alone(
+    *, monkeypatch, tmp_path
+) -> None:
+    """Width six shares its wave with the other cores' compiles, then runs alone."""
+    attempts = _fail_compiles(
+        monkeypatch=monkeypatch,
+        action_widths={_ACTION_EXTENT},
+        error=jax.errors.JaxRuntimeError(_OUT_OF_MEMORY),
+    )
+
+    _searched_solve(monkeypatch=monkeypatch, tmp_path=tmp_path)
+
+    assert attempts == [_ACTION_EXTENT, _ACTION_EXTENT]
+
+
+@pytest.mark.usefixtures("synthetic_peaks")
+def test_a_compile_error_other_than_out_of_memory_stops_the_search(
+    *, monkeypatch, tmp_path
+) -> None:
+    """Only a device out-of-memory refuses a width; any other XLA error is raised."""
+    error = jax.errors.JaxRuntimeError("INTERNAL: the compiler gave up")
+    _fail_compiles(monkeypatch=monkeypatch, action_widths={_ACTION_EXTENT}, error=error)
+
+    with pytest.raises(jax.errors.JaxRuntimeError) as raised:
+        _searched_solve(monkeypatch=monkeypatch, tmp_path=tmp_path)
+
+    assert raised.value is error
+
+
+def _causes(error: BaseException) -> list[BaseException]:
+    """Return `error` and every exception chained below it as a cause."""
+    chain: list[BaseException] = []
+    current: BaseException | None = error
+    while current is not None:
+        chain.append(current)
+        current = current.__cause__
+    return chain
+
+
+@pytest.mark.usefixtures("synthetic_peaks")
+def test_every_width_running_out_of_memory_while_compiling_is_a_planning_error(
+    *, monkeypatch, tmp_path
+) -> None:
+    """The refusal says compilation itself ran out of memory and chains XLA's error."""
+    error = jax.errors.JaxRuntimeError(_OUT_OF_MEMORY)
+    _fail_compiles(monkeypatch=monkeypatch, action_widths={1, 2, 4, 6}, error=error)
+
+    with pytest.raises(
+        ExecutionPlanningError, match="Compilation itself ran out of device memory"
+    ) as raised:
+        _searched_solve(monkeypatch=monkeypatch, tmp_path=tmp_path)
+
+    assert error in _causes(raised.value)
+
+
+@pytest.mark.usefixtures("synthetic_peaks")
+@pytest.mark.parametrize("budgeted", [False, True], ids=["unbudgeted", "budgeted"])
+def test_an_explicit_width_whose_compile_runs_out_of_memory_raises_xla_error(
+    *, budgeted, monkeypatch, tmp_path
+) -> None:
+    """A width the configuration fixed has no narrower width to yield to."""
+    error = jax.errors.JaxRuntimeError(_OUT_OF_MEMORY)
+    _fail_compiles(monkeypatch=monkeypatch, action_widths={4}, error=error)
+
+    with pytest.raises(jax.errors.JaxRuntimeError) as raised:
+        _solve_capturing(
+            monkeypatch=monkeypatch,
+            tmp_path=tmp_path,
+            device_memory_bytes=(
+                _fixed_owner_bytes() + _ACTION_EXTENT * _BYTES_PER_ACTION
+                if budgeted
+                else None
+            ),
+            axis_widths={"action_product": 4},
+        )
+
+    assert raised.value is error
 
 
 def _report_pool_limit(*, monkeypatch: pytest.MonkeyPatch, bytes_limit: int) -> None:

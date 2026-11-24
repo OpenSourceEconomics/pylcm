@@ -434,7 +434,10 @@ Under a device-memory budget, solve execution waits for earlier compiled work th
 any of the next core's execution or transfer devices. Work on disjoint device sets can
 remain asynchronous. A shared source array can therefore serialize cores assigned to
 different regime submeshes. The wait covers returned auxiliary arrays and declared
-copies as well as values; it does not bound memory used by compiler autotuning.
+copies as well as values; it does not bound memory used by compiler autotuning. When
+compiling a width runs out of device memory, the default widest-first width search
+passes over that width and tries the next one; a width fixed in `axis_widths`, or the
+only width a core admits, raises XLA's error instead.
 
 (set-a-device-memory-budget)=
 

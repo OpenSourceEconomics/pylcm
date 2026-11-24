@@ -50,7 +50,10 @@ from _lcm.engine import (
 )
 from _lcm.execution.abstract_program_inputs import abstract_program_inputs
 from _lcm.execution.compiler_inputs import compiler_input_paths
-from _lcm.execution.compiler_memory import compiler_memory_bytes
+from _lcm.execution.compiler_memory import (
+    compiler_memory_bytes,
+    is_device_out_of_memory,
+)
 from _lcm.execution.core_program import (
     CoreBuildContext,
     CoreExecutionDisposition,
@@ -5266,6 +5269,17 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         source = _RankedCandidateSource(
             frontier=frontier, positions=dict.fromkeys(eligible, 0)
         )
+    # The ranked walk passes over a width whose compile runs out of device memory
+    # when the core has another width to offer; a width the configuration fixes,
+    # or the only one a core admits, keeps XLA's error.
+    searched = frozenset(
+        ()
+        if bounded
+        else (
+            triple for triple, length in frontier.frontier_lengths.items() if length > 1
+        )
+    )
+    out_of_memory: dict[Hashable, BaseException] = {}
     with solve_phase(name="compilation_waves", logger=logger, call_id=call_id):
         wave = 0
         skipped_fallback_evaluations: dict[_CoreTriple, int] = {}
@@ -5309,6 +5323,8 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                 logger=logger,
                 compiled=compiled,
                 labels=labels,
+                refusable=_refusable_keys(keys=wave_lowering_keys, searched=searched),
+                out_of_memory=out_of_memory,
             )
             admission_keys.update(wave_lowering_keys)
             for triple, candidate in wave_candidates.items():
@@ -5330,6 +5346,9 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                 for triple in pending:
                     candidate = wave_candidates[triple]
                     primary_key = lowering_keys[candidate]
+                    if primary_key not in compiled:
+                        _refuse_out_of_memory(source=source, triple=triple)
+                        continue
                     resident = _measure_variant(
                         variant_key=primary_key,
                         candidate=candidate,
@@ -5409,6 +5428,8 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                 logger=logger,
                 compiled=compiled,
                 labels=labels,
+                refusable=_refusable_keys(keys=wave_fallback_keys, searched=searched),
+                out_of_memory=out_of_memory,
             )
             for triple, candidate in survivors.items():
                 if candidate in fallback_keys:
@@ -5429,6 +5450,13 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             if budget_bytes is None:
                 break
             for triple, candidate in survivors.items():
+                if (
+                    fallback_keys.get(candidate, lowering_keys[candidate])
+                    not in compiled
+                ):
+                    admission_keys[candidate] = fallback_keys[candidate]
+                    _refuse_out_of_memory(source=source, triple=triple)
+                    continue
                 variant_keys = tuple(
                     dict.fromkeys(
                         (
@@ -5514,7 +5542,13 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             compiled_by_width = {
                 candidate[1]: compiled[admission_keys[candidate]]
                 for candidate in candidates
+                if candidate in admission_keys and admission_keys[candidate] in compiled
+            }
+            out_of_memory_by_width = {
+                candidate[1]: out_of_memory[admission_keys[candidate]]
+                for candidate in candidates
                 if candidate in admission_keys
+                and admission_keys[candidate] not in compiled
             }
             representative = resolved_programs[candidates[0]]
             try:
@@ -5533,7 +5567,8 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                         width_ceilings=execution.ceilings_for(regime_name=triple[0]),
                         covered_axes=execution.covered_axes,
                         compile_candidate=_CompiledCandidateLookup(
-                            compiled_by_width=compiled_by_width
+                            compiled_by_width=compiled_by_width,
+                            out_of_memory_by_width=out_of_memory_by_width,
                         ),
                         budget_bytes=budget_bytes,
                         memory_for=(
@@ -6044,11 +6079,18 @@ def _lower_and_compile_candidate(
 # every compiled executable of a core — for the life of the process.
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class _CompiledCandidateLookup:
-    """Serve the planner's width requests from one triple's compiled candidates."""
+    """Serve the planner's width requests from one triple's compiled candidates.
+
+    A width whose compile ran out of device memory raises XLA's error again, so
+    the planner refuses it as it would a compile it ran itself.
+    """
 
     compiled_by_width: Mapping[_WidthKey, jax.stages.Compiled]
+    out_of_memory_by_width: Mapping[_WidthKey, BaseException]
 
     def __call__(self, widths: Mapping[str, int]) -> jax.stages.Compiled:
+        if _width_key(widths=widths) in self.out_of_memory_by_width:
+            raise self.out_of_memory_by_width[_width_key(widths=widths)]
         try:
             return self.compiled_by_width[_width_key(widths=widths)]
         except KeyError:
@@ -6367,6 +6409,38 @@ def _uncompiled(
     return MappingProxyType(new)
 
 
+def _refusable_keys(
+    *,
+    keys: Mapping[_CoreCandidate, Hashable],
+    searched: Container[_CoreTriple],
+) -> frozenset[Hashable]:
+    """Name the keys whose compile may run out of device memory without an error.
+
+    A key qualifies when every core asking for it searches its width; a key a
+    core with a fixed width shares keeps that core's error.
+    """
+    return frozenset(keys.values()) - {
+        key for candidate, key in keys.items() if candidate[0] not in searched
+    }
+
+
+def _refuse_out_of_memory(
+    *, source: _RankedCandidateSource | _BoundedCandidateSource, triple: _CoreTriple
+) -> None:
+    """Refuse a core's candidate whose compile ran out of device memory.
+
+    Only the ranked walk refuses on a compile that ran out of memory, and it
+    reads nothing but the verdict, so no compiler report stands behind the zeros.
+    """
+    source.record(
+        triple=triple,
+        reservation_bytes=0,
+        resident_bytes=0,
+        peak_bytes=0,
+        admitted=False,
+    )
+
+
 def _measure_variant(
     *,
     variant_key: Hashable,
@@ -6441,47 +6515,68 @@ def _lower_and_compile_wave(
     logger: logging.Logger,
     compiled: dict[Hashable, jax.stages.Compiled],
     labels: dict[Hashable, str],
+    refusable: Collection[Hashable] = (),
+    out_of_memory: dict[Hashable, BaseException] | None = None,
 ) -> None:
     """Lower one wave's new candidates in order and compile them on the pool.
 
     Executables and their log labels land in `compiled` and `labels`, keyed by
     lowering key; `CompilationWave` owns the threading and error contract.
+
+    A key in `refusable` whose compile runs out of device memory gets no
+    executable; XLA's error lands in `out_of_memory` under its key. XLA's
+    autotuner places a fusion's operands on the device while compiling, so
+    whether it runs out can depend on the wave's other compiles; such a key is
+    compiled once more on its own before it is given up.
     """
-    n_unique = len(new_lowerings)
-    with CompilationWave(
-        n_workers=n_workers,
-        logger=logger,
-        log_kernel_memory=log_kernel_memory,
-        compiled=compiled,
-    ) as wave:
-        for i, (lowering_key, candidate) in enumerate(new_lowerings.items(), 1):
-            triple, _ = candidate
-            regime_name, period, core_key = triple
-            resolved = resolved_programs[candidate]
-            label = (
-                f"{regime_name} {core_key} "
-                f"({coordinate_kind(ages)} {ages.values[period].item()}, "
-                f"widths={dict(resolved.tile_widths)!r})"
-            )
-            labels[lowering_key] = label
-            log_module_fanout(
-                label=label,
-                n_triples=n_triples_per_lowering[lowering_key],
-                logger=logger,
-            )
-            logger.info("%d/%d  %s", i, n_unique, label)
-            wave.lower(
-                lowering_key=lowering_key,
-                label=label,
-                lower=functools.partial(
-                    _lower_resolved_candidate,
-                    resolved=resolved,
-                    layout=all_layouts[triple],
-                    donated=_donated_arguments(donations=donations[candidate]),
-                    internal_templates=internal_templates[candidate],
+    refused = {} if out_of_memory is None else out_of_memory
+    batches = [new_lowerings]
+    for batch in batches:
+        with CompilationWave(
+            n_workers=n_workers,
+            logger=logger,
+            log_kernel_memory=log_kernel_memory,
+            compiled=compiled,
+            refusable=refusable,
+        ) as wave:
+            for i, (lowering_key, candidate) in enumerate(batch.items(), 1):
+                triple, _ = candidate
+                regime_name, period, core_key = triple
+                resolved = resolved_programs[candidate]
+                label = (
+                    f"{regime_name} {core_key} "
+                    f"({coordinate_kind(ages)} {ages.values[period].item()}, "
+                    f"widths={dict(resolved.tile_widths)!r})"
+                )
+                labels[lowering_key] = label
+                log_module_fanout(
                     label=label,
-                ),
-            )
+                    n_triples=n_triples_per_lowering[lowering_key],
+                    logger=logger,
+                )
+                logger.info("%d/%d  %s", i, len(batch), label)
+                wave.lower(
+                    lowering_key=lowering_key,
+                    label=label,
+                    lower=functools.partial(
+                        _lower_resolved_candidate,
+                        resolved=resolved,
+                        layout=all_layouts[triple],
+                        donated=_donated_arguments(donations=donations[candidate]),
+                        internal_templates=internal_templates[candidate],
+                        label=label,
+                    ),
+                )
+        for lowering_key in batch:
+            refused.pop(lowering_key, None)
+        refused.update(wave.out_of_memory)
+        if len(batch) > 1:
+            for lowering_key in wave.out_of_memory:
+                logger.info(
+                    "  compiling %s ran out of device memory; compiling it alone",
+                    labels[lowering_key],
+                )
+                batches.append({lowering_key: batch[lowering_key]})
 
 
 def _lower_resolved_candidate(
@@ -6534,6 +6629,10 @@ class CompilationWave:
     Either way no further program is lowered, compiles not yet started are
     cancelled, running ones finish in the background with their results
     discarded, and nothing from the wave is published.
+
+    A compile of a key in `refusable` that runs out of device memory is no
+    error: the wave records XLA's error in `out_of_memory`, carries on, and
+    leaves that key without an executable.
     """
 
     def __init__(
@@ -6544,6 +6643,7 @@ class CompilationWave:
         log_kernel_memory: bool,
         compiled: dict[Hashable, jax.stages.Compiled],
         compile_phase: str | None = None,
+        refusable: Collection[Hashable] = (),
     ) -> None:
         """Open a pool of `n_workers` compile threads.
 
@@ -6553,6 +6653,8 @@ class CompilationWave:
             log_kernel_memory: Whether to log each executable's memory analysis.
             compiled: Receives each executable under its lowering key.
             compile_phase: Phase record bracketing each compile, if any.
+            refusable: Lowering keys whose compile may run out of device memory
+                without failing the wave.
 
         """
         self._pool = ThreadPoolExecutor(max_workers=n_workers)
@@ -6560,6 +6662,11 @@ class CompilationWave:
         self._log_kernel_memory = log_kernel_memory
         self._compiled = compiled
         self._compile_phase = compile_phase
+        self._refusable = refusable
+        self.out_of_memory: dict[Hashable, BaseException] = {}
+        self._refusable_futures: dict[
+            Future[tuple[Hashable, jax.stages.Compiled]], Hashable
+        ] = {}
         self._futures: dict[Future[tuple[Hashable, jax.stages.Compiled]], str] = {}
         self._futures_by_key: dict[
             Hashable, tuple[Future[tuple[Hashable, jax.stages.Compiled]], str]
@@ -6642,6 +6749,8 @@ class CompilationWave:
         context = contextvars.copy_context()
         future = self._pool.submit(lambda: context.run(compile_one))
         self._futures[future] = label
+        if lowering_key in self._refusable:
+            self._refusable_futures[future] = lowering_key
         self._futures_by_key[lowering_key] = (future, label)
         self._out_info[lowering_key] = low.out_info
         self._publishers[lowering_key] = publish
@@ -6661,6 +6770,8 @@ class CompilationWave:
             try:
                 lowering_key, executable = future.result()
             except BaseException as error:
+                if self._refuse(future=future, error=error):
+                    continue
                 error.add_note(f"while compiling {self._futures[future]}")
                 self._pool.shutdown(wait=False, cancel_futures=True)
                 raise
@@ -6668,7 +6779,7 @@ class CompilationWave:
         self._pool.shutdown()
         self._compiled.update(executables)
         for lowering_key, publish in self._publishers.items():
-            if publish is not None:
+            if publish is not None and lowering_key not in self.out_of_memory:
                 publish(executable=self._compiled[lowering_key])
 
     def _raise_first_compile_error(self) -> None:
@@ -6676,9 +6787,22 @@ class CompilationWave:
         for future, label in self._futures.items():
             if future.done() and not future.cancelled():
                 error = future.exception()
-                if error is not None:
+                if error is not None and not self._refuse(future=future, error=error):
                     error.add_note(f"while compiling {label}")
                     raise error
+
+    def _refuse(
+        self,
+        *,
+        future: Future[tuple[Hashable, jax.stages.Compiled]],
+        error: BaseException,
+    ) -> bool:
+        """Record a refusable compile that ran out of device memory, if it is one."""
+        lowering_key = self._refusable_futures.get(future)
+        if lowering_key is None or not is_device_out_of_memory(error=error):
+            return False
+        self.out_of_memory[lowering_key] = error
+        return True
 
 
 def _compile_and_log(
