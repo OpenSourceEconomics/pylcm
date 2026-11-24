@@ -17,17 +17,24 @@ from lcm import (
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
 )
 from lcm.exceptions import PyLCMError
 from lcm.transition import StochasticTransition
-from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteAction,
+    FloatND,
+    ScalarInt,
+    UserFunction,
+)
 
 _AGES = AgeGrid(start=40, inclusive_stop=50, step="5Y")
 _X = LinSpacedGrid(start=0.0, stop=2.0, n_points=2)
@@ -75,7 +82,7 @@ def _boolean_gate(x: ContinuousState) -> BoolND:
     return x > 1.0
 
 
-def _make_model(*, gate) -> Model:
+def _make_model(*, gate: UserFunction) -> Model:
     return Model(
         edges={
             "source": Transition(
@@ -85,7 +92,7 @@ def _make_model(*, gate) -> Model:
                     "target": Gate(
                         predicate=gate,
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection={"x": _identity_x},

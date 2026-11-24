@@ -189,12 +189,12 @@ log one `Off-grid next states` line per regime, target, period and state. At eve
 a full phase grid. The explicit `"raise"` policy applies at every `log_level`, even with
 `runtime_checks=False`.
 
-A regime with value-dependent constraints or gated edges only knows which actions and
-branches a next state is reached through once values exist. Its solve therefore checks
-`"raise"` grids inside the maximization: an exterior next state counts only for an
-action every constraint keeps, value constraints included, and through a gated edge only
-on the branch the gate selects — the target where it opens, the projected fallback where
-it closes. Such a regime emits no solve-phase diagnostic counts for the other rules.
+A regime with gated edges only knows which branch a next state is reached through once
+values exist. Its solve therefore checks `"raise"` grids inside the maximization: an
+exterior next state counts only for an action every constraint keeps, and through a
+gated edge only on the branch the gate selects — the target where it opens, the
+projected fallback where it closes. Such a regime emits no solve-phase diagnostic counts
+for the other rules.
 
 ### LinSpacedGrid
 

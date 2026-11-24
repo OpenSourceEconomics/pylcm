@@ -9,7 +9,6 @@ names it, and a gate fallback's are those of its gated target. Supplying
 from collections.abc import Mapping
 
 import jax.numpy as jnp
-import numpy as np
 import pytest
 
 from lcm import (
@@ -17,23 +16,20 @@ from lcm import (
     AgeRange,
     ByAge,
     CollectiveUtility,
+    Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     Phased,
     ProjectedRegimeValue,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
-    fixed_transition,
 )
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import Regime
-from lcm.solver_api import ResultRetention
-from lcm.transition import ModelEdges, PhaseEdges
-from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
+from lcm.transition import AgeSelector, ModelEdges, PhaseEdges
+from lcm.typing import BoolND, ContinuousState, FloatND, RegimeName, ScalarInt
 
 # Four ages: transitions happen out of ages 0, 1 and 2.
 _AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
@@ -56,7 +52,7 @@ _EXIT_LAW = {
 }
 
 
-def test_per_target_law_without_targets_derives_each_destination_and_its_ages():
+def test_per_target_law_without_targets_derives_each_destination_and_its_ages() -> None:
     """Each target is reached at exactly the ages whose case names it."""
     model = _model(
         Transition(
@@ -77,7 +73,7 @@ def test_per_target_law_without_targets_derives_each_destination_and_its_ages():
     }
 
 
-def test_plain_per_target_law_reaches_its_targets_at_every_non_final_age():
+def test_plain_per_target_law_reaches_its_targets_at_every_non_final_age() -> None:
     """A law with no age schedule names its targets out of every non-final age."""
     model = _model(Transition(law=_EXIT_LAW))
     assert dict(model.graph.edges.simulate["alive"]) == {
@@ -86,7 +82,7 @@ def test_plain_per_target_law_reaches_its_targets_at_every_non_final_age():
     }
 
 
-def test_supplied_targets_equal_to_the_derived_ones_are_accepted():
+def test_supplied_targets_equal_to_the_derived_ones_are_accepted() -> None:
     """Spelling out the derived destinations changes nothing."""
     model = _model(
         Transition(targets={"retired": (0, 1, 2), "dead": (0, 1, 2)}, law=_EXIT_LAW)
@@ -107,7 +103,9 @@ def test_supplied_targets_equal_to_the_derived_ones_are_accepted():
         pytest.param({"retired": (0, 1, 2, 3), "dead": (0, 1, 2, 3)}, id="final-age"),
     ],
 )
-def test_supplied_targets_that_also_select_the_final_age_are_accepted(targets):
+def test_supplied_targets_that_also_select_the_final_age_are_accepted(
+    targets: Mapping[RegimeName, AgeSelector],
+) -> None:
     """No transition leaves the final age, so selecting it changes no destination."""
     model = _model(Transition(targets=targets, law=_EXIT_LAW))
     assert dict(model.graph.edges.solve["alive"]) == {
@@ -130,7 +128,9 @@ def test_supplied_targets_that_also_select_the_final_age_are_accepted(targets):
         ),
     ],
 )
-def test_supplied_targets_that_differ_from_the_derived_ones_are_refused(targets):
+def test_supplied_targets_that_differ_from_the_derived_ones_are_refused(
+    targets: Mapping[RegimeName, AgeSelector],
+) -> None:
     """The error names both the supplied and the derived destinations."""
     with pytest.raises(
         ModelInitializationError, match=r"(?s)'alive'.*supplied.*derived"
@@ -138,7 +138,7 @@ def test_supplied_targets_that_differ_from_the_derived_ones_are_refused(targets)
         _model(Transition(targets=targets, law=_EXIT_LAW))
 
 
-def test_age_schedule_names_each_target_at_the_ages_its_edge_fires():
+def test_age_schedule_names_each_target_at_the_ages_its_edge_fires() -> None:
     """A target active only from age 2 is named only by the case for age 1."""
     model = _model_with_edges(
         edges={
@@ -162,7 +162,7 @@ def test_age_schedule_names_each_target_at_the_ages_its_edge_fires():
         "gate-fallback-at-fewer-ages",
     ],
 )
-def test_supplied_targets_narrower_than_the_law_are_refused(case):
+def test_supplied_targets_narrower_than_the_law_are_refused(case: str) -> None:
     """A law with no age schedule names its targets out of every non-final age.
 
     Supplied targets that name fewer ages disagree with it, whether or not the
@@ -174,13 +174,13 @@ def test_supplied_targets_narrower_than_the_law_are_refused(case):
         _model_with_edges(edges=_narrowed_edges(case))
 
 
-def test_law_over_all_targets_still_requires_targets():
+def test_law_over_all_targets_still_requires_targets() -> None:
     """A function returning a regime code names no target, so it needs `targets`."""
     with pytest.raises(RegimeInitializationError, match="targets"):
         Transition(law=_always_dead)
 
 
-def test_gate_fallbacks_join_the_derived_targets_at_the_gated_ages():
+def test_gate_fallbacks_join_the_derived_targets_at_the_gated_ages() -> None:
     """A route's fallback regime is reached wherever its gated target is."""
     model = _model(
         Transition(
@@ -193,7 +193,7 @@ def test_gate_fallbacks_join_the_derived_targets_at_the_gated_ages():
                     (1, 2): {"dead": StochasticTransition(func=_certain)},
                 }
             ),
-            participation={"couple": _consent_gate()},
+            gates={"couple": _couple_gate()},
         )
     )
     assert dict(model.graph.edges.solve["alive"]) == {
@@ -203,21 +203,24 @@ def test_gate_fallbacks_join_the_derived_targets_at_the_gated_ages():
     }
 
 
-def test_gate_on_a_target_the_law_never_reaches_is_refused():
+def test_gate_on_a_target_the_law_never_reaches_is_refused() -> None:
     """A gate belongs to a destination of its own `Transition`."""
     with pytest.raises(
         ModelInitializationError,
-        match=r"^ParticipationCheck of 'alive' names an unscheduled solve target\.$",
+        match=(
+            r"^'alive' declares a gate on 'couple', which its solve edges never "
+            r"reach\. A gate belongs to a destination of its own `Transition`\.$"
+        ),
     ):
         _model(
             Transition(
                 law={"dead": StochasticTransition(func=_certain)},
-                participation={"couple": _consent_gate()},
+                gates={"couple": _couple_gate()},
             )
         )
 
 
-def test_gate_declared_in_one_phase_only_is_refused():
+def test_gate_declared_in_one_phase_only_is_refused() -> None:
     """A target reached in both phases is gated in both or in neither."""
     law = {
         "couple": StochasticTransition(func=_survive),
@@ -226,11 +229,7 @@ def test_gate_declared_in_one_phase_only_is_refused():
     with pytest.raises(ModelInitializationError, match="'couple'"):
         _model(
             Phased(
-                solve={
-                    "alive": Transition(
-                        law=law, participation={"couple": _consent_gate()}
-                    )
-                },
+                solve={"alive": Transition(law=law, gates={"couple": _couple_gate()})},
                 simulate={"alive": Transition(law=law)},
             )
         )
@@ -295,7 +294,7 @@ def _narrowed_edges(case: str) -> dict[str, Transition | dict[str, tuple[int]]]:
                     "couple": StochasticTransition(func=_survive),
                     "dead": StochasticTransition(func=_die),
                 },
-                participation={"couple": _consent_gate(fallback="retired")},
+                gates={"couple": _couple_gate(fallback="retired")},
             )
         }
     retired_ages = (1,) if case == "target-active-from-a-later-age" else (0, 1)
@@ -334,22 +333,13 @@ def _retirement_law(form: str) -> dict[str, StochasticTransition] | ByAge:
     )
 
 
-def _consent_gate(fallback: str = "alive") -> ParticipationCheck:
-    """A gate into the couple that sends a refused single to `fallback`."""
-    return ParticipationCheck(
-        predicate=_couple_is_better,
-        reads={
-            f"V_target_{member}": ParticipationRead(
-                kind="Raw",
-                regime="couple",
-                stakeholder=member,
-                projection={"wealth": _keep_wealth},
-            )
-            for member in ("f", "m")
-        },
+def _couple_gate(fallback: str = "alive") -> Gate:
+    """A gate into the couple that sends a single without wealth to `fallback`."""
+    return Gate(
+        predicate=_has_wealth,
         routes={
-            "self": StakeholderRoute(
-                target_stakeholder="f",
+            "self": MemberRoute(
+                target_member="f",
                 fallback=ProjectedRegimeValue(
                     regime=fallback, projection={"wealth": _keep_wealth}
                 ),
@@ -358,8 +348,8 @@ def _consent_gate(fallback: str = "alive") -> ParticipationCheck:
     )
 
 
-def _couple_is_better(*, V_target_f: FloatND, V_target_m: FloatND) -> BoolND:
-    return V_target_f >= V_target_m
+def _has_wealth(wealth: ContinuousState) -> BoolND:
+    return wealth > 0.0
 
 
 def _keep_wealth(wealth: ContinuousState) -> ContinuousState:
@@ -392,100 +382,3 @@ def _certain(age: FloatND) -> FloatND:
 
 def _always_dead() -> ScalarInt:
     return _RegimeId.dead
-
-
-@categorical(ordered=False)
-class _ComponentParticipationId:
-    alive: ScalarInt
-    couple: ScalarInt
-    retired: ScalarInt
-
-
-def _component_source(wealth: ContinuousState) -> FloatND:
-    return 0.0 * wealth
-
-
-def _component_male(wealth: ContinuousState) -> FloatND:
-    return 2.0 - wealth
-
-
-def _component_fallback(wealth: ContinuousState) -> FloatND:
-    return 10.0 + wealth
-
-
-def test_component_comparison_prices_and_replays_less_equal_and_greater() -> None:
-    """The actual f>=m component comparison admits a tie and rejects only f<m."""
-    wealth = LinSpacedGrid(start=0.0, stop=2.0, n_points=3)
-    model = Model(
-        regimes={
-            "alive": Regime(
-                states={"wealth": wealth},
-                state_transitions={"wealth": fixed_transition("wealth")},
-                functions={"utility": _component_source},
-            ),
-            "couple": Regime(
-                states={"wealth": wealth},
-                functions={
-                    "utility": CollectiveUtility(
-                        utilities={"f": _utility, "m": _component_male}
-                    )
-                },
-            ),
-            "retired": Regime(
-                states={"wealth": wealth},
-                functions={"utility": _component_fallback},
-            ),
-        },
-        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
-        initial_nodes={0: "alive"},
-        regime_id_class=_ComponentParticipationId,
-        edges={
-            "alive": Transition(
-                law="couple",
-                participation={"couple": _consent_gate(fallback="retired")},
-            )
-        },
-    )
-    params = {"discount_factor": 0.5}
-    solution = model.solve(
-        params=params, retention=ResultRetention.VALUES, log_level="off"
-    )
-    # The read pairs are (0,2), (1,1), (2,0); outside pays more at every state.
-    np.testing.assert_array_equal(
-        solution.values[1]["couple"], [[0, 2], [1, 1], [2, 0]]
-    )
-    np.testing.assert_array_equal(solution.values[1]["retired"], [10, 11, 12])
-    np.testing.assert_array_equal(solution.values[0]["alive"], [5.0, 0.5, 1.0])
-    frame = (
-        model.simulate(
-            params=params,
-            solution=solution,
-            initial_conditions={
-                "wealth": jnp.asarray([0.0, 1.0, 2.0]),
-                "age": jnp.zeros(3),
-                "regime_id": jnp.full(
-                    3, _ComponentParticipationId.alive, dtype=jnp.int32
-                ),
-            },
-            seed=0,
-            log_level="off",
-        )
-        .to_dataframe()
-        .sort_values(["period", "subject_id"])
-    )
-    source = frame.loc[frame["period"] == 0]
-    landed = frame.loc[frame["period"] == 1]
-    np.testing.assert_array_equal(source["subject_id"], [0, 1, 2])
-    np.testing.assert_array_equal(source["value"], [5.0, 0.5, 1.0])
-    np.testing.assert_array_equal(landed["subject_id"], [0, 1, 2])
-    np.testing.assert_array_equal(landed["wealth"], [0.0, 1.0, 2.0])
-    np.testing.assert_array_equal(
-        landed["regime_name"], ["retired", "couple", "couple"]
-    )
-    np.testing.assert_array_equal(
-        landed.loc[landed["subject_id"] == 0, "value"], [10.0]
-    )
-    kept = landed.loc[landed["subject_id"] != 0]
-    np.testing.assert_array_equal(kept["own_stakeholder"], ["f", "f"])
-    np.testing.assert_array_equal(kept["value_f"], [1.0, 2.0])
-    np.testing.assert_array_equal(kept["value_m"], [1.0, 0.0])

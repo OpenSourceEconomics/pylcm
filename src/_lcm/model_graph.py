@@ -41,14 +41,13 @@ from _lcm.user_regime_validation import (
     fail_if_a_joint_target_is_unreachable,
     validate_regimes,
 )
-from lcm.collective import Gate, ProjectedRegimeValue, StakeholderRoute
+from lcm.collective import Gate, MemberRoute, ProjectedRegimeValue
 from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
     ModelInitializationError,
     RegimeInitializationError,
 )
 from lcm.exits import Consent, Exit
-from lcm.participation import ParticipationCheck
 from lcm.phased import Phased
 from lcm.regime import Regime
 from lcm.transition import (
@@ -269,10 +268,6 @@ def prepare_graph(
         exit_targets_by_period=exit_targets,
         schedules=after,
         initial_nodes=initial_nodes,
-        same_period_refs_by_regime={
-            name: tuple(ref.regime for ref in regime.same_period_refs.values())
-            for name, regime in fixed_support.user_regimes.items()
-        },
         terminal_regimes=frozenset(name for name, law in laws.items() if law.terminal),
         ages=ages,
     )
@@ -581,9 +576,6 @@ def bind_edge_laws(
                 gated_edges=_declared_gated_edges(
                     source=name, declared=declared, resolved=resolved
                 ),
-                participation=_declared_participation(
-                    source=name, declared=declared, resolved=resolved
-                ),
             )
             for name in regimes
         }
@@ -767,7 +759,7 @@ def _derived_target_ages(
                 return None
             for name in names:
                 selected.setdefault(name, set()).add(ages.exact_values[period])
-    for target, gate in {**transition.gates, **transition.participation}.items():
+    for target, gate in transition.gates.items():
         for route in gate.routes.values():
             for fallback in {
                 (
@@ -853,38 +845,6 @@ def _declared_gated_edges(
     )
 
 
-def _declared_participation(
-    *,
-    source: RegimeName,
-    declared: Mapping[Side, PhaseEdges],
-    resolved: Mapping[Side, ResolvedEdges],
-) -> MappingProxyType[RegimeName, ParticipationCheck]:
-    """Retain the incoming edge's typed decision through both actual phases."""
-    by_side = {}
-    for side in _PHASE_SIDES:
-        declaration = declared[side].get(source)
-        participation = (
-            declaration.participation if isinstance(declaration, Transition) else {}
-        )
-        reached = resolved[side].get(source, {})
-        if set(participation) - set(reached):
-            raise ModelInitializationError(
-                f"ParticipationCheck of {source!r} names an unscheduled {side} target."
-            )
-        by_side[side] = participation
-    solve, simulate = by_side["solve"], by_side["simulate"]
-    for target in solve.keys() | simulate.keys():
-        shared = target in resolved["solve"].get(source, {}) and target in resolved[
-            "simulate"
-        ].get(source, {})
-        if shared and solve.get(target) != simulate.get(target):
-            raise ModelInitializationError(
-                f"ParticipationCheck of {source!r} into {target!r} differs by phase; "
-                "declare differing settlements with Phased fallback projections."
-            )
-    return MappingProxyType({**simulate, **solve})
-
-
 def _with_roles_as_gates(
     *, declared: Mapping[Side, DeclaredModelEdges], regimes: Mapping[RegimeName, Regime]
 ) -> dict[Side, DeclaredModelEdges]:
@@ -937,10 +897,10 @@ def _role_lowered_transition(
             gates[key] = Gate(
                 predicate=role_gate_is_open,
                 routes={
-                    role: StakeholderRoute(
-                        target_stakeholder=role,
+                    role: MemberRoute(
+                        target_member=role,
                         fallback=ProjectedRegimeValue(
-                            regime=target, projection={}, stakeholder=role
+                            regime=target, projection={}, member=role
                         ),
                     )
                 },
@@ -965,31 +925,30 @@ def _fail_if_role_invalid(
     entry = (
         f"`Transition.roles` of '{source}' gives target '{target}' the role '{role}'"
     )
-    if target in transition.gates or target in transition.participation:
-        declared = "Gate" if target in transition.gates else "ParticipationCheck"
+    if target in transition.gates:
         raise ModelInitializationError(
-            f"{entry}, and the transition declares both a role and a `{declared}` "
+            f"{entry}, and the transition declares both a role and a `Gate` "
             f"for '{target}'. A role is the always-open gate; declare one of them."
         )
-    stakeholders = regimes[source].stakeholders
-    if stakeholders is not None:
+    member_axis = regimes[source].member_axis
+    if member_axis is not None:
         raise ModelInitializationError(
-            f"{entry}, but '{source}' is collective (stakeholders={stakeholders}): "
+            f"{entry}, but '{source}' is collective (members={member_axis}): "
             "each of its rows already carries a role. Route a collective source "
-            "into another layout with a `Gate` or a `ParticipationCheck`."
+            "into another layout with a `Gate`."
         )
     if target not in regimes:
         return
-    target_stakeholders = regimes[target].stakeholders
-    if target_stakeholders is None:
+    target_member_axis = regimes[target].member_axis
+    if target_member_axis is None:
         raise ModelInitializationError(
             f"{entry}, but '{target}' is not collective: a role names one of a "
-            "collective target's stakeholders. Reach a singleton target by a "
+            "collective target's members. Reach a singleton target by a "
             "plain edge."
         )
-    if role not in target_stakeholders:
+    if role not in target_member_axis:
         raise ModelInitializationError(
-            f"{entry}, but the stakeholders of '{target}' are {target_stakeholders}."
+            f"{entry}, but the members of '{target}' are {target_member_axis}."
         )
 
 
@@ -1017,8 +976,8 @@ def _fail_if_a_role_names_no_target(
 
 
 def _identity_fallback_route(
-    *, route: StakeholderRoute, states: tuple[StateName, ...]
-) -> StakeholderRoute:
+    *, route: MemberRoute, states: tuple[StateName, ...]
+) -> MemberRoute:
     """Return `route` with its fallback projecting every state onto itself."""
     return replace(
         route,
@@ -1209,7 +1168,6 @@ def bind_graph_support(
                 )
                 fallbacks = _gate_fallbacks(
                     gated_edges=source_law.gated_edges,
-                    participation=source_law.participation,
                     targets=targets[side],
                     side=side,
                 )
@@ -1283,7 +1241,6 @@ def bind_graph_support(
         result[source] = bind_regime_law(
             bound,
             gated_edges=source_law.gated_edges,
-            participation=source_law.participation,
         )
     return MappingProxyType(result), MappingProxyType(dropped)
 
@@ -1521,21 +1478,14 @@ def _gate_fallbacks(
     gated_edges: Mapping[RegimeName, GatedEdge],
     targets: tuple[RegimeName, ...],
     side: Side,
-    participation: Mapping[RegimeName, ParticipationCheck] = MappingProxyType({}),
 ) -> tuple[RegimeName, ...]:
     """The gate-closed regimes of the gated targets among `targets`, for one side."""
     return tuple(
         dict.fromkeys(
             (leg.solve_fallback if side == "solve" else leg.simulate_fallback).regime
-            for target, routes in (
-                *((target, edge.legs) for target, edge in gated_edges.items()),
-                *(
-                    (target, decision.routes)
-                    for target, decision in participation.items()
-                ),
-            )
+            for target, edge in gated_edges.items()
             if target in targets
-            for leg in routes.values()
+            for leg in edge.legs.values()
         )
     )
 

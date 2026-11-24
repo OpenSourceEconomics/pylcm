@@ -181,12 +181,12 @@ _PROFILED_HELPER_MUTATIONS = {
     "simulation_pandas:role_writer_omitted": (
         "src/_lcm/pandas_utils.py",
         (
-            '            labels=df["own_stakeholder"],\n'
+            '            labels=df["own_member"],\n'
             "            user_regimes=user_regimes,\n"
             "            array_writer=array_writer,"
         ),
         (
-            '            labels=df["own_stakeholder"],\n'
+            '            labels=df["own_member"],\n'
             "            user_regimes=user_regimes,\n"
             "            array_writer=None,"
         ),
@@ -809,11 +809,11 @@ _COMBINED_INPUT_MUTATIONS = {
             "                states,\n"
             "                subject_regime_ids,\n"
             "                new_subject_regime_ids,\n"
-            "                own_stakeholder,"
+            "                own_member,"
         ),
         (
             "                states,\n                (),\n                (),\n"
-            "                own_stakeholder,"
+            "                own_member,"
         ),
     ),
     "chunk_diagnostics:profiled_nonfinite_bypassed": (

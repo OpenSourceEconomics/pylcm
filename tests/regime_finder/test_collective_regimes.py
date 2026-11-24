@@ -1,7 +1,7 @@
 """The regime finder on collective models: pooling, counts, renegotiation and exits.
 
-Every model is a constructed `Model` from the collective, exit, renegotiation, gate
-and shared-problem tests, or a few-line model of the same kind. The certificate
+Every model is a constructed `Model` from the collective, exit, renegotiation and
+gate tests, or a few-line model of the same kind. The certificate
 tests alter a genuine report the way an unsound finder would write it and check that
 the independent replay rejects it.
 """
@@ -23,24 +23,38 @@ from _lcm_regime_finder.model_snapshot import read_model
 from _lcm_regime_finder.records import JSONValue
 from lcm import (
     CollectiveUtility,
+    Consent,
+    Counterparty,
     DiscreteGrid,
+    ExecutionConfig,
     Exit,
     ExitTarget,
     InitialNodes,
+    LinSpacedGrid,
     Model,
+    MutualConsent,
+    Periods,
     Regime,
     Unilateral,
     categorical,
+    fixed_transition,
 )
-from lcm.typing import BoolND, DiscreteState, FloatND, RegimeName, ScalarInt
+from lcm.exits import ExitRule
+from lcm.shocks import GaussHermite, Normal, Product, ShockGroup
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    RegimeName,
+    ScalarInt,
+)
 from tests import test_transition_roles as transition_roles
-from tests.collective_fixtures import make_two_stakeholder_model
+from tests.collective_fixtures import make_two_member_model
 from tests.regime_building import test_gate_shared_fallback as gate_fallback
 from tests.regime_finder import native_conditional_current_shocks as observed_offer
-from tests.simulation import test_query_only_participation_actors as value_readers
 from tests.solution import test_mutual_consent_settlement as settlement
 from tests.solution import test_renegotiation as renegotiation
-from tests.solution import test_shared_problem as shared_problem
 
 BACKENDS: tuple[FactsBackendName, ...] = ("dense", "metadata")
 
@@ -106,11 +120,199 @@ def _role_model() -> Model:
     )
 
 
+@categorical(ordered=True)
+class _Skill:
+    low: ScalarInt
+    high: ScalarInt
+
+
+@categorical(ordered=False)
+class _Household:
+    couple_u: ScalarInt
+    couple_m: ScalarInt
+    single_f: ScalarInt
+    single_m: ScalarInt
+    couple_end: ScalarInt
+    single_end: ScalarInt
+
+
+def _twin_wife(*, wealth: ContinuousState, match: FloatND) -> FloatND:
+    return 3.0 * wealth + match
+
+
+def _twin_husband(*, wealth: ContinuousState, skill: DiscreteState) -> FloatND:
+    return wealth + skill
+
+
+def _twin_outside(wealth: ContinuousState) -> FloatND:
+    return 2.0 * wealth
+
+
+def _twin_regimes() -> dict[RegimeName, Regime]:
+    """Two couples that differ only in the rule of their exit, and their singles.
+
+    One couple dissolves unless both members are willing to stay, the other only
+    if neither is. The couples read a current shock and the model-level state
+    `skill`; every regime moves on to a terminal regime of its kind.
+    """
+
+    def couple(*, last: bool, rule: ExitRule | None) -> Regime:
+        return Regime(
+            states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
+            state_transitions={} if last else {"wealth": fixed_transition("wealth")},
+            functions={
+                "utility": CollectiveUtility(
+                    utilities={"f": _twin_wife, "m": _twin_husband}
+                )
+            },
+            shocks=("match",),
+            exit=None
+            if rule is None
+            else Exit(
+                rule=rule,
+                targets={
+                    member: ExitTarget(
+                        regime=f"single_{member}",
+                        projection={
+                            "wealth": fixed_transition("wealth"),
+                            "skill": fixed_transition("skill"),
+                        },
+                    )
+                    for member in ("f", "m")
+                },
+            ),
+        )
+
+    def single(*, last: bool) -> Regime:
+        return Regime(
+            states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
+            state_transitions={} if last else {"wealth": fixed_transition("wealth")},
+            functions={"utility": _twin_outside},
+        )
+
+    return {
+        "couple_u": couple(last=False, rule=Unilateral()),
+        "couple_m": couple(last=False, rule=MutualConsent()),
+        "single_f": single(last=False),
+        "single_m": single(last=False),
+        "couple_end": couple(last=True, rule=None),
+        "single_end": single(last=True),
+    }
+
+
+def _twin_model(regimes: Mapping[RegimeName, Regime]) -> Model:
+    """Build the two-period couples model with the model-level state `skill`."""
+    return Model(
+        regimes=regimes,
+        states={"skill": DiscreteGrid(category_class=_Skill)},
+        state_transitions={"skill": fixed_transition("skill")},
+        shocks={
+            "match": ShockGroup(
+                shocks={"match": Normal(mu=0.0, sigma=0.5)},
+                nodes=Product(match=GaussHermite(n=2)),
+            )
+        },
+        n_periods=2,
+        regime_id_class=_Household,
+        initial_nodes=InitialNodes(by_period={0: ("couple_u", "couple_m")}),
+        edges={
+            source: {target: Periods(values=(0,))}
+            for source, target in (
+                ("couple_u", "couple_end"),
+                ("couple_m", "couple_end"),
+                ("single_f", "single_end"),
+                ("single_m", "single_end"),
+            )
+        },
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+    )
+
+
 def _equal_exit_couples() -> Model:
-    """The hand-declared twin couples, both dissolving under one rule."""
-    regimes = shared_problem._twin_regimes()
+    """The twin couples, both dissolving under one rule."""
+    regimes = _twin_regimes()
     regimes["couple_m"] = regimes["couple_u"]
-    return shared_problem._model(regimes=regimes, skill=True)
+    return _twin_model(regimes)
+
+
+@categorical(ordered=False)
+class _ValueReaderRegimes:
+    source: ScalarInt
+    formation: ScalarInt
+    counterparty: ScalarInt
+    done: ScalarInt
+    couple_done: ScalarInt
+    target: ScalarInt
+
+
+def _one() -> float:
+    return 1.0
+
+
+def _three() -> float:
+    return 3.0
+
+
+def _five() -> float:
+    return 5.0
+
+
+def _seven() -> float:
+    return 7.0
+
+
+def _eight() -> float:
+    return 8.0
+
+
+def _ten() -> float:
+    return 10.0
+
+
+def _twenty() -> float:
+    return 20.0
+
+
+def _value_reader_model() -> Model:
+    """A single forms a couple under `Consent`, reading the couple's member values."""
+    return Model(
+        regimes={
+            "source": Regime(
+                functions={"utility": _one},
+                exit=Exit(
+                    targets={
+                        "self": ExitTarget(regime="formation", role="f", projection={})
+                    },
+                    rule=Consent(
+                        counterparty=Counterparty(
+                            regime="counterparty", role="m", projection={}
+                        )
+                    ),
+                ),
+            ),
+            "formation": Regime(
+                functions={
+                    "utility": CollectiveUtility(utilities={"f": _eight, "m": _seven})
+                }
+            ),
+            "counterparty": Regime(functions={"utility": _three}),
+            "done": Regime(functions={"utility": _five}),
+            "couple_done": Regime(
+                functions={
+                    "utility": CollectiveUtility(utilities={"f": _ten, "m": _twenty})
+                }
+            ),
+            "target": Regime(functions={"utility": _five}),
+        },
+        n_periods=2,
+        regime_id_class=_ValueReaderRegimes,
+        initial_nodes=InitialNodes(by_period={0: "source"}),
+        edges={
+            "source": {"done": Periods(values=(0,))},
+            "formation": {"couple_done": Periods(values=(0,))},
+            "counterparty": {"target": Periods(values=(0,))},
+        },
+    )
 
 
 _MODELS: dict[str, Callable[[], Model]] = {
@@ -118,24 +320,19 @@ _MODELS: dict[str, Callable[[], Model]] = {
     "plain": lambda: transition_roles.build_model(edge_form="plain"),
     "exact_gate": lambda: transition_roles.build_model(edge_form="exact_gate"),
     "hand_gate": lambda: transition_roles.build_model(edge_form="hand_gate"),
-    "twin": lambda: shared_problem._model(
-        regimes=shared_problem._twin_regimes(), skill=True
-    ),
+    "twin": lambda: _twin_model(_twin_regimes()),
     "equal_exits": _equal_exit_couples,
-    "shared": lambda: shared_problem._model(
-        regimes=shared_problem._shared_regimes(skill=True), skill=True
-    ),
     "renegotiate_1p": lambda: renegotiation._model(values=renegotiation._VALUES),
     "renegotiate_2p": lambda: renegotiation._model(
         values=renegotiation._VALUES, n_periods=2
     ),
-    "two_stakeholder": lambda: make_two_stakeholder_model()[0],
+    "two_member": lambda: make_two_member_model()[0],
     "role": _role_model,
     "observed_offer": observed_offer.model,
     "settle": lambda: settlement._settlement_model(division="transfer"),
     "survivor_gate": lambda: gate_fallback.build_model(route_form="survivor"),
     "shared_fallback": lambda: gate_fallback.build_model(route_form="both_phases"),
-    "value_reader": lambda: value_readers.household_model(target_payoff=5, budget=None),
+    "value_reader": lambda: _value_reader_model(),
 }
 
 
@@ -215,7 +412,7 @@ def test_collective_regime_does_not_pool_with_a_single_agent_regime(
 def test_single_agent_regimes_of_one_kind_still_pool(
     backend: FactsBackendName,
 ) -> None:
-    """Without stakeholders, the same couple and single pool as one dense regime."""
+    """Without members, the same couple and single pool as one dense regime."""
     assert _pooled(_report("plain", backend), "couple", "single")
 
 
@@ -227,14 +424,14 @@ def test_regimes_with_different_exits_do_not_pool(backend: FactsBackendName) -> 
 
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_regimes_with_equal_exits_still_pool(backend: FactsBackendName) -> None:
-    """Two couples with one stakeholder tuple and one exit pool."""
+    """Two couples with one member tuple and one exit pool."""
     assert _pooled(_report("equal_exits", backend), "couple_m", "couple_u")
 
 
-def test_normalized_cells_carry_their_stakeholders() -> None:
-    """Each cell names its regime's stakeholders, `None` for a single agent."""
+def test_normalized_cells_carry_their_members() -> None:
+    """Each cell names its regime's members, `None` for a single agent."""
     cells = _report("roles", "dense")["analysis"]["declarations"]["cells"]
-    assert {c["regime"]: c.get("stakeholders", "absent") for c in cells} == {
+    assert {c["regime"]: c.get("member_axis", "absent") for c in cells} == {
         "single": None,
         "couple": ["f", "m"],
         "single_end": None,
@@ -245,7 +442,7 @@ def test_normalized_cells_carry_their_stakeholders() -> None:
 @pytest.mark.parametrize(
     ("label", "key", "regimes"),
     [
-        ("roles", "stakeholders", ("couple", "single")),
+        ("roles", "member_axis", ("couple", "single")),
         ("twin", "exit_identity", ("couple_m", "couple_u")),
     ],
 )
@@ -266,7 +463,7 @@ def test_certificate_rejects_a_layout_that_pools_unequal_regimes(
 @pytest.mark.parametrize(
     ("label", "regime", "key", "value"),
     [
-        ("roles", "couple", "stakeholders", None),
+        ("roles", "couple", "member_axis", None),
         ("twin", "couple_m", "exit_identity", None),
         ("renegotiate_2p", "couple", "renegotiated_states", []),
     ],
@@ -274,7 +471,7 @@ def test_certificate_rejects_a_layout_that_pools_unequal_regimes(
 def test_certificate_rejects_cells_that_lose_their_kind(
     label: str, regime: RegimeName, key: str, value: JSONValue
 ) -> None:
-    """The source check rejects cells whose stakeholders, exit or renegotiation changed."""
+    """The source check rejects cells whose members, exit or renegotiation changed."""
     genuine = verify_certificate(_captured(label), _report(label, "dense"))
     verified = _verify_with_cells(label, "dense", regime=regime, key=key, value=value)
     assert (
@@ -342,31 +539,31 @@ def test_certificate_rejects_a_layout_that_splits_the_renegotiation_state() -> N
 
 
 def _engine_counts() -> tuple[int, int]:
-    """Solve the two-stakeholder model; return its stored values and action values.
+    """Solve the two-member model; return its stored values and action values.
 
     The collective readout runs once per state node of each regime-period and
-    receives every stakeholder's action values there; the stored value carries
-    the state axes and a trailing stakeholder axis.
+    receives every member's action values there; the stored value carries
+    the state axes and a trailing member axis.
     """
     per_node: list[int] = []
     readout = max_Q_over_a.collective_readout
 
     def recording(
         *,
-        stakeholder_Q: Mapping[str, FloatND],
+        member_Q: Mapping[str, FloatND],
         feasibility: BoolND,
         weights: Mapping[str, FloatND | float],
         action_axes: tuple[int, ...],
     ) -> tuple[dict[str, FloatND], BoolND]:
-        per_node.append(sum(prod(q.shape) for q in stakeholder_Q.values()))
+        per_node.append(sum(prod(q.shape) for q in member_Q.values()))
         return readout(
-            stakeholder_Q=stakeholder_Q,
+            member_Q=member_Q,
             feasibility=feasibility,
             weights=weights,
             action_axes=action_axes,
         )
 
-    model, params = make_two_stakeholder_model()
+    model, params = make_two_member_model()
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(max_Q_over_a, "collective_readout", recording)
         values = model.solve(params=params, log_level="off").values
@@ -379,10 +576,10 @@ def _engine_counts() -> tuple[int, int]:
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_storage_counts_the_stakeholder_axis(backend: FactsBackendName) -> None:
+def test_storage_counts_the_member_axis(backend: FactsBackendName) -> None:
     """The finder's stored values of the model as written equal the solve's."""
     stored, _ = _engine_counts()
-    report = _report("two_stakeholder", backend)
+    report = _report("two_member", backend)
     assert (
         report["original_cost"]["storage"],
         report["layouts"]["curve"][0]["storage"],
@@ -390,10 +587,10 @@ def test_storage_counts_the_stakeholder_axis(backend: FactsBackendName) -> None:
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_evaluations_count_the_stakeholder_axis(backend: FactsBackendName) -> None:
+def test_evaluations_count_the_member_axis(backend: FactsBackendName) -> None:
     """The finder's evaluations of the model as written equal the solve's action values."""
     _, evaluated = _engine_counts()
-    report = _report("two_stakeholder", backend)
+    report = _report("two_member", backend)
     assert (report["original_cost"]["work"], report["layouts"]["original_count"]) == (
         evaluated,
         evaluated,
@@ -427,7 +624,7 @@ def test_exit_role_keeps_the_projected_state_live_and_is_reported(
         for c, v in report["analysis"]["dependency_closure"].items()
     }
     roles = {
-        r.get("stakeholder")
+        r.get("member")
         for r in report["analysis"]["declarations"]["relations"]
         if r["kind"] == "exit" and r["targets"]
     }
@@ -465,7 +662,7 @@ def test_settlement_reads_stay_live(backend: FactsBackendName) -> None:
 
 @pytest.mark.parametrize("label", ["survivor_gate", "shared_fallback"])
 def test_gates_with_legs_and_shared_fallbacks_stay_complete(label: str) -> None:
-    """A gate with stakeholder legs and fallbacks, one of them shared, is checked."""
+    """A gate with member legs and fallbacks, one of them shared, is checked."""
     report = _report(label, "dense")
     fallbacks = [
         r
@@ -493,16 +690,6 @@ def test_roles_equal_their_lowered_gate() -> None:
         for label in ("roles", "exact_gate")
     ]
     assert curves[0] == curves[1]
-
-
-def test_problem_holders_are_checked_as_the_regimes_declaring_their_slots() -> None:
-    """Holders of one `Problem` get the result of the hand-declared twin regimes."""
-    shared, twin = _report("shared", "dense"), _report("twin", "dense")
-    assert (shared["status"], shared["analysis"]["obligations"]) == ("COMPLETE", [])
-    assert (shared["layouts"]["dense_regimes"], shared["original_cost"]) == (
-        twin["layouts"]["dense_regimes"],
-        twin["original_cost"],
-    )
 
 
 def test_readers_of_a_collective_value_stay_unresolved() -> None:

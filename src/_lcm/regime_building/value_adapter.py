@@ -26,7 +26,6 @@ from typing import cast, no_type_check
 
 import jax.numpy as jnp
 from dags import get_annotations, get_free_arguments
-from dags.signature import rename_arguments
 
 from _lcm.dtypes import name_of
 from _lcm.gated_edge import GatedEdge
@@ -38,11 +37,7 @@ from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.typing import AgeValue, EconFunctionArg, FunctionName, RegimeName
 from _lcm.utils.ast_inspection import value_indexed_arrays
 from _lcm.utils.functools import is_user_function
-from lcm.collective import (
-    CollectiveUtility,
-    ProjectedRegimeValue,
-    ValueDependentConstraint,
-)
+from lcm.collective import CollectiveUtility, ProjectedRegimeValue
 from lcm.condition import Condition
 from lcm.decoupled import Decoupled
 from lcm.exceptions import (
@@ -51,7 +46,6 @@ from lcm.exceptions import (
     RegimeInitializationError,
 )
 from lcm.grids import DiscreteGrid
-from lcm.participation import ParticipationCheck, ParticipationRead
 from lcm.phased import Phased
 from lcm.processes import JointNormalIIDProcess
 from lcm.regime import (
@@ -633,7 +627,7 @@ def _adapt_regime_law(
     value_grids_by_regime: Mapping[RegimeName, Mapping[StateOrActionName, AdapterGrid]],
     adapters: AdapterMemo,
 ) -> RegimeLaw:
-    """Adapt the source law and target-dated gate and participation callbacks."""
+    """Adapt the source law and target-dated gate callbacks."""
     transition = (
         law.transition
         if isinstance(law.transition, str)
@@ -655,131 +649,14 @@ def _adapt_regime_law(
         )
         for target, edge in law.gated_edges.items()
     }
-    participation = {
-        target: _adapt_participation(
-            declaration=declaration,
-            value_grids=value_grids_by_regime[target],
-            adapters=adapters,
-        )
-        for target, declaration in law.participation.items()
-    }
-    if (
-        transition is law.transition
-        and all(gated_edges[target] is edge for target, edge in law.gated_edges.items())
-        and all(
-            participation[target] is declaration
-            for target, declaration in law.participation.items()
-        )
+    if transition is law.transition and all(
+        gated_edges[target] is edge for target, edge in law.gated_edges.items()
     ):
         return law
     return dataclasses.replace(
         law,
         transition=transition,
         gated_edges=MappingProxyType(gated_edges),
-        participation=MappingProxyType(participation),
-    )
-
-
-@dataclass(frozen=True, kw_only=True, eq=False)
-class _AdaptedParticipationPredicate:
-    """Canonical predicate reader plus the private names of its declared reads.
-
-    The declaration keeps its public read keys. Only the callback's input channel is
-    renamed before value adaptation, and the participation check lowerer reconnects that
-    channel to its query operands without rebuilding the retained adapter.
-    """
-
-    function: UserFunction
-    read_aliases: MappingProxyType[str, str]
-
-    def __post_init__(self) -> None:
-        for name in ("__module__", "__name__", "__qualname__", "__doc__"):
-            value = getattr(self.function, name, None)
-            if value is not None:
-                object.__setattr__(self, name, value)
-        object.__setattr__(self, "__signature__", inspect.signature(self.function))
-        object.__setattr__(self, "__annotations__", get_annotations(self.function))
-        object.__setattr__(self, "__lcm_source__", self.function)
-
-    @no_type_check
-    def __call__(self, **kwargs: EconFunctionArg) -> ValueND:
-        return self.function(**kwargs)
-
-
-def _adapt_participation(
-    *,
-    declaration: ParticipationCheck,
-    value_grids: Mapping[StateOrActionName, AdapterGrid],
-    adapters: AdapterMemo,
-) -> ParticipationCheck:
-    """Read landing values and encode projected read and settlement states."""
-    predicate = declaration.predicate
-    # Keep explicit read operands separate from same-spelled physical inputs.
-    # Adapt the actual reader here, with the canonical bindings and shared memo,
-    # so process-code admission sees exactly the adapter the lowerer will use.
-    if any(
-        name in value_grids
-        or (
-            name.endswith(CODE_SUFFIX) and name.removesuffix(CODE_SUFFIX) in value_grids
-        )
-        for name in declaration.reads
-    ):
-        occupied = set(inspect.signature(predicate).parameters) | set(value_grids)
-        aliases = {}
-        for index, name in enumerate(declaration.reads):
-            alias = f"_lcm_participation_declared_read_{index}"
-            while alias in occupied:
-                alias += "_"
-            aliases[name] = alias
-            occupied.add(alias)
-        predicate = _AdaptedParticipationPredicate(
-            function=adapt_user_function(
-                func=rename_arguments(predicate, mapper=aliases),
-                value_grids=value_grids,
-                encode=None,
-                adapters=adapters,
-            ),
-            read_aliases=MappingProxyType(aliases),
-        )
-    else:
-        predicate = adapt_user_function(
-            func=declaration.predicate,
-            value_grids=value_grids,
-            encode=None,
-            adapters=adapters,
-        )
-    reads = {
-        name: cast(
-            "ParticipationRead",
-            _adapt_reference(
-                reference=read, value_grids=value_grids, adapters=adapters
-            ),
-        )
-        for name, read in declaration.reads.items()
-    }
-    fallbacks = {
-        name: _adapt_reference(
-            reference=route.fallback, value_grids=value_grids, adapters=adapters
-        )
-        for name, route in declaration.routes.items()
-    }
-    if (
-        predicate is declaration.predicate
-        and all(reads[name] is read for name, read in declaration.reads.items())
-        and all(
-            fallbacks[name] is route.fallback
-            for name, route in declaration.routes.items()
-        )
-    ):
-        return declaration
-    return dataclasses.replace(
-        declaration,
-        predicate=predicate,
-        reads=reads,
-        routes={
-            name: dataclasses.replace(route, fallback=fallbacks[name])
-            for name, route in declaration.routes.items()
-        },
     )
 
 
@@ -792,28 +669,28 @@ def adapt_collective_utility(
 ) -> CollectiveUtility:
     """Return the household declaration with the bodies the engine runs.
 
-    Each stakeholder's body is the adapted `utility_<s>` the engine holds, so the
+    Each member's body is the adapted `utility_<s>` the engine holds, so the
     declaration and the engine name one object, and each Pareto weight reads
     values. A declaration that reads no value grid is returned as declared.
     """
     utilities = {
-        stakeholder: None
+        member: None
         if body is None
         else cast(
             "UserFunction | Phased",
-            engine_functions.get(f"utility_{stakeholder}", body),
+            engine_functions.get(f"utility_{member}", body),
         )
-        for stakeholder, body in declaration.utilities.items()
+        for member, body in declaration.utilities.items()
     }
     objective = declaration.objective
     if objective is not None:
         weights = {
-            stakeholder: adapt_user_function(
+            member: adapt_user_function(
                 func=weight, value_grids=value_grids, encode=None, adapters=adapters
             )
             if is_user_function(weight)
             else weight
-            for stakeholder, weight in objective.weights.items()
+            for member, weight in objective.weights.items()
         }
         if any(weights[s] is not w for s, w in objective.weights.items()):
             objective = dataclasses.replace(objective, weights=weights)
@@ -901,18 +778,16 @@ def adapt_entry(  # noqa: PLR0911
 ) -> AdaptableEntry:
     """Adapt every user function inside one regime slot entry.
 
-    Walks `Phased` sides, per-target mappings, both functions of a `Decoupled`
-    Koopmans aggregator, the function of a `DeterministicTransition`, the
-    predicate and projections of a `ValueDependentConstraint`, the callables of
-    a `JointTransition`, the probability function of a `StochasticTransition`,
-    which is decoded only: it returns probabilities over codes, and every
-    function an `AgeSpecializedFunction` builds. With `adapters`, one authored
-    function gets one adapter wherever it appears, so a function shared by both
-    phases stays one function.
+    Walks `Phased` sides, per-target mappings, both functions of a `Decoupled` Koopmans
+    aggregator, the function of a `DeterministicTransition`, the callables of a
+    `JointTransition`, the probability function of a `StochasticTransition`, which is
+    decoded only: it returns probabilities over codes, and every function an
+    `AgeSpecializedFunction` builds. With `adapters`, one authored function gets one
+    adapter wherever it appears, so a function shared by both phases stays one function.
     """
     # Without value grids nothing changes. A grid declares no function. A
     # condition is a tree of names, not a function; the model refuses one that
-    # reads a value or a code. A household's stakeholder bodies
+    # reads a value or a code. A household's member bodies
     # are adapted as the regime's `utility_<s>` functions. An identity law maps
     # codes to codes exactly as it maps values to values.
     if not value_grids or isinstance(
@@ -930,10 +805,6 @@ def adapt_entry(  # noqa: PLR0911
     if isinstance(entry, AgeSpecializedFunction):
         return _adapt_age_specialized(
             entry=entry, value_grids=value_grids, encode=encode, adapters=adapters
-        )
-    if isinstance(entry, ValueDependentConstraint):
-        return _adapt_value_dependent_constraint(
-            entry=entry, value_grids=value_grids, adapters=adapters
         )
     if isinstance(entry, Phased):
         return _adapt_phased(
@@ -971,7 +842,7 @@ def adapt_entry(  # noqa: PLR0911
 
 
 # A container whose parts all come back unchanged is returned as declared: other
-# checks compare declarations, such as a stakeholder's utility, by identity.
+# checks compare declarations, such as a member's utility, by identity.
 
 
 def _adapt_phased(
@@ -1061,32 +932,6 @@ class AdaptedBuild:
                 "function cannot read. Read it in a plain function."
             )
         return func
-
-
-def _adapt_value_dependent_constraint(
-    *,
-    entry: ValueDependentConstraint,
-    value_grids: Mapping[StateOrActionName, AdapterGrid],
-    adapters: AdapterMemo,
-) -> ValueDependentConstraint:
-    """Adapt the predicate and the projections, keeping the entry if neither changes."""
-    predicate = adapt_user_function(
-        func=entry.predicate, value_grids=value_grids, encode=None, adapters=adapters
-    )
-    references = {
-        name: cast(
-            "ProjectedRegimeValue",
-            _adapt_reference(
-                reference=reference, value_grids=value_grids, adapters=adapters
-            ),
-        )
-        for name, reference in entry.references.items()
-    }
-    if predicate is entry.predicate and all(
-        references[name] is reference for name, reference in entry.references.items()
-    ):
-        return entry
-    return dataclasses.replace(entry, predicate=predicate, references=references)
 
 
 def _adapt_joint(

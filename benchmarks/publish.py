@@ -40,18 +40,21 @@ _RENAMED_BENCHMARKS = {
     f"bench_collective_household.{cls}.time_execution": (
         f"bench_collective_household.{cls}.track_execution_time"
     )
-    for cls in ("CollectiveHouseholdSimulate", "ReferenceChainSolve")
+    for cls in ("CollectiveHouseholdSimulate",)
 }
 
 # Benchmark classes removed from the suite whose stored results are dropped, so the
 # dashboard and the pushed-back results no longer carry them.
-_RETIRED_BENCHMARK_PREFIXES = tuple(
-    f"bench_aca_baseline.{cls}."
-    for cls in (
-        "AcaBaselineGpuPeakMem",
-        "AcaBaselineDebugLogGpuPeakMem",
-        "_AcaBaselineDebugLogGpuPeakMem",
-    )
+_RETIRED_BENCHMARK_PREFIXES = (
+    *(
+        f"bench_aca_baseline.{cls}."
+        for cls in (
+            "AcaBaselineGpuPeakMem",
+            "AcaBaselineDebugLogGpuPeakMem",
+            "_AcaBaselineDebugLogGpuPeakMem",
+        )
+    ),
+    "bench_collective_household.ReferenceChainSolve.",
 )
 
 

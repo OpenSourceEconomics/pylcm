@@ -17,14 +17,19 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from _lcm.engine import Regime, StateActionSpace, placed_devices_for_ids
+from _lcm.engine import (
+    Regime,
+    StateActionSpace,
+    _RegimeSharding,
+    placed_devices_for_ids,
+)
 from _lcm.grids import Grid
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.gated_edges import EdgeChannels
 from _lcm.solution import backward_induction
 from _lcm.solution.backward_induction import _iter_edge_topologies
 from _lcm.typing import FlatRegimeParams
-from lcm.typing import StateName, StateOrActionName
+from lcm.typing import RegimeName, StateName, StateOrActionName
 
 
 @dataclasses.dataclass(frozen=True)
@@ -66,10 +71,16 @@ class _MockSolutionPhase:
 class _MockRegime(Regime):
     """A `Regime` carrying only what the topology iterator reads."""
 
-    def __init__(self, *, solution, gated_edges, stakeholders=None) -> None:
+    def __init__(
+        self,
+        *,
+        solution: _MockSolutionPhase,
+        gated_edges: MappingProxyType[RegimeName, _MockEdge],
+        member_axis: tuple[str, ...] | None = None,
+    ) -> None:
         object.__setattr__(self, "solution", solution)
         object.__setattr__(self, "gated_edges", gated_edges)
-        object.__setattr__(self, "stakeholders", stakeholders)
+        object.__setattr__(self, "member_axis", member_axis)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -111,12 +122,20 @@ def _two_sources_one_target() -> MappingProxyType[str, Regime]:
 
 
 @pytest.fixture
-def sharding_plan_calls(monkeypatch):
+def sharding_plan_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[MappingProxyType[StateOrActionName, Grid]]:
     """Record the target names `_iter_edge_topologies` builds a plan for."""
     calls: list[MappingProxyType[StateOrActionName, Grid]] = []
     original = backward_induction._build_regime_sharding
 
-    def counting(*, grids, sharded_state_names, devices, action_partitions=1):
+    def counting(
+        *,
+        grids: MappingProxyType[StateOrActionName, Grid],
+        sharded_state_names: frozenset[StateName],
+        devices: tuple[jax.Device, ...],
+        action_partitions: int = 1,
+    ) -> _RegimeSharding | None:
         calls.append(grids)
         return original(
             grids=grids,
@@ -129,7 +148,9 @@ def sharding_plan_calls(monkeypatch):
     return calls
 
 
-def test_one_target_reached_twice_is_described_once(sharding_plan_calls):
+def test_one_target_reached_twice_is_described_once(
+    sharding_plan_calls: list[MappingProxyType[StateOrActionName, Grid]],
+) -> None:
     """Two sources into one target build that target's topology a single time."""
     regimes = _two_sources_one_target()
     flat_params = MappingProxyType(dict.fromkeys(regimes, MappingProxyType({})))
@@ -139,7 +160,8 @@ def test_one_target_reached_twice_is_described_once(sharding_plan_calls):
     assert len(sharding_plan_calls) == 1
 
 
-def test_both_edges_still_get_their_topology(sharding_plan_calls):  # noqa: ARG001
+@pytest.mark.usefixtures("sharding_plan_calls")
+def test_both_edges_still_get_their_topology() -> None:
     """Sharing the work does not drop an edge: both sources are still yielded."""
     regimes = _two_sources_one_target()
     flat_params = MappingProxyType(dict.fromkeys(regimes, MappingProxyType({})))
@@ -152,7 +174,8 @@ def test_both_edges_still_get_their_topology(sharding_plan_calls):  # noqa: ARG0
     ]
 
 
-def test_a_shared_target_gives_both_edges_the_same_shape(sharding_plan_calls):  # noqa: ARG001
+@pytest.mark.usefixtures("sharding_plan_calls")
+def test_a_shared_target_gives_both_edges_the_same_shape() -> None:
     """The shared topology is the target's grid plus each edge's channel axis.
 
     Both edges here stack one target component, so both read `(4, 1)`: the
@@ -173,7 +196,8 @@ def test_a_shared_target_gives_both_edges_the_same_shape(sharding_plan_calls):  
     assert shapes == {(4, 1)}
 
 
-def test_the_trailing_axis_is_the_edges_own_channel_count(sharding_plan_calls):  # noqa: ARG001
+@pytest.mark.usefixtures("sharding_plan_calls")
+def test_the_trailing_axis_is_the_edges_own_channel_count() -> None:
     """Each edge's trailing axis counts ITS operands, not the source's roles.
 
     The continuation array holds the operands the gate and the branches are
@@ -186,7 +210,7 @@ def test_the_trailing_axis_is_the_edges_own_channel_count(sharding_plan_calls): 
     regimes["source_a"] = _MockRegime(
         solution=_MockSolutionPhase(states=MappingProxyType({})),
         gated_edges=MappingProxyType({"shared_target": _edge(n_components=2)}),
-        stakeholders=("f", "m"),
+        member_axis=("f", "m"),
     )
     frozen = MappingProxyType(regimes)
     flat_params = MappingProxyType(dict.fromkeys(frozen, MappingProxyType({})))

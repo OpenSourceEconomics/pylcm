@@ -37,7 +37,6 @@ from lcm.typing import (
     UserFunction,
     UserParams,
 )
-from tests.test_demand_worklists import _gated_model
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 _PARAMS = {"discount_factor": 0.9}
@@ -100,7 +99,7 @@ def _life_model(
     initial_nodes: UserInitialNodes,
     working_law: TransitionLaw | None = None,
     dead: Regime | None = None,
-):
+) -> Model:
     return Model(
         regimes={
             "working": _nonterminal(),
@@ -263,11 +262,3 @@ def test_terminal_utility_required_at_an_unfinite_age_trips_the_nan_check() -> N
     )
     with pytest.raises(InvalidValueFunctionError, match="dead"):
         model.solve(params={}, log_level="debug")
-
-
-def test_gate_reference_through_a_terminal_regime_reads_its_value() -> None:
-    """A terminal regime read only as a gate reference is solved to its utility."""
-    values = _gated_model(phased_fallback=False).solve(params=_PARAMS, log_level="off")
-    np.testing.assert_array_equal(
-        np.asarray(values.values[1]["reference"]), np.asarray([0.0, 1.0])
-    )

@@ -221,7 +221,7 @@ class AxisRole(StrEnum):
     ACTION = "action"
     CANDIDATE = "candidate"
     STOCHASTIC = "stochastic"
-    STAKEHOLDER = "stakeholder"
+    MEMBER = "member"
     OTHER = "other"
 
 

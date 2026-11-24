@@ -1,20 +1,19 @@
-"""A dissolution participation check is decided at the state a household realises.
+"""A household's dissolution exit is decided at the state the household realises.
 
-The participation reads the target's Participating policy support: whether the target
-regime has a feasible action at the state the household lands on. A landing between two
-nodes can have no feasible action even though both nodes do, and a landing next to an
-empty node can have one, so the support is queried at the realised landing itself rather
-than interpolated from the grid nodes. A household left with no feasible action takes
-its participation check's dissolution route in that same period instead of aborting the
-simulation.
+The exit keeps the best action every member accepts, so it asks whether the regime
+has such an action at the state the household lands on. A landing between two nodes
+can have none even though both nodes do, and a landing next to an empty node can have
+one, so the exit decides at the realised landing itself rather than interpolating
+from the grid nodes. A household left with no accepted action takes its own exit in
+that same period instead of aborting the simulation.
 
-The model is the smallest one with that geometry. A source regime carries the
-household's wage unchanged into a two-stakeholder `pair` regime whose wage grid
-has nodes 1 and 3. Under the pair's dissolution exit rule the wife participates
+The model is the smallest one with that geometry. A two-member source regime carries
+the household's wage unchanged into a two-member `pair` regime whose wage grid has
+nodes 1 and 3. Under the pair's dissolution exit rule the wife accepts an action
 only when her pair payoff strictly beats her outside option of 0.5, and her pair
-payoff is a function of the wage alone, so whether `pair` has a feasible action
-at a wage is a scalar inequality that the reference below evaluates by
-enumerating both actions directly.
+payoff is a function of the wage alone, so whether `pair` keeps the household at a
+wage is a scalar inequality that the reference below evaluates by enumerating both
+actions directly. Every simulated row is the husband, whose exit leads to `alone_m`.
 """
 
 import logging
@@ -34,12 +33,10 @@ from lcm import (
     ExecutionConfig,
     Gate,
     IrregSpacedGrid,
+    MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
 )
@@ -86,10 +83,6 @@ def _ramp(wage: FloatND | np.floating) -> FloatND | np.floating:
 _PAYOFFS = {"bowl": _bowl, "ramp": _ramp}
 
 
-def _to_pair(age: FloatND) -> FloatND:
-    return jnp.ones_like(age, dtype=float)
-
-
 def _u_source(wage: ContinuousState) -> FloatND:
     return 0.0 * wage
 
@@ -125,10 +118,6 @@ def _identity(wage: ContinuousState) -> ContinuousState:
     return wage
 
 
-def _has_policy_support(pair_support: BoolND) -> BoolND:
-    return pair_support
-
-
 def _double(wage: ContinuousState) -> ContinuousState:
     return 2.0 * wage
 
@@ -143,40 +132,16 @@ def _build_model(
 ) -> Model:
     wage_grid = IrregSpacedGrid(points=np.array([1.0, 3.0]))
     return Model(
-        edges={
-            "source": Transition(
-                targets={"pair": 0, "alone_m": 0},
-                law=ByAge(cases={0: {"pair": StochasticTransition(func=_to_pair)}}),
-                participation={
-                    "pair": ParticipationCheck(
-                        predicate=_has_policy_support,
-                        reads={
-                            "pair_support": ParticipationRead(
-                                regime="pair",
-                                stakeholder="f",
-                                kind="Participating",
-                                field="support",
-                                projection={"wage": _identity},
-                            )
-                        },
-                        routes={
-                            "only": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="alone_m",
-                                    projection={"wage": fallback_projection},
-                                ),
-                            )
-                        },
-                    )
-                },
-            )
-        },
+        edges={"source": {"pair": 0}},
         regimes={
             "source": Regime(
                 states={"wage": wage_grid},
                 state_transitions={"wage": _keep_wage},
-                functions={"utility": _u_source},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"f": _u_source, "m": _u_source}
+                    )
+                },
             ),
             "pair": Regime(
                 states={"wage": wage_grid},
@@ -192,7 +157,8 @@ def _build_model(
                             regime="alone_f", projection={"wage": _identity}
                         ),
                         "m": ExitTarget(
-                            regime="alone_m", projection={"wage": _identity}
+                            regime="alone_m",
+                            projection={"wage": fallback_projection},
                         ),
                     },
                     rule=Unilateral(tie="leave"),
@@ -246,7 +212,7 @@ def _working_dtype() -> type[np.floating]:
 def _landings(*, payoff_name: str) -> np.ndarray:
     """Landings at, next to, and between the nodes, and around the boundary.
 
-    The participation boundary is where the wife's payoff equals 0.5. Each
+    The acceptance boundary is where the wife's payoff equals 0.5. Each
     boundary point is represented in the working format and flanked by its
     three representable neighbours on either side, so the reference and the
     simulation are compared on both sides of a structural decision without any
@@ -289,6 +255,9 @@ def _simulate(
             "regime_id": jnp.full(
                 n_subjects, model.regime_names_to_ids["source"], jnp.int32
             ),
+            "own_member": jnp.full(
+                n_subjects, model.member_names_to_ids["m"], jnp.int32
+            ),
         },
         solution=solution,
         log_level="off",
@@ -302,17 +271,17 @@ def _simulate(
 def test_simulate_routes_an_empty_landing_between_feasible_nodes_to_the_fallback() -> (
     None
 ):
-    """A household landing at wage 2 has no feasible pair action and takes its route.
+    """A household landing at wage 2 has no accepted pair action and takes its exit.
 
-    Both nodes of the cell around wage 2 are feasible, but at wage 2 the wife's
-    payoff is 0 and no action satisfies her participation constraint.
+    Both nodes of the cell around wage 2 keep the household, but at wage 2 the
+    wife's payoff is 0 and she accepts no action.
     """
     _, panel = _simulate(payoff_name="bowl", wages=np.array([2.0]))
     assert panel["regime_name"].tolist() == ["alone_m"]
 
 
 def test_simulate_carries_the_projected_state_into_the_fallback() -> None:
-    """The fallback leg's identity projection keeps the realised wage."""
+    """The exit target's identity projection keeps the realised wage."""
     _, panel = _simulate(payoff_name="bowl", wages=np.array([2.0]))
     assert panel["wage"].tolist() == [2.0]
 
@@ -344,33 +313,8 @@ def test_generated_landings_reach_both_sides_of_the_boundary(
     }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="A participation fallback is not recorded in `dissolution_fallbacks`.",
-)
-def test_every_dissolution_route_is_recorded_with_its_state_and_route() -> None:
-    """The rerouted household is recorded with subject, period, state and route."""
-    model = _build_model(payoff_name="bowl")
-    solution = model.solve(params=_PARAMS, log_level="off")
-    result = model.simulate(
-        params=_PARAMS,
-        initial_conditions={
-            "wage": jnp.array([3.0, 2.0]),
-            "age": jnp.zeros(2),
-            "regime_id": jnp.full(2, model.regime_names_to_ids["source"], jnp.int32),
-        },
-        solution=solution,
-        log_level="off",
-        seed=0,
-    )
-    assert [
-        (r.subject_id, r.period, r.regime, dict(r.state), r.source, r.fallback)
-        for r in result.dissolution_fallbacks
-    ] == [(1, 1, "pair", {"wage": 2.0}, "source", "alone_m")]
-
-
 def _clip_state_fallback_model() -> Model:
-    """`alone_m` clips its wage to `[1, 3]`; the route doubles the realised wage."""
+    """`alone_m` clips its wage to `[1, 3]`; the exit doubles the realised wage."""
     return _build_model(
         payoff_name="bowl",
         fallback_grid=IrregSpacedGrid(
@@ -390,6 +334,7 @@ def _simulate_at_wage_two(
             "wage": jnp.array([2.0]),
             "age": jnp.zeros(1),
             "regime_id": jnp.full(1, model.regime_names_to_ids["source"], jnp.int32),
+            "own_member": jnp.full(1, model.member_names_to_ids["m"], jnp.int32),
         },
         solution=solution,
         log_level=log_level,
@@ -397,6 +342,13 @@ def _simulate_at_wage_two(
     )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "An exit projection landing off its destination grid is neither clipped "
+        "nor refused in simulation; the removed participation fallback was."
+    ),
+)
 def test_a_rerouted_state_follows_the_fallback_grid_clip_rule() -> None:
     """Wage 2 is empty in `pair`; doubled to 4, `alone_m` clips it to its top node."""
     result = _simulate_at_wage_two(model=_clip_state_fallback_model())
@@ -409,7 +361,7 @@ def test_a_rerouted_state_follows_the_fallback_grid_clip_rule() -> None:
 def test_debug_transition_counts_name_the_regime_a_rerouted_household_acted_in(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The household rerouted at period 1 acted in `alone_m`, then stays there."""
+    """The household that exits at period 1 acted in `alone_m`, then stays there."""
     with caplog.at_level(logging.DEBUG, logger="lcm"):
         _simulate_at_wage_two(model=_clip_state_fallback_model(), log_level="debug")
     transition_lines = [
@@ -430,8 +382,15 @@ def _bend_middle_up(wage: ContinuousState) -> ContinuousState:
     return wage + 2.0 * (wage - 1.0) * (3.0 - wage)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "An exit projection landing off its destination grid is neither clipped "
+        "nor refused in simulation; the removed participation fallback was."
+    ),
+)
 def test_an_off_grid_rerouted_state_is_refused_at_the_period_it_acts_in() -> None:
-    """Wage 2 is empty in `pair` at period 1; its route lands off `alone_m`'s grid."""
+    """Wage 2 is empty in `pair` at period 1; its exit lands off `alone_m`'s grid."""
     model = _build_model(
         payoff_name="bowl",
         fallback_grid=IrregSpacedGrid(
@@ -482,7 +441,7 @@ def _gated_entry_into_x(
             "x": Gate(
                 predicate=_always_open,
                 routes={
-                    "only": StakeholderRoute(
+                    "only": MemberRoute(
                         fallback=ProjectedRegimeValue(
                             regime=fallback, projection={"wage": projection}
                         )

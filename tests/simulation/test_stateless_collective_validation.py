@@ -2,7 +2,7 @@
 
 A collective regime that declares no states still simulates one row per
 subject: its recorded value array carries the subject axis in front of the
-stakeholder axis, and every subject records the household's shared optimal
+member axis, and every subject records the household's shared optimal
 action. That contract is a property of the model, not of the diagnostics, so
 it holds at `log_level="debug"`, which switches the value-function validation
 on, exactly as it does at every quieter level.
@@ -31,7 +31,7 @@ _REGIME_NAME = "stateless_couple"
 
 _N_SUBJECTS = 3
 
-_N_STAKEHOLDERS = 2
+_N_MEMBERS = 2
 
 # The regime's payoffs are `utility_f = 10 * work` and
 # `utility_m = 5 * (1 - work)`, so the household argmax takes `work` (10 + 0
@@ -80,14 +80,14 @@ def _simulate_stateless_collective_at_debug() -> PeriodRegimeSimulationData:
     return result.raw_results[_REGIME_NAME][0]
 
 
-def test_stateless_collective_simulated_V_has_subject_and_stakeholder_axes() -> None:
-    """The simulated value array is `(n_subjects, n_stakeholders)`."""
+def test_stateless_collective_simulated_V_has_subject_and_member_axes() -> None:
+    """The simulated value array is `(n_subjects, n_members)`."""
     period_0 = _simulate_stateless_collective_at_debug()
 
-    assert period_0.V_arr.shape == (_N_SUBJECTS, _N_STAKEHOLDERS)
+    assert period_0.V_arr.shape == (_N_SUBJECTS, _N_MEMBERS)
 
 
-def test_stateless_collective_simulated_V_records_each_stakeholder_payoff() -> None:
+def test_stateless_collective_simulated_V_records_each_member_payoff() -> None:
     """Every subject records `(value_f, value_m) == (10.0, 0.0)`."""
     period_0 = _simulate_stateless_collective_at_debug()
 

@@ -74,7 +74,6 @@ from _lcm.typing import (
     EconFunctionsMapping,
     FlatParams,
     FunctionName,
-    PeriodToRegimeToParticipationSurfaces,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
     PytreeValue,
@@ -126,25 +125,15 @@ from lcm.typing import Float1D, FloatND, UserFunction
 
 if TYPE_CHECKING:
     from _lcm.current_iid import CurrentIIDDrawPlan, CurrentIIDPlan
-    from _lcm.participation_queries import (
-        ParticipationPublication,
-        ParticipationQueryPlan,
-    )
     from _lcm.regime_building.finalize import FinalizedUserRegime
     from _lcm.regime_building.V import VInterpolationInfo
     from _lcm.regime_law import RegimeLaw
 
     type RegimeLawsMapping = Mapping[RegimeName, RegimeLaw]
-    type ParticipationQueriesMapping = Mapping[
-        int, Mapping[RegimeName, ParticipationQueryPlan]
-    ]
-    type ParticipationPublicationsMapping = Mapping[int, ParticipationPublication]
 
     type UserRegimesMapping = Mapping[RegimeName, FinalizedUserRegime]
     type RegimeToVInterpolationInfo = MappingProxyType[RegimeName, VInterpolationInfo]
 else:
-    ParticipationQueriesMapping = Mapping
-    ParticipationPublicationsMapping = Mapping
     # The innovation plan imports the solver facade through its law registry.
     type CurrentIIDPlan = object
     type CurrentIIDDrawPlan = object
@@ -277,29 +266,6 @@ class SolverBuildContext:
     template yet; filled for the `declare_continuation_reads` call that follows
     once every regime is built.
     """
-    participation_queries: ParticipationQueriesMapping = field(
-        default_factory=lambda: MappingProxyType({})
-    )
-    """Actual next-date policy/value read graphs inside this source's Q/F."""
-
-    participation_surfaces: ParticipationQueriesMapping = field(
-        default_factory=lambda: MappingProxyType({}),
-        metadata={"fingerprint_omit_if_default": True},
-    )
-    """Participation plan whose stored surface each participation target's value reads.
-
-    Set only on the contexts a participation plan rebuilds an action problem from.
-    There the action problem's next-date participation checks read the source's stored
-    surface -- the plan's branches and decision operands, interpolated and
-    decided again at the landing -- instead of nesting another plan.
-    """
-
-    participation_publications: ParticipationPublicationsMapping = field(
-        default_factory=lambda: MappingProxyType({}),
-        metadata={"fingerprint_omit_if_default": True},
-    )
-    """Dated participation payload this regime publishes: borrowed values, surfaces."""
-
     scalar_query_models: Mapping[RegimeName, ScalarEGMQueryModel] | None = None
     """Trusted scalar query pools prepared once before numerical kernel factories."""
 
@@ -520,17 +486,20 @@ class SolverBuildContext:
     continuation carrying the state. Empty when nothing is blocked.
     """
 
-    stakeholders: tuple[str, ...] | None = None
-    """Ordered stakeholder names for a collective regime, or `None` (singleton).
+    members: tuple[str, ...]
+    """The regime's members (`Regime.members`); `("self",)` for a singleton."""
+
+    member_axis: tuple[str, ...] | None = None
+    """Ordered member names for a collective regime, or `None` (singleton).
 
     When set, the grid-search kernel reads off each
-    stakeholder's own value at the shared household argmax of the Pareto-weighted
+    member's own value at the shared household argmax of the Pareto-weighted
     scalarization, and the regime's value-function array gains a trailing
-    stakeholder axis.
+    member axis.
     """
 
     pareto_weights: ParetoWeights | None = None
-    """The household's Pareto weight evaluator; set together with `stakeholders`."""
+    """The household's Pareto weight evaluator; set together with `member_axis`."""
 
     edge_target_regimes: tuple[RegimeName, ...] = ()
     """Target regimes this regime reaches through a gated edge, or empty.
@@ -551,18 +520,6 @@ class SolverBuildContext:
     kernel — at the value of the period the source lands in. The rolled V
     mapping already carries that array; these names are what pick it out and
     thread each reference regime's OWN grid params beside it.
-    """
-
-    same_period_ref_regimes: tuple[RegimeName, ...] = ()
-    """Reference regimes whose SAME-period V this regime's kernels read.
-
-    Non-empty only for a collective regime declaring
-    `same_period_refs`. The grid-search kernel then accepts the extra call
-    argument `same_period_regime_to_V_arr` (the mapping of these regimes to
-    their current-period V arrays, supplied by the solve loop after solving
-    them earlier in the same period) and includes matching zero templates in
-    its lowering arguments. Empty for every other regime, whose kernel
-    signatures are unchanged.
     """
 
     def place_on_regime_devices[Template](self, *, template: Template) -> Template:
@@ -668,14 +625,6 @@ class BackwardInductionResult:
 
     auxiliary_artifacts: ArtifactStore = field(default_factory=ArtifactStore)
     """Addressed solver-defined inspection/persistence artifacts."""
-
-    participation_surfaces: PeriodToRegimeToParticipationSurfaces = MappingProxyType({})
-    """Stored participation surfaces, by period, publishing regime and payload leaf.
-
-    Participation replay rebuilds the same plans the solve priced with, so it reads
-    the same surfaces. Retained on the host beside the values, whatever the
-    retention, because every simulated participation price needs them.
-    """
 
 
 @runtime_checkable

@@ -23,6 +23,7 @@ import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.certainty_equivalent import LinearExpectation
+from _lcm.engine import Regime as EngineRegime
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
@@ -38,7 +39,7 @@ from _lcm.simulation.gated_routing import (
     substitute_gated_edge_continuations,
 )
 from _lcm.solution.backward_induction import solve
-from _lcm.typing import FlatParams
+from _lcm.typing import PeriodToRegimeToVArr, QualifiedName, RegimeNamesToIds
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
 from _lcm.utils.logging import get_logger
@@ -48,9 +49,9 @@ from lcm import (
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
 )
@@ -63,6 +64,7 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FloatND,
+    RegimeName,
     ScalarInt,
 )
 from tests.conftest import (
@@ -189,7 +191,7 @@ def _laws() -> RegimeLaws:
                     "target": Gate(
                         predicate=_gate_dissolves_everywhere,
                         routes={
-                            "own": StakeholderRoute(
+                            "own": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection={"settlement": _settlement_from_health},
@@ -205,7 +207,9 @@ def _laws() -> RegimeLaws:
     )
 
 
-def _flat_params() -> FlatParams:
+def _flat_params() -> MappingProxyType[
+    RegimeName, MappingProxyType[QualifiedName, FloatND]
+]:
     return MappingProxyType(
         {
             "src": MappingProxyType(
@@ -217,7 +221,12 @@ def _flat_params() -> FlatParams:
     )
 
 
-def _solve_fixture():
+def _solve_fixture() -> tuple[
+    MappingProxyType[RegimeName, EngineRegime],
+    RegimeNamesToIds,
+    MappingProxyType[RegimeName, MappingProxyType[QualifiedName, FloatND]],
+    PeriodToRegimeToVArr,
+]:
     """Process and solve the three regimes, kernel-level."""
     regimes_dict = _make_regimes()
     laws = _laws()
@@ -252,7 +261,14 @@ def _solve_fixture():
     return regimes, regime_names_to_ids, flat_params, solution
 
 
-def _fold_output(*, regimes, flat_params, solution):
+def _fold_output(
+    *,
+    regimes: MappingProxyType[RegimeName, EngineRegime],
+    flat_params: MappingProxyType[RegimeName, MappingProxyType[QualifiedName, FloatND]],
+    solution: PeriodToRegimeToVArr,
+) -> tuple[
+    FloatND, MappingProxyType[RegimeName, MappingProxyType[RegimeName, FloatND]]
+]:
     """The edge's `Wbar` at the target's own nodes, and the value mappings.
 
     The substituted leaf holds the edge's operand channels, which the source
@@ -329,7 +345,7 @@ def _fold_output(*, regimes, flat_params, solution):
     return wbar, mappings
 
 
-def test_solve_side_fold_projects_one_settlement_per_health_state():
+def test_solve_side_fold_projects_one_settlement_per_health_state() -> None:
     """The fold projects each target grid cell's own settlement.
 
     With the gate closed on the whole target grid and
@@ -349,7 +365,7 @@ def test_solve_side_fold_projects_one_settlement_per_health_state():
     )
 
 
-def test_router_writes_each_subject_its_own_projected_fallback_state():
+def test_router_writes_each_subject_its_own_projected_fallback_state() -> None:
     """Each dissolving household enters the fallback at its own settlement.
 
     Two households whose realized target health differs project to different
@@ -384,12 +400,8 @@ def test_router_writes_each_subject_its_own_projected_fallback_state():
         ),
         subjects_in_regime=jnp.array([True, True]),
         flat_params=flat_params,
-        own_stakeholder=jnp.full_like(
-            jnp.array([True, True]), NO_ROLE, dtype=jnp.int32
-        ),
-        new_own_stakeholder=jnp.full_like(
-            jnp.array([True, True]), NO_ROLE, dtype=jnp.int32
-        ),
+        own_member=jnp.full_like(jnp.array([True, True]), NO_ROLE, dtype=jnp.int32),
+        new_own_member=jnp.full_like(jnp.array([True, True]), NO_ROLE, dtype=jnp.int32),
     )
     aaae(
         np.asarray(states["fallback"]["settlement"]),
@@ -398,7 +410,7 @@ def test_router_writes_each_subject_its_own_projected_fallback_state():
     )
 
 
-def test_router_sends_every_dissolving_household_to_the_fallback_regime():
+def test_router_sends_every_dissolving_household_to_the_fallback_regime() -> None:
     """A closed gate routes both households out of the target regime.
 
     The settlement equality above is only a statement about the coordinate a
@@ -432,12 +444,8 @@ def test_router_sends_every_dissolving_household_to_the_fallback_regime():
         ),
         subjects_in_regime=jnp.array([True, True]),
         flat_params=flat_params,
-        own_stakeholder=jnp.full_like(
-            jnp.array([True, True]), NO_ROLE, dtype=jnp.int32
-        ),
-        new_own_stakeholder=jnp.full_like(
-            jnp.array([True, True]), NO_ROLE, dtype=jnp.int32
-        ),
+        own_member=jnp.full_like(jnp.array([True, True]), NO_ROLE, dtype=jnp.int32),
+        new_own_member=jnp.full_like(jnp.array([True, True]), NO_ROLE, dtype=jnp.int32),
     )
     np.testing.assert_array_equal(
         np.asarray(routed_ids),

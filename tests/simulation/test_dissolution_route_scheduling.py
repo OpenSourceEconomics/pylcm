@@ -6,10 +6,10 @@ schedules have to hold for that:
 
 - A fallback runs after every target it serves, whatever order the regimes are
   declared in, so any acyclic arrangement of targets and fallbacks simulates.
-- A participation check may name its own target as the fallback, at a projected
-  state. A household landing where the target has no policy support then decides
-  in the same regime at the projected state, and its period's row records that
-  decision.
+- A gate may name its own target as the fallback, at a projected state. A
+  household landing where the gate closes, which here is where the target has no
+  feasible action, then decides in the same regime at the projected state, and its
+  period's row records that decision.
 """
 
 from itertools import permutations
@@ -24,19 +24,27 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
     IrregSpacedGrid,
+    MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
 )
 from lcm.exceptions import NoFeasibleActionError
+from lcm.result import SimulationResult
+from lcm.solver_api import SolutionResult
 from lcm.transition import StochasticTransition
-from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteAction,
+    FloatND,
+    ScalarInt,
+    UserFunction,
+)
 from tests.simulation.test_dissolution_route_provenance import (
     Work,
     build_chain_model,
@@ -46,7 +54,9 @@ from tests.simulation.test_dissolution_route_provenance import (
 
 
 @pytest.mark.parametrize("order", list(permutations(("source", "a", "b", "c"))))
-def test_every_declaration_order_simulates_the_same_panel(*, order: tuple[str, ...]):
+def test_every_declaration_order_simulates_the_same_panel(
+    *, order: tuple[str, ...]
+) -> None:
     """`a` falls back to `b` and `b` to `c`; every landing is feasible."""
     model = build_chain_model(order=order, close_a=False, constrain_b=False)
     wages = np.array([3.0, 1.0, 2.0])
@@ -73,7 +83,7 @@ def test_every_declaration_order_simulates_the_same_panel(*, order: tuple[str, .
 )
 def test_a_fallback_declared_first_still_receives_its_rerouted_rows(
     *, order: tuple[str, ...], enable_jit: bool
-):
+) -> None:
     """`b` is declared before `a`; an empty landing in `b` acts in `c`."""
     model = build_chain_model(
         order=order, close_a=False, constrain_b=True, enable_jit=enable_jit
@@ -89,7 +99,9 @@ def test_a_fallback_declared_first_still_receives_its_rerouted_rows(
     ]
 
 
-def test_targets_and_fallbacks_in_a_cycle_simulate_when_no_household_is_rerouted():
+def test_targets_and_fallbacks_in_a_cycle_simulate_when_no_household_is_rerouted() -> (
+    None
+):
     """`a` falls back to `b` and `b` to `a`; every landing is feasible."""
     model = build_chain_model(
         order=("source", "a", "b", "c"),
@@ -108,7 +120,7 @@ def test_targets_and_fallbacks_in_a_cycle_simulate_when_no_household_is_rerouted
     ]
 
 
-def test_a_reroute_into_a_regime_that_already_ran_this_period_raises():
+def test_a_reroute_into_a_regime_that_already_ran_this_period_raises() -> None:
     """`a` runs before `b` in the cycle; an empty landing in `b` cannot act in `a`."""
     model = build_chain_model(
         order=("source", "a", "b", "c"),
@@ -152,10 +164,6 @@ def _feasible_below_the_middle(*, wage: ContinuousState) -> BoolND:
     return wage < 1.5
 
 
-def _has_policy_support(*, target_support: BoolND) -> BoolND:
-    return target_support
-
-
 def _certain(*, wage: ContinuousState) -> FloatND:
     return 1.0 + 0.0 * wage
 
@@ -172,32 +180,23 @@ def _feasible_at_the_clipped_top(*, wage: ContinuousState) -> BoolND:
 def _self_route_model(
     *,
     enable_jit: bool,
-    feasible=_feasible,
-    projection=_project_to_three,
+    feasible: UserFunction = _feasible,
+    projection: UserFunction = _project_to_three,
     off_grid: Literal["extrapolate", "clip_state"] = "extrapolate",
 ) -> Model:
-    """The participation check into `a` falls back to `a`, projecting the wage to 3."""
-    route = StakeholderRoute(
-        target_stakeholder="f",
+    """The gate into `a` closes where `a` is empty and falls back to `a` itself.
+
+    The gate reads the same state-only restriction as `a`'s constraint, so it
+    closes exactly where `a` has no feasible action, and the route projects the
+    wage to 3 (or to `projection`).
+    """
+    route = MemberRoute(
+        target_member="f",
         fallback=ProjectedRegimeValue(
-            regime="a", stakeholder="f", projection={"wage": projection}
+            regime="a", member="f", projection={"wage": projection}
         ),
     )
-    participation = {
-        "a": ParticipationCheck(
-            predicate=_has_policy_support,
-            reads={
-                "target_support": ParticipationRead(
-                    regime="a",
-                    stakeholder="f",
-                    kind="Participating",
-                    field="support",
-                    projection={"wage": _identity},
-                )
-            },
-            routes={"only": route},
-        )
-    }
+    gates = {"a": Gate(predicate=feasible, routes={"only": route})}
     grid = IrregSpacedGrid(points=np.array([1.0, 2.0, 3.0]))
     a_grid = IrregSpacedGrid(points=np.array([1.0, 2.0, 3.0]), off_grid=off_grid)
     return Model(
@@ -221,7 +220,7 @@ def _self_route_model(
         edges={
             "source": Transition(
                 law=ByAge(cases={0: {"a": StochasticTransition(func=_certain)}}),
-                participation=participation,
+                gates=gates,
             )
         },
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
@@ -234,7 +233,9 @@ def _self_route_model(
 _SELF_PARAMS = {"source": {"koopmans_aggregator": {"discount_factor": 1.0}}, "a": {}}
 
 
-def _simulate_self_route(*, model: Model, runtime_checks: bool):
+def _simulate_self_route(
+    *, model: Model, runtime_checks: bool
+) -> tuple[SolutionResult, SimulationResult]:
     solution = model.solve(params=_SELF_PARAMS, log_level="off")
     result = model.simulate(
         params=_SELF_PARAMS,
@@ -255,7 +256,7 @@ def _simulate_self_route(*, model: Model, runtime_checks: bool):
 @pytest.mark.parametrize("runtime_checks", [False, True])
 def test_a_self_route_decides_again_at_its_projected_state(
     *, enable_jit: bool, runtime_checks: bool
-):
+) -> None:
     """Wage 2 is empty in `a`; projected to 3 it works, as wages 1 and 3 do."""
     _, result = _simulate_self_route(
         model=_self_route_model(enable_jit=enable_jit), runtime_checks=runtime_checks
@@ -273,7 +274,7 @@ def test_a_self_route_decides_again_at_its_projected_state(
     )
 
 
-def test_a_self_route_that_is_empty_again_raises():
+def test_a_self_route_that_is_empty_again_raises() -> None:
     """The route is taken once: an empty projected state has nowhere to go."""
     assert reference_action(wage=3.0, constrained=False) is not None
     model = _self_route_model(enable_jit=True, feasible=_feasible_below_the_middle)
@@ -281,7 +282,7 @@ def test_a_self_route_that_is_empty_again_raises():
         _simulate_self_route(model=model, runtime_checks=False)
 
 
-def test_a_self_route_decides_again_at_its_clipped_projected_state():
+def test_a_self_route_decides_again_at_its_clipped_projected_state() -> None:
     """Wage 2 is empty; its route projects to 4, which `a` clips to 3.
 
     `a` is empty beyond 3.5, so only a redecision at the clipped state finds an
@@ -306,7 +307,7 @@ def test_a_self_route_decides_again_at_its_clipped_projected_state():
     )
 
 
-def test_a_forward_reroute_inside_a_cycle_acts_in_a_fallback_that_has_not_run():
+def test_a_forward_reroute_inside_a_cycle_acts_in_a_fallback_that_has_not_run() -> None:
     """`a` and `b` fall back to each other; `b` is declared first and runs first.
 
     An empty landing in `b` is routed forward into `a`, which has not run yet

@@ -1,9 +1,9 @@
 """A household's Pareto scalarization is a declaration, not an ordinary function.
 
-`ParetoObjective(weights=...)` names one weight per stakeholder and the engine
-owns what a Pareto weight means: one per stakeholder, finite and non-negative,
-with a strictly positive total, and multiplied into each stakeholder's action
-value zero-safely so an excluded stakeholder's admissible `-inf` cannot poison
+`ParetoObjective(weights=...)` names one weight per member and the engine
+owns what a Pareto weight means: one per member, finite and non-negative,
+with a strictly positive total, and multiplied into each member's action
+value zero-safely so an excluded member's admissible `-inf` cannot poison
 the household's choice.
 
 The models below are terminal-continuation-free and use one binary action, so
@@ -38,6 +38,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
     StateName,
+    UserFunction,
     UserParamsNode,
 )
 from tests.conftest import DECIMAL_PRECISION
@@ -104,8 +105,8 @@ def _build_model(
     objective: ParetoObjective | None,
     states: dict[StateName, StateEntry] | None = None,
     state_transitions: dict[StateName, StateTransitionEntry] | None = None,
-    utility_f=_utility_f,
-    utility_m=_utility_m,
+    utility_f: UserFunction = _utility_f,
+    utility_m: UserFunction = _utility_m,
 ) -> Model:
     couple = Regime(
         states=states or {},
@@ -270,16 +271,16 @@ def test_integer_constant_weights_are_stored_as_floats() -> None:
     }
 
 
-def test_a_missing_stakeholder_weight_is_rejected() -> None:
-    """The error names the stakeholder the objective does not weight."""
+def test_a_missing_member_weight_is_rejected() -> None:
+    """The error names the member the objective does not weight."""
     with pytest.raises(RegimeInitializationError) as excinfo:
         _build_model(objective=ParetoObjective(weights={"f": 1.0}))
 
     assert "'m'" in str(excinfo.value)
 
 
-def test_a_weight_for_an_unknown_stakeholder_is_rejected() -> None:
-    """The error names the stakeholder the regime does not have."""
+def test_a_weight_for_an_unknown_member_is_rejected() -> None:
+    """The error names the member the regime does not have."""
     with pytest.raises(RegimeInitializationError) as excinfo:
         _build_model(
             objective=ParetoObjective(weights={"f": 0.5, "m": 0.5, "child": 0.1})
@@ -289,7 +290,7 @@ def test_a_weight_for_an_unknown_stakeholder_is_rejected() -> None:
 
 
 def test_a_negative_constant_weight_is_rejected() -> None:
-    """The error names the stakeholder and the value."""
+    """The error names the member and the value."""
     with pytest.raises(RegimeInitializationError) as excinfo:
         _build_model(objective=ParetoObjective(weights={"f": -0.5, "m": 1.5}))
 
@@ -330,7 +331,7 @@ def test_a_negative_weight_parameter_is_rejected_when_the_model_is_solved() -> N
 
     The declaration is admissible — the defect is the value supplied for it —
     so it is caught where the value arrives, and the message names the
-    parameter's own path rather than the stakeholder alone.
+    parameter's own path rather than the member alone.
     """
     model = _build_model(
         objective=ParetoObjective(weights={"f": _weight_f, "m": _weight_m}),
@@ -357,7 +358,7 @@ _EXTREME_WEIGHTS = [
 def test_the_endpoints_of_the_weight_interval_read_one_partner(
     *, weights: dict[str, float], expected: list[float]
 ) -> None:
-    """At `w = 0` and `w = 1` the household follows exactly one stakeholder.
+    """At `w = 0` and `w = 1` the household follows exactly one member.
 
     Her value of `a` is an admissible `-inf`. Weighting only him picks `a` for
     his 5, and her `-inf` is published as her own value there. Weighting only
@@ -380,7 +381,7 @@ _NEAR_ZERO = [1e-300, 5e-324, np.finfo(np.float64).tiny]
 
 
 @pytest.mark.parametrize("weight", _NEAR_ZERO)
-def test_a_weight_just_above_zero_still_weighs_its_stakeholder(
+def test_a_weight_just_above_zero_still_weighs_its_member(
     weight: float,
 ) -> None:
     """A subnormal weight is a weight, not an exclusion.
@@ -388,7 +389,7 @@ def test_a_weight_just_above_zero_still_weighs_its_stakeholder(
     Her weight is far below his but not zero, so the household still compares
     `w * 3` against `(1 - w) * 4` and picks his `b`. The point is that the
     subnormal is not flushed to an exact zero on the way in, which would make
-    the comparison one-sided and, for a stakeholder holding `-inf`, silently
+    the comparison one-sided and, for a member holding `-inf`, silently
     drop her from the objective.
     """
     model = _build_model(objective=ParetoObjective(weights={"f": weight, "m": 1.0}))
@@ -420,8 +421,8 @@ def _three_params() -> dict[str, UserParamsNode]:
     }
 
 
-def _three_stakeholder_solution(order: tuple[str, ...]) -> np.ndarray:
-    """Solve the same household with its stakeholders declared in `order`."""
+def _three_member_solution(order: tuple[str, ...]) -> np.ndarray:
+    """Solve the same household with its members declared in `order`."""
     utilities = {
         "f": _utility_f,
         "m": _utility_m,
@@ -470,7 +471,7 @@ _ORDERS = [
 def test_declaration_order_does_not_decide_a_three_party_household(
     order: tuple[str, ...],
 ) -> None:
-    """Relabelling three stakeholders leaves the household's choice alone.
+    """Relabelling three members leaves the household's choice alone.
 
     `0.5 * 3 = 1.5` for `a` against `0.25 * 4 = 1` for `b`, plus the child's
     `0.25 * 1 = 0.25` for `a`, so `a` wins under every declaration order and
@@ -479,7 +480,7 @@ def test_declaration_order_does_not_decide_a_three_party_household(
     order would let an economically inert relabelling move a close decision.
     """
     np.testing.assert_array_almost_equal(
-        _three_stakeholder_solution(order),
+        _three_member_solution(order),
         np.array([3.0, 0.0, 1.0]),
         decimal=DECIMAL_PRECISION,
     )
@@ -545,7 +546,7 @@ def test_a_weight_reading_a_carried_state_solves_on_its_imputation() -> None:
 
     The imputation puts the bargaining power with her, so her weight is `0.8`
     and the household takes `a`, worth `3` to her and `0` to him. A carried
-    state contributes no solve axis, so the value array carries the stakeholder
+    state contributes no solve axis, so the value array carries the member
     axis alone.
     """
     model = _build_carried_power_model()
@@ -565,7 +566,7 @@ def test_a_carried_weight_preserves_ordinary_imputation_dependencies() -> None:
     `weight_f(power)` reads a carried state, whose solve imputation is
     `impute_power(power_signal)`. The ordinary `power_signal` function produces
     `high`; it is not a parameter named `power__power_signal`. The resulting
-    weights select her preferred action and publish stakeholder values `(3, 0)`.
+    weights select her preferred action and publish member values `(3, 0)`.
     """
     couple = Regime(
         states={

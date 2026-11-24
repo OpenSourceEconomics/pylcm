@@ -1,19 +1,25 @@
-"""Collective-regime readout: the stakeholder value gather at the household argmax.
+"""Collective-regime readout: the member value gather at the household argmax.
 
-A collective regime carries one per-stakeholder action-value array `Q^s` each,
+A collective regime carries one per-member action-value array `Q^s` each,
 chooses the action that maximizes a household *scalarization*
-`O = Σ_s λ_s Q^s` over the feasible set, and then reads off *each stakeholder's
+`O = Σ_s λ_s Q^s` over the feasible set, and then reads off *each member's
 own* `Q^s` at that common argmax — NOT the scalarized value `O`. The household
-maximizes the weighted objective, but the individual values are each stakeholder's
+maximizes the weighted objective, but the individual values are each member's
 own utility stream under that joint choice.
 
 This module is a pure, engine-topology-free building block: it takes already-computed
-per-stakeholder `Q` arrays and the feasibility mask and returns the per-stakeholder
+per-member `Q` arrays and the feasibility mask and returns the per-member
 `V` plus the all-infeasible flag `D` (the dissolution / empty-feasible-set marker,
 kept distinct from a numeric `-inf` that can arise on-path). The terminal and
 non-terminal solve kernels call it after building their `Q^s`.
+
+Under EV1 taste shocks a household has one decider, the member with the positive
+Pareto weight. `decider_smoothed_readout` publishes that member's smoothed expected
+maximum and every other member's mean action value under the decider's choice
+probabilities; `decider_choice` is the part the simulated draw shares with it.
 """
 
+import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -21,6 +27,7 @@ from types import MappingProxyType
 import jax.numpy as jnp
 from dags import concatenate_functions, rename_arguments, with_signature
 
+from _lcm.logsum import logsum_and_softmax
 from _lcm.regime_building.argmax import (
     _flatten_last_n_axes,
     _move_axes_to_back,
@@ -30,9 +37,16 @@ from _lcm.typing import FunctionName, ParamsLeaf, QualifiedName, RegimeName, Sta
 from _lcm.utils.functools import get_union_of_args, is_user_function
 from _lcm.zero_safe import sum_in_value_order, zero_safe_weighted_term
 from lcm.collective import ParetoObjective
-from lcm.typing import BoolND, FloatND, IntND, ReferenceName, UserFunction
+from lcm.typing import (
+    BoolND,
+    FloatND,
+    IntND,
+    ReferenceName,
+    ScalarFloat,
+    UserFunction,
+)
 
-# Up to this many stakeholders, the scalarization's reduction order is not a choice:
+# Up to this many members, the scalarization's reduction order is not a choice:
 # one term is returned as-is and two admit a single association. From three terms on,
 # a declaration-order left fold lets an economically inert relabeling select a
 # different reduction tree, so the sum is canonicalized by contribution value instead.
@@ -41,7 +55,7 @@ _LARGEST_ORDER_FREE_HOUSEHOLD = 2
 
 def collective_argmax_and_readout(
     *,
-    stakeholder_Q: Mapping[str, FloatND],
+    member_Q: Mapping[str, FloatND],
     feasibility: BoolND,
     weights: Mapping[str, FloatND | float],
     action_axes: tuple[int, ...],
@@ -49,7 +63,7 @@ def collective_argmax_and_readout(
     r"""Like `collective_readout`, but also returns the household argmax index.
 
     The solve-side readout (`collective_readout`) only needs the
-    per-stakeholder VALUES at the shared argmax; the simulate-side value
+    per-member VALUES at the shared argmax; the simulate-side value
     router additionally needs the argmax INDEX itself, so the engine can look
     up which action was actually taken (mirroring the singleton
     `argmax_and_max_Q_over_a`, whose flat index feeds
@@ -58,20 +72,20 @@ def collective_argmax_and_readout(
     Returns:
         Tuple `(argmax_flat, V, D)` — the flat argmax index (in the same
         flattened-action layout `argmax_and_max` produces, directly
-        compatible with the singleton simulate lookup), the per-stakeholder
+        compatible with the singleton simulate lookup), the per-member
         value mapping, and the dissolution flag.
     """
-    if not stakeholder_Q:
-        msg = "collective_argmax_and_readout requires at least one stakeholder."
+    if not member_Q:
+        msg = "collective_argmax_and_readout requires at least one member."
         raise ValueError(msg)
-    if set(stakeholder_Q) != set(weights):
+    if set(member_Q) != set(weights):
         msg = (
-            "stakeholder_Q and weights must have identical keys; got "
-            f"{sorted(stakeholder_Q)} vs {sorted(weights)}."
+            "member_Q and weights must have identical keys; got "
+            f"{sorted(member_Q)} vs {sorted(weights)}."
         )
         raise ValueError(msg)
 
-    objective = _weighted_sum(stakeholder_Q=stakeholder_Q, weights=weights)
+    objective = _weighted_sum(member_Q=member_Q, weights=weights)
     argmax_flat, best = argmax_and_max(
         a=objective, axis=action_axes, initial=-jnp.inf, where=feasibility
     )
@@ -96,22 +110,22 @@ def collective_argmax_and_readout(
                 ),
             ),
         )
-        for name, q in stakeholder_Q.items()
+        for name, q in member_Q.items()
     }
     return argmax_flat, values, dissolution
 
 
 def collective_readout(
     *,
-    stakeholder_Q: Mapping[str, FloatND],
+    member_Q: Mapping[str, FloatND],
     feasibility: BoolND,
     weights: Mapping[str, FloatND | float],
     action_axes: tuple[int, ...],
 ) -> tuple[dict[str, FloatND], BoolND]:
-    r"""Household argmax of the scalarization, then per-stakeholder value readout.
+    r"""Household argmax of the scalarization, then per-member value readout.
 
-    One household maximizes the Pareto-weighted sum of its stakeholders' action
-    values over the feasible actions, and each stakeholder's value is its own
+    One household maximizes the Pareto-weighted sum of its members' action
+    values over the feasible actions, and each member's value is its own
     action value read at that single choice:
 
     ```{math}
@@ -119,8 +133,8 @@ def collective_readout(
         \qquad V^s(x) = Q^s(x, a^*(x)).
     ```
 
-    All stakeholders share the same argmax `a*` (the joint household choice), so
-    ties are broken identically for every stakeholder — `argmax_and_max` selects
+    All members share the same argmax `a*` (the joint household choice), so
+    ties are broken identically for every member — `argmax_and_max` selects
     the first maximizer, and the gather uses that same flattened index for each
     `Q^s`. A cell with no feasible action yields `D = True` (the dissolution /
     empty-`F` marker); the returned `V^s` in such a cell is overwritten with the
@@ -129,24 +143,24 @@ def collective_readout(
     by the caller through the dissolution fallback, never read as a value.
 
     Args:
-        stakeholder_Q: Mapping stakeholder name -> its action-value array, each of
-            shape `(*state_axes, *action_axes)` (identical shape across stakeholders).
+        member_Q: Mapping member name -> its action-value array, each of
+            shape `(*state_axes, *action_axes)` (identical shape across members).
         feasibility: Boolean mask of the same shape as each `Q^s`; `True` where
             the (state, action) is feasible.
-        weights: Mapping stakeholder name -> Pareto weight `λ_s` (scalar or an array
-            broadcastable to the state axes). Should sum to 1 across stakeholders,
+        weights: Mapping member name -> Pareto weight `λ_s` (scalar or an array
+            broadcastable to the state axes). Should sum to 1 across members,
             though this is not enforced (a caller may pass unnormalized weights).
         action_axes: The axes of `Q^s` / `feasibility` to maximize over (the
             action dimensions). The remaining axes are the state axes retained in the
             output.
 
     Returns:
-        Tuple `(V, D)` where `V` maps each stakeholder name to its value array of
+        Tuple `(V, D)` where `V` maps each member name to its value array of
         shape `(*state_axes,)` (the action axes reduced away), and `D` is the
         boolean all-infeasible flag of shape `(*state_axes,)`.
     """
     _argmax_flat, values, dissolution = collective_argmax_and_readout(
-        stakeholder_Q=stakeholder_Q,
+        member_Q=member_Q,
         feasibility=feasibility,
         weights=weights,
         action_axes=action_axes,
@@ -154,22 +168,140 @@ def collective_readout(
     return values, dissolution
 
 
+def decider_choice(
+    *,
+    Q: FloatND,
+    feasibility: BoolND,
+    weights: FloatND,
+    n_discrete_action_axes: int,
+) -> tuple[IntND, FloatND, IntND, FloatND]:
+    """Locate the decider and its best continuous action per discrete action.
+
+    The decider is the member whose Pareto weight is positive; the caller
+    guarantees there is exactly one. The decider's own action values are
+    maximized over the feasible continuous actions, conditional on each
+    discrete action, and every member's action value is read at that
+    conditional argmax. The member axis is the trailing axis of `Q` and is
+    handled for any length.
+
+    Args:
+        Q: Per-member action values of shape
+            `(*discrete_actions, *continuous_actions, n_members)`.
+        feasibility: Boolean mask of shape `(*discrete_actions,
+            *continuous_actions)`.
+        weights: The Pareto weights in member order, shape `(n_members,)`.
+        n_discrete_action_axes: Number of leading discrete-action axes.
+
+    Returns:
+        Tuple `(decider, Qc, continuous_argmax, at_choice)`: the decider's
+        member index; its conditional maxima over the continuous actions, one
+        per discrete-action cell in C order, `-inf` where none is feasible; the
+        flat continuous index attaining each; and each member's action value
+        there, of shape `(n_discrete_cells, n_members)`.
+    """
+    decider = jnp.argmax(weights > 0).astype(jnp.int32)
+    n_discrete_cells = math.prod(feasibility.shape[:n_discrete_action_axes])
+    n_continuous_cells = math.prod(feasibility.shape[n_discrete_action_axes:])
+    flat_Q = Q.reshape(n_discrete_cells, n_continuous_cells, Q.shape[-1])
+    decider_Q = jnp.where(
+        feasibility.reshape(n_discrete_cells, n_continuous_cells),
+        jnp.take(flat_Q, decider, axis=-1),
+        -jnp.inf,
+    )
+    continuous_argmax = jnp.argmax(decider_Q, axis=1).astype(jnp.int32)
+    at_choice = jnp.take_along_axis(flat_Q, continuous_argmax[:, None, None], axis=1)
+    return decider, decider_Q.max(axis=1), continuous_argmax, at_choice[:, 0, :]
+
+
+def decider_smoothed_readout(
+    *,
+    Q: FloatND,
+    feasibility: BoolND,
+    weights: FloatND,
+    n_discrete_action_axes: int,
+    scale: ScalarFloat,
+) -> tuple[FloatND, BoolND]:
+    r"""Read off every member's value when one member decides under EV1 shocks.
+
+    With decider $d$, conditional maxima $Q^d_c(j) = \max_c Q^d(j, c)$ over the
+    feasible continuous actions $c$ of each discrete action $j$, and
+    $c^*(j)$ attaining it:
+
+    ```{math}
+        V^d = \sigma \log \sum_j e^{Q^d_c(j) / \sigma}, \qquad
+        P(j) = \frac{e^{Q^d_c(j) / \sigma}}{\sum_k e^{Q^d_c(k) / \sigma}}, \qquad
+        V^s = \sum_j P(j)\, Q^s(j, c^*(j)) \quad (s \neq d).
+    ```
+
+    The decider's value is its expected maximum; every other member's value
+    is the mean of its own action value under the decider's choice. A
+    discrete action with probability zero contributes exactly zero, whatever
+    the member's value there. Where the decider's every feasible action is
+    worth `-inf` it takes the first discrete action with probability one, the
+    action its simulated draw takes. A cell with no feasible action publishes
+    `-inf` for every member, beside the dissolution flag `D = True`.
+
+    Args:
+        Q: Per-member action values of shape
+            `(*discrete_actions, *continuous_actions, n_members)`.
+        feasibility: Boolean mask of shape `(*discrete_actions,
+            *continuous_actions)`.
+        weights: The Pareto weights in member order, shape `(n_members,)`,
+            exactly one of them positive.
+        n_discrete_action_axes: Number of leading discrete-action axes.
+        scale: The taste-shock scale $\sigma$, strictly positive.
+
+    Returns:
+        Tuple `(V, D)`: the member values of shape `(n_members,)` and the
+        all-infeasible flag.
+    """
+    decider, Qc, _continuous_argmax, at_choice = decider_choice(
+        Q=Q,
+        feasibility=feasibility,
+        weights=weights,
+        n_discrete_action_axes=n_discrete_action_axes,
+    )
+    smoothed, probabilities = logsum_and_softmax(values=Qc, scale=scale, axes=(0,))
+    # A decider whose every feasible action is worth `-inf` has no choice
+    # probabilities; it takes the first discrete action, as its draw does.
+    probabilities = jnp.where(
+        jnp.isneginf(smoothed),
+        jnp.arange(Qc.shape[0]) == jnp.argmax(Qc),
+        probabilities,
+    ).astype(probabilities.dtype)
+    means = jnp.sum(
+        zero_safe_weighted_term(
+            weight=probabilities[:, None],
+            value=at_choice,
+            subnormal_is_accounted_for=False,
+        ),
+        axis=0,
+    )
+    dissolution = ~jnp.any(feasibility)
+    values = jnp.where(
+        dissolution,
+        -jnp.inf,
+        jnp.where(jnp.arange(Q.shape[-1]) == decider, smoothed, means),
+    )
+    return values, dissolution
+
+
 def _weighted_sum(
     *,
-    stakeholder_Q: Mapping[str, FloatND],
+    member_Q: Mapping[str, FloatND],
     weights: Mapping[str, FloatND | float],
 ) -> FloatND:
-    """Scalarize the per-stakeholder Q into the household objective Σ_s λ_s Q^s.
+    """Scalarize the per-member Q into the household objective Σ_s λ_s Q^s.
 
-    Zero-safe: a stakeholder excluded from the household scalarization via a
+    Zero-safe: a member excluded from the household scalarization via a
     zero Pareto weight may still hold an admissible on-path `-inf` `Q^s` (e.g.
     a feasible zero-consumption action for that partner); `weight * Q` would
     then be `0.0 * -inf = nan`, poisoning the objective — and, via the
-    argmax, the WRONG stakeholder's `Q` would decide the household's choice.
+    argmax, the WRONG member's `Q` would decide the household's choice.
     Each term goes through `zero_safe_weighted_term` so a zero-weight
-    stakeholder contributes exactly `0.0` regardless of its own `Q^s`.
+    member contributes exactly `0.0` regardless of its own `Q^s`.
     """
-    names = list(stakeholder_Q)
+    names = list(member_Q)
 
     # A Pareto weight may arrive as a plain Python float -- see this function's
     # own signature -- while the shared term takes arrays, so it is converted
@@ -178,17 +310,17 @@ def _weighted_sum(
     # `subnormal_is_accounted_for=False`: the weight arrives at whatever size
     # the model chose and nothing upstream has put it on a scale, so the term
     # moves the exponent itself rather than let a below-normal weight flush and
-    # price a stakeholder out of the household objective entirely.
+    # price a member out of the household objective entirely.
     def _term(name: str) -> FloatND:
         return zero_safe_weighted_term(
             weight=jnp.asarray(weights[name]),
-            value=stakeholder_Q[name],
+            value=member_Q[name],
             subnormal_is_accounted_for=False,
         )
 
     terms = [_term(name) for name in names]
     if len(terms) <= _LARGEST_ORDER_FREE_HOUSEHOLD:
-        # Preserve the established one-/two-stakeholder arithmetic exactly.  With
+        # Preserve the established one-/two-member arithmetic exactly.  With
         # two terms there is no association choice, so relabeling cannot select a
         # different reduction tree.
         objective = terms[0]
@@ -196,7 +328,7 @@ def _weighted_sum(
             objective = objective + term
         return objective
 
-    # `stakeholders` is an ordered representation of identities, not an economic
+    # `members` is an ordered representation of identities, not an economic
     # ordering of summands.  For three or more terms a declaration-order left fold
     # can cross a strict action boundary under cancellation.  Canonicalise by the
     # contribution VALUES, the same invariant used for the regime mixture.
@@ -234,7 +366,7 @@ NO_ROLE = -1
 
 
 def build_role_vocabulary(
-    stakeholders_by_regime: Mapping[RegimeName, tuple[str, ...] | None],
+    member_axis_by_regime: Mapping[RegimeName, tuple[str, ...] | None],
 ) -> MappingProxyType[str, int]:
     """Assign one code to every role any regime of the model declares.
 
@@ -245,7 +377,7 @@ def build_role_vocabulary(
     of the vocabulary.
 
     Args:
-        stakeholders_by_regime: Mapping of regime names to their stakeholder
+        member_axis_by_regime: Mapping of regime names to their member
             tuples, or `None` for a singleton regime.
 
     Returns:
@@ -253,8 +385,8 @@ def build_role_vocabulary(
         regimes taken in their own order.
     """
     names: dict[str, None] = {}
-    for stakeholders in stakeholders_by_regime.values():
-        for name in stakeholders or ():
+    for member_axis in member_axis_by_regime.values():
+        for name in member_axis or ():
             names.setdefault(name, None)
     return MappingProxyType({name: code for code, name in enumerate(names)})
 
@@ -270,7 +402,7 @@ class ParetoWeights:
     """
 
     compute: Callable[..., dict[str, FloatND]]
-    """Return the weights the objective uses at one cell, keyed by stakeholder.
+    """Return the weights the objective uses at one cell, keyed by member.
 
     Normalized under the `"pointwise"` convention; the declared values under
     `"none"`.
@@ -297,7 +429,7 @@ class ParetoWeights:
 def build_pareto_weights(
     *,
     objective: ParetoObjective | None,
-    stakeholders: tuple[str, ...],
+    members: tuple[str, ...],
     state_names: frozenset[StateName],
     carried_imputations: Mapping[StateName, UserFunction] = MappingProxyType({}),
     solve_functions: Mapping[FunctionName, UserFunction] = MappingProxyType({}),
@@ -310,13 +442,13 @@ def build_pareto_weights(
 
     A weight callable's arguments are the regime's own states, the engine
     context `period` / `age`, and free parameters. The parameters are qualified
-    into the regime's `pareto_objective` template entry, so every stakeholder's
+    into the regime's `pareto_objective` template entry, so every member's
     weight reads one shared namespace: `weight_f(pareto_weight)` and
     `weight_m(pareto_weight)` name the same number.
 
     Args:
         objective: The regime's declaration, or `None` for equal weights.
-        stakeholders: Ordered stakeholder names.
+        members: Ordered member names.
         state_names: The regime's own state names.
         carried_imputations: Mapping of each carried state's name to its
             solve-phase imputation. A weight reading such a state is composed
@@ -334,17 +466,17 @@ def build_pareto_weights(
         The evaluator, its argument names, and the normalization convention.
     """
     declared: Mapping[str, UserFunction | float] = (
-        MappingProxyType(dict.fromkeys(stakeholders, 1.0 / len(stakeholders)))
+        MappingProxyType(dict.fromkeys(members, 1.0 / len(members)))
         if objective is None
         else objective.weights
     )
     context = frozenset({"period", "age"})
-    per_stakeholder: dict[str, tuple[UserFunction, tuple[str, ...]]] = {}
+    per_member: dict[str, tuple[UserFunction, tuple[str, ...]]] = {}
     param_names: set[QualifiedName] = set()
-    for name in stakeholders:
+    for name in members:
         weight = declared[name]
         if not is_user_function(weight):
-            per_stakeholder[name] = (_constant_weight(float(weight)), ())
+            per_member[name] = (_constant_weight(float(weight)), ())
             continue
         imputation_params: frozenset[str] = frozenset()
         if carried_imputations and _reads_a_carried_state(
@@ -368,21 +500,19 @@ def build_pareto_weights(
         param_names.update(
             qualified for arg, qualified in renamed.items() if qualified != arg
         )
-        per_stakeholder[name] = (
+        per_member[name] = (
             rename_arguments(func=weight, mapper=renamed),
             tuple(renamed.values()),
         )
 
-    arg_names = tuple(
-        sorted({arg for _, args in per_stakeholder.values() for arg in args})
-    )
+    arg_names = tuple(sorted({arg for _, args in per_member.values() for arg in args}))
     normalization = "pointwise" if objective is None else objective.normalization
 
     @with_signature(args=list(arg_names), return_annotation="dict")
     def declared_weights(**kwargs: ParamsLeaf) -> dict[str, FloatND]:
         return {
             name: jnp.asarray(func(**{arg: kwargs[arg] for arg in args}))
-            for name, (func, args) in per_stakeholder.items()
+            for name, (func, args) in per_member.items()
         }
 
     @with_signature(args=list(arg_names), return_annotation="dict")
@@ -393,7 +523,7 @@ def build_pareto_weights(
             # Bring the weights down to (0, 1] before summing. Nothing in the
             # admissibility contract bounds how large a finite weight may be,
             # and a raw total that leaves the working format sends every share
-            # to zero — which ties the stakeholders and lets the household take
+            # to zero — which ties the members and lets the household take
             # an action no declared weighting ranks first.
             #
             # The rescale is a power of two applied with `ldexp`, not a divide
@@ -405,7 +535,7 @@ def build_pareto_weights(
             # ratio it already had.
             _, exponent = jnp.frexp(jnp.max(stacked, axis=0))
             scaled = jnp.ldexp(stacked, -exponent)
-            # Stakeholder names are economically inert, so the total is summed
+            # Member names are economically inert, so the total is summed
             # in value order: relabelling the household must not select a
             # different reduction tree and hence a different normalizer. The
             # scale is itself order-invariant, so it does not reintroduce one.

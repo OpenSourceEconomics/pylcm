@@ -200,7 +200,7 @@ def build_simulation_programs(
         _fail_if_the_streamed_reduction_is_wrong(
             regime_name=context.regime_name,
             has_taste_shocks=context.has_taste_shocks,
-            stakeholders=context.stakeholders,
+            member_axis=context.member_axis,
         )
     action_width_keyword = _select_action_width_keyword(context=context)
 
@@ -236,7 +236,7 @@ def build_simulation_programs(
     action_values: dict[int, CoreProgram] = {}
     space = context.state_action_space
     lookup_subject_arg_names = tuple(space.states)
-    for period in decision if context.stakeholders is None else ():
+    for period in decision if context.member_axis is None else ():
         kernel = Q_and_F_functions[period]
         declared_lookup_subject_names = (
             *lookup_subject_arg_names,
@@ -679,8 +679,8 @@ class _GateRouteArguments(TypedDict):
     new_subject_regime_ids: Int1D
     subjects_in_regime: Bool1D
     flat_params: FlatParams
-    own_stakeholder: Int1D
-    new_own_stakeholder: Int1D
+    own_member: Int1D
+    new_own_member: Int1D
     fold_age: FoldAge
 
 
@@ -689,8 +689,8 @@ _GATE_ROUTE_SUBJECT_ARG_NAMES = (
     "next_states",
     "new_subject_regime_ids",
     "subjects_in_regime",
-    "own_stakeholder",
-    "new_own_stakeholder",
+    "own_member",
+    "new_own_member",
 )
 
 
@@ -771,8 +771,8 @@ class _GateRouteBody:
             new_subject_regime_ids=arguments["new_subject_regime_ids"],
             subjects_in_regime=arguments["subjects_in_regime"],
             flat_params=arguments["flat_params"],
-            own_stakeholder=arguments["own_stakeholder"],
-            new_own_stakeholder=arguments["new_own_stakeholder"],
+            own_member=arguments["own_member"],
+            new_own_member=arguments["new_own_member"],
             fold_age=arguments["fold_age"],
             subject_width=cast("int | None", kwargs[SUBJECT_WIDTH_KEYWORD]),
         )
@@ -782,7 +782,7 @@ def _fail_if_the_streamed_reduction_is_wrong(
     *,
     regime_name: RegimeName,
     has_taste_shocks: bool,
-    stakeholders: tuple[str, ...] | None,
+    member_axis: tuple[str, ...] | None,
 ) -> None:
     """Refuse a streamed decision whose reduction is not the exact hard max.
 
@@ -791,16 +791,16 @@ def _fail_if_the_streamed_reduction_is_wrong(
     exact hard max and a period's two phases cannot disagree about the winner.
     That mirror is sound only for a regime whose action reduction *is* that hard
     max. A taste shock adds a per-subject Gumbel term to the choice and a
-    collective utility reduces the household over its stakeholders; either one
+    collective utility reduces the household over its members; either one
     makes the streamed body answer a different question than the regime asks, so
     the mismatch is refused here rather than left to the classifier's ordering.
     """
-    if not (has_taste_shocks or stakeholders is not None):
+    if not (has_taste_shocks or member_axis is not None):
         return
     reduction = (
         "taste shocks draw a per-subject Gumbel term"
         if has_taste_shocks
-        else "a collective utility reduces over stakeholders"
+        else "a collective utility reduces over members"
     )
     msg = (
         f"Regime {regime_name!r} would declare a streamed simulation "
@@ -845,7 +845,6 @@ def _decision_value_reads(
         regime_name=context.regime_name,
         period=period,
         target_regimes=target_regimes,
-        same_period_ref_regimes=context.same_period_ref_regimes,
         edge_reference_regimes=_edge_reference_regimes_for_targets(
             context=context, target_regimes=target_regimes
         ),

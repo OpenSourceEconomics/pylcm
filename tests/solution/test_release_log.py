@@ -52,7 +52,7 @@ from tests.solution._callback_types import ConsumeOutputKwargs
 
 def _params() -> dict[str, float]:
     """Discount factor and consent-threshold parameters of the mini-EKL model."""
-    return {"discount_factor": 0.95, "delta_f": 0.5, "delta_m": 0.2}
+    return {"discount_factor": 0.95}
 
 
 class _Records(logging.Handler):

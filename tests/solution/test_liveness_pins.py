@@ -376,9 +376,7 @@ def _published_leaf_paths(
 
 
 @pytest.mark.parametrize("declares_no_reads", [True, False])
-def test_the_last_period_pins_nothing_beyond_same_period_references(
-    *, declares_no_reads: bool
-) -> None:
+def test_the_last_period_pins_nothing(*, declares_no_reads: bool) -> None:
     """At the last period there is no next period to read."""
     model = _egm_model(solver=EGM(savings_grid=_SAVINGS_GRID))
     regimes = model._regimes

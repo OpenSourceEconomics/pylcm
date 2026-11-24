@@ -128,8 +128,8 @@ def _initial_conditions(model: Model) -> MappingProxyType[str, FloatND | IntND]:
             "regime_id": jnp.array(
                 [model.regime_names_to_ids["married"]] * _N_SUBJECTS, dtype=jnp.int32
             ),
-            "own_stakeholder": jnp.full(
-                _N_SUBJECTS, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
+            "own_member": jnp.full(
+                _N_SUBJECTS, model.member_names_to_ids["f"], dtype=jnp.int32
             ),
         }
     )

@@ -12,16 +12,16 @@ from lcm import (
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
 )
+from lcm.result import SimulationResult
+from lcm.solver_api import SolutionResult
 from lcm.transition import StochasticTransition
 from lcm.typing import (
     BoolND,
@@ -53,7 +53,6 @@ class Work:
 class RegimeId:
     source: ScalarInt
     target: ScalarInt
-    reference: ScalarInt
     fallback: ScalarInt
 
 
@@ -67,10 +66,6 @@ def _utility_source(*, x: ContinuousState, work: DiscreteAction) -> FloatND:
 
 def _utility_target(x: ContinuousState) -> FloatND:
     return 10.0 + jnp.zeros_like(x)
-
-
-def _utility_reference(x: ContinuousState) -> FloatND:
-    return x
 
 
 def _utility_fallback(x: ContinuousState) -> FloatND:
@@ -105,31 +100,6 @@ def _age_projection(age: ScalarInt | ScalarFloat) -> FloatND:
 
 def _context_gate_open(
     *,
-    V_reference: FloatND,
-    period: ScalarInt,
-    age: ScalarInt | ScalarFloat,
-) -> BoolND:
-    """Open only when context and the gate-reference projection are right."""
-    return (period == 1) & (age == 45) & (V_reference > 1.5)
-
-
-def _context_gate_closed(
-    *,
-    V_reference: FloatND,
-    period: ScalarInt,
-    age: ScalarInt | ScalarFloat,
-) -> BoolND:
-    """Stay closed at the right context so the fallback projection is read."""
-    return (period == 1) & (age == 45) & (V_reference < 0.0)
-
-
-def _period_gate_open(*, V_reference: FloatND, period: ScalarInt) -> BoolND:
-    """Open only in the target period after the age-only projection."""
-    return (period == 1) & (V_reference > 1.5)
-
-
-def _context_gate_open_without_reference(
-    *,
     period: ScalarInt,
     age: ScalarInt | ScalarFloat,
 ) -> BoolND:
@@ -137,42 +107,39 @@ def _context_gate_open_without_reference(
     return (period == 1) & (age == 45)
 
 
-def _edge_decision(
+def _context_gate_closed(
+    *,
+    period: ScalarInt,
+    age: ScalarInt | ScalarFloat,
+) -> BoolND:
+    """Close in the target period, so the fallback projection is read there."""
+    return ~((period == 1) & (age == 45))
+
+
+def _period_gate_open(period: ScalarInt) -> BoolND:
+    """Open only in the target period, beside an age-only fallback projection."""
+    return period == 1
+
+
+def _edge_gates(
     *, gate: UserFunction, action_sensitive: bool, split_context: bool
-) -> tuple[dict[str, Gate], dict[str, ParticipationCheck]]:
-    """Return the edge's state-only gate or its value-reading participation check."""
-    if action_sensitive:
-        return (
-            {
-                "target": Gate(
-                    predicate=gate,
-                    routes={
-                        "only": StakeholderRoute(
-                            fallback=ProjectedRegimeValue(
-                                regime="fallback", projection={"x": _identity_x}
-                            )
-                        )
-                    },
-                )
-            },
-            {},
-        )
-    projection = _age_projection if split_context else _context_projection
-    return {}, {
-        "target": ParticipationCheck(
+) -> dict[str, Gate]:
+    """Return the edge's gate, whose fallback projection reads the context."""
+    projection = (
+        _identity_x
+        if action_sensitive
+        else _age_projection
+        if split_context
+        else _context_projection
+    )
+    return {
+        "target": Gate(
             predicate=gate,
             routes={
-                "only": StakeholderRoute(
+                "only": MemberRoute(
                     fallback=ProjectedRegimeValue(
                         regime="fallback", projection={"x": projection}
                     )
-                )
-            },
-            reads={
-                "V_reference": ParticipationRead(
-                    kind="IntegratedFull",
-                    regime="reference",
-                    projection={"x": projection},
                 )
             },
         )
@@ -186,24 +153,22 @@ def _make_model(
     split_context: bool = False,
 ) -> Model:
     gate = (
-        _context_gate_open_without_reference
-        if action_sensitive
-        else _period_gate_open
+        _period_gate_open
         if split_context
         else _context_gate_open
         if gate_open
         else _context_gate_closed
-    )
-    gates, participation = _edge_decision(
-        gate=gate, action_sensitive=action_sensitive, split_context=split_context
     )
     return Model(
         edges={
             "source": Transition(
                 targets={"target": 40, "fallback": 40},
                 law=ByAge(cases={40: {"target": StochasticTransition(func=_prob_one)}}),
-                gates=gates,
-                participation=participation,
+                gates=_edge_gates(
+                    gate=gate,
+                    action_sensitive=action_sensitive,
+                    split_context=split_context,
+                ),
             )
         },
         regimes={
@@ -224,10 +189,6 @@ def _make_model(
                         _utility_target_by_x if action_sensitive else _utility_target
                     )
                 },
-            ),
-            "reference": Regime(
-                states={"x": _X},
-                functions={"utility": _utility_reference},
             ),
             "fallback": Regime(
                 states={"x": _X},
@@ -265,7 +226,7 @@ def _solve_and_simulate(
     gate_open: bool,
     action_sensitive: bool = False,
     split_context: bool = False,
-):
+) -> tuple[SolutionResult, SimulationResult]:
     model = _make_model(
         gate_open=gate_open,
         action_sensitive=action_sensitive,
@@ -293,7 +254,7 @@ def _leaf_paths(*, node: _TemplateNode, prefix: tuple[str, ...] = ()) -> set[str
     return {"__".join(prefix)}
 
 
-def test_period_and_age_are_engine_context_not_gated_edge_parameters():
+def test_period_and_age_are_engine_context_not_gated_edge_parameters() -> None:
     """Gated-edge context names do not create user parameters."""
     model = _make_model(gate_open=True)
 
@@ -302,7 +263,7 @@ def test_period_and_age_are_engine_context_not_gated_edge_parameters():
     }
 
 
-def test_gate_and_gate_reference_use_target_period_context():
+def test_open_gate_uses_target_period_context() -> None:
     """Solve and simulation evaluate an open gate in the target period."""
     solution, simulation = _solve_and_simulate(gate_open=True)
 
@@ -314,7 +275,7 @@ def test_gate_and_gate_reference_use_target_period_context():
     assert bool(simulation.raw_results["target"][1].in_regime.all())
 
 
-def test_period_only_gate_and_age_only_projections_receive_context():
+def test_period_only_gate_and_age_only_projections_receive_context() -> None:
     """Each context name is bound when edge callables declare it alone."""
     solution, simulation = _solve_and_simulate(
         gate_open=True,
@@ -329,7 +290,7 @@ def test_period_only_gate_and_age_only_projections_receive_context():
     assert bool(simulation.raw_results["target"][1].in_regime.all())
 
 
-def test_fallback_projection_uses_target_period_context():
+def test_fallback_projection_uses_target_period_context() -> None:
     """A closed gate projects fallback states in the target period."""
     solution, simulation = _solve_and_simulate(gate_open=False)
 
@@ -347,7 +308,7 @@ def test_fallback_projection_uses_target_period_context():
     )
 
 
-def test_simulation_prices_source_actions_with_target_period_context():
+def test_simulation_prices_source_actions_with_target_period_context() -> None:
     """Simulation's source action responds to the target-period gated fold."""
     solution, simulation = _solve_and_simulate(
         gate_open=True,

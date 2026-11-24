@@ -13,7 +13,6 @@ Some draws only select a slice of $V'$. A draw `next_<state>` qualifies when
 - it is a genuine draw onto the target's grid of `<state>`, persisted as that
   state, and the source carries `<state>` on a grid with static nodes: a
   stochastic process whose nodes come from runtime parameters keeps its axis;
-- no later stage rebinds the target's reader, as a participation check does.
 
 Weights that do not read `<state>` itself, as an IID draw's, give every row the
 same expectation; the continuation then reads the first row and no current value,
@@ -107,13 +106,6 @@ class LotteryContractionSource:
 
     action_names: frozenset[ActionName]
     """The source's action names."""
-
-    rebound_targets: frozenset[RegimeName] = frozenset()
-    """Targets whose continuation a later stage rebinds around the built reader.
-
-    A participation check replaces the reader of the continuation it is built
-    on, so that continuation must keep every draw as a node axis.
-    """
 
     current_values_on_nodes: bool = True
     """Whether a process state's current value is always one of its grid's nodes.

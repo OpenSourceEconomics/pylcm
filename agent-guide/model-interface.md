@@ -83,9 +83,7 @@ Model(
   is its declaration path under `params["edges"]` — `[source][arg]` for a law over all
   targets, `[source][target][arg]` for a per-target cell (gated or not), and
   `[source][target]["predicate"][arg]`,
-  `[source][target]["routes"][route]["fallback"][state][arg]` for a target's `Gate` or
-  `ParticipationCheck`, and `[source][target]["reads"][read][state][arg]` for a
-  `ParticipationRead` projection.
+  `[source][target]["routes"][route]["fallback"][state][arg]` for a target's `Gate`.
   Values resolve from that path, `params["edges"][source][arg]` or the model level; a
   regime-level value never reaches an edge callable. Per-target state laws stay under
   their source regime.
@@ -108,20 +106,10 @@ Model(
 - Stochastic processes have intrinsic transitions and must NOT appear in
   `state_transitions`.
 - Terminal regimes must have empty `state_transitions`.
-- Regime, state, action, function, constraint, stakeholder and route
+- Regime, state, action, function, constraint, member and route
   names, and parameter arguments of model functions, cannot contain the reserved
   separator `__` and cannot start or end with `_`. `edges` is reserved as a regime, function
   and argument name
-
-**Shared problems:** `Problem` takes the thirteen action-problem slots of `Regime`
-(`states` through `certainty_equivalent`), and `Regime(problem=..., exit=...,
-description=...)` holds one. At construction the holder takes the problem's own objects
-for those slots and is from then on the regime that declares them itself: same values,
-same fingerprint. Several regimes may hold one problem and differ in their exits and
-edges; parameters stay per regime. Refused with `RegimeInitializationError`: a problem
-slot declared beside `problem`, a `ConsumptionSavingsRegime` or
-`NestedConsumptionSavingsRegime` holding a problem, and a `ValueDependentConstraint` in
-a `Problem`. Nothing in the engine shares work between holders.
 
 ### Model Creation
 
@@ -238,7 +226,7 @@ model's actual core programs declare.
   population without solving or simulating; the second returns a per-subject boolean
   mask in caller order. They take the `simulate` input forms (mapping or DataFrame), no
   `log_level`, apply every initial-condition check `simulate` applies (including the
-  `own_stakeholder` declaration of a collective start) and always raise on malformed
+  `own_member` declaration of a collective start) and always raise on malformed
   structure. At present they run in one eager pass on one device without memory
   admission or padding; the verdict does not depend on that. Unsupported checks
   (age-specialized constraint ancestors with subjects at several ages) raise
@@ -276,24 +264,17 @@ booleans as array indices inside JIT. Use `jnp.int32(...)` to cast.
 
 ### Collective regimes and value-dependent choice
 
-A regime whose utility is a `CollectiveUtility` has **stakeholders** — the `utilities`
-keys, in insertion order, which fix the trailing axis of `V` and of every published
-array. Everything is declared in a slot that already exists: the regime's utility and
-constraints, and the `Transition` on its `Model(edges=...)` entry:
+Every regime has **members**: `Regime.members` is `("self",)` for a regime declared
+with a plain utility function, and the `utilities` keys of a `CollectiveUtility`, in
+insertion order, for a household; those fix the trailing axis of `V` and of every
+published array. A household may not name a member `"self"`. `Regime.member_axis` is
+the engine's household marker (`None` for a plain utility). Everything is declared in a
+slot that already exists: the regime's utility, its `exit`, and the `Transition` on its
+`Model(edges=...)` entry:
 
 ```python
 Regime(
     functions={"utility": CollectiveUtility(utilities={"f": u_f, "m": u_m})},
-    constraints={
-        "participation_f": ValueDependentConstraint(  # goes in `constraints`
-            predicate=participation_f,
-            references={
-                "V_alone_f": ProjectedRegimeValue(
-                    regime="single_f", projection={"wealth": half_of_wealth}
-                )
-            },
-        )
-    },
 )
 
 # The gate lives on the source's edges, beside the law, keyed by TARGET
@@ -306,7 +287,7 @@ Model(
                 "couple": Gate(
                     predicate=above_wealth_floor,  # Boolean, on the target's states
                     routes={
-                        "f": StakeholderRoute(target_stakeholder="f", fallback=alone_f)
+                        "f": MemberRoute(target_member="f", fallback=alone_f)
                     },
                     off_grid="pointwise",  # or "reject"
                 )
@@ -318,19 +299,19 @@ Model(
 ```
 
 - `Transition(roles={"couple": "f"})` is the plain edge from a singleton source into a
-  collective target: the row continues as stakeholder `f`, and a landing with no
+  collective target: the row continues as member `f`, and a landing with no
   feasible action raises `NoFeasibleActionError`. It is lowered into the always-open
   gate whose fallback is the target itself in that role, so the source has a gated
   source's scope. Refused at build, naming source, target and role: a non-collective
   target, an unknown role, a collective source, a target the transition never reaches,
-  a target with a gate or participation check as well.
+  a target with a gate as well.
 - **The transition key is always the GATE-OPEN target.** An edge that may dissolve a
   couple is keyed by the *continuing* collective regime. Keying it by the singleton
   would send both partners there whenever the couple stays together.
-- `routes` is keyed by **source** stakeholder; a singleton source declares exactly one
+- `routes` is keyed by **source** member; a singleton source declares exactly one
   route. Each route owns four destinations: the open regime (the dict key) and role
-  (`target_stakeholder`), and the closed regime and role (`fallback.regime`,
-  `fallback.stakeholder`).
+  (`target_member`), and the closed regime and role (`fallback.regime`,
+  `fallback.member`).
 - One `Gate` per target, valid at every age the target is reached and in both phases;
   never inside `ByAge` / `Phased` (only a route `fallback` may be `Phased`). With
   `Phased` edges, a target reached in both phases carries the equal `Gate` in both or
@@ -338,24 +319,31 @@ Model(
 - A gate predicate reads target states, params, `period` and `age`, never a value: an
   argument named `V_target`, `V_target_<s>` or `D_target` raises `GateReadsValueError`
   when the `Gate` is declared, and `Gate` takes no `references`. A move decided by
-  comparing values is an `Exit` in the source's `Regime(exit=...)` (current period) or
-  a `ParticipationCheck` in `Transition(participation=...)` with named `ParticipationRead`s (on
-  landing). The Boolean-dtype requirement is checked **at evaluation**, i.e. on the
-  first `solve()`, not at build.
+  comparing values is an `Exit` in `Regime(exit=...)` of the regime that decides:
+  formation with a `Consent` rule on the single's regime, dissolution with `Unilateral`
+  or `MutualConsent` on the household's. The Boolean-dtype requirement is checked **at
+  evaluation**, i.e. on the first `solve()`, not at build.
+- An exit's payoff is the destination's problem value at the projected state, without
+  the destination's own exit; under `Consent` it is the formed household's staying
+  value. Within one step a rule read through a staying value reads problem values only;
+  a longer chain is refused. See
+  `docs/adr/0004-one-noun-members-and-the-rule-of-the-deciding-regime.md`.
+- A household admits `taste_shocks` only when exactly one member has a positive Pareto
+  weight (the decider), and not with an `exit`, with `shocks`, or when another regime's
+  exit reads its decision.
 - `ParetoObjective(weights=...)` scalarizes the household; a weight may read the
   regime's states and `period`/`age`, never an action. Its other arguments become free
   parameters under the `pareto_objective` key. Omit it for equal weights.
-- A constraint-local projection may introduce **no** free parameter (refused when the
-  `Regime` is constructed); an edge projection's free arguments become that edge's
-  params, under `params["edges"][source][target]`.
-- Stakeholder identity is **per row**: seed `initial_conditions["own_stakeholder"]`
+- An edge projection's free arguments become that edge's params, under
+  `params["edges"][source][target]`.
+- Member identity is **per row**: seed `initial_conditions["own_member"]`
   whenever the starting regime's forward closure contains a collective regime declaring
   a transition with more than one route. A row keeps its role across an ordinary regime
   transition, so a two-leg route it runs into later demands the seed, while one in a
   regime the cohort can never reach demands nothing. It is published as an
-  `own_stakeholder` column, missing for singleton rows.
-- `GatedEdge`, `stakeholders`, `value_constraints`, `same_period_refs` and `gated_edges`
-  are the **lowered** form these declarations decompose into. Write the declarations.
+  `own_member` column, missing for singleton rows.
+- `GatedEdge`, `member_axis` and `gated_edges` are the **lowered** form these
+  declarations decompose into. Write the declarations.
 
 See `docs/user_guide/collective_regimes.md` and `docs/reference/collective_regimes.md`.
 

@@ -1,7 +1,7 @@
 """Typed current-period reads use mapped canonical action problems.
 
 The private adapter installed below is a stage fixture. Public Exit declarations
-and integrated collective publication are qualified by their own later stages.
+are qualified by their own later stages.
 """
 
 import logging
@@ -27,7 +27,6 @@ from _lcm.execution.core_program import (
 from _lcm.execution.footprint import ResidentBreakdown
 from _lcm.execution.output_layout import StateAxesLeading, resolve_output_layout
 from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
-from _lcm.participation_queries import bind_participation_query_graph
 from _lcm.policy_queries import (
     PolicyAnswer,
     QueryKind,
@@ -52,8 +51,6 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.collective import ProjectedRegimeValue, StakeholderRoute
-from lcm.participation import ParticipationCheck, ParticipationRead
 from lcm.shocks import Normal, ShockGroup, UserNodes
 from lcm.solvers import EGM, GridSearch
 from lcm.typing import BoolND, FloatND, IntND, RegimeName, ScalarInt
@@ -161,27 +158,22 @@ def test_query_cycles_and_foreign_full_reads_refuse() -> None:
         )
 
 
-def test_integrated_value_reader_is_only_a_participation_comparison_operand() -> None:
-    """A represented Full payload cannot become a policy/support dependency."""
+def test_participating_query_reading_a_participating_query_refuses() -> None:
+    """A rule for staying reads problem values only, never another rule for staying."""
     reads = {
-        "participation": _read(kind=QueryKind.PARTICIPATION, target="target"),
-        "stored": _read(kind=QueryKind.INTEGRATED_FULL, target="target"),
+        "couple_participating": _read(kind=QueryKind.PARTICIPATING, target="couple"),
+        "single_participating": _read(kind=QueryKind.PARTICIPATING, target="single"),
+        "single_raw": _read(kind=QueryKind.RAW, target="single"),
     }
-    assert demanded_query_order(
-        reads=reads,
-        dependencies={"participation": ("stored",), "stored": ()},
-        roots=("participation",),
-    ) == ("stored", "participation")
-    with pytest.raises(ValueError, match="Only a participation comparison"):
+    with pytest.raises(ValueError, match="Participating query 'single_participating'"):
         demanded_query_order(
-            reads={
-                **reads,
-                "participation": replace(
-                    reads["participation"], kind=QueryKind.PARTICIPATING
-                ),
+            reads=reads,
+            dependencies={
+                "couple_participating": ("single_participating",),
+                "single_participating": ("single_raw",),
+                "single_raw": (),
             },
-            dependencies={"participation": ("stored",), "stored": ()},
-            roots=("participation",),
+            roots=("couple_participating",),
         )
 
 
@@ -419,115 +411,6 @@ def _native_model(
         ),
     )
     return model
-
-
-def test_participation_consumer_uses_boolean_rule_and_source_owned_answer_shape() -> (
-    None
-):
-    """A singleton participation check in a household does not rerun the argmax."""
-    _native_model(enable_jit=False)
-
-    def decide(*, target: PolicyAnswer, outside: PolicyAnswer) -> PolicyAnswer:
-        accept = (target[0][0] > 0.75) & target[2]
-        return (
-            jnp.where(accept, target[0][0], outside[0]),
-            jnp.asarray(-1, jnp.int32),
-            jnp.where(accept, target[2], outside[2]),
-            target[3] & outside[3],
-            jnp.zeros((0,), dtype=jnp.int32),
-        )
-
-    node = QueryNode(
-        read=_read(kind=QueryKind.PARTICIPATION, target="target"),
-        context=_CONTEXTS["target"],
-        inputs={"target": "part", "outside": "outside"},
-        operand_builder=lambda _context: {},
-        decision=decide,
-        answer_shape=(),
-    )
-    answer = queries._query_cell(
-        jnp.asarray(a=True),
-        {"wealth": jnp.asarray(0.5)},
-        {
-            "target": (
-                jnp.asarray([0.5, 2.0]),
-                jnp.asarray(0, jnp.int32),
-                jnp.asarray(a=True),
-                jnp.asarray(a=True),
-                jnp.zeros((0,), dtype=jnp.int32),
-            ),
-            "outside": (
-                jnp.asarray(-2.0),
-                jnp.asarray(0, jnp.int32),
-                jnp.asarray(a=True),
-                jnp.asarray(a=True),
-                jnp.zeros((0,), dtype=jnp.int32),
-            ),
-        },
-        node=node,
-        period=0,
-        fixed={"period": jnp.asarray(0), "age": jnp.asarray(0)},
-        projection_operands={},
-    )
-    np.testing.assert_array_equal(np.asarray(answer[0]), -2.0)
-    assert bool(answer[2])
-    assert bool(answer[3])
-
-
-def test_bound_participation_strict_hurdle_uses_one_household_participating_tuple() -> (
-    None
-):
-    """An exact threshold can reject a target even when a member's fallback is worse."""
-    model = _native_model(enable_jit=False)
-    declaration = ParticipationCheck(
-        predicate=lambda benchmark: benchmark > 2.0,
-        reads={
-            "benchmark": ParticipationRead(
-                regime="target",
-                projection={"wealth": _identity},
-                stakeholder="f",
-                kind="Participating",
-            )
-        },
-        routes={
-            member: StakeholderRoute(
-                target_stakeholder=member,
-                fallback=ProjectedRegimeValue(
-                    regime="root",
-                    projection={"wealth": _identity},
-                    stakeholder=member,
-                ),
-            )
-            for member in ("f", "m")
-        },
-    )
-    plan = bind_participation_query_graph(
-        contexts=_CONTEXTS,
-        canonical_regimes=model._regimes,
-        source="root",
-        target="target",
-        period=0,
-        phase="solve",
-        declaration=declaration,
-    )
-    arguments = plan.queries.arguments(
-        context=CoreBuildContext(
-            state_action_space=_CONTEXTS["target"].state_action_space,
-            next_regime_to_V_arr={},
-            next_regime_to_continuation={},
-            flat_params={},
-            period=0,
-            ages=model._time,
-        )
-    )
-    answer = plan.queries(
-        states={"wealth": jnp.asarray(0.5)},
-        arguments=cast("Mapping[str, Mapping[str, PytreeValue]]", arguments),
-    )
-    np.testing.assert_array_equal(answer[0], [0.5, 3.5])
-    assert int(answer[1]) == 1
-    assert bool(answer[2])
-    assert bool(answer[3])
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
@@ -1002,7 +885,7 @@ def _vector_keep(*, q: FloatND, outside: PolicyAnswer) -> jax.Array:
 
 
 def test_query_kept_set_requires_one_scalar_per_action() -> None:
-    """A stakeholder-shaped predicate must never become an extra action axis."""
+    """A member-shaped predicate must never become an extra action axis."""
     model = _native_model(enable_jit=True)
     original = model._regimes["root"]
     kernel = original.solution.period_kernels[0]

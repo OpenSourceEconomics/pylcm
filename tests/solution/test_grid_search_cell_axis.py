@@ -177,7 +177,7 @@ def test_cell_width_preserves_public_values(*, kind: str, width: int) -> None:
 
 @pytest.mark.parametrize("width", [1, 4, 6])
 def test_cell_width_preserves_exact_dissolution_flags(*, width: int) -> None:
-    """The Boolean output keeps its state axes without a stakeholder dimension."""
+    """The Boolean output keeps its state axes without a member dimension."""
     with recorded_dissolution_flags() as flags:
         _model(kind="collective", width=width).solve(
             params=_params("collective"), log_level="off"

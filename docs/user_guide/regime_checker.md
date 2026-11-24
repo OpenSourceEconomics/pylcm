@@ -119,19 +119,16 @@ interval; see [economic time and computational periods](period_time.md).
 
 In a model with collective regimes, the checker holds to these rules:
 
-- A collective regime pools only with regimes that have the same stakeholders, so never
-  with a single-agent regime.
+- A collective regime pools only with regimes that have the same members, so never with
+  a single-agent regime.
 - Regimes pool only when their exits are equal: the same rule, tie, comparison,
   renegotiation and settlement, the same targets with the same roles, the same observed
   shocks and the same availability.
-- Work and storage count one action value and one stored value per stakeholder, as the
-  solve computes them.
+- Work and storage count one action value and one stored value per member, as the solve
+  computes them.
 - The state an exit's `Renegotiate` moves stays in its regime whole: it is kept in every
   period and never split into status lanes, because renegotiation compares the stay
   values at its codes within the period.
-
-A regime that holds a `Problem` is checked as the regime that declares the problem's
-slots itself, with the same result: the model takes each holder's slots at construction.
 
 ### Which layout is recommended?
 

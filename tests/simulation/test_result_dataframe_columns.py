@@ -1,8 +1,8 @@
 """Published columns and deferred computation of simulation results.
 
 The published frame names its columns in a fixed order: the columns that
-identify a row, then a collective regime's per-stakeholder values in the order
-the regime declares its stakeholders, then states, actions, and everything else.
+identify a row, then a collective regime's per-member values in the order
+the regime declares its members, then states, actions, and everything else.
 The tests also cover exact published rows and reuse of deferred-target work
 when parameter values change regime membership within a fixed population.
 """
@@ -72,13 +72,13 @@ SOLO_PARAMS = {
 }
 
 
-def test_to_dataframe_orders_stakeholder_columns_by_declared_stakeholders():
-    """Per-stakeholder value columns follow the regime's `stakeholders` order.
+def test_to_dataframe_orders_member_columns_by_declared_members() -> None:
+    """Per-member value columns follow the regime's `members` order.
 
-    The household declares `stakeholders=("wife", "husband")`, which fixes the
+    The household declares `members=("wife", "husband")`, which fixes the
     order of its value function's trailing axis, so the frame carries
     `value_wife` before `value_husband` — the household's own order, not the
-    alphabetical order of the two names. `own_stakeholder` precedes them: it
+    alphabetical order of the two names. `own_member` precedes them: it
     says which role the row occupies, so it identifies the row rather than
     reporting a value of it.
     """
@@ -93,7 +93,7 @@ def test_to_dataframe_orders_stakeholder_columns_by_declared_stakeholders():
         "subject_id",
         "period",
         "regime_name",
-        "own_stakeholder",
+        "own_member",
         "value_wife",
         "value_husband",
         "wage",
@@ -102,13 +102,13 @@ def test_to_dataframe_orders_stakeholder_columns_by_declared_stakeholders():
     ]
 
 
-def test_to_dataframe_places_additional_target_after_states_and_actions():
+def test_to_dataframe_places_additional_target_after_states_and_actions() -> None:
     """An additional target sits in the trailing block, whatever it is called.
 
     A computed target is not a value column: `value_of_leisure` is one of the
     regime's own functions, requested through `additional_targets`, and it
     belongs after the states and actions like any other computed column. The
-    model has a single decision maker and therefore no per-stakeholder values at
+    model has a single decision maker and therefore no per-member values at
     all, so nothing may be placed in front of `wage`.
     """
     model = _make_solo_model_with_value_prefixed_target()
@@ -134,10 +134,10 @@ def test_to_dataframe_places_additional_target_after_states_and_actions():
     ]
 
 
-def test_model_rejects_a_state_named_like_a_stakeholder_value_column():
-    """`value_<stakeholder>` is reserved for the stakeholder's published value.
+def test_model_rejects_a_state_named_like_a_member_value_column() -> None:
+    """`value_<member>` is reserved for the member's published value.
 
-    A collective regime with stakeholders `("f", "m")` publishes `value_f` and
+    A collective regime with members `("f", "m")` publishes `value_f` and
     `value_m`, so a state of either name is refused when the model is built. The
     name it collides with is in the message, because the alternative is a frame
     whose `value_f` column silently holds the wife's value instead of the state
@@ -147,13 +147,15 @@ def test_model_rejects_a_state_named_like_a_stakeholder_value_column():
         _make_collective_model_with_colliding_state()
 
 
-def test_model_rejects_a_singleton_state_named_like_another_regimes_value_column():
-    """`value_<stakeholder>` is reserved across the model, not within one regime.
+def test_model_rejects_a_singleton_state_named_like_another_regimes_value_column() -> (
+    None
+):
+    """`value_<member>` is reserved across the model, not within one regime.
 
     The published frame is a single table over every regime, so a singleton
     regime's state named `value_f` claims the column a collective regime already
     publishes for its wife. Neither regime is wrong on its own, which is why the
-    name is refused against the model's stakeholders rather than the declaring
+    name is refused against the model's members rather than the declaring
     regime's.
     """
     with pytest.raises(PyLCMError, match="value_f"):
@@ -161,13 +163,15 @@ def test_model_rejects_a_singleton_state_named_like_another_regimes_value_column
 
 
 @pytest.mark.parametrize("missing_column", ["subject_id", "period", "regime_name"])
-def test_reorder_columns_requires_the_row_identifying_columns(missing_column):
+def test_reorder_columns_requires_the_row_identifying_columns(
+    missing_column: str,
+) -> None:
     """Every published frame identifies its rows, so those columns are required.
 
     `subject_id`, `period` and `regime_name` are present in every result and are
     named unconditionally, so a frame that lacks one is refused rather than
     silently published one column narrower. Only the scalar `value` column is
-    optional: an all-collective result publishes `value_<stakeholder>` columns
+    optional: an all-collective result publishes `value_<member>` columns
     in its place.
     """
     frame = pd.DataFrame(
@@ -185,12 +189,12 @@ def test_reorder_columns_requires_the_row_identifying_columns(missing_column):
 
 
 def _make_reverse_alphabetical_collective_model() -> Model:
-    """Build a two-stakeholder model whose stakeholders are not in name order.
+    """Build a two-member model whose members are not in name order.
 
     The economics are those of `tests.collective_fixtures`: a household choosing
     between work and leisure over a two-point wage grid, where the wife values
     her own leisure and the husband values household consumption. The
-    stakeholders are declared `("wife", "husband")`, so the declared order and
+    members are declared `("wife", "husband")`, so the declared order and
     the alphabetical order of the names disagree.
     """
     couple = Regime(
@@ -226,8 +230,8 @@ def _make_solo_model_with_value_prefixed_target() -> Model:
 
     `value_of_leisure` is an ordinary intermediate of the utility DAG, so it can
     be requested as an additional target. Its name shares the `value_` prefix
-    with a collective regime's published stakeholder columns, and this model
-    declares no stakeholders at all.
+    with a collective regime's published member columns, and this model
+    declares no members at all.
     """
     working = Regime(
         states={"wage": WAGE_GRID},
@@ -252,7 +256,7 @@ def _make_solo_model_with_value_prefixed_target() -> Model:
 def _make_collective_model_with_colliding_state() -> Model:
     """Build a collective model whose state is named `value_f`.
 
-    Everything else is the two-stakeholder household of
+    Everything else is the two-member household of
     `tests.collective_fixtures`: the state is the household's wage, carrying the
     name of the column the wife's published value claims.
     """
@@ -287,7 +291,7 @@ def _make_collective_model_with_colliding_state() -> Model:
 def _make_mixed_model_with_a_singleton_state_shadowing_a_value_column() -> Model:
     """Build a model pairing a collective household with an unrelated singleton.
 
-    The couple is the two-stakeholder household of `tests.collective_fixtures`
+    The couple is the two-member household of `tests.collective_fixtures`
     over its wage state; the singleton lives alongside it and calls its own state
     `value_f`. Each regime transitions only into its own terminal, so the two
     never meet — they share nothing but the published frame.

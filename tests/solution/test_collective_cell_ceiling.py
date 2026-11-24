@@ -1,6 +1,6 @@
 """A binding cell ceiling on a collective model narrows the tile and nothing else.
 
-The model is the two-stakeholder couple of `tests.collective_fixtures` over a
+The model is the two-member couple of `tests.collective_fixtures` over a
 wage grid wide enough that the planner's own choice exceeds the ceiling, so
 the ceiling binds rather than sitting inactive above the selected width. Each
 solve's dispatched widths and compiler reservations are read from the planner
@@ -19,7 +19,7 @@ from lcm import ExecutionConfig, LinSpacedGrid, Model
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactRef, SolutionResult
 from lcm.typing import RegimeName, UserParams
-from tests.collective_fixtures import AGES, CoupleRegimeId, make_two_stakeholder_model
+from tests.collective_fixtures import AGES, CoupleRegimeId, make_two_member_model
 from tests.solution._candidate_census import Census, CensusRecorder, Triple
 
 
@@ -48,8 +48,8 @@ _TERMINAL: Triple = ("couple_terminal", 1, "main")
 def _model(
     *, n_wage: int = _N_WAGE, **execution: Unpack[_ModelExecutionOptions]
 ) -> tuple[Model, UserParams]:
-    """Build the two-stakeholder couple over an `n_wage`-point wage grid."""
-    base, params = make_two_stakeholder_model()
+    """Build the two-member couple over an `n_wage`-point wage grid."""
+    base, params = make_two_member_model()
     grid = LinSpacedGrid(start=8.0, stop=40.0, n_points=n_wage)
     regimes = {
         name: regime.replace(states={"wage": grid})
@@ -253,10 +253,10 @@ def test_budgeted_full_extent_arm_agrees_bitwise_with_the_ceiling_arm(
     assert _bytes(bounded) == _bytes(unbounded)
 
 
-def test_ceiling_publishes_a_stakeholder_value_for_every_wage_point(
+def test_ceiling_publishes_a_member_value_for_every_wage_point(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Tiling narrower keeps the (wage, stakeholder) shape of the stored value."""
+    """Tiling narrower keeps the (wage, member) shape of the stored value."""
     bounded, _ = _solve(
         monkeypatch=monkeypatch, axis_width_ceilings={"cell": _CELL_CEILING}
     )

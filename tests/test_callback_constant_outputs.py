@@ -2,7 +2,7 @@
 
 A felicity (under grid search and every endogenous-grid family), a constraint,
 a next state, a regime-transition probability, a stochastic weight, an exit
-utility adjustment, exit availability, a gate or participation predicate, a
+utility adjustment, exit availability, a gate predicate, a
 fallback projection, a joint-transition output or probability, a current-IID
 law parameter and a borrowing floor may each return `0`, `0.0`, `True` or an
 array. Each solves and simulates to the same values as its array-returning
@@ -28,11 +28,10 @@ from lcm import (
     IrregSpacedGrid,
     JointTransition,
     LinSpacedGrid,
+    MemberRoute,
     Model,
-    ParticipationCheck,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -40,7 +39,7 @@ from lcm import (
     post_decision_lower_bound,
     ref,
 )
-from lcm.collective import CollectiveUtility, ValueDependentConstraint
+from lcm.collective import CollectiveUtility
 from lcm.exceptions import InvalidFunctionOutputError, InvalidValueFunctionError
 from lcm.exits import Unilateral
 from lcm.regime import StateTransitionEntry
@@ -229,7 +228,7 @@ def _integer_utility_m(work: DiscreteAction) -> FloatND:
 
 
 def test_integer_collective_felicities_match_their_float_twins() -> None:
-    """Integer-valued stakeholder felicities solve like their float spellings."""
+    """Integer-valued member felicities solve like their float spellings."""
     couple, couple_terminal = (
         make_stateless_collective_target_model()[0].user_regimes[name]
         for name in ("couple", "couple_terminal")
@@ -761,16 +760,13 @@ def _ten_plus_wealth(*, wealth: ContinuousState) -> FloatND:
     return wealth + 10.0
 
 
-def _gate_model(
-    *, predicate: UserFunction, fallback: UserFunction = _stay, gated: bool = False
-) -> Model:
-    route = StakeholderRoute(
+def _gate_model(*, predicate: UserFunction, fallback: UserFunction = _stay) -> Model:
+    route = MemberRoute(
         fallback=ProjectedRegimeValue(
             regime="fallback", projection={"wealth": fallback}
         )
     )
     gates = {"target": Gate(predicate=predicate, routes={"self": route})}
-    checks = {"target": ParticipationCheck(predicate=predicate, routes={"self": route})}
     return Model(
         regimes={
             "source": Regime(
@@ -792,8 +788,7 @@ def _gate_model(
             "source": Transition(
                 targets={"target": 40, "fallback": 40},
                 law=ByAge(cases={40: {"target": StochasticTransition(func=_certain)}}),
-                gates=gates if gated else {},
-                participation={} if gated else checks,
+                gates=gates,
             )
         },
     )
@@ -819,20 +814,16 @@ def _gated_landings(model: Model) -> pd.DataFrame:
     return landed[["regime_name", "wealth"]].reset_index(drop=True)
 
 
-_GATE_KINDS = pytest.mark.parametrize("gated", [False, True], ids=["check", "gate"])
-
-
-@_GATE_KINDS
 @pytest.mark.parametrize("value", [0, 1])
 @pytest.mark.parametrize("form", _BOOLEAN_FORMS)
-def test_constant_landing_predicate(*, gated: bool, value: int, form: str) -> None:
-    """A gate or participation predicate `True` or `False` admits or diverts."""
+def test_constant_landing_predicate(*, value: int, form: str) -> None:
+    """A gate predicate `True` or `False` admits or diverts."""
     raw = _constant(form=form, value=value)
 
     def predicate() -> BoolND:
         return raw  # ty: ignore[invalid-return-type]
 
-    model = _gate_model(predicate=predicate, gated=gated)
+    model = _gate_model(predicate=predicate)
     np.testing.assert_array_equal(
         _gated_values(model), [10.0, 11.0, 12.0] if value else [0.0, 1.0, 2.0]
     )
@@ -841,11 +832,10 @@ def test_constant_landing_predicate(*, gated: bool, value: int, form: str) -> No
     np.testing.assert_array_equal(landed["wealth"], [0.0, 1.0, 2.0])
 
 
-@_GATE_KINDS
 @pytest.mark.parametrize(
     "form", ["python_int", "python_float", "int_array", "float_array"]
 )
-def test_constant_gated_fallback_projection(*, gated: bool, form: str) -> None:
+def test_constant_gated_fallback_projection(*, form: str) -> None:
     """A fallback projecting every subject to wealth `2` lands there at 2.0."""
     raw = _constant(form=form, value=2)
 
@@ -855,7 +845,7 @@ def test_constant_gated_fallback_projection(*, gated: bool, form: str) -> None:
     def never() -> BoolND:
         return jnp.asarray(a=False)
 
-    model = _gate_model(predicate=never, fallback=projection, gated=gated)
+    model = _gate_model(predicate=never, fallback=projection)
     np.testing.assert_array_equal(_gated_values(model), [2.0] * 3)
     landed = _gated_landings(model)
     assert list(landed["regime_name"]) == ["fallback"] * 3
@@ -1089,37 +1079,6 @@ def test_constant_current_iid_law_parameters(*, form: str) -> None:
     np.testing.assert_array_equal(np.asarray(values), 1.0)
 
 
-@pytest.mark.parametrize("form", _BOOLEAN_FORMS)
-def test_constant_value_dependent_constraint(*, form: str) -> None:
-    """A value-dependent predicate `True` admits every cell."""
-    raw = _constant(form=form, value=1)
-
-    def participation(*, Q_f: FloatND) -> BoolND:  # noqa: ARG001
-        return raw  # ty: ignore[invalid-return-type]
-
-    base, params = make_stateless_collective_target_model()
-    couple = base.user_regimes["couple"]
-    model = Model(
-        regimes={
-            "couple": couple.replace(
-                constraints={
-                    **dict(couple.constraints),
-                    "participation": ValueDependentConstraint(predicate=participation),
-                }
-            ),
-            "couple_terminal": base.user_regimes["couple_terminal"],
-        },
-        ages=AGES,
-        regime_id_class=CoupleRegimeId,
-        initial_nodes={0: "couple"},
-        edges={"couple": {"couple_terminal": 0}},
-    )
-    values = model.solve(params=params, log_level="off").values
-    np.testing.assert_allclose(
-        values[0]["couple"], STATELESS_TARGET_V_PERIOD_0, rtol=1e-6
-    )
-
-
 # What each role refuses: a predicate refuses numbers, a discrete code refuses
 # floats and a float role refuses Booleans. Only the returned dtype is checked.
 
@@ -1193,16 +1152,15 @@ def test_numeric_constraint_is_refused(*, form: str) -> None:
         model.solve(params=_PARAMS, log_level="off")
 
 
-@_GATE_KINDS
 @pytest.mark.parametrize("form", ["python_int", "int_array"])
-def test_numeric_landing_predicate_is_refused(*, gated: bool, form: str) -> None:
-    """A gate or participation predicate `1` is refused rather than read as true."""
+def test_numeric_landing_predicate_is_refused(*, form: str) -> None:
+    """A gate predicate `1` is refused rather than read as true."""
     raw = _constant(form=form, value=1)
 
     def predicate() -> BoolND:
         return raw  # ty: ignore[invalid-return-type]
 
-    model = _gate_model(predicate=predicate, gated=gated)
+    model = _gate_model(predicate=predicate)
     with pytest.raises(
         InvalidFunctionOutputError,
         match=r"returned dtype 'int(32|64)', but must return a Boolean",
@@ -1284,33 +1242,6 @@ def test_numeric_constraint_under_endogenous_grids_is_refused() -> None:
 
     with pytest.raises(InvalidFunctionOutputError, match="must return a Boolean"):
         _constrained_nbegm_values(allowed)
-
-
-def test_numeric_value_dependent_constraint_is_refused() -> None:
-    """A value-dependent predicate `1` is a number, not a Boolean."""
-
-    def participation(*, Q_f: FloatND) -> BoolND:  # noqa: ARG001
-        return jnp.asarray(1)
-
-    base, params = make_stateless_collective_target_model()
-    couple = base.user_regimes["couple"]
-    model = Model(
-        regimes={
-            "couple": couple.replace(
-                constraints={
-                    **dict(couple.constraints),
-                    "participation": ValueDependentConstraint(predicate=participation),
-                }
-            ),
-            "couple_terminal": base.user_regimes["couple_terminal"],
-        },
-        ages=AGES,
-        regime_id_class=CoupleRegimeId,
-        initial_nodes={0: "couple"},
-        edges={"couple": {"couple_terminal": 0}},
-    )
-    with pytest.raises(InvalidFunctionOutputError, match="must return a Boolean"):
-        model.solve(params=params, log_level="off")
 
 
 @pytest.mark.parametrize(

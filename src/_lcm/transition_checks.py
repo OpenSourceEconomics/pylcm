@@ -2251,10 +2251,9 @@ def validate_discrete_state_laws_all_periods(
     them before any maximum, and neither do cells whose regime transition gives
     the law's target no probability, since nothing reads the law there.
 
-    Feasibility here is the ordinary constraints. A value-dependent constraint or
-    a gate that reads a value cannot exclude a cell whose code is off the grid,
-    since that code has no value; a value-free restriction belongs among the
-    ordinary constraints.
+    Feasibility here is the ordinary constraints. A gate that reads a value
+    cannot exclude a cell whose code is off the grid, since that code has no
+    value; a value-free restriction belongs among the ordinary constraints.
 
     Raises:
         InvalidStateTransitionError: At the first feasible cell a law leaves its
@@ -2972,10 +2971,10 @@ def _raise_off_grid_at_cell(
         f"{description} leaves its grid at the feasible cell {cell}. "
         + _off_grid_remedy(target_grid)
         + (
-            " A value constraint or a gated edge cannot exclude that cell, since an "
-            "off-grid code has no value to decide with. Declare the restriction "
-            "that rules the cell out as an ordinary constraint (in `constraints`, "
-            "beside the value constraint), or keep the law on its grid."
+            " A gated edge cannot exclude that cell, since an off-grid code has no "
+            "value to decide with. Declare the restriction that rules the cell out "
+            "as an ordinary constraint (in `constraints`), or keep the law on its "
+            "grid."
             if value_dependent
             else ""
         )

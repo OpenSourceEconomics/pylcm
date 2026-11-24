@@ -1,4 +1,4 @@
-"""Validate participation fallback coordinates independently of acceptance."""
+"""Validate exit and gate fallback coordinates independently of the move taken."""
 
 import jax.numpy as jnp
 import numpy as np
@@ -7,23 +7,21 @@ import pytest
 
 from lcm import (
     ExecutionConfig,
+    Gate,
     InitialNodes,
     IrregSpacedGrid,
+    MemberRoute,
     Model,
-    ParticipationCheck,
     Periods,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     TauchenAR1Process,
     Transition,
     categorical,
 )
-from lcm.exceptions import OffGridStateError
 from lcm.typing import BoolND, DiscreteState, FloatND, ScalarInt
 from tests.simulation.test_realised_dissolution_route import (
     _PARAMS,
-    _bend_middle_up,
     _build_model,
 )
 
@@ -42,6 +40,9 @@ def _replay_wages(*, model: Model, wages: tuple[float, ...]) -> pd.DataFrame:
                 "regime_id": jnp.full(
                     len(wages), model.regime_names_to_ids["source"], jnp.int32
                 ),
+                "own_member": jnp.full(
+                    len(wages), model.member_names_to_ids["m"], jnp.int32
+                ),
             },
             seed=0,
             log_level="off",
@@ -57,10 +58,10 @@ def _replay_wages(*, model: Model, wages: tuple[float, ...]) -> pd.DataFrame:
     [(False, None, None), (True, None, 1), (True, 2**28, 2)],
     ids=["eager", "compiled-one-row", "budgeted-two-row"],
 )
-def test_accepted_and_rejected_rows_validate_their_actual_fallback_projection(
+def test_staying_and_leaving_rows_validate_their_actual_exit_projection(
     *, enable_jit: bool, budget: int | None, width: int | None
 ) -> None:
-    """Positive-domain valid fallbacks cannot reject an accepted row's zero buffer."""
+    """Positive-domain valid exit projections cannot reject a staying row's buffer."""
     model = _build_model(
         payoff_name="ramp",
         fallback_grid=IrregSpacedGrid(
@@ -73,32 +74,10 @@ def test_accepted_and_rejected_rows_validate_their_actual_fallback_projection(
         ),
     )
     panel = _replay_wages(model=model, wages=(3.0, 1.0, 2.0))
-    # The wife accepts exactly when wage-1 > 1/2. Every actual fallback
-    # coordinate lies in [1,3], including those priced for accepted rows.
+    # The wife accepts exactly when wage-1 > 1/2. Every actual exit coordinate
+    # lies in [1,3], including those priced for staying rows.
     assert panel["regime_name"].tolist() == ["pair", "alone_m", "pair"]
     np.testing.assert_array_equal(panel["wage"], [3.0, 1.0, 2.0])
-
-
-@pytest.mark.parametrize("payoff_name", ["ramp", "bowl"])
-@pytest.mark.parametrize(
-    "lower_node", [0.0, 1.0], ids=["zero-in-domain", "zero-outside-domain"]
-)
-def test_actual_invalid_fallback_is_refused_on_both_participation_branches(
-    *, payoff_name: str, lower_node: float
-) -> None:
-    """Refuse invalid priced fallbacks whether participation accepts or rejects."""
-    model = _build_model(
-        payoff_name=payoff_name,
-        fallback_grid=IrregSpacedGrid(
-            points=np.array([lower_node, 2.0, 3.0]), off_grid="raise"
-        ),
-        fallback_projection=_bend_middle_up,
-        execution_config=ExecutionConfig(device_memory_bytes=None),
-    )
-    # Solve-grid wages 1 and 3 map on grid, but realised wage 2 maps to 4.
-    # Ramp accepts the target; bowl rejects it. Both price that fallback.
-    with pytest.raises(OffGridStateError, match=r"target='alone_m', period=1,"):
-        _replay_wages(model=model, wages=(2.0,))
 
 
 @categorical(ordered=False)
@@ -161,11 +140,11 @@ def test_process_code_validation_uses_the_actual_fallback_node(*, accept: bool) 
                     "fallback": Periods(values=(0,)),
                 },
                 law="target",
-                participation={
-                    "target": ParticipationCheck(
+                gates={
+                    "target": Gate(
                         predicate=_accept if accept else _reject,
                         routes={
-                            "self": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback", projection={"z": _node_two}
                                 )

@@ -37,8 +37,8 @@ averaging over the draw at every state-action candidate. Values agree with the
 per-candidate expectation to rounding relative to the largest next-period value
 magnitude across the draws, not relative to the expectation itself: with large
 cancelling values, either summation order can lose a small term. The contraction applies
-only under the linear expectation, and not to a target reached through a participation
-check or to a stochastic process whose nodes come from runtime parameters. A next-period
+only under the linear expectation, and not to a stochastic process whose nodes come
+from runtime parameters. A next-period
 value of `+inf` is outside the supported domain: where one meets an infeasible `-inf`
 across draws, the contracted read is `-inf`, while per-draw enumeration gives NaN.
 
@@ -54,7 +54,7 @@ simulated choice can differ from the solve's by more than a tie with cancelling 
 even at a node.
 
 The contraction applies in every kernel of a regime that declares it: the ordinary one,
-the exit, consent and participation queries that solve a regime with an exit, and a
+the exit and consent queries that solve a regime with an exit, and a
 collective regime's, where each member's value is contracted on its own. A query
 evaluates its regime at projected states, so, like the simulation, it keeps a process
 draw whose probabilities read the current value enumerated. It binds the current
@@ -64,7 +64,7 @@ own kernel, so a regime with an exit keeps such a draw there too; a regime witho
 sums it. A query also keeps every draw toward a target whose `off_grid="raise"`
 landings it counts on the nodes.
 
-A regime with a gated edge or a value constraint contracts nothing in either phase.
+A regime with a gated edge contracts nothing in either phase.
 
 The contraction is off by default, and off it leaves every program unchanged. The
 ordinary kernel builds its table inside its tile loops, and on GPU the compiler does not
@@ -127,7 +127,7 @@ internal IID node state of every regime that reads the group, `GridSearch` reade
 included, and the continuation integrates that axis with the rule's weights. Every
 shape the node-state route supports is therefore supported with `shocks=` too: several
 states, deterministic discrete states carried into the terminal, discrete actions,
-chains of endogenous-grid regimes over several dates, shocks in resources, and a
+chains of endogenous-grid regimes over several periods, shocks in resources, and a
 literal savings-grid floor. A shock that enters utility other than through resources is
 refused; see [process states in utility](#egm-process-utility). Groups read only by
 `GridSearch` regimes keep the integrated current-IID route. A plain `EGM` regime
@@ -208,7 +208,7 @@ deliberately dense, unsupported, or trivial declares no `action_product` axis.
 The separate `cell` axis tiles the flattened Cartesian product of inner states.
 `ExecutionConfig(axis_widths={"cell": n})` bounds the number of state cells evaluated
 together. Each output leaf recovers its state axes; collective values also retain their
-trailing stakeholder axis.
+trailing member axis.
 Sharded states stay outside this loop; fixed states also retain their co-mapping with
 continuation values, preserving device-local reads. Empty and singleton state products
 declare no `cell` axis. A core
@@ -222,11 +222,11 @@ This matrix uses exactly three disposition labels:
 | Route shape | Disposition | Meaning |
 | --- | --- | --- |
 | Singleton hard max | streamed | Action blocks feed the hard-max reduction. |
-| Collective hard max | deliberately dense | Dense action reduction preserves candidate identity, stakeholder readout, and dissolution; the streamed reference currently regresses the measured resource envelope. |
+| Collective hard max | deliberately dense | Dense action reduction preserves candidate identity, member readout, and dissolution; the streamed reference currently regresses the measured resource envelope. |
 | Singleton EV1 with at least one discrete action | deliberately dense | Dense action reduction preserves canonical floating-point reduction order and winner identity; the blocked reference does not yet preserve that contract. |
-| Same-period references, edge references, or gated targets without a co-mapped state | streamed | Each target artifact and its exact source argument path is declared; the resolved transfer supplies it as a dynamic input to the streamed solve core. |
+| Edge references or gated targets without a co-mapped state | streamed | Each target artifact and its exact source argument path is declared; the resolved transfer supplies it as a dynamic input to the streamed solve core. |
 | Ordinary co-mapped state route without a separate reference channel | streamed | Continuation leaves co-map with the state cell while actions stream. |
-| Co-mapped state plus a separate same-period or edge-reference channel | deliberately dense | The two data transports are not yet represented together by the streamed program. |
+| Co-mapped state plus a separate edge-reference channel | deliberately dense | The two data transports are not yet represented together by the streamed program. |
 | No action, or an action product containing at most one candidate | deliberately dense | Blocking a trivial product adds no useful execution choice. |
 | JIT disabled, including the raw execution path | deliberately dense | The action-streamed program is a JIT lowering route. |
 | Collective EV1 | unsupported | The action-streamed solve program has no collective EV1 reduction. |

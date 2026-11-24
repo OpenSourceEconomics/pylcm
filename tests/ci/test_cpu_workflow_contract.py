@@ -1,6 +1,5 @@
 """Contracts between the CPU workflow and supported platform capabilities."""
 
-import argparse
 import shlex
 from pathlib import Path
 
@@ -19,10 +18,6 @@ from tests.ci.cpu_suite_invocations import (
 )
 
 _REPO_ROOT = Path(__file__).parents[2]
-_SAVED_REPLAY_NODE = (
-    "tests/solution/test_participation_pricing_depth.py::"
-    "test_a_saved_solution_replays_its_stored_participation_surfaces"
-)
 
 
 def _workflow() -> Workflow:
@@ -45,80 +40,6 @@ def _all_cpu_suite_invocations() -> list[tuple[str, str, list[str]]]:
         for step in job.get("steps", ())
         if isinstance(step.get("run"), str)
         for argv in cpu_suite_invocation_argvs(step["run"])
-    ]
-
-
-def test_saved_solution_replay_is_excluded_from_parallel_solution_workers() -> None:
-    """Give the replay its own process instead of concurrent compiler work."""
-    invocations = _pytest_invocation_argvs(
-        job="tests-slow-solution", step_name="Run one slow solution shard"
-    )
-    assert [f"--deselect={_SAVED_REPLAY_NODE}" in argv for argv in invocations] == [
-        True
-    ]
-
-
-def test_saved_solution_replay_has_one_serial_full_policy_invocation() -> None:
-    """Execute the original replay alone under the full policy and 600-second bar."""
-    parser = argparse.ArgumentParser(add_help=False)
-    for option in (
-        "-n",
-        "--timeout",
-        "--timeout-method",
-        "--isolation-mode",
-        "--ci-policy",
-        "--hardware-profile",
-    ):
-        parser.add_argument(option)
-    parser.add_argument("--policy-child", action="store_true")
-    contracts = [
-        {
-            "job": job,
-            "targets": tuple(arg for arg in argv if arg.startswith("tests/")),
-            "options": vars(parser.parse_known_args(argv)[0]),
-        }
-        for job, _, argv in _all_cpu_suite_invocations()
-        if _SAVED_REPLAY_NODE in argv
-    ]
-    assert contracts == [
-        {
-            "job": "tests-slow-solution",
-            "targets": (_SAVED_REPLAY_NODE,),
-            "options": {
-                "n": "0",
-                "timeout": "600",
-                "timeout_method": "thread",
-                "isolation_mode": "fresh",
-                "ci_policy": "full",
-                "hardware_profile": "cpu",
-                "policy_child": True,
-            },
-        }
-    ]
-
-
-def test_saved_solution_replay_keeps_the_shards_coverage_and_membership_guard() -> None:
-    """Append covered replay only in the shard that owns its test file."""
-    steps = _workflow()["jobs"]["tests-slow-solution"]["steps"]
-    contracts = [
-        (
-            step.get("if"),
-            "--cov-append" in shlex.split(step["run"], comments=True),
-            tuple(
-                token
-                for token in shlex.split(step["run"], comments=True)
-                if token.startswith("--cov-report=")
-            ),
-        )
-        for step in steps
-        if step.get("name") == "Run saved solution replay serially"
-    ]
-    assert contracts == [
-        (
-            "always() && steps.solution_shard.outputs.serial_replay == 'true'",
-            True,
-            ("--cov-report=xml:reports/coverage-solution-$PYLCM_CI_SHARD.xml",),
-        )
     ]
 
 
@@ -155,7 +76,7 @@ def test_new_solution_shards_can_restore_the_same_precisions_cache(
 _FOUR_DEVICE_INVOCATION_CASES = tuple(FOUR_DEVICE_TEST_FILES)
 
 
-def test_windows_cpu_suite_has_no_missing_kernel_skip_policy():
+def test_windows_cpu_suite_has_no_missing_kernel_skip_policy() -> None:
     """Windows builds the native kernel, so its CPU suite needs no skip workaround."""
     workflow = yaml.safe_load(
         (_REPO_ROOT / ".github/workflows/cpu.yml").read_text(encoding="utf-8")
@@ -175,7 +96,7 @@ def test_windows_cpu_suite_has_no_missing_kernel_skip_policy():
     )
 
 
-def test_every_four_device_test_file_is_registered():
+def test_every_four_device_test_file_is_registered() -> None:
     """Every test file pinning several CPU devices is in `FOUR_DEVICE_TEST_FILES`.
 
     Registration is what gives a file its own-process invocation in both
@@ -190,7 +111,7 @@ def test_every_four_device_test_file_is_registered():
     )
 
 
-def test_no_lane_uploads_coverage_to_codecov_before_the_combine_stage():
+def test_no_lane_uploads_coverage_to_codecov_before_the_combine_stage() -> None:
     """Only the dedicated `coverage` job talks to Codecov.
 
     The suite used to accumulate coverage with `--cov-append` along one `&&`
@@ -213,7 +134,7 @@ def test_no_lane_uploads_coverage_to_codecov_before_the_combine_stage():
     )
 
 
-def test_every_recorded_coverage_contributor_uploads_its_artifact():
+def test_every_recorded_coverage_contributor_uploads_its_artifact() -> None:
     """Each lane the manifest records as contributing coverage uploads one.
 
     This is the replacement completeness contract. The combine stage refuses to
@@ -242,7 +163,7 @@ def test_every_recorded_coverage_contributor_uploads_its_artifact():
     assert not missing, f"recorded coverage contributors with no upload step: {missing}"
 
 
-def test_the_combine_stage_checks_the_manifest_before_uploading():
+def test_the_combine_stage_checks_the_manifest_before_uploading() -> None:
     """The `coverage` job runs the contributor check ahead of the Codecov step."""
     steps = _workflow()["jobs"]["coverage"]["steps"]
     check = next(
@@ -269,11 +190,6 @@ def _step_run_block(*, job: str, step_name: str) -> str:
     return step["run"]
 
 
-def _pytest_invocation_argvs(*, job: str, step_name: str) -> list[list[str]]:
-    """Return the argv of every CPU-suite pytest invocation in one step."""
-    return cpu_suite_invocation_argvs(_step_run_block(job=job, step_name=step_name))
-
-
 def _invocations_naming(*, four_device_file: str) -> list[tuple[str, str, list[str]]]:
     """Return every CPU-suite invocation in the workflow naming `four_device_file`."""
     return [
@@ -297,7 +213,9 @@ def _sole_invocation(*, four_device_file: str) -> list[str]:
 
 
 @pytest.mark.parametrize("four_device_file", _FOUR_DEVICE_INVOCATION_CASES)
-def test_four_device_file_appears_in_exactly_one_invocation(*, four_device_file: str):
+def test_four_device_file_appears_in_exactly_one_invocation(
+    *, four_device_file: str
+) -> None:
     """Each four-CPU-device test file is named by exactly one pytest invocation.
 
     Such a file pins a four-CPU-device topology at import, a pin that depends on
@@ -312,7 +230,9 @@ def test_four_device_file_appears_in_exactly_one_invocation(*, four_device_file:
 
 
 @pytest.mark.parametrize("four_device_file", _FOUR_DEVICE_INVOCATION_CASES)
-def test_four_device_file_runs_without_other_test_paths(*, four_device_file: str):
+def test_four_device_file_runs_without_other_test_paths(
+    *, four_device_file: str
+) -> None:
     """A four-CPU-device test file's invocation names no other test path.
 
     Sharing the invocation with `tests` or another `tests/...` target would
@@ -334,7 +254,7 @@ def test_four_device_file_runs_without_other_test_paths(*, four_device_file: str
 @pytest.mark.parametrize("four_device_file", _FOUR_DEVICE_INVOCATION_CASES)
 def test_four_device_file_invocation_passes_the_worker_count_flag(
     *, four_device_file: str
-):
+) -> None:
     """A four-CPU-device test file's invocation states its worker count explicitly.
 
     An implicit worker count would leave the invocation's process-isolation
@@ -345,7 +265,7 @@ def test_four_device_file_invocation_passes_the_worker_count_flag(
 
 
 @pytest.mark.parametrize("four_device_file", _FOUR_DEVICE_INVOCATION_CASES)
-def test_four_device_file_runs_at_worker_count_zero(*, four_device_file: str):
+def test_four_device_file_runs_at_worker_count_zero(*, four_device_file: str) -> None:
     """A four-CPU-device test file's invocation runs at `-n 0`, its own process.
 
     Any other worker count would distribute the file's tests across xdist
@@ -363,7 +283,7 @@ def test_four_device_file_runs_at_worker_count_zero(*, four_device_file: str):
 @pytest.mark.parametrize("four_device_file", _FOUR_DEVICE_INVOCATION_CASES)
 def test_four_device_file_invocation_omits_policy_activation_flags(
     *, four_device_file: str
-):
+) -> None:
     """A four-CPU-device test file's invocation never activates the CI policy launcher.
 
     `--ci-policy` or `--full-suite` drives `pytest_policy.configure()`, which
@@ -550,7 +470,7 @@ def _general_shard_counts() -> dict[str, int]:
     return counts
 
 
-def test_the_workflow_runs_exactly_the_shard_counts_the_manifest_records():
+def test_the_workflow_runs_exactly_the_shard_counts_the_manifest_records() -> None:
     """`cpu.yml`'s matrices and the manifest's `shard_layout` agree.
 
     The two halves are written apart: the manifest decides which files a shard
@@ -581,7 +501,7 @@ def test_the_workflow_runs_exactly_the_shard_counts_the_manifest_records():
         } == {cfg["shards"]}, leg
 
 
-def test_every_general_leg_matrix_entry_declares_its_own_shard_count():
+def test_every_general_leg_matrix_entry_declares_its_own_shard_count() -> None:
     """No general matrix entry inherits a shard count from another leg.
 
     The legs no longer share one count -- Windows takes more shards than macOS

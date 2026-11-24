@@ -188,7 +188,7 @@ def _comparison_model(*, rule: ExitRule) -> Model:
 def _simulate_every_cell(*, model: Model, n_cells: int) -> pd.DataFrame:
     """Simulate one subject per cell and member, ordered by cell, then f before m."""
     solution = model.solve(params={}, log_level="off")
-    roles = [model.stakeholder_names_to_ids[member] for member in ("f", "m")]
+    roles = [model.member_names_to_ids[member] for member in ("f", "m")]
     return (
         model.simulate(
             params={},
@@ -198,9 +198,7 @@ def _simulate_every_cell(*, model: Model, n_cells: int) -> pd.DataFrame:
                 "regime_id": jnp.full(
                     2 * n_cells, model.regime_names_to_ids["couple"], dtype=jnp.int32
                 ),
-                "own_stakeholder": jnp.tile(
-                    jnp.asarray(roles, dtype=jnp.int32), n_cells
-                ),
+                "own_member": jnp.tile(jnp.asarray(roles, dtype=jnp.int32), n_cells),
                 "case": jnp.repeat(jnp.arange(n_cells, dtype=jnp.int32), 2),
             },
             seed=6271,
@@ -377,7 +375,7 @@ def test_renegotiation_refuses_a_per_action_comparison() -> None:
 
 # Settlement cells. The couple has no action, so its stay values are `W`. At
 # settlement `s` the outside values are `O_f(s) = A_f + 4 s` and
-# `O_m(s) = A_m - 4 s`, so increasing `s` favours f, the first stakeholder, and one
+# `O_m(s) = A_m - 4 s`, so increasing `s` favours f, the first member, and one
 # candidate step moves each outside value by one.
 _POINTS = (0.0, 0.25, 0.5, 0.75, 1.0)
 # Each cell is the stay values `W`, the intercepts `A` and the default settlement.

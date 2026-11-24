@@ -639,16 +639,14 @@ def root_functions(
     every name it transitively reads is a genuine input of the regime. The
     roots are
 
-    - `utility`, or one `utility_<stakeholder>` per stakeholder of a
+    - `utility`, or one `utility_<member>` per member of a
       collective regime;
     - every derived-categorical function;
     - every constraint;
     - the Koopmans aggregator, in a non-terminal regime;
     - the regime transition — every cell of a per-target dict, or the coarse
       callable;
-    - every value-constraint predicate;
     - every Pareto weight declared as a function;
-    - every `same_period_refs` projection;
     - for each gated edge *whose target is this regime*, the edge's gate and
       its legs' fallback projections.
 
@@ -687,7 +685,7 @@ def root_functions(
             koopmans_aggregator=koopmans_aggregator,
         )
         | _transition_roots(regime=regime, law=laws[regime_name], phase=phase)
-        | _value_aware_roots(regime=regime)
+        | _pareto_weight_roots(regime=regime)
         | _incoming_edge_roots(regime_name=regime_name, laws=laws)
         | {
             "__".join(path): function
@@ -726,8 +724,8 @@ def _valuation_roots(
         for name, func in regime.decomposed_functions.items()
     }
     utility_names = (
-        tuple(f"utility_{stakeholder}" for stakeholder in regime.stakeholders)
-        if regime.stakeholders is not None
+        tuple(f"utility_{member}" for member in regime.member_axis)
+        if regime.member_axis is not None
         else ("utility",)
     )
     roots = {
@@ -788,29 +786,21 @@ def _transition_roots(
     return MappingProxyType(roots)
 
 
-def _value_aware_roots(*, regime: UserRegime) -> MappingProxyType[str, UserFunction]:
-    """Key a collective regime's household declarations.
+def _pareto_weight_roots(*, regime: UserRegime) -> MappingProxyType[str, UserFunction]:
+    """Key a collective regime's Pareto weights declared as functions.
 
-    Its value constraints, its same-period projections, and its Pareto weights
-    — a weight is evaluated on this regime's grid at every cell, so a state it
+    A weight is evaluated on this regime's grid at every cell, so a state it
     reads is as much an input of the regime as one the utility reads.
     """
-    roots = {
-        f"__value_constraint__{name}": predicate
-        for name, predicate in regime.value_constraints.items()
-    }
-    if regime.pareto_objective is not None:
-        roots |= {
+    if regime.pareto_objective is None:
+        return MappingProxyType({})
+    return MappingProxyType(
+        {
             f"__pareto_weight__{name}": cast("UserFunction", weight)
             for name, weight in regime.pareto_objective.weights.items()
             if callable(weight)
         }
-    roots |= {
-        f"__same_period_ref__{ref_name}__{state_name}": projection
-        for ref_name, ref in regime.same_period_refs.items()
-        for state_name, projection in ref.projection.items()
-    }
-    return MappingProxyType(roots)
+    )
 
 
 def _incoming_edge_roots(
@@ -834,30 +824,6 @@ def _incoming_edge_roots(
             for phase, ref in (
                 ("solve", leg.solve_fallback),
                 ("simulate", leg.simulate_fallback),
-            )
-            for state_name, projection in ref.projection.items()
-        }
-    # A participation check into this regime is evaluated at its landing on this
-    # regime's states, like a gated edge: its predicate, read projections and fallback
-    # projections read them.
-    for source_name, law in laws.items():
-        decision = law.participation.get(regime_name)
-        if decision is None:
-            continue
-        roots[f"__incoming_participation__{source_name}"] = decision.predicate
-        roots |= {
-            f"__incoming_participation_read__{source_name}__{read_name}__"
-            f"{state_name}": projection
-            for read_name, read in decision.reads.items()
-            for state_name, projection in read.projection.items()
-        }
-        roots |= {
-            f"__incoming_participation_fallback__{source_name}__{route_name}__{phase}__"
-            f"{state_name}": projection
-            for route_name, route in decision.routes.items()
-            for phase, ref in (
-                ("solve", route.solve_fallback),
-                ("simulate", route.simulate_fallback),
             )
             for state_name, projection in ref.projection.items()
         }
@@ -1206,9 +1172,8 @@ def _needed_names(
     """Collect every name this phase slice's root computations read.
 
     The roots are `root_functions`' — utility, derived categoricals,
-    constraints, the Koopmans aggregator, the regime transition, the
-    value-constraint predicates, the `same_period_refs` projections and the
-    incoming gated edges' gates and fallbacks — plus the laws
+    constraints, the Koopmans aggregator, the regime transition, the Pareto
+    weights and the incoming gated edges' gates and fallbacks — plus the laws
     of motion toward candidate targets that keep the law's state, which are
     pruning's own: whatever such a law reads has to stay alive here so the
     target can be handed its value.
@@ -1517,9 +1482,9 @@ def _names_the_household_writes(*, user_regime: UserRegime) -> frozenset[str]:
     """Return the function names this regime's household supplies for itself.
 
     A collective regime declares `utility` as a household, and with it a body
-    for every stakeholder it does not delegate. Those names are the household's
+    for every member it does not delegate. Those names are the household's
     and a model-level entry under one of them belongs to the other regimes. A
-    stakeholder the household *does* delegate is left out, which is exactly how
+    member the household *does* delegate is left out, which is exactly how
     a model-level body reaches her.
     """
     declaration = user_regime.functions.get("utility")
@@ -1529,8 +1494,8 @@ def _names_the_household_writes(*, user_regime: UserRegime) -> frozenset[str]:
         {
             "utility",
             *(
-                f"utility_{stakeholder}"
-                for stakeholder, body in declaration.utilities.items()
+                f"utility_{member}"
+                for member, body in declaration.utilities.items()
                 if body is not None
             ),
         }

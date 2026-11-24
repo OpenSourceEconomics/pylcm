@@ -506,11 +506,9 @@ _PAIRED_REDUCTION_CALLERS = {
         action_ids=_ACTION_IDS,
     ),
     "collective_action_reduction": lambda v: COLLECTIVE_HARD_MAX_REDUCTION.add(
-        accumulator=COLLECTIVE_HARD_MAX_REDUCTION.initialize(
-            stakeholder_template=v[:, :2]
-        ),
+        accumulator=COLLECTIVE_HARD_MAX_REDUCTION.initialize(member_template=v[:, :2]),
         objectives=v,
-        stakeholder_values=jnp.stack([v, -v], axis=-1),
+        member_values=jnp.stack([v, -v], axis=-1),
         feasible=v > 0,
         action_ids=_ACTION_IDS,
     ),

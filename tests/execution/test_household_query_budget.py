@@ -217,7 +217,7 @@ def _plan(
             value_bytes=value_bytes,
             retain_all=not recompute,
         )
-        # Both sides use the coupled action/stakeholder maxima conservatively.
+        # Both sides use the coupled action/member maxima conservatively.
         scratch = 2 * (
             18 * 2 * value_bytes
             + 18 * value_bytes
@@ -267,9 +267,9 @@ def _inventories(
             for channel in ("value", "action", "mask"):
                 key = _QueryBuffer(root=root, view=view, channel=channel)
                 members.append(key)
-                stakeholders = 2 if view == 4 and channel == "value" else 1
+                n_members = 2 if view == 4 and channel == "value" else 1
                 footprints[key] = footprint(
-                    shape=(query_cells, _NODES, stakeholders),
+                    shape=(query_cells, _NODES, n_members),
                     item_bytes=value_bytes
                     if channel == "value"
                     else (

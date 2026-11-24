@@ -2076,7 +2076,7 @@ def _original_schedule(source, dates):
                     elif isinstance(law, str): targets = [law]
                     elif isinstance(law, dict) and "kind" not in law: targets = list(law)
                     else: raise ValueError("Original numerical routing law lacks declared targets")
-                gate_map = _independent_gate_map(data, "gates", "arrivals", "participation")
+                gate_map = _independent_gate_map(data, "gates", "arrivals")
             elif isinstance(entry, dict) and "kind" not in entry:
                 targets = [target for target, selector in entry.items() if selects(selector, period)]
                 gate_map = {}
@@ -2103,12 +2103,11 @@ def _original_schedule(source, dates):
 def _independent_gate_map(payload, *keys):
     pairs = [(target, value) for key in keys for target, value in payload.get(key, {}).items()]
     if len({target for target, _ in pairs}) != len(pairs):
-        raise ValueError("Original target has conflicting participation/gate declarations")
+        raise ValueError("Original target has conflicting gate/arrival declarations")
     return dict(pairs)
 
 
 def _check_current_type_sources(original, fail):
-    from .current_api_contract import matches_authority
     pending = [original]
     while pending:
         value = pending.pop()
@@ -2121,10 +2120,6 @@ def _check_current_type_sources(original, fail):
             label = tag.split(".")[-1]
             if label == "Transition" and value.get("fields", {}).get("roles"):
                 fail("original transition roles are not read", declaration_type=tag)
-            required = label in ("ParticipationRead", "ParticipationCheck") or (label == "Transition" and bool(value.get("fields", {}).get("participation")))
-            if required:
-                if not matches_authority(name=tag, observed=value.get("canonical_type_source")):
-                    fail("original participation class authority changed", declaration_type=tag)
             pending.extend(value.values())
 
 
@@ -2342,7 +2337,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
         operators = {key: payload_digest(declaration[key]) if declaration.get(key) is not None else None
                      for key in ("koopmans_aggregator", "certainty_equivalent", "pareto_objective", "taste_shocks")}
         if cell.get("operators") != operators: fail("original decision operators changed", cell=cell["id"])
-        if cell.get("stakeholders") != declaration.get("stakeholders"): fail("original stakeholders changed", cell=cell["id"])
+        if cell.get("member_axis") != declaration.get("member_axis"): fail("original members changed", cell=cell["id"])
         exit_declaration = declaration.get("exit")
         if cell.get("exit_identity") != (payload_digest(exit_declaration) if exit_declaration is not None else None):
             fail("original exit identity changed", cell=cell["id"])
@@ -2417,15 +2412,10 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
                     expected_roots.append(("certainty_equivalent", "solve", selected(declaration["certainty_equivalent"], "solve", period)))
                 continue
             for kind, mapping in [("reward", {"utility": declaration.get("functions", {}).get("utility")}),
-                                  ("feasible", declaration.get("constraints", {})),
-                                  ("value_constraint", declaration.get("value_constraints", {}))]:
+                                  ("feasible", declaration.get("constraints", {}))]:
                 for value in mapping.values():
                     if value is None: continue
-                    value = selected(value, phase, period)
-                    actual_kind = kind
-                    if short(value) == "ValueDependentConstraint":
-                        actual_kind, value = "value_constraint", fields(value).get("predicate")
-                    expected_roots.append((actual_kind, phase, value))
+                    expected_roots.append((kind, phase, selected(value, phase, period)))
             for name in declaration.get("output_only_functions", []):
                 if name in declaration.get("functions", {}): expected_roots.append(("reporting", phase, selected(declaration["functions"][name], phase, period)))
             for name in ("koopmans_aggregator", "pareto_objective"):
@@ -2433,8 +2423,8 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
             if "discount_factor" in declaration.get("functions", {}): expected_roots.append(("discount", phase, selected(declaration["functions"]["discount_factor"], phase, period)))
         for value in structural_roles.values(): expected_roots.append(("structural_margin", "solve", value))
         supported_slots = {"states", "actions", "functions", "constraints", "state_transitions", "joint_transitions", "derived_categoricals",
-                           "output_only_functions", "koopmans_aggregator", "certainty_equivalent", "pareto_objective", "value_constraints",
-                           "same_period_refs", "exit", "description", "solver", "taste_shocks", "shocks", "stakeholders", "liquid", "outer_continuous", "semantic_role", "stage"}
+                           "output_only_functions", "koopmans_aggregator", "certainty_equivalent", "pareto_objective",
+                           "exit", "description", "solver", "taste_shocks", "shocks", "member_axis", "liquid", "outer_continuous", "semantic_role", "stage"}
         for slot, value in declaration.items():
             if slot not in supported_slots and value is not None and value != {} and value != []:
                 expected_roots.append(("unresolved_declaration_slot", "both", value))
@@ -2562,7 +2552,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
     def refs(value, phase=None):
         if short(value) == "Phased" and phase is not None:
             yield from refs(fields(value).get("solve" if phase == "solve" else "simulate"), phase)
-        elif short(value) in {"ProjectedRegimeValue", "ArrivalRead", "ParticipationRead", "ExitTarget", "Counterparty"}:
+        elif short(value) in {"ProjectedRegimeValue", "ArrivalRead", "ExitTarget", "Counterparty"}:
             yield value
         elif isinstance(value, dict):
             for child in value.values(): yield from refs(child, phase)
@@ -2581,7 +2571,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
         if short(value) == "Phased":
             side = "solve" if phase == "solve" else "simulate"
             yield from reference_locations(fields(value).get(side), ptr(ptr(path, "fields"), side), phase)
-        elif short(value) in {"ProjectedRegimeValue", "ArrivalRead", "ParticipationRead", "ExitTarget", "Counterparty"}:
+        elif short(value) in {"ProjectedRegimeValue", "ArrivalRead", "ExitTarget", "Counterparty"}:
             yield value, path
         elif isinstance(value, dict):
             for key, child in value.items(): yield from reference_locations(child, ptr(path, key), phase)
@@ -2592,9 +2582,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
         declaration = original_regimes[name]
         root = ptr(ptr(base, regime_key), name)
         root_fields = ptr(root, "fields") if raw.get("kind") in {"object", "dataclass"} else root
-        keys = ["same_period_refs", "value_constraints", "exit"]
-        if not declaration.get("same_period_refs"): keys.append("constraints")
-        for key in keys:
+        for key in ("exit",):
             location = ptr(root_fields, key) if key in fields(raw) else ptr(base, key)
             yield from reference_locations(declaration.get(key) or {}, location, phase)
     def demand(name, period, phase):
@@ -2646,7 +2634,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
                 if any(callbacks.get(cid, {}).get("status") not in allowed_statuses for cid in relation.get("callbacks", [])):
                     fail("unproved policy query factorization was asserted", relation=relation.get("id"))
                 read_type = data.get("kind", "Participating" if short(raw) == "ExitTarget" else "Raw" if short(raw) == "Counterparty" else "value")
-                if relation.get("read_type") != read_type or relation.get("read_field") != data.get("field", "value") or relation.get("stakeholder") != data.get("stakeholder", data.get("role")) or relation.get("observes") != data.get("observes", []):
+                if relation.get("read_type") != read_type or relation.get("read_field") != data.get("field", "value") or relation.get("member") != data.get("member", data.get("role")) or relation.get("observes") != data.get("observes", []):
                     fail("original policy query information/read contract changed", relation=relation.get("id"))
                 try: pointed = _pointer(original, relation.get("source_path", ""))
                 except (KeyError, IndexError, ValueError, TypeError): pointed = None
@@ -2665,18 +2653,16 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
             expected_callbacks = [data["utility_adjustment"]] if data.get("utility_adjustment") is not None else []
             if not same_payloads(callback_payloads(relation.get("callbacks", [])), expected_callbacks): fail("original reference adjustment callback changed", relation=relation.get("id"))
             read_type = data.get("kind", "Participating" if short(raw) == "ExitTarget" else "Raw" if short(raw) == "Counterparty" else "value")
-            if relation.get("read_type") != read_type or relation.get("read_field") != data.get("field", "value") or relation.get("stakeholder") != data.get("stakeholder", data.get("role")) or relation.get("observes") != data.get("observes", []): fail("original reference information/read contract changed", relation=relation.get("id"))
+            if relation.get("read_type") != read_type or relation.get("read_field") != data.get("field", "value") or relation.get("member") != data.get("member", data.get("role")) or relation.get("observes") != data.get("observes", []): fail("original reference information/read contract changed", relation=relation.get("id"))
     for cell in cells.values():
         declaration = original_regimes[cell["regime"]]
-        keys = ["same_period_refs", "value_constraints", "exit"]
-        if not declaration.get("same_period_refs"): keys.append("constraints")
-        for key in keys:
+        for key in ("exit",):
             for phase in ("solve", "simulation"):
                 for raw in refs(declaration.get(key) or {}, phase):
                     check_reference(raw, cell["id"], phase, "exit" if key == "exit" else "value_read")
     for cell in cells.values():
         native_law = fields(laws.get(cell["regime"]))
-        declared_gates = _independent_gate_map(native_law, "gated_edges", "arrivals", "participation")
+        declared_gates = _independent_gate_map(native_law, "gated_edges", "arrivals")
         gate_records = [(target_regime, side, selected(gate, side, cell["period"] + 1))
                         for target_regime, gate in declared_gates.items() for side in ("solve", "simulation")]
         if original_schedule:

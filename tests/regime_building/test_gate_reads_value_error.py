@@ -2,19 +2,19 @@
 
 A predicate naming a target value component or the dissolution flag is refused
 when the gate is declared, with a message pointing to the two declarations that
-express a value-driven move: a source `Exit` in `Regime(exit=...)` for a move
-decided in the current period, and a `ParticipationCheck` for a comparison made on
-landing.
+express a value-driven move, each an `Exit` of the regime that decides: formation
+under a `Consent` rule on the source regime, dissolution as the household regime's
+own `Exit`.
 """
 
 import pytest
 
-from lcm import Gate, ProjectedRegimeValue, StakeholderRoute
+from lcm import Gate, MemberRoute, ProjectedRegimeValue
 from lcm.exceptions import GateReadsValueError, RegimeInitializationError
 from lcm.typing import BoolND, ContinuousState, FloatND, UserFunction
 
 _ROUTES = {
-    "only": StakeholderRoute(
+    "only": MemberRoute(
         fallback=ProjectedRegimeValue(regime="fallback", projection={})
     ),
 }
@@ -24,7 +24,7 @@ def _reads_V_target(V_target: FloatND) -> BoolND:
     return V_target > 0.0
 
 
-def _reads_stakeholder_component(*, V_target_f: FloatND, x: ContinuousState) -> BoolND:
+def _reads_member_component(*, V_target_f: FloatND, x: ContinuousState) -> BoolND:
     return V_target_f > x
 
 
@@ -40,7 +40,7 @@ def _reads_state(*, x: ContinuousState, threshold: float) -> BoolND:
     ("predicate", "operand"),
     [
         (_reads_V_target, "V_target"),
-        (_reads_stakeholder_component, "V_target_f"),
+        (_reads_member_component, "V_target_f"),
         (_reads_dissolution_flag, "D_target"),
     ],
 )
@@ -53,8 +53,8 @@ def test_a_value_reading_gate_predicate_is_refused(
 
     message = str(excinfo.value)
     assert operand in message
-    assert "exit=" in message
-    assert "ParticipationCheck" in message
+    assert "`Exit` with a `Consent` rule on the source regime" in message
+    assert "the household regime's own `Exit`" in message
 
 
 def test_gate_reads_value_error_is_a_regime_initialization_error() -> None:
@@ -63,7 +63,7 @@ def test_gate_reads_value_error_is_a_regime_initialization_error() -> None:
 
 
 def test_a_gate_declares_no_references() -> None:
-    """Projected references are read by a `ParticipationCheck`, not by a gate."""
+    """A gate routes on target states and params; it declares no value reference."""
     with pytest.raises(TypeError, match="references"):
         Gate(
             predicate=_reads_state,

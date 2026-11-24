@@ -1,9 +1,5 @@
 """Tests for the shared-measurement collective-household construct/solve benchmarks."""
 
-# ruff: noqa: SLF001
-
-from collections.abc import Callable
-
 import pytest
 from asv_runner.benchmarks._base import Benchmark
 
@@ -77,30 +73,6 @@ def test_solve_still_tracks_compilation_time(monkeypatch: pytest.MonkeyPatch) ->
     cache = instance.setup_cache()
     instance.setup(cache)
     assert instance.track_compilation_time(cache) == 1.5
-
-
-def test_reference_chain_tracks_the_median_warm_call(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Execution time is the median of the shared warm-call timer, as elsewhere."""
-    calls = []
-
-    def _fake_warm_call_seconds(
-        *, execute: Callable[[], None], warm_samples: int
-    ) -> list[float]:
-        calls.append((execute, warm_samples))
-        return [3.0, 1.0, 2.0]
-
-    monkeypatch.setattr(_gpu_mem, "warm_call_seconds", _fake_warm_call_seconds)
-    benchmark_class = bench_collective_household.ReferenceChainSolve
-    instance = benchmark_class()
-
-    assert instance.track_execution_time(1) == 2.0
-    assert calls == [
-        (instance.execute_for_measurement, bench_collective_household._WARM_SAMPLES)
-    ]
-    assert benchmark_class.track_execution_time.unit == "seconds"
-    assert not hasattr(benchmark_class, "time_execution")
 
 
 def test_every_simulate_metric_reads_one_measurement_per_cohort(

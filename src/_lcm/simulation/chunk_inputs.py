@@ -110,8 +110,8 @@ class SimulationChunkInputs:
     """Parameters replicated on the subject devices."""
     initial_regime_ids: Int1D
     """Seeded regime ids in subject layout."""
-    initial_own_stakeholder: Int1D
-    """Seeded stakeholder roles in subject layout."""
+    initial_own_member: Int1D
+    """Seeded member roles in subject layout."""
     starting_periods: Int1D
     """Entry periods in subject layout."""
     base_state_action_spaces: Mapping[RegimeName, StateActionSpace]
@@ -122,7 +122,7 @@ def prepare_simulation_chunk_inputs(
     *,
     initial_states: Mapping[StateOrActionName, Float1D | IntND],
     initial_regime_ids: Int1D,
-    initial_own_stakeholder: Int1D,
+    initial_own_member: Int1D,
     starting_periods: Int1D,
     flat_params: FlatParams,
     regimes: MappingProxyType[RegimeName, Regime],
@@ -136,7 +136,7 @@ def prepare_simulation_chunk_inputs(
         memory.unit_inputs = (
             initial_states,
             initial_regime_ids,
-            initial_own_stakeholder,
+            initial_own_member,
             starting_periods,
         )
     if call_inputs is None:
@@ -154,7 +154,7 @@ def prepare_simulation_chunk_inputs(
     subject_inputs = place_simulation_arguments(
         arguments={
             "regime_ids": initial_regime_ids,
-            "roles": initial_own_stakeholder,
+            "roles": initial_own_member,
             "starting_periods": starting_periods,
         },
         subject_arg_names=("regime_ids", "roles", "starting_periods"),
@@ -165,7 +165,7 @@ def prepare_simulation_chunk_inputs(
         budget_devices=() if memory is None else memory.devices,
     )
     initial_regime_ids = subject_inputs["regime_ids"]
-    initial_own_stakeholder = subject_inputs["roles"]
+    initial_own_member = subject_inputs["roles"]
     starting_periods = subject_inputs["starting_periods"]
     base_state_action_spaces = call_inputs.base_state_action_spaces
     if memory is not None:
@@ -178,7 +178,7 @@ def prepare_simulation_chunk_inputs(
                 ),
                 initial_states,
                 initial_regime_ids,
-                initial_own_stakeholder,
+                initial_own_member,
                 starting_periods,
             )
         )
@@ -187,7 +187,7 @@ def prepare_simulation_chunk_inputs(
         devices=devices,
         flat_params=flat_params,
         initial_regime_ids=initial_regime_ids,
-        initial_own_stakeholder=initial_own_stakeholder,
+        initial_own_member=initial_own_member,
         starting_periods=starting_periods,
         base_state_action_spaces=base_state_action_spaces,
     )

@@ -35,7 +35,7 @@ class ExitTarget:
     projection: Mapping[StateName, UserFunction] | Phased
     """Complete destination-state mapping; Phased may change settlements."""
     role: ExitRole | None = None
-    """Destination stakeholder, required for a collective destination."""
+    """Destination member, required for a collective destination."""
     utility_adjustment: UserFunction | None = None
     """Utility paid once on exit and in its participation benchmark."""
 
@@ -72,7 +72,7 @@ class Consent:
 class Renegotiate:
     """Move a discrete state toward the refusing member before separation.
 
-    Increasing node order favors the first stakeholder; decreasing order favors
+    Increasing node order favors the first member; decreasing order favors
     the second. Stop at the first mutually willing node, or separate when the
     other member refuses or the path reaches the edge of the declared grid.
     """
@@ -103,7 +103,7 @@ class Settlement:
     name: str
     """Argument name under which projections and utility adjustments read it."""
     candidates: Grid
-    """Ordered candidate values; increasing order favours the first stakeholder."""
+    """Ordered candidate values; increasing order favours the first member."""
     default: UserFunction
     """The division by law: reads what the exit's `available` may read.
 
@@ -194,7 +194,7 @@ class Exit:
     """The regime's current-period move, separate from scheduled next-period edges."""
 
     targets: Mapping[ExitRole, ExitTarget]
-    """One destination per source stakeholder, or self for a singleton."""
+    """One destination per source member, or self for a singleton."""
     rule: ExitRule
     """Built-in dissolution rule or strict formation consent."""
     available: UserFunction | None = None

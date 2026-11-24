@@ -163,7 +163,6 @@ from _lcm.params.edges import (
     is_gated_cell_slot,
     regime_kernel_params,
 )
-from _lcm.participation_continuation import participation_surface_leaves
 from _lcm.persistence.solution import (
     DiskPolicyEntry,
     DiskValueEntry,
@@ -700,9 +699,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     retained_continuations: dict[ArtifactRef, ArtifactPayload] = {}
     replay_artifacts: dict[ArtifactRef, ArtifactPayload] = {}
     auxiliary_artifacts: dict[ArtifactRef, ArtifactPayload] = {}
-    participation_surfaces: dict[
-        int, MappingProxyType[RegimeName, MappingProxyType[str, FloatND]]
-    ] = {}
 
     # Async diagnostics accumulators: per-period NaN/Inf flags (and the
     # debug min/max/mean trio) live here as device-side scalars during
@@ -868,12 +864,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     generation=transfer_generation,
                 )
 
-                # Regimes declaring `same_period_refs` read other regimes' V of
-                # THIS period, so a reference regime is planned into an earlier wave
-                # than its reader. Independent regimes whose device sets are disjoint
-                # share a wave and dispatch back to back, which is what a submesh
-                # placement buys; regimes sharing a device keep one unit per wave, in
-                # declaration order among regimes without a reference.
+                # Regimes whose device sets are disjoint share a wave and dispatch
+                # back to back, which is what a submesh placement buys; regimes
+                # sharing a device keep one unit per wave, in declaration order.
                 waves = plan_period_waves(
                     nodes=tuple(
                         ScheduledNode(
@@ -881,12 +874,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         )
                         for regime_name in active_regimes
                         for core_key in compiled_functions[(regime_name, period)]
-                    ),
-                    same_period_dependencies=MappingProxyType(
-                        {
-                            regime_name: regime.same_period_ref_regimes
-                            for regime_name, regime in active_regimes.items()
-                        }
                     ),
                     device_sets=MappingProxyType(
                         {
@@ -1461,30 +1448,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         retained_continuations[
                             ArtifactRef(period=period, regime=regime_name, key=key)
                         ] = jax.block_until_ready(jax.device_put(payload, host_device))
-                period_participation_surfaces = {
-                    regime_name: surfaces
-                    for regime_name, payload in period_continuations.items()
-                    if (surfaces := participation_surface_leaves(payload))
-                }
-                if period_participation_surfaces:
-                    # Replay prices participation checks with the solve's own plans, so
-                    # it reads these surfaces under every retention, like values.
-                    participation_host = jax.devices("cpu")[0]
-                    participation_surfaces[period] = MappingProxyType(
-                        {
-                            regime_name: MappingProxyType(
-                                {
-                                    name: jax.block_until_ready(
-                                        jax.device_put(surface, participation_host)
-                                    )
-                                    for name, surface in surfaces.items()
-                                }
-                            )
-                            for regime_name, surfaces in (
-                                period_participation_surfaces.items()
-                            )
-                        }
-                    )
                 if retain_all_artifacts:
                     assert host_device is not None  # noqa: S101
                     for (
@@ -1580,7 +1543,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         retained_continuations=ArtifactStore(retained_continuations),
         replay_artifacts=ArtifactStore(replay_artifacts),
         auxiliary_artifacts=ArtifactStore(auxiliary_artifacts),
-        participation_surfaces=MappingProxyType(participation_surfaces),
     )
 
 
@@ -1672,11 +1634,7 @@ def _run_period_kernel(
     the artifacts it publishes on its keyed channels, which the loop reads through
     `consume_kernel_output` and accumulates where something consumes them.
 
-    A regime declaring `same_period_refs` additionally
-    receives the referenced regimes' V arrays of THIS period, read off
-    `period_solution` — the within-period topological order guarantees they were
-    solved earlier in this period's loop. a source
-    with gated edges receives its own rolled Wbar arrays, keyed by target
+    A source with gated edges receives its own rolled Wbar arrays, keyed by target
     regime name, which the grid-search kernel substitutes for the raw target V in
     `next_regime_to_V_arr`. Every other regime's adapter is called with the
     unchanged uniform signature.
@@ -1776,22 +1734,10 @@ def _run_period_kernel(
         logger=logger,
     )
 
-    same_period_kwargs: dict[
-        ReferenceName, MappingProxyType[RegimeName, ValueTemplate]
-    ] = {}
-    if regime.same_period_ref_regimes:
-        same_period_kwargs["same_period_regime_to_V_arr"] = MappingProxyType(
-            {
-                ref_regime_name: period_solution[ref_regime_name]
-                for ref_regime_name in regime.same_period_ref_regimes
-            }
-        )
-    same_period_kwargs.update(
-        _edge_kwargs(
-            regime=regime,
-            regime_name=regime_name,
-            next_edge_to_V_arr=next_edge_to_V_arr,
-        )
+    edge_kwargs = _edge_kwargs(
+        regime=regime,
+        regime_name=regime_name,
+        next_edge_to_V_arr=next_edge_to_V_arr,
     )
     started = time.perf_counter() if entry is not None else None
     output = period_kernel(
@@ -1805,7 +1751,7 @@ def _run_period_kernel(
         period=period,
         ages=ages,
         logger=logger,
-        **same_period_kwargs,
+        **edge_kwargs,
     )
     if entry is not None and started is not None:
         jax.block_until_ready(output.value)
@@ -2196,7 +2142,7 @@ def _roll_continuation_inputs(
 
     Constant-schema carries keep their template key set and update the entries solved
     this period. Date-specific carries keep only this period's actual publications, so
-    an undemanded participation check cannot retain another date's operands.
+    an undemanded reader cannot retain another period's operands.
 
     Returns:
         Tuple of the rolled V mapping and the rolled carry mapping.
@@ -2621,7 +2567,7 @@ def _build_continuation_templates(
       regimes, in the key order reused every period;
     - the gated-edge template holds an abstract `Wbar` per declared edge,
       shaped like the target regime's V state grid plus the source regime's
-      stakeholder axis (a singleton source: the target grid alone). Empty for
+      member axis (a singleton source: the target grid alone). Empty for
       models without gated edges, so the default path only gains an empty third
       mapping.
     """
@@ -4130,12 +4076,6 @@ def _scheduled_waves(
             for regime_name in active
             for core_key in program_keys_by_cell[(regime_name, period)]
         ),
-        same_period_dependencies=MappingProxyType(
-            {
-                regime_name: regime.same_period_ref_regimes
-                for regime_name, regime in active.items()
-            }
-        ),
         device_sets=MappingProxyType(
             {regime_name: device_ids_by_regime[regime_name] for regime_name in active}
         ),
@@ -4393,7 +4333,7 @@ def _workspace_chunk(*, regime: Regime, period: int) -> int | None:
     `None` for a kernel that has no chunk to narrow.
     """
     kernel = regime.solution.period_kernels[period]
-    # A participation kernel keeps the chunked kernel it borrows as its base.
+    # A wrapping kernel keeps the chunked kernel it wraps as its base.
     while not hasattr(kernel, "chunk_size") and hasattr(kernel, "base"):
         kernel = getattr(kernel, "base")  # noqa: B009
     chunk = getattr(kernel, "chunk_size", None)

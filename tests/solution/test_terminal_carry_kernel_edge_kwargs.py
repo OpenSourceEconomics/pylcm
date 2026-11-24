@@ -1,10 +1,10 @@
-"""A source with a participation check solves beside an endogenous-grid regime.
+"""A gated source solves beside an endogenous-grid regime.
 
 Two independent branches share one lifecycle. On one branch a household chooses
 consumption on a liquid asset and is solved by `EGM`. On the other a household
 holds `wealth`, is solved by `GridSearch`, and reaches its terminal regime
-through a `ParticipationCheck`: it moves only where moving beats staying, and takes the
-stay value everywhere else.
+through a `Gate` on the landing wealth: it moves only where that wealth exceeds 3,
+which is where moving beats staying, and takes the stay value everywhere else.
 
 Nothing connects the two branches — no transition, no same-period reference —
 so the endogenous-grid household's presence must leave the gated-edge
@@ -14,7 +14,8 @@ Hand computation on the `wealth` grid $\\{0, 2, 4\\}$ with $\\beta = 0.95$:
 
 - `moved_terminal` pays $2w$, so its value is $(0, 4, 8)$.
 - `stay_terminal` pays $w + 3$, so its value is $(3, 5, 7)$.
-- The gate opens where moving beats staying, $2w > w + 3$: closed, closed, open.
+- The gate opens where $w > 3$, which is where moving beats staying, $2w > w + 3$:
+  closed, closed, open.
 - The gated continuation is therefore $\\bar W = (3, 5, 8)$ — the stay value at
   the two closed nodes, the move value at the open one.
 - `mover` pays $w$ and carries `wealth` unchanged, so its period-0 value is
@@ -33,14 +34,13 @@ from lcm import (
     AgeRange,
     ByAge,
     ConsumptionSavingsRegime,
+    Gate,
     LinSpacedGrid,
     LiquidMargin,
+    MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -93,7 +93,7 @@ class MixedRegimeId:
     saver_terminal: ScalarInt
 
 
-def test_gated_edge_source_solves_beside_an_endogenous_grid_regime():
+def test_gated_edge_source_solves_beside_an_endogenous_grid_regime() -> None:
     """A gated-edge source keeps its value when the model also runs `EGM`.
 
     The endogenous-grid branch neither transitions into nor references the
@@ -120,7 +120,7 @@ def test_gated_edge_source_solves_beside_an_endogenous_grid_regime():
     )
 
 
-def test_gated_edge_source_solves_on_its_own():
+def test_gated_edge_source_solves_on_its_own() -> None:
     """The gated-edge branch alone folds the move value against the stay value.
 
     Fixes the value the mixed model has to reproduce, and shows the gate is
@@ -154,28 +154,16 @@ def _mover_transition() -> Transition:
                 }
             }
         ),
-        participation={
-            "moved_terminal": ParticipationCheck(
+        gates={
+            "moved_terminal": Gate(
                 predicate=_move_gate,
                 routes={
-                    "self": StakeholderRoute(
+                    "self": MemberRoute(
                         fallback=ProjectedRegimeValue(
                             regime="stay_terminal",
                             projection={"wealth": _identity_wealth},
                         ),
                     )
-                },
-                reads={
-                    "V_target": ParticipationRead(
-                        kind="Raw",
-                        regime="moved_terminal",
-                        projection={"wealth": _identity_wealth},
-                    ),
-                    "V_stay_ref": ParticipationRead(
-                        kind="Raw",
-                        regime="stay_terminal",
-                        projection={"wealth": _identity_wealth},
-                    ),
                 },
             )
         },
@@ -266,13 +254,13 @@ def _stay_terminal_utility(wealth: ContinuousState) -> FloatND:
 
 
 def _identity_wealth(wealth: ContinuousState) -> ContinuousState:
-    """The stay regime is read at the same wealth the target grid names."""
+    """The stay regime is entered at the same wealth the target grid names."""
     return wealth
 
 
-def _move_gate(*, V_target: FloatND, V_stay_ref: FloatND) -> BoolND:
-    """The household moves only where the move value beats the stay value."""
-    return V_target > V_stay_ref
+def _move_gate(wealth: ContinuousState) -> BoolND:
+    """The household moves only where its landing wealth exceeds 3."""
+    return wealth > 3.0
 
 
 def _saver_utility(consumption: ContinuousAction) -> FloatND:

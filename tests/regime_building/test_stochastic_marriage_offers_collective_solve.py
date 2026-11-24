@@ -2,25 +2,24 @@
 
 EKL 2019's marriage market (eqs. 24-26): a single may receive a marriage OFFER
 — a stochastic draw of a potential spouse's attributes, with an offer
-distribution conditioned on the single's own education. Consent (eq. 27, a
-`ParticipationCheck`) then compares the household's married value (given the DRAWN
-spouse) against each partner's own outside option.
+distribution conditioned on the single's own education.
 
-**What this adds on top of the surrounding machinery.** The participation check
-`Wbar = jnp.where(consent, V_target, V_fallback)` is read at the TARGET
-regime's landing, and the continuation already averages a
-non-terminal regime's continuation over any `StochasticTransition`-declared
-stochastic state, INCLUDING a "target-only" state declared solely in a
-per-target `state_transitions` dict entry (a state that is BORN at the
-transition — not carried from the source's own state space; see
-`_lcm.regime_building.transitions.collect_state_transitions`, "Target-only
+**What this adds on top of the surrounding machinery.** The continuation
+already averages a non-terminal regime's continuation over any
+`StochasticTransition`-declared stochastic state, INCLUDING a "target-only"
+state declared solely in a per-target `state_transitions` dict entry (a state
+that is BORN at the transition — not carried from the source's own state space;
+see `_lcm.regime_building.transitions.collect_state_transitions`, "Target-only
 states").
 
 So the marriage-offer mechanism below is closing a GAP IN TESTING, not a gap
 in the engine: a spouse-type offer, drawn via a `StochasticTransition` on a
-target-only state conditioned on the single's own education, feeding a
-mutual-consent participation check. `test_stochastic_marriage_offer_*` proves this
-composition numerically, hand-computed. `test_job_offer_gates_...` pins the
+target-only state conditioned on the single's own education, entering a
+collective target through an always-open gate that names the single's role.
+`test_stochastic_marriage_offer_*` proves this composition numerically,
+hand-computed. Consent to the match is decided by an `Exit` of the single
+before any transition draw (see `lcm_examples.collective_household`), so it is
+not part of this composition. `test_job_offer_gates_...` pins the
 adjacent (already-generic) claim that ordinary discrete stochastic states can
 gate action FEASIBILITY, not just shift utility (the mood test in
 `test_nonterminal_collective_solve.py` already covers the utility-shift case).
@@ -30,7 +29,7 @@ flavored, self-referential offer) is not representable through this
 primitive.
 
 Memory note: the spouse-type draw here is an ordinary GRID AXIS of the stored
-`married_terminal` V array (`(*states, n_stakeholders)` with a `spouse_type`
+`married_terminal` V array (`(*states, n_members)` with a `spouse_type`
 state axis), exactly like every other stochastic state in this engine. Folding
 a transient categorical shock before storage instead is a MEMORY optimization
 for full-scale EKL (it avoids a node blow-up across married's much larger
@@ -50,18 +49,18 @@ from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_law import RegimeLaws
 from _lcm.solution.backward_induction import solve
+from _lcm.typing import PeriodToRegimeToSimulationPolicy, PeriodToRegimeToVArr
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
+    MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
@@ -74,14 +73,14 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FloatND,
+    RegimeName,
     ScalarInt,
-    UserFunction,
 )
 from tests.collective_fixtures import recorded_dissolution_flags
 from tests.conftest import bind_laws, build_prepared_structure
 
 # Stochastic marriage offer: single_f (singleton) -> married_terminal (collective),
-# with a spouse-type draw feeding the mutual-consent participation check.
+# with a spouse-type draw at the transition.
 
 
 @categorical(ordered=True)
@@ -116,14 +115,10 @@ def _u_single_f_terminal(education: DiscreteState) -> FloatND:
     return 1.5 * _wage(education)  # {1.5, 3.0}
 
 
-def _u_single_m_terminal(education: DiscreteState) -> FloatND:
-    return jnp.where(education == 0, 0.5, 3.0)  # {0.5, 3.0}
-
-
 def _u_married(
     *, education: DiscreteState, spouse_type: DiscreteState, work: DiscreteAction
 ) -> FloatND:
-    """Pooled household income; identical for both stakeholders (symmetric split)."""
+    """Pooled household income; identical for both members (symmetric split)."""
     return _wage(education) + _wage(spouse_type) + 0.0 * work
 
 
@@ -131,29 +126,9 @@ def _identity_education(education: DiscreteState) -> DiscreteState:
     return education
 
 
-def _identity_spouse_type(spouse_type: DiscreteState) -> DiscreteState:
-    return spouse_type
-
-
-def _married_projection() -> dict[str, UserFunction]:
-    """The couple's value is read at the landing's own education and spouse type."""
-    return {"education": _identity_education, "spouse_type": _identity_spouse_type}
-
-
-def _spouse_type_as_education(spouse_type: DiscreteState) -> DiscreteState:
-    """The offered spouse's own outside option is read at their drawn type."""
-    return spouse_type
-
-
-def _consent_gate(
-    *,
-    V_target_f: FloatND,
-    V_target_m: FloatND,
-    V_single_f_ref: FloatND,
-    V_single_m_ref: FloatND,
-) -> BoolND:
-    # EKL eq. 27: strict, unanimous mutual consent.
-    return (V_target_f > V_single_f_ref) & (V_target_m > V_single_m_ref)
+def _always_open() -> BoolND:
+    """Every offer is accepted; the gate only names the arriving member."""
+    return jnp.ones((), dtype=bool)
 
 
 def _offer_probs(education: DiscreteState) -> FloatND:
@@ -190,10 +165,6 @@ def _make_offer_regimes() -> dict[str, Regime]:
         states={"education": DiscreteGrid(category_class=Education)},
         functions={"utility": _u_single_f_terminal},
     )
-    single_m_terminal = Regime(
-        states={"education": DiscreteGrid(category_class=Education)},
-        functions={"utility": _u_single_m_terminal},
-    )
     married_terminal = Regime(
         states={
             "education": DiscreteGrid(category_class=Education),
@@ -207,16 +178,15 @@ def _make_offer_regimes() -> dict[str, Regime]:
     return {
         "single_f": single_f,
         "single_f_terminal": single_f_terminal,
-        "single_m_terminal": single_m_terminal,
         "married_terminal": married_terminal,
     }
 
 
 def _single_f_transition() -> Transition:
-    """The single's age-0 transition: a consent-gated marriage offer.
+    """The single's age-0 transition: an always-accepted marriage offer.
 
-    The edge into `married_terminal` opens only where both partners consent;
-    otherwise the single falls back to `single_f_terminal`.
+    The always-open gate names the member `f` the single becomes in
+    `married_terminal`; its fallback `single_f_terminal` is never taken.
     """
     return Transition(
         targets={"married_terminal": 0, "single_f_terminal": 0},
@@ -227,36 +197,12 @@ def _single_f_transition() -> Transition:
                 }
             }
         ),
-        participation={
-            "married_terminal": ParticipationCheck(
-                predicate=_consent_gate,
-                reads={
-                    "V_target_f": ParticipationRead(
-                        regime="married_terminal",
-                        stakeholder="f",
-                        kind="Participating",
-                        projection=_married_projection(),
-                    ),
-                    "V_target_m": ParticipationRead(
-                        regime="married_terminal",
-                        stakeholder="m",
-                        kind="Participating",
-                        projection=_married_projection(),
-                    ),
-                    "V_single_f_ref": ParticipationRead(
-                        regime="single_f_terminal",
-                        kind="Raw",
-                        projection={"education": _identity_education},
-                    ),
-                    "V_single_m_ref": ParticipationRead(
-                        regime="single_m_terminal",
-                        kind="Raw",
-                        projection={"education": _spouse_type_as_education},
-                    ),
-                },
+        gates={
+            "married_terminal": Gate(
+                predicate=_always_open,
                 routes={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
+                    "f": MemberRoute(
+                        target_member="f",
                         fallback=ProjectedRegimeValue(
                             regime="single_f_terminal",
                             projection={"education": _identity_education},
@@ -284,35 +230,28 @@ def _offer_laws(regimes: dict[str, Regime]) -> RegimeLaws:
 # wage(edu) + wage(spouse):
 #   (0,0)=2  (0,1)=3  (1,0)=3  (1,1)=4
 #
-# Consent reads: V_single_f_ref(edu) = 1.5*wage(edu) -> {1.5, 3.0}
-#            V_single_m_ref(spouse) = u_single_m_terminal(spouse) -> {0.5, 3.0}
-#
-# Consent gate (V_target_f > V_single_f_ref) & (V_target_m > V_single_m_ref),
-# both components equal V_married here:
-#   edu=0 (ref=1.5): spouse=0 -> 2>1.5 & 2>0.5   -> OPEN
-#                     spouse=1 -> 3>1.5 & 3>3.0   -> CLOSED (strict, tie on m)
-#   edu=1 (ref=3.0): spouse=0 -> 3>3.0 & ...      -> CLOSED (strict, tie on f)
-#                     spouse=1 -> 4>3.0 & 4>3.0   -> OPEN
-#
-# Wbar_f(edu, spouse) = where(gate, V_married, V_single_f_ref(edu)):
-#   (0,0)=2 (OPEN)      (0,1)=1.5 (CLOSED, fallback)
-#   (1,0)=3.0 (CLOSED, fallback)   (1,1)=4 (OPEN)
-#
 # Offer distribution conditioned on OWN education:
 #   edu=0: P(spouse=0)=0.7, P(spouse=1)=0.3
 #   edu=1: P(spouse=0)=0.4, P(spouse=1)=0.6
 #
-# E[Wbar_f | edu=0] = 0.7*2 + 0.3*1.5   = 1.85
-# E[Wbar_f | edu=1] = 0.4*3.0 + 0.6*4   = 3.6
+# E[V_married_f | edu=0] = 0.7*2 + 0.3*3   = 2.3
+# E[V_married_f | edu=1] = 0.4*3 + 0.6*4   = 3.6
 #
-# V_single_f(period 0, edu) = wage(edu)*work + beta*E[Wbar_f | edu], work=1 always
-# optimal (wage(edu) > 0, continuation independent of the source's own action):
-#   edu=0: 1.0 + 0.95*1.85 = 2.7575
-#   edu=1: 2.0 + 0.95*3.6  = 5.42
-_EXPECTED_V_SINGLE_F_PERIOD_0 = np.array([2.7575, 5.42])
+# V_single_f(period 0, edu) = wage(edu)*work + beta*E[V_married_f | edu], work=1
+# always optimal (wage(edu) > 0, continuation independent of the source's own
+# action):
+#   edu=0: 1.0 + 0.95*2.3 = 3.185
+#   edu=1: 2.0 + 0.95*3.6 = 5.42
+_EXPECTED_V_SINGLE_F_PERIOD_0 = np.array([3.185, 5.42])
 
 
-def _solve_offer_regimes(*, enable_jit: bool = False):
+def _solve_offer_regimes(
+    *, enable_jit: bool = False
+) -> tuple[
+    PeriodToRegimeToVArr,
+    PeriodToRegimeToSimulationPolicy,
+    dict[int, dict[RegimeName, BoolND]],
+]:
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     user_regimes = _make_offer_regimes()
     laws = _offer_laws(user_regimes)
@@ -340,7 +279,6 @@ def _solve_offer_regimes(*, enable_jit: bool = False):
                 {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
             ),
             "single_f_terminal": MappingProxyType({}),
-            "single_m_terminal": MappingProxyType({}),
             "married_terminal": MappingProxyType({}),
         }
     )
@@ -360,26 +298,25 @@ def _solve_offer_regimes(*, enable_jit: bool = False):
     )
 
 
-def test_stochastic_marriage_offer_forms_couple_via_kernel():
+def test_stochastic_marriage_offer_forms_couple_via_kernel() -> None:
     """Kernel-level: process_regimes -> backward_induction.solve, real path.
 
     The single's continuation, at each education level, is the offer-
-    probability-weighted mixture over the two drawn spouse types of the
-    consent-gated marriage value vs. the single fallback.
+    probability-weighted mixture of the marriage value over the two drawn
+    spouse types.
     """
     solution, _sim, _dissolution_flags = _solve_offer_regimes()
     V_single_f = np.asarray(solution[0]["single_f"])
     np.testing.assert_allclose(V_single_f, _EXPECTED_V_SINGLE_F_PERIOD_0, rtol=1e-6)
 
 
-def test_stochastic_marriage_offer_matches_public_model_api():
+def test_stochastic_marriage_offer_matches_public_model_api() -> None:
     """Model-level: the same topology through the public `Model(...).solve()`."""
 
     @categorical(ordered=False)
     class OfferRegimeId:
         single_f: ScalarInt
         single_f_terminal: ScalarInt
-        single_m_terminal: ScalarInt
         married_terminal: ScalarInt
 
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
@@ -398,7 +335,7 @@ def test_stochastic_marriage_offer_matches_public_model_api():
     )
 
 
-def test_stochastic_marriage_offer_matches_under_jit():
+def test_stochastic_marriage_offer_matches_under_jit() -> None:
     """The jitted kernel path folds and averages the same offer draw."""
     solution, _sim, _dissolution = _solve_offer_regimes(enable_jit=True)
     np.testing.assert_allclose(
@@ -411,7 +348,7 @@ def test_stochastic_marriage_offer_matches_under_jit():
 # Job-offer stochastic state: feasibility (not just felicity) conditions on a
 # StochasticTransition-drawn discrete state (EKL eq. 24). The collective +
 # StochasticTransition-into-utility case is already covered end-to-end by
-# `test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder`
+# `test_nonterminal_collective_stochastic_state_expectation_is_per_member`
 # in `test_nonterminal_collective_solve.py` (nothing collective-specific about
 # it); this test pins the FEASIBILITY-gating half.
 
@@ -429,7 +366,7 @@ class JobRegimeId:
 
 
 def _offer_arrival_probs() -> FloatND:
-    """Unconditional offer participation check: P(offer'=0)=0.4, P(offer'=1)=0.6."""
+    """Unconditional offer arrival: P(offer'=0)=0.4, P(offer'=1)=0.6."""
     return jnp.array([0.4, 0.6])
 
 
@@ -468,7 +405,7 @@ def _make_job_offer_regimes() -> dict[str, Regime]:
 _EXPECTED_V_JOB_PERIOD_0 = np.array([4.23, 8.23])
 
 
-def test_job_offer_gates_feasible_actions_and_solves():
+def test_job_offer_gates_feasible_actions_and_solves() -> None:
     """A drawn discrete job-offer state gates action feasibility (EKL eq. 24)."""
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
     model = Model(
@@ -487,35 +424,31 @@ def test_job_offer_gates_feasible_actions_and_solves():
 # Scope fence: an endogenous / self-referential offer distribution (reading the
 # household's OWN solved value) is not representable through `StochasticTransition`
 # — it can only read states/actions/params through the ordinary DAG, never a
-# `Q_<s>` action value (that access is `value_constraints`-only). This pins
+# `Q_<s>` action value, which the engine hands to no user function. This pins
 # the natural failure mode rather than a bespoke check.
 
 
 def _self_referential_offer_probs(Q_f: FloatND) -> FloatND:  # noqa: ARG001
-    """Ill-formed: an offer distribution reading the household's own Q.
-
-    Reading `Q_<s>` is a `value_constraints`-only access.
-    """
+    """Ill-formed: an offer distribution reading the household's own Q."""
     return jnp.array([0.5, 0.5])
 
 
 def test_endogenous_offer_distribution_is_rejected() -> None:
     """A `Q_<s>`-conditioned (self-referential) offer distribution is unrepresentable.
 
-    `Q_<s>` is injected only into `value_constraints` predicates; an
-    ordinary state-transition / `StochasticTransition` function has no such
-    injection — it resolves through the regime's plain DAG (states, actions,
-    params, helper functions). `process_regimes` itself does not eagerly call
-    the transition closures, so the ill-formed `Q_f` argument is NOT caught at
-    build time: the DAG machinery falls back to treating the unresolved name
-    as an ordinary flat regime PARAMETER (`married_terminal__next_spouse_type
-    __Q_f`), so it surfaces only once `solve` actually invokes the closure and
-    finds no such parameter was supplied — a `KeyError` naming exactly the
-    missing (and unsuppliable-as-a-live-value) argument. There is no way to
-    bind it to the household's own in-solve `Q_f` array: the params dict can
-    only ever hold a caller-supplied CONSTANT, never the solved value, so the
-    "endogenous offer distribution" is unrepresentable through this
-    primitive — confirmed, not merely asserted, by this failure mode.
+    `Q_<s>` is injected into no user function; an ordinary state-transition /
+    `StochasticTransition` function resolves its arguments through the regime's
+    plain DAG (states, actions, params, helper functions). `process_regimes` itself
+    does not eagerly call the transition closures, so the ill-formed `Q_f` argument
+    is NOT caught at build time: the DAG machinery falls back to treating the
+    unresolved name as an ordinary flat regime PARAMETER
+    (`married_terminal__next_spouse_type __Q_f`), so it surfaces only once `solve`
+    actually invokes the closure and finds no such parameter was supplied — a
+    `KeyError` naming exactly the missing (and unsuppliable-as-a-live-value)
+    argument. There is no way to bind it to the household's own in-solve `Q_f`
+    array: the params dict can only ever hold a caller-supplied CONSTANT, never the
+    solved value, so the "endogenous offer distribution" is unrepresentable through
+    this primitive — confirmed, not merely asserted, by this failure mode.
     """
     regimes = _make_offer_regimes()
     regimes["single_f"] = regimes["single_f"].replace(
@@ -555,7 +488,6 @@ def test_endogenous_offer_distribution_is_rejected() -> None:
                 {"koopmans_aggregator__discount_factor": jnp.asarray(_BETA)}
             ),
             "single_f_terminal": MappingProxyType({}),
-            "single_m_terminal": MappingProxyType({}),
             "married_terminal": MappingProxyType({}),
         }
     )

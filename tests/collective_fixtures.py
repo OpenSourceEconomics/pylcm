@@ -5,15 +5,15 @@ small-integer expression, so a test can assert the value itself rather than the
 absence of NaN. Each factory's hand computation is stated in its docstring and
 the resulting arrays are published as module constants.
 
-The economics are the same throughout: a two-stakeholder household choosing
+The economics are the same throughout: a two-member household choosing
 between work and leisure, where the wife `f` values her own leisure and the
 husband `m` values household consumption. The household maximizes the equally
 weighted scalarization $O = (Q^f + Q^m) / 2$ and each partner reads off their
-OWN value at that shared argmax, so the two stakeholder slices genuinely
+OWN value at that shared argmax, so the two member slices genuinely
 differ and neither equals $O$.
 
 A collective regime's stored value function carries one axis per solve state
-plus one trailing stakeholder axis.
+plus one trailing member axis.
 """
 
 from collections.abc import Generator
@@ -24,7 +24,6 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.solution import backward_induction
-from _lcm.solution.feasibility import FeasibilityKernelOutput
 from _lcm.typing import RegimeName
 from lcm import (
     AgeGrid,
@@ -58,9 +57,9 @@ type InitialConditions = dict[str, FloatND | IntND]
 def recorded_dissolution_flags() -> Generator[dict[int, dict[RegimeName, BoolND]]]:
     """Record each collective kernel's dissolved cells while a solve runs.
 
-    A collective kernel writes the `-inf` sentinel into every stakeholder's value
+    A collective kernel writes the `-inf` sentinel into every member's value
     on the state cells whose household action set is empty; solve publishes no
-    separate flag. The recorded flag `D` is `True` where every stakeholder slice
+    separate flag. The recorded flag `D` is `True` where every member slice
     is `-inf`, so a feasible cell whose best value is itself `-inf` would also
     count; the models these tests solve have none. The yielded mapping fills in,
     by period and regime, as the solve runs.
@@ -70,7 +69,7 @@ def recorded_dissolution_flags() -> Generator[dict[int, dict[RegimeName, BoolND]
 
     def recording(**kwargs: Unpack[_KernelKwargs]) -> KernelOutput:
         output = original(**kwargs)
-        if kwargs["regime"].stakeholders is not None:
+        if kwargs["regime"].member_axis is not None:
             flags.setdefault(kwargs["period"], {})[kwargs["regime_name"]] = jnp.all(
                 jnp.isneginf(output.value), axis=-1
             )
@@ -79,35 +78,6 @@ def recorded_dissolution_flags() -> Generator[dict[int, dict[RegimeName, BoolND]
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(backward_induction, "_run_period_kernel", recording)
         yield flags
-
-
-@contextmanager
-def recorded_feasibility_counts() -> Generator[
-    dict[int, dict[RegimeName, tuple[int, int]]]
-]:
-    """Record each kernel's `(empty, other -inf)` state-cell counts while a solve runs.
-
-    The first count is the kernel's own empty-feasible-set mask; the second counts
-    the cells whose value is infinite although some action is feasible. Together
-    they tell a dissolving cell from an on-path `-inf` value, which the value array
-    alone cannot.
-    """
-    counts: dict[int, dict[RegimeName, tuple[int, int]]] = {}
-    original = backward_induction._run_period_kernel
-
-    def recording(**kwargs: Unpack[_KernelKwargs]) -> KernelOutput:
-        output = original(**kwargs)
-        if isinstance(output, FeasibilityKernelOutput):
-            empty, other_inf = output.feasibility_counts
-            counts.setdefault(kwargs["period"], {})[kwargs["regime_name"]] = (
-                int(empty),
-                int(other_inf),
-            )
-        return output
-
-    with pytest.MonkeyPatch.context() as monkeypatch:
-        monkeypatch.setattr(backward_induction, "_run_period_kernel", recording)
-        yield counts
 
 
 @categorical(ordered=True)
@@ -152,23 +122,23 @@ SHOCKED_TERMINAL_PAYOFF = 4.0
 # The IID shock of `make_shocked_singleton_model`.
 WAGE_SHOCK = NormalIIDProcess(n_points=5, gauss_hermite=True, mu=0.0, sigma=2.0)
 
-# `make_two_stakeholder_model`'s value functions, indexed (wage, stakeholder).
-TWO_STAKEHOLDER_V_PERIOD_0 = ((46.0, 92.0), (78.0, 156.0))
-TWO_STAKEHOLDER_V_TERMINAL = ((30.0, 0.0), (40.0, 80.0))
+# `make_two_member_model`'s value functions, indexed (wage, member).
+TWO_MEMBER_V_PERIOD_0 = ((46.0, 92.0), (78.0, 156.0))
+TWO_MEMBER_V_TERMINAL = ((30.0, 0.0), (40.0, 80.0))
 
 # `make_stateless_collective_target_model`'s value functions. The terminal one
-# carries the stakeholder axis alone, the period-0 one (wage, stakeholder).
+# carries the member axis alone, the period-0 one (wage, member).
 STATELESS_TARGET_V_TERMINAL = (10.0, 0.0)
 STATELESS_TARGET_V_PERIOD_0 = ((39.5, 0.0), (49.5, 80.0))
 
 
-def make_two_stakeholder_model() -> tuple[Model, ParamsDict]:
-    """Build a two-stakeholder collective model over one 2-point wage state.
+def make_two_member_model() -> tuple[Model, ParamsDict]:
+    """Build a two-member collective model over one 2-point wage state.
 
     `couple` is active at age 0 and transitions with probability one into
-    `couple_terminal`, active from age 1 on. Both regimes carry the stakeholders
+    `couple_terminal`, active from age 1 on. Both regimes carry the members
     `("f", "m")` and the same 2-point `wage` grid, so each stored value function
-    has one wage axis plus the trailing stakeholder axis, shape `(2, 2)`.
+    has one wage axis plus the trailing member axis, shape `(2, 2)`.
 
     Hand computation, wage grid $\\{8, 40\\}$, $\\beta = 0.95$, and
     `next_wage = 40 * work + 8 * (1 - work)`:
@@ -211,10 +181,10 @@ def make_two_stakeholder_model() -> tuple[Model, ParamsDict]:
 def make_stateless_collective_target_model() -> tuple[Model, ParamsDict]:
     """Build a collective model whose only target carries no state.
 
-    `couple` is the same two-stakeholder wage regime as in
-    `make_two_stakeholder_model`, but it transitions with probability one into a
+    `couple` is the same two-member wage regime as in
+    `make_two_member_model`, but it transitions with probability one into a
     collective terminal regime declaring `states={}`. That target's value
-    function is rank one — the stakeholder axis alone — with no state to
+    function is rank one — the member axis alone — with no state to
     interpolate at, and its value still belongs in the continuation.
 
     Hand computation, $\\beta = 0.95$:

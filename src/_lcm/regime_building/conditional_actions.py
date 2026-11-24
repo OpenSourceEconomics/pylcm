@@ -19,7 +19,7 @@ from dags.annotations import ensure_annotations_are_strings
 from _lcm.regime_building.age_specialization import resolve_node
 from _lcm.time import TimeAxis, specialization_coordinate_at
 from _lcm.typing import DiscreteGridValue
-from lcm.collective import CollectiveUtility, ValueDependentConstraint
+from lcm.collective import CollectiveUtility
 from lcm.grids import ConditionalAction, DiscreteGrid
 from lcm.phased import Phased
 from lcm.regime import (
@@ -430,8 +430,6 @@ def _callables(readers: tuple[_Reader, ...]) -> Iterator[UserFunction]:
             yield from _callables(tuple(reader.values()))
         elif isinstance(reader, CollectiveUtility):
             yield from _callables(tuple(reader.utilities.values()))
-        elif isinstance(reader, ValueDependentConstraint):
-            yield reader.predicate
         elif callable(reader) and not isinstance(
             reader, AgeSpecializedFunction | _SignedPin
         ):

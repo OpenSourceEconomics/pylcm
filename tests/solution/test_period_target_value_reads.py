@@ -17,8 +17,8 @@ The NB-EGM and nested models have one living regime that stays alive or dies,
 except at its last active period, where it only dies.
 
 The gated model's `src` stays in `src` at periods 0 and 1 and at period 2 enters
-`tgt` through a participation check whose refused branch pays the fallback regime `fb`;
-both are terminal at period 3.
+`tgt` through a gate on the landing wealth whose closed branch pays the fallback
+regime `fb`; both are terminal at period 3.
 """
 
 from types import MappingProxyType
@@ -36,12 +36,11 @@ from lcm import (
     DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
+    Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     ProjectedRegimeValue,
-    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
@@ -155,8 +154,8 @@ def _next_gated_regime(age: float) -> ScalarInt:
     return jnp.where(age < 2, _GatedRegimeId.src, _GatedRegimeId.tgt)
 
 
-def _open_when_rich(V_target: FloatND) -> BoolND:
-    return V_target > 0.5
+def _open_when_rich(wealth: ContinuousState) -> BoolND:
+    return wealth > 2.0
 
 
 def _same_wealth(wealth: ContinuousState) -> ContinuousState:
@@ -180,21 +179,11 @@ def _gated_model(
             "src": Transition(
                 targets={"src": AgeRange(exclusive_stop=2), "tgt": 2, "fb": 2},
                 law=DeterministicTransition(func=_next_gated_regime),
-                participation={
-                    "tgt": ParticipationCheck(
+                gates={
+                    "tgt": Gate(
                         predicate=_open_when_rich,
-                        reads={
-                            "V_target": ParticipationRead(
-                                kind="IntegratedFull",
-                                regime="tgt",
-                                projection={
-                                    "wealth": _same_wealth,
-                                    "health": _same_health,
-                                },
-                            )
-                        },
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fb",
                                     projection={

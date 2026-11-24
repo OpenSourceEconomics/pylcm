@@ -95,9 +95,7 @@ def _simulated_regimes(*, model: Model) -> list[str]:
             "period": jnp.zeros(2, dtype=jnp.int32),
             "wealth": jnp.asarray([1.0, 2.0]),
             "regime_id": jnp.full(2, _Household.couple, dtype=jnp.int32),
-            "own_stakeholder": jnp.full(
-                2, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
-            ),
+            "own_member": jnp.full(2, model.member_names_to_ids["f"], dtype=jnp.int32),
         },
         seed=0,
         log_level="off",
@@ -146,7 +144,7 @@ def test_builtin_dissolution_rule_prices_and_settles_original_members(
         else [[3.0, 1.0], [6.0, 2.0]]
     )
     np.testing.assert_array_equal(solution.values[0]["couple"], expected_full)
-    roles = [model.stakeholder_names_to_ids[member] for member in ("f", "m", "f", "m")]
+    roles = [model.member_names_to_ids[member] for member in ("f", "m", "f", "m")]
     frame = (
         model.simulate(
             params={},
@@ -155,7 +153,7 @@ def test_builtin_dissolution_rule_prices_and_settles_original_members(
                 "period": jnp.zeros(4, dtype=jnp.int32),
                 "wealth": jnp.asarray([1.0, 1.0, 2.0, 2.0]),
                 "regime_id": jnp.full(4, _Household.couple, dtype=jnp.int32),
-                "own_stakeholder": jnp.asarray(roles, dtype=jnp.int32),
+                "own_member": jnp.asarray(roles, dtype=jnp.int32),
             },
             seed=0,
             log_level="off",
@@ -173,7 +171,7 @@ def test_builtin_dissolution_rule_prices_and_settles_original_members(
         np.testing.assert_array_equal(frame["value"], [2.0, 2.0, 4.0, 4.0])
     else:
         np.testing.assert_array_equal(frame["regime_name"], ["couple"] * 4)
-        np.testing.assert_array_equal(frame["own_stakeholder"], roles)
+        np.testing.assert_array_equal(frame["own_member"], roles)
         np.testing.assert_array_equal(frame["value_f"], [3.0, 3.0, 6.0, 6.0])
         np.testing.assert_array_equal(frame["value_m"], [1.0, 1.0, 2.0, 2.0])
         np.testing.assert_array_equal(

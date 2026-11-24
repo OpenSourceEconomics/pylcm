@@ -1,6 +1,6 @@
 """Canonical runtime-bound transport survives actual solver and subject evaluations."""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from functools import partial
 from types import MappingProxyType
 from typing import Never, TypedDict, Unpack, cast
@@ -28,17 +28,20 @@ from _lcm.simulation.program_types import SUBJECT_WIDTH_KEYWORD
 from _lcm.simulation.programs import _SubjectTiled
 from _lcm.simulation.simulate import _canonical_Q_at_actions, _read_external_replay
 from _lcm.simulation.transitions import create_regime_state_action_space
+from _lcm.solution.action_reduction import HardMaxResult
 from _lcm.solution.action_streaming import (
     build_partitioned_streaming_max_Q_over_a,
     build_streaming_collective_max_Q_over_a,
     build_streaming_ev1_max_Q_over_a,
     build_streaming_max_Q_over_a,
 )
+from _lcm.solution.collective_action_reduction import CollectiveHardMaxResult
 from _lcm.solution.feasibility import (
     BoundedResult,
     BoundInputStatus,
     CountedGridSearch,
 )
+from _lcm.solution.logsumexp_action_reduction import LogSumExpResult
 from _lcm.typing import (
     ConstraintFunction,
     ConstraintFunctionsMapping,
@@ -55,18 +58,18 @@ from lcm import (
     ExecutionConfig,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     PeriodSpecializedFunction,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
     post_decision_lower_bound,
     ref,
 )
-from lcm.collective import CollectiveUtility, ParetoObjective, ValueDependentConstraint
+from lcm.collective import CollectiveUtility, ParetoObjective
 from lcm.exceptions import (
     InvalidValueFunctionError,
     OffGridStateError,
@@ -183,7 +186,7 @@ def _floor_landing_model(
     handwritten: bool,
     invalid: bool,
     budgeted: bool,
-    value_aware: bool,
+    household: bool,
     gated: bool = False,
     invariant: bool = False,
     raised: bool = True,
@@ -205,9 +208,6 @@ def _floor_landing_model(
 
     def terminal(*, wealth: FloatND, income: FloatND | IntND) -> FloatND:
         return wealth + 0.0 * income
-
-    def participation(*, Q_alice: FloatND) -> BoolND:
-        return Q_alice >= -jnp.inf
 
     def gate(*, wealth: FloatND) -> BoolND:
         return wealth >= -jnp.inf
@@ -236,24 +236,24 @@ def _floor_landing_model(
         Transition(
             targets={
                 "done": 0,
-                **({"fallback_alice": 0, "fallback_bob": 0} if value_aware else {}),
+                **({"fallback_alice": 0, "fallback_bob": 0} if household else {}),
             },
             law=ByAge(cases={0: {"done": StochasticTransition(func=certain)}}),
             gates={
                 "done": Gate(
                     predicate=gate,
                     routes={
-                        name: StakeholderRoute(
-                            target_stakeholder=name if value_aware else None,
+                        name: MemberRoute(
+                            target_member=name if household else None,
                             fallback=ProjectedRegimeValue(
-                                regime=f"fallback_{name}" if value_aware else "done",
+                                regime=f"fallback_{name}" if household else "done",
                                 projection={
                                     "wealth": identity,
                                     "income": identity_income,
                                 },
                             ),
                         )
-                        for name in (("alice", "bob") if value_aware else ("only",))
+                        for name in (("alice", "bob") if household else ("only",))
                     },
                     off_grid="pointwise",
                 )
@@ -279,7 +279,7 @@ def _floor_landing_model(
                     "utility": CollectiveUtility(
                         utilities={"alice": utility, "bob": utility}
                     )
-                    if value_aware
+                    if household
                     else utility,
                     "resources": resources,
                     "savings": savings,
@@ -289,15 +289,6 @@ def _floor_landing_model(
                     "borrowing": ref("savings") >= ref("floor")
                     if handwritten
                     else post_decision_lower_bound(margin=LIQUID, lower=floor),
-                    **(
-                        {
-                            "participation": ValueDependentConstraint(
-                                predicate=participation
-                            )
-                        }
-                        if value_aware
-                        else {}
-                    ),
                 },
             ),
             "done": Regime(
@@ -314,7 +305,7 @@ def _floor_landing_model(
                     "utility": CollectiveUtility(
                         utilities={"alice": terminal, "bob": terminal}
                     )
-                    if value_aware
+                    if household
                     else terminal
                 },
             ),
@@ -331,14 +322,14 @@ def _floor_landing_model(
                     )
                     for name in ("alice", "bob")
                 }
-                if gated and value_aware
+                if gated and household
                 else {}
             ),
         },
         ages=AgeGrid(exact_values=(0, 1)),
         edges={"saving": edge},
         initial_nodes={0: "saving"},
-        regime_id_class=GatedRegimeId if gated and value_aware else TemporalRegimeId,
+        regime_id_class=GatedRegimeId if gated and household else TemporalRegimeId,
         execution_config=ExecutionConfig(
             device_memory_bytes=(1 << 28) if budgeted else None,
             invariant_block_widths={"income": 1} if invariant else {},
@@ -350,7 +341,7 @@ def _floor_landing_model(
 @pytest.mark.parametrize("handwritten", [False, True])
 @pytest.mark.parametrize("invalid", [False, True])
 @pytest.mark.parametrize("budgeted", [False, True])
-@pytest.mark.parametrize("value_aware", [False, True])
+@pytest.mark.parametrize("household", [False, True])
 def test_floor_integrity_precedes_reached_landing_errors(
     *,
     runtime_checks: bool,
@@ -358,7 +349,7 @@ def test_floor_integrity_precedes_reached_landing_errors(
     invalid: bool,
     budgeted: bool,
     monkeypatch: pytest.MonkeyPatch,
-    value_aware: bool,
+    household: bool,
 ) -> None:
     """
     Mandatory floor integrity is checked before reached off-grid landings are
@@ -370,7 +361,7 @@ def test_floor_integrity_precedes_reached_landing_errors(
         handwritten=handwritten,
         invalid=invalid,
         budgeted=budgeted,
-        value_aware=value_aware,
+        household=household,
     )
     error = InvalidValueFunctionError if invalid else OffGridStateError
     with pytest.raises(error, match=r"floor|state='wealth'"):
@@ -384,23 +375,22 @@ def test_floor_integrity_precedes_reached_landing_errors(
 @pytest.mark.parametrize("runtime_checks", [False, True])
 @pytest.mark.parametrize("handwritten", [False, True])
 @pytest.mark.parametrize("invalid", [False, True])
-@pytest.mark.parametrize("value_aware", [False, True])
+@pytest.mark.parametrize("household", [False, True])
 def test_gated_floor_integrity_precedes_reached_landing_errors(
     *,
     runtime_checks: bool,
     handwritten: bool,
     invalid: bool,
-    value_aware: bool,
+    household: bool,
 ) -> None:
     """
-    Actually gated landings retain own-floor integrity outside gate and
-    participation masks.
+    Actually gated landings retain own-floor integrity outside gate masks.
     """
     model = _floor_landing_model(
         handwritten=handwritten,
         invalid=invalid,
         budgeted=True,
-        value_aware=value_aware,
+        household=household,
         gated=True,
     )
     error = InvalidValueFunctionError if invalid else OffGridStateError
@@ -424,7 +414,7 @@ def test_invariant_codes_reduce_floor_integrity_before_landing_interpretation(
         handwritten=handwritten,
         invalid=True,
         budgeted=True,
-        value_aware=False,
+        household=False,
         invariant=True,
     )
     with pytest.raises(InvalidValueFunctionError, match="floor"):
@@ -452,7 +442,7 @@ def test_actual_invariant_dispatch_keeps_floor_integrity_across_code_outputs(
         handwritten=handwritten,
         invalid=invalid,
         budgeted=True,
-        value_aware=False,
+        household=False,
         invariant=True,
         raised=False,
     )
@@ -666,12 +656,12 @@ def test_household_action_owner_keeps_integrity_outside_pareto_weights(
         constraints=MappingProxyType(
             {"borrowing": cast("ConstraintFunction", borrowing)}
         ),
-        stakeholders=("a", "b"),
+        members=("a", "b"),
         bound_specs=(_bound(),),
     )
     weights = build_pareto_weights(
         objective=ParetoObjective(weights={"a": 1.0, "b": 0.0}),
-        stakeholders=("a", "b"),
+        members=("a", "b"),
         state_names=frozenset({"income"}),
     )
     builder = get_streaming_max_Q_over_a if streamed else get_max_Q_over_a
@@ -680,7 +670,7 @@ def test_household_action_owner_keeps_integrity_outside_pareto_weights(
         batch_sizes={"income": 1},
         action_names=("consumption",),
         state_names=("income",),
-        stakeholders=("a", "b"),
+        member_axis=("a", "b"),
         pareto_weights=weights,
         return_feasibility=True,
     )
@@ -1170,7 +1160,19 @@ def test_bounded_action_streams_match_the_unbounded_stream(
         np.testing.assert_array_equal(np.asarray(got), np.asarray(want))
 
 
-def _marked_stream(*, route: str, bounded: bool, block_width: int):
+type _MarkedStreamResult = (
+    HardMaxResult
+    | LogSumExpResult
+    | CollectiveHardMaxResult
+    | BoundedResult[HardMaxResult]
+    | BoundedResult[LogSumExpResult]
+    | BoundedResult[CollectiveHardMaxResult]
+)
+
+
+def _marked_stream(
+    *, route: str, bounded: bool, block_width: int
+) -> Callable[[FloatND], _MarkedStreamResult]:
     """Build one action stream whose utility carries a single rounding marker."""
     kernel = _marked_kernel(route=route, bounded=bounded)
     work = jnp.asarray([0.0, 1.0])
@@ -1185,7 +1187,7 @@ def _marked_stream(*, route: str, bounded: bool, block_width: int):
             Q_and_F=kernel,
             action_names=action_names,
             block_width=block_width,
-            stakeholders=("a", "b"),
+            members=("a", "b"),
             weights={"a": 1.0, "b": 0.5},
         )
     elif route == "ev1":
@@ -1205,7 +1207,7 @@ def _marked_stream(*, route: str, bounded: bool, block_width: int):
             axis_name="owners",
         )
 
-        def run_partitioned(income: FloatND):
+        def run_partitioned(income: FloatND) -> _MarkedStreamResult:
             return jax.vmap(
                 lambda _: partitioned(
                     next_regime_to_V_arr=MappingProxyType({}),
@@ -1220,7 +1222,7 @@ def _marked_stream(*, route: str, bounded: bool, block_width: int):
 
         return run_partitioned
 
-    def run(income: FloatND):
+    def run(income: FloatND) -> _MarkedStreamResult:
         return stream(
             next_regime_to_V_arr=MappingProxyType({}),
             period=jnp.int32(0),
@@ -1264,7 +1266,7 @@ def _marked_kernel(*, route: str, bounded: bool) -> QAndFFunction:
                 }
             ),
             constraints=constraints,
-            stakeholders=("a", "b"),
+            members=("a", "b"),
             bound_specs=bound_specs,
         )
     return get_Q_and_F_terminal(

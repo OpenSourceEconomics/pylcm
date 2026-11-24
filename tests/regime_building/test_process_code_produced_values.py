@@ -24,13 +24,11 @@ from lcm import (
     CollectiveUtility,
     DiscreteGrid,
     Gate,
+    MemberRoute,
     Model,
     NormalIIDProcess,
-    ParticipationCheck,
-    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
 )
@@ -143,14 +141,6 @@ def _closed_by_code(z_code: DiscreteState) -> BoolND:
     return z_code < 0
 
 
-def _has_policy_support(target_support: BoolND) -> BoolND:
-    return target_support
-
-
-def _landed_z(z: ContinuousState) -> ContinuousState:
-    return z
-
-
 def _off_middle_node(z_code: DiscreteState) -> BoolND:
     return z_code != 2
 
@@ -215,7 +205,7 @@ def _gate_model(*, on_node: bool, enable_jit: bool) -> Model:
                     "landing": Gate(
                         predicate=_closed_by_code,
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback", projection={"z": _project_zero}
                                 )
@@ -235,38 +225,24 @@ def _gate_model(*, on_node: bool, enable_jit: bool) -> Model:
 def _dissolution_model(*, on_node: bool, enable_jit: bool) -> Model:
     """Collective source landing in `a`, which has no policy at the middle node.
 
-    The participation check decides the landing by `a`'s policy support; the off-node
-    model's `f` route projects back into `a`, which reads `z_code`.
+    The gate closes the landing exactly where `a` has no feasible action, the middle
+    node; the off-node model's `f` route projects back into `a`, which reads
+    `z_code`.
     """
     work = DiscreteGrid(category_class=Work)
     routes = {
-        "f": StakeholderRoute(
-            target_stakeholder="f",
+        "f": MemberRoute(
+            target_member="f",
             fallback=ProjectedRegimeValue(
                 regime="a",
-                stakeholder="f",
+                member="f",
                 projection={"z": _project_one if on_node else _project_off_node},
             ),
         ),
-        "m": StakeholderRoute(
-            target_stakeholder="m",
+        "m": MemberRoute(
+            target_member="m",
             fallback=ProjectedRegimeValue(regime="b", projection={"z": _project_one}),
         ),
-    }
-    participation = {
-        "a": ParticipationCheck(
-            predicate=_has_policy_support,
-            reads={
-                "target_support": ParticipationRead(
-                    regime="a",
-                    stakeholder="f",
-                    kind="Participating",
-                    field="support",
-                    projection={"z": _landed_z},
-                )
-            },
-            routes=routes,
-        )
     }
     return Model(
         regimes={
@@ -295,7 +271,7 @@ def _dissolution_model(*, on_node: bool, enable_jit: bool) -> Model:
         edges={
             "source": Transition(
                 law=ByAge(cases={0: {"a": StochasticTransition(func=_prob_one)}}),
-                participation=participation,
+                gates={"a": Gate(predicate=_off_middle_node, routes=routes)},
             )
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
@@ -344,8 +320,8 @@ def _simulate_from_source(*, model: Model, roles: tuple[str, ...] = ()) -> pd.Da
         ),
     }
     if roles:
-        initial["own_stakeholder"] = jnp.asarray(
-            [model.stakeholder_names_to_ids[role] for role in roles], dtype=jnp.int32
+        initial["own_member"] = jnp.asarray(
+            [model.member_names_to_ids[role] for role in roles], dtype=jnp.int32
         )
     return (
         model.simulate(
@@ -364,20 +340,20 @@ def _simulate_from_source(*, model: Model, roles: tuple[str, ...] = ()) -> pd.Da
 def test_state_dependent_entry_off_node_is_refused_where_code_is_read(
     *,
     enable_jit: bool,
-):
+) -> None:
     model = _entry_model(on_node=False, code=True, enable_jit=enable_jit)
     with pytest.raises(InvalidStateTransitionError, match=r"off the process's nodes"):
         _simulate_from_source(model=model)
 
 
-def test_constant_entry_off_node_is_refused_at_build_where_code_is_read():
+def test_constant_entry_off_node_is_refused_at_build_where_code_is_read() -> None:
     with pytest.raises(ModelInitializationError, match=r"Enter at one of its nodes"):
         _entry_model(
             on_node=False, code=True, enable_jit=False, law=_entry_constant_off_node
         )
 
 
-def test_constant_entry_off_node_is_built_where_only_values_are_read():
+def test_constant_entry_off_node_is_built_where_only_values_are_read() -> None:
     model = _entry_model(
         on_node=False, code=False, enable_jit=False, law=_entry_constant_off_node
     )
@@ -385,7 +361,9 @@ def test_constant_entry_off_node_is_built_where_only_values_are_read():
 
 
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
-def test_state_dependent_entry_on_node_is_held_where_code_is_read(*, enable_jit: bool):
+def test_state_dependent_entry_on_node_is_held_where_code_is_read(
+    *, enable_jit: bool
+) -> None:
     panel = _simulate_from_source(
         model=_entry_model(on_node=True, code=True, enable_jit=enable_jit)
     )
@@ -400,7 +378,7 @@ def test_state_dependent_entry_on_node_is_held_where_code_is_read(*, enable_jit:
 def test_state_dependent_entry_off_node_is_held_where_only_values_are_read(
     *,
     enable_jit: bool,
-):
+) -> None:
     panel = _simulate_from_source(
         model=_entry_model(on_node=False, code=False, enable_jit=enable_jit)
     )
@@ -415,14 +393,14 @@ def test_state_dependent_entry_off_node_is_held_where_only_values_are_read(
 def test_gate_reading_code_at_off_node_draw_is_refused_though_it_closes(
     *,
     enable_jit: bool,
-):
+) -> None:
     model = _gate_model(on_node=False, enable_jit=enable_jit)
     with pytest.raises(InvalidStateTransitionError, match=r"off the process's nodes"):
         _simulate_from_source(model=model)
 
 
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
-def test_gate_reading_code_at_node_draw_routes_to_fallback(*, enable_jit: bool):
+def test_gate_reading_code_at_node_draw_routes_to_fallback(*, enable_jit: bool) -> None:
     panel = _simulate_from_source(
         model=_gate_model(on_node=True, enable_jit=enable_jit)
     )
@@ -436,7 +414,7 @@ def test_gate_reading_code_at_node_draw_routes_to_fallback(*, enable_jit: bool):
 def test_dissolution_route_off_node_back_into_code_reader_is_refused(
     *,
     enable_jit: bool,
-):
+) -> None:
     model = _dissolution_model(on_node=False, enable_jit=enable_jit)
     with pytest.raises(InvalidStateTransitionError, match=r"off the process's nodes"):
         _simulate_from_source(model=model, roles=("f",))
@@ -446,7 +424,7 @@ def test_dissolution_route_off_node_back_into_code_reader_is_refused(
 def test_dissolution_route_on_node_back_into_code_reader_decides_again(
     *,
     enable_jit: bool,
-):
+) -> None:
     panel = _simulate_from_source(
         model=_dissolution_model(on_node=True, enable_jit=enable_jit), roles=("f",)
     )
@@ -475,13 +453,13 @@ def _simulate_shock_path(*, later: float, enable_jit: bool) -> pd.DataFrame:
 
 
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
-def test_shock_path_off_node_in_a_later_period_is_refused(*, enable_jit: bool):
+def test_shock_path_off_node_in_a_later_period_is_refused(*, enable_jit: bool) -> None:
     with pytest.raises(InvalidSimulationInputError, match=r"period 1"):
         _simulate_shock_path(later=_OFF_NODE, enable_jit=enable_jit)
 
 
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
-def test_shock_path_on_node_in_a_later_period_is_held(*, enable_jit: bool):
+def test_shock_path_on_node_in_a_later_period_is_held(*, enable_jit: bool) -> None:
     panel = _simulate_shock_path(later=1.0, enable_jit=enable_jit)
     np.testing.assert_array_equal(panel["z"].to_numpy(), np.array([0.0, 1.0]))
 
@@ -535,7 +513,7 @@ _FOREIGN_KINDS = ("category_action", "category_state", "value_action")
 )
 def test_foreign_discrete_declaration_leaves_process_reads_local(
     *, kind: str, reader: UserFunction, expected: tuple[float, ...]
-):
+) -> None:
     model = Model(
         regimes={
             "a": Regime(states={"z": _process()}, functions={"utility": reader}),
@@ -565,7 +543,9 @@ def _refuse_off_node_producer(*, producer: str) -> None:
 
 
 @pytest.mark.parametrize("producer", ["entry", "gate", "dissolution"])
-def test_off_node_refusal_names_the_code_argument_the_regime_reads(*, producer: str):
+def test_off_node_refusal_names_the_code_argument_the_regime_reads(
+    *, producer: str
+) -> None:
     with pytest.raises(InvalidStateTransitionError, match=r"position `z_code`"):
         _refuse_off_node_producer(producer=producer)
 
@@ -577,7 +557,7 @@ def test_off_node_refusal_names_the_code_argument_the_regime_reads(*, producer: 
 )
 def test_held_process_code_check_refuses_only_an_off_node_holder(
     *, held: tuple[float, ...], refused: bool
-):
+) -> None:
     """Only holders count: the non-holder's `1/4` never trips the check."""
     states = {"z": jnp.asarray((*held, _OFF_NODE))}
     holders = jnp.asarray((True, True, True, False))

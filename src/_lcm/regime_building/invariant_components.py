@@ -16,7 +16,7 @@ value read crosses its codes:
   established binding);
 - every carrier holds the state on one discrete grid, the canonical code
   mapping;
-- no same-period reference, gated edge or edge reference touches a carrier, and
+- no gated edge or edge reference touches a carrier, and
   no simulate-phase carrier replays a retained solve payload; those channels
   have no supported per-code binding.
 
@@ -399,13 +399,6 @@ def _channel_refusals(
 ) -> tuple[str, ...]:
     """Refuse every non-continuation value channel that touches a carrier."""
     refusals = [
-        f"same-period reference {name} -> {reference} touches a carrier of "
-        f"{state_name!r}; no per-code binding is supported for it"
-        for name, regime in sorted(regimes.items())
-        for reference in regime.same_period_ref_regimes
-        if carriers & {name, reference}
-    ]
-    refusals += [
         f"gated edge {name} -> {target} touches a carrier of {state_name!r}; no "
         "per-code binding is supported for it"
         for name, regime in sorted(regimes.items())

@@ -1,10 +1,10 @@
 """A collective regime publishes ONE household feasibility mask, not one per partner.
 
-A collective regime carries a per-stakeholder `utility_<s>`, so `Q^f` and `Q^m`
-genuinely differ. Its feasibility is NOT per stakeholder: the mask is built from
+A collective regime carries a per-member `utility_<s>`, so `Q^f` and `Q^m`
+genuinely differ. Its feasibility is NOT per member: the mask is built from
 the regime's constraints against the shared function pool, and the household
 argmax runs over that single mask. A constraint may name one partner's felicity
-node — `utility_f` here — and that names the SAME node for every stakeholder, so
+node — `utility_f` here — and that names the SAME node for every member, so
 the husband's action set is restricted by the wife's participation condition
 exactly as the wife's is.
 
@@ -191,7 +191,7 @@ def test_nonterminal_collective_dissolution_flags_come_from_the_shared_mask(
     )
 
 
-def test_the_two_stakeholders_action_values_genuinely_differ(
+def test_the_two_members_action_values_genuinely_differ(
     solved: SolutionResult,
 ) -> None:
     """`Q^f` and `Q^m` differ, so a mask taken from one partner would be visible."""

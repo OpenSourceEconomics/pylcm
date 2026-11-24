@@ -5,7 +5,7 @@ from collections.abc import Callable, Mapping
 from fractions import Fraction
 from functools import partial
 from types import MappingProxyType
-from typing import Literal, Unpack, cast
+from typing import Literal, TypedDict, Unpack, cast
 
 import jax
 import jax.numpy as jnp
@@ -14,9 +14,12 @@ import pandas as pd
 import pytest
 
 from _lcm import transition_checks
+from _lcm.engine import Regime as EngineRegime
+from _lcm.engine import SimulationPhase, SolutionPhase
 from _lcm.grids.continuous import _clip_grid_value
 from _lcm.off_grid import count_off_grid
 from _lcm.params.edges import regime_kernel_params
+from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.V import (
     VInterpolationInfo,
     _get_coordinate_finder,
@@ -30,7 +33,15 @@ from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.residency import measure_buffer_footprint
 from _lcm.simulation.transitions import _clip_next_states
 from _lcm.solution.feasibility import BoundedResult, BoundInputStatus
-from _lcm.typing import EconFunctionArg, EconFunctionKwargs, PytreeValue
+from _lcm.time import TimeAxis
+from _lcm.transition_checks import _ValidationSummary
+from _lcm.typing import (
+    EconFunctionArg,
+    EconFunctionKwargs,
+    FlatParams,
+    PytreeValue,
+    RegimeTransitionFunction,
+)
 from benchmarks.asv._compile_counters import count_compile_requests
 from lcm import (
     AgeGrid,
@@ -42,14 +53,13 @@ from lcm import (
     ExecutionConfig,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     NormalIIDProcess,
     ProjectedRegimeValue,
-    StakeholderRoute,
     StateConditioned,
     StochasticTransition,
     Transition,
-    ValueDependentConstraint,
     categorical,
     fixed_transition,
 )
@@ -82,6 +92,7 @@ from lcm.typing import (
     ContinuousAction,
     ContinuousState,
     DiscreteState,
+    Float1D,
     FloatND,
     IntND,
     OffGrid,
@@ -94,6 +105,22 @@ from lcm.typing import (
 from tests.conftest import DECIMAL_PRECISION
 from tests.regime_building._shock_average import average_over_shock
 from tests.simulation.test_entry_operation_reuse import _HostCompilation
+
+
+class _OffGridTargetCountsKwargs(TypedDict):
+    """The keywords `transition_checks._off_grid_target_counts` is called with."""
+
+    regime: EngineRegime
+    phase: SolutionPhase | SimulationPhase
+    target: RegimeName
+    law: RegimeTransitionFunction
+    points: Mapping[StateName, Float1D]
+    target_axes: Mapping[StateName, FloatND | IntND]
+    period: int
+    flat_params: FlatParams
+    ages: TimeAxis
+    summary: _ValidationSummary | None
+    process_grid_resolver: ProcessGridResolver | None
 
 
 @categorical(ordered=False)
@@ -625,7 +652,7 @@ def test_non_debug_solve_does_not_materialize_count_only_off_grid_diagnostics(
 ) -> None:
     """Below `"debug"`, a non-raise grid is neither counted nor reported."""
 
-    def reject_count_sweep(**_kwargs) -> None:
+    def reject_count_sweep(**_kwargs: Unpack[_OffGridTargetCountsKwargs]) -> None:
         pytest.fail("A non-debug solve expanded an optional off-grid diagnostic grid")
 
     monkeypatch.setattr(
@@ -1696,18 +1723,14 @@ def _collective_model(
     rule: OffGrid,
     tail: float,
     threshold: float,
-    value_dependent: bool,
     enable_jit: bool = True,
 ) -> Model:
-    """Two stakeholders with `Q = 1 - 2a`; action 0 lands at 1, action 1 at `tail`."""
+    """Two members with `Q = 1 - 2a`; action 0 lands at 1, action 1 at `tail`."""
 
     def landing(action: ContinuousAction) -> FloatND:
         return jnp.where(action == 0.0, 1.0, tail)
 
-    def participation(Q_alice: FloatND) -> BoolND:
-        return Q_alice >= threshold
-
-    def ordinary(action: ContinuousAction) -> BoolND:
+    def participates(action: ContinuousAction) -> BoolND:
         return (1.0 - 2.0 * action) >= threshold
 
     grid = LinSpacedGrid(start=0.0, stop=2.0, n_points=3, off_grid=rule)
@@ -1722,11 +1745,7 @@ def _collective_model(
                     )
                 },
                 state_transitions={"wealth": landing},
-                constraints={
-                    "participation": ValueDependentConstraint(predicate=participation)
-                    if value_dependent
-                    else ordinary
-                },
+                constraints={"participates": participates},
             ),
             "terminal": Regime(
                 states={"wealth": grid},
@@ -1751,16 +1770,14 @@ def _collective_model(
 @pytest.mark.parametrize("runtime_checks", [False, True])
 @pytest.mark.parametrize("enable_jit", [False, True])
 @pytest.mark.parametrize("tail", [-1.0, 3.0])
-@pytest.mark.parametrize("value_dependent", [False, True])
 def test_raise_omits_the_action_excluded_by_any_constraint(
-    *, runtime_checks: bool, enable_jit: bool, tail: float, value_dependent: bool
+    *, runtime_checks: bool, enable_jit: bool, tail: float
 ) -> None:
     """Only the participating action lands, on the grid, whatever excludes the other."""
     solution = _collective_model(
         rule="raise",
         tail=tail,
         threshold=0.0,
-        value_dependent=value_dependent,
         enable_jit=enable_jit,
     ).solve(
         params={"discount_factor": 1.0},
@@ -1771,31 +1788,9 @@ def test_raise_omits_the_action_excluded_by_any_constraint(
 
 
 @pytest.mark.parametrize("tail", [-1.0, 3.0])
-def test_kernel_and_preflight_refuse_the_same_landing_in_the_same_words(
-    tail: float,
-) -> None:
-    """The solve kernel's refusal names the count exactly as the preflight does."""
-    messages = []
-    for value_dependent in (True, False):
-        model = _collective_model(
-            rule="raise", tail=tail, threshold=-2.0, value_dependent=value_dependent
-        )
-        with pytest.raises(OffGridStateError) as error:
-            model.solve(params={"discount_factor": 1.0}, log_level="off")
-        messages.append(str(error.value))
-    expected = (
-        "Off-grid next states: regime='source', target='terminal', period=0, "
-        "state='wealth', phase='solve', count=3"
-    )
-    assert messages == [expected, expected]
-
-
-@pytest.mark.parametrize("tail", [-1.0, 3.0])
 def test_raise_refuses_a_participating_exterior_action(tail: float) -> None:
     """When both actions participate, the exterior landing is reached."""
-    model = _collective_model(
-        rule="raise", tail=tail, threshold=-2.0, value_dependent=True
-    )
+    model = _collective_model(rule="raise", tail=tail, threshold=-2.0)
     with pytest.raises(OffGridStateError, match=r"regime='source'.*state='wealth'"):
         model.solve(params={"discount_factor": 1.0}, log_level="off")
 
@@ -1805,21 +1800,21 @@ def test_raise_accepts_participating_landings_on_the_closed_endpoints(
     tail: float,
 ) -> None:
     """Landings exactly on the grid's endpoints are on the grid."""
-    solution = _collective_model(
-        rule="raise", tail=tail, threshold=-2.0, value_dependent=True
-    ).solve(params={"discount_factor": 1.0}, log_level="off")
+    solution = _collective_model(rule="raise", tail=tail, threshold=-2.0).solve(
+        params={"discount_factor": 1.0}, log_level="off"
+    )
     np.testing.assert_array_equal(solution.values[0]["source"], np.ones((3, 2)))
 
 
 @pytest.mark.parametrize("rule", ["extrapolate", "clip_lookup", "clip_state"])
-def test_checked_counts_never_include_the_value_excluded_action(
+def test_checked_counts_never_include_the_excluded_action(
     *, rule: OffGrid, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """No reported count for the source includes the action participation excludes."""
+    """No reported count for the source includes the action the constraint excludes."""
     with caplog.at_level("INFO"):
-        _collective_model(
-            rule=rule, tail=3.0, threshold=0.0, value_dependent=True
-        ).solve(params={"discount_factor": 1.0}, log_level="debug")
+        _collective_model(rule=rule, tail=3.0, threshold=0.0).solve(
+            params={"discount_factor": 1.0}, log_level="debug"
+        )
     counts = [
         int(message.rsplit("count=", maxsplit=1)[1])
         for record in caplog.records
@@ -1875,7 +1870,7 @@ def _gate_model(*, gate_open: bool, projection: float, enable_jit: bool) -> Mode
                     "target": Gate(
                         predicate=gate,
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback", projection={"wealth": project}
                                 )

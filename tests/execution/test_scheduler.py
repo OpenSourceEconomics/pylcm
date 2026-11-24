@@ -514,10 +514,9 @@ def _node(*, regime: RegimeName, program: str = "main") -> ScheduledNode:
 
 
 def test_independent_units_on_disjoint_devices_share_one_wave() -> None:
-    """Two regimes without a same-period read between them dispatch together."""
+    """Two regimes on disjoint devices dispatch together."""
     waves = plan_period_waves(
         nodes=(_node(regime="a"), _node(regime="b")),
-        same_period_dependencies=MappingProxyType({}),
         device_sets=MappingProxyType({"a": frozenset({0}), "b": frozenset({1})}),
     )
 
@@ -529,27 +528,10 @@ def test_independent_units_on_disjoint_devices_share_one_wave() -> None:
     )
 
 
-def test_a_same_period_read_orders_the_reader_after_its_reference() -> None:
-    """A regime reading another regime's same-period value waits for it."""
-    waves = plan_period_waves(
-        nodes=(_node(regime="reader"), _node(regime="reference")),
-        same_period_dependencies=MappingProxyType({"reader": ("reference",)}),
-        device_sets=MappingProxyType(
-            {"reader": frozenset({0}), "reference": frozenset({1})}
-        ),
-    )
-
-    assert [tuple(unit.regime for unit in wave) for wave in waves] == [
-        ("reference",),
-        ("reader",),
-    ]
-
-
 def test_units_sharing_a_device_dispatch_in_separate_waves() -> None:
     """Concurrency needs disjoint submeshes; a shared device serializes."""
     waves = plan_period_waves(
         nodes=(_node(regime="a"), _node(regime="b")),
-        same_period_dependencies=MappingProxyType({}),
         device_sets=MappingProxyType({"a": frozenset({0, 1}), "b": frozenset({1})}),
     )
 
@@ -566,7 +548,6 @@ def test_the_programs_of_one_kernel_form_one_unit_in_topological_order() -> None
             _node(regime="a", program="keeper"),
             _node(regime="a", program="sweep"),
         ),
-        same_period_dependencies=MappingProxyType({}),
         device_sets=MappingProxyType({"a": frozenset({0})}),
     )
 
@@ -579,7 +560,6 @@ def test_declaration_order_breaks_ties_inside_a_wave() -> None:
     """Independent units keep the order their regimes were declared in."""
     waves = plan_period_waves(
         nodes=(_node(regime="second"), _node(regime="first")),
-        same_period_dependencies=MappingProxyType({}),
         device_sets=MappingProxyType(
             {"second": frozenset({0}), "first": frozenset({1})}
         ),
@@ -588,22 +568,11 @@ def test_declaration_order_breaks_ties_inside_a_wave() -> None:
     assert tuple(unit.regime for unit in waves[0]) == ("second", "first")
 
 
-def test_a_dependency_cycle_is_refused() -> None:
-    """Two regimes reading each other's same-period value cannot be scheduled."""
-    with pytest.raises(ExecutionPlanningError, match="cycle"):
-        plan_period_waves(
-            nodes=(_node(regime="a"), _node(regime="b")),
-            same_period_dependencies=MappingProxyType({"a": ("b",), "b": ("a",)}),
-            device_sets=MappingProxyType({"a": frozenset({0}), "b": frozenset({1})}),
-        )
-
-
 def test_a_regime_missing_from_device_sets_is_refused_by_name() -> None:
     """A regime with no declared device set is a planning error, not a KeyError."""
     with pytest.raises(ExecutionPlanningError, match="b"):
         plan_period_waves(
             nodes=(_node(regime="a"), _node(regime="b")),
-            same_period_dependencies=MappingProxyType({}),
             device_sets=MappingProxyType({"a": frozenset({0})}),
         )
 
@@ -616,7 +585,6 @@ def test_nodes_of_two_periods_are_refused() -> None:
                 _node(regime="a"),
                 ScheduledNode(period=2, regime="b", program="main"),
             ),
-            same_period_dependencies=MappingProxyType({}),
             device_sets=MappingProxyType({"a": frozenset({0}), "b": frozenset({1})}),
         )
 

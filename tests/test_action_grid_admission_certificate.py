@@ -56,16 +56,17 @@ def test_action_grid_controls_preserve_historical_mutation_populations() -> None
     # the fold-machinery removal deleted ten streaming fold controls and two
     # supplemental s02_status:fold_weight_* controls with theirs; the dead-code
     # removal deleted the three streaming_ev1 semantic-key controls with
-    # GridSearchEV1ActionReduction.
-    assert len(historical) == 395
+    # GridSearchEV1ActionReduction; the ValueDependentConstraint removal deleted
+    # value_access:grid_same_period_shifted with the same-period value access.
+    assert len(historical) == 394
     assert (
         _name_digest(historical)
-        == "2f1f0e0a6ce13bc16159eb8f154cb230e9912ccae149cef245c1b531c8ec03e9"
+        == "2f8d45afccfc746ab2fc3ad14505c7f087d4571092e83dedf2ce6dfc3780ff3b"
     )
-    assert len(registered) == 412
+    assert len(registered) == 411
     assert (
         _name_digest(registered)
-        == "39b2e6f7ea82047c1b09c454bbe353fb2cc1a89d81a588b5bd8a91f3ee02bb76"
+        == "ce4f0914b5cf4530600d46264ffe50b13254137d44de1abe78b5f787c9957612"
     )
     assert len(supplemental) == 94
     assert (

@@ -409,8 +409,8 @@ def _check_household_replay(
                 * 8,
                 jnp.int32,
             ),
-            "own_stakeholder": jnp.asarray(
-                [-1, model.stakeholder_names_to_ids["m"]] * 8, jnp.int32
+            "own_member": jnp.asarray(
+                [-1, model.member_names_to_ids["m"]] * 8, jnp.int32
             ),
             "experience": jnp.zeros(size, jnp.int32),
             "experience_f": jnp.asarray([0, 1] * 8, jnp.int32),
@@ -627,7 +627,7 @@ def test_collective_current_shocks_replay_same_original_subject_and_role() -> No
     model = _model(exits=True, enable_jit=True, width=1)
     solution = model.solve(params={}, log_level="off", runtime_checks=False)
     ids = model.regime_names_to_ids
-    roles = model.stakeholder_names_to_ids
+    roles = model.member_names_to_ids
     frame = (
         model.simulate(
             params={},
@@ -636,7 +636,7 @@ def test_collective_current_shocks_replay_same_original_subject_and_role() -> No
                 "period": jnp.zeros(8, jnp.int32),
                 "wealth": jnp.zeros(8),
                 "regime_id": jnp.full(8, ids["couple"], jnp.int32),
-                "own_stakeholder": jnp.asarray([roles["f"], roles["m"]] * 4, jnp.int32),
+                "own_member": jnp.asarray([roles["f"], roles["m"]] * 4, jnp.int32),
             },
             seed=17,
             log_level="off",
@@ -800,7 +800,7 @@ def test_collective_current_policy_preserves_names_under_reversed_declarations()
     """Reordering regimes and members keeps named values and one joint action."""
     model = _model(exits=True, enable_jit=True, width=3, reverse=True)
     solution = model.solve(params={}, log_level="off", runtime_checks=False)
-    members = model._regimes["couple"].stakeholders
+    members = model._regimes["couple"].member_axis
     assert members == ("m", "f")
     for member, expected in (("f", [4.0, 4.0, 8.0]), ("m", [4.0, 4.0, 4.0])):
         assert_array_almost_equal(
@@ -818,9 +818,8 @@ def test_collective_current_policy_preserves_names_under_reversed_declarations()
                 "regime_id": jnp.full(
                     8, model.regime_names_to_ids["couple"], jnp.int32
                 ),
-                "own_stakeholder": jnp.asarray(
-                    [model.stakeholder_names_to_ids[member] for member in ("f", "m")]
-                    * 4,
+                "own_member": jnp.asarray(
+                    [model.member_names_to_ids[member] for member in ("f", "m")] * 4,
                     jnp.int32,
                 ),
             },

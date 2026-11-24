@@ -3,7 +3,7 @@
 The streamed GridSearch route enumerates the canonical action product in fixed-width
 blocks and combines them with a mergeable hard-max state. It preserves value,
 feasibility, tie-breaking, and global action identity across block boundaries. The
-collective route retains every stakeholder's value at one shared household winner;
+collective route retains every member's value at one shared household winner;
 the EV1 route hard-maxes continuous cells within each discrete prefix before logsum.
 Compiler fusion, rematerialization, and allocation still determine measured runtime
 and peak memory. Supported co-mapped routes preserve device-local continuation
@@ -278,30 +278,30 @@ def build_streaming_collective_max_Q_over_a(
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
     action_names: tuple[ActionName, ...],
     block_width: int,
-    stakeholders: tuple[str, ...],
+    members: tuple[str, ...],
     weights: Mapping[str, FloatND | float],
 ) -> Callable[..., CollectiveHardMaxResult | BoundedResult[CollectiveHardMaxResult]]:
     """Build the fixed-state collective hard-max callable.
 
-    Each action cell is evaluated once through Q_and_F. Its trailing stakeholder
+    Each action cell is evaluated once through Q_and_F. Its trailing member
     vector is scalarized with the same zero-safe, canonical household objective as
-    dense collective_readout. The collective reduction then retains every stakeholder
+    dense collective_readout. The collective reduction then retains every member
     value at one global C-order winner and keeps the empty feasible set explicit.
     """
     _validate_streaming_configuration(
         action_names=action_names, block_width=block_width
     )
-    if not stakeholders:
-        raise ValueError("stakeholders must not be empty")
-    if len(set(stakeholders)) != len(stakeholders):
-        raise ValueError("stakeholders must not contain duplicates")
-    if set(stakeholders) != set(weights):
-        raise ValueError("stakeholders and weights must have identical keys")
+    if not members:
+        raise ValueError("members must not be empty")
+    if len(set(members)) != len(members):
+        raise ValueError("members must not contain duplicates")
+    if set(members) != set(weights):
+        raise ValueError("members and weights must have identical keys")
     return _StreamingCollectiveHardMax(
         Q_and_F=Q_and_F,
         action_names=action_names,
         block_width=block_width,
-        stakeholders=stakeholders,
+        members=members,
         weights=weights,
     )
 
@@ -383,7 +383,7 @@ def _bounded_hard_max(
     action_names: tuple[ActionName, ...],
     block_width: int,
     kwargs: dict[ReferenceName, QAndFArg],
-    stakeholders: tuple[str, ...] | None = None,
+    member_axis: tuple[str, ...] | None = None,
     weights: Mapping[str, FloatND | float] | None = None,
 ) -> BoundedResult[HardMaxResult | CollectiveHardMaxResult]:
     """OR actual action-window validity beside the existing hard-max accumulator."""
@@ -391,22 +391,21 @@ def _bounded_hard_max(
     if not action_names:
         result = evaluator(**kwargs)
         values, feasible = result.output
-        if stakeholders is not None:
+        if member_axis is not None:
             if weights is None:
                 raise TypeError("Collective bound reduction requires Pareto weights")
             block_values = values[None, ...]
             collective_reduced = COLLECTIVE_HARD_MAX_REDUCTION.add(
                 accumulator=COLLECTIVE_HARD_MAX_REDUCTION.initialize(
-                    stakeholder_template=jnp.zeros_like(values)
+                    member_template=jnp.zeros_like(values)
                 ),
                 objectives=_weighted_sum(
-                    stakeholder_Q={
-                        name: block_values[..., i]
-                        for i, name in enumerate(stakeholders)
+                    member_Q={
+                        name: block_values[..., i] for i, name in enumerate(member_axis)
                     },
                     weights=weights,
                 ),
-                stakeholder_values=block_values,
+                member_values=block_values,
                 feasible=feasible[None],
                 action_ids=jnp.asarray([0], dtype=jnp.int32),
             )
@@ -451,13 +450,13 @@ def _bounded_hard_max(
         )
         result = jax.vmap(evaluate_one)(selected)
         values, feasible = result.output
-        if stakeholders is None:
+        if member_axis is None:
             _validate_block_Q_and_F(values=values, feasible=feasible)
         else:
             _validate_collective_block_Q_and_F(
-                stakeholder_values=values,
+                member_values=values,
                 feasible=feasible,
-                n_stakeholders=len(stakeholders),
+                n_members=len(member_axis),
             )
         return BoundedResult(
             output=(values, feasible & active, identities),
@@ -471,7 +470,7 @@ def _bounded_hard_max(
 
     def add_block(*, accumulator: _HardMaxState, block: _Block) -> _HardMaxState:
         values, feasible, identities = block
-        if stakeholders is None:
+        if member_axis is None:
             return HARD_MAX_REDUCTION.add(
                 accumulator=cast("HardMaxAccumulator", accumulator),
                 values=values,
@@ -483,12 +482,10 @@ def _bounded_hard_max(
         return COLLECTIVE_HARD_MAX_REDUCTION.add(
             accumulator=cast("CollectiveHardMaxAccumulator", accumulator),
             objectives=_weighted_sum(
-                stakeholder_Q={
-                    name: values[..., i] for i, name in enumerate(stakeholders)
-                },
+                member_Q={name: values[..., i] for i, name in enumerate(member_axis)},
                 weights=weights,
             ),
-            stakeholder_values=values,
+            member_values=values,
             feasible=feasible,
             action_ids=identities,
         )
@@ -499,8 +496,8 @@ def _bounded_hard_max(
     template = jnp.zeros(trace.shapes[0].shape[1:], dtype=trace.shapes[0].dtype)
     initial = (
         HARD_MAX_REDUCTION.initialize(value_template=template)
-        if stakeholders is None
-        else COLLECTIVE_HARD_MAX_REDUCTION.initialize(stakeholder_template=template)
+        if member_axis is None
+        else COLLECTIVE_HARD_MAX_REDUCTION.initialize(member_template=template)
     )
     carry = BoundedResult(
         output=_typed_like(accumulator=initial, arrays=trace.read_arrays),
@@ -538,7 +535,7 @@ def _bounded_hard_max(
             HARD_MAX_REDUCTION.finalize(
                 accumulator=cast("HardMaxAccumulator", carry.output)
             )
-            if stakeholders is None
+            if member_axis is None
             else COLLECTIVE_HARD_MAX_REDUCTION.finalize(
                 accumulator=cast("CollectiveHardMaxAccumulator", carry.output)
             )
@@ -772,7 +769,7 @@ class _StreamingCollectiveHardMax:
     Q_and_F: Callable[..., tuple[FloatND, BoolND]]
     action_names: tuple[ActionName, ...]
     block_width: int
-    stakeholders: tuple[str, ...]
+    members: tuple[str, ...]
     weights: Mapping[str, FloatND | float]
 
     def __call__(
@@ -786,14 +783,14 @@ class _StreamingCollectiveHardMax:
                     action_names=self.action_names,
                     block_width=self.block_width,
                     kwargs=kwargs,
-                    stakeholders=self.stakeholders,
+                    member_axis=self.members,
                     weights=self.weights,
                 ),
             )
         if not self.action_names:
             return _reduce_collective_no_action(
                 Q_and_F=self.Q_and_F,
-                stakeholders=self.stakeholders,
+                members=self.members,
                 weights=self.weights,
                 kwargs=kwargs,
             )
@@ -813,16 +810,16 @@ class _StreamingCollectiveHardMax:
             n_actions=n_actions,
             block_width=self.block_width,
             block_offsets=jnp.arange(self.block_width, dtype=jnp.int32),
-            stakeholders=self.stakeholders,
+            members=self.members,
             weights=self.weights,
         )
         block = _trace_block(evaluate_block=evaluate_block)
-        stakeholder_values = block.shapes[1]
+        member_values = block.shapes[1]
         accumulator = _scan_collective_blocks(
             accumulator=_typed_like(
                 accumulator=COLLECTIVE_HARD_MAX_REDUCTION.initialize(
-                    stakeholder_template=jnp.zeros(
-                        stakeholder_values.shape[1:], dtype=stakeholder_values.dtype
+                    member_template=jnp.zeros(
+                        member_values.shape[1:], dtype=member_values.dtype
                     )
                 ),
                 arrays=block.read_arrays,
@@ -1044,7 +1041,7 @@ def _evaluate_collective_block(
     n_actions: int,
     block_width: int,
     block_offsets: jax.Array,
-    stakeholders: tuple[str, ...],
+    members: tuple[str, ...],
     weights: Mapping[str, FloatND | float],
 ) -> _CollectiveBlock:
     """Evaluate and scalarize one padded collective action block."""
@@ -1062,22 +1059,21 @@ def _evaluate_collective_block(
         action_sizes=action_sizes,
         fixed_kwargs=fixed_kwargs,
     )
-    stakeholder_values, feasible = jax.vmap(evaluate_one)(global_ids)
-    stakeholder_values = jnp.asarray(stakeholder_values)
+    member_values, feasible = jax.vmap(evaluate_one)(global_ids)
+    member_values = jnp.asarray(member_values)
     feasible = jnp.asarray(feasible)
     _validate_collective_block_Q_and_F(
-        stakeholder_values=stakeholder_values,
+        member_values=member_values,
         feasible=feasible,
-        n_stakeholders=len(stakeholders),
+        n_members=len(members),
     )
     objectives = _weighted_sum(
-        stakeholder_Q={
-            name: stakeholder_values[..., index]
-            for index, name in enumerate(stakeholders)
+        member_Q={
+            name: member_values[..., index] for index, name in enumerate(members)
         },
         weights=weights,
     )
-    return objectives, stakeholder_values, feasible & valid, global_ids
+    return objectives, member_values, feasible & valid, global_ids
 
 
 # keyword-only-exempt: library-callback=jax.vmap
@@ -1529,14 +1525,14 @@ def _start_collective_reduction(
     *, block: _CollectiveBlock
 ) -> CollectiveHardMaxAccumulator:
     """Seed a collective hard-max reduction from one evaluated block."""
-    objectives, stakeholder_values, feasible, global_ids = block
+    objectives, member_values, feasible, global_ids = block
     accumulator = COLLECTIVE_HARD_MAX_REDUCTION.initialize(
-        stakeholder_template=jnp.zeros_like(stakeholder_values[0])
+        member_template=jnp.zeros_like(member_values[0])
     )
     return COLLECTIVE_HARD_MAX_REDUCTION.add(
         accumulator=accumulator,
         objectives=objectives,
-        stakeholder_values=stakeholder_values,
+        member_values=member_values,
         feasible=feasible,
         action_ids=global_ids,
     )
@@ -1581,11 +1577,11 @@ def _add_collective_block(
     block: _CollectiveBlock,
 ) -> CollectiveHardMaxAccumulator:
     """Merge one collective block into the household hard-max state."""
-    objectives, stakeholder_values, feasible, global_ids = block
+    objectives, member_values, feasible, global_ids = block
     return COLLECTIVE_HARD_MAX_REDUCTION.add(
         accumulator=accumulator,
         objectives=objectives,
-        stakeholder_values=stakeholder_values,
+        member_values=member_values,
         feasible=feasible,
         action_ids=global_ids,
     )
@@ -1594,28 +1590,26 @@ def _add_collective_block(
 def _reduce_collective_no_action(
     *,
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
-    stakeholders: tuple[str, ...],
+    members: tuple[str, ...],
     weights: Mapping[str, FloatND | float],
     kwargs: dict[ReferenceName, QAndFArg],
 ) -> CollectiveHardMaxResult:
     """Treat a collective empty action product as one shared identity cell."""
-    stakeholder_values, feasible = Q_and_F(**kwargs)
-    stakeholder_values = jnp.asarray(stakeholder_values)
+    member_values, feasible = Q_and_F(**kwargs)
+    member_values = jnp.asarray(member_values)
     feasible = jnp.asarray(feasible)
     _validate_collective_scalar_Q_and_F(
-        stakeholder_values=stakeholder_values,
+        member_values=member_values,
         feasible=feasible,
-        n_stakeholders=len(stakeholders),
+        n_members=len(members),
     )
     objective = _weighted_sum(
-        stakeholder_Q={
-            name: stakeholder_values[index] for index, name in enumerate(stakeholders)
-        },
+        member_Q={name: member_values[index] for index, name in enumerate(members)},
         weights=weights,
     )
     block = (
         objective[jnp.newaxis],
-        stakeholder_values[jnp.newaxis, :],
+        member_values[jnp.newaxis, :],
         feasible[jnp.newaxis],
         jnp.array([0], dtype=jnp.int32),
     )
@@ -1664,18 +1658,18 @@ def _validate_block_Q_and_F(*, values: jax.Array, feasible: jax.Array) -> None:
 
 def _validate_collective_scalar_Q_and_F(
     *,
-    stakeholder_values: jax.Array,
+    member_values: jax.Array,
     feasible: jax.Array,
-    n_stakeholders: int,
+    n_members: int,
 ) -> None:
     """Validate one collective action cell."""
     if (
-        stakeholder_values.ndim != 1
-        or stakeholder_values.shape[-1] != n_stakeholders
+        member_values.ndim != 1
+        or member_values.shape[-1] != n_members
         or feasible.ndim != 0
     ):
         raise ValueError(
-            "Collective action streaming requires one trailing stakeholder "
+            "Collective action streaming requires one trailing member "
             "axis and scalar feasibility at each action cell"
         )
     if feasible.dtype != jnp.bool_:
@@ -1684,19 +1678,19 @@ def _validate_collective_scalar_Q_and_F(
 
 def _validate_collective_block_Q_and_F(
     *,
-    stakeholder_values: jax.Array,
+    member_values: jax.Array,
     feasible: jax.Array,
-    n_stakeholders: int,
+    n_members: int,
 ) -> None:
     """Validate a vmapped collective block against the streaming contract."""
     if (
-        stakeholder_values.ndim != _COLLECTIVE_BLOCK_NDIM
-        or stakeholder_values.shape[-1] != n_stakeholders
+        member_values.ndim != _COLLECTIVE_BLOCK_NDIM
+        or member_values.shape[-1] != n_members
         or feasible.ndim != 1
-        or stakeholder_values.shape[0] != feasible.shape[0]
+        or member_values.shape[0] != feasible.shape[0]
     ):
         raise ValueError(
-            "Collective action streaming requires one trailing stakeholder "
+            "Collective action streaming requires one trailing member "
             "axis and scalar feasibility at each action cell"
         )
     if feasible.dtype != jnp.bool_:

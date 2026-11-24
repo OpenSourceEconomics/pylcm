@@ -33,7 +33,6 @@ from lcm import (
     Periods,
     Regime,
     Unilateral,
-    ValueDependentConstraint,
     categorical,
     fixed_transition,
 )
@@ -499,10 +498,6 @@ def _past_the_grid(wealth: FloatND) -> FloatND:
     return wealth + 2.0
 
 
-def _admit_feasible(Q_f: FloatND) -> BoolND:
-    return Q_f > -jnp.inf
-
-
 def _rare_pair(
     *,
     p: float,
@@ -523,9 +518,8 @@ def _rare_pair(
     makes two nodes unavailable, and a fair draw in a group of its own, which the
     stay reads, gives the node standing for them two rows.
 
-    With `landing` the source is a household of two that keeps every action by a
-    value constraint, so its stay problem counts its landings in the query, and
-    staying moves its wealth past a raise-rule grid in a second period. The
+    With `landing` the source is a household of two, and staying moves its wealth
+    past a raise-rule grid in a second period. The
     destination is worth `leave` instead of zero. With `drawn` the exit choice
     draws the group's nodes where the exit is available and adds one sample for
     the others.
@@ -562,11 +556,7 @@ def _rare_pair(
                 if landing
                 else utility
             },
-            constraints={"admit": ValueDependentConstraint(predicate=_admit_feasible)}
-            if landing
-            else {"never_feasible": _never_feasible}
-            if infeasible
-            else {},
+            constraints={"never_feasible": _never_feasible} if infeasible else {},
             shocks=tuple(shocks),
             state_transitions={"wealth": _past_the_grid} if landing else {},
             exit=Exit(

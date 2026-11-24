@@ -8,22 +8,19 @@ process's whole continuous support.
 
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
 from lcm import (
     AgeGrid,
-    CollectiveUtility,
     DiscreteGrid,
     Model,
     NormalIIDProcess,
-    ProjectedRegimeValue,
     Regime,
-    ValueDependentConstraint,
     categorical,
 )
 from lcm.exceptions import InvalidInitialConditionsError, InvalidSimulationInputError
 from lcm.typing import (
-    BoolND,
     ContinuousState,
     DiscreteAction,
     DiscreteState,
@@ -40,8 +37,7 @@ class Work:
 
 @categorical(ordered=False)
 class RegimeId:
-    couple: ScalarInt
-    single: ScalarInt
+    worker: ScalarInt
 
 
 _NODES = (-2.0, -1.0, 0.0, 1.0, 2.0)
@@ -70,28 +66,12 @@ _OFF_NODES = (
 )
 
 
-def _single(z: ContinuousState) -> FloatND:
-    return z
+def _utility_by_code(*, z_code: DiscreteState, work: DiscreteAction) -> FloatND:
+    return jnp.asarray(_NODES)[z_code] + 0.125 * work
 
 
-def _wife(*, z: ContinuousState, work: DiscreteAction) -> FloatND:
-    return z + 0.125 * (2.0 * work - 1.0)
-
-
-def _husband(*, z: ContinuousState, work: DiscreteAction) -> FloatND:
-    return 10.0 * (1.0 - work) + 0.0 * z
-
-
-def _project_node(z_code: DiscreteState) -> ContinuousState:
-    return jnp.asarray(_NODES)[z_code]
-
-
-def _identity(z: ContinuousState) -> ContinuousState:
-    return z
-
-
-def _participates(*, Q_f: FloatND, V_ref: FloatND) -> BoolND:
-    return Q_f >= V_ref
+def _utility_by_value(*, z: ContinuousState, work: DiscreteAction) -> FloatND:
+    return z + 0.125 * work
 
 
 def _model(*, code: bool, enable_jit: bool = False) -> Model:
@@ -103,41 +83,27 @@ def _model(*, code: bool, enable_jit: bool = False) -> Model:
         gauss_hermite=False,
         simulated_draws="nodes",
     )
-    couple = Regime(
+    worker = Regime(
         states={"z": shock},
         actions={"work": DiscreteGrid(category_class=Work)},
-        functions={"utility": CollectiveUtility(utilities={"f": _wife, "m": _husband})},
-        constraints={
-            "participation": ValueDependentConstraint(
-                predicate=_participates,
-                references={
-                    "V_ref": ProjectedRegimeValue(
-                        regime="single",
-                        projection={"z": _project_node if code else _identity},
-                    )
-                },
-            )
-        },
+        functions={"utility": _utility_by_code if code else _utility_by_value},
     )
     return Model(
-        regimes={
-            "couple": couple,
-            "single": Regime(states={"z": shock}, functions={"utility": _single}),
-        },
+        regimes={"worker": worker},
         edges={},
         ages=AgeGrid(exact_values=(0,)),
-        initial_nodes={0: "couple"},
+        initial_nodes={0: "worker"},
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
     )
 
 
-def _simulate(*, model: Model, value: float, entry: str):
-    params = {"couple": {}, "single": {}}
+def _simulate(*, model: Model, value: float, entry: str) -> pd.DataFrame:
+    params = {"worker": {}}
     initial = {
         "z": jnp.array([0.0 if entry == "shock_path" else value]),
         "age": jnp.array([0.0]),
-        "regime_id": jnp.array([model.regime_names_to_ids["couple"]], dtype=jnp.int32),
+        "regime_id": jnp.array([model.regime_names_to_ids["worker"]], dtype=jnp.int32),
     }
     return model.simulate(
         params=params,
@@ -150,13 +116,13 @@ def _simulate(*, model: Model, value: float, entry: str):
 
 
 @pytest.mark.parametrize("value", _OFF_NODES)
-def test_off_node_initial_value_is_refused_where_its_code_is_read(value: float):
+def test_off_node_initial_value_is_refused_where_its_code_is_read(value: float) -> None:
     with pytest.raises(InvalidInitialConditionsError, match="off the process's nodes"):
         _simulate(model=_model(code=True), value=value, entry="initial")
 
 
 @pytest.mark.parametrize("value", _OFF_NODES)
-def test_off_node_shock_path_is_refused_where_its_code_is_read(value: float):
+def test_off_node_shock_path_is_refused_where_its_code_is_read(value: float) -> None:
     with pytest.raises(
         InvalidSimulationInputError, match=r"off the process's nodes|inadmissible"
     ):
@@ -164,7 +130,7 @@ def test_off_node_shock_path_is_refused_where_its_code_is_read(value: float):
 
 
 @pytest.mark.parametrize("entry", ["initial", "shock_path"])
-def test_off_node_value_is_refused_under_jit(entry: str):
+def test_off_node_value_is_refused_under_jit(entry: str) -> None:
     with pytest.raises(
         (InvalidInitialConditionsError, InvalidSimulationInputError), match="node"
     ):
@@ -173,27 +139,13 @@ def test_off_node_value_is_refused_under_jit(entry: str):
 
 @pytest.mark.parametrize("entry", ["initial", "shock_path"])
 @pytest.mark.parametrize("value", _NODES)
-def test_node_value_is_held_where_its_code_is_read(*, entry: str, value: float):
+def test_node_value_is_held_where_its_code_is_read(*, entry: str, value: float) -> None:
     panel = _simulate(model=_model(code=True), value=value, entry=entry)
     np.testing.assert_array_equal(panel["z"].to_numpy(), np.array([value]))
 
 
 @pytest.mark.parametrize("entry", ["initial", "shock_path"])
-@pytest.mark.parametrize("value", _NODES)
-def test_node_value_read_by_code_admits_only_work(*, entry: str, value: float):
-    panel = _simulate(model=_model(code=True), value=value, entry=entry)
-    assert panel["work"].tolist() == ["on"]
-
-
-@pytest.mark.parametrize("entry", ["initial", "shock_path"])
 @pytest.mark.parametrize("value", [-0.25, 0.25])
-def test_off_node_value_read_by_value_is_held(*, entry: str, value: float):
+def test_off_node_value_read_by_value_is_held(*, entry: str, value: float) -> None:
     panel = _simulate(model=_model(code=False), value=value, entry=entry)
     np.testing.assert_array_equal(panel["z"].to_numpy(), np.array([value]))
-
-
-@pytest.mark.parametrize("entry", ["initial", "shock_path"])
-@pytest.mark.parametrize("value", [-0.25, 0.25])
-def test_off_node_value_read_by_value_admits_only_work(*, entry: str, value: float):
-    panel = _simulate(model=_model(code=False), value=value, entry=entry)
-    assert panel["work"].tolist() == ["on"]

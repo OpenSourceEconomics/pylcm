@@ -97,7 +97,7 @@ class SimulationChunkInputs(TypedDict):
     ages: simulation.TimeAxis
     seed: int
     logger: simulation.logging.Logger
-    initial_own_stakeholder: simulation.Int1D
+    initial_own_member: simulation.Int1D
     period_to_regime_to_sim_policy: NotRequired[
         simulation.PeriodToRegimeToSimulationPolicy | None
     ]

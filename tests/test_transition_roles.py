@@ -1,7 +1,7 @@
-"""A singleton source enters a collective target as a declared stakeholder.
+"""A singleton source enters a collective target as a declared member.
 
 `Transition(roles={"couple": "f"})` says that a row moving from a singleton source
-into the collective regime `couple` continues there as its stakeholder `f`. It is
+into the collective regime `couple` continues there as its member `f`. It is
 the always-open gate a model would otherwise write by hand, so the two declarations
 solve and simulate identically. A row landing where the target has no feasible
 action is refused as on a plain edge.
@@ -24,11 +24,11 @@ from lcm import (
     Gate,
     JointTransition,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     Phased,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -200,8 +200,8 @@ def _hand_gate() -> Gate:
     return Gate(
         predicate=marriage_gate,
         routes={
-            "own": StakeholderRoute(
-                target_stakeholder="f",
+            "own": MemberRoute(
+                target_member="f",
                 fallback=ProjectedRegimeValue(
                     regime="single", projection={"wealth": project_wealth}
                 ),
@@ -215,15 +215,15 @@ def _exact_gate() -> Gate:
     return Gate(
         predicate=role_gate_is_open,
         routes={
-            "f": StakeholderRoute(
-                target_stakeholder="f",
+            "f": MemberRoute(
+                target_member="f",
                 fallback=ProjectedRegimeValue(
                     regime="couple",
                     projection={
                         "wealth": fixed_transition("wealth"),
                         "partner_wealth": fixed_transition("partner_wealth"),
                     },
-                    stakeholder="f",
+                    member="f",
                 ),
             )
         },
@@ -407,13 +407,13 @@ def test_roles_fingerprint_equals_the_gate_spelled_as_the_lowering() -> None:
 
 
 def test_a_row_entering_through_roles_carries_the_declared_role() -> None:
-    """Every row, all of whom marry, is the couple's stakeholder `f` at period 1."""
+    """Every row, all of whom marry, is the couple's member `f` at period 1."""
     _, panel, _ = _solve_and_simulate(
         model=build_model(edge_form="roles"), marriage_rate=1.0
     )
     married = panel.loc[panel["period"] == 1]
     assert (
-        married[["regime_name", "own_stakeholder"]].astype(str).to_numpy().tolist()
+        married[["regime_name", "own_member"]].astype(str).to_numpy().tolist()
         == [["couple", "f"]] * 8
     )
 
@@ -498,7 +498,7 @@ def _marriage_law() -> ByAge:
         ),
         (
             {"couple": "x"},
-            r"'single'.*'couple'.*'x'.*stakeholders of 'couple' are \('f', 'm'\)",
+            r"'single'.*'couple'.*'x'.*members of 'couple' are \('f', 'm'\)",
         ),
         (
             {"couple": "f", "couple_end": "f"},
@@ -546,6 +546,6 @@ def test_a_target_with_both_a_role_and_a_gate_is_refused() -> None:
 
 
 def test_a_plain_edge_into_a_collective_target_points_at_roles() -> None:
-    """Without `roles`, a gate or a participation check, the edge stays refused."""
-    with pytest.raises(NotImplementedError, match=r"stakeholders.*roles="):
+    """Without `roles` or a gate, the edge stays refused."""
+    with pytest.raises(NotImplementedError, match=r"members.*roles="):
         _model_with_edges(_edges_with_single(single=Transition(law=_marriage_law())))

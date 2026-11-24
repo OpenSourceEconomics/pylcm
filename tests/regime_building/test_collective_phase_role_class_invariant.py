@@ -18,7 +18,7 @@ resolve. The invariant is generic over `PHASE_ARGS`, so it re-arms by itself if 
 is added.
 
 Both twins reach the continuation through one builder, `_get_compute_CE`, which takes
-the stakeholder axis as a parameter, so the pool travels two hops and the invariant
+the member axis as a parameter, so the pool travels two hops and the invariant
 follows it over both: the twins are pinned to hand `continuation_pool` to the
 aggregator, and `_build_target_continuation` is pinned to resolve BOTH continuation
 roles -- the state law and the stochastic weights -- against the pool it was handed.
@@ -28,7 +28,7 @@ constructible one frame down, which is where the per-role guard sits.
 The mutation catalogue below is the evidence that the checker has teeth: each
 mutation is one member of the counterexample class (drop the argument from the
 signature, drop it at the dispatch, pair a role with the wrong pool, skip age
-specialization, hide a builder in a stakeholder-only branch), and every one must be
+specialization, hide a builder in a member-only branch), and every one must be
 rejected.
 
 Checked against the REAL history, not only against synthetic mutations: at `f0f7173`
@@ -54,7 +54,7 @@ SRC = Path(__file__).resolve().parents[2] / "src"
 
 PHASE_ARGS = frozenset({"continuation_functions"})
 
-# Files with a `stakeholders is not None` branch that is meant to be value/shape
+# Files with a `member_axis is not None` branch that is meant to be value/shape
 # selection, NOT builder dispatch. The invariant pins that classification.
 OTHER_PATHS = (
     "_lcm/regime_building/max_Q_over_a.py",
@@ -163,8 +163,8 @@ def assert_role_default(*, node: ast.AST, default: str, override: str) -> None:
     assert_name(node=node.orelse, expected=override)
 
 
-def stakeholder_test(node: ast.AST) -> bool:
-    return "stakeholders" in ast.unparse(node)
+def member_test(node: ast.AST) -> bool:
+    return "member_axis" in ast.unparse(node)
 
 
 def assert_every_twin_exposes_its_singleton_s_phase_roles(
@@ -207,11 +207,11 @@ def assert_the_collective_builders_route_each_role(
         override="continuation_functions",
     )
 
-    # The FLOW is the other half of the split: each stakeholder's within-period
+    # The FLOW is the other half of the split: each member's within-period
     # utility and the shared feasibility must be built from `functions` -- the pool
     # of the phase being built -- never from the perceived continuation pool.
     u_calls = call_named(node=collective, name="_get_U_and_F")
-    assert len(u_calls) == 1  # one call, building every stakeholder's felicity at once
+    assert len(u_calls) == 1  # one call, building every member's felicity at once
     u_kw = keyword_map(u_calls[0])
     assert_name(node=u_kw["functions"], expected="functions")
     assert_name(node=u_kw["constraints"], expected="constraints")
@@ -334,10 +334,10 @@ def assert_every_dispatch_threads_every_role(
         )
 
 
-def assert_no_hidden_builder_in_a_stakeholder_branch(
+def assert_no_hidden_builder_in_a_member_branch(
     other_trees: dict[str, ast.Module],
 ) -> None:
-    """A stakeholder-only branch outside the central dispatcher builds nothing.
+    """A member-only branch outside the central dispatcher builds nothing.
 
     Secretly constructing another Q/F or phase-resolved transition DAG there is how
     a collective path escapes the twin-pair sweep entirely.
@@ -347,7 +347,7 @@ def assert_no_hidden_builder_in_a_stakeholder_branch(
         for branch in ast.walk(tree):
             if not isinstance(branch, ast.If | ast.IfExp):
                 continue
-            if not stakeholder_test(branch.test):
+            if not member_test(branch.test):
                 continue
             names = {
                 dotted(call.func)
@@ -380,7 +380,7 @@ def check_class_invariant(
     assert_the_collective_builders_route_each_role(qdefs)
     assert_the_shared_continuation_builder_reads_its_own_pool(qdefs)
     assert_every_dispatch_threads_every_role(pdefs)
-    assert_no_hidden_builder_in_a_stakeholder_branch(other_trees)
+    assert_no_hidden_builder_in_a_member_branch(other_trees)
 
 
 @dataclass(frozen=True)
@@ -392,7 +392,9 @@ class Mutation:
 def remove_kwonly_arg(
     *, func_name: FunctionName, arg_name: ReferenceName
 ) -> Callable[..., None]:
-    def mutate(*, q_tree, p_tree, others):
+    def mutate(
+        *, q_tree: ast.Module, p_tree: ast.Module, others: dict[str, ast.Module]
+    ) -> None:
         _ = p_tree, others
         func = functions(q_tree)[func_name]
         index = next(
@@ -407,7 +409,9 @@ def remove_kwonly_arg(
 def remove_call_keyword(
     *, callee: str, keyword: str, occurrence: int = 0
 ) -> Callable[..., None]:
-    def mutate(*, q_tree, p_tree, others):
+    def mutate(
+        *, q_tree: ast.Module, p_tree: ast.Module, others: dict[str, ast.Module]
+    ) -> None:
         _ = q_tree, others
         call = call_named(node=p_tree, name=callee)[occurrence]
         before = len(call.keywords)
@@ -424,7 +428,9 @@ def replace_assignment(
     func_name: FunctionName = "get_Q_and_F_collective",
     occurrence: int = 0,
 ) -> Callable[..., None]:
-    def mutate(*, q_tree, p_tree, others):
+    def mutate(
+        *, q_tree: ast.Module, p_tree: ast.Module, others: dict[str, ast.Module]
+    ) -> None:
         _ = p_tree, others
         func = functions(q_tree)[func_name]
         replacement = ast.parse(expression, mode="eval").body
@@ -450,7 +456,9 @@ def replace_call_keyword_in(
     behaviour it changes.
     """
 
-    def mutate(*, q_tree, p_tree, others):
+    def mutate(
+        *, q_tree: ast.Module, p_tree: ast.Module, others: dict[str, ast.Module]
+    ) -> None:
         _ = p_tree, others
         func = functions(q_tree)[func_name]
         call = call_named(node=func, name=callee)[0]
@@ -471,7 +479,9 @@ def replace_call_keyword_in_collective(
     )
 
 
-def drop_age_specialization(*, q_tree, p_tree, others):
+def drop_age_specialization(
+    *, q_tree: ast.Module, p_tree: ast.Module, others: dict[str, ast.Module]
+) -> None:
     _ = q_tree, others
     func = functions(p_tree)["_build_Q_and_F_per_period"]
     call = call_named(node=func, name="get_Q_and_F_collective")[0]
@@ -479,13 +489,15 @@ def drop_age_specialization(*, q_tree, p_tree, others):
     kw.value = ast.Name(id="continuation_functions", ctx=ast.Load())
 
 
-def inject_hidden_builder(*, q_tree, p_tree, others):
+def inject_hidden_builder(
+    *, q_tree: ast.Module, p_tree: ast.Module, others: dict[str, ast.Module]
+) -> None:
     _ = q_tree, p_tree
     tree = others["_lcm/regime_building/max_Q_over_a.py"]
     branch = next(
         node
         for node in ast.walk(tree)
-        if isinstance(node, ast.If) and stakeholder_test(node.test)
+        if isinstance(node, ast.If) and member_test(node.test)
     )
     branch.body.insert(
         0,
@@ -606,16 +618,14 @@ def mutation_catalog() -> list[Mutation]:
                 ),
             ),
             Mutation("drop_collective_age_specialization", drop_age_specialization),
-            Mutation(
-                "inject_hidden_builder_in_stakeholder_branch", inject_hidden_builder
-            ),
+            Mutation("inject_hidden_builder_in_member_branch", inject_hidden_builder),
         ]
     )
     return mutations
 
 
 @pytest.fixture(scope="module")
-def production_trees():
+def production_trees() -> tuple[ast.Module, ast.Module, dict[str, ast.Module]]:
     return (
         parse(SRC / "_lcm/regime_building/Q_and_F.py"),
         parse(SRC / "_lcm/regime_building/processing.py"),
@@ -623,7 +633,9 @@ def production_trees():
     )
 
 
-def test_the_production_source_satisfies_the_class_invariant(production_trees):
+def test_the_production_source_satisfies_the_class_invariant(
+    production_trees: tuple[ast.Module, ast.Module, dict[str, ast.Module]],
+) -> None:
     """Guard the guard: the invariant must hold on the unmodified tree."""
     q_tree, p_tree, others = production_trees
     check_class_invariant(q_tree=q_tree, processing_tree=p_tree, other_trees=others)
@@ -633,11 +645,13 @@ def test_the_production_source_satisfies_the_class_invariant(production_trees):
     "mutation", mutation_catalog(), ids=lambda mutation: mutation.name
 )
 def test_every_member_of_the_counterexample_class_is_rejected(
-    *, mutation, production_trees
-):
+    *,
+    mutation: Mutation,
+    production_trees: tuple[ast.Module, ast.Module, dict[str, ast.Module]],
+) -> None:
     """Each mutation is one way a collective path can drop or misroute a phase role."""
     q_tree, p_tree, others = (copy.deepcopy(tree) for tree in production_trees)
     mutation.apply(q_tree=q_tree, p_tree=p_tree, others=others)
 
     with pytest.raises((AssertionError, KeyError, StopIteration)):
-        check_class_invariant(q_tree=q_tree, processing_tree=p_tree, other_trees=others)
+        check_class_invariant(q_tree=q_tree, processing_tree=p_tree, other_trees=others)  # ty: ignore[invalid-argument-type]

@@ -14,8 +14,8 @@ from lcm_examples.collective_regimes import (
 from tests.conftest import DECIMAL_PRECISION
 
 
-def test_shared_decision_values_are_the_stakeholders_values_at_one_argmax() -> None:
-    """Both stakeholder values are read at the household's shared work choice."""
+def test_shared_decision_values_are_the_members_values_at_one_argmax() -> None:
+    """Both member values are read at the household's shared work choice."""
     model = get_shared_decision_model()
 
     solution = model.solve(params=get_params(), log_level="debug")
@@ -28,22 +28,24 @@ def test_shared_decision_values_are_the_stakeholders_values_at_one_argmax() -> N
 
 
 def test_participation_constraints_dissolve_only_the_middle_wage_cell() -> None:
-    """The source prices each actual route; dissolution pays the full outside value."""
+    """The source prices each actual route; dissolution pays the exit's cost."""
     model = get_dissolution_model()
     solution = model.solve(params=get_params(), log_level="debug")
 
-    # Work keeps wages one and three feasible for both partners. Wage two
-    # has no participating action and receives (5.5, 1), without subtracting
-    # the (0.5, 0.2) participation slack from either payoff.
+    # Work keeps wages one and three feasible for both partners. Wage two has
+    # no participating action, so the household's own exit moves both partners
+    # to their single regimes, (5.5, 1), and pays the divorce cost (0.5, 0.2):
+    # (5.0, 0.8).
     aaae(
         solution.values[0]["married"],
-        0.95 * np.array([[2.0, 1.0], [5.5, 1.0], [6.0, 3.0]]),
+        0.95 * np.array([[2.0, 1.0], [5.0, 0.8], [6.0, 3.0]]),
         decimal=DECIMAL_PRECISION,
     )
 
 
 def test_dissolution_routes_the_simulated_person_to_their_single_regime() -> None:
-    """The female cohort follows its own fallback route when participation fails."""
+    """The female cohort takes her own exit target when no household action is
+    feasible."""
     model = get_dissolution_model()
     solution = model.solve(
         params=get_params(),
@@ -60,9 +62,9 @@ def test_dissolution_routes_the_simulated_person_to_their_single_regime() -> Non
         # Every subject starts in the collective regime, so each one occupies a
         # household role from the first period on, and that role decides which
         # fallback a dissolving row takes.
-        "own_stakeholder": jnp.full(
+        "own_member": jnp.full(
             3,
-            model.stakeholder_names_to_ids["f"],
+            model.member_names_to_ids["f"],
             dtype=jnp.int32,
         ),
     }
@@ -85,8 +87,8 @@ def test_dissolution_routes_the_simulated_person_to_their_single_regime() -> Non
     )
 
 
-def test_participation_support_routes_without_retained_dissolution_artifacts() -> None:
-    """The participation policy's feasible set routes each original role directly."""
+def test_the_household_exit_routes_without_retained_dissolution_artifacts() -> None:
+    """The household's own exit routes each original role directly."""
     model = get_dissolution_model()
     params = get_params()
     solution = model.solve(
@@ -101,9 +103,7 @@ def test_participation_support_routes_without_retained_dissolution_artifacts() -
             "regime_id": jnp.full(
                 3, model.regime_names_to_ids["married"], dtype=jnp.int32
             ),
-            "own_stakeholder": jnp.full(
-                3, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
-            ),
+            "own_member": jnp.full(3, model.member_names_to_ids["f"], dtype=jnp.int32),
         },
         seed=0,
         log_level="off",

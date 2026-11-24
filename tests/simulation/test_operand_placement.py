@@ -33,7 +33,6 @@ from _lcm.simulation.program_types import subject_axis
 from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
 from _lcm.simulation.residency import measure_buffer_footprint
 from _lcm.simulation.runtime import SimulationRuntime, _materialize_abstract
-from _lcm.typing import ParticipationQueryArguments
 from lcm.exceptions import ExecutionPlanningError
 from tests.conftest import assert_agrees_to_ulp
 
@@ -274,32 +273,6 @@ def test_abstract_materialization_preserves_container_order_and_value_reads(
         enable_jit=True,
         subject_devices=subject_devices,
     )
-    concrete_value = jax.device_put(jnp.arange(6.0), devices[0])
-    concrete = ParticipationQueryArguments(
-        by_target={
-            "done": {
-                "query": {
-                    "zeta": concrete_value,
-                    "wealth": concrete_value,
-                    "alpha": concrete_value,
-                }
-            }
-        }
-    )
-    carrier = jax.tree.map(_describe_array, concrete)
-    assert isinstance(carrier, ParticipationQueryArguments)
-    query = carrier.by_target["done"]["query"]
-    protected_query_value = query["wealth"]
-    assert isinstance(protected_query_value, jax.ShapeDtypeStruct)
-    value_read = _program().requirements.value_reads[0]
-    query_read = replace(
-        value_read,
-        source=replace(
-            value_read.source,
-            argument="participation_arguments",
-            path=("by_target", "done", "query", "wealth"),
-        ),
-    )
     with monkeypatch.context() as guard:
         guard.setattr(jax, "device_put", _refuse_operand_copy)
         guard.setattr(
@@ -307,12 +280,6 @@ def test_abstract_materialization_preserves_container_order_and_value_reads(
         )
         with pytest.raises(AssertionError, match="before checking headroom"):
             jnp.zeros(3)
-        placed_carrier = place_simulation_arguments(
-            arguments={"participation_arguments": carrier},
-            subject_arg_names=(),
-            value_reads=(query_read,),
-            devices=subject_devices,
-        )["participation_arguments"]
         materialized = _materialize_abstract(
             runtime=runtime,
             program=_program(),
@@ -336,14 +303,6 @@ def test_abstract_materialization_preserves_container_order_and_value_reads(
     assert placed["state"] is arguments["state"]
     assert placed["action_grid"] is weights
     assert not runtime.cache
-    assert isinstance(placed_carrier, ParticipationQueryArguments)
-    placed_query = placed_carrier.by_target["done"]["query"]
-    assert isinstance(placed_query, MappingProxyType)
-    assert tuple(placed_query) == ("zeta", "wealth", "alpha")
-    assert placed_query["wealth"] is protected_query_value
-    assert placed_query["zeta"] is query["zeta"]
-    assert placed_query["alpha"] is query["alpha"]
-    assert protected_query_value.sharding.device_set == {devices[0]}
 
 
 def test_replay_payload_placement_preserves_abstract_and_protected_arrays(

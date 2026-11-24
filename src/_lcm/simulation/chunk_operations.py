@@ -160,7 +160,7 @@ def broadcast_collective(
 def _broadcast_collective(
     *, indices: jax.Array, value: jax.Array, n_subjects: int
 ) -> tuple[jax.Array, jax.Array]:
-    """Keep the original index and stakeholder-axis broadcast expressions."""
+    """Keep the original index and member-axis broadcast expressions."""
     return (
         jnp.broadcast_to(jnp.asarray(indices), (n_subjects,)),
         jnp.broadcast_to(value[None, ...], (n_subjects, *value.shape)),

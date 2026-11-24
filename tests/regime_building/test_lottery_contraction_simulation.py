@@ -25,12 +25,12 @@ from lcm import (
     ExecutionConfig,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     PolicyLookup,
     ProjectedRegimeValue,
     Regime,
     RouwenhorstAR1Process,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -358,7 +358,7 @@ def _transposed_model_with_a_gated_edge(*, contract: bool) -> Model:
                     "gated": Gate(
                         predicate=_gate_open,
                         routes={
-                            "only": StakeholderRoute(
+                            "only": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback", projection={}
                                 )

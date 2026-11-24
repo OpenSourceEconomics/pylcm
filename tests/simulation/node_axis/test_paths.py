@@ -358,7 +358,7 @@ def test_budgeted_transition_reuses_compiled_shock_producers(
                         tuple(record.shocks.values()),
                         record.V_arr,
                         record.in_regime,
-                        record.own_stakeholder,
+                        record.own_member,
                         record.nested_policy_fallback,
                     )
                 )
@@ -401,7 +401,7 @@ def _raw_simulation_arrays(*, result: SimulationResult) -> tuple[ValueND, ...]:
                 record.shocks,
                 record.V_arr,
                 record.in_regime,
-                record.own_stakeholder,
+                record.own_member,
                 record.nested_policy_fallback,
             )
         )

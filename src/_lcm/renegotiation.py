@@ -30,7 +30,7 @@ class RenegotiationQueries:
     state: StateName
     """Canonical discrete source state."""
     n_nodes: int
-    """Canonical code extent, increasing toward the first stakeholder."""
+    """Canonical code extent, increasing toward the first member."""
     operands: tuple[ReferenceName, ...]
     """Raw stay policy at each node, with the same other current states."""
     tie: Literal["stay", "leave"]
@@ -71,11 +71,11 @@ class SettlementQueries:
     """Read the settlement nearest the default that the stayer accepts."""
 
     points: tuple[float, ...]
-    """Candidate settlements, increasing in favour of the first stakeholder."""
+    """Candidate settlements, increasing in favour of the first member."""
     default: Callable[..., PytreeValue]
     """Source-context default settlement, clipped to the candidates' range."""
     targets: tuple[Mapping[ExitRole, tuple[str, int | None]], ...]
-    """Per candidate, each member's outside read and destination stakeholder index."""
+    """Per candidate, each member's outside read and destination member index."""
     adjustments: tuple[Mapping[ExitRole, Callable[..., PytreeValue]], ...]
     """Per candidate, each member's source-context adjustment at that settlement."""
     tie: Literal["stay", "leave"]

@@ -30,9 +30,9 @@ with one named dimension per state, so `.sel(education="college")` picks a curve
 regardless of axis order. Discrete states carry categorical labels by default, and a
 state declared with [values](grids.md#discrete-grids-with-numeric-values) carries those
 numbers; pass `use_categorical_codes=True` for integer codes. Collective values also
-have a `stakeholder` dimension. `solution.value_frame(...)` returns the same values as a
-long DataFrame with state columns and `V`; it explicitly materializes the whole grid.
-Use `model.lookup_policy` for values between grid nodes, with the same interpolation as
+have a `member` dimension. `solution.value_frame(...)` returns the same values as a long
+DataFrame with state columns and `V`; it explicitly materializes the whole grid. Use
+`model.lookup_policy` for values between grid nodes, with the same interpolation as
 simulation.
 
 ### Retention and replay
@@ -260,30 +260,29 @@ initial_conditions = {
 
 ### Household roles
 
-In a model with a collective regime, every simulated row carries a *role*: which
-stakeholder of the household that row is. The role belongs to the row, not to the run —
-one cohort holds both partners at once — and it decides which regime the row moves to
-when the household dissolves. Seed it with an `"own_stakeholder"` entry alongside the
-states:
+In a model with a collective regime, every simulated row carries a *role*: which member
+of the household that row is. The role belongs to the row, not to the run — one cohort
+holds both partners at once — and it decides which regime the row moves to when the
+household dissolves. Seed it with an `"own_member"` entry alongside the states:
 
 ```python
 initial_conditions = {
     "age": jnp.full(4, model.ages.values[0]),
     "wealth": jnp.array([1.0, 5.0, 10.0, 20.0]),
     "regime_id": jnp.full(4, model.regime_names_to_ids["couple"], dtype=jnp.int32),
-    "own_stakeholder": jnp.array(
+    "own_member": jnp.array(
         [
-            model.stakeholder_names_to_ids["f"],
-            model.stakeholder_names_to_ids["m"],
-            model.stakeholder_names_to_ids["f"],
-            model.stakeholder_names_to_ids["m"],
+            model.member_names_to_ids["f"],
+            model.member_names_to_ids["m"],
+            model.member_names_to_ids["f"],
+            model.member_names_to_ids["m"],
         ],
         dtype=jnp.int32,
     ),
 }
 ```
 
-As a DataFrame the same column carries stakeholder *labels*, converted to codes like any
+As a DataFrame the same column carries member *labels*, converted to codes like any
 other discrete column:
 
 ```python
@@ -292,24 +291,24 @@ df = pd.DataFrame(
         "regime_name": ["couple", "couple"],
         "age": [25.0, 25.0],
         "wealth": [1.0, 5.0],
-        "own_stakeholder": ["f", "m"],
+        "own_member": ["f", "m"],
     }
 )
 ```
 
-- Codes come from `model.stakeholder_names_to_ids` — one vocabulary for the whole model,
-  so a role means the same thing in every regime. It is empty for a model with no
-  collective regime.
+- Codes come from `model.member_names_to_ids` — one vocabulary for the whole model, so a
+  role means the same thing in every regime. It is empty for a model with no collective
+  regime.
 - The entry is required for subjects who **start** in a collective regime that can reach
-  one declaring a value-dependent transition with more than one route — its own, or one
-  further along, since a row keeps its role across an ordinary regime transition.
-  Omitting it there raises `InvalidInitialConditionsError` rather than defaulting to
-  whichever partner was declared first, and a code that is valid model-wide but names no
-  stakeholder of that regime is rejected too. A collective start that can never arrive
-  at such a transition needs no entry.
+  one declaring a gated transition with more than one route — its own, or one further
+  along, since a row keeps its role across an ordinary regime transition. Omitting it
+  there raises `InvalidInitialConditionsError` rather than defaulting to whichever
+  partner was declared first, and a code that is valid model-wide but names no member of
+  that regime is rejected too. A collective start that can never arrive at such a
+  transition needs no entry.
 - A subject starting in a singleton regime occupies no role and needs no entry. It is
-  given one on entering a collective regime, from the `target_stakeholder` of the
-  `StakeholderRoute` it takes, and loses it again on landing in a singleton regime.
+  given one on entering a collective regime, from the `target_member` of the
+  `MemberRoute` it takes, and loses it again on landing in a singleton regime.
 
 See [Collective regimes](../reference/collective_regimes.md#roles-are-carried-per-row)
 for the full rules.
@@ -333,7 +332,7 @@ holds). `validate_initial_conditions` raises `InvalidInitialConditionsError` exa
 when that mask contains a `False`, with the diagnostics `simulate(log_level="debug")`
 would print. A malformed structure — unknown regime, missing or extra state, unequal
 lengths, off-grid age, inactive regime, unknown categorical label, a collective start
-without its `own_stakeholder` — raises from both methods rather than being counted as
+without its `own_member` — raises from both methods rather than being counted as
 infeasible, so a population they accept is one `simulate` accepts. Neither method takes
 a `log_level`: they always raise. A constraint that depends on an age-specialized
 function while subjects start at different ages cannot be evaluated and raises
@@ -474,15 +473,14 @@ value representation read at the subject's realized resources, not the utility p
 continuation along the replayed path; on a coarse savings grid the two can differ
 slightly in either direction.
 
-A model with a collective regime publishes two further things. An `own_stakeholder`
-column names the role each row occupies — in every regime, not only the collective ones,
+A model with a collective regime publishes two further things. An `own_member` column
+names the role each row occupies — in every regime, not only the collective ones,
 because a row that has left a household still has to say that it now occupies none. It
-is a Categorical over the declared stakeholder names, and a row in a singleton regime
-carries a missing entry. A collective regime also publishes one `value_<stakeholder>`
-column per stakeholder, since the household stores every partner's own value at the
-shared maximizing action. Those columns sit alongside `value`, which is dropped only
-when no regime in the model publishes a scalar value — that is, when every regime is
-collective.
+is a Categorical over the declared member names, and a row in a singleton regime carries
+a missing entry. A collective regime also publishes one `value_<member>` column per
+member, since the household stores every partner's own value at the shared maximizing
+action. Those columns sit alongside `value`, which is dropped only when no regime in the
+model publishes a scalar value — that is, when every regime is collective.
 
 ### Additional targets
 

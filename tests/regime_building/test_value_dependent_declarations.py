@@ -1,9 +1,8 @@
-"""Collective utilities, source participation checks and current participation rules.
+"""Collective utilities, gates and the household's own dissolution exit.
 
-Current dissolution belongs to an own Exit; a separate participation check reads
-its Part support after landing. Non-exit value constraints retain their own
-projected references. The public declaration paths determine roles, phases,
-parameter namespaces and the canonical policy problems the model evaluates.
+Current dissolution belongs to the household's own Exit. The public declaration
+paths determine roles, phases, parameter namespaces and the canonical policy problems
+the model evaluates.
 """
 
 import dataclasses
@@ -25,16 +24,14 @@ from lcm import (
     ByAge,
     CollectiveUtility,
     DiscreteGrid,
+    Gate,
+    MemberRoute,
     Model,
     ParetoObjective,
-    ParticipationCheck,
-    ParticipationRead,
     Phased,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
-    ValueDependentConstraint,
     categorical,
     fixed_transition,
 )
@@ -44,8 +41,8 @@ from lcm.regime import RegimeReplacement
 from lcm.transition import PhaseTransitionLaw, StochasticTransition
 from lcm.typing import (
     BoolND,
+    ContinuousState,
     FloatND,
-    FunctionName,
     RegimeName,
     ScalarInt,
     UserFunction,
@@ -59,7 +56,6 @@ from tests.regime_building.test_collective_regime_simulate import (
     _identity_wage,
     _make_dissolution_regimes,
     _married_dissolution_transition,
-    _participation_support,
     _prob_one,
     _u_married_ir_f,
     _u_married_ir_m,
@@ -71,18 +67,8 @@ from tests.regime_building.test_collective_regime_simulate import (
 
 
 class _Snapshot(TypedDict):
-    stakeholders: tuple[str, ...] | None
+    member_axis: tuple[str, ...] | None
     pareto_objective: ParetoObjective | None
-    value_constraints: dict[FunctionName, UserFunction]
-    same_period_refs: dict[str, ProjectedRegimeValue]
-    participation: dict[
-        RegimeName,
-        tuple[
-            UserFunction,
-            dict[str, tuple[str | None, ProjectedRegimeValue]],
-            dict[str, ParticipationRead],
-        ],
-    ]
     exit: tuple[str, dict[str, ExitTarget]] | None
 
 
@@ -128,43 +114,19 @@ class RegimeId:
     single_m_terminal: ScalarInt
 
 
-def test_collective_utility_declares_the_regimes_stakeholders() -> None:
-    """The `utilities` keys are the stakeholders, in the order they are written."""
+def test_collective_utility_declares_the_regimes_members() -> None:
+    """The `utilities` keys are the members, in the order they are written."""
     regime = _new_vocabulary_regimes()["married_ir"]
 
-    assert regime.stakeholders == ("f", "m")
+    assert regime.member_axis == ("f", "m")
 
 
-def test_collective_utility_becomes_one_utility_function_per_stakeholder() -> None:
-    """Each stakeholder's flow utility lands under the name the engine reads."""
+def test_collective_utility_becomes_one_utility_function_per_member() -> None:
+    """Each member's flow utility lands under the name the engine reads."""
     regime = _new_vocabulary_regimes()["married_ir"]
 
     assert regime.decomposed_functions["utility_f"] is _u_married_ir_f
     assert regime.decomposed_functions["utility_m"] is _u_married_ir_m
-
-
-def _reference_cap(*, V_single_f_ref: FloatND) -> BoolND:
-    return V_single_f_ref <= 6.0
-
-
-def test_value_dependent_constraint_keeps_its_references_local() -> None:
-    """A non-exit value cap keeps its projected reference local to its constraint."""
-    regime = _new_vocabulary_regimes()["married_ir"].replace(
-        exit=None,
-        constraints={
-            "reference_cap": ValueDependentConstraint(
-                predicate=_reference_cap,
-                references={
-                    "V_single_f_ref": ProjectedRegimeValue(
-                        regime="single_f", projection={"wage": _identity_wage}
-                    )
-                },
-            )
-        },
-    )
-    assert set(regime.value_constraints) == {"reference_cap"}
-    assert set(regime.same_period_refs) == {"V_single_f_ref"}
-    assert regime.same_period_refs["V_single_f_ref"].regime == "single_f"
 
 
 def test_value_dependent_transition_keeps_the_ordinary_transition_entry() -> None:
@@ -175,16 +137,14 @@ def test_value_dependent_transition_keeps_the_ordinary_transition_entry() -> Non
     assert isinstance(transition["married_ir"], StochasticTransition)
 
 
-def test_value_dependent_transition_routes_each_stakeholder_to_her_own_fallback() -> (
-    None
-):
-    """Each source stakeholder's route keeps all four of its destinations."""
-    edge = _bound_laws()["married"].participation["married_ir"]
+def test_the_households_exit_routes_each_member_to_her_own_single_regime() -> None:
+    """Each member's exit target is her own single regime."""
+    married_exit = _new_vocabulary_regimes()["married_ir"].exit
+    assert married_exit is not None
 
-    assert edge.routes["f"].target_stakeholder == "f"
-    assert edge.routes["f"].solve_fallback.regime == "single_f"
-    assert edge.routes["m"].target_stakeholder == "m"
-    assert edge.routes["m"].solve_fallback.regime == "single_m"
+    assert set(married_exit.targets) == {"f", "m"}
+    assert married_exit.targets["f"].regime == "single_f"
+    assert married_exit.targets["m"].regime == "single_m"
 
 
 def test_the_two_vocabularies_solve_to_the_same_values() -> None:
@@ -192,7 +152,7 @@ def test_the_two_vocabularies_solve_to_the_same_values() -> None:
 
     The new declarations are a consolidation of the old ones, so every regime's
     value function has to agree array for array — including `married_ir`,
-    whose participation constraints empty at the middle wage node.
+    whose kept stay actions empty at the middle wage node.
     """
     new = _solve(regimes=_new_vocabulary_regimes(), married=_married_transition())
     old = _solve(
@@ -227,7 +187,6 @@ def test_an_edge_inside_a_phased_transition_solves_to_the_unphased_values() -> N
             law=ByAge(
                 cases={AgeRange(exclusive_stop=1): Phased(solve=law, simulate=law)}
             ),
-            participation=married.participation,
         ),
     )
     unphased = _solve(regimes=_new_vocabulary_regimes(), married=married)
@@ -252,11 +211,7 @@ def _solve(
         regime_id_class=RegimeId,
         initial_nodes={0: "married"},
         edges={
-            "married": Transition(
-                targets={"married_ir": 0, "single_f": 0, "single_m": 0},
-                law=married.law,
-                participation=married.participation,
-            ),
+            "married": Transition(targets={"married_ir": 0}, law=married.law),
             "married_ir": {"married_terminal": 1},
             "single_f": {"single_f_terminal": 1},
             "single_m": {"single_m_terminal": (0, 1, 2)},
@@ -338,10 +293,10 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
 
 
 def _married_transition() -> Transition:
-    """`married`'s participation check into `married_ir` after age 0.
+    """`married`'s move into `married_ir` after age 0.
 
-    Each stakeholder's route falls back to her own single regime, so a model
-    declares `married` with `married_ir`, `single_f` and `single_m` as targets.
+    `married_ir` dissolves through its own exit, each member to her own single
+    regime.
     """
     return Transition(
         law=ByAge(
@@ -350,33 +305,28 @@ def _married_transition() -> Transition:
                     "married_ir": StochasticTransition(func=_prob_one)
                 }
             }
-        ),
-        participation={"married_ir": _dissolution_participation()},
+        )
     )
 
 
-def _dissolution_participation() -> ParticipationCheck:
-    """`married`'s check into `married_ir`, each route to its own single regime."""
-    return ParticipationCheck(
-        predicate=_participation_support,
-        reads={
-            "target_support": ParticipationRead(
-                regime="married_ir",
-                stakeholder="f",
-                kind="Participating",
-                field="support",
-                projection={"wage": _identity_wage},
-            )
-        },
+def _always_open(wage: ContinuousState) -> BoolND:
+    """A state-only gate: every landing wage keeps the household."""
+    return jnp.ones_like(wage, dtype=bool)
+
+
+def _gate_into_married_ir() -> Gate:
+    """A gate into `married_ir`, each route to its own single regime."""
+    return Gate(
+        predicate=_always_open,
         routes={
-            "f": StakeholderRoute(
-                target_stakeholder="f",
+            "f": MemberRoute(
+                target_member="f",
                 fallback=ProjectedRegimeValue(
                     regime="single_f", projection={"wage": _identity_wage}
                 ),
             ),
-            "m": StakeholderRoute(
-                target_stakeholder="m",
+            "m": MemberRoute(
+                target_member="m",
                 fallback=ProjectedRegimeValue(
                     regime="single_m", projection={"wage": _identity_wage}
                 ),
@@ -431,7 +381,7 @@ def _phased_edge_law() -> RegimeLaw:
                         )
                     }
                 ),
-                participation={"married_ir": _dissolution_participation()},
+                gates={"married_ir": _gate_into_married_ir()},
             )
         }
     )["married"]
@@ -441,16 +391,15 @@ def test_a_gate_beside_a_phased_law_is_one_edge() -> None:
     """A law may differ by phase, and the gate beside it is one edge.
 
     The perceived meeting probability and the realized one are a legitimate
-    wedge, so the law may differ by phase. The gate, the routes, the
-    references and the off-grid contract are declared once beside it, so the
-    law carries one `participation` entry and each phase keeps its own
-    probability.
+    wedge, so the law may differ by phase. The gate, the routes and the off-grid
+    contract are declared once beside it, so the law carries one gated edge and
+    each phase keeps its own probability.
     """
     law = _phased_edge_law()
 
-    edge = law.participation["married_ir"]
-    assert edge.predicate is _participation_support
-    assert set(edge.routes) == {"f", "m"}
+    edge = law.gated_edges["married_ir"]
+    assert edge.gate is _always_open
+    assert set(edge.legs) == {"f", "m"}
 
     transition = law.decomposed_transition
     assert isinstance(transition, Phased)
@@ -458,29 +407,16 @@ def test_a_gate_beside_a_phased_law_is_one_edge() -> None:
     assert transition.simulate["married_ir"].func is _prob_half
 
 
-def _derived_snapshot(*, regime: Regime, law: RegimeLaw) -> _Snapshot:
-    """The canonical engine-facing facts a regime's declarations and law determine.
+def _derived_snapshot(*, regime: Regime) -> _Snapshot:
+    """The canonical engine-facing facts a regime's declarations determine.
 
     Flattened into plain data so that two regimes built by different code paths
     — or by the same code path before and after a refactoring — compare by
     value, with the declared callables compared by identity.
     """
     return {
-        "stakeholders": regime.stakeholders,
+        "member_axis": regime.member_axis,
         "pareto_objective": regime.pareto_objective,
-        "value_constraints": dict(regime.value_constraints),
-        "same_period_refs": dict(regime.same_period_refs),
-        "participation": {
-            target: (
-                decision.predicate,
-                {
-                    source: (route.target_stakeholder, route.solve_fallback)
-                    for source, route in decision.routes.items()
-                },
-                dict(decision.reads),
-            )
-            for target, decision in law.participation.items()
-        },
         "exit": None
         if regime.exit is None
         else (type(regime.exit.rule).__name__, dict(regime.exit.targets)),
@@ -488,44 +424,17 @@ def _derived_snapshot(*, regime: Regime, law: RegimeLaw) -> _Snapshot:
 
 
 def _expected_snapshots() -> dict[RegimeName, _Snapshot]:
-    """Canonical source participation checks and current participation stay distinct."""
-    fallback_f = ProjectedRegimeValue(
-        regime="single_f", projection={"wage": _identity_wage}
-    )
-    fallback_m = ProjectedRegimeValue(
-        regime="single_m", projection={"wage": _identity_wage}
-    )
+    """A plain collective source, the household's own exit and a singleton."""
     plain: _Snapshot = {
-        "stakeholders": None,
+        "member_axis": None,
         "pareto_objective": None,
-        "value_constraints": {},
-        "same_period_refs": {},
-        "participation": {},
         "exit": None,
     }
     return {
-        "married": {
-            **plain,
-            "stakeholders": ("f", "m"),
-            "participation": {
-                "married_ir": (
-                    _participation_support,
-                    {"f": ("f", fallback_f), "m": ("m", fallback_m)},
-                    {
-                        "target_support": ParticipationRead(
-                            regime="married_ir",
-                            stakeholder="f",
-                            kind="Participating",
-                            field="support",
-                            projection={"wage": _identity_wage},
-                        )
-                    },
-                )
-            },
-        },
+        "married": {**plain, "member_axis": ("f", "m")},
         "married_ir": {
             **plain,
-            "stakeholders": ("f", "m"),
+            "member_axis": ("f", "m"),
             "exit": (
                 "Unilateral",
                 {
@@ -542,7 +451,7 @@ def _expected_snapshots() -> dict[RegimeName, _Snapshot]:
                 },
             ),
         },
-        "married_terminal": {**plain, "stakeholders": ("f", "m")},
+        "married_terminal": {**plain, "member_axis": ("f", "m")},
         "single_f": plain,
     }
 
@@ -555,16 +464,13 @@ def test_the_declarations_determine_every_engine_facing_fact(
 ) -> None:
     """One regime's declarations fix the canonical facts the engine reads off it.
 
-    A gated regime, a value-constrained one, a plain collective one and a
-    singleton: between them they cover every shape a declaration can take. The
+    A collective source of a transition, one with an exit, a plain collective
+    one and a singleton: between them they cover every shape a declaration can take. The
     snapshot is the contract that survives any change to how the decomposition
     is performed, because it names what the decomposition must produce rather
     than how.
     """
-    snapshot = _derived_snapshot(
-        regime=_new_vocabulary_regimes()[regime_name],
-        law=_bound_laws()[regime_name],
-    )
+    snapshot = _derived_snapshot(regime=_new_vocabulary_regimes()[regime_name])
 
     assert snapshot == _expected_snapshots()[regime_name]
 
@@ -572,15 +478,13 @@ def test_the_declarations_determine_every_engine_facing_fact(
 @pytest.mark.parametrize(
     "slot",
     [
-        "stakeholders",
+        "member_axis",
         "pareto_objective",
-        "value_constraints",
-        "same_period_refs",
         "gated_edges",
     ],
 )
 def test_a_derived_slot_cannot_be_declared(slot: str) -> None:
-    """The five engine-facing slots are read off a regime, never written to it.
+    """The engine-facing slots are read off a regime, never written to it.
 
     Each is what one of the three declarations decomposes into, so naming one
     at construction would be a second way to say the same thing — and a way
@@ -599,10 +503,8 @@ def test_a_derived_slot_cannot_be_declared(slot: str) -> None:
 @pytest.mark.parametrize(
     "slot",
     [
-        "stakeholders",
+        "member_axis",
         "pareto_objective",
-        "value_constraints",
-        "same_period_refs",
         "gated_edges",
     ],
 )

@@ -16,11 +16,11 @@ from lcm import (
     DeterministicTransition,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     Phased,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
     categorical,
     fixed_transition,
@@ -105,7 +105,7 @@ def _make_model() -> Model:
         "retired": Gate(
             predicate=_well_off,
             routes={
-                "only": StakeholderRoute(
+                "only": MemberRoute(
                     fallback=Phased(
                         solve=ProjectedRegimeValue(
                             regime="hardship", projection={"wealth": _whole_wealth}

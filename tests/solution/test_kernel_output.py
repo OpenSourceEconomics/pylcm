@@ -44,12 +44,11 @@ from lcm import (
     DiscreteGrid,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     Transition,
-    ValueDependentConstraint,
     categorical,
     fixed_transition,
 )
@@ -622,14 +621,6 @@ def _u_single_m_ir(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return 1.0 * work + 0.0 * wage
 
 
-def _ir_f(*, Q_f: FloatND, V_single_f_ref: FloatND, delta_f: FloatND) -> BoolND:
-    return Q_f >= V_single_f_ref - delta_f
-
-
-def _ir_m(*, Q_m: FloatND, V_single_m_ref: FloatND, delta_m: FloatND) -> BoolND:
-    return Q_m >= V_single_m_ref - delta_m
-
-
 def _stay_married(wage: ContinuousState) -> BoolND:
     """Open onto the couple at every wage the target can land on."""
     return wage >= 0.0
@@ -655,24 +646,6 @@ def _make_dissolution_model() -> tuple[Model, UserParams]:
             "utility": CollectiveUtility(
                 utilities={"f": _u_married_ir_f, "m": _u_married_ir_m}
             )
-        },
-        constraints={
-            "ir_f": ValueDependentConstraint(
-                predicate=_ir_f,
-                references={
-                    "V_single_f_ref": ProjectedRegimeValue(
-                        regime="single_f", projection={"wage": _identity_wage}
-                    )
-                },
-            ),
-            "ir_m": ValueDependentConstraint(
-                predicate=_ir_m,
-                references={
-                    "V_single_m_ref": ProjectedRegimeValue(
-                        regime="single_m", projection={"wage": _identity_wage}
-                    )
-                },
-            ),
         },
     )
     married_terminal = Regime(
@@ -724,15 +697,15 @@ def _make_dissolution_model() -> tuple[Model, UserParams]:
                     "married_ir": Gate(
                         predicate=_stay_married,
                         routes={
-                            "f": StakeholderRoute(
-                                target_stakeholder="f",
+                            "f": MemberRoute(
+                                target_member="f",
                                 fallback=ProjectedRegimeValue(
                                     regime="single_f",
                                     projection={"wage": _identity_wage},
                                 ),
                             ),
-                            "m": StakeholderRoute(
-                                target_stakeholder="m",
+                            "m": MemberRoute(
+                                target_member="m",
                                 fallback=ProjectedRegimeValue(
                                     regime="single_m",
                                     projection={"wage": _identity_wage},
@@ -747,5 +720,5 @@ def _make_dissolution_model() -> tuple[Model, UserParams]:
             "single_m": {"single_m_terminal": (0, 1, 2)},
         },
     )
-    params = {"discount_factor": _BETA, "delta_f": 0.5, "delta_m": 0.2}
+    params = {"discount_factor": _BETA}
     return model, params

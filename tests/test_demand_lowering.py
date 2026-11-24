@@ -23,12 +23,10 @@ from lcm import (
     ByAge,
     Gate,
     LinSpacedGrid,
+    MemberRoute,
     Model,
-    ParticipationCheck,
-    ParticipationRead,
     ProjectedRegimeValue,
     Regime,
-    StakeholderRoute,
     StochasticTransition,
     Transition,
     categorical,
@@ -358,22 +356,12 @@ def _gated_fold_model(
     *,
     initial_nodes: UserInitialNodes,
     fallback_at_45: bool = False,
-    reads_values: bool = True,
 ) -> Model:
-    """Gate the target on wealth, or compare target and reference values on landing."""
+    """Gate the target on wealth on landing."""
     fallback = ProjectedRegimeValue(regime="fallback", projection={"wealth": _identity})
     target_law = {"target": StochasticTransition(func=_prob_one)}
-    routes = {"only": StakeholderRoute(fallback=fallback)}
-    gates: dict[RegimeName, Gate] = {}
-    participation: dict[RegimeName, ParticipationCheck] = {}
-    if reads_values:
-        participation["target"] = ParticipationCheck(
-            predicate=_gate,
-            reads={"V_target": _read("target"), "V_reference": _read("reference")},
-            routes=routes,
-        )
-    else:
-        gates["target"] = Gate(predicate=_wealth_is_positive, routes=routes)
+    routes = {"only": MemberRoute(fallback=fallback)}
+    gates = {"target": Gate(predicate=_wealth_is_positive, routes=routes)}
     terminal = Regime(
         states={"wealth": _WEALTH},
         functions={"utility": _utility},
@@ -402,7 +390,6 @@ def _gated_fold_model(
                     }
                 ),
                 gates=gates,
-                participation=participation,
             )
         },
     )
@@ -420,10 +407,6 @@ def _prob_one(age: FloatND) -> FloatND:
     return jnp.ones_like(age, dtype=float)
 
 
-def _gate(*, V_target: FloatND, V_reference: FloatND) -> BoolND:
-    return V_target > V_reference
-
-
 def _wealth_is_positive(wealth: ContinuousState) -> BoolND:
     return wealth > 0.0
 
@@ -432,17 +415,9 @@ def _identity(wealth: ContinuousState) -> ContinuousState:
     return wealth
 
 
-def _read(regime: RegimeName) -> ParticipationRead:
-    return ParticipationRead(
-        kind="IntegratedFull", regime=regime, projection={"wealth": _identity}
-    )
-
-
 def test_a_gate_fold_exists_only_where_its_source_lands() -> None:
     """A target solved at a later age for another start gets no fold there."""
-    model = _gated_fold_model(
-        initial_nodes={40: "source", 50: "target"}, reads_values=False
-    )
+    model = _gated_fold_model(initial_nodes={40: "source", 50: "target"})
     folds = model._regimes["source"].gated_edges["target"].folds_by_period
     assert set(folds) == {1}
 
@@ -453,7 +428,6 @@ def test_a_gate_fold_exists_only_where_the_selected_case_reaches_the_target() ->
     model = _gated_fold_model(
         initial_nodes={40: "source", 45: "source", 50: "target"},
         fallback_at_45=True,
-        reads_values=False,
     )
     folds = model._regimes["source"].gated_edges["target"].folds_by_period
     assert set(folds) == {1}
@@ -474,7 +448,6 @@ def test_a_gated_target_solved_where_its_source_never_stands_solves() -> None:
         (0, "reference"),
         (0, "fallback"),
         (1, "target"),
-        (1, "reference"),
         (1, "fallback"),
         (2, "target"),
     }

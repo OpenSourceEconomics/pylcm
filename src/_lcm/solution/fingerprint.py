@@ -229,6 +229,25 @@ _TRUSTED_TERMINAL_OBJECT_TYPES = (
     # an output-role wrapper means its user function and role.
     | frozenset({ValueAdapter, AdaptedBuild, InRole})
 )
+# A fingerprint hashes the names of declaration types and fields. These keep the
+# literal `stakeholder` names they are hashed under until the single-member and
+# household engine paths merge, so a model's durable fingerprint does not move
+# with the vocabulary.
+_DURABLE_TYPE_NAMES = MappingProxyType(
+    {"lcm.collective.MemberRoute": "lcm.collective.StakeholderRoute"}
+)
+_DURABLE_FIELD_NAMES = MappingProxyType(
+    {
+        ("lcm.collective.MemberRoute", "target_member"): "target_stakeholder",
+        ("lcm.collective.ProjectedRegimeValue", "member"): "stakeholder",
+    }
+)
+# Every regime declaration was hashed with these two empty slots, so they stay in
+# its record at their empty values and no model's durable fingerprint moves.
+_DURABLE_EMPTY_REGIME_FIELDS = (
+    ("value_constraints", MappingProxyType({})),
+    ("same_period_refs", MappingProxyType({})),
+)
 
 
 def _anchored_module_closure(
@@ -857,7 +876,7 @@ def fingerprint_model_structure(
 
     No parameter vector reaches this record: it carries period and regime
     topology (the solved and the visited periods of every regime, but not the
-    declared starts that produced them), state and action names, stakeholders,
+    declared starts that produced them), state and action names, members,
     solver and replay identities, artifact descriptors, per-period state axes, the user
     declaration's callable semantics, and the regimes' own fixed parameters.
     Concrete grid support and canonical solution parameters belong to
@@ -891,7 +910,8 @@ def fingerprint_model_structure(
                 ),
                 "state_names": regime.solution.state_names,
                 "action_names": regime.solution.action_names,
-                "stakeholders": regime.stakeholders,
+                # Hashed under its kept literal name, as in `_DURABLE_FIELD_NAMES`.
+                "stakeholders": regime.member_axis,
                 "solver_identity": user_regimes[name].solver.identity,
                 "replay_identity": (
                     None
@@ -1101,8 +1121,11 @@ def _project_user_regime_declaration(
         fields = vars(regime).items()
     elif dataclasses.is_dataclass(regime) and not isinstance(regime, type):
         fields = (
-            (declaration.name, getattr(regime, declaration.name))
-            for declaration in dataclasses.fields(cast("DataclassInstance", regime))
+            *(
+                (declaration.name, getattr(regime, declaration.name))
+                for declaration in dataclasses.fields(cast("DataclassInstance", regime))
+            ),
+            *_DURABLE_EMPTY_REGIME_FIELDS,
         )
     else:
         msg = "A model fingerprint requires a dataclass user-regime declaration."
@@ -1120,19 +1143,19 @@ def _project_user_regime_declaration(
             "type": f"{declaration_type.__module__}.{declaration_type.__qualname__}",
             "fields": MappingProxyType(
                 {
-                    name: (
+                    # Hashed under its kept literal name, as in `_DURABLE_FIELD_NAMES`.
+                    ("stakeholders" if name == "member_axis" else name): (
                         _project_transition_slot_to_solve(value)
                         if name in _TRANSITION_SLOTS
                         else value
                     )
                     for name, value in all_fields
-                    if name not in {"description", "problem"}
+                    if name != "description"
                     # An empty reporting declaration adds no semantic facts to
                     # the pre-existing feature-free model identity.
                     and not (
                         name in {"output_only_functions", "shocks"} and value == ()
                     )
-                    and not (name == "participation" and not value)
                 }
             ),
         }
@@ -2338,9 +2361,10 @@ class _SemanticHasher:
         self.frame(label="module-reference-end")
 
     def _visit_dataclass(self, value: DataclassInstance) -> None:
+        type_name = f"{type(value).__module__}.{type(value).__qualname__}"
         self.frame(
             label="dataclass-start",
-            payload=f"{type(value).__module__}.{type(value).__qualname__}".encode(),
+            payload=_DURABLE_TYPE_NAMES.get(type_name, type_name).encode(),
         )
         for declaration in dataclasses.fields(value):
             # An optional field left at its default hashes like its absence, so
@@ -2352,7 +2376,10 @@ class _SemanticHasher:
                 )
             ):
                 continue
-            self.frame(label="field", payload=declaration.name.encode())
+            field_name = _DURABLE_FIELD_NAMES.get(
+                (type_name, declaration.name), declaration.name
+            )
+            self.frame(label="field", payload=field_name.encode())
             self.visit(value=getattr(value, declaration.name))
         # Exact pylcm declarations have their implementation sealed by the
         # separately checked pylcm version; their fully traversed fields carry

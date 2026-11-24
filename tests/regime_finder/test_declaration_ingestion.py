@@ -490,7 +490,7 @@ def _create_gated_spec() -> dict[str, JSONValue]:
     }
     route = {
         "kind": "dataclass",
-        "type": "lcm.StakeholderRoute",
+        "type": "lcm.MemberRoute",
         "fields": {"fallback": fallback},
     }
     gate = {

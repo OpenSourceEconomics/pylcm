@@ -65,8 +65,6 @@ Public inspection attributes include:
 
 - `ages`, `n_periods`, and `regime_names_to_ids`;
 - `user_regimes`, the finalized declarations in user vocabulary;
-- `problems`, the [`Problem`](#api-problem) each regime was given, or `None`, by regime
-  name;
 - `edges`, the edges exactly as declared, `Transition` laws included;
 - `initial_nodes`, a normalized immutable `InitialNodes` whose `by_age` or `by_period`
   mapping contains exact coordinates and sorted, unique tuples of regime names;
@@ -104,8 +102,8 @@ or a DataFrame with a `"regime_name"` column, ages and categorical labels — an
 A subject is feasible when at least one combination of its regime's declared action-grid
 points satisfies every constraint jointly or, in a regime without actions, when every
 state-only constraint holds. Both methods apply every initial-condition check `simulate`
-applies, including the `own_stakeholder` declaration a collective start needs, and take
-no `log_level`: they always raise. The verdict does not depend on how the check is
+applies, including the `own_member` declaration a collective start needs, and take no
+`log_level`: they always raise. The verdict does not depend on how the check is
 executed; at present both run in one eager pass on the default device, without
 device-memory admission or subject padding. When a constraint depends on an
 age-specialized function, each subject is checked against the constraints and functions
@@ -238,7 +236,6 @@ A general regime declares:
 | `certainty_equivalent`  | Optional regime-level lottery reduction                                       |
 | `exit`                  | Current-period move with mapped policy queries                                |
 | `description`           | Human-readable description                                                    |
-| `problem`               | Optional shared [`Problem`](#api-problem) in place of the slots above `exit`  |
 
 Use `Regime.replace(...)` to derive a modified immutable declaration.
 
@@ -252,7 +249,7 @@ it:
 
 | Role                                                                                                                                    | Returns                                                        |
 | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| Constraint, `ValueDependentConstraint` predicate, gate, participation predicate, exit availability                                      | A Boolean, e.g. `wealth > 0` or `work == 1`                    |
+| Constraint, gate, exit availability                                                                                                     | A Boolean, e.g. `wealth > 0` or `work == 1`                    |
 | Law of a discrete state, regime selector                                                                                                | An integer code, or a Boolean for the codes 0 and 1            |
 | Utility, law of a continuous state, transition probability, joint-transition weight or output, exit utility adjustment, borrowing bound | A number: an integer or a float, read at the model's precision |
 
@@ -273,79 +270,6 @@ required by EGM-family solvers. See
 [Consumption-saving regimes and margins](consumption_savings.md). Collective fields on
 `Regime` are documented separately in [Collective regimes](collective_regimes.md).
 
-(api-problem)=
-
-## `Problem`
-
-A `Problem` is an action problem: states, actions, constraints, functions and laws of
-motion, valued with next period's regimes and with nothing from the current period. Its
-fields are the thirteen `Regime` slots from `states` to `certainty_equivalent` in the
-table above, each with the same type and default.
-
-Several regimes may hold one problem with `Regime(problem=...)`. A regime that holds a
-problem declares none of the problem's slots: it takes the problem's own objects for
-them and adds only its `exit` and `description`. Holding the same problem means the same
-declaration, not the same value: holders may differ in their exits and in the edges the
-model declares for them. Initial conditions, edges, results and parameters name regimes,
-never problems, so the parameters of a problem's functions stay per regime. A regime
-that declares its slots itself owns a problem no other regime shares.
-
-A holder is passed no problem slot beside its problem, or one that is the problem's
-object already. Any other object is refused, a value equal to the `Regime` default
-included, so an explicit argument is never silently replaced. `holder.replace(exit=...)`
-or `holder.replace(description=...)` therefore keeps the problem and its objects.
-Replacing a slot of a holder is refused, and so is giving a holder another problem whose
-objects differ from those the holder carries, such as a copy of its problem with one
-slot changed. Construct a new `Regime(problem=...)` for another problem, or pass
-`problem=None` beside the slots a regime declares itself. A regime the model derives by
-rewriting slots, such as each of `model.user_regimes`, holds no problem. Ask the model
-instead: `model.problems` maps each regime name to the problem the regime was given, and
-two regimes share a problem when they map to the same object. A model built from another
-model's `user_regimes` therefore knows no problems.
-
-Three declarations are refused with `RegimeInitializationError`:
-
-- a regime that holds a problem and declares one of its slots with anything other than
-  the default or the problem's own object;
-- a `ConsumptionSavingsRegime` or `NestedConsumptionSavingsRegime` that holds a problem,
-  since its margin declarations belong to its own problem;
-- a problem with a `ValueDependentConstraint`, which compares action values and so is a
-  regime's rule rather than part of a problem.
-
-Two couples that hold one problem and differ in their exit:
-
-```python
-import lcm
-
-household = lcm.Problem(
-    states={"wealth": lcm.LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
-    functions={"utility": lcm.CollectiveUtility(utilities={"f": wife, "m": husband})},
-)
-
-
-def dissolution(rule):
-    return lcm.Exit(
-        rule=rule,
-        targets={
-            member: lcm.ExitTarget(
-                regime=f"single_{member}",
-                projection={"wealth": lcm.fixed_transition("wealth")},
-            )
-            for member in ("f", "m")
-        },
-    )
-
-
-regimes = {
-    "couple_unilateral": lcm.Regime(
-        problem=household, exit=dissolution(lcm.Unilateral())
-    ),
-    "couple_mutual": lcm.Regime(
-        problem=household, exit=dissolution(lcm.MutualConsent())
-    ),
-}
-```
-
 (api-current-exits)=
 
 ## Current-period exits
@@ -354,11 +278,17 @@ regimes = {
 most one exit; its parameters live under `exit`. Scheduled next-period transitions
 remain in `Model(edges=...)`.
 
-- `Exit(targets=..., rule=..., available=None, observes=())` names each source
-  stakeholder's destination. A singleton uses the key `"self"`.
+- `Exit(targets=..., rule=..., available=None, observes=(), nodes=None)` names each
+  source member's destination. A singleton uses the key `"self"`. `nodes`, a
+  `MonteCarlo` or `QuasiMonteCarlo` rule, applies when the regime is solved: every shock
+  group of the choice that the regime's own stay problem does not read, observed target
+  information included, is drawn `n` times from its law at the current state, and the
+  same draws serve every row of the groups the stay problem reads, which keep their
+  declared nodes. `None` integrates over the full product. Simulation uses the realized
+  shocks.
 - `ExitTarget(regime=..., projection=..., role=None, utility_adjustment=None)` names a
   real destination and maps its complete current state. A collective destination
-  requires its stakeholder `role`. The adjustment reads source states and parameters and
+  requires its member `role`. The adjustment reads source states and parameters and
   enters the exit payoff once. A projection may use `Phased(solve=..., simulate=...)`
   settlements; it does not change information. A projection names every state its
   destination declares, model-level ones included. Where the destination does not read a
@@ -389,19 +319,17 @@ destination's problem at the projected state, without the destination's own exit
 destination's rule for leaving does not constrain that value, and two regimes may exit
 into each other. A formation by `Consent` is the exception: the formed couple applies
 its own rule for staying, and the outside values that rule compares are again problem
-values. A mover acts in the problem its move was priced at, the formed couple's
-Participating policy after consent and the destination's problem otherwise. A regime
-with an available exit that needs no consent, entered in one period both by consent or a
-participation check and by another exit, would act in two different problems; the model
-refuses it when it is built.
-
-A `ParticipationRead(kind="Participating")` of a regime with an exit compares the
-outside values of that exit the same way, as problem values.
+values. Within one step (one stage of one period), a rule for staying that is read
+through such a value reads problem values only; a longer chain is refused. A mover acts
+in the problem its move was priced at, the formed couple's Participating policy after
+consent and the destination's problem otherwise. A regime with an available exit that
+needs no consent, entered in one period both by consent and by another exit, would act
+in two different problems; the model refuses it when it is built.
 
 `Unilateral(renegotiate=Renegotiate(state="mu"))` first optimizes the Raw stay policy at
 every node of the ordered discrete state. It supports a collective pair: increasing node
-order favors the first stakeholder in the utility mapping, decreasing order the second.
-If both accept the incumbent, it stays. If one refuses, walk one node toward that member
+order favors the first member in the utility mapping, decreasing order the second. If
+both accept the incumbent, it stays. If one refuses, walk one node toward that member
 and stop at the first node both accept. Simultaneous refusal, reaching the grid edge or
 encountering the other member's refusal separates the pair; a later feasible island does
 not reopen the path. Equality follows the rule's `tie`. Outside payoffs use the original
@@ -412,11 +340,11 @@ of members shift the division on separation before deciding. Every exit target's
 projection functions and utility adjustment may read the settlement as the argument
 `name`; a settlement no target reads, and a name that is a state, action, function or
 shock of the source, are refused when the model is built. `candidates` is a continuous
-grid with fixed points; increasing values favour the first stakeholder. `default` reads
-what `available` reads and is clipped to the candidates' range. With `O_i(s)` member
-`i`'s outside value at settlement `s` (its destination's problem value at the
-projections evaluated with `s`, plus its adjustment evaluated with `s`), `W_i` its value
-at the household optimum and `d` the default:
+grid with fixed points; increasing values favour the first member. `default` reads what
+`available` reads and is clipped to the candidates' range. With `O_i(s)` member `i`'s
+outside value at settlement `s` (its destination's problem value at the projections
+evaluated with `s`, plus its adjustment evaluated with `s`), `W_i` its value at the
+household optimum and `d` the default:
 
 1. A member refuses to stay when `O_i(d)` is above `W_i`, or equal to it under
    `tie="leave"`.
@@ -510,85 +438,10 @@ invariant or co-mapped state layouts, action partitioning, stored Full-value ref
 and runtime-bound query status adapters.
 
 Collective current-IID decisions select one common action and route exits at each node,
-then integrate each member's selected value. Stored values retain the stakeholder axis
-and carry no current-shock axis. This also applies to collective regimes without exits.
-Collective EV1 tastes and custom source selectors combined with source EV1 tastes are
-explicitly refused.
-
-(api-participation-checks)=
-
-## Scheduled participation checks
-
-Attach `ParticipationCheck(predicate=..., routes=..., reads=..., observes=())` to an
-incoming `Transition(participation={target_name: ...})` in `Model(edges=...)`. It
-belongs to that incoming source, scheduled target, original source role and actual
-participation period. The scheduled transition produces the landing state before the
-comparison, and the final regime acts after it. Initial occupants and subjects arriving
-through another edge cannot borrow this decision or its fallback. A scheduled target
-cannot declare both a `Gate` and a `ParticipationCheck`.
-
-The check is the per-period limited-commitment participation constraint. It also
-re-checks a continuing household on its scheduled self-transition: on a couple → couple
-edge, a failed check is a divorce.
-
-`predicate` returns a scalar Boolean from the landed target's states and helpers,
-parameters, and the explicitly named `reads`. Declare every value operand, including
-`V_target`, with a `ParticipationRead`. `D_target` is refused; request typed policy
-support instead. The predicate's threshold, window or other comparison determines
-acceptance; it is not replaced by a maximization over the compared values. Acceptance
-also requires the target's Participating policy to have support. `observes` names the
-target physical shocks visible at this comparison.
-
-`routes` maps every original source stakeholder to a
-[`StakeholderRoute`](collective_regimes.md#api-stakeholder-route); a singleton has its
-single route. On acceptance, `target_stakeholder` selects the role in the scheduled
-target. On rejection, `fallback` names the destination, role and complete state
-projection from the landed target state. A collective destination requires its exact
-stakeholder name; a singleton has no stakeholder role. A
-`Phased(solve=..., simulate=...)` fallback prices the source decision using the solve
-settlement and routes simulation using the simulate settlement. The incoming source and
-role remain attached to this settlement, so another edge's fallback cannot replace it.
-
-Participation callbacks use the target's actual participation `period` and `age`. Their
-runtime parameters belong under `params["edges"][source][target]`: the predicate uses
-`["predicate"]`, read projections use `["reads"][read_name][state]`, and fallback
-projections use `["routes"][source_role]["fallback"]`, with a phase key for a phased
-fallback. Use `model.get_params_template()` for the complete paths. Queried regime
-functions and target helpers retain their own regime parameter namespaces; temporal
-values are selected for the participation date, rather than the incoming source's
-decision date.
-
-A source prices its next participation check exactly at every landing. A participation
-check at a later date is taken again at each landing from a stored per-period surface of
-its branches and operands, each interpolated between grid nodes: exact where landings
-fall on nodes, approximate between them; see
-[Participation checks over several periods](../user_guide/collective_regimes.md#participation-check-depth).
-
-(api-participation-reads)=
-
-### `ParticipationRead`
-
-`ParticipationRead(regime=..., projection=..., kind=..., stakeholder=None, field="value", observes=())`
-names the represented object supplied to the predicate. `projection` provides every
-state of the referenced regime from the landed target state, and `stakeholder` selects a
-collective reference's exact role. The `reads` mapping key is the argument name the
-predicate receives.
-
-- `kind="Raw"` reads the referenced regime's problem: its action problem without its
-  exit.
-- `kind="Participating"` reads the same problem with the referenced regime's exit
-  applied as a rule for staying, without the move; an exit by `Consent` is not applied.
-- `kind="IntegratedFull"` reads the regime's value: the stored, shock-integrated Full
-  value at the projected state, moves included.
-
-`Raw` and `Participating` reconstruct their canonical `GridSearch` action problems at
-the projected state, including the common action for a collective regime.
-`field="value"` reads the selected value; `field="support"` reads Boolean policy
-support. A read's `observes` adds the referenced physical shocks visible for this
-comparison to the decision's declared information. `IntegratedFull` exposes only
-`field="value"`, with empty `observes`; policy reconstruction, realized information and
-support are unavailable from it. `Participating` is slated for removal once a regime's
-value can be read at observed shocks.
+then integrate each member's selected value. Stored values retain the member axis and
+carry no current-shock axis. This also applies to collective regimes without exits. EV1
+taste shocks on a collective regime with an exit or with current shocks are refused; see
+[`ExtremeValueTasteShocks`](#api-extreme-value-taste-shocks).
 
 (api-extreme-value-taste-shocks)=
 
@@ -623,10 +476,16 @@ candidates and therefore need not reproduce its off-grid solve value or choice
 probabilities; see [Solvers and capabilities](solvers.md#api-dcegm).
 
 This feature requires at least one discrete action and is implemented by `GridSearch`
-and `DCEGM`. It is rejected for `NEGM`, `NBEGM`, and `NNBEGM`; on a collective regime;
-on the source regime of a gated transition; and together with a nonlinear certainty
-equivalent. These are semantic boundaries, not ignored options: the declaration is
-rejected during `Regime` declaration or `Model` construction, before solve.
+and `DCEGM`. A collective regime admits it when exactly one member has a positive Pareto
+weight; that member decides, and every other member's value is the mean of its action
+values under the decider's choice probabilities (see
+[Collective regimes](collective_regimes.md)). It is rejected for `NEGM`, `NBEGM`, and
+`NNBEGM`; on a collective regime with more than one positive weight, with an `exit` or
+with `shocks`, or whose decision another regime's exit reads; on the source regime of a
+gated transition; and together with a nonlinear certainty equivalent. These are semantic
+boundaries, not ignored options: the declaration is rejected during `Regime` declaration
+or `Model` construction, before solve, except that a weight declared as a function is
+checked at every solve.
 
 (api-euler-gamma)=
 

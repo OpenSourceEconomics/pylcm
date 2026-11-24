@@ -21,6 +21,87 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - See
   [State-conditioned process parameters](docs/user_guide/continuous_stochastic_processes.md#state-conditioned-process-parameters).
 
+### Every regime has members
+
+- The parties of a regime whose values are tracked are its **members**; the word
+  "stakeholder" is gone from the API. `Regime.members` is always a tuple: the
+  `utilities` keys of a `CollectiveUtility`, in the order written, and `("self",)` for a
+  regime declared with a plain utility function. `Regime.member_axis` is the household
+  marker: equal to `members` for a household and `None` otherwise.
+- Renamed: `Regime.stakeholders` to `Regime.member_axis`, `StakeholderRoute` to
+  `MemberRoute`, its `target_stakeholder` to `target_member`, the `stakeholder` field of
+  `ProjectedRegimeValue` to `member`,
+  `Model.stakeholder_names_to_ids` to `Model.member_names_to_ids`, the initial condition
+  and published column `own_stakeholder` to `own_member`, and the solver API's
+  `AxisRole.STAKEHOLDER` (axis `"stakeholder"`) to `AxisRole.MEMBER` (axis `"member"`).
+  Error messages and documentation say "member" throughout.
+- `CollectiveUtility` refuses a member named `"self"`, which is reserved for the single
+  member of a regime declared with a plain utility function.
+- Values, model fingerprints and saved simulation results of models without a
+  `CollectiveUtility` are unchanged.
+
+### Taste shocks in a household with one decider
+
+- A household admits `taste_shocks=ExtremeValueTasteShocks()` when exactly one member has
+  a positive Pareto weight. That member decides: its value is its own smoothed expected
+  maximum, and every other member's value is its mean action value under the decider's
+  choice probabilities, at the decider's best continuous action. Simulation draws the
+  decider's choice as a single's draw. A household of one member with weight 1 gives the
+  single's values and draws.
+- Constant weights with more than one positive entry are refused when the regime is
+  constructed; a weight declared as a function is checked at every solve, at every cell.
+  Taste shocks stay refused on a household that declares an `exit` or observes
+  current-period `shocks`, and on one whose
+  decision another regime's exit reads.
+- Values of models without taste shocks in a household are unchanged.
+
+### `ValueDependentConstraint` is removed
+
+- `ValueDependentConstraint` is gone, and with it `Regime.value_constraints` and
+  `Regime.same_period_refs`: no predicate reads a member's action value `Q_<s>` or
+  another regime's value in the same period. A household that should not continue where
+  a member is better off alone declares that as an `Exit` of the household regime, whose
+  rule (`Unilateral` or `MutualConsent`) compares each member's stay value with her
+  outside value. A move that depends only on the landing state is a `Gate`.
+  `ProjectedRegimeValue` remains, as the fallback of a gate's route.
+- Values, model fingerprints and saved results of models without a
+  `ValueDependentConstraint` are unchanged.
+- The `ReferenceChainSolve` benchmark is removed with the feature it measured.
+
+### `ParticipationCheck` is removed
+
+- `ParticipationCheck`, `ParticipationRead` and `Transition(participation=...)` are gone,
+  with no replacement under those names. A move decided by comparing values is an `Exit`
+  of the regime that decides:
+  - formation is an `Exit` of the single's regime toward the household, with
+    `rule=Consent(counterparty=Counterparty(...))`: the single moves when both she and the
+    counterparty, read at her projected state, prefer the household;
+  - dissolution is the household's own `Exit`, with `rule=Unilateral(...)` or
+    `rule=MutualConsent(...)`;
+  - a move that depends only on states, or on nothing, is a `Gate`.
+- These checks can no longer be written: a value compared with a threshold, a parameter
+  or a third regime's value; a comparison between the members of one household; and a
+  read of next period's integrated value.
+- `lcm_examples.collective_household` forms couples with `Consent` and dissolves them
+  with the couple's `Unilateral` exit; its values change. Values, model fingerprints and
+  saved results of models without a participation check are unchanged. A saved solution
+  that holds participation surfaces no longer loads; solve the model again.
+- The `bench_collective_household` benchmarks measure the example in this form, so
+  their history breaks here: earlier entries measured the participation-check form.
+- See [ADR 4](docs/adr/0004-one-noun-members-and-the-rule-of-the-deciding-regime.md)
+  for what is not shipped.
+
+### A regime declares at most one exit, with a built-in rule
+
+- `Regime(exit=Exit(...))` replaces `Regime(exits={name: Exit(...)})`. The rule strings
+  `"unilateral"` and `"mutual"` are `Unilateral()` and `MutualConsent()`; custom rule
+  callables and `RuleResult` are removed, with no replacement.
+- `Exit(nodes=MonteCarlo(...))` or `QuasiMonteCarlo(...)` replaces, in the solve, every
+  shock group of the exit choice that the regime's own stay problem does not read by
+  `n` draws from its law at the current state, shared by every row of the groups the
+  stay problem reads. The default `None` integrates over the full product. Simulation
+  uses the realized shocks.
+
 ### `GridSearch(lottery_contraction=True)` contracts in exits and collective regimes
 
 - With the option on, the eligible draws are summed into the next-period value also in
@@ -38,12 +119,12 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ### The regime finder keeps collective regimes, exits and renegotiation apart
 
-- `find_regimes` pools a collective regime only with regimes of the same stakeholders,
+- `find_regimes` pools a collective regime only with regimes of the same members,
   and pools regimes only when their exits are equal (rule, tie, comparison,
   renegotiation, settlement, targets with roles, observed shocks and availability). The
-  normalized cells carry the stakeholders, the exit's identity and the renegotiated
+  normalized cells carry the members, the exit's identity and the renegotiated
   states, and the independent source check verifies them and the cells' operators.
-- Work and storage count one action value and one stored value per stakeholder, as the
+- Work and storage count one action value and one stored value per member, as the
   solve does.
 - The state an exit's `Renegotiate` moves is an ordinary, always-live state of its
   regime: it is never contracted, split into lanes or carried as a status.
@@ -79,16 +160,16 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 ### A singleton source enters a collective target in a declared role
 
 - `Transition(roles={"couple": "f"})` declares that a row moving from a singleton source
-  into the collective regime `couple` continues there as its stakeholder `f`. It replaces
+  into the collective regime `couple` continues there as its member `f`. It replaces
   the hand-written always-open `Gate` with a never-taken fallback, solves and simulates
   identically to it, and refuses a landing without a feasible action with
   `NoFeasibleActionError`, as a plain edge does. A role on a non-collective target, an
   unknown role, a role on a collective source, a role on a target the transition never
-  reaches, and a role beside a gate or participation check on the same target raise
+  reaches, and a role beside a gate on the same target raise
   `ModelInitializationError`. See
   [Regime transitions](docs/reference/transitions.md#api-regime-transitions).
 - Two routes of one gate may share a fallback regime when, in each phase, they name the
-  same stakeholder and the same parameter-free projection function per state, so both
+  same member and the same parameter-free projection function per state, so both
   write the same row; any other sharing is refused as before, the message now naming a
   parameter where only that stands in the way.
 
@@ -98,25 +179,6 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   regime placed on other devices, moves that value onto its own devices as a streamed
   regime does, instead of failing with incompatible devices. One-device solves are
   unchanged.
-
-### Regimes may share a `Problem`
-
-- `lcm.Problem` declares an action problem with the thirteen slots of `Regime` from
-  `states` to `certainty_equivalent`, and `Regime(problem=..., exit=...)` holds one. A
-  holder takes the problem's slots at construction and is then the regime that declares
-  them itself: same values, same fingerprint, parameters per regime. Several regimes may
-  hold one problem and differ in their exits and edges. A problem slot declared beside
-  `problem`, a `ConsumptionSavingsRegime` or `NestedConsumptionSavingsRegime` holding a
-  problem, and a `ValueDependentConstraint` in a `Problem` raise
-  `RegimeInitializationError`. See [`Problem`](docs/reference/model_and_regime.md#problem).
-- Every problem slot of a holder is its default or the problem's own object; anything
-  else is refused. A holder given a copy of its problem with one slot changed, or
-  constructed with its problem's solver beside slots of its own, is refused instead of
-  keeping the first problem's slots and solving the wrong problem. `replace` of a holder
-  that changes a slot needs `problem=None`, and the finalized regimes of a model hold no
-  problem.
-- `Model.problems` maps each regime name to the problem the regime was given, or `None`,
-  so regimes sharing a problem map to one object. It enters no fingerprint.
 
 ### Exits read the destination's problem
 
@@ -136,8 +198,7 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   solves on several devices, with stored and with point reads, as on one device. In
   an exit period each of the reader's devices computes the whole grid of that state
   and holds every next-period value that carries it whole, then keeps its own slice
-  of the reader's value; other periods still compute only each device's slice. A
-  participation check on such a state is still refused.
+  of the reader's value; other periods still compute only each device's slice.
 - A budgeted simulation of a regime with a current-period exit and a gated edge builds
   when the gate's fallback regime declares its states in an order other than the sorted
   one.
@@ -146,6 +207,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   and one more node that carries the mass of all the others at the value of staying,
   instead of every node. Values agree with the full enumeration to rounding; simulation
   is unchanged.
+- Within one step, a rule for staying that is read through another regime's staying
+  value reads problem values only; a longer chain is refused. No shipped model has one.
 
 ### Discrete limited commitment
 
@@ -219,10 +282,9 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - Each role's returned dtype is checked when the function is first evaluated in
   `solve()`, and a mismatch raises the new `InvalidFunctionOutputError`, naming the
   function:
-  - constraints, `ValueDependentConstraint` predicates, gates, participation predicates
-    and exit availability return a Boolean. An integer `0`/`1`, which gates,
-    participation predicates and exit availability accepted before, is refused; write
-    the comparison, e.g. `work == 1`;
+  - constraints, gates and exit availability return a Boolean. An integer `0`/`1`, which
+    gates and exit availability accepted before, is refused; write the comparison, e.g.
+    `work == 1`;
   - laws of discrete states, deterministic regime selectors and projections onto a
     discrete state return an integer code, or a Boolean for the codes 0 and 1. A float
     is refused rather than truncated onto a code;
@@ -378,19 +440,6 @@ unchanged. The solvers keep the derivative rules they use themselves.
   set it since `fold=` was removed, so it was always empty. A custom solver that read it
   must drop the read.
 
-### Arrival decisions are participation checks
-
-- Breaking API: `lcm.ArrivalDecision` is renamed `lcm.ParticipationCheck`,
-  `lcm.ArrivalRead` is `lcm.ParticipationRead`, and `Transition(arrivals=...)` is
-  `Transition(participation=...)`. The construct also re-checks continuing couples
-  (couple → couple, where failure means divorce); it is the per-period limited-commitment
-  participation constraint. There are no aliases; see
-  [Arrival → participation check](docs/user_guide/migrating_dated_regimes.md#arrival-participation-check).
-- The read-projection parameter path `params["edges"][source][target]["references"]`
-  is now `["reads"]`, named after `ParticipationCheck.reads`.
-- `SOLUTION_FORMAT_VERSION` is 3: archives store participation surfaces under renamed
-  manifest keys, and version-2 archives no longer load.
-
 ### EGM regimes refuse fixed-node processes entering utility
 
 - An endogenous-grid regime (`DCEGM`, `NBEGM`, `NEGM`, `NNBEGM`) whose `utility` reads
@@ -449,8 +498,7 @@ unchanged. The solvers keep the derivative rules they use themselves.
 - A `Gate` predicate naming `V_target`, `V_target_<s>` or `D_target` raises the new
   `lcm.exceptions.GateReadsValueError` when the gate is declared, and
   `Gate(references=...)` raises `TypeError`. Declare a value comparison made in the
-  current period as an `Exit` in `Regime(exit=...)`, and one made on landing as a
-  `ParticipationCheck` with named `ParticipationRead`s in `Transition(participation=...)`; see
+  current period as an `Exit` in `Regime(exit=...)`; see
   [Gates route on states only](docs/user_guide/migrating_dated_regimes.md#gates-route-on-states-only).
 - `solve()` no longer publishes a `DISSOLUTION_FLAG` replay artifact, and
   `simulate(solution=...)` reads none. A household landing in a gated target cell where
@@ -525,9 +573,7 @@ unchanged. The solvers keep the derivative rules they use themselves.
   choice is feasible raises `InvalidStateTransitionError` before the solve, naming the
   regime, period, law and cell; cells where no choice is feasible never count.
   `Model.validate_transitions` runs this check too. Feasibility here is the ordinary
-  constraints, in both phases: a value-dependent constraint or a gate that reads a
-  value cannot exclude a cell whose code is off the grid, since that code has no value.
-  Declare a value-free restriction as an ordinary constraint instead.
+  constraints, in both phases.
 - Behavior change: with `runtime_checks=False`, reading the value function at a code
   outside `0..n-1` gives NaN instead of the value at the nearest end node. This holds
   for category grids as well, which used to clamp silently. An integer value grid has
@@ -563,8 +609,8 @@ unchanged. The solvers keep the derivative rules they use themselves.
   stochastic law reads values and still returns probabilities in the order of
   `values`. Integer values arrive as int32, as codes do. A variable declared with values
   must carry the same values and tolerance in every regime. Regime transition laws,
-  gates and their projections, collective regimes (stakeholder utilities, Pareto
-  weights, value-dependent constraints and their projections), joint transitions
+  gates and their projections, collective regimes (member utilities and Pareto
+  weights), joint transitions
   and carried-state imputations read values too; a projection, a joint output and an
   imputation of a value-grid state return a value. A `functools.partial` reading a
   value grid asks only for the arguments it leaves free. Condition constraints that
@@ -692,7 +738,7 @@ unchanged. The solvers keep the derivative rules they use themselves.
 - `SolutionResult.value_array(period=..., regime=...)` returns an xarray `DataArray`
   named `V` with one dimension per state axis, the resolved grid nodes as coordinates,
   discrete states labelled as categoricals in declaration order (`use_categorical_codes=True` for
-  integer codes), and a `stakeholder` dimension for collective regimes. It wraps the
+  integer codes), and a `member` dimension for collective regimes. It wraps the
   stored value without a host copy; `.sel(...)` selects a curve or surface by name before
   any table is built. `SolutionResult.value_frame(...)` returns the same values as a long
   pandas DataFrame with state columns followed by `V`. Both survive saving and loading.
@@ -949,7 +995,7 @@ unchanged. The solvers keep the derivative rules they use themselves.
   simulation diagnostics; the second returns a one-dimensional boolean mask in caller
   order, `True` exactly for the subjects admitting a jointly feasible action combination
   on the declared action grids. Malformed inputs raise from both, and so does a
-  collective start without the `own_stakeholder` declaration `simulate` demands, so a
+  collective start without the `own_member` declaration `simulate` demands, so a
   population the methods accept is one `simulate` accepts. The checks take no
   `log_level`; at present they run in one eager pass on one device without device-memory
   admission or subject padding, which does not affect the verdict.
@@ -1426,7 +1472,8 @@ unchanged. The solvers keep the derivative rules they use themselves.
   itself; a consuming model admits the descriptor only when it names exactly the
   published fields with the dtypes they carry, and a restored archive reads its
   diagnostics without a model. A diagnostic omission without a descriptor is refused
-  on both save and load. The solution-format version is 2.
+  on both save and load. The solution-format version is 3; an archive of version 2 does
+  not load.
 - A result restored by `load_solution` can be saved again without a model. Its payloads
   are re-read from the archive they came from and verified against their checksums and
   descriptors before they are written to the new archive.

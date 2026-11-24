@@ -141,7 +141,7 @@ def captured_gate_graph(
             "legs": {
                 "person": {
                     "kind": "dataclass",
-                    "type": "lcm.StakeholderRoute",
+                    "type": "lcm.MemberRoute",
                     "fields": {"fallback": fallback},
                 }
             },

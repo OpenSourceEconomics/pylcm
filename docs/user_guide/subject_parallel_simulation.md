@@ -113,7 +113,7 @@ writes the substituted continuation over that same grid, so it carries no subjec
 and is replicated. The gate route recomputes the gate at each subject's own realized
 state and writes that row's destination under an elementwise mask, so its per-subject
 operands --- the candidate next states, the new regime ids, the in-regime membership,
-and the current and new stakeholder roles --- are partitioned like any other per-subject
+and the current and new member roles --- are partitioned like any other per-subject
 tree, while the folded continuation grids and the params stay shared. Nothing in the
 route reduces, sorts, or scatters across rows.
 

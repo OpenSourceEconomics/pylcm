@@ -45,7 +45,9 @@ def test_grouped_mapper_population_is_independent() -> None:
         direct_flow.uniform_process_mutation_specs(repo_root=root),
         direct_flow.action_grid_mutation_specs(repo_root=root),
     )
-    assert tuple(map(len, populations)) == (412, 94, 37, 10)
+    # The ValueDependentConstraint removal deleted
+    # value_access:grid_same_period_shifted with the same-period value access.
+    assert tuple(map(len, populations)) == (411, 94, 37, 10)
     grouped = direct_flow.grouped_mapper_mutation_specs(repo_root=root)
     assert len(grouped) == 18
     digest = hashlib.sha256(("\n".join(sorted(grouped)) + "\n").encode()).hexdigest()

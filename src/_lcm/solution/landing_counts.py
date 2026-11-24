@@ -1,12 +1,11 @@
 """Count a GridSearch solve's raw raise-rule landings in the pass that maximizes.
 
-A regime whose value constraints or gated edges decide, only once values are
-known, which actions and branches reach a landing has its `Q_and_F` return the
-raw `off_grid="raise"` landing counts of every action as a third output. The
-builders here carry those counts through the same reductions the value takes:
+A regime whose gated edges decide, only once values are known, which branches
+reach a landing has its `Q_and_F` return the raw `off_grid="raise"` landing
+counts of every action as a third output. The builders here carry those counts
+through the same reductions the value takes:
 
-- over the actions, summed where the feasibility mask keeps an action, value
-  constraints included;
+- over the actions, summed where the feasibility mask keeps an action;
 - through the state product, alongside the value;
 - over every state cell, into one saturating int32 total per check, which the period
   kernel reads and raises on.
@@ -109,7 +108,7 @@ def get_landing_counting_max_Q_over_a(
     has_taste_shocks: bool = False,
     co_map_state_names: tuple[StateName, ...] = (),
     co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = (),
-    stakeholders: tuple[str, ...] | None = None,
+    member_axis: tuple[str, ...] | None = None,
     pareto_weights: ParetoWeights | None = None,
     cell_width_keyword: str | None = None,
     untiled_state_names: tuple[StateName, ...] = (),
@@ -152,12 +151,14 @@ def get_landing_counting_max_Q_over_a(
         _SmoothedMaxQOverA(
             Q_and_F=action_mapped,
             n_discrete_action_axes=n_discrete_action_axes,
+            member_axis=member_axis,
+            pareto_weights=pareto_weights,
             return_feasibility=True,
         )
         if has_taste_shocks
         else _HardMaxQOverA(
             Q_and_F=action_mapped,
-            stakeholders=stakeholders,
+            member_axis=member_axis,
             pareto_weights=pareto_weights,
             return_feasibility=True,
         )

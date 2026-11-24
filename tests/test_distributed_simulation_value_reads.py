@@ -21,7 +21,6 @@ from _lcm.execution.value_transfer import (
     ValueConsumerAddress,
     ValueInputChannel,
 )
-from _lcm.participation_queries import ParticipationQueryArguments
 from _lcm.simulation.exit_replay import _query_arguments
 from _lcm.simulation.exits import OriginalExitOutput, ParticipatingExitOutput
 from _lcm.simulation.replay_inputs import place_replay_payload, replay_payload_reads
@@ -516,13 +515,9 @@ def _query_copy_leaf(
 ) -> FloatND:
     node: PytreeValue = arguments
     for step in path:
-        if isinstance(node, ParticipationQueryArguments):
-            assert step == "by_target"
-            node = node.by_target
-        else:
-            assert isinstance(node, Mapping)
-            assert isinstance(step, str)
-            node = node[step]
+        assert isinstance(node, Mapping)
+        assert isinstance(step, str)
+        node = node[step]
     assert isinstance(node, jax.Array)
     return node
 
@@ -530,7 +525,7 @@ def _query_copy_leaf(
 def test_collective_queries_share_original_value_copies_on_an_ordered_submesh(  # noqa: C901, PLR0912, PLR0915 - keep the real read/refusal/copy lifecycle together
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Current and participation queries share live future-value copies until done."""
+    """Full and Participating exit queries share live future-value copies until done."""
     declarations = _make_dissolution_regimes()
     declarations["married_terminal"] = declarations["married_terminal"].replace(
         functions={
@@ -583,13 +578,6 @@ def test_collective_queries_share_original_value_copies_on_an_ordered_submesh(  
             "exit_participating",
             plan.participating["married_ir"],
             regime.simulation.programs.exit_participating[1],
-        ),
-        (
-            "participation_entry:married",
-            plan.participation["married"].queries,
-            regime.simulation.programs.participation_program(
-                family="participation_entry:married", period=1
-            ),
         ),
     )
     addresses = [
@@ -726,23 +714,15 @@ def test_collective_queries_share_original_value_copies_on_an_ordered_submesh(  
         else:
             np.testing.assert_array_equal(answer[2], np.ones(4, dtype=bool))
             # At wage 2 the household leaves. Its own exit pays each member the
-            # single value (7.4, 2.9) net of the exit costs (0.5, 0.2); the
-            # participation check's fallback pays the single value without them.
-            leaving = (
-                [7.4, 2.9] if family == "participation_entry:married" else [6.9, 2.7]
-            )
+            # single value (7.4, 2.9) net of the exit costs (0.5, 0.2).
             np.testing.assert_allclose(
                 answer[0],
-                [[2.95, 1.95], leaving, [8.85, 5.85], [2.95, 1.95]],
+                [[2.95, 1.95], [6.9, 2.7], [8.85, 5.85], [2.95, 1.95]],
                 rtol=10.0**-DECIMAL_PRECISION,
             )
             exits = tuple(queries.definitions[queries.root].exit_targets)
             assert exits
-            rejected = (
-                np.asarray(answer[1]) == 1
-                if family == "participation_entry:married"
-                else np.isin(np.asarray(answer[1]), exits)
-            )
+            rejected = np.isin(np.asarray(answer[1]), exits)
             np.testing.assert_array_equal(rejected, [False, True, False, False])
         outputs.append(output)
         assert all(not copied.is_deleted() for copied in copies.values())

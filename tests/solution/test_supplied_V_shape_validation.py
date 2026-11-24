@@ -1,7 +1,7 @@
 """Rank contract for a value function handed back to `simulate`.
 
 A regime's stored value function carries one axis per solve state it keeps as a
-grid axis, plus one trailing stakeholder axis when the regime is collective.
+grid axis, plus one trailing member axis when the regime is collective.
 
 Solving and then simulating with the returned solution is the documented
 workflow, so the rank a solve produces is by definition the rank `simulate`
@@ -25,22 +25,22 @@ from tests.collective_fixtures import (
     make_couple_initial_conditions,
     make_shocked_singleton_initial_conditions,
     make_shocked_singleton_model,
-    make_two_stakeholder_model,
+    make_two_member_model,
     wage_shock_nodes,
 )
 from tests.conftest import DECIMAL_PRECISION
 
 
-def test_supplied_collective_V_passes_shape_validation_at_debug():
+def test_supplied_collective_V_passes_shape_validation_at_debug() -> None:
     """A collective regime's own solved value function is accepted by `simulate`.
 
-    The solver writes one trailing stakeholder axis onto a collective regime's
+    The solver writes one trailing member axis onto a collective regime's
     value function, so the rank check counts that axis alongside the state
-    axes. Both subjects then simulate their household's per-stakeholder values:
+    axes. Both subjects then simulate their household's per-member values:
     the wife's leisure taste loses to the continuation at period 0, so both
     couples work and land on the high wage.
     """
-    model, params = make_two_stakeholder_model()
+    model, params = make_two_member_model()
     solution = model.solve(params=params, log_level="off")
 
     result = model.simulate(
@@ -69,7 +69,7 @@ def test_supplied_collective_V_passes_shape_validation_at_debug():
     )
 
 
-def test_supplied_shock_V_passes_shape_validation_at_debug():
+def test_supplied_shock_V_passes_shape_validation_at_debug() -> None:
     """An IID shock state's regime supplies a value function the rank check accepts.
 
     The stored array carries the shock's axis, and each simulated subject reads
@@ -107,14 +107,14 @@ def test_supplied_shock_V_passes_shape_validation_at_debug():
     )
 
 
-def test_supplying_a_value_function_of_the_wrong_rank_is_rejected():
+def test_supplying_a_value_function_of_the_wrong_rank_is_rejected() -> None:
     """A supplied value function of a rank no regime produces is rejected.
 
-    The `couple` regime carries one wage axis and one stakeholder axis, so a
+    The `couple` regime carries one wage axis and one member axis, so a
     rank-four array cannot be its value function under any reading of the rank
     rule. It is reported by period and regime, naming the rank that arrived.
     """
-    model, params = make_two_stakeholder_model()
+    model, params = make_two_member_model()
     solution = model.solve(params=params, log_level="off")
 
     per_period = {period: dict(regimes) for period, regimes in solution.values.items()}

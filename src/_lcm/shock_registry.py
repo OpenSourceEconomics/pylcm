@@ -25,7 +25,6 @@ from _lcm.utils.error_messages import path_segment_name_errors
 from lcm.exceptions import (
     InvalidNameError,
     InvalidParamsError,
-    RegimeInitializationError,
     ShockDeclarationError,
     UnsupportedOperationError,
 )
@@ -312,7 +311,6 @@ def create_shock_registry(  # noqa: C901 - bind declarations and phase-specific 
             if not isinstance(law, Discrete)
         )
         law = laws.get(regime_name)
-        _fail_if_participation_shock_reads_are_unobserved(law=law, groups=groups)
         ordinary = (law.transition, law.gated_edges) if law is not None else None
         for func in _iter_declared_callables((regime, ordinary)):
             if reads := set(inspect.signature(func).parameters) & continuous_codes:
@@ -572,59 +570,6 @@ def _create_legacy_adapters(
     return MappingProxyType(records)
 
 
-def _fail_if_participation_shock_reads_are_unobserved(
-    *, law: RegimeLaw | None, groups: Mapping[ShockGroupName, ShockGroup]
-) -> None:
-    """Reserve global physical inputs before participation edge-parameter discovery.
-
-    An observation may be supplied by a queried comparison or fallback rather
-    than the landing regime. The query graph authenticates that producer later;
-    this declaration check only enforces visibility and physical code domains.
-    """
-    if law is None:
-        return
-    physical = {
-        name: distribution
-        for group in groups.values()
-        for name, distribution in group.shocks.items()
-    }
-    for target, declaration in law.participation.items():
-        callbacks = [
-            (declaration.predicate, frozenset(declaration.reads)),
-            *(
-                (function, frozenset())
-                for read in declaration.reads.values()
-                for function in read.projection.values()
-            ),
-            *(
-                (function, frozenset())
-                for route in declaration.routes.values()
-                for fallback in (route.solve_fallback, route.simulate_fallback)
-                for function in fallback.projection.values()
-            ),
-        ]
-        for function, read_names in callbacks:
-            for name in inspect.signature(function).parameters.keys() - read_names:
-                physical_name = name
-                if name.endswith("_code") and name.removesuffix("_code") in physical:
-                    physical_name = name.removesuffix("_code")
-                    if not isinstance(physical[physical_name], Discrete):
-                        raise UnsupportedOperationError(
-                            f"Participation input {name!r} cannot read a continuous "
-                            "physical "
-                            "shock's code: a physical draw has no quadrature-node "
-                            "position."
-                        )
-                if (
-                    physical_name in physical
-                    and physical_name not in declaration.observes
-                ):
-                    raise RegimeInitializationError(
-                        f"Participation callback for {target!r} requires unobserved "
-                        f"physical input {physical_name!r}."
-                    )
-
-
 def _fail_if_shock_reads_are_unlowered(
     *,
     declaration: tuple[Regime, RegimeLaw | None],
@@ -634,7 +579,6 @@ def _fail_if_shock_reads_are_unlowered(
     if not shock_names:
         return
     for value in declaration:
-        # Typed participation callbacks are lowered in their landed target context.
         ordinary = (
             (value.transition, value.gated_edges)
             if isinstance(value, RegimeLaw)

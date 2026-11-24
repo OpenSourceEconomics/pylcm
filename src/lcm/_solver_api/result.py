@@ -34,7 +34,6 @@ from lcm.typing import FloatND, RegimeName
 
 if TYPE_CHECKING:
     from _lcm.solution.artifacts import OwnedSolutionView
-    from lcm._solver_api.entries import _LazyEntry
     from lcm.model import _ResolvedSolution
 
     type _SolutionValuesInput = Mapping[int, Mapping[RegimeName, FloatND]] | ValueStore
@@ -44,11 +43,6 @@ if TYPE_CHECKING:
     # that model's instance and the parameter fingerprint it consumed under. The
     # model fills this memo as it consumes the result, so it is a mutable dict.
     type _ConsumedViews = dict[tuple[str, str], _ResolvedSolution]
-    # Stored participation surfaces by period, publishing regime and leaf name: arrays
-    # for a solve in this process, lazy archive entries for a loaded result.
-    type _ParticipationSurfaces = Mapping[
-        int, Mapping[RegimeName, Mapping[str, FloatND | _LazyEntry]]
-    ]
 else:
     # The public static contract stays precise above. At runtime the package-wide
     # beartype claw must not traverse these mappings: a ValueStore can contain lazy
@@ -62,8 +56,6 @@ else:
     # The resolved replay inputs are defined by the model, which imports the solver
     # API.
     type _ConsumedViews = object
-    # Lazy archive entries validate on explicit materialization, as values do.
-    type _ParticipationSurfaces = object
 
 
 @beartype(conf=SOLVER_API_CONF)
@@ -108,16 +100,6 @@ class SolutionResult:
     )
     """Validated engine views keyed by the consuming model and parameters, so a
     result from elsewhere is validated and materialized once per consumer."""
-    _participation_surfaces: _ParticipationSurfaces = field(
-        default=MappingProxyType({}),
-        init=False,
-        repr=False,
-        compare=False,
-    )
-    """Stored participation surfaces that participation replay reads, persisted beside
-    the values;
-    empty for a model without nested participation checks and for any
-    `dataclasses.replace` copy."""
 
     def __post_init__(self) -> None:
         for field_name, store in (
@@ -176,7 +158,7 @@ class SolutionResult:
         """Return one value-function array with its state coordinates, named `V`.
 
         Dimensions follow the stored value schema's axis order, including a
-        trailing `stakeholder` dimension for collective values; a regime without
+        trailing `member` dimension for collective values; a regime without
         states yields a zero-dimensional array. Coordinates are the resolved
         process and period-specific grid nodes used by this solve. By default, a
         category-class state carries its labels as an (ordered) categorical index
@@ -245,7 +227,7 @@ class SolutionResult:
         in the same order and with the same coordinates and categorical labels,
         followed by `V`.
 
-        This explicit call materializes one row per grid point and stakeholder,
+        This explicit call materializes one row per grid point and member,
         so large grids produce large frames; select a slice of `value_array`
         first to convert only part of it. For values between nodes, use
         `Model.lookup_policy`, which uses simulation's interpolation.

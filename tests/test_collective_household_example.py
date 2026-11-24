@@ -8,9 +8,7 @@ off the published frame.
 
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import replace
 from types import MappingProxyType
-from typing import Unpack
 
 import jax.numpy as jnp
 import numpy as np
@@ -19,13 +17,11 @@ import pytest
 
 from _lcm.regime_building import Q_and_F
 from _lcm.regime_building.collective import NO_ROLE
-from _lcm.solution import backward_induction
 from lcm import Model
 from lcm.exits import Unilateral
-from lcm.solver_api import KernelOutput, ResultRetention, SolutionResult
+from lcm.solver_api import ResultRetention, SolutionResult
 from lcm.typing import FloatND, RegimeName, UserParamsNode
 from lcm_examples import collective_household as household
-from tests.solution.test_solution_result import _KernelKwargs
 
 _N_PERIODS = 3
 _N_SUBJECTS = 200
@@ -55,7 +51,7 @@ def simulated(solved: _Solved) -> pd.DataFrame:
     is_single = jnp.arange(_N_SUBJECTS) < n_single
     is_woman = jnp.arange(_N_SUBJECTS) % 2 == 0
     regime_ids = model.regime_names_to_ids
-    role_ids = model.stakeholder_names_to_ids
+    role_ids = model.member_names_to_ids
     initial_conditions = {
         "wealth": jnp.concatenate(
             [
@@ -73,7 +69,7 @@ def simulated(solved: _Solved) -> pd.DataFrame:
             jnp.where(is_woman, regime_ids["single_f"], regime_ids["single_m"]),
             regime_ids["couple"],
         ).astype(jnp.int32),
-        "own_stakeholder": jnp.where(
+        "own_member": jnp.where(
             is_single, NO_ROLE, jnp.where(is_woman, role_ids["f"], role_ids["m"])
         ).astype(jnp.int32),
     }
@@ -88,11 +84,11 @@ def simulated(solved: _Solved) -> pd.DataFrame:
 
 
 def test_the_household_publishes_one_value_per_partner(solved: _Solved) -> None:
-    """The couple's value function carries a trailing stakeholder axis."""
+    """The couple's value function carries a trailing member axis."""
     model, _, period_to_regime_to_V_arr = solved
 
     assert period_to_regime_to_V_arr.values[1]["couple"].shape[-1] == 2
-    assert model.user_regimes["couple"].stakeholders == ("f", "m")
+    assert model.user_regimes["couple"].member_axis == ("f", "m")
 
 
 def test_households_too_poor_to_outweigh_her_income_alone_dissolve() -> None:
@@ -118,10 +114,8 @@ def test_households_too_poor_to_outweigh_her_income_alone_dissolve() -> None:
             "regime_id": jnp.full(
                 2 * n_wealth, model.regime_names_to_ids["couple"], dtype=jnp.int32
             ),
-            "own_stakeholder": jnp.repeat(
-                jnp.asarray(
-                    [model.stakeholder_names_to_ids[role] for role in ("f", "m")]
-                ),
+            "own_member": jnp.repeat(
+                jnp.asarray([model.member_names_to_ids[role] for role in ("f", "m")]),
                 n_wealth,
             ),
         },
@@ -137,7 +131,7 @@ def test_households_too_poor_to_outweigh_her_income_alone_dissolve() -> None:
 
 
 def test_some_simulated_couples_dissolve(simulated: pd.DataFrame) -> None:
-    """A household that participation rules out sends both partners back single."""
+    """A household whose own exit is taken sends both partners back single."""
     by_subject = simulated.sort_values(["subject_id", "period"])
     previous = by_subject.groupby("subject_id")["regime_name"].shift()
     dissolved = by_subject.loc[
@@ -163,7 +157,7 @@ def test_singles_of_both_sexes_reach_the_household(
     entered = simulated.loc[
         simulated["subject_id"].isin(starts_single)
         & (simulated["regime_name"] == "couple"),
-        "own_stakeholder",
+        "own_member",
     ]
 
     assert set(entered.dropna().unique()) == {"f", "m"}
@@ -172,9 +166,9 @@ def test_singles_of_both_sexes_reach_the_household(
 def test_a_row_in_a_singleton_regime_carries_no_role(
     simulated: pd.DataFrame,
 ) -> None:
-    """`own_stakeholder` is a household role, so a single row has none."""
+    """`own_member` is a household role, so a single row has none."""
     single_rows = simulated.loc[
-        simulated["regime_name"].isin(["single_f", "single_m"]), "own_stakeholder"
+        simulated["regime_name"].isin(["single_f", "single_m"]), "own_member"
     ]
 
     assert single_rows.isna().all()
@@ -190,10 +184,8 @@ def test_every_subject_ends_in_a_terminal_regime(
     assert last["regime_name"].str.endswith("terminal").all()
 
 
-def test_participation_checks_replay_from_values_without_dissolution_artifacts() -> (
-    None
-):
-    """Participation support and consent do not require retained dissolution flags."""
+def test_exits_replay_from_values_without_dissolution_artifacts() -> None:
+    """Consent and the couple's own exit do not require retained dissolution flags."""
     model = household.get_model(n_periods=3, wealth_n_points=6, consumption_n_points=6)
     params = household.get_params()
     solution = model.solve(
@@ -218,44 +210,15 @@ def test_couple_dissolves_under_the_eckstein_keane_lifshitz_rule() -> None:
     assert getattr(declaration, "rule", None) == Unilateral(tie="leave")
 
 
-def test_a_missing_declared_participation_payload_fails_before_the_period_roll(
-    *,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A dated publisher must return its payload at the actual declared date."""
-    original = backward_induction._run_period_kernel
-
-    def missing_payload(**kwargs: Unpack[_KernelKwargs]) -> KernelOutput:
-        output = original(**kwargs)
-        if kwargs["regime_name"] == "couple" and kwargs["period"] == 1:
-            return replace(output, continuations={})
-        return output
-
-    monkeypatch.setattr(backward_induction, "_run_period_kernel", missing_payload)
-    model = household.get_model(n_periods=3, wealth_n_points=2, consumption_n_points=2)
-    with pytest.raises(
-        RuntimeError,
-        match=(
-            r"Regime 'couple' in period 1.*missing required.*"
-            r"pylcm\.participation\.query_operands"
-        ),
-    ):
-        model.solve(
-            params=household.get_params(),
-            retention=ResultRetention.VALUES,
-            log_level="off",
-        )
-
-
 def test_each_query_action_problem_is_traced_once_per_solve(
     *,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A query read inside another query's continuation reuses the target's trace.
 
-    A participation continuation prices the target's action problem at the landing
-    date, so the reads nest date by date. Re-tracing that problem at every read
-    multiplies the traces by the fan-out of every later date.
+    An exit reads the destination's problem, and a consent counterparty its
+    regime's problem, so the reads nest. Re-tracing a problem at every read
+    multiplies the traces by the fan-out of every read.
     """
     traces: Counter[int] = Counter()
     for kernel_class in (Q_and_F._QAndF, Q_and_F._CollectiveQAndF):

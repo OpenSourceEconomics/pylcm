@@ -12,17 +12,24 @@ The terminal wealth grid covers every reachable next-period wealth value so that
 linear interpolation (which clamps in numpy and extrapolates in pylcm) agrees
 between the reference and the solver.
 
+`get_household_model` writes the same model as a household in which exactly one
+member carries a positive Pareto weight and so decides.
+
 Importable only once `lcm.taste_shocks` exists.
 """
+
+from collections.abc import Mapping
 
 import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
+    CollectiveUtility,
     DiscreteGrid,
     ExecutionConfig,
     LinSpacedGrid,
     Model,
+    ParetoObjective,
     categorical,
 )
 from lcm.regime import Regime as UserRegime
@@ -121,6 +128,68 @@ def get_params(
         "discount_factor": discount_factor,
         "alive": {
             "utility": {"kappa": KAPPA},
+            "next_wealth": {"wage": WAGE},
+            "taste_shocks": {"scale": scale},
+        },
+    }
+
+
+PARTNER_WORK_TASTE = 0.5
+
+
+def utility_partner(*, consumption: ContinuousAction, work: DiscreteAction) -> FloatND:
+    return jnp.sqrt(consumption) + PARTNER_WORK_TASTE * work
+
+
+def utility_partner_done(wealth: ContinuousState) -> FloatND:
+    return jnp.sqrt(wealth)
+
+
+# Member `x` holds the single's utilities, member `y` the partner's; each pair is
+# (decision-period utility, terminal utility).
+HOUSEHOLD_UTILITIES = {
+    "x": (utility_alive, utility_done),
+    "y": (utility_partner, utility_partner_done),
+}
+
+
+def get_household_model(*, weights: Mapping[str, float]) -> Model:
+    """Return the toy as a household with the members and weights in `weights`.
+
+    The keys of `weights` are the members, in order, each `"x"` or `"y"`. With
+    `weights={"x": 1.0}` it is the single above written as a household of one.
+    """
+    alive_household = alive.replace(
+        functions={
+            "utility": CollectiveUtility(
+                utilities={name: HOUSEHOLD_UTILITIES[name][0] for name in weights},
+                objective=ParetoObjective(weights=weights),
+            )
+        },
+    )
+    done_household = done.replace(
+        functions={
+            "utility": CollectiveUtility(
+                utilities={name: HOUSEHOLD_UTILITIES[name][1] for name in weights}
+            )
+        },
+    )
+    return Model(
+        edges={"alive": {"done": 40}},
+        regimes={"alive": alive_household, "done": done_household},
+        ages=AgeGrid(start=40, inclusive_stop=41, step="Y"),
+        regime_id_class=ToyRegimeId,
+        initial_nodes={40: "alive"},
+    )
+
+
+def get_household_params(
+    *, scale: float, discount_factor: float = 0.95
+) -> dict[str, UserParamsNode]:
+    return {
+        "discount_factor": discount_factor,
+        "alive": {
+            "utility_x": {"kappa": KAPPA},
             "next_wealth": {"wage": WAGE},
             "taste_shocks": {"scale": scale},
         },
