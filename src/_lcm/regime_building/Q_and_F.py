@@ -1862,8 +1862,11 @@ def get_Q_and_F_collective(
     `(*action_axes, n_members)` and `F` `(*action_axes,)` — exactly what
     the member branch there (`collective_readout`) consumes.
 
-    No taste shocks and no nonlinear certainty equivalent: both are rejected at
-    regime construction for collective regimes.
+    No nonlinear certainty equivalent: it is rejected at regime construction for
+    collective regimes. Taste shocks are admitted only where exactly one member
+    has a positive Pareto weight and the regime declares no `exit` and no
+    `shocks`; the member branch there reads its decider's smoothed choice
+    (`decider_smoothed_readout`).
 
     Args:
         flat_param_names: Frozenset of flat parameter names for the regime.

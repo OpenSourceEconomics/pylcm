@@ -48,6 +48,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   choice probabilities, at the decider's best continuous action. Simulation draws the
   decider's choice as a single's draw. A household of one member with weight 1 gives the
   single's values and draws.
+- `Model.lookup_policy` on such a household returns the decider's choice probabilities,
+  the conditional continuous actions all members share, and every member's value.
 - Constant weights with more than one positive entry are refused when the regime is
   constructed; a weight declared as a function is checked at every solve, at every cell.
   Taste shocks stay refused on a household that declares an `exit` or observes
@@ -90,6 +92,22 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   their history breaks here: earlier entries measured the participation-check form.
 - See [ADR 4](docs/adr/0004-one-noun-members-and-the-rule-of-the-deciding-regime.md)
   for what is not shipped.
+
+### An exit lands under its destination grid's `off_grid` rule
+
+- A state an `Exit` projects follows its destination grid's `off_grid` rule, as a
+  realised next state does, in the solve and in the simulation alike. Under
+  `"clip_state"` the destination's problem is priced, and the mover lands, at the state
+  capped to the grid's outer nodes. Under `"raise"` a read the exit choice evaluates
+  that lands outside the grid raises `OffGridStateError`, even where the household then
+  stays; a read where the exit is unavailable, or at a shock node of zero mass, does
+  not. `"extrapolate"`, the default, and `"clip_lookup"` keep the projected state. This
+  holds for every exit target, a consent counterparty, and the reads below a couple a
+  consent exit forms.
+- An exit that projects onto a `"clip_state"` or `"raise"` grid whose points are
+  supplied at run time is refused when the model is built.
+- Values of models whose exits land only on `"extrapolate"` or `"clip_lookup"` grids
+  are unchanged.
 
 ### A regime declares at most one exit, with a built-in rule
 

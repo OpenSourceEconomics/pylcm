@@ -40,6 +40,7 @@ from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.execution.pending_work import PendingSolveWork
 from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
 from _lcm.grids import Grid
+from _lcm.off_grid import ProjectedGridRule, count_projected_off_grid
 from _lcm.output_roles import OutputRole, target_role
 from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
 from _lcm.regime_building.argmax import argmax_and_max
@@ -330,6 +331,12 @@ class QueryNode:
     None when the build cannot prove it; the read keeps its Raw identity either
     way, since it is the same problem value.
     """
+    grid_rules: tuple[ProjectedGridRule, ...] = ()
+    """Destination-grid rules of the states an exit projects into this read.
+
+    The projection already caps each `clip_state` state; each `raise` state adds
+    one reached-landing check to the read's own.
+    """
 
     def __post_init__(self) -> None:
         """Freeze edges and require the actual canonical target authority."""
@@ -486,6 +493,22 @@ type StayTable = tuple[FloatND, BoolND, BoolND, IntND]
 
 
 def _query_landing_checks(*, node: QueryNode) -> tuple[LandingCheck, ...]:
+    """The read's reached-landing checks: its problem's, then its projected states'.
+
+    A projected state checks against its destination grid on behalf of the exit
+    that projects it.
+    """
+    return (
+        *_problem_landing_checks(node=node),
+        *(
+            (rule.source, node.read.period, rule.target, rule.state)
+            for rule in node.grid_rules
+            if rule.off_grid == "raise"
+        ),
+    )
+
+
+def _problem_landing_checks(*, node: QueryNode) -> tuple[LandingCheck, ...]:
     return getattr(
         node.context.Q_and_F_functions[node.read.period], "landing_checks", ()
     )
@@ -493,7 +516,7 @@ def _query_landing_checks(*, node: QueryNode) -> tuple[LandingCheck, ...]:
 
 def _evaluated_query_landings(*, node: QueryNode, evaluated: EvaluatedQAndF) -> IntND:
     """Require the original canonical count vector in declared check order."""
-    checks = _query_landing_checks(node=node)
+    checks = _problem_landing_checks(node=node)
     if checks:
         if len(evaluated.landing_counts) != 1:
             raise TypeError("Canonical query lost its declared landing-count vector.")
@@ -2322,7 +2345,14 @@ def _active_query_cell(
         jnp.where(support, action, -1).astype(jnp.int32),
         live & support,
         ~live | valid,
-        sum_counts(counts=jnp.where(live, landing_counts, 0), axis=axes),
+        jnp.concatenate(
+            (
+                sum_counts(counts=jnp.where(live, landing_counts, 0), axis=axes),
+                count_projected_off_grid(
+                    rules=node.grid_rules, mapped=mapped, active=guard
+                ),
+            )
+        ),
     )
     if node.decision is not None:
         operands = {

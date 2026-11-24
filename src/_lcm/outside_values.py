@@ -40,6 +40,7 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.output_layout import StateAxesLeading
 from _lcm.grids import Grid
+from _lcm.off_grid import count_projected_off_grid
 from _lcm.policy_queries import (
     _PHYSICAL_CONTEXTS,
     _PROJECTION,
@@ -54,6 +55,7 @@ from _lcm.policy_queries import (
     _mapped_query_states,
     _mapped_query_valid,
     _node_inputs,
+    _problem_landing_checks,
     _query_availability,
     _query_cell,
     _query_landing_checks,
@@ -279,7 +281,8 @@ def read_outside_value(
 
     Returns:
         The read's answer, shaped as a point read's: the value, no action of its
-        own, its support, its integrity and no reached landings. A NaN value, a
+        own, its support, its integrity, and as reached landings those of its
+        projected states alone, which the stored cells do not hold. A NaN value, a
         cell whose problem failed its integrity check, fails the read's integrity.
 
     """
@@ -306,7 +309,14 @@ def read_outside_value(
         jnp.asarray(-1, dtype=jnp.int32),
         guard & support[cell],
         ~guard | integrity,
-        jnp.zeros((len(_query_landing_checks(node=node)),), dtype=jnp.int32),
+        jnp.concatenate(
+            (
+                jnp.zeros((len(_problem_landing_checks(node=node)),), jnp.int32),
+                count_projected_off_grid(
+                    rules=node.grid_rules, mapped=mapped, active=guard
+                ),
+            )
+        ),
     )
 
 

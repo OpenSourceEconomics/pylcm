@@ -96,11 +96,13 @@ would: its value is its own smoothed expected maximum over the discrete actions,
 the maximum over the continuous ones. Every other member's value is the mean of its own
 action value under the decider's choice probabilities, read at the decider's best
 continuous action for each discrete one. Simulation draws the decider's choice exactly
-as a single's draw. Constant weights must give exactly one member a positive weight; a
-weight declared as a function is checked at every solve, at every cell of the regime's
-grid, so a bargaining state may hand the decision from one member to the other. A
-household with taste shocks may not declare an `exit` or `shocks`, and another regime's
-exit may not read its decision.
+as a single's draw. `model.lookup_policy` returns, per discrete action, the decider's
+conditional value `Qc`, its choice probability and the continuous actions every member
+shares, and one value per member, in member order. Constant weights must give exactly
+one member a positive weight; a weight declared as a function is checked at every solve,
+at every cell of the regime's grid, so a bargaining state may hand the decision from one
+member to the other. A household with taste shocks may not declare an `exit` or
+`shocks`, and another regime's exit may not read its decision.
 
 ## Dissolving in the current period: where the members compare
 
@@ -115,6 +117,12 @@ member compares with its outside value (the
 - `compares="optimum"`: only the household's unconstrained optimum is tested.
   `Unilateral` separates when any member refuses there, `MutualConsent` when every
   member does. A household that stays acts at its optimum.
+
+A member's outside value is its destination's problem at the state the exit target's
+`projection` gives, and a member who leaves lands there. That state follows the
+destination grid's `off_grid` rule as a realised next state does: a `"clip_state"` grid
+caps it to its outer nodes for both the outside value and the landing, and a `"raise"`
+grid refuses a read outside it, even where the household then stays.
 
 Under mutual consent the members can also shift the division on separation before they
 decide. `Settlement` names it as an argument the exit's projections and utility
@@ -519,14 +527,16 @@ transition; the branch it takes then sets the role it carries onward.
 - A subject starting in a **singleton** regime has no role.
 - A subject starting in a **collective** regime declares one, through
   `initial_conditions["own_member"]`, whenever a route it can still reach turns on the
-  role — that is, whenever some collective regime in the starting regime's forward
-  closure declares a gated transition with more than one route. A row keeps its role
-  across an ordinary regime transition, so a two-leg transition the cohort runs into
-  later counts; one in a regime the cohort can never arrive at does not, and no seed is
-  required for it.
-- Entering a collective regime through `roles` sets the declared role, and through a
-  gated transition the route's `target_member`; leaving through the closed branch sets
-  it from the fallback's `member`, or clears it for a singleton destination.
+  role — that is, whenever some regime in the starting regime's forward closure, the
+  starting regime included, declares a gated transition with more than one route or an
+  `Exit` with targets for more than one member, such as a dissolution that sends `f` to
+  `single_f` and `m` to `single_m`. A row keeps its role across an ordinary regime
+  transition, so such a transition or exit the cohort runs into later counts; one in a
+  regime the cohort can never arrive at does not, and no seed is required for it.
+- Entering a collective regime through `roles` sets the declared role, through a gated
+  transition the route's `target_member`, and through an exit the target's `role`;
+  leaving through the closed branch sets it from the fallback's `member`, or clears it
+  for a singleton destination.
 
 ```python
 initial_conditions = {

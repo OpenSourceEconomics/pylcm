@@ -69,6 +69,10 @@ class PolicyLookup:
     With taste shocks, its expectation at the objective's noisy choice,
     including the selected centered shock. This is generally not a logsum of
     `Qc`: the choice probabilities come from the objective profile.
+
+    A household has a trailing member axis, in member order. With taste shocks,
+    the deciding member's entry is its smoothed maximum and every other
+    member's is its mean action value under the decider's choice probabilities.
     """
 
     Q: FloatND | None = None
@@ -119,6 +123,8 @@ class PolicyLookup:
     of `Q` over feasible continuous actions. With `Decoupled`, the value profile
     at the objective's first feasible continuous maximizer, not generally the
     max of `Q`. A combination without a feasible continuous action has `-inf`.
+    In a household, the deciding member's own conditional value, with no member
+    axis; every member shares the continuous actions attaining it.
     """
 
     choice_probabilities: FloatND | None = None

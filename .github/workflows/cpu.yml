@@ -2629,9 +2629,8 @@ jobs:
   # The slow solution phase dominates both CPU precisions. Whole files are
   # assigned by decreasing observed per-precision weight into the lightest bin
   # (`shard_test_files.py --weights-leg`), preserving module-local compile reuse
-  # while balancing real cost rather than a hash. Per-precision shard counts
-  # leave room for the serial replay within the same 30-minute payload budget.
-  # Whole-file costs still set a lower bound under `--dist loadfile`. Each job keeps
+  # while balancing real cost rather than a hash. Whole-file costs still set a
+  # lower bound under `--dist loadfile`. Each job keeps
   # two xdist workers: increasing that inside a 16 GB runner has exhausted
   # memory, whereas separate runners provide real capacity.
   tests-slow-solution:

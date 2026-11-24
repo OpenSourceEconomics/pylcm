@@ -69,9 +69,10 @@ _Avoid_: participation value
 
 **Outside value**:
 What a member of a regime gets by leaving it at the current step: the destination's
-problem value at the member's projected state, given the current shocks the decision
-observes, and with no further move in that period. A move that needs the consent of the
-destination's members reads the destination's staying value instead.
+problem value at the member's projected state under the destination grid's `off_grid`
+rule, given the current shocks the decision observes, and with no further move in that
+period. A move that needs the consent of the destination's members reads the
+destination's staying value instead.
 _Avoid_: benchmark, threat point
 
 **Exit**:
