@@ -11,10 +11,11 @@ from lcm.typing import StateName
 
 @dataclass(frozen=True, kw_only=True)
 class StateConditioned:
-    r"""A shock parameter conditioned on a discrete state of the same regime.
+    r"""A process parameter conditioned on a discrete state of the same regime.
 
-    Write it in place of the parameter it conditions. Use it when the size of a shock
-    depends on where the subject currently is — the variance of the earnings innovation
+    Write it in place of the parameter it conditions: the intercept, persistence or
+    innovation scale of a process, or a mixture parameter. Use it when the law depends
+    on where the subject currently is — the variance of the earnings innovation
     differing by employment status, with
     $\sigma_\text{employed} < \sigma_\text{unemployed}$:
 
@@ -29,19 +30,22 @@ class StateConditioned:
             ),
         )
 
-    Writing $s_t$ for the time-$t$ value of `on` and $\sigma_{s_t}$ for `by[s_t]`, an
-    AR(1) process transitions as
+    Writing $s_t$ for the time-$t$ value of `on`, an AR(1) process with every
+    parameter conditioned transitions as
 
     ```{math}
-    y_{t+1} \mid y_t, s_t \sim N(\mu + \rho y_t,\ \sigma_{s_t}^2),
+    y_{t+1} \mid y_t, s_t \sim N(\mu_{s_t} + \rho_{s_t} y_t,\ \sigma_{s_t}^2),
     ```
 
-    an IID process dropping the $\rho y_t$ term. The row is binned on one set of nodes,
-    placed from the widest value in `by` — only $\sigma_{s_t}$ varies with $s_t$.
-    Standing where the scalar would go, it says which parameter is conditioned and
-    leaves no way to give that parameter twice.
+    an IID process dropping the $\rho y_t$ term. Several parameters of one process may
+    be conditioned, all on the same state and the same categories. The row is binned on
+    one set of nodes that spans every category's own nodes, so a category whose own
+    nodes cover only part of that range is resolved more coarsely than by a process of
+    its own; the user guide describes how to standardize the state instead. Standing
+    where the scalar would go, it says which parameter is conditioned and leaves no way
+    to give that parameter twice.
 
-    The conditioning value is dated $t$, so the variance of the innovation realized
+    The conditioning value is dated $t$, so the law of the innovation realized
     between $t$ and $t+1$ is set by where the subject is at $t$. The mapping it is read
     against is the *target* regime's declaration, so a process declared with different
     values in the source and target regimes takes the target's.

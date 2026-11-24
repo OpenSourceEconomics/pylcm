@@ -547,10 +547,10 @@ def _resolve_conditioned_sigma(
     *,
     grid: _ContinuousStochasticProcess,
     grids: Mapping[StateOrActionName, Grid],
-) -> tuple[StateConditioned, Float1D] | None:
-    """Resolve the code-ordered sigma array of a state-conditioned process, else None.
+) -> tuple[StateConditioned, Mapping[str, Float1D]] | None:
+    """Resolve each conditioned parameter's code-ordered values, else None.
 
-    Reuses `sigma_array_by_code` so simulation gathers sigma under exactly the
+    Reuses `sigma_array_by_code` so simulation gathers the values under exactly the
     category-code ordering the solve-side transition rows use.
     """
     sc = grid.state_conditioned
@@ -563,7 +563,10 @@ def _resolve_conditioned_sigma(
             f"same regime as the process."
         )
         raise ModelInitializationError(msg)
-    return sc, sigma_array_by_code(cond_grid=conditioning_grid, by=sc.by)
+    return sc, {
+        param: sigma_array_by_code(cond_grid=conditioning_grid, by=declaration.by)
+        for param, declaration in grid.conditioned_params
+    }
 
 
 def _create_ar1_next_func(
@@ -571,7 +574,7 @@ def _create_ar1_next_func(
     qname: QualifiedName,
     state_name: StateName,
     grid: _AR1Process,
-    conditioned: tuple[StateConditioned, Float1D] | None = None,
+    conditioned: tuple[StateConditioned, Mapping[str, Float1D]] | None = None,
 ) -> StochasticNextFunction:
     fixed_params = dict(grid.params)
     runtime_param_names = {
@@ -609,8 +612,8 @@ class _AR1NextState:
     """Process parameters fixed at construction."""
     runtime_param_names: dict[str, str]
     """Mapping of qualified runtime-param names to the process's own names."""
-    conditioned: tuple[StateConditioned, Float1D] | None
-    """The state-conditioned sigma array, or `None` for an unconditioned process."""
+    conditioned: tuple[StateConditioned, Mapping[str, Float1D]] | None
+    """The conditioned parameters' values by code, or `None` if unconditioned."""
     draw_shock: Callable[..., ContinuousState]
     """The process's own draw."""
 
@@ -643,7 +646,7 @@ def _create_iid_next_func(
     qname: QualifiedName,
     state_name: StateName,
     grid: _IIDProcess,
-    conditioned: tuple[StateConditioned, Float1D] | None = None,
+    conditioned: tuple[StateConditioned, Mapping[str, Float1D]] | None = None,
 ) -> StochasticNextFunction:
     fixed_params = dict(grid.params)
     runtime_param_names = {
@@ -677,8 +680,8 @@ class _IIDNextState:
     """Process parameters fixed at construction."""
     runtime_param_names: dict[str, str]
     """Mapping of qualified runtime-param names to the process's own names."""
-    conditioned: tuple[StateConditioned, Float1D] | None
-    """The state-conditioned sigma array, or `None` for an unconditioned process."""
+    conditioned: tuple[StateConditioned, Mapping[str, Float1D]] | None
+    """The conditioned parameters' values by code, or `None` if unconditioned."""
     draw_shock: Callable[..., ContinuousState]
     """The process's own draw."""
 
@@ -707,18 +710,21 @@ class _IIDNextState:
 
 def _conditioned_sigma(
     *,
-    conditioned: tuple[StateConditioned, Float1D] | None,
+    conditioned: tuple[StateConditioned, Mapping[str, Float1D]] | None,
     kwargs: Mapping[ReferenceName, FloatND | IntND | PRNGKeyND],
 ) -> Mapping[str, ScalarFloat]:
-    """Return `{"sigma": <the value the conditioning state selects>}`, else `{}`.
+    """Return each conditioned parameter's value at the conditioning state, else `{}`.
 
-    Overrides the scalar `sigma` that places the nodes, so the draw uses the same
-    per-category value the solve-side transition row was built from.
+    Overrides the scalar the process holds for the parameter, so the draw uses the
+    same per-category value the solve-side transition row was built from.
     """
     if conditioned is None:
         return {}
-    sc, sigma_by_code = conditioned
-    return {"sigma": gather_sigma(sigma_by_code=sigma_by_code, code=kwargs[sc.on])}
+    sc, by_code = conditioned
+    return {
+        param: gather_sigma(sigma_by_code=values, code=kwargs[sc.on])
+        for param, values in by_code.items()
+    }
 
 
 def _publish_signature(

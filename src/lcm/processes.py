@@ -57,7 +57,7 @@ from _lcm.processes.joint_normal import (
     _rounded_zero_pivots,
     covariance_factor,
 )
-from _lcm.processes.state_conditioned import tauchen_row
+from _lcm.processes.state_conditioned import tauchen_mixture_row, tauchen_row
 from _lcm.typing import PRNGKeyND
 from lcm.exceptions import GridInitializationError
 from lcm.state_conditioned import StateConditioned
@@ -133,15 +133,14 @@ class NormalIIDProcess(_IIDProcess):
     gauss_hermite: bool
     """Use Gauss-Hermite quadrature nodes and weights."""
 
-    mu: float | None = None
+    mu: float | StateConditioned | None = None
     """Mean of the distribution."""
 
     sigma: float | StateConditioned | None = None
     """Standard deviation of the distribution.
 
     A `StateConditioned` here conditions the innovation scale on a discrete state
-    of the same regime; `__post_init__` then leaves this holding the scalar that
-    places the nodes.
+    of the same regime.
     """
 
     n_std: float | None = None
@@ -386,11 +385,10 @@ class TauchenAR1Process(_AR1Process):
     """Standard deviation of the innovation.
 
     A `StateConditioned` here conditions the innovation scale on a discrete state
-    of the same regime; `__post_init__` then leaves this holding the scalar that
-    places the nodes.
+    of the same regime.
     """
 
-    mu: float | None = None
+    mu: float | StateConditioned | None = None
     """Intercept (drift) of the AR(1) process."""
 
     n_std: float | None = None
@@ -402,9 +400,9 @@ class TauchenAR1Process(_AR1Process):
         nodes: UserVector,
         simulated_draws: Literal["continuous", "nodes"] = "continuous",
         off_grid: OffGrid = "extrapolate",
-        rho: float | None = None,
+        rho: float | StateConditioned | None = None,
         sigma: float | StateConditioned | None = None,
-        mu: float | None = 0.0,
+        mu: float | StateConditioned | None = 0.0,
         transition_rule: TransitionRule = "midpoint",
         n_quadrature: int | None = None,
         innovation_nodes: UserVector | None = None,
@@ -636,26 +634,32 @@ class TauchenNormalMixtureAR1Process(_AR1Process):
 
     """
 
-    mu: float | None = None
+    mu: float | StateConditioned | None = None
     """Intercept (drift) of the AR(1) process."""
 
     n_std: float | None = None
     """Number of unconditional standard deviations for the grid boundary."""
 
-    p1: float | None = None
+    p1: float | StateConditioned | None = None
     """Probability of the first mixture component."""
 
-    mu1: float | None = None
+    mu1: float | StateConditioned | None = None
     """Mean of the first mixture component."""
 
-    sigma1: float | None = None
+    sigma1: float | StateConditioned | None = None
     """Standard deviation of the first mixture component."""
 
-    mu2: float | None = None
+    mu2: float | StateConditioned | None = None
     """Mean of the second mixture component."""
 
-    sigma2: float | None = None
+    sigma2: float | StateConditioned | None = None
     """Standard deviation of the second mixture component."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if isinstance(self.p1, float) and not 0.0 <= self.p1 <= 1.0:
+            msg = f"`p1` is a probability and must lie in [0, 1], but got {self.p1}."
+            raise GridInitializationError(msg)
 
     @staticmethod
     def _innovation_variance(
@@ -726,14 +730,10 @@ class TauchenNormalMixtureAR1Process(_AR1Process):
         Each node's bin reaches half a step to either side, the first and last
         bins open, as in `compute_transition_probs`.
         """
-        x = self.compute_gridpoints(**kwargs)
-        mixture = {name: kwargs[name] for name in ("p1", "mu1", "sigma1", "mu2")}
-        half_step = 0.5 * (x[-1] - x[0]) / (self.n_points - 1)
-        z = x - kwargs["mu"] - kwargs["rho"] * from_value
-        upper = _mixture_cdf(x=z + half_step, sigma2=kwargs["sigma2"], **mixture)
-        lower = _mixture_cdf(x=z - half_step, sigma2=kwargs["sigma2"], **mixture)
-        row = (upper - lower).at[0].set(upper[0])
-        return row.at[-1].set(1 - lower[-1])
+        law = {name: value for name, value in kwargs.items() if name != "n_std"}
+        return tauchen_mixture_row(
+            nodes=self.compute_gridpoints(**kwargs), from_value=from_value, **law
+        )
 
     def draw_shock(
         self,

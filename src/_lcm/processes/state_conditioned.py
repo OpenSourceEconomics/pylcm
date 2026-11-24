@@ -1,21 +1,21 @@
-"""Direct-CDF transition rows for state-conditioned shock parameters.
+"""Direct-CDF transition rows for state-conditioned process parameters.
 
-The transition kernel is discretized on fixed common nodes, built once from the
-process's own scalar `sigma`, while the per-category `sigma` enters only the transition
-CDF. Each row is evaluated directly at the actual time-$t$ value.
+The transition kernel is discretized on fixed common nodes, which span every
+category's own nodes, while the per-category parameter values enter only the
+transition CDF. Each row is evaluated directly at the actual time-$t$ value.
 
 Interpolating precomputed node rows instead is wrong by an amount that does not shrink
 as the grid refines: for a `sigma` small relative to the cell width, essentially all of
 the conditional mass sits inside a single cell, and a row read off the neighbouring
 nodes and blended puts mass where the true kernel has none.
 
-Supported families are the CDF-binned IID normal and Tauchen AR(1), whose transition
-CDFs carry `sigma`. Rouwenhorst is excluded: its transition depends on `rho` only, so
-fixing the nodes removes the sole `sigma` channel.
+Supported families are the CDF-binned IID normal, Tauchen AR(1) and Tauchen
+normal-mixture AR(1), whose rows are a CDF evaluated on nodes that any law can be
+binned on. Rouwenhorst is excluded: its transition matrix belongs to its own nodes.
 
-Evaluated at a node with the per-category `sigma` equal to the node-placing one, these
-builders reproduce the `NormalIIDProcess(gauss_hermite=False)` and `TauchenAR1Process`
-rows exactly.
+Evaluated at a node with every category holding the same values, these builders
+reproduce the `NormalIIDProcess(gauss_hermite=False)`, `TauchenAR1Process` and
+`TauchenNormalMixtureAR1Process` rows exactly.
 """
 
 from collections.abc import Mapping
@@ -24,7 +24,7 @@ from typing import Literal
 import jax.numpy as jnp
 from jax.scipy.stats.norm import cdf
 
-from _lcm.processes.base import sealed
+from _lcm.processes.base import _mixture_cdf, sealed
 from lcm.grids import DiscreteGrid
 from lcm.typing import Float1D, FloatND, ScalarFloat, ScalarInt
 
@@ -34,21 +34,21 @@ __all__ = [
     "gather_sigma",
     "iid_normal_row",
     "sigma_array_by_code",
+    "tauchen_mixture_row",
     "tauchen_row",
 ]
 
 
-# Process families whose transition CDF carries `sigma`. Rouwenhorst is absent: its
-# transition is `rho`-only, so a fixed node grid leaves no channel for a
-# state-conditioned `sigma`.
-type Family = Literal["iid_normal", "tauchen"]
+# Process families whose row is a CDF binned on nodes any law can use. Rouwenhorst
+# is absent: its transition matrix belongs to its own nodes.
+type Family = Literal["iid_normal", "tauchen", "tauchen_mixture"]
 
 # A law parameter as declared, or as the canonical 0-d array a runtime binding holds.
 type _Scalar = float | ScalarFloat
 
 
 def sigma_array_by_code(*, cond_grid: DiscreteGrid, by: Mapping[str, float]) -> Float1D:
-    """Order the per-category `sigma` values by the categorical's integer **code**.
+    """Order one parameter's per-category values by the categorical's integer **code**.
 
     Stacking by `Mapping` insertion order silently permutes categories whenever the code
     order differs from the insertion order; indexing the returned array by the
@@ -86,10 +86,10 @@ def conditioned_row(
 ) -> Float1D:
     """Dispatch to the direct-CDF row builder for the given process `family`.
 
-    `nodes` are the fixed common nodes, placed by the process's own scalar `sigma`;
-    `sigma` here is the innovation std the conditioning state selects, already gathered
-    by code. `mu` is the process's fixed location (IID mean, AR(1) intercept) —
-    dropping it misplaces the entire row. `rho` is required for Tauchen.
+    `nodes` are the fixed common nodes; `sigma`, `mu` and `rho` are the values the
+    conditioning state selects, already gathered by code, or the process's own where
+    a parameter is not conditioned. `mu` is the location (IID mean, AR(1) intercept)
+    — dropping it misplaces the entire row. `rho` is required for Tauchen.
     """
     if family == "iid_normal":
         return iid_normal_row(nodes=nodes, mu=mu, sigma=sigma)
@@ -105,7 +105,7 @@ def conditioned_row(
 
 
 def gather_sigma(*, sigma_by_code: Float1D, code: int | ScalarInt) -> ScalarFloat:
-    """Select the `sigma` the time-$t$ conditioning state selects, by its code."""
+    """Select the value the time-$t$ conditioning state selects, by its code."""
     return sigma_by_code[code]
 
 
@@ -157,6 +157,36 @@ def tauchen_row(
     return _row_from_edge_cdf(
         cdf(_standardized_midpoints(nodes=nodes, location=mu, shift=shift, sigma=sigma))
     )
+
+
+def tauchen_mixture_row(
+    *,
+    nodes: Float1D,
+    from_value: float | ScalarFloat,
+    mu: float | ScalarFloat,
+    rho: float | ScalarFloat,
+    p1: float | ScalarFloat,
+    mu1: float | ScalarFloat,
+    sigma1: float | ScalarFloat,
+    mu2: float | ScalarFloat,
+    sigma2: float | ScalarFloat,
+) -> Float1D:
+    r"""Conditional AR(1) row with two-component normal-mixture innovations.
+
+    Each node's bin reaches half a step of the evenly spaced `nodes` to either
+    side, the first and last bins open, as in
+    `TauchenNormalMixtureAR1Process.compute_transition_probs`.
+    """
+    half_step = 0.5 * (nodes[-1] - nodes[0]) / (nodes.shape[0] - 1)
+    z = nodes - mu - rho * from_value
+    upper = _mixture_cdf(
+        x=z + half_step, p1=p1, mu1=mu1, sigma1=sigma1, mu2=mu2, sigma2=sigma2
+    )
+    lower = _mixture_cdf(
+        x=z - half_step, p1=p1, mu1=mu1, sigma1=sigma1, mu2=mu2, sigma2=sigma2
+    )
+    row = (upper - lower).at[0].set(upper[0])
+    return row.at[-1].set(1 - lower[-1])
 
 
 def _standardized_midpoints(

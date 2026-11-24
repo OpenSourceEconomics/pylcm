@@ -24,6 +24,7 @@ from _lcm.processes.base import (
 )
 from _lcm.typing import PRNGKeyND
 from lcm.exceptions import GridInitializationError
+from lcm.state_conditioned import StateConditioned
 from lcm.typing import (
     Float1D,
     FloatND,
@@ -38,12 +39,12 @@ type TransitionRule = Literal["midpoint", "innovation_quadrature", "density"]
 class _AR1Process(_ContinuousStochasticProcess):
     """Base for AR(1) processes — draw depends on previous value."""
 
-    rho: float | None = None
+    rho: float | StateConditioned | None = None
     """Persistence parameter of the stationary AR(1) process."""
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if self.rho is not None:
+        if isinstance(self.rho, float):
             self.fail_if_nonstationary_rho(rho=self.rho)
 
     def fail_if_nonstationary_rho(self, *, rho: float | FloatND) -> None:
