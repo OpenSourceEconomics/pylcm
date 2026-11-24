@@ -1,7 +1,7 @@
 """Tests for compile-only workspace-frontier selection."""
 
 from collections.abc import Callable, Hashable, Mapping
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from typing import Literal, Never, cast
 
 import jax
@@ -888,9 +888,11 @@ def test_budgeted_frontier_is_enumerated_once_per_axis_declaration(
     built: list[tuple[int, ...]] = []
     width_mapping = planning._width_mapping
 
-    def record(**kwargs):
-        built.append(kwargs["values"])
-        return width_mapping(**kwargs)
+    def record(
+        *, axes: tuple[ReducedAxis | TiledOutputAxis, ...], values: tuple[int, ...]
+    ) -> MappingProxyType[str, int]:
+        built.append(values)
+        return width_mapping(axes=axes, values=values)
 
     monkeypatch.setattr(planning, "_width_mapping", record)
 
