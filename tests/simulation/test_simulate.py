@@ -2,7 +2,7 @@ import shutil
 from collections.abc import Sequence
 from pathlib import Path
 from types import MappingProxyType
-from typing import Literal
+from typing import Literal, Protocol, TypedDict
 
 import cloudpickle
 import jax
@@ -12,6 +12,7 @@ import pytest
 from numpy.testing import assert_array_almost_equal, assert_array_equal
 from pandas.testing import assert_frame_equal
 
+from _lcm.engine import Regime
 from _lcm.execution.core_program import CoreProgramGraphAware
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
@@ -21,6 +22,7 @@ from _lcm.simulation.simulate import (
     _lookup_values_from_indices,
     simulate,
 )
+from _lcm.typing import RegimeNamesToIds
 from _lcm.utils.logging import get_logger
 from lcm import (
     LinearAggregator,
@@ -33,7 +35,8 @@ from lcm.result import (
     SimulationResult,
     _collect_array_tree_leaf_sizes,
 )
-from lcm.typing import FunctionName
+from lcm.solver_api import SolutionResult
+from lcm.typing import FunctionName, RegimeName, UserParams
 from tests.conftest import bind_laws, build_prepared_structure
 from tests.simulation.test_runtime_helpers import bind_eager_simulation
 from tests.test_models.deterministic.regression import (
@@ -48,8 +51,25 @@ from tests.test_models.deterministic.regression import (
 )
 
 
+class _SimulateInputs(TypedDict):
+    """The kernel-level inputs `simulate` takes besides params, values and subjects."""
+
+    regimes: MappingProxyType[RegimeName, Regime]
+    regime_names_to_ids: RegimeNamesToIds
+    ages: AgeGrid
+    simulation_output_dtypes: MappingProxyType[str, pd.CategoricalDtype]
+
+
+class _SolveStrippedDown(Protocol):
+    """Solve the stripped-down model for a number of periods."""
+
+    def __call__(
+        self, *, n_periods: int
+    ) -> tuple[SolutionResult, UserParams, Model]: ...
+
+
 @pytest.fixture
-def simulate_inputs():
+def simulate_inputs() -> _SimulateInputs:
     ages = AgeGrid(start=0, inclusive_stop=1, step="Y")
     final_age_alive = 0
     updated_working_life = working_life.replace(
@@ -105,7 +125,7 @@ def simulate_inputs():
     }
 
 
-def test_simulate_using_raw_inputs(simulate_inputs):
+def test_simulate_using_raw_inputs(simulate_inputs: _SimulateInputs) -> None:
     flat_params = MappingProxyType(
         {
             "working_life": MappingProxyType(
@@ -160,8 +180,8 @@ def test_simulate_using_raw_inputs(simulate_inputs):
 
 
 @pytest.fixture
-def iskhakov_et_al_2017_stripped_down_model_solution():
-    def _model_solution(n_periods):
+def iskhakov_et_al_2017_stripped_down_model_solution() -> _SolveStrippedDown:
+    def _model_solution(*, n_periods: int) -> tuple[SolutionResult, UserParams, Model]:
         # remove wage function so that wage becomes a parameter
         updated_functions = {
             name: func
@@ -188,8 +208,8 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
 
 
 def test_simulate_using_model_methods(
-    iskhakov_et_al_2017_stripped_down_model_solution,
-):
+    iskhakov_et_al_2017_stripped_down_model_solution: _SolveStrippedDown,
+) -> None:
     n_periods = 4
     period_to_regime_to_V_arr, params, model = (
         iskhakov_et_al_2017_stripped_down_model_solution(
@@ -246,8 +266,8 @@ def test_simulate_using_model_methods(
 
 
 def test_grid_search_simulation_with_supplied_values_dispatches_its_decision_program(
-    iskhakov_et_al_2017_stripped_down_model_solution,
-):
+    iskhakov_et_al_2017_stripped_down_model_solution: _SolveStrippedDown,
+) -> None:
     """Supplying solved values still computes the subject's own decision."""
     period_to_regime_to_V_arr, params, model = (
         iskhakov_et_al_2017_stripped_down_model_solution(n_periods=2)
@@ -271,7 +291,7 @@ def test_grid_search_simulation_with_supplied_values_dispatches_its_decision_pro
     assert result.n_subjects == 1
 
 
-def test_simulate_with_only_discrete_actions():
+def test_simulate_with_only_discrete_actions() -> None:
     from tests.test_models.deterministic.discrete import (  # noqa: PLC0415
         RegimeId as DiscreteRegimeId,
     )
@@ -317,7 +337,7 @@ def test_simulate_with_only_discrete_actions():
     )
 
 
-def test_effect_of_discount_factor_on_last_period():
+def test_effect_of_discount_factor_on_last_period() -> None:
     n_periods = 6
     model = get_model(n_periods=n_periods)
 
@@ -380,7 +400,7 @@ def test_effect_of_discount_factor_on_last_period():
     assert (period_4["value_low"] <= period_4["value_high"]).all()
 
 
-def test_effect_of_disutility_of_work():
+def test_effect_of_disutility_of_work() -> None:
     n_periods = 6
     model = get_model(n_periods=n_periods)
 
@@ -450,7 +470,7 @@ def test_effect_of_disutility_of_work():
     ).all()
 
 
-def test_to_dataframe_use_categorical_codes_parameter():
+def test_to_dataframe_use_categorical_codes_parameter() -> None:
     """`use_categorical_codes` switches discrete columns between labels and codes."""
 
     model = get_model(n_periods=3)
@@ -478,7 +498,7 @@ def test_to_dataframe_use_categorical_codes_parameter():
 
 
 @pytest.fixture
-def regression_simulation_result():
+def regression_simulation_result() -> SimulationResult:
     """Shared fixture for available_targets tests."""
 
     model = get_model(n_periods=3)
@@ -494,7 +514,9 @@ def regression_simulation_result():
     )
 
 
-def test_available_targets_property(regression_simulation_result):
+def test_available_targets_property(
+    regression_simulation_result: SimulationResult,
+) -> None:
     """Test that available_targets shows what can be computed."""
     result = regression_simulation_result
     assert {"utility", "borrowing_constraint"} <= set(result.available_targets)
@@ -505,16 +527,16 @@ _NAME_LISTINGS = ("regime_names", "state_names", "action_names", "available_targ
 
 @pytest.mark.parametrize("name", _NAME_LISTINGS)
 def test_simulation_result_name_listing_is_a_tuple(
-    *, regression_simulation_result, name
-):
+    *, regression_simulation_result: SimulationResult, name: str
+) -> None:
     """Each name listing of a simulation result is a tuple."""
     assert isinstance(getattr(regression_simulation_result, name), tuple)
 
 
 @pytest.mark.parametrize("name", _NAME_LISTINGS)
 def test_simulation_result_name_listing_cannot_be_mutated(
-    *, regression_simulation_result, name
-):
+    *, regression_simulation_result: SimulationResult, name: str
+) -> None:
     """Writing into a name listing of a simulation result is refused."""
     names = getattr(regression_simulation_result, name)
 
@@ -524,8 +546,8 @@ def test_simulation_result_name_listing_cannot_be_mutated(
 
 @pytest.mark.parametrize("name", _NAME_LISTINGS)
 def test_load_returns_name_listings_archived_as_lists_as_tuples(
-    *, tmp_path, regression_simulation_result, name
-):
+    *, tmp_path: Path, regression_simulation_result: SimulationResult, name: str
+) -> None:
     """An archive holding a result's name listings as lists loads them as tuples."""
     save_dir = tmp_path / "result"
     regression_simulation_result.save(directory=save_dir)
@@ -547,7 +569,9 @@ def test_load_returns_name_listings_archived_as_lists_as_tuples(
     assert isinstance(getattr(loaded, name), tuple)
 
 
-def test_additional_targets_all(regression_simulation_result):
+def test_additional_targets_all(
+    regression_simulation_result: SimulationResult,
+) -> None:
     """Test that additional_targets='all' computes all available targets."""
     result = regression_simulation_result
     df = result.to_dataframe(additional_targets="all")
@@ -612,7 +636,7 @@ def test_target_boundaries_reject_bare_strings(
             result.to_dataframe(additional_targets=targets)
 
 
-def test_additional_targets_all_with_stochastic_transitions():
+def test_additional_targets_all_with_stochastic_transitions() -> None:
     """Test that additional_targets='all' works with stochastic transition models.
 
     Stochastic weight functions (e.g. `weight_next_health`) must not appear in
@@ -652,7 +676,7 @@ def test_additional_targets_all_with_stochastic_transitions():
     assert set(result.available_targets) <= set(df.columns)
 
 
-def test_retrieve_actions():
+def test_retrieve_actions() -> None:
     got = _lookup_values_from_indices(
         flat_indices=jnp.array([0, 3, 7], dtype=jnp.int32),
         grids=MappingProxyType(
@@ -663,7 +687,7 @@ def test_retrieve_actions():
     assert_array_equal(got["b"], jnp.array([10, 16, 12]))
 
 
-def test_simulation_result_save_load_roundtrip(tmp_path: Path):
+def test_simulation_result_save_load_roundtrip(tmp_path: Path) -> None:
     """`SimulationResult.save(directory=...)` + `load(directory=...)` preserve content.
 
     A round-trip through the on-disk format must produce a result whose
@@ -703,7 +727,7 @@ def test_simulation_result_save_load_roundtrip(tmp_path: Path):
 
 def test_load_solution_reads_value_arrays_without_the_per_subject_artifacts(
     tmp_path: Path,
-):
+) -> None:
     """`SimulationResult.load_solution` returns the saved value arrays alone.
 
     A consumer that only compares or reuses value functions reads `V_arr/` and
@@ -742,7 +766,9 @@ def test_load_solution_reads_value_arrays_without_the_per_subject_artifacts(
             assert_array_equal(got[period][name], V_arr)
 
 
-def test_loaded_result_computes_additional_targets_matching_original(tmp_path: Path):
+def test_loaded_result_computes_additional_targets_matching_original(
+    tmp_path: Path,
+) -> None:
     """A loaded result computes `additional_targets` identically to the original.
 
     The target DAG is evaluated against the regime's `flat_params`, so this is the
@@ -769,7 +795,7 @@ def test_loaded_result_computes_additional_targets_matching_original(tmp_path: P
     assert_frame_equal(loaded.to_dataframe(additional_targets=["utility"]), expected_df)
 
 
-def test_save_overwrites_existing_output_directory(tmp_path: Path):
+def test_save_overwrites_existing_output_directory(tmp_path: Path) -> None:
     """`save` into a directory that already holds a checkpoint overwrites it.
 
     Re-running a pipeline writes into the same output directory, so `save` must
@@ -839,7 +865,9 @@ def test_save_writes_simulated_data_arrow_matching_to_dataframe(tmp_path: Path) 
     assert_frame_equal(pd.read_feather(arrow_path), expected, check_exact=True)
 
 
-def test_save_clears_regimes_to_release_compiled_program_workspaces(tmp_path: Path):
+def test_save_clears_regimes_to_release_compiled_program_workspaces(
+    tmp_path: Path,
+) -> None:
     """`save` drops `self._regimes` after pickling metadata to free the JIT cache.
 
     Each `Regime` holds numerical functions whose compiled workspaces can stay
@@ -868,7 +896,9 @@ def test_save_clears_regimes_to_release_compiled_program_workspaces(tmp_path: Pa
     assert dict(result._regimes) == {}
 
 
-def test_save_clears_period_to_regime_to_V_arr_to_free_device_memory(tmp_path: Path):
+def test_save_clears_period_to_regime_to_V_arr_to_free_device_memory(
+    tmp_path: Path,
+) -> None:
     """`save` drops the in-memory `period_to_regime_to_V_arr` after persisting it.
 
     The grid V-array is the largest device-resident artifact at save time. The
@@ -896,7 +926,7 @@ def test_save_clears_period_to_regime_to_V_arr_to_free_device_memory(tmp_path: P
     assert dict(result.period_to_regime_to_V_arr) == {}
 
 
-def test_collect_array_tree_leaf_sizes_orders_leaves_by_size_descending():
+def test_collect_array_tree_leaf_sizes_orders_leaves_by_size_descending() -> None:
     """Leaves come back biggest-first with shape, dtype, and byte count.
 
     A `(100,)` float32 leaf at the same depth as a `(2,)` float32 leaf yields
@@ -912,14 +942,14 @@ def test_collect_array_tree_leaf_sizes_orders_leaves_by_size_descending():
     assert [(leaf.shape, leaf.n_bytes) for leaf in leaves] == [((100,), 400), ((2,), 8)]
 
 
-def test_collect_array_tree_leaf_sizes_returns_a_tuple():
+def test_collect_array_tree_leaf_sizes_returns_a_tuple() -> None:
     """The leaf records come back as an immutable sequence."""
     tree = {"regime_A": {"big": jnp.zeros((2,), dtype=jnp.float32)}}
 
     assert isinstance(_collect_array_tree_leaf_sizes(tree=tree), tuple)
 
 
-def test_collect_array_tree_leaf_sizes_records_path_dtype_and_size():
+def test_collect_array_tree_leaf_sizes_records_path_dtype_and_size() -> None:
     """Each leaf carries the full dotted path, shape, dtype, and byte count.
 
     For a `(3, 4)` int32 leaf nested under `"raw_results.r.7.actions.foo"`,
