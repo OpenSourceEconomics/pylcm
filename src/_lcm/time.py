@@ -41,9 +41,6 @@ class ModelTime:
     stages: Stages = ()
     """Each stage of a period, in order, with its regimes; empty for one stage."""
 
-    pass_throughs: frozenset[RegimeName] = frozenset()
-    """The generated regimes a subject is in where its regime sits out a stage."""
-
     @classmethod
     def from_inputs(
         cls,
@@ -165,6 +162,16 @@ def period_of_step(*, ages: TimeAxis, step: int) -> int:
 def stage_position(*, ages: TimeAxis, regime: RegimeName) -> int:
     """Position of `regime`'s stage within every period of `ages`."""
     return ages.stage_of.get(regime, 0) if isinstance(ages, ModelTime) else 0
+
+
+def landing_step(*, ages: TimeAxis, step: int, target: RegimeName) -> int:
+    """The step an edge from `step` into `target` lands at.
+
+    It is the target's next occurrence: the first step after `step` in the
+    target's stage, so `step + 1` in a model without stages.
+    """
+    n_stages = stages_per_period(ages)
+    return step + 1 + (stage_position(ages=ages, regime=target) - step - 1) % n_stages
 
 
 # Internal helper entry points also accept the existing age-grid test/plugin inputs.

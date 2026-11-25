@@ -209,6 +209,7 @@ from _lcm.time import (
     coordinate_at,
     coordinate_kind,
     display_age_at,
+    landing_step,
     period_of_step,
 )
 from _lcm.typing import (
@@ -1387,6 +1388,7 @@ def _subject_chunk_periods(  # noqa: PLR0915
                 memory=memory,
                 base_state_action_space=base_state_action_spaces[regime_name],
                 period=period,
+                ages=ages,
                 reported_period=period_of_step(ages=ages, step=period),
                 age=age,
                 states=states,
@@ -2014,6 +2016,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     base_state_action_space: StateActionSpace,
     base_state_action_spaces: Mapping[RegimeName, StateActionSpace],
     period: int,
+    ages: TimeAxis,
     reported_period: int,
     age: ScalarInt | ScalarFloat,
     states: StatesPerRegime,
@@ -2176,9 +2179,21 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         regime_states=states[regime_name],
         base=base_state_action_space,
     )
-    # The decision reads the next period's reachable values. In the last period
-    # it receives an empty mapping because no continuation is consumed.
-    next_period_values = period_to_regime_to_V_arr.get(period + 1, MappingProxyType({}))
+    # The decision reads each target's value where its edge lands, at the target's
+    # next occurrence. In the last period no continuation is consumed.
+    next_period_values = MappingProxyType(
+        {
+            target: landed[target]
+            for target in regimes
+            if target
+            in (
+                landed := period_to_regime_to_V_arr.get(
+                    landing_step(ages=ages, step=period, target=target),
+                    MappingProxyType({}),
+                )
+            )
+        }
+    )
     next_regime_to_V_arr = _require_next_period_values(
         next_period_values=next_period_values,
         required_targets=decision_targets_next_period,

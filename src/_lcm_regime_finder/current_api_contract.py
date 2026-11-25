@@ -30,10 +30,12 @@ NATIVE_SCHEDULE_TYPES = frozenset(name for name in NATIVE_INPUT_TYPES
 
 _TRANSITION_FILE = '8dfed1b3b1418281d1c50ca3e56f578861baf7fd595a894821bd8d566410e2cc'
 # Schedule files whose `_PeriodDispatch` and `_ProbabilityConstant` are identical.
-# The second counts every period a gated source reads in `gated_source_periods`.
+# The second counts every period a gated source reads in `gated_source_periods`; the
+# third lands each edge at its target's next occurrence in `resolve_demand`.
 _SCHEDULES_FILES = (
     'b9b26eacf800b5be94f84ba493e4f4686b9ac5b81610303a2ac38b8a1bee8d27',
     '4e7ccbe7dbacb185351281459b8175715e8e2c1408cf53442fae77ae35a55501',
+    'f2c456c24025cccd12733e44e1594058507fddb64ee6c8f060e85764f3d4a60f',
 )
 _AUTHORITIES = {
     '_lcm.regime_building.schedules._PeriodDispatch': (

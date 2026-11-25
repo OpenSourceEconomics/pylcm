@@ -28,6 +28,7 @@ from enum import IntEnum
 from types import MappingProxyType
 from typing import Literal
 
+from _lcm.time import TimeAxis, landing_step
 from _lcm.typing import RegimeName
 from lcm.transition import StochasticTransition
 from lcm.typing import UserAge, UserFunction
@@ -179,12 +180,14 @@ def build_phase_reachability(
     active_periods_by_regime: Mapping[RegimeName, Collection[int]],
     support_by_period: Mapping[RegimeName, Mapping[int, Collection[RegimeName]]],
     terminal_regimes: Collection[RegimeName] = (),
+    ages: TimeAxis | None = None,
 ) -> PhaseReachability:
     """Build one static graph; every retained edge is `CONDITIONAL`.
 
     A source's retained targets at a period are exactly its declared support
-    there. Every declared target must be covered at the next period; the graph
-    never drops a declared target.
+    there. Every declared target must be covered at the period the edge lands
+    in, its next occurrence on the clock `ages`; the graph never drops a
+    declared target.
     """
     if n_periods < 1:
         raise ValueError("n_periods must be positive")
@@ -212,11 +215,16 @@ def build_phase_reachability(
         for source, by_period in support_by_period.items()
         for period, targets in by_period.items()
         for target in targets
-        if period + 1 not in active[target]
+        if (
+            period + 1
+            if ages is None
+            else landing_step(ages=ages, step=period, target=target)
+        )
+        not in active[target]
     )
     if uncovered:
         raise ValueError(
-            "Declared targets must be covered at the next period; "
+            "Declared targets must be covered at the period they land in; "
             f"(source, period, target) = {uncovered}"
         )
 
@@ -267,6 +275,7 @@ def build_model_reachability(
     ],
     terminal_regimes: Collection[RegimeName] = (),
     visited_periods_by_regime: Mapping[RegimeName, Collection[int]] | None = None,
+    ages: TimeAxis | None = None,
 ) -> ModelReachability:
     """Build solve and simulate graphs from the declared per-period support.
 
@@ -281,6 +290,7 @@ def build_model_reachability(
             active_periods_by_regime=active_periods_by_regime,
             support_by_period=support_by_phase["solution"],
             terminal_regimes=terminal_regimes,
+            ages=ages,
         ),
         simulation=build_phase_reachability(
             n_periods=n_periods,
@@ -291,5 +301,6 @@ def build_model_reachability(
             ),
             support_by_period=support_by_phase["simulation"],
             terminal_regimes=terminal_regimes,
+            ages=ages,
         ),
     )

@@ -851,6 +851,7 @@ def _decision_value_reads(
     )
     return _value_reads(
         regime_name=context.regime_name,
+        ages=context.ages,
         period=period,
         target_regimes=target_regimes,
         edge_reference_regimes=_edge_reference_regimes_for_targets(

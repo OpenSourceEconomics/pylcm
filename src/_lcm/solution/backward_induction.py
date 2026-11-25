@@ -266,7 +266,14 @@ from _lcm.solution.v_topology import (
     _RegimeVTopology,
     placed_V_sharding,
 )
-from _lcm.time import TimeAxis, coordinate_at, coordinate_kind, display_age_at
+from _lcm.time import (
+    TimeAxis,
+    coordinate_at,
+    coordinate_kind,
+    display_age_at,
+    stage_position,
+    stages_per_period,
+)
 from _lcm.typing import (
     AgeValue,
     ArgumentTree,
@@ -1370,7 +1377,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 next_regime_to_V_arr, next_regime_to_continuation = (
                     _roll_continuation_inputs(
                         regimes=regimes,
+                        ages=ages,
                         period=period,
+                        next_regime_to_V_arr=next_regime_to_V_arr,
                         period_solution=period_solution,
                         period_continuations=period_continuations,
                         V_templates=input_templates.next_regime_to_V_arr,
@@ -2136,7 +2145,9 @@ def _period_shared_transfer_plan(
 def _roll_continuation_inputs(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
+    ages: TimeAxis,
     period: int,
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     period_solution: dict[RegimeName, FloatND],
     period_continuations: dict[RegimeName, ContinuationPayload],
     V_templates: MappingProxyType[RegimeName, ValueTemplate],
@@ -2147,10 +2158,10 @@ def _roll_continuation_inputs(
 ]:
     """Roll the per-period continuation mappings forward by one period.
 
-    The V mapping holds exactly the regimes solved this period: a period
-    program reads only its period targets, which are active, and so solved, at
-    the next period. A regime inactive this period drops out, and nothing keeps
-    its earlier value alive for the roll.
+    The V mapping holds the regimes solved this period and carries the value of
+    each regime whose stage is not this period's: a program reads each target
+    at its next occurrence, where it is active and so solved. A regime inactive
+    in its own stage drops out, and nothing keeps its earlier value alive.
 
     Constant-schema carries keep their template key set and update the entries solved
     this period. Date-specific carries keep only this period's actual publications, so
@@ -2168,6 +2179,12 @@ def _roll_continuation_inputs(
             )
             for regime_name in regimes
             if regime_name in period_solution
+        }
+        | {
+            regime_name: value
+            for regime_name, value in next_regime_to_V_arr.items()
+            if stage_position(ages=ages, regime=regime_name)
+            != period % stages_per_period(ages)
         }
     )
     rolled_continuation = {}

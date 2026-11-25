@@ -5,6 +5,7 @@ from pathlib import Path
 
 from networkx import DiGraph
 
+from _lcm.time import landing_step
 from _lcm.typing import JSONValue
 from _lcm_regime_finder.layout_search import analyze_layouts as _analyze_layouts
 from lcm.model import Model
@@ -142,7 +143,10 @@ def digraph(model: Model, *, phase: Phase | None = None) -> DiGraph:
         for source in sorted(targets_by_source):
             for target in sorted(targets_by_source[source]):
                 source_node = (clock[period], source)
-                target_node = (clock[period + 1], target)
+                target_node = (
+                    clock[landing_step(ages=model._time, step=period, target=target)],  # noqa: SLF001
+                    target,
+                )
                 # NetworkX otherwise silently admits a missing endpoint.
                 if source_node not in result or target_node not in result:
                     msg = "A temporal edge has an endpoint outside the admitted nodes."

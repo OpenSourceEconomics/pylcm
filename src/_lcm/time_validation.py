@@ -1,16 +1,19 @@
 """Reject ambiguous time declarations before DAG compilation or specialization."""
 
 from collections.abc import Iterator, Mapping
+from types import MappingProxyType
+from typing import cast
 
 from _lcm.model_graph import GraphEdges
 from _lcm.params.temporal import temporal_parameter_names
+from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.schedules import RegimeTransitionLaw
 from _lcm.regime_law import RegimeLaws
-from _lcm.time import ModelTime, TimeAxis, coordinate_kind
+from _lcm.time import ModelTime, TimeAxis, coordinate_kind, format_age
 from _lcm.utils.functools import is_user_function
 from lcm.consumption_savings_regime import _EGMFamilyRegime
 from lcm.exceptions import ModelInitializationError
-from lcm.exits import Consent
+from lcm.exits import Consent, Exit
 from lcm.phased import Phased
 from lcm.regime import (
     ActionEntry,
@@ -20,6 +23,7 @@ from lcm.regime import (
     StateEntry,
     StateTransitionEntry,
 )
+from lcm.shocks import ShockGroup, ShockGroupName
 from lcm.transition import (
     AgeSpecializedFunction,
     AgeSpecializedGrid,
@@ -27,7 +31,7 @@ from lcm.transition import (
     PeriodSpecializedFunction,
     PeriodSpecializedGrid,
 )
-from lcm.typing import RegimeName
+from lcm.typing import RegimeName, UserAge
 
 # A declaration the walk visits: a regime slot value or a regime law, or a
 # mapping of them.
@@ -106,35 +110,100 @@ def validate_time_declarations(
                     )
 
 
-def validate_stages(
+def validate_stages(  # noqa: C901, PLR0912 - one pass over the regimes' edges and exits
     *,
     regimes: Mapping[RegimeName, Regime],
     laws: RegimeLaws,
     edges: GraphEdges,
     time: ModelTime,
-) -> None:
+    shocks: Mapping[ShockGroupName, ShockGroup],
+) -> MappingProxyType[RegimeName, frozenset[int]]:
     """Refuse declarations that break the order of the stages within a period.
 
-    With its pass-throughs, every edge lands in the next stage; a gate's fallback
-    lands there too. An exit enters a regime of its own stage or of a later stage
-    of its period. A stage before the last links to the next one without
-    discounting, so its regimes declare no Koopmans aggregator and use no
-    endogenous-grid solver.
+    An edge lands at its target's next occurrence: in a later stage of the
+    source's period without discounting, else in the next period with one
+    discount. At each age, a source's edges all land in its period or all cross
+    into the next one; one whose edges stay in its period at some age declares
+    no Koopmans aggregator and uses no endogenous-grid solver. A gated edge and
+    its fallbacks land in the next stage, and an edge skips no stage of a target
+    with continuous stochastic processes. An exit enters a regime of its own
+    stage or of a later stage of its period, and observes no shock that such a
+    regime draws.
+
+    Returns:
+        The regimes whose edges land in their own period at some age, each with
+        the periods in which its edges cross into the next period instead.
+
     """
     if not time.stages:
-        return
+        return MappingProxyType({})
     stage_of = time.stage_of
     names = [name for name, _ in time.stages]
-    problems = [
-        f"the edge '{source}' -> '{target}' lands in stage "
-        f"'{names[stage_of[target]]}', not in the next stage "
-        f"'{names[(stage_of[source] + 1) % time.n_stages]}'"
-        for phase_edges in (edges.solve, edges.simulate)
-        for source, targets in phase_edges.items()
-        for target in targets
-        if stage_of[target] != (stage_of[source] + 1) % time.n_stages
-    ]
+    problems: list[str] = []
+    linked: dict[RegimeName, frozenset[int]] = {}
     for name, regime in regimes.items():
+        stage = stage_of[name]
+        targets = sorted(
+            {
+                target
+                for phase_edges in (edges.solve, edges.simulate)
+                for target in phase_edges.get(name, {})
+            }
+        )
+        by_age: dict[UserAge, set[RegimeName]] = {}
+        for phase_edges in (edges.solve, edges.simulate):
+            for target, ages in phase_edges.get(name, {}).items():
+                for age in ages:
+                    by_age.setdefault(age, set()).add(target)
+        within_ages = set()
+        for age, at_age in sorted(by_age.items()):
+            within = sorted(target for target in at_age if stage_of[target] > stage)
+            if within:
+                within_ages.add(age)
+            if within and len(within) < len(at_age):
+                problems.append(
+                    f"at {coordinate_kind(time)} {format_age(float(age))}, the edges "
+                    f"of '{name}' in stage '{names[stage]}' land in its period, "
+                    f"into {within}, and in the next period, into "
+                    f"{sorted(at_age - set(within))}; "
+                    "a source's edges at one age either all stay in its period or "
+                    "all cross into the next one"
+                )
+        skipped = {
+            target: names[stage + 1 :] + names[: stage_of[target]]
+            if stage_of[target] <= stage
+            else names[stage + 1 : stage_of[target]]
+            for target in targets
+        }
+        for target in laws[name].gated_edges:
+            gated = (
+                target,
+                *(
+                    route.regime
+                    for leg in laws[name].gated_edges[target].legs.values()
+                    for route in (leg.solve_fallback, leg.simulate_fallback)
+                ),
+            )
+            problems.extend(
+                f"the gated edge '{name}' -> '{target}' lands in '{landing}' of "
+                f"stage '{names[stage_of[landing]]}'; a gated edge and its "
+                "fallbacks land in the next stage"
+                for landing in gated
+                if stage_of[landing] != (stage + 1) % time.n_stages
+            )
+        for target, sat_out in skipped.items():
+            processes = sorted(
+                state
+                for state, grid in regimes[target].states.items()
+                if isinstance(grid, _ContinuousStochasticProcess)
+            )
+            if sat_out and processes:
+                problems.append(
+                    f"'{target}' sits out stage '{sat_out[0]}' on the edge from "
+                    f"'{name}', so its continuous stochastic processes "
+                    f"{processes} are not drawn there; declare a regime of its "
+                    f"own in stage '{sat_out[0]}'"
+                )
         exit_ = regime.exit
         destinations = (
             ()
@@ -148,24 +217,48 @@ def validate_stages(
                 ),
             )
         )
-        problems.extend(
-            f"the exit of '{name}' in stage '{names[stage_of[name]]}' reads "
-            f"'{destination}' of the earlier stage '{names[stage_of[destination]]}'"
-            for destination in destinations
-            if stage_of[destination] < stage_of[name]
-        )
-        if stage_of[name] == time.n_stages - 1 or laws[name].terminal:
+        for destination in destinations:
+            if stage_of[destination] < stage:
+                problems.append(
+                    f"the exit of '{name}' in stage '{names[stage]}' reads "
+                    f"'{destination}' of the earlier stage "
+                    f"'{names[stage_of[destination]]}'"
+                )
+            drawn = sorted(
+                set(cast("Exit", exit_).observes)
+                & {
+                    shock
+                    for group in regimes[destination].shocks
+                    if group in shocks
+                    for shock in shocks[group].shocks
+                }
+            )
+            if stage_of[destination] > stage and drawn:
+                problems.append(
+                    f"the exit of '{name}' in stage '{names[stage]}' observes "
+                    f"{drawn} of '{destination}', drawn in its later stage "
+                    f"'{names[stage_of[destination]]}'; draw the shock in stage "
+                    f"'{names[stage]}' and carry it as a state"
+                )
+        if not within_ages or laws[name].terminal:
             continue
+        crossing = frozenset(by_age) - within_ages
+        linked[name] = frozenset(
+            step // time.n_stages
+            for step, label in enumerate(time.exact_values)
+            if label in crossing
+        )
         if regime.koopmans_aggregator is not None:
             problems.append(
                 f"'{name}' declares a Koopmans aggregator in stage "
-                f"'{names[stage_of[name]]}'; a stage before the last links to the "
-                "next stage of its period without discounting"
+                f"'{names[stage]}'; its edges land in its period, which they "
+                "reach without discounting"
             )
         if isinstance(regime, _EGMFamilyRegime):
             problems.append(
                 f"'{name}' uses an endogenous-grid solver in stage "
-                f"'{names[stage_of[name]]}'; only the last stage of a period may"
+                f"'{names[stage]}'; only a regime whose edges cross into the next "
+                "period may"
             )
     if problems:
         raise ModelInitializationError(
@@ -173,3 +266,4 @@ def validate_stages(
             + "; ".join(dict.fromkeys(problems))
             + "."
         )
+    return MappingProxyType(linked)

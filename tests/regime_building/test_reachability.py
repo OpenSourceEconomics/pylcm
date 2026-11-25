@@ -47,7 +47,7 @@ def test_an_edge_is_the_declared_support_at_its_period() -> None:
 
 def test_a_declared_target_not_covered_next_period_is_rejected() -> None:
     """The graph never drops a declared target; it refuses an uncovered one."""
-    with pytest.raises(ValueError, match="covered at the next period"):
+    with pytest.raises(ValueError, match="covered at the period they land in"):
         build_phase_reachability(
             n_periods=2,
             active_periods_by_regime={"source": {0}, "target": {0}},

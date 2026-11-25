@@ -185,10 +185,12 @@ def install_exit_simulation_queries(
         full_queries[owner, period] = ScalarPolicyQueries(
             definitions=definitions, root=root, period=period
         )
+        # A mover into a later stage acts at its occurrence there, not here.
         actors.update(
             (definitions[query].read.target, period)
             for targets in definitions[root].exit_targets.values()
             for query in targets.values()
+            if definitions[query].landing is None
         )
     for owner, period in sorted((actors & original_actors) - full_queries.keys()):
         definitions, root = bind_exit_query_graph(

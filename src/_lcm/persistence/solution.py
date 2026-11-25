@@ -2153,10 +2153,11 @@ def _solution_stores(*, solution: _SolutionResultBoundary) -> _StoreTupleBoundar
 def _verify_result_entries(*, result: _SolutionResultBoundary) -> None:
     """Verify all lazy entries without materializing or caching any of them."""
     values = cast("ValueStore", result.values)
-    for period, regime in values._entries:  # noqa: SLF001
-        raw = values._raw(period=period, regime=regime)  # noqa: SLF001
-        if isinstance(raw, _LazyHdf5Entry):
-            raw.verify()
+    for period in values:
+        for regime in values[period]:
+            raw = values._raw(period=period, regime=regime)  # noqa: SLF001
+            if isinstance(raw, _LazyHdf5Entry):
+                raw.verify()
     for _channel, store in _solution_stores(solution=result):
         for ref in store:
             raw = store._raw(ref)  # noqa: SLF001
@@ -2167,11 +2168,6 @@ def _verify_result_entries(*, result: _SolutionResultBoundary) -> None:
 def _metadata_to_manifest(metadata: SolutionMetadata) -> dict[str, JSONValue]:
     """Encode descriptive metadata without serializing Python implementations."""
     return {
-        **(
-            {"pass_throughs": sorted(metadata.pass_throughs)}
-            if metadata.pass_throughs
-            else {}
-        ),
         "pylcm_version": metadata.pylcm_version,
         "retention": metadata.retention.value,
         "n_periods": metadata.n_periods,
@@ -2446,7 +2442,7 @@ def _metadata_from_manifest(  # noqa: C901, PLR0912, PLR0915
 ) -> SolutionMetadata:
     """Decode descriptive solution metadata into exact immutable public types."""
     try:
-        if set(raw) - {"pass_throughs"} != {
+        if set(raw) != {
             "pylcm_version",
             "retention",
             "n_periods",
@@ -2695,12 +2691,6 @@ def _metadata_from_manifest(  # noqa: C901, PLR0912, PLR0915
             source=SolutionSource.PERSISTED,
             solver_api_version=SOLVER_API_VERSION,
             solution_schema_version=SOLUTION_SCHEMA_VERSION,
-            pass_throughs=frozenset(
-                _require_nonempty_exact_str(value=name, label="pass-through")
-                for name in _require_exact_list(
-                    value=raw.get("pass_throughs", []), label="pass-throughs"
-                )
-            ),
         )
     except (KeyError, TypeError, ValueError) as error:
         raise SolutionIntegrityError(

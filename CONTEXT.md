@@ -153,15 +153,9 @@ _Avoid_: date, time step
 
 **Next occurrence**:
 The first step after the current one that belongs to a regime's stage; where an edge
-into the regime lands.
-
-**Pass-through**:
-The generated regime a subject is in at a step of a stage its regime sits out on the way
-to its next occurrence: the regime's states and members, one action, no shocks, zero
-utility and the identity transition, so its value is the next step's passed through
-unchanged. The user never declares or sees one: parameters, regime codes, values and
-simulated results name only declared regimes.
-_Avoid_: waiting regime, dummy regime
+into the regime lands and whose value it reads. A subject has no row at a step its
+regime sits out.
+_Avoid_: pass-through, waiting regime
 
 ### Parameters
 

@@ -44,6 +44,7 @@ from _lcm.renegotiation import (
 )
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.solution.grid_search import GridSearch
+from _lcm.time import landing_step, period_of_step
 from _lcm.typing import PytreeValue, QualifiedName
 from _lcm.utils.functools import (
     ComposedProjection,
@@ -620,9 +621,12 @@ class _QueryGraphBuilder:
         if (kind, owner) in ancestry:
             raise ValueError(f"Policy query cycle: {(*ancestry, (kind, owner))!r}")
         context = self.contexts[owner]
-        if self.period not in context.Q_and_F_functions:
+        # A regime of a later stage of the period is read at its occurrence.
+        occurrence = landing_step(ages=context.ages, step=self.period - 1, target=owner)
+        if occurrence == self.period and self.period not in context.Q_and_F_functions:
             raise ValueError(
-                f"Exit target {owner!r} has no active policy at period {self.period}."
+                f"Exit target {owner!r} has no active policy at period "
+                f"{period_of_step(ages=context.ages, step=self.period)}."
             )
         key = f"query_{len(self.keys)}"
         self.keys.append(key)
@@ -637,11 +641,44 @@ class _QueryGraphBuilder:
                 grids=context.grids,
                 nodes={
                     **context.state_action_space.states,
-                    **({} if axes is None else axes.get(self.period, {})),
+                    **({} if axes is None else axes.get(occurrence, {})),
                 },
             )
         )
         projection = clip_projection(projection=projection, rules=grid_rules)
+        if occurrence != self.period:
+            self.nodes[key] = QueryNode(
+                read=QueryRead(
+                    kind=kind,
+                    target=owner,
+                    phase=self.phase,
+                    period=self.period,
+                    role=role,
+                    projection=cast("Mapping[StateName, UserFunction]", projection),
+                    state_inputs=frozenset(context.state_action_space.state_names),
+                    physical_inputs=frozenset(),
+                    operand_paths={
+                        name: path
+                        for name, path in self.operand_paths.items()
+                        if any(
+                            name in inspect.signature(function).parameters
+                            for function in (*projection.values(), *guards)
+                        )
+                    },
+                    policy_information=frozenset(),
+                    price_information=price_information,
+                ),
+                context=context,
+                available=_guard(guards),
+                ancestors=ancestors,
+                source_projection=cast(
+                    "Mapping[StateName, UserFunction]",
+                    projection if source_projection is None else source_projection,
+                ),
+                grid_rules=grid_rules,
+                landing=occurrence,
+            )
+            return key
         declaration = exit_for_phase(
             declaration=context.user_regimes_at(period=self.period)[owner].exit,
             phase=self.phase,
@@ -1034,7 +1071,10 @@ class _QueryGraphBuilder:
                 exit_source=owner,
             )
             inputs[operand] = producer
-            if not isinstance(declaration.rule, Consent):
+            if (
+                not isinstance(declaration.rule, Consent)
+                and self.nodes[producer].landing is None
+            ):
                 self.outside_reads[producer] = (owner, f"member {member!r}")
             targets[member] = (
                 operand,
@@ -1405,6 +1445,9 @@ def acting_kinds(
     for source, definitions, root, period in readers:
         for targets in definitions[root].exit_targets.values():
             for query in targets.values():
+                # A mover into a later stage is a subject there, not an actor here.
+                if definitions[query].landing is not None:
+                    continue
                 read = definitions[query].read
                 moves.setdefault((read.target, period), {}).setdefault(
                     read.kind, set()
@@ -1417,8 +1460,9 @@ def acting_kinds(
                 f"{kind.value} after {', '.join(map(repr, sorted(sources)))}"
                 for kind, sources in sorted(kinds.items())
             )
+            economic = period_of_step(ages=contexts[owner].ages, step=period)
             raise RegimeInitializationError(
-                f"Regime {owner!r} is entered in period {period} by moves priced at "
+                f"Regime {owner!r} is entered in period {economic} by moves priced at "
                 f"different problems ({readings}). A regime with an available exit "
                 "that needs no consent cannot be entered in one period both by "
                 "consent, which reads it with its exit, and by another exit, which "
@@ -2016,6 +2060,8 @@ def _node_structure(*, node: QueryNode) -> _Structure:
             value = value is not None
         elif item.name == "source_projection":
             value = tuple(value)
+        elif item.name == "landing" and value is not None:
+            value -= node.read.period
         elif item.name == "exit_adjustments":
             value = tuple(
                 (exit_id, tuple(members)) for exit_id, members in value.items()
@@ -2034,14 +2080,19 @@ def _context_structure(*, node: QueryNode) -> _Structure:
     from _lcm.model_graph import _exit_is_statically_unavailable  # noqa: PLC0415
 
     context, period = node.context, node.read.period
+    shared = tuple(
+        id(getattr(context, item.name))
+        for item in fields(context)
+        if item.name != "current_iid_plans"
+    )
+    if node.landing is not None:
+        # A landing read traces its target's grid at the occurrence.
+        grids = context.period_to_regime_v_interp or {}
+        return (shared, id(grids.get(node.landing, {}).get(node.read.target)))
     declaration = context.user_regimes_at(period=period)[node.read.target]
     plan = context.current_iid_plans.get(period)
     return (
-        tuple(
-            id(getattr(context, item.name))
-            for item in fields(context)
-            if item.name != "current_iid_plans"
-        ),
+        shared,
         id(context.Q_and_F_functions[period]),
         id(declaration),
         declaration.exit is not None

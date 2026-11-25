@@ -66,13 +66,13 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - `Model(stages={stage_name: (regime_name, ...), ...})` declares the decisions taken one
   after another within every period. Every regime is in exactly one stage; subjects
   start in their regime's stage, an edge lands at its target's next occurrence, and an
-  exit enters a regime of its own or a later stage of its period. In the stages a
-  regime sits out on the way, the subject is in the regime's generated pass-through,
-  which passes the next step's value through unchanged, so a regime with one decision
-  per period needs no regime of its own in the other stages; parameters, regime codes,
-  values and simulated results name only declared regimes. The stages of a period are
-  linked without discounting; a regime of a stage before the last that declares a
-  Koopmans aggregator or uses an endogenous-grid solver is refused, as is an exit into
+  exit enters a regime of its own or a later stage of its period. A regime
+  with one decision per period needs no regime of its own in the other stages: an edge
+  reads its value at its next occurrence, and a subject has no row at a step it sits
+  out. The stages of a period are linked without discounting; a source whose edges at
+  one age both stay in its period and cross into the next one, and a regime whose edges
+  land in its period that declares a Koopmans aggregator or uses an endogenous-grid
+  solver, are refused, as is an exit into
   an earlier stage or one that observes a shock its destination draws later.
 - `period` and `age` are the period's in user functions, time-indexed parameters are
   indexed by period, and the simulated frame gains a `stage` column. `model.n_periods`,

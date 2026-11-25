@@ -136,22 +136,22 @@ _PROFILED_HELPER_MUTATIONS = {
     "simulation_pandas:dataframe_writer_omitted": (
         "src/lcm/model.py",
         (
-            "                        regime_names_to_ids=self._regime_codes,\n"
+            "                        regime_names_to_ids=self.regime_names_to_ids,\n"
             "                        array_writer=entry_allocations,"
         ),
         (
-            "                        regime_names_to_ids=self._regime_codes,\n"
+            "                        regime_names_to_ids=self.regime_names_to_ids,\n"
             "                        array_writer=None,"
         ),
     ),
     "simulation_pandas:series_writer_omitted": (
         "src/lcm/model.py",
         (
-            "            regime_names_to_ids=self._regime_codes,\n"
+            "            regime_names_to_ids=self.regime_names_to_ids,\n"
             "            array_writer=array_writer,"
         ),
         (
-            "            regime_names_to_ids=self._regime_codes,\n"
+            "            regime_names_to_ids=self.regime_names_to_ids,\n"
             "            array_writer=None,"
         ),
     ),

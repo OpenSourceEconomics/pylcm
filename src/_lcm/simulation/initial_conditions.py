@@ -64,6 +64,7 @@ from _lcm.time import (
     TimeAxis,
     coordinate_kind,
     period_of_step,
+    stage_position,
     stages_per_period,
 )
 from _lcm.transition_checks import (
@@ -557,7 +558,8 @@ def _read_initial_cohorts(
     periods = tuple(host_periods.tolist())
     if (
         any(
-            periods[index] not in regimes[name].active_periods
+            periods[index] + stage_position(ages=ages, regime=name)
+            not in regimes[name].active_periods
             for name, members in indices.items()
             for index in members
         )
@@ -590,7 +592,8 @@ def resolve_initial_periods(
 
     """
     if coordinate_kind(ages) == "period":
-        # A subject starts in the first stage of its period.
+        # A subject enters at the first step of its period and first acts in
+        # its regime's own stage.
         n_stages = stages_per_period(ages)
         values = np.asarray(initial_ages)
         valid = (values >= 0) & (values < ages.n_periods // n_stages)
@@ -1591,7 +1594,7 @@ def _collect_structural_errors(
         for regime_name, regime in regimes.items():
             in_regime = regime_id_arr == regime_names_to_ids[regime_name]
             period_active = jnp.isin(
-                periods,
+                periods + stage_position(ages=ages, regime=regime_name),
                 jnp.array(regime.active_periods, dtype=jnp.int32),
             )
             active_mask = active_mask & (~in_regime | period_active)
@@ -1913,6 +1916,8 @@ def _regime_views_by_start_pool(
         )
     else:
         subject_periods = np.asarray(cohorts.periods)[np.asarray(subject_indices)]
+    # A subject is judged at the step its regime first acts in.
+    subject_periods = subject_periods + stage_position(ages=ages, regime=regime.name)
     pools = regime.simulation.feasibility_pools_by_period
     # Start periods in order of first appearance, so groups follow their first
     # subject and each mask keeps the subjects' order.

@@ -59,11 +59,19 @@ from lcm.decoupled import KoopmansDeclaration
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.exits import Consent, Exit, MutualConsent
 from lcm.grids import DiscreteGrid
+from lcm.koopmans_aggregation import LinearAggregator
 from lcm.phased import Phased
 from lcm.regime import ConstraintEntry, StateEntry, StateTransitionEntry
 from lcm.regime import Regime as UserRegime
 from lcm.transition import JointTransition, _AgeSpecialized
-from lcm.typing import FloatND, ReferenceName, StateName, UserFunction, ValueND
+from lcm.typing import (
+    FloatND,
+    IntND,
+    ReferenceName,
+    StateName,
+    UserFunction,
+    ValueND,
+)
 
 # A user `Regime` after model-build finalization. Runtime-equivalent to
 # `lcm.regime.Regime`; internal signatures use this alias to mark values
@@ -73,8 +81,38 @@ type FinalizedUserRegime = UserRegime
 
 
 def link_stages(*, utility: FloatND, CE: FloatND) -> FloatND:
-    """Add the next stage's certainty equivalent: no time passes within a period."""
+    """Add a later stage's certainty equivalent: no time passes within a period."""
     return utility + CE
+
+
+def _linking(
+    *,
+    regime_name: RegimeName,
+    crossing: frozenset[int],
+    koopmans_aggregator: UserFunction,
+) -> UserFunction:
+    """The aggregator of a regime whose edges land in its period at some age.
+
+    In the `crossing` periods its edges reach the next period instead, which only
+    the linear aggregator can discount alongside the undiscounted ages.
+    """
+    if not crossing:
+        return link_stages
+    if not isinstance(koopmans_aggregator, LinearAggregator):
+        raise ModelInitializationError(
+            f"The edges of '{regime_name}' land in its period at some ages and in "
+            "the next period at others; the model's Koopmans aggregator must then "
+            "be `LinearAggregator`."
+        )
+    periods = jnp.asarray(sorted(crossing), dtype=jnp.int32)
+
+    def link_or_discount(
+        *, utility: FloatND, CE: FloatND, discount_factor: FloatND, period: IntND
+    ) -> FloatND:
+        """Discount the certainty equivalent only where the edges cross."""
+        return utility + jnp.where(jnp.isin(period, periods), discount_factor, 1.0) * CE
+
+    return link_or_discount
 
 
 def finalize_regimes(
@@ -86,7 +124,7 @@ def finalize_regimes(
     certainty_equivalent: CertaintyEquivalent,
     value_grids_by_regime: Mapping[RegimeName, Mapping[str, AdapterGrid]] | None = None,
     adapters: AdapterMemo | None = None,
-    linked: frozenset[RegimeName] = frozenset(),
+    linked: Mapping[RegimeName, frozenset[int]] = MappingProxyType({}),
 ) -> MappingProxyType[RegimeName, FinalizedUserRegime]:
     """Finalize every user regime for the model build.
 
@@ -109,9 +147,11 @@ def finalize_regimes(
             functions is read through, with processes bound to that regime.
             Collected from `user_regimes` when `None`.
         adapters: The adapters already built for this model.
-        linked: The regimes in a stage before the last of their period. Each
-            links to the next stage of its period without discounting, so it
-            gets `link_stages` as its Koopmans aggregator.
+        linked: The regimes whose edges land in their own period at some age,
+            which they reach without discounting, each with the periods in which
+            its edges cross into the next period instead. Each gets
+            `link_stages` as its Koopmans aggregator, or a linear aggregator
+            that discounts only in those periods.
 
     Returns:
         Immutable mapping of regime names to finalized regimes.
@@ -183,7 +223,11 @@ def finalize_regimes(
             regime_koopmans_aggregator = (
                 user_regime.koopmans_aggregator
                 if user_regime.koopmans_aggregator is not None
-                else link_stages
+                else _linking(
+                    regime_name=regime_name,
+                    crossing=linked[regime_name],
+                    koopmans_aggregator=koopmans_aggregator,
+                )
                 if regime_name in linked
                 else koopmans_aggregator
             )

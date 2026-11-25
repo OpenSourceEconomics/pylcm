@@ -51,7 +51,6 @@ from _lcm.typing import PRNGKeyND, RegimeNamesToIds
 from lcm._solver_api.contract import ValueArraySchema
 from lcm._solver_api.identity import AxisDescriptor, AxisRole
 from lcm._solver_api.result import SolutionResult
-from lcm._solver_api.stores import ValueStore
 from lcm.exceptions import InvalidSimulationInputError, ShockDeclarationError
 from lcm.processes import LogNormalIIDProcess, NormalIIDProcess, UniformIIDProcess
 from lcm.regime import Regime
@@ -350,7 +349,7 @@ class NodeAxisAdapter:
                 )
                 for regime_name, value in regimes.items()
             }
-            for period, regimes in _every_value(result=result).items()
+            for period, regimes in result.values.items()  # noqa: PD011 - result store
         }
         published = _copy_result(
             result=result,
@@ -398,7 +397,7 @@ class NodeAxisAdapter:
                 )
                 for regime_name, value in regimes.items()
             }
-            for period, regimes in _every_value(result=solution).items()
+            for period, regimes in solution.values.items()  # noqa: PD011 - result store
         }
         return _copy_result(result=solution, values=values, schemas=expanded)
 
@@ -1057,12 +1056,3 @@ def _copy_result(
     authority = result._artifact_authority  # noqa: SLF001
     object.__setattr__(copied, "_artifact_authority", authority)
     return copied
-
-
-def _every_value(*, result: SolutionResult) -> dict[int, dict[RegimeName, FloatND]]:
-    """Every value `result` stores, by period and regime, the unlisted included."""
-    store = cast("ValueStore", result.values)
-    return {
-        period: {regime: store[period][regime] for regime in regimes}
-        for period, regimes in store._regimes_by_period.items()  # noqa: SLF001
-    }

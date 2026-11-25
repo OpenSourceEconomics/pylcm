@@ -21,6 +21,7 @@ from _lcm.solution.grid_search import (
     _GridSearchPeriodKernel,
     _value_reads,
 )
+from _lcm.time import ModelTime
 from tests.simulation.test_aot_collective_and_gated import _make_consent_model
 from tests.solution.test_gated_edge_fold_reads import (
     _model as _gated_full_topology_model,
@@ -37,6 +38,7 @@ def _kernel(
     requirements = CoreExecutionRequirements(
         value_reads=_value_reads(
             regime_name="source",
+            ages=ModelTime(n_periods=5),
             period=3,
             target_regimes=target_regimes,
             edge_target_regimes=edge_target_regimes,

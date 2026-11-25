@@ -795,15 +795,17 @@ def test_route_metadata_makes_only_a_regime_of_several_members_collective(
 ) -> None:
     """Base and head checkouts spell members differently but agree on the count."""
 
-    def regime(members: tuple[str, ...] | None) -> SimpleNamespace:
+    def regime(value: tuple[str, ...] | None) -> SimpleNamespace:
         solution = SimpleNamespace(
             action_names=(), grids={}, sharded_state_names=(), period_kernels={}
         )
         return SimpleNamespace(
-            solution=solution,
-            has_taste_shocks=False,
-            gated_edges=(),
-            **{field: members},
+            **{
+                "solution": solution,
+                "has_taste_shocks": False,
+                "gated_edges": (),
+                field: value,
+            }
         )
 
     model = SimpleNamespace(

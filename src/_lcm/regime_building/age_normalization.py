@@ -59,7 +59,7 @@ from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.phases import PhasedRegimeSpec, RegimePhaseSpec
 from _lcm.regime_building.Q_and_F import partition_continuation_targets
 from _lcm.regime_building.V import VInterpolationInfo
-from _lcm.time import TimeAxis, specialization_coordinate_at
+from _lcm.time import TimeAxis, landing_step, specialization_coordinate_at
 from _lcm.transition_plans import TargetTransitionPlan
 from _lcm.typing import (
     ConstraintFunction,
@@ -174,9 +174,11 @@ class ResolvedAgeGrid:
 class AgeGridSchedule:
     """All concrete age-dependent grid data, built during model creation.
 
-    `by_period` holds only the periods where a regime is active (there are no
-    inactive-period placeholder grids). `specialized_states_by_regime` records,
-    per regime, which continuous states are age-specialized.
+    `by_period` holds the periods where a regime is active, and each step a regime
+    sits out holds the grids of its next occurrence, where a value read at that
+    step lives; an inactive period has no placeholder grid.
+    `specialized_states_by_regime` records, per regime, which continuous states
+    are age-specialized.
     """
 
     by_period: MappingProxyType[
@@ -218,7 +220,8 @@ class PeriodRegimes:
     """Per period, every regime with its age markers resolved at that period.
 
     A regime that declares no marker, or is inactive at the period, keeps its
-    representative declaration.
+    representative declaration; at a step it sits out it is declared as at its
+    next occurrence.
     """
 
     function_signatures: MappingProxyType[int, MappingProxyType[RegimeName, Hashable]]
@@ -1089,6 +1092,24 @@ def _visit_function_marker(
         _visit_function_marker(value=value.simulate, markers=markers)
 
 
+def _fill_sat_out_steps[Entry](
+    *,
+    table: dict[int, dict[RegimeName, Entry]],
+    ages: TimeAxis,
+    names: tuple[RegimeName, ...],
+) -> None:
+    """Give each regime, at a step it sits out, its entry at its next occurrence.
+
+    A value read at such a step is the value at the occurrence, so the step holds
+    the occurrence's grids and functions.
+    """
+    for step in range(ages.n_periods):
+        for name in names:
+            occurrence = landing_step(ages=ages, step=step - 1, target=name)
+            if occurrence != step and name in table.get(occurrence, {}):
+                table.setdefault(step, {})[name] = table[occurrence][name]
+
+
 def normalize_age_specialization(
     *,
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
@@ -1230,6 +1251,12 @@ def normalize_age_specialization(
                         }
                     )
                 )
+
+    _fill_sat_out_steps(table=schedule_by_period, ages=ages, names=tuple(user_regimes))
+    _fill_sat_out_steps(table=regimes_at_period, ages=ages, names=tuple(user_regimes))
+    _fill_sat_out_steps(
+        table=signatures_at_period, ages=ages, names=tuple(user_regimes)
+    )
 
     grid_schedule = (
         AgeGridSchedule(

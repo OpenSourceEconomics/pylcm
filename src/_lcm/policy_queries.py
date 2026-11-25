@@ -38,7 +38,12 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.execution.pending_work import PendingSolveWork
-from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
+from _lcm.execution.value_transfer import (
+    ValueArtifactAddress,
+    ValueArtifactKind,
+    ValueConsumerAddress,
+    ValueInputChannel,
+)
 from _lcm.grids import Grid
 from _lcm.off_grid import ProjectedGridRule, count_projected_off_grid
 from _lcm.output_roles import OutputRole, target_role
@@ -59,6 +64,7 @@ from _lcm.regime_building.Q_and_F import (
     has_objective_profile,
     runtime_bound_specs,
 )
+from _lcm.regime_building.V import get_V_interpolator
 from _lcm.solution.contract import ContinuationPayload, PeriodKernel, SolverBuildContext
 from _lcm.solution.grid_search import (
     GridSearch,
@@ -342,6 +348,13 @@ class QueryNode:
     The projection already caps each `clip_state` state; each `raise` state adds
     one reached-landing check to the read's own.
     """
+    landing: int | None = None
+    """The target's occurrence later in the period, whose stored value this read
+    takes; `None` for a read of the target's problem at the read's step.
+
+    An exit enters a regime of a later stage of its period, which decides there:
+    its value at its occurrence is interpolated at the projected states.
+    """
 
     def __post_init__(self) -> None:
         """Freeze edges and require the actual canonical target authority."""
@@ -438,6 +451,24 @@ def _node_inputs(
         return _OutsideReadArguments(
             period=period, plan=node.context.current_iid_plans.get(period)
         ), ()
+    if node.landing is not None:
+        target = node.read.target
+        return _LandingReadArguments(period=period, target=target), (
+            ValueRead(
+                target=ValueArtifactAddress(
+                    kind=ValueArtifactKind.REGIME_VALUE,
+                    period=node.landing,
+                    regime=target,
+                ),
+                source=ValueConsumerAddress(
+                    source_period=period,
+                    source_regime=target,
+                    core_key="main",
+                    channel=ValueInputChannel.NEXT_REGIME_VALUE,
+                    path=(target,),
+                ),
+            ),
+        )
     builder, reads = grid_search_query_inputs(context=node.context, period=period)
     if not node.gated_channels:
         return builder, reads
@@ -454,6 +485,29 @@ def _node_inputs(
         else read
         for read in reads
     )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _LandingReadArguments:
+    """A landing read's operands: the clock and its target's stored value."""
+
+    period: int
+    target: RegimeName
+
+    def __call__(
+        self, context: CoreBuildContext
+    ) -> Mapping[str, PytreeValue | ShapeDtypePytree]:
+        if context.ages is None:
+            raise ValueError("A landing read needs its actual economic age.")
+        arguments: dict[str, PytreeValue | ShapeDtypePytree] = {
+            "period": jnp.int32(self.period),
+            "age": context.ages.values[self.period],
+        }
+        arguments["next_regime_to_V_arr"] = cast(
+            "PytreeValue",
+            MappingProxyType({self.target: context.next_regime_to_V_arr[self.target]}),
+        )
+        return MappingProxyType(arguments)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -513,6 +567,8 @@ def _query_landing_checks(*, node: QueryNode) -> tuple[LandingCheck, ...]:
 
 
 def _problem_landing_checks(*, node: QueryNode) -> tuple[LandingCheck, ...]:
+    if node.landing is not None:
+        return ()
     return getattr(
         node.context.Q_and_F_functions[node.read.period], "landing_checks", ()
     )
@@ -1303,6 +1359,9 @@ def _admit_node(*, node: QueryNode, period: int) -> None:
         raise UnsupportedOperationError(
             "A policy query needs its exact solve phase/period."
         )
+    if node.landing is not None:
+        _fail_if_projection_incomplete(node=node, reader="A query")
+        return
     _admit_query_solver(context=context, period=period)
     if period not in context.Q_and_F_functions:
         raise ValueError("The target action problem is inactive at this period.")
@@ -2284,6 +2343,10 @@ def _active_query_cell(
         fixed=fixed,
         projection_operands=projection_operands,
     )
+    if node.landing is not None:
+        return _landing_answer(
+            node=node, live=live, guard=guard, arguments=arguments, mapped=mapped
+        )
     context = node.context
     q, feasible, valid, landing_counts = (
         stay_table(
@@ -2360,6 +2423,52 @@ def _active_query_cell(
         )
         _validate_decision_answer(node=node, answer=answer)
     return answer
+
+
+def _landing_answer(
+    *,
+    node: QueryNode,
+    live: BoolND,
+    guard: BoolND,
+    arguments: Mapping[str, PytreeValue],
+    mapped: Mapping[str, FloatND | IntND],
+) -> PolicyAnswer:
+    """Read a later stage's target at its occurrence, at the mapped states.
+
+    The value is the one stored at the occurrence, interpolated on the target's
+    grid there: the target decides later in the period, undiscounted. The read
+    chooses no action and is supported wherever its guard holds.
+    """
+    context = node.context
+    target = node.read.target
+    info = (
+        (context.period_to_regime_v_interp or {})
+        .get(cast("int", node.landing), {})
+        .get(target, context.regime_to_v_interpolation_info[target])
+    )
+    interpolate = get_V_interpolator(
+        v_interpolation_info=info, state_prefix="", V_arr_name="V_arr"
+    )
+    stored = cast("Mapping[RegimeName, FloatND]", arguments["next_regime_to_V_arr"])[
+        target
+    ]
+    value = jnp.stack(
+        tuple(
+            interpolate(
+                **{state: mapped[state] for state in info.state_names},
+                V_arr=stored[..., index],
+            )
+            for index, _ in enumerate(context.members)
+        )
+    )
+    valid = ~jnp.any(jnp.isnan(value)) & _mapped_query_valid(node=node, mapped=mapped)
+    return (
+        jnp.where(guard, value, -jnp.inf),
+        jnp.asarray(-1, dtype=jnp.int32),
+        live & guard,
+        ~live | valid,
+        count_projected_off_grid(rules=node.grid_rules, mapped=mapped, active=guard),
+    )
 
 
 def _mapped_query_valid(

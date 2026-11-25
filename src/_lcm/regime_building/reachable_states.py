@@ -30,7 +30,7 @@ from dags import concatenate_functions
 
 from _lcm.engine import Regime, SimulationPhase, SolutionPhase
 from _lcm.grids import Grid
-from _lcm.time import TimeAxis
+from _lcm.time import TimeAxis, landing_step
 from _lcm.typing import (
     FlatRegimeParams,
     FunctionName,
@@ -116,7 +116,10 @@ def enumerate_reachable_states(
         for source, target, phase_name in edges.get(period, ()):
             tuples = by_node.get((period, source))
             if tuples:
-                by_node.setdefault((period + 1, target), set()).update(
+                by_node.setdefault(
+                    (landing_step(ages=ages, step=period, target=target), target),
+                    set(),
+                ).update(
                     evaluator.successors(
                         phase_name=phase_name,
                         source=source,

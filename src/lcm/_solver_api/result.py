@@ -115,8 +115,6 @@ class SolutionResult:
         values = (
             self.values if type(self.values) is ValueStore else ValueStore(self.values)
         )
-        if self.metadata.pass_throughs:
-            values = values._hiding(regimes=self.metadata.pass_throughs)  # noqa: SLF001
         object.__setattr__(self, "values", values)
         omissions: dict[ArtifactRef, OmissionReason] = {}
         for raw_ref, reason in _traverse_public_mapping_items(

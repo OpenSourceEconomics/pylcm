@@ -531,6 +531,7 @@ def prepare_model_structure(
             support_by_phase=support_by_phase,
             terminal_regimes={name for name, law in laws.items() if law.terminal},
             visited_periods_by_regime=visited_periods_by_regime,
+            ages=ages,
         )
     except ValueError as error:
         raise ModelInitializationError(str(error)) from error
@@ -3604,7 +3605,10 @@ def _fail_if_ref_invalid(
 
 
 def _period_to_state_nodes(
-    *, regime_name: RegimeName, grid_schedule: AgeGridSchedule | None
+    *,
+    regime_name: RegimeName,
+    grid_schedule: AgeGridSchedule | None,
+    active_periods: tuple[int, ...],
 ) -> MappingProxyType[int, MappingProxyType[StateName, Float1D]] | None:
     """Return this regime's age-specialized state nodes, per active period.
 
@@ -3627,7 +3631,7 @@ def _period_to_state_nodes(
                 }
             )
             for period, by_regime in grid_schedule.by_period.items()
-            if regime_name in by_regime
+            if regime_name in by_regime and period in active_periods
         }
     )
 
@@ -4652,7 +4656,9 @@ def _prepare_numerical_solution_phase(
     )
 
     period_to_state_nodes = _period_to_state_nodes(
-        regime_name=regime_name, grid_schedule=grid_schedule
+        regime_name=regime_name,
+        grid_schedule=grid_schedule,
+        active_periods=regimes_to_active_periods[regime_name],
     )
     # Set by whichever branch below builds the decision kernels, to the key
     # their periods were grouped by; `None` where one closure serves every period.

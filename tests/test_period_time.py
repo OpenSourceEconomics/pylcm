@@ -1535,7 +1535,18 @@ def _out_of_stage_order(case: str) -> _StagedChange:
                 },
             },
         },
-        "beyond": {"stages": {"work": ("working", "final"), "spend": ("spending",)}},
+        "beyond": {
+            "stages": {"work": ("working", "final"), "spend": ("spending",)},
+            "edges": {
+                "working": {
+                    "working": lcm.PeriodRange(exclusive_stop=_N_ECONOMIC_PERIODS - 1),
+                    "final": lcm.PeriodRange(start=_N_ECONOMIC_PERIODS - 1),
+                },
+                "spending": {
+                    "spending": lcm.PeriodRange(exclusive_stop=_N_ECONOMIC_PERIODS - 1)
+                },
+            },
+        },
         "pair": {
             "edges": {  # ty: ignore[invalid-argument-type]
                 "working": lcm.Phased(
@@ -1554,6 +1565,23 @@ def _out_of_stage_order(case: str) -> _StagedChange:
                 "spending": {"working": lcm.Periods(values=(_N_ECONOMIC_PERIODS - 1,))},
             }
         },
+        "mixed": {
+            "edges": {  # ty: ignore[invalid-argument-type]
+                "working": lcm.Transition(
+                    targets={
+                        "spending": lcm.PeriodRange(
+                            exclusive_stop=_N_ECONOMIC_PERIODS - 1
+                        ),
+                        "working": lcm.Periods(values=(0,)),
+                        "final": lcm.PeriodRange(start=_N_ECONOMIC_PERIODS - 1),
+                    },
+                    law=lcm.DeterministicTransition(func=_to_spending),
+                ),
+                "spending": {
+                    "working": lcm.PeriodRange(exclusive_stop=_N_ECONOMIC_PERIODS - 1)
+                },
+            }
+        },
     }
     return changes[case]
 
@@ -1568,15 +1596,23 @@ def _out_of_stage_order(case: str) -> _StagedChange:
         ("aggregator", r"'working' declares a Koopmans aggregator in stage 'work'"),
         ("egm", r"'working' uses an endogenous-grid solver in stage 'work'"),
         ("process", r"'spending' sits out stage 'work' .* processes \['income'\]"),
-        ("beyond", r"requires 'final' sitting out stage 'spend' at age 2, which is"),
+        ("beyond", r"lands in 'final' at its next occurrence, which lies beyond"),
         ("pair", r"'working' maps to a `Phased` pair of transitions. Phase"),
         ("final", r"'spending' → 'working' selects only the final age"),
+        (
+            "mixed",
+            (
+                r"at period 0, the edges of 'working' in stage 'work' land in its "
+                r"period, into \['spending'\], and in the next period, into "
+                r"\['working'\]"
+            ),
+        ),
     ],
 )
 def test_stages_refuse_declarations_out_of_stage_order(
     *, case: str, match: str
 ) -> None:
-    """A refusal names declared regimes and stages, never a generated regime."""
+    """A refusal names the regimes and stages it concerns."""
     with pytest.raises(ModelInitializationError, match=match):
         _staged_model(clock="staged", **_out_of_stage_order(case))
 
@@ -2036,7 +2072,9 @@ def test_an_edge_lands_at_the_next_occurrence_of_its_target() -> None:
 
     The single's edge to itself skips the parting stage, the couple's exit enters
     the single in a later stage, and singles start in their own stage; written
-    with a hand-made waiting regime, the values and the simulated rows agree.
+    with a hand-made waiting regime, the values and the simulated rows agree. The
+    waiting regime interpolates the single's value once more on the way, so the
+    two agree to within a few units in the last place.
     """
     params = {"couple_sep": {"love": 0.2}}
     staged = _marriage(hand=False)
@@ -2046,17 +2084,36 @@ def test_an_edge_lands_at_the_next_occurrence_of_its_target() -> None:
     for step, regimes in hand_values.items():
         for name, value in regimes.items():
             if name != "single_wait":
-                np.testing.assert_array_equal(staged_values[step][name], value)
+                assert_agrees_to_ulp(
+                    got=staged_values[step][name],
+                    expected=value,
+                    n_ulp=_SKIP_ULP,
+                    operand_magnitude=1.0,
+                )
     staged_frame = _marriage_frame(model=staged, hand=False)
     hand_frame = _marriage_frame(model=hand, hand=True)
     hand_frame = hand_frame[hand_frame["regime_name"] != "single_wait"]
     assert "single" in set(staged_frame["regime_name"])
     assert set(staged_frame["regime_name"]) == set(hand_frame["regime_name"])
+    staged_frame = staged_frame.reset_index(drop=True)
+    hand_frame = hand_frame.reset_index(drop=True)
+    floats = [
+        column
+        for column in staged_frame.columns
+        if pd.api.types.is_float_dtype(staged_frame[column])
+    ]
     pd.testing.assert_frame_equal(
-        staged_frame.reset_index(drop=True),
-        hand_frame.reset_index(drop=True),
+        staged_frame.drop(columns=floats),
+        hand_frame.drop(columns=floats),
         check_categorical=False,
     )
+    for column in floats:
+        assert_agrees_to_ulp(
+            got=staged_frame[column],
+            expected=hand_frame[column],
+            n_ulp=_SKIP_ULP,
+            operand_magnitude=1.0,
+        )
 
 
 def test_an_exit_reads_the_destination_at_its_occurrence_later_in_the_period() -> None:
@@ -2097,21 +2154,29 @@ def _saver_grid(period: int) -> lcm.LinSpacedGrid:
     return lcm.LinSpacedGrid(start=1.0, stop=6.0 + period, n_points=6)
 
 
+def _saver_grid_by_age(age: float) -> lcm.LinSpacedGrid:
+    return _saver_grid(round(age) - 60)
+
+
 def _saver(
     *,
     stages: Mapping[str, tuple[RegimeName, ...]] | None,
     grid_by_period: bool = False,
     discount_factor: float | None = 0.9,
+    by_age: bool = False,
 ) -> lcm.Model:
     """The marriage model's single alone: one spending decision per period.
 
     Without `stages` the model declares no stages. With them, the regimes `idle`
     and `rest` fill the stages the single sits out. `discount_factor=None` leaves
-    the discount factor to the parameters.
+    the discount factor to the parameters. `by_age` declares the clock by age,
+    from 60, and a period-specific grid by age.
     """
     last = _N_ECONOMIC_PERIODS - 1
     wealth = (
-        lcm.PeriodSpecializedGrid(build=_saver_grid, signature=int)
+        lcm.AgeSpecializedGrid(build=_saver_grid_by_age)
+        if grid_by_period and by_age
+        else lcm.PeriodSpecializedGrid(build=_saver_grid, signature=int)
         if grid_by_period
         else _saver_grid(0)
     )
@@ -2132,16 +2197,27 @@ def _saver(
     idle = () if stages is None else ("idle", "rest")
     for name in idle:
         regimes[name] = lcm.Regime(functions={"utility": _waiting})
+    clock: ClockKwargs = (
+        {"ages": lcm.AgeGrid(start=60, inclusive_stop=60 + last, step="Y")}
+        if by_age
+        else {"n_periods": _N_ECONOMIC_PERIODS}
+    )
+    origin = 60 if by_age else 0
+    selector = lcm.AgeRange if by_age else lcm.PeriodRange
     return lcm.Model(
-        n_periods=_N_ECONOMIC_PERIODS,
+        **clock,
         stages=stages,
         regimes=regimes,
         regime_id_class=SaverId if stages is None else IdleSaverId,
-        initial_nodes=lcm.InitialNodes(by_period={0: ("single", *idle)}),
+        initial_nodes=lcm.InitialNodes(by_age={60: ("single", *idle)})
+        if by_age
+        else lcm.InitialNodes(by_period={0: ("single", *idle)}),
         edges={
             "single": {
-                "single": lcm.PeriodRange(exclusive_stop=last - 1),
-                "single_final": lcm.Periods(values=(last - 1,)),
+                "single": selector(exclusive_stop=origin + last - 1),
+                "single_final": selector(
+                    start=origin + last - 1, exclusive_stop=origin + last
+                ),
             }
         },
         fixed_params={}
@@ -2186,23 +2262,33 @@ def _hand_saver_values(*, landing: int) -> dict[int, np.ndarray]:
     return values
 
 
-def test_a_crossing_edge_reads_the_grid_of_the_period_it_lands_in() -> None:
-    """A saver in the last stage reads its next value on the next period's grid.
+@pytest.mark.parametrize("by_age", [False, True])
+def test_a_crossing_edge_reads_the_grid_of_the_period_it_lands_in(
+    *, by_age: bool
+) -> None:
+    """A saver reads its next value on the grid of the period it lands in.
 
-    The wealth grid widens with the period, and the saver sits out the first
-    stage. Oracle: a backward recursion in NumPy with one interpolation and one
-    discount per period. The same recursion reading on the grid of the source's
-    period is far from the model's values.
+    The wealth grid widens with the period. By period, the saver sits out the
+    first stage; by age, it sits out the last, so the step after its own lies in
+    its own period, whose age and grid are the wrong ones to read. Oracle: a
+    backward recursion in NumPy with one interpolation and one discount per
+    period. The same recursion reading on the grid of the source's period is far
+    from the model's values.
     """
+    stages = (
+        dict(reversed(_SAVER_SITS_OUT_FIRST.items()))
+        if by_age
+        else _SAVER_SITS_OUT_FIRST
+    )
     values = (
-        _saver(stages=_SAVER_SITS_OUT_FIRST, grid_by_period=True)
+        _saver(stages=stages, grid_by_period=True, by_age=by_age)
         .solve(params={}, log_level="off")
         .values
     )
     expected = _hand_saver_values(landing=1)
     wrong = _hand_saver_values(landing=0)
     for period in range(_N_ECONOMIC_PERIODS - 1):
-        got = np.asarray(values[2 * period + 1]["single"])[..., 0]
+        got = np.asarray(values[2 * period + (0 if by_age else 1)]["single"])[..., 0]
         assert_agrees_to_ulp(
             got=got,
             expected=expected[period].astype(got.dtype),
@@ -2253,22 +2339,7 @@ def test_a_landing_in_the_same_period_is_not_discounted(
             )
 
 
-@pytest.mark.parametrize(
-    "discount_factor",
-    [
-        0.5,
-        pytest.param(
-            None,
-            marks=pytest.mark.xfail(
-                strict=True,
-                raises=lcm.exceptions.InvalidParamsError,
-                reason="The discount factor of a regime that crosses the period "
-                "from a stage before the last sits on a generated regime: given "
-                "under the declared regime, it is reported as missing and unknown.",
-            ),
-        ),
-    ],
-)
+@pytest.mark.parametrize("discount_factor", [0.5, None])
 def test_a_crossing_edge_discounts_once_whatever_it_skips(
     discount_factor: float | None,
 ) -> None:
@@ -2387,22 +2458,7 @@ def _even_odds() -> FloatND:
     return jnp.asarray([0.0, 0.0, 0.5, 0.5])
 
 
-@pytest.mark.parametrize(
-    "declared",
-    [
-        "model",
-        pytest.param(
-            "regime",
-            marks=pytest.mark.xfail(
-                strict=True,
-                raises=ModelInitializationError,
-                reason="A certainty equivalent declared only on the source is "
-                "refused as ambiguous: the regimes generated for the skipped "
-                "stage count as regimes with a continuation that lack one.",
-            ),
-        ),
-    ],
-)
+@pytest.mark.parametrize("declared", ["model", "regime"])
 def test_a_source_applies_its_certainty_equivalent_once_to_a_later_stage(
     declared: str,
 ) -> None:
@@ -2528,17 +2584,15 @@ def _skipping_case(
 @pytest.mark.parametrize(
     "variant", ["plain", "age", "phased", "recoded", "spread", "cells", "consent"]
 )
-def test_the_user_never_sees_a_pass_through(*, variant: str, tmp_path: Path) -> None:
+def test_a_model_whose_edges_skip_a_stage_names_only_declared_regimes(
+    *, variant: str, tmp_path: Path
+) -> None:
     """A regime that sits out a stage is known only by the name the user declared.
 
-    The parameter template, the parameters of an edge that skips a stage, the
-    regime codes, the starts, a refusal of missing parameters, the values of a
-    solution and of its saved copy, the raw and tabulated simulation and its
-    saved copy name only declared regimes.
+    The regime codes, the values of a solution and of its saved copy, and the
+    raw and tabulated simulation and its saved copy name only declared regimes.
     """
     model, params, starts, declared = _skipping_case(variant)
-    generated = model._time.pass_throughs
-    assert generated
     solution = model.solve(params=params, log_level="off")
     loaded = lcm.load_solution(path=solution.save(path=tmp_path / "solution.lcm"))
     result = model.simulate(
@@ -2555,21 +2609,12 @@ def test_the_user_never_sees_a_pass_through(*, variant: str, tmp_path: Path) -> 
     assert tuple(model.regime_names_to_ids) == declared
     assert tuple(frame["regime_name"].cat.categories) == declared
     assert restored.regime_names == declared
-    seen = repr(
-        (
-            model.get_params_template(),
-            model.initial_nodes,
-            [list(regimes) for regimes in solution.values.values()],
-            [list(regimes) for regimes in loaded.values.values()],
-            list(result.raw_results),
-            list(restored.raw_results),
+    for values in (solution.values, loaded.values):
+        assert {name for regimes in values.values() for name in regimes} <= set(
+            declared
         )
-    )
-    if params:
-        with pytest.raises(lcm.exceptions.InvalidParamsError) as missing:
-            model.validate_transitions(params={})
-        seen += str(missing.value)
-    assert [name for name in generated if name in seen] == []
+    assert set(result.raw_results) <= set(declared)
+    assert set(restored.raw_results) <= set(declared)
 
 
 # The periods the readers below were called with, filled from inside the program.

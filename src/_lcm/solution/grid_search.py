@@ -94,7 +94,7 @@ from _lcm.solution.feasibility import (
     _fail_if_feasibility_count_exceeds_capacity,
     get_feasibility_count_dtype,
 )
-from _lcm.time import TimeAxis
+from _lcm.time import TimeAxis, landing_step
 from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
     FlatParams,
@@ -775,6 +775,7 @@ def grid_search_query_inputs(
         regime_name=context.regime_name,
         period=period,
         target_regimes=targets,
+        ages=context.ages,
         edge_reference_regimes=references,
         edge_target_regimes=context.edge_target_regimes,
     )
@@ -799,6 +800,7 @@ def _edge_reference_regimes_for_targets(
 def _value_reads(
     *,
     regime_name: RegimeName,
+    ages: TimeAxis,
     period: int,
     target_regimes: tuple[RegimeName, ...],
     edge_reference_regimes: tuple[RegimeName, ...],
@@ -817,7 +819,7 @@ def _value_reads(
             if target_regime in edge_target_regimes
             else ValueArtifactAddress(
                 kind=ValueArtifactKind.REGIME_VALUE,
-                period=period + 1,
+                period=landing_step(ages=ages, step=period, target=target_regime),
                 regime=target_regime,
             )
         )

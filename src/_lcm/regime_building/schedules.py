@@ -50,7 +50,7 @@ from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
     _SupportedStochasticTransition,
 )
-from _lcm.time import TimeAxis, coordinate_kind
+from _lcm.time import TimeAxis, coordinate_kind, landing_step
 from _lcm.typing import AnnotationForm, EconFunctionArg, RegimeName
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.initial_nodes import InitialNodes, UserInitialNodes
@@ -620,7 +620,7 @@ def _lower(
     )
 
 
-def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and typed query contexts
+def resolve_demand(  # noqa: C901, PLR0915 - shared fixed point for occupancy, values and typed query contexts
     *,
     schedules: RegimeSchedules,
     initial_nodes: frozenset[tuple[UserAge, RegimeName]],
@@ -658,8 +658,14 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
         name: frozenset(periods)
         for name, periods in schedules.coverage_by_regime.items()
     }
+    # A subject starts in its regime's own stage of the period.
     work: deque[tuple[bool, int, RegimeName, str]] = deque(
-        (True, period_by_age[age], name, "`initial_nodes`")
+        (
+            True,
+            landing_step(ages=ages, step=period_by_age[age] - 1, target=name),
+            name,
+            "`initial_nodes`",
+        )
         for age, name in sorted(initial_nodes, key=repr)
     )
     visited: set[tuple[int, RegimeName]] = set()
@@ -672,6 +678,32 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
         "simulation": set(),
     }
     acting: set[tuple[int, RegimeName]] = set()
+
+    def landing(*, period: int, target: RegimeName, requester: str) -> int:
+        """The step an edge from `period` into `target` lands at, if any."""
+        step = landing_step(ages=ages, step=period, target=target)
+        if step >= ages.n_periods:
+            raise ModelInitializationError(
+                f"{requester} lands in '{target}' at its next occurrence, which "
+                "lies beyond the last period."
+            )
+        return step
+
+    def read_policies(
+        *, phase: str, period: int, reads: tuple[tuple[RegimeName, str], ...]
+    ) -> None:
+        """Queue the exit reads of `period`; a later stage's are value reads.
+
+        An exit reads a regime of its own stage at its step and one of a later
+        stage of its period at that regime's occurrence, where its value is read.
+        """
+        for target, kind in reads:
+            occurrence = landing_step(ages=ages, step=period - 1, target=target)
+            if occurrence == period:
+                query_work.append((phase, period, target, kind))
+            else:
+                work.append((False, occurrence, target, f"an exit read of '{target}'"))
+
     while work or query_work:
         if not work:
             phase, period, name, kind = query_work.popleft()
@@ -691,16 +723,23 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
                     )
                 )
             queried[phase].add((period, name, kind))
-            query_work.extend(
-                (phase, period, target, target_kind)
-                for target, target_kind in policy_reads_by_phase.get(phase, {}).get(
+            read_policies(
+                phase=phase,
+                period=period,
+                reads=policy_reads_by_phase.get(phase, {}).get(
                     (period, name, kind), ()
-                )
+                ),
             )
             # Actual Q/F reads next-period Full continuation, even when no
             # subject ever occupies this current-period query context.
+            requester = f"the continuation of {kind}[{name}]"
             work.extend(
-                (False, period + 1, target, f"the continuation of {kind}[{name}]")
+                (
+                    False,
+                    landing(period=period, target=target, requester=requester),
+                    target,
+                    requester,
+                )
                 for target in (
                     *support["solution"].get(name, {}).get(period, ()),
                     *value_reads["solution"].get(name, {}).get(period, ()),
@@ -730,30 +769,43 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
                 )
             )
         done.add((period, name))
-        query_work.extend(
-            (required_phase, period, target, kind)
-            for target, kind in policy_reads_by_phase.get(required_phase, {}).get(
+        read_policies(
+            phase=required_phase,
+            period=period,
+            reads=policy_reads_by_phase.get(required_phase, {}).get(
                 (period, name, "Full"), ()
-            )
+            ),
         )
         if physical:
             for target in exit_targets_by_period.get((period, name), ()):
+                occurrence = landing_step(ages=ages, step=period - 1, target=target)
+                # A subject who leaves for a later stage is there at its step.
+                if occurrence != period:
+                    work.append((True, occurrence, target, f"the exit of '{name}'"))
+                    continue
                 if (period, target) in acting:
                     continue
                 acting.add((period, target))
+                actor = f"the final exit actor {target!r}"
                 work.extend(
-                    (True, period + 1, successor, f"the final exit actor {target!r}")
+                    (
+                        True,
+                        landing(period=period, target=successor, requester=actor),
+                        successor,
+                        actor,
+                    )
                     for successor in (
                         *support["simulation"].get(target, {}).get(period, ()),
                         *schedules.landings_by_regime.get(target, {}).get(period, ()),
                     )
                 )
+                routing = f"the routing of final exit actor {target!r}"
                 work.extend(
                     (
                         False,
-                        period + 1,
+                        landing(period=period, target=reference, requester=routing),
                         reference,
-                        f"the routing of final exit actor {target!r}",
+                        routing,
                     )
                     for reference in value_reads["simulation"]
                     .get(target, {})
@@ -763,7 +815,12 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
         if physical:
             work.append((False, period, name, requester))
             work.extend(
-                (True, period + 1, target, here)
+                (
+                    True,
+                    landing(period=period, target=target, requester=here),
+                    target,
+                    here,
+                )
                 for target in (
                     *support["simulation"].get(name, {}).get(period, ()),
                     *schedules.landings_by_regime.get(name, {}).get(period, ()),
@@ -787,7 +844,15 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
             pair=f"({ages.exact_values[period]}, '{name}')",
             here=here,
         )
-        work.extend((False, period + 1, target, kinds[target]) for target in reads)
+        work.extend(
+            (
+                False,
+                landing(period=period, target=target, requester=kinds[target]),
+                target,
+                kinds[target],
+            )
+            for target in reads
+        )
 
     return dataclasses.replace(
         schedules,
