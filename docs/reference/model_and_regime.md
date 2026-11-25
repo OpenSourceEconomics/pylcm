@@ -433,15 +433,16 @@ are the same physical point, so the target's policy is evaluated once and that a
 weighted by every row's original weight. Values equal the row-by-row reduction. A group
 the exit observes only partly keeps its row-by-row evaluation.
 
-The law of a shock that an exit observes, whether the source draws its group too or only
-the destination does, is the same at the source's state and at the landing state: it may
-read parameters, and states that the projection returns unchanged. A state the source's
-own law reads lands under its own name; a state only the destination's law reads may
-land from any source state with the same grid. Model build raises
-`ShockDeclarationError` for a law that reads a state the projection changes or is not
-proven to keep, for every law family and every rule, naming the regimes, the group, the
-shock and the state. To let such a shock depend on a changing state, draw it in the
-source and carry it to the destination as a state.
+When the source draws the group of a shock its exit observes, the source and the
+destination see one draw, so its law is the same at the source's state and at the
+landing state: it may read parameters, and states that the projection returns unchanged
+under their own name. Model build raises `ShockDeclarationError` for such a law that
+reads a state the projection changes or is not proven to keep, for every law family and
+every rule, naming the regimes, the group, the shock and the state. To let such a shock
+depend on a changing state, draw it in the source and carry it to the destination as a
+state. A group only the destination draws has its law at the landing state: the source's
+decision, the destination's node and the simulated draw all evaluate it there, so it may
+read any state the projection sets.
 
 When solving, an outside value is read from a table rather than evaluated again, where
 the model build can prove that the read lands on the table's nodes:

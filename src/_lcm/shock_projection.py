@@ -55,19 +55,18 @@ def validate_observed_laws(
 ) -> None:
     """Refuse an observed shock whose law can differ at the source and the landing.
 
-    A target group that the source sees and the target reads is one draw, so each
-    of its shocks needs one law at the source's state and at the landing state.
-    The law may read parameters and states that the projection returns unchanged:
-    under the same name when the source draws the group itself, since its own law
-    reads that state, and otherwise from any source state of the same domain. A law
-    the source draws also binds the same functions and parameters in both regimes.
-    A declaration that the source or target does not read adds no obligation.
+    A group that the source draws, sees and the target reads is one draw, so each
+    of its shocks needs one law at the source's state and at the landing state: the
+    same functions and parameters in both regimes, reading only parameters and
+    states that the projection returns unchanged. A group only the target draws has
+    its law at the landing state alone and adds no obligation, nor does a
+    declaration that the source or target does not read.
     """
     seen = source_physical_inputs & physical_inputs
     for group, binding in target_bindings.items():
-        if not seen & binding.group.shocks.keys():
-            continue
         own = source_bindings.get(group)
+        if own is None or not seen & binding.group.shocks.keys():
+            continue
         for shock in binding.group.shocks:
             record = _law_record(
                 shock=shock,
@@ -79,7 +78,7 @@ def validate_observed_laws(
                 f"Regime {source!r} observes shock {shock!r} of group {group!r} at "
                 f"its exit to {target!r}"
             )
-            if own is not None and record != _law_record(
+            if record != _law_record(
                 shock=shock,
                 group=group,
                 binding=own,
@@ -90,16 +89,12 @@ def validate_observed_laws(
                     f"parameters in {source!r} and in {target!r}."
                 )
             for state in sorted(record[1]):
-                if state not in projection or not any(
-                    _kept(
-                        state=state,
-                        source_state=name,
-                        func=projection[state],
-                        functions=projection_functions,
-                        source_domains=source_domains,
-                        target_domains=target_domains,
-                    )
-                    for name in ((state,) if own is not None else source_domains)
+                if state not in projection or not _kept(
+                    state=state,
+                    func=projection[state],
+                    functions=projection_functions,
+                    source_domains=source_domains,
+                    target_domains=target_domains,
                 ):
                     raise ShockDeclarationError(
                         f"{context}, and its law reads state {state!r}, which the "
@@ -115,14 +110,13 @@ def validate_observed_laws(
 def _kept(
     *,
     state: StateName,
-    source_state: StateName,
     func: UserFunction,
     functions: Mapping[FunctionName, UserFunction],
     source_domains: Mapping[StateName, StateEntry],
     target_domains: Mapping[StateName, StateEntry],
 ) -> bool:
-    """Whether `func` lands `state` at the value of `source_state`, on the same grid."""
-    source_grid = _grid(source_domains.get(source_state))
+    """Whether `func` lands `state` at its source value, on the same grid."""
+    source_grid = _grid(source_domains.get(state))
     target_grid = _grid(target_domains.get(state))
     if (
         source_grid is None
@@ -131,7 +125,7 @@ def _kept(
     ):
         return False
     return _preserves_input(
-        state=source_state,
+        state=state,
         func=func,
         functions=functions,
         source_domains=source_domains,
