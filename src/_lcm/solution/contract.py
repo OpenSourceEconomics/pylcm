@@ -462,8 +462,9 @@ class SolverBuildContext:
     has_taste_shocks: bool
     """Whether the regime declares EV1 taste shocks on its discrete actions."""
 
-    certainty_equivalent: CertaintyEquivalent | None
-    """Nonlinear certainty equivalent declared by the regime, if any.
+    certainty_equivalent: CertaintyEquivalent | Mapping[str, CertaintyEquivalent] | None
+    """Nonlinear certainty equivalent declared by the regime, if any; a
+    household's may be keyed by member.
 
     `GridSearch` consumes it via the compiled Q-and-F closures; solvers
     that exploit the linear-expectation structure of the continuation

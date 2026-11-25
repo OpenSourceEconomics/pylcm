@@ -1495,8 +1495,9 @@ class Regime:
     has_taste_shocks: bool = False
     """Whether the regime declares EV1 taste shocks on its discrete actions."""
 
-    certainty_equivalent: CertaintyEquivalent | None
-    """Nonlinear certainty equivalent declared by the regime, if any."""
+    certainty_equivalent: CertaintyEquivalent | Mapping[str, CertaintyEquivalent] | None
+    """Nonlinear certainty equivalent declared by the regime, if any; a
+    household's may be keyed by member."""
 
     resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
     """Flat resolved fixed params for this regime, used by to_dataframe targets."""

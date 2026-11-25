@@ -51,6 +51,10 @@ Mixing model-level and selective regime-level ownership is rejected.
 
 A terminal regime declares neither: there is no continuation to aggregate.
 
+A household may give each member its own aggregator and certainty equivalent by keying
+either slot by member; see
+[Preferences per member](../reference/collective_regimes.md#preferences-per-member).
+
 `Phased(solve=..., simulate=...)` is accepted for the Koopmans aggregator. It can
 represent perceived versus realized intertemporal behavior, including naive
 quasi-hyperbolic discounting.

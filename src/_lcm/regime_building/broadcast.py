@@ -42,7 +42,7 @@ from _lcm.exits import exit_functions, exit_without_pruned_states
 from _lcm.processes import _ContinuousStochasticProcess, _IIDProcess
 from _lcm.reachability import PhaseName, candidate_targets_from_transition
 from _lcm.regime_building.age_specialization import resolve_node
-from _lcm.regime_building.collective import member_name
+from _lcm.regime_building.collective import member_name, member_slots
 from _lcm.regime_building.conditional_actions import (
     add_conditional_action_pins,
     bind_specialized_annotations,
@@ -751,7 +751,14 @@ def _valuation_roots(
     if not law.terminal:
         aggregator = regime.get_koopmans_aggregator(phase=phase) or koopmans_aggregator
         if aggregator is not None:
-            roots["__koopmans_aggregator"] = aggregator
+            roots |= {
+                f"__{entry}": function
+                for entry, function in member_slots(
+                    base="koopmans_aggregator",
+                    declaration=aggregator,
+                    members=regime.members,
+                )
+            }
         objective = regime.get_objective_aggregator(phase=phase)
         if objective is not None:
             roots["__koopmans_aggregator__objective"] = objective

@@ -422,6 +422,8 @@ class GridSearch(Solver):
                             context.state_action_space.discrete_actions
                         ),
                         has_taste_shocks=context.has_taste_shocks,
+                        member_axis=context.member_axis,
+                        pareto_weights=context.pareto_weights,
                     )
                 elif landing_checks_of(Q_and_F):
                     program_functions[q_id] = get_landing_counting_max_Q_over_a(

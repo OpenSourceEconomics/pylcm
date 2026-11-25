@@ -54,7 +54,7 @@ from lcm.consumption_savings_regime import (
     _composition_rule_message,
     _EGMFamilyRegime,
 )
-from lcm.decoupled import Decoupled
+from lcm.decoupled import KoopmansDeclaration
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.exits import Consent, Exit
 from lcm.grids import DiscreteGrid
@@ -235,7 +235,7 @@ def finalize_regimes(
             ),
             derived_categoricals=merged,
             koopmans_aggregator=cast(
-                "UserFunction | Phased | Decoupled | None",
+                "KoopmansDeclaration",
                 adapt_entry(
                     entry=regime_koopmans_aggregator,
                     value_grids=value_grids,

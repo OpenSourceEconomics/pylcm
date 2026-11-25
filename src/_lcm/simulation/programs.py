@@ -52,7 +52,6 @@ from _lcm.execution.core_program import (
     ValueRead,
 )
 from _lcm.execution.output_layout import OutputRoleLeaf, StateAxesLeading
-from _lcm.regime_building.argmax import argmax_and_max
 from _lcm.regime_building.collective import ParetoWeights
 from _lcm.regime_building.decoupled import (
     DECOUPLED_LOOKUP_OUTPUT_ROLES,
@@ -60,6 +59,7 @@ from _lcm.regime_building.decoupled import (
     DecoupledTasteShockLookup,
     DecoupledWithActionParts,
 )
+from _lcm.regime_building.max_Q_over_a import _HardMaxArgmaxQOverA
 from _lcm.regime_building.Q_and_F import (
     BoundedQAndF,
     QAndFParts,
@@ -235,15 +235,13 @@ def build_simulation_programs(
     # The dense decision with its parts, even where the decision streams: same
     # reads and subject tiling, no reduced action axis. A taste-shock regime
     # applies the solve's EV1 reduction to its simulation decision, which draws
-    # nothing. A household's lookup without taste shocks is its decision itself.
+    # nothing.
     action_value_bodies: dict[int, Callable[..., PytreeValue]] = {}
     action_value_roles: dict[int, tuple[str, ...]] = {}
     action_values: dict[int, CoreProgram] = {}
     space = context.state_action_space
     lookup_subject_arg_names = tuple(space.states)
-    for period in (
-        decision if context.member_axis is None or context.has_taste_shocks else ()
-    ):
+    for period in decision:
         kernel = Q_and_F_functions[period]
         declared_lookup_subject_names = (
             *lookup_subject_arg_names,
@@ -255,14 +253,23 @@ def build_simulation_programs(
         )
         group = id(kernel)
         if group not in action_value_bodies:
-            if context.member_axis is None:
+            if (
+                context.member_axis is None
+                or not context.has_taste_shocks
+                or has_objective_profile(Q_and_F=kernel)
+            ):
                 body, action_value_roles[group] = _lookup_body_and_roles(
                     Q_and_F=kernel,
                     has_taste_shocks=context.has_taste_shocks,
                     n_discrete_action_axes=len(space.discrete_actions),
+                    member_axis=context.member_axis,
+                    pareto_weights=context.pareto_weights,
                 )
                 lookup = _decision_with_action_parts(
-                    Q_and_F=kernel, action_names=space.action_names, body=body
+                    Q_and_F=kernel,
+                    action_names=space.action_names,
+                    body=body,
+                    pareto_weights=context.pareto_weights,
                 )
             else:
                 action_value_roles[group] = HOUSEHOLD_TASTE_SHOCK_LOOKUP_OUTPUT_ROLES
@@ -964,7 +971,12 @@ ACTION_VALUES_OUTPUT_ROLES = (ACTION_INDEX, DECISION_VALUE, *ACTION_PARTS_ROLES)
 
 
 def _lookup_body_and_roles(
-    *, Q_and_F: QAndFFunction, has_taste_shocks: bool, n_discrete_action_axes: int
+    *,
+    Q_and_F: QAndFFunction,
+    has_taste_shocks: bool,
+    n_discrete_action_axes: int,
+    member_axis: tuple[str, ...] | None,
+    pareto_weights: ParetoWeights | None,
 ) -> tuple[Callable[..., Callable[..., PytreeValue]], tuple[str, ...]]:
     """Return the lookup body for one kernel and the roles it publishes, in order."""
     match has_objective_profile(Q_and_F=Q_and_F), has_taste_shocks:
@@ -973,11 +985,20 @@ def _lookup_body_and_roles(
                 partial(
                     DecoupledTasteShockLookup,
                     n_discrete_action_axes=n_discrete_action_axes,
+                    member_axis=member_axis,
+                    pareto_weights=pareto_weights,
                 ),
                 DECOUPLED_TASTE_SHOCK_LOOKUP_OUTPUT_ROLES,
             )
         case True, False:
-            return DecoupledWithActionParts, DECOUPLED_LOOKUP_OUTPUT_ROLES
+            return (
+                partial(
+                    DecoupledWithActionParts,
+                    member_axis=member_axis,
+                    pareto_weights=pareto_weights,
+                ),
+                DECOUPLED_LOOKUP_OUTPUT_ROLES,
+            )
         case False, True:
             return (
                 partial(
@@ -986,7 +1007,14 @@ def _lookup_body_and_roles(
                 TASTE_SHOCK_LOOKUP_OUTPUT_ROLES,
             )
         case _:
-            return _DecisionWithActionParts, ACTION_VALUES_OUTPUT_ROLES
+            return (
+                partial(
+                    _DecisionWithActionParts,
+                    member_axis=member_axis,
+                    pareto_weights=pareto_weights,
+                ),
+                ACTION_VALUES_OUTPUT_ROLES,
+            )
 
 
 # Derived programs keyed by the source program's identity and the kept parts. The
@@ -1118,13 +1146,14 @@ def _decision_with_action_parts(
     Q_and_F: QAndFFunction,
     action_names: tuple[ActionName, ...],
     body: Callable[..., Callable[..., PytreeValue]],
+    pareto_weights: ParetoWeights | None,
 ) -> Callable[..., PytreeValue]:
     """Return the dense decision extended by the parts it reduces.
 
     The result takes the arguments of the parts form of `Q_and_F` mapped once
-    over the action product, and calls `body` built from it: the hard max over
-    that `Q` and `F`, or the EV1 reduction the solve applies, both without a
-    taste-shock draw.
+    over the action product, plus every argument a household's Pareto weights
+    read, and calls `body` built from it: the hard max over that `Q` and `F`, or
+    the EV1 reduction the solve applies, both without a taste-shock draw.
     """
     bounded = has_action_integrity(function=Q_and_F)
     parts = productmap(
@@ -1141,10 +1170,17 @@ def _decision_with_action_parts(
                 parts=cast("Callable[..., BoundedResult[QAndFParts]]", parts),
                 body=body,
             )
-            if bounded and body is not _DecisionWithActionParts
+            if bounded
             else body(parts=parts)
         ),
-        args=list(inspect.signature(parts).parameters),
+        args=list(
+            dict.fromkeys(
+                (
+                    *inspect.signature(parts).parameters,
+                    *(() if pareto_weights is None else pareto_weights.arg_names),
+                )
+            )
+        ),
         return_annotation="tuple[FloatND | IntND | BoolND, ...]",
         enforce=False,
     )
@@ -1179,6 +1215,13 @@ def _evaluated_action_parts(*, parts: QAndFParts, **_kwargs: PytreeValue) -> QAn
     return parts
 
 
+def _given_action_values(
+    *, Q: FloatND, F: BoolND, **_kwargs: PytreeValue
+) -> tuple[FloatND, BoolND]:
+    """Return action values and feasibility already evaluated over the product."""
+    return Q, F
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
 class _DecisionWithActionParts:
     """The dense hard-max decision at one state cell, with the parts it maximizes.
@@ -1186,39 +1229,38 @@ class _DecisionWithActionParts:
     Returns the chosen flat index and its value, followed by the action values
     `Q`, their feasibility `F`, the flow utility `U` and the certainty-equivalent
     continuation `CE` over the action product, all from one evaluation of the
-    regime's kernel. A cell without a feasible action publishes index -1, as the
-    dense decision does. `Q`, `U` and `CE` are unmasked: an infeasible entry holds
-    what the action would have; the objective masks `Q` with `F`.
+    regime's kernel, reduced as the dense decision reduces them. A cell without a
+    feasible action publishes index -1. `Q`, `U` and `CE` are unmasked: an
+    infeasible entry holds what the action would have; the objective masks `Q`
+    with `F`. A household's value, `Q`, `U` and `CE` carry its trailing member
+    axis.
     """
 
     __name__: ClassVar[str] = "argmax_and_max_Q_over_a_with_action_parts"
     """Name `dags` reads off the callable when it reports an invalid argument."""
 
-    parts: Callable[..., QAndFParts | BoundedResult[QAndFParts]]
+    parts: Callable[..., QAndFParts]
     """The kernel's parts, mapped over the action product."""
 
-    def __call__(
-        self,
-        **kwargs: PytreeValue,
-    ) -> ActionPartsDecisionOutput | BoundedResult[ActionPartsDecisionOutput]:
+    member_axis: tuple[str, ...] | None
+    """Ordered member names of a household, or `None` without a member axis."""
+
+    pareto_weights: ParetoWeights | None
+    """The household's Pareto weight evaluator, or `None` without a member axis."""
+
+    def __call__(self, **kwargs: PytreeValue) -> ActionPartsDecisionOutput:
         """Return the chosen flat index, its value, and `Q`, `F`, `U` and `CE`."""
-        evaluated = self.parts(**kwargs)
-        parts = cast(
-            "QAndFParts",
-            evaluated.output if type(evaluated) is BoundedResult else evaluated,
+        parts = self.parts(**kwargs)
+        decision = cast(
+            "Callable[..., tuple[IntND, FloatND]]",
+            _HardMaxArgmaxQOverA(
+                Q_and_F=partial(_given_action_values, Q=parts.Q, F=parts.F),
+                member_axis=self.member_axis,
+                pareto_weights=self.pareto_weights,
+            ),
         )
-        index, value = argmax_and_max(a=parts.Q, where=parts.F, initial=-jnp.inf)
-        index = jnp.where(jnp.any(parts.F), index, -1)
-        output = index, value, parts.Q, parts.F, parts.U, parts.CE
-        return (
-            BoundedResult[ActionPartsDecisionOutput](
-                output=output,
-                bound_status=evaluated.bound_status,
-                query_status=evaluated.query_status,
-            )
-            if type(evaluated) is BoundedResult
-            else output
-        )
+        index, value = decision(**kwargs)
+        return index, value, parts.Q, parts.F, parts.U, parts.CE
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)

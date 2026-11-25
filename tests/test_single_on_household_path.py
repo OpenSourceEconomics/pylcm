@@ -32,6 +32,7 @@ from lcm import (
     InitialNodes,
     LinSpacedGrid,
     Model,
+    PowerMean,
     Regime,
 )
 from lcm.exceptions import InvalidInitialConditionsError
@@ -43,13 +44,16 @@ from lcm.solvers import EGM
 from lcm.typing import FloatND, IntND, RegimeName, UserParamsNode
 from lcm_examples import (
     collective_household,
+    epstein_zin,
     precautionary_savings_health,
     stochastic_volatility,
 )
 from tests import test_transition_roles as single_to_household
 from tests.conftest import assert_agrees_to_ulp
+from tests.regime_building import test_additive_shock_transition as additive_shock
 from tests.regime_building import test_gate_shared_fallback as household_to_single
 from tests.regime_building import test_gated_edge_params_are_per_edge as single_gate
+from tests.solution import test_decoupled as decoupled
 from tests.solution import test_egm_solver as egm_closed_form
 from tests.solution.test_fingerprint_pin import _MODELS as PINNED_MODELS
 from tests.solution.test_fingerprint_pin import _pinned
@@ -113,6 +117,57 @@ def _taste_shocks_toy() -> Case:
     return (
         taste_shocks_toy.get_model(),
         taste_shocks_toy.get_params(scale=0.2),
+        initial_conditions,
+    )
+
+
+def _additive_shock() -> Case:
+    # The continuation is read through the value averaged over the shock.
+    initial_conditions: InitialConditions = {
+        "age": jnp.zeros(_N_SUBJECTS),
+        "wealth": jnp.linspace(1.0, 10.0, _N_SUBJECTS),
+        "health": jnp.arange(_N_SUBJECTS) % 2,
+        "regime_id": jnp.zeros(_N_SUBJECTS, dtype=jnp.int32),
+    }
+    return (
+        additive_shock._model(additive=True),
+        cast("dict[str, UserParamsNode]", additive_shock._params()),
+        initial_conditions,
+    )
+
+
+def _decoupled(*, taste_shocks: bool) -> Case:
+    # A partially naive agent: it chooses with one aggregator, stores another,
+    # and its acting self chooses with a third.
+    initial_conditions: InitialConditions = {
+        "wealth": jnp.arange(_N_SUBJECTS) % 4,
+        "regime_id": jnp.full(_N_SUBJECTS, decoupled.RegimeId.decide),
+        "period": jnp.zeros(_N_SUBJECTS, dtype=jnp.int32),
+    }
+    if taste_shocks:
+        return (
+            decoupled._ev1_model(),
+            cast("dict[str, UserParamsNode]", decoupled._ev1_params(beta_tilde=0.7)),
+            initial_conditions,
+        )
+    return (
+        decoupled._model(),
+        cast("dict[str, UserParamsNode]", decoupled._params(beta_tilde=0.7)),
+        initial_conditions,
+    )
+
+
+def _epstein_zin() -> Case:
+    # A nonlinear certainty equivalent over a stochastic regime and health draw.
+    initial_conditions: InitialConditions = {
+        "age": jnp.full(_N_SUBJECTS, 25.0),
+        "wealth": jnp.linspace(1.0, 10.0, _N_SUBJECTS),
+        "health": jnp.arange(_N_SUBJECTS) % 2,
+        "regime_id": jnp.full(_N_SUBJECTS, epstein_zin.EZRegimeId.alive),
+    }
+    return (
+        epstein_zin.get_model(certainty_equivalent=PowerMean()),
+        epstein_zin.get_params(risk_aversion=4.0),
         initial_conditions,
     )
 
@@ -307,9 +362,13 @@ def _single_exit(*, compares: Literal["each_action", "optimum"]) -> Case:
 
 
 _CASES: dict[str, Callable[[], Case]] = {
+    "additive_shock": _additive_shock,
     "collective_household": _collective_household,
     "dcegm": _dcegm,
+    "decoupled": functools.partial(_decoupled, taste_shocks=False),
+    "decoupled_taste_shocks": functools.partial(_decoupled, taste_shocks=True),
     "egm": _egm,
+    "epstein_zin": _epstein_zin,
     "gate_household_to_single": _gate_household_to_single,
     "gate_single_to_household_member_route": functools.partial(
         _single_to_household, edge_form="hand_gate"

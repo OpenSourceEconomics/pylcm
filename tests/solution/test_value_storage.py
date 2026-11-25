@@ -1706,7 +1706,7 @@ def test_a_nan_is_diagnosed_without_reading_stored_values_back(
     monkeypatch.setattr(host_values, "to_device", _counting_to_device)
     monkeypatch.setattr(DiskValueEntry, "materialize", _counting_materialize)
     model, params = nan_diagnostics._build_nan_model(
-        _host() if storage == "host" else _disk(tmp_path)
+        execution_config=_host() if storage == "host" else _disk(tmp_path)
     )
     with pytest.raises(InvalidValueFunctionError) as stored:
         model.solve(params=params, log_level="off")

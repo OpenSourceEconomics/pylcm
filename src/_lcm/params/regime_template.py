@@ -40,7 +40,11 @@ from _lcm.params.numeric_roles import (
 )
 from _lcm.params.temporal import validate_temporal_variants
 from _lcm.processes import _ContinuousStochasticProcess
-from _lcm.regime_building.collective import PARETO_OBJECTIVE_ENTRY, member_name
+from _lcm.regime_building.collective import (
+    PARETO_OBJECTIVE_ENTRY,
+    member_name,
+    member_slots,
+)
 from _lcm.regime_building.gated_edges import EDGE_PERIOD_CONTEXT_ARGS
 from _lcm.regime_building.transitions import collect_state_transitions
 from _lcm.regime_law import DecomposedTransition, RegimeLaw
@@ -55,8 +59,10 @@ from _lcm.typing import (
 )
 from _lcm.utils.error_messages import path_segment_name_errors
 from _lcm.utils.functools import get_union_of_args, is_user_function
+from lcm.certainty_equivalent import CertaintyEquivalent
 from lcm.collective import Gate, ProjectedRegimeValue
 from lcm.decoupled import (
+    KoopmansDeclaration,
     koopmans_aggregator_variants,
     resolve_koopmans_aggregator,
 )
@@ -1451,12 +1457,14 @@ def _fail_if_a_next_name_is_read_outside_a_transition(
 
     # A certainty equivalent declares parameter names rather than a signature to
     # walk, so its public names get the same test the walk applies to arguments.
-    if user_regime.certainty_equivalent is not None:
+    for entry, certainty_equivalent in _certainty_equivalent_entries(
+        user_regime=user_regime
+    ).items():
         _fail_if_a_next_name_is_read(
-            consumer_name="certainty_equivalent",
+            consumer_name=entry,
             reserved={
                 param_name: ()
-                for param_name in user_regime.certainty_equivalent.param_names
+                for param_name in certainty_equivalent.param_names
                 if param_name.startswith("next_")
             },
         )
@@ -1566,7 +1574,13 @@ def _koopmans_consumers(
     value, objective = resolve_koopmans_aggregator(
         declaration=user_regime.koopmans_aggregator, phase=phase
     )
-    consumers = {} if value is None else {"koopmans_aggregator": value}
+    consumers = dict(
+        member_slots(
+            base="koopmans_aggregator", declaration=value, members=user_regime.members
+        )
+        if value is not None
+        else ()
+    )
     if objective is not None:
         consumers["koopmans_aggregator (objective)"] = objective
     return consumers
@@ -1578,28 +1592,14 @@ def _add_koopmans_aggregator_params(
     """Add the Koopmans aggregator's params under its pseudo-function name in place.
 
     The aggregator's parameters beyond `utility` and `CE` surface in the
-    template under the reserved key `koopmans_aggregator`; a regime function
-    of that name collides and is rejected. Parameters that are states,
+    template under the reserved key `koopmans_aggregator`, or member `m`'s
+    under `koopmans_aggregator_<m>` when the slot is keyed by member; a regime
+    function of that name collides and is rejected. Parameters that are states,
     actions, or regime functions are wired at call time and never surface.
     """
-    if user_regime.koopmans_aggregator is None:
+    declared = user_regime.koopmans_aggregator
+    if declared is None:
         return
-    if "koopmans_aggregator" in function_params:
-        raise InvalidNameError(
-            "The regime declares `koopmans_aggregator`, whose parameters live "
-            "under the pseudo-function name 'koopmans_aggregator' in the "
-            "params — this conflicts with a regime function of the same name."
-        )
-    # Every aggregator the slot runs reads its params from one namespace, so a
-    # name that two of them declare is one parameter.
-    tree: dict[str, str] = {}
-    for aggregator in reversed(
-        koopmans_aggregator_variants(declaration=user_regime.koopmans_aggregator)
-    ):
-        tree = merge_template_params(
-            left=tree,
-            right=_annotated_input_types(name="koopmans_aggregator", func=aggregator),
-        )
     variables = {
         *set(user_regime.states),
         *set(user_regime.actions),
@@ -1609,8 +1609,32 @@ def _add_koopmans_aggregator_params(
         "utility",
         "CE",
     }
-    params = {k: v for k, v in sorted(tree.items()) if k not in variables}
-    function_params["koopmans_aggregator"] = params
+    for entry, declaration in dict(
+        member_slots(
+            base="koopmans_aggregator",
+            declaration=cast("KoopmansDeclaration", declared),
+            members=user_regime.members,
+        )
+    ).items():
+        if entry in function_params:
+            raise InvalidNameError(
+                "The regime declares `koopmans_aggregator`, whose parameters "
+                f"live under the pseudo-function name '{entry}' in the params — "
+                "this conflicts with a regime function of the same name."
+            )
+        # Every aggregator the slot runs reads its params from one namespace,
+        # so a name that two of them declare is one parameter.
+        tree: dict[str, str] = {}
+        for aggregator in reversed(
+            koopmans_aggregator_variants(declaration=declaration)
+        ):
+            tree = merge_template_params(
+                left=tree,
+                right=_annotated_input_types(name=entry, func=aggregator),
+            )
+        function_params[entry] = {
+            k: v for k, v in sorted(tree.items()) if k not in variables
+        }
 
 
 def _add_pareto_objective_params(
@@ -1658,20 +1682,37 @@ def _add_certainty_equivalent_params(
     """Add the certainty equivalent's params under its pseudo-function name in place.
 
     The transform parameters surface in the template under the reserved
-    key `certainty_equivalent`; a regime function of that name collides
-    and is rejected.
+    key `certainty_equivalent`, or member `m`'s under
+    `certainty_equivalent_<m>` when the slot is keyed by member; a regime
+    function of that name collides and is rejected.
     """
-    if user_regime.certainty_equivalent is None:
-        return
-    if "certainty_equivalent" in function_params:
-        raise InvalidNameError(
-            "The regime declares `certainty_equivalent`, whose parameters "
-            "live under the pseudo-function name 'certainty_equivalent' in "
-            "the params — this conflicts with a regime function of the "
-            "same name."
+    for entry, certainty_equivalent in _certainty_equivalent_entries(
+        user_regime=user_regime
+    ).items():
+        if entry in function_params:
+            raise InvalidNameError(
+                "The regime declares `certainty_equivalent`, whose parameters "
+                f"live under the pseudo-function name '{entry}' in the params — "
+                "this conflicts with a regime function of the same name."
+            )
+        function_params[entry] = dict.fromkeys(
+            sorted(certainty_equivalent.param_names), _float_slot()
         )
-    function_params["certainty_equivalent"] = dict.fromkeys(
-        sorted(user_regime.certainty_equivalent.param_names), _float_slot()
+
+
+def _certainty_equivalent_entries(
+    *, user_regime: UserRegime
+) -> dict[str, CertaintyEquivalent]:
+    """Key the declared certainty equivalents by the params entry they read."""
+    declared = user_regime.certainty_equivalent
+    if declared is None:
+        return {}
+    return dict(
+        member_slots(
+            base="certainty_equivalent",
+            declaration=declared,
+            members=user_regime.members,
+        )
     )
 
 

@@ -31,6 +31,7 @@ wage makes work jointly optimal.
 """
 
 from types import MappingProxyType
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -48,10 +49,13 @@ from _lcm.utils.logging import get_logger
 from lcm import (
     AgeRange,
     ByAge,
+    CESAggregator,
     CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
+    ParetoObjective,
+    Transition,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -66,8 +70,11 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserFunction,
+    UserParamsNode,
 )
-from tests.conftest import bind_laws, build_prepared_structure
+from lcm_examples import epstein_zin
+from tests.conftest import assert_agrees_to_ulp, bind_laws, build_prepared_structure
 
 
 @categorical(ordered=True)
@@ -487,17 +494,128 @@ def test_collective_regime_with_taste_shocks_is_rejected() -> None:
         )
 
 
-def test_collective_regime_with_certainty_equivalent_is_rejected() -> None:
-    """A nonlinear certainty equivalent on a collective regime is out of scope."""
-    with pytest.raises(NotImplementedError, match="certainty equivalent"):
-        Regime(
-            certainty_equivalent=PowerMean(),
-            states={"wage": _WAGE_GRID},
-            state_transitions={"wage": _next_wage},
-            actions={"work": DiscreteGrid(category_class=Work)},
-            functions={
-                "utility": CollectiveUtility(
-                    utilities={"f": _utility_f, "m": _utility_m}
-                )
+def _epstein_zin(
+    *,
+    alive_utility: UserFunction | CollectiveUtility,
+    dead_utility: UserFunction | CollectiveUtility,
+    koopmans_aggregator: CESAggregator
+    | LinearAggregator
+    | dict[str, CESAggregator | LinearAggregator],
+    certainty_equivalent: PowerMean
+    | LinearExpectation
+    | dict[str, PowerMean | LinearExpectation],
+) -> Model:
+    """The Epstein-Zin example over four periods, with the given preferences."""
+    alive = Regime(
+        states={
+            "wealth": epstein_zin.WEALTH_GRID,
+            "health": DiscreteGrid(category_class=epstein_zin.HealthStatus),
+        },
+        state_transitions={
+            "wealth": epstein_zin.next_wealth,
+            "health": {"alive": StochasticTransition(func=epstein_zin.health_probs)},
+        },
+        actions={"consumption": epstein_zin.CONSUMPTION_GRID},
+        constraints={"budget_constraint": epstein_zin.budget_constraint},
+        functions={"utility": alive_utility},
+        koopmans_aggregator=koopmans_aggregator,
+        certainty_equivalent=certainty_equivalent,
+    )
+    dead = Regime(
+        states={"wealth": epstein_zin.DEAD_WEALTH_GRID},
+        functions={"utility": dead_utility},
+    )
+    return Model(
+        edges={
+            "alive": Transition(
+                targets={"dead": (25, 26, 27), "alive": (25, 26)},
+                law=StochasticTransition(func=epstein_zin.next_regime),
+            )
+        },
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=25, inclusive_stop=28, step="Y"),
+        regime_id_class=epstein_zin.EZRegimeId,
+        initial_nodes={25: "alive"},
+    )
+
+
+@pytest.mark.parametrize(
+    ("member", "weights", "koopmans_aggregator", "certainty_equivalent"),
+    [
+        ("f", {"f": 1.0, "m": 0.0}, CESAggregator(), PowerMean()),
+        ("m", {"f": 0.0, "m": 1.0}, LinearAggregator(), LinearExpectation()),
+    ],
+)
+def test_each_member_aggregates_with_its_own_w_and_certainty_equivalent(
+    *,
+    member: str,
+    weights: dict[str, float],
+    koopmans_aggregator: CESAggregator | LinearAggregator,
+    certainty_equivalent: PowerMean | LinearExpectation,
+) -> None:
+    """The deciding member's values are the single's under that member's W and CE.
+
+    `f` aggregates with `CESAggregator` and `PowerMean`, `m` with the linear
+    aggregator and expectation; the Pareto weights make one of them decide.
+    Per-member parameters live under `koopmans_aggregator_<m>` and
+    `certainty_equivalent_<m>`.
+    """
+    params = epstein_zin.get_params(risk_aversion=4.0)
+    alive = cast("dict[str, UserParamsNode]", params["alive"])
+    linear = {"discount_factor": 0.9}
+    single = _epstein_zin(
+        alive_utility=epstein_zin.utility_alive,
+        dead_utility=epstein_zin.utility_dead,
+        koopmans_aggregator=koopmans_aggregator,
+        certainty_equivalent=certainty_equivalent,
+    ).solve(
+        params={
+            **params,
+            "alive": {
+                "next_wealth": alive["next_wealth"],
+                **(
+                    {
+                        "koopmans_aggregator": alive["koopmans_aggregator"],
+                        "certainty_equivalent": alive["certainty_equivalent"],
+                    }
+                    if member == "f"
+                    else {"koopmans_aggregator": linear}
+                ),
             },
-        )
+        },
+        log_level="off",
+    )
+    household = _epstein_zin(
+        alive_utility=CollectiveUtility(
+            utilities={"f": epstein_zin.utility_alive, "m": epstein_zin.utility_alive},
+            objective=ParetoObjective(weights=weights),
+        ),
+        dead_utility=CollectiveUtility(
+            utilities={"f": epstein_zin.utility_dead, "m": epstein_zin.utility_dead}
+        ),
+        koopmans_aggregator={"f": CESAggregator(), "m": LinearAggregator()},
+        certainty_equivalent={"f": PowerMean(), "m": LinearExpectation()},
+    ).solve(
+        params={
+            **params,
+            "alive": {
+                "next_wealth": alive["next_wealth"],
+                "koopmans_aggregator_f": alive["koopmans_aggregator"],
+                "koopmans_aggregator_m": linear,
+                "certainty_equivalent_f": alive["certainty_equivalent"],
+            },
+            "dead": {f"utility_{name}": {"bequest_scale": 1.0} for name in ("f", "m")},
+        },
+        log_level="off",
+    )
+    index = ("f", "m").index(member)
+
+    for period, values in single.values.items():
+        for regime, expected in values.items():
+            assert_agrees_to_ulp(
+                got=np.asarray(household.values[period][regime])[..., index],
+                expected=np.asarray(expected),
+                n_ulp=16,
+                operand_magnitude=float(np.max(np.abs(expected))),
+                err_msg=f"period {period}, regime {regime!r}",
+            )

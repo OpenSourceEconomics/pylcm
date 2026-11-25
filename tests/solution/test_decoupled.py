@@ -19,6 +19,7 @@ The expected values come from an exhaustive NumPy enumeration
 """
 
 from collections.abc import Mapping
+from types import MappingProxyType
 from typing import cast
 
 import jax.numpy as jnp
@@ -110,6 +111,10 @@ def current_choice(
     *, utility: FloatND, CE: FloatND, beta: float, delta: float
 ) -> FloatND:
     return utility + beta * delta * CE
+
+
+def indifferent_utility(choice: DiscreteAction) -> FloatND:
+    return jnp.zeros_like(jnp.asarray(choice, dtype=float))
 
 
 def indifferent(*, utility: FloatND, CE: FloatND) -> FloatND:
@@ -458,29 +463,59 @@ def test_other_solvers_refuse_a_decoupled_aggregator() -> None:
         )
 
 
-def test_collective_regime_refuses_a_decoupled_aggregator() -> None:
-    """A household chooses with its Pareto-weighted objective."""
-    shared_utility = lcm.CollectiveUtility(utilities={"f": utility, "m": utility})
-    with pytest.raises(ModelInitializationError, match="collective regime cannot"):
-        lcm.Model(
-            n_periods=2,
-            regimes={
-                "decide": lcm.Regime(
-                    actions={"choice": lcm.DiscreteGrid(Choice)},
-                    functions={"utility": shared_utility},
-                    koopmans_aggregator=lcm.Decoupled(
-                        objective=long_run, value=long_run
-                    ),
-                ),
-                "end": lcm.Regime(
-                    actions={"choice": lcm.DiscreteGrid(Choice)},
-                    functions={"utility": shared_utility},
-                ),
-            },
-            regime_id_class=RegimeId,
-            initial_nodes=lcm.InitialNodes(by_period={0: "decide"}),
-            edges={"decide": {"end": lcm.Periods(values=(0,))}},
-        )
+@pytest.mark.parametrize("period", [0, 1])
+def test_a_household_chooses_on_its_weighted_objectives(*, period: int) -> None:
+    """The deciding member's choices and values are the single's.
+
+    `f` carries all the Pareto weight; `m` gains nothing from spending, so its
+    value is the discounted terminal value its share of `f`'s choices lead to.
+    """
+    single = _model()
+    regime = single.user_regimes["decide"]
+    household = lcm.Model(
+        n_periods=3,
+        regimes={
+            "decide": regime.replace(
+                functions={
+                    "utility": lcm.CollectiveUtility(
+                        utilities={"f": utility, "m": indifferent_utility},
+                        objective=lcm.ParetoObjective(weights={"f": 1.0, "m": 0.0}),
+                    )
+                }
+            ),
+            "end": lcm.Regime(
+                states={"wealth": lcm.DiscreteGrid(Wealth)},
+                functions={
+                    "utility": lcm.CollectiveUtility(
+                        utilities={"f": terminal_utility, "m": terminal_utility}
+                    )
+                },
+            ),
+        },
+        regime_id_class=RegimeId,
+        initial_nodes=lcm.InitialNodes(by_period={0: "decide"}),
+        edges={
+            "decide": {
+                "decide": lcm.PeriodRange(exclusive_stop=1),
+                "end": lcm.Periods(values=(1,)),
+            }
+        },
+    )
+    params = _params(beta_tilde=0.7)
+    values = household.solve(params=params, log_level="off").value(
+        period=period, regime="decide"
+    )
+    assert_array_almost_equal(
+        values[..., 0],
+        single.solve(params=params, log_level="off").value(
+            period=period, regime="decide"
+        ),
+        decimal=DECIMAL_PRECISION,
+    )
+    df = _first_period(_simulate(model=household, params=params))
+    assert list(df["choice"]) == list(
+        _first_period(_simulate(model=single, params=params))["choice"]
+    )
 
 
 @lcm.categorical(ordered=False)
@@ -1218,7 +1253,12 @@ def test_ev1_underflowed_feasible_infinite_value_is_kept(
 
 def _phase_aggregators(
     declaration: UserFunction | lcm.Phased | lcm.Decoupled | None,
-) -> dict[str, tuple[UserFunction | None, UserFunction | None]]:
+) -> dict[
+    str,
+    tuple[
+        UserFunction | MappingProxyType[str, UserFunction] | None, UserFunction | None
+    ],
+]:
     regime = lcm.Regime(
         functions={"utility": lambda: jnp.asarray(0.0)},
         koopmans_aggregator=declaration,

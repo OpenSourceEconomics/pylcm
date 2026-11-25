@@ -90,7 +90,11 @@ Model(
 - `koopmans_aggregator` and `certainty_equivalent` are optional: `None` means the regime
   takes the model-level value. Declaring either at the regime level requires declaring
   it in *every* non-terminal regime — no mixing with the model-level broadcast. Terminal
-  regimes take neither and declaring one is an error.
+  regimes take neither and declaring one is an error. A household may key either slot
+  by member (`{"f": CESAggregator(), "m": LinearAggregator()}`), every member named;
+  member `m`'s params then live under `koopmans_aggregator_<m>` /
+  `certainty_equivalent_<m>`. A bare declaration is shared by every member under the
+  single key. `Decoupled` is declared for the household as a whole, never per member.
 - `functions` must contain a `"utility"` entry (the utility function); checked when the
   model finalizes its regimes, not at `Regime` construction
 - `state_transitions` maps state names to transition functions. Every non-process state

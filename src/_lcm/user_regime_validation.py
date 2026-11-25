@@ -376,11 +376,48 @@ def validate_regime(regime: Regime) -> None:
             "for a household declared with a `CollectiveUtility`. Omit it "
             "for a singleton regime."
         )
+    member_mapping_errors = _member_mapping_errors(regime)
+    if member_mapping_errors:
+        raise RegimeInitializationError(format_messages(member_mapping_errors))
 
     _validate_mapping_contents(regime)
     _validate_exits(regime)
     _validate_logical_consistency(regime)
     validate_law_free_phase_grammar(regime)
+
+
+def _member_mapping_errors(regime: Regime) -> tuple[str, ...]:
+    """Collect errors for a Koopmans aggregator or certainty equivalent per member.
+
+    A slot keyed by member names every member of a household, and a `Decoupled`
+    aggregator chooses for the household as a whole, so no member declares one.
+    """
+    error_messages: list[str] = []
+    for slot in ("koopmans_aggregator", "certainty_equivalent"):
+        declared = getattr(regime, slot)
+        if not isinstance(declared, Mapping):
+            continue
+        if regime.member_axis is None:
+            error_messages.append(
+                f"`{slot}` is keyed by member, which only a household declared "
+                f"with a `CollectiveUtility` has. Declare one `{slot}` for this "
+                "regime."
+            )
+        elif set(declared) != set(regime.members):
+            error_messages.append(
+                f"`{slot}` must be keyed by the members {regime.members!r}; got "
+                f"{tuple(declared)!r}."
+            )
+    if isinstance(regime.koopmans_aggregator, Mapping) and any(
+        isinstance(value, Decoupled) for value in regime.koopmans_aggregator.values()
+    ):
+        error_messages.append(
+            "A `Decoupled` aggregator cannot be declared per member: the "
+            "household chooses on the Pareto-weighted sum of its members' "
+            "objectives. Declare `koopmans_aggregator=Decoupled(...)` for the "
+            "household."
+        )
+    return tuple(error_messages)
 
 
 def _fail_if_solver_cannot_solve_the_members(regime: Regime) -> None:
@@ -483,10 +520,8 @@ def _validate_collective_regime(regime: Regime) -> None:
     build. The household argmax runs over whatever action product the regime
     declares, which may be continuous or empty.
 
-    Features the collective solve does not implement raise `NotImplementedError`:
-    EV1 taste shocks unless exactly one member can carry a positive weight
-    (`_fail_if_taste_shocks_lack_one_decider`) and a nonlinear certainty
-    equivalent (the per-member continuation is the linear expectation). Whether
+    EV1 taste shocks raise `NotImplementedError` unless exactly one member can
+    carry a positive weight (`_fail_if_taste_shocks_lack_one_decider`). Whether
     the solver handles the member count is checked for every regime, by
     `_fail_if_solver_cannot_solve_the_members`.
 
@@ -496,17 +531,6 @@ def _validate_collective_regime(regime: Regime) -> None:
     members = cast("tuple[str, ...]", regime.member_axis)
 
     _fail_if_taste_shocks_lack_one_decider(regime=regime, members=members)
-    # Every non-terminal regime carries a certainty equivalent, and
-    # `LinearExpectation` is the expected-utility default the collective path
-    # implements -- so the test is the CE's type, not whether one is attached.
-    if aggregates_nonlinearly(regime.certainty_equivalent):
-        raise NotImplementedError(
-            "A nonlinear certainty equivalent on a collective "
-            "(member-valued) regime is not yet implemented: the "
-            "per-member continuation is the linear expectation "
-            "E[V'^s]. Use `certainty_equivalent=LinearExpectation()` on this "
-            "regime."
-        )
     error_messages: list[str] = []
     error_messages.extend(_members_tuple_errors(members))
     error_messages.extend(path_segment_name_errors(kind="Member", names=members))
@@ -1204,25 +1228,19 @@ def _koopmans_aggregator_errors(regime: Regime, *, law: RegimeLaw) -> tuple[str,
 def _decoupled_errors(regime: Regime) -> tuple[str, ...]:
     """Collect errors for a `Decoupled` Koopmans aggregator.
 
-    - only `GridSearch` reduces the action product in concrete values, so only
-      it can choose with one aggregator and store another
-    - a collective regime chooses with its Pareto-weighted objective
+    Only `GridSearch` reduces the action product in concrete values, so only it
+    can choose with one aggregator and store another.
     """
-    error_messages: list[str] = []
-    if not isinstance(regime.solver, GridSearch):
-        error_messages.append(
+    if isinstance(regime.solver, GridSearch):
+        return ()
+    return (
+        (
             f"The {type(regime.solver).__name__} solver does not support a "
             "`Decoupled` Koopmans aggregator: choosing with one aggregator "
             "and storing another needs the full action product. Use "
             "`solver=GridSearch()` for this regime."
-        )
-    if regime.member_axis is not None:
-        error_messages.append(
-            "A collective regime cannot declare a `Decoupled` Koopmans "
-            "aggregator: the household chooses with its Pareto-weighted "
-            "objective."
-        )
-    return tuple(error_messages)
+        ),
+    )
 
 
 def _expected_utility_aggregator_errors(regime: Regime) -> tuple[str, ...]:
@@ -1270,20 +1288,25 @@ def _certainty_equivalent_errors(regime: Regime, *, law: RegimeLaw) -> tuple[str
     taste-shock regime implements, so only a nonlinear certainty equivalent is
     subject to the composition rules.
     """
-    if regime.certainty_equivalent is None:
+    declared = regime.certainty_equivalent
+    if declared is None:
         return ()
+    each_member = (
+        tuple(declared.values()) if isinstance(declared, Mapping) else (declared,)
+    )
     # Which class owns which reduction is a separate question from linearity, so
     # it is asked before the linear default is waved through: a subclass of
     # `LinearExpectation` that restates `aggregate` is an instance of it, and
     # would otherwise skip the very gate written to catch it.
-    error_messages: list[str] = []
-    error_messages.extend(_scaled_capability_errors(regime.certainty_equivalent))
+    error_messages: list[str] = [
+        message for each in each_member for message in _scaled_capability_errors(each)
+    ]
     if law.terminal:
         error_messages.append(
             "A terminal regime cannot declare `certainty_equivalent`: there "
             "is no continuation value to aggregate."
         )
-    if _is_plain_linear_expectation(regime.certainty_equivalent):
+    if all(map(_is_plain_linear_expectation, each_member)):
         return tuple(error_messages)
     if (
         regime.solver.required_continuation_keys

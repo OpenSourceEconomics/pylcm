@@ -152,6 +152,7 @@ from _lcm.regime_building.collective import (
     build_pareto_weights,
     build_role_vocabulary,
     landing_member_index,
+    member_name,
 )
 from _lcm.regime_building.decoupled import get_decoupled_Q_over_a
 from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
@@ -239,6 +240,7 @@ from _lcm.regime_building.Q_and_F import (
     GatedContinuationSchedule,
     GatedContinuationSpec,
     ResolvedProjectedRegimeValue,
+    get_member_aggregator,
     get_Q_and_F,
     get_Q_and_F_collective,
     get_Q_and_F_terminal,
@@ -4418,7 +4420,9 @@ def _prepare_solution_phase(
     sharded_state_names: frozenset[StateName],
     ages: TimeAxis,
     enable_jit: bool,
-    certainty_equivalent: CertaintyEquivalent | None,
+    certainty_equivalent: CertaintyEquivalent
+    | Mapping[str, CertaintyEquivalent]
+    | None,
     solver: Solver,
     continuation_demanded: bool,
     has_taste_shocks: bool,
@@ -4556,7 +4560,9 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
     sharded_state_names: frozenset[StateName],
     ages: TimeAxis,
     enable_jit: bool,
-    certainty_equivalent: CertaintyEquivalent | None,
+    certainty_equivalent: CertaintyEquivalent
+    | Mapping[str, CertaintyEquivalent]
+    | None,
     solver: Solver,
     continuation_demanded: bool,
     has_taste_shocks: bool,
@@ -4871,34 +4877,18 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
             else MappingProxyType({})
         )
         decision_group_key = grouped_Q_and_F.group_key
-        if member_axis is not None:
-            # The NaN-diagnostics intermediates mirror
-            # the singleton Q evaluation (one `utility` target), which a
-            # collective regime does not carry. The failure path handles a
-            # missing closure gracefully (no U/F/E/Q breakdown).
-            compute_intermediates = MappingProxyType({})
-        else:
-            compute_intermediates = _build_compute_intermediates_per_period(
-                active_periods=regimes_to_active_periods[regime_name],
-                flat_param_names=flat_param_names,
-                phase_reachability=phase_reachability,
-                source_regime_name=regime_name,
-                functions=core.functions,
-                constraints=core.constraints,
-                transitions=core.transitions,
-                transition_plans=core.transition_plans,
-                compute_regime_transition_probs=compute_regime_transition_probs,
-                regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-                state_action_space=state_action_space,
-                enable_jit=enable_jit,
-                koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
-                certainty_equivalent=certainty_equivalent,
-                # Diagnostics recompute on the SAME period-specific target
-                # grid as the primary solve (not the representative grid).
-                grid_schedule=grid_schedule,
-                period_to_regime_v_interp=period_to_regime_v_interp,
-                gated_continuations=gated_continuations,
-            )
+        # The diagnostics recompute the solve's kernels on the same period
+        # grids, handed the full value arrays: nothing is co-mapped, contracted
+        # ahead of the call or counted.
+        compute_intermediates = _build_compute_intermediates_per_period(
+            Q_and_F_functions=decision_Q_and_F(
+                co_map_state_names=(),
+                count_raise_landings=False,
+                lottery_contraction_source=None,
+            ).by_period,
+            state_action_space=state_action_space,
+            enable_jit=enable_jit,
+        )
 
     # Dispatch the per-period kernel build polymorphically on the regime's
     # solver: `validate` rejects out-of-scope configurations at build time,
@@ -5840,7 +5830,9 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     replay_unsupported: bool,
     has_taste_shocks: bool,
     solver: Solver,
-    certainty_equivalent: CertaintyEquivalent | None,
+    certainty_equivalent: CertaintyEquivalent
+    | Mapping[str, CertaintyEquivalent]
+    | None,
     member_axis: tuple[str, ...] | None = None,
     pareto_weights: ParetoWeights | None = None,
     post_decision_shocks: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
@@ -5908,8 +5900,8 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             discrete actions.
         solver: The regime's solver configuration; a DC-EGM or NEGM regime
             gets the synthesized intrinsic budget constraint.
-        certainty_equivalent: Nonlinear certainty equivalent declared by the
-            regime, or `None`.
+        certainty_equivalent: Certainty equivalent declared by the regime, a
+            household's possibly keyed by member, or `None`.
         member_axis: Ordered member names for a collective regime, or
             `None` (the singleton default).
         pareto_weights: The household's Pareto weight evaluator; required (and
@@ -6928,7 +6920,7 @@ def _process_regime_core(
     functions: Mapping[FunctionName, UserFunction],
     constraints: ProcessedConstraintsMapping,
     evaluated_constraint_names: frozenset[FunctionName],
-    koopmans_aggregator: UserFunction | None,
+    koopmans_aggregator: UserFunction | Mapping[str, UserFunction] | None,
     objective_aggregator: UserFunction | None,
     state_transitions: Mapping[StateName, _PhaseStateTransition],
     markov_draw_laws: Mapping[StateName, StochasticTransition],
@@ -6960,8 +6952,9 @@ def _process_regime_core(
         constraints: Phase-resolved normalized constraints.
         evaluated_constraint_names: Names whose callables remain in the numerical
             feasibility kernel after routing.
-        koopmans_aggregator: The regime's Bellman aggregator, or `None` in a
-            terminal regime.
+        koopmans_aggregator: The regime's Bellman aggregator, each member's in
+            member order when it is keyed by member, or `None` in a terminal
+            regime.
         objective_aggregator: The aggregator the actions are chosen with, or
             `None` when the Bellman aggregator also chooses.
         state_transitions: This phase's `state_transitions` slice, used to
@@ -7355,6 +7348,17 @@ def _process_regime_core(
         if scalar_query_model is not None
         else None
         if koopmans_aggregator is None
+        else get_member_aggregator(
+            aggregators=tuple(
+                _process_one_function(
+                    func=func,
+                    regime_params_template=regime_params_template,
+                    param_key=member_name(base="koopmans_aggregator", member=member),
+                )
+                for member, func in koopmans_aggregator.items()
+            )
+        )
+        if isinstance(koopmans_aggregator, Mapping)
         else _process_one_function(
             func=koopmans_aggregator,
             regime_params_template=regime_params_template,
@@ -9951,7 +9955,9 @@ def _build_Q_and_F_per_period(
     flat_param_names: frozenset[QualifiedName],
     koopmans_aggregator: EconFunction,
     objective_aggregator: EconFunction | None = None,
-    certainty_equivalent: CertaintyEquivalent | None,
+    certainty_equivalent: CertaintyEquivalent
+    | Mapping[str, CertaintyEquivalent]
+    | None,
     period_to_regime_v_interp: (
         MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
     ) = None,
@@ -9997,8 +10003,8 @@ def _build_Q_and_F_per_period(
             renamed to qnames.
         objective_aggregator: The aggregator the actions are chosen with, params
             renamed, or `None` when the Bellman aggregator also chooses.
-        certainty_equivalent: Nonlinear certainty equivalent declared by the
-            regime, or `None`.
+        certainty_equivalent: Certainty equivalent declared by the regime, a
+            household's possibly keyed by member, or `None`.
         member_axis: Ordered member names for a collective regime, or
             `None` (the singleton default). When set, the per-period closures
             come from `get_Q_and_F_collective` (per-member continuation,
@@ -10095,17 +10101,16 @@ def _build_Q_and_F_per_period(
         if member_axis is not None:
             # A collective regime gets its own builder: the household objective
             # and the per-member value readout differ from the singleton
-            # kernel. It takes no certainty equivalent — a nonlinear one is
-            # rejected at regime construction, and the per-member
-            # continuation is the linear expectation. Functions and constraints
-            # are resolved at the group's representative age exactly as in the
-            # singleton branch; with no age-specialized node the resolution is a
-            # passthrough.
+            # kernel. Functions and constraints are resolved at the group's
+            # representative age exactly as in the singleton branch; with no
+            # age-specialized node the resolution is a passthrough.
             built[key] = get_Q_and_F_collective(
                 phase_name=phase_name,
                 bound_specs=bound_specs,
                 flat_param_names=flat_param_names,
                 koopmans_aggregator=koopmans_aggregator,
+                objective_aggregator=objective_aggregator,
+                certainty_equivalent=certainty_equivalent,
                 functions=cast(
                     "EconFunctionsMapping",
                     resolve_periodized_nodes(
@@ -10178,7 +10183,10 @@ def _build_Q_and_F_per_period(
             co_map_state_names=co_map_state_names,
             koopmans_aggregator=koopmans_aggregator,
             objective_aggregator=objective_aggregator,
-            certainty_equivalent=certainty_equivalent,
+            # A certainty equivalent keyed by member is a household's.
+            certainty_equivalent=cast(
+                "CertaintyEquivalent | None", certainty_equivalent
+            ),
             # Resolve the perceived continuation pool at this group's own period.
             # Safe because that pool's per-period signature is part of the group key
             # above, so every period in the group resolves it identically.
@@ -10235,6 +10243,8 @@ def _build_per_subject_decisions_per_period(
                     if has_taste_shocks
                     else 0,
                     has_taste_shocks=has_taste_shocks,
+                    member_axis=member_axis,
+                    pareto_weights=pareto_weights,
                 ),
             )
         elif q_id not in built:

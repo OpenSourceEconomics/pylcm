@@ -397,6 +397,23 @@ def member_name(*, base: str, member: str) -> str:
     return base if member == "self" else f"{base}_{member}"
 
 
+def member_slots[T](
+    *, base: str, declaration: T | Mapping[str, T], members: tuple[str, ...]
+) -> tuple[tuple[str, T], ...]:
+    """Return each member's params entry and declaration of a slot, in member order.
+
+    A declaration keyed by member gives member `m` its own entry
+    `member_name(base=base, member=m)`; a bare one serves every member under the
+    shared entry `base`.
+    """
+    if isinstance(declaration, Mapping):
+        return tuple(
+            (member_name(base=base, member=member), declaration[member])
+            for member in members
+        )
+    return tuple((base, declaration) for _ in members)
+
+
 def build_role_vocabulary(
     members_by_regime: Mapping[RegimeName, tuple[str, ...]],
 ) -> MappingProxyType[str, int]:

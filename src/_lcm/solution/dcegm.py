@@ -29,6 +29,7 @@ from pydantic import TypeAdapter
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.bounds import proves_the_savings_grids_lower_bound
 from _lcm.constraints.routes import (
     ConstraintRoute,
@@ -534,7 +535,11 @@ class DCEGM(OneMarginSolver):
             laws=context.laws,
             functions=context.functions,
             koopmans_aggregator=context.koopmans_aggregator,
-            certainty_equivalent=context.certainty_equivalent,
+            # DC-EGM solves a regime of one member, whose certainty equivalent
+            # is not keyed by member.
+            certainty_equivalent=cast(
+                "CertaintyEquivalent | None", context.certainty_equivalent
+            ),
             constraints=context.constraints,
             processed_constraints=context.processed_constraints,
             transitions=context.transitions,

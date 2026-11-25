@@ -5318,8 +5318,8 @@ class Model:
                 actions and value unchanged. `Q`, `U` and `CE` are unmasked; `F`
                 says which of their entries the decision admits. Any non-empty
                 choice materializes the whole action product, even where the
-                decision alone streams over it. Not supported for a collective
-                regime.
+                decision alone streams over it. In a household, `Q`, `U` and
+                `CE` carry a trailing member axis in member order.
             use_categorical_codes: Whether value-grid states, value-grid action
                 grids and the returned discrete actions are codes instead of
                 values, and the discrete levels of a `pd.Series` in `params`
@@ -5375,7 +5375,6 @@ class Model:
             regime_name=regime_name,
             period=period,
             solver=self._user_regimes[regime_name].solver,
-            keep_intermediates=keep_intermediates,
         )
         value_grids = (
             MappingProxyType({})
@@ -6673,7 +6672,6 @@ def _fail_if_policy_lookup_unsupported(
     regime_name: RegimeName,
     period: int,
     solver: Solver,
-    keep_intermediates: tuple[Intermediate, ...],
 ) -> None:
     """Raise when policy lookup cannot reproduce the regime's simulated decision."""
     exit_plan = regime.simulation.exit_queries.get(period)
@@ -6702,12 +6700,6 @@ def _fail_if_policy_lookup_unsupported(
             f"GridSearch only; {regime_name!r} is solved by "
             f"{type(solver).__name__}, whose simulation need not reproduce "
             "the choice probabilities of its solve."
-        )
-        raise InvalidSimulationInputError(msg)
-    if keep_intermediates and regime.member_axis is not None:
-        msg = (
-            "Policy lookup keeps intermediates for singleton regimes only; "
-            f"{regime_name!r} is a collective regime."
         )
         raise InvalidSimulationInputError(msg)
 

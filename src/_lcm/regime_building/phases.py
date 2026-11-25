@@ -29,7 +29,7 @@ from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.typing import FunctionName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.collective import CollectiveUtility
-from lcm.decoupled import Decoupled
+from lcm.decoupled import Decoupled, KoopmansDeclaration
 from lcm.exceptions import RegimeInitializationError
 from lcm.exits import Consent
 from lcm.phased import Phased
@@ -173,7 +173,9 @@ def normalize_regime_phases(user_regime: Regime, *, law: RegimeLaw) -> PhasedReg
             state_transitions=solve_state_transitions,
             joint_transitions=solve_joint_transitions,
             regime_transition=solve_transition,
-            koopmans_aggregator=cast("UserFunction | None", solve_aggregator),
+            koopmans_aggregator=cast(
+                "UserFunction | Mapping[str, UserFunction] | None", solve_aggregator
+            ),
             objective_aggregator=user_regime.get_objective_aggregator(),
         ),
         simulation=_build_phase_spec(
@@ -183,7 +185,9 @@ def normalize_regime_phases(user_regime: Regime, *, law: RegimeLaw) -> PhasedReg
             state_transitions=simulate_state_transitions,
             joint_transitions=simulate_joint_transitions,
             regime_transition=simulate_transition,
-            koopmans_aggregator=cast("UserFunction | None", simulate_aggregator),
+            koopmans_aggregator=cast(
+                "UserFunction | Mapping[str, UserFunction] | None", simulate_aggregator
+            ),
             objective_aggregator=user_regime.get_objective_aggregator(phase="simulate"),
         ),
     )
@@ -308,7 +312,7 @@ def _build_phase_spec(
     state_transitions: Mapping[StateName, _PhaseStateTransition],
     joint_transitions: _PhaseJointTransitions,
     regime_transition: _PhaseRegimeTransition,
-    koopmans_aggregator: UserFunction | None,
+    koopmans_aggregator: UserFunction | Mapping[str, UserFunction] | None,
     objective_aggregator: UserFunction | None,
 ) -> RegimePhaseSpec:
     """Assemble one phase's slice from its resolved slot values."""
@@ -448,9 +452,16 @@ def phase_variation_paths(
     if isinstance(transition, Phased) and transition.solve is not transition.simulate:
         varied.append("transition")
 
+    solve_aggregator = user_regime.get_koopmans_aggregator(phase="solve")
+    simulate_aggregator = user_regime.get_koopmans_aggregator(phase="simulate")
     if (
-        user_regime.get_koopmans_aggregator(phase="solve")
-        is not user_regime.get_koopmans_aggregator(phase="simulate")
+        any(
+            solve_aggregator[member] is not simulate_aggregator[member]
+            for member in solve_aggregator
+        )
+        if isinstance(solve_aggregator, Mapping)
+        and isinstance(simulate_aggregator, Mapping)
+        else solve_aggregator is not simulate_aggregator
     ) or (
         user_regime.get_objective_aggregator(phase="solve")
         is not user_regime.get_objective_aggregator(phase="simulate")
@@ -531,12 +542,19 @@ def project_onto_solve_phase(user_regime: Regime) -> Regime:
 
 
 def _project_koopmans_onto_solve(
-    *, declaration: UserFunction | Phased | Decoupled | None
-) -> UserFunction | Decoupled | None:
+    *, declaration: KoopmansDeclaration
+) -> UserFunction | Decoupled | MappingProxyType[str, UserFunction] | None:
     """Keep the solve variant of a Koopmans declaration, objective included."""
     if isinstance(declaration, Decoupled):
         return Decoupled(
             objective=_solve_variant(declaration.objective), value=declaration.value
+        )
+    if isinstance(declaration, Mapping):
+        return MappingProxyType(
+            {
+                member: cast("UserFunction", _solve_variant(value))
+                for member, value in declaration.items()
+            }
         )
     return cast("UserFunction | None", _solve_variant(declaration))
 
@@ -601,8 +619,9 @@ class RegimePhaseSpec:
     joint_transitions: _PhaseJointTransitions
     """Phase-resolved joint kernels, explicitly scoped by target and node name."""
 
-    koopmans_aggregator: UserFunction | None
-    """Phase-resolved Bellman aggregator; `None` for terminal regimes. With a
+    koopmans_aggregator: UserFunction | Mapping[str, UserFunction] | None
+    """Phase-resolved Bellman aggregator, each member's by member name when the
+    declaration is keyed by member; `None` for terminal regimes. With a
     `Decoupled` declaration it is the value aggregator."""
 
     objective_aggregator: UserFunction | None

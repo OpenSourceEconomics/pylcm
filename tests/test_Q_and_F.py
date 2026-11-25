@@ -24,12 +24,15 @@ from _lcm.regime_building.Q_and_F import (
     _get_joint_weights_function,
     _get_U_and_F,
     _unit_regime_mass_or_nan,
-    get_compute_intermediates,
     get_Q_and_F,
     get_Q_and_F_terminal,
 )
 from _lcm.regime_building.V import VInterpolationInfo
-from _lcm.typing import FlatRegimeParams, QualifiedName, RegimeName
+from _lcm.typing import (
+    FlatRegimeParams,
+    QualifiedName,
+    RegimeName,
+)
 from lcm import (
     AgeGrid,
     ByAge,
@@ -68,7 +71,7 @@ from tests.test_models.deterministic.regression import (
 
 
 @pytest.mark.illustrative
-def test_get_Q_and_F_function():
+def test_get_Q_and_F_function() -> None:
     ages = AgeGrid(start=0, inclusive_stop=4, step="Y")
     user_regimes = {"working_life": working_life, "dead": dead}
     laws = bind_laws(
@@ -140,8 +143,15 @@ def test_get_Q_and_F_function():
     assert_array_equal(F_arr, jnp.array([True, True, False]))
 
 
+class _FeasibilityInputs(TypedDict, closed=True):
+    """User-signature functions and constraints for `_get_feasibility`."""
+
+    functions: MappingProxyType[str, UserFunction]
+    constraints: MappingProxyType[str, UserFunction]
+
+
 @pytest.fixture
-def internal_functions_illustrative():
+def internal_functions_illustrative() -> _FeasibilityInputs:
     def age(period: Period) -> int | Int1D:
         return period + 18
 
@@ -185,8 +195,10 @@ def internal_functions_illustrative():
 
 
 @pytest.mark.illustrative
-def test_get_combined_constraint_illustrative(internal_functions_illustrative):
-    combined_constraint = _get_feasibility(**internal_functions_illustrative)
+def test_get_combined_constraint_illustrative(
+    internal_functions_illustrative: _FeasibilityInputs,
+) -> None:
+    combined_constraint = _get_feasibility(**internal_functions_illustrative)  # ty: ignore[invalid-argument-type]
 
     age, retirement, lagged_retirement = jnp.array(
         [
@@ -213,7 +225,7 @@ def test_get_combined_constraint_illustrative(internal_functions_illustrative):
     assert_array_equal(got, exp)
 
 
-def test_get_multiply_weights():
+def test_get_multiply_weights() -> None:
     multiply_weights = _get_joint_weights_function(
         regime_name="test",
         variables=("next_a", "next_b"),
@@ -228,7 +240,7 @@ def test_get_multiply_weights():
     assert_array_equal(shifts, jnp.zeros_like(expected, dtype=jnp.int32))
 
 
-def test_joint_weight_without_stochastic_axes_is_the_certain_event():
+def test_joint_weight_without_stochastic_axes_is_the_certain_event() -> None:
     """A target with no stochastic next-state axis has weight one at scale zero."""
     weight, shift = _get_joint_weights_function(regime_name="test", variables=())()
 
@@ -240,7 +252,7 @@ def test_joint_weight_without_stochastic_axes_is_the_certain_event():
     )
 
 
-def test_joint_weight_without_stochastic_axes_closes_over_no_empty_array():
+def test_joint_weight_without_stochastic_axes_closes_over_no_empty_array() -> None:
     """The weight's staged program reads no zero-size array.
 
     An array a simulation body closes over becomes an operand of the
@@ -253,7 +265,7 @@ def test_joint_weight_without_stochastic_axes_closes_over_no_empty_array():
     assert [np.shape(const) for const in closed.consts if np.size(const) == 0] == []
 
 
-def test_joint_weights_axes_follow_the_declared_variable_order():
+def test_joint_weights_axes_follow_the_declared_variable_order() -> None:
     """The axis order of the outer product is the order the caller passes in.
 
     The caller productmaps the value surface over the same tuple, so the two
@@ -273,14 +285,14 @@ def test_joint_weights_axes_follow_the_declared_variable_order():
     assert_array_equal(reversed_order, forward.T)
 
 
-def test_get_combined_constraint():
-    def f():
+def test_get_combined_constraint() -> None:
+    def f() -> bool:
         return True
 
-    def g():
+    def g() -> bool:
         return False
 
-    def h():
+    def h() -> None:
         return None
 
     combined_constraint = _get_feasibility(
@@ -291,7 +303,7 @@ def test_get_combined_constraint():
     assert feasibility.item() is False
 
 
-def test_get_U_and_F_with_annotated_constraints():
+def test_get_U_and_F_with_annotated_constraints() -> None:
     """Test that _get_U_and_F works when constraints and utility have type annotations.
 
     This test verifies that dags handles the case where:
@@ -441,7 +453,7 @@ def _build_partial_coverage_model(
     return model, params
 
 
-def test_partial_state_laws_solve_with_declared_targets():
+def test_partial_state_laws_solve_with_declared_targets() -> None:
     """Per-target state laws covering exactly the declared targets solve.
 
     "work" declares only itself and "dead" as targets; "retire" carries
@@ -536,7 +548,7 @@ def _build_two_target_closure[T](
     period_targets: tuple[RegimeName, ...] = ("low", "high"),
     scalar_targets: tuple[RegimeName, ...] = (),
 ) -> T:
-    """Build `Q_and_F` (or the diagnostics twin) over two stateless target regimes."""
+    """Build `Q_and_F` over two stateless target regimes."""
     return builder(
         co_map_state_names=(),
         flat_param_names=flat_param_names,
@@ -578,7 +590,7 @@ def _two_target_call_kwargs(
     regime_prob_low: float,
     utility_level: float,
     risk_aversion: float,
-    dtype,
+    dtype: DTypeLike,
 ) -> _TwoTargetCallKwargs:
     return {
         "next_regime_to_V_arr": MappingProxyType(
@@ -646,7 +658,7 @@ def test_linear_expectation_fast_path_normalizes_accepted_regime_mass(
     fixture_name: str,
     dtype: DTypeLike,
     rtol: float,
-):
+) -> None:
     """The shortcut equals `LinearExpectation.aggregate` on accepted probabilities."""
     request.getfixturevalue(fixture_name)
     represented_mass = jnp.asarray(0.5, dtype=dtype) + jnp.asarray(
@@ -664,7 +676,7 @@ def test_linear_expectation_fast_path_normalizes_accepted_regime_mass(
 
 def test_linear_expectation_normalizes_mass_carried_by_stateless_targets(
     x64_enabled: None,
-):
+) -> None:
     """A stateless target's probability counts toward the mass the fast path divides by.
 
     Every reachable target here carries no state, so the whole continuation is
@@ -702,7 +714,7 @@ def test_linear_expectation_normalizes_mass_carried_by_stateless_targets(
     np.testing.assert_allclose(np.asarray(got), value, rtol=1e-12, atol=0.0)
 
 
-def test_power_mean_regime_lottery_stays_finite_in_float64(x64_enabled: None):
+def test_power_mean_regime_lottery_stays_finite_in_float64(x64_enabled: None) -> None:
     """A `(1e-50, 2e-50)` regime lottery at risk aversion 8 keeps its exact value."""
     Q_and_F = _build_two_target_closure(
         builder=get_Q_and_F, certainty_equivalent=PowerMean()
@@ -721,7 +733,7 @@ def test_power_mean_regime_lottery_stays_finite_in_float64(x64_enabled: None):
     np.testing.assert_allclose(float(got), 1.102862741485982e-50, rtol=5e-5, atol=0.0)
 
 
-def test_power_mean_regime_lottery_stays_finite_in_float32(x64_disabled: None):
+def test_power_mean_regime_lottery_stays_finite_in_float32(x64_disabled: None) -> None:
     """A `(1e-8, 2e-8)` regime lottery at risk aversion 8 keeps its exact value."""
     Q_and_F = _build_two_target_closure(
         builder=get_Q_and_F, certainty_equivalent=PowerMean()
@@ -807,7 +819,7 @@ def test_bellman_prefers_the_higher_certainty_equivalent_at_any_scale(
     x64_enabled: None,
     risk_aversion: float,
     scale: float,
-):
+) -> None:
     """The action with the larger certainty equivalent wins however small values are."""
     _assert_the_even_lottery_wins(
         risk_aversion=risk_aversion, scale=scale, dtype=jnp.float64, rtol=8e-5
@@ -820,7 +832,7 @@ def test_bellman_prefers_the_higher_certainty_equivalent_at_any_scale_float32(
     x64_disabled: None,
     risk_aversion: float,
     scale: float,
-):
+) -> None:
     """The float32 Bellman ranks the same two actions the same way."""
     _assert_the_even_lottery_wins(
         risk_aversion=risk_aversion, scale=scale, dtype=jnp.float32, rtol=5e-4
@@ -865,7 +877,7 @@ def _tiny_anchor_action_values(
 
 def test_bellman_keeps_the_safe_action_at_a_tiny_anchor_weight_float64(
     x64_enabled: None,
-):
+) -> None:
     """A near-zero-probability low branch stays finite and loses to a safe action."""
     risky, safe = _tiny_anchor_action_values(
         risky_values=(1e-50, 1.0),
@@ -878,7 +890,7 @@ def test_bellman_keeps_the_safe_action_at_a_tiny_anchor_weight_float64(
 
 def test_bellman_keeps_the_safe_action_at_a_tiny_anchor_weight_float32(
     x64_disabled: None,
-):
+) -> None:
     """The float32 Bellman comparison keeps the safe action too."""
     risky, safe = _tiny_anchor_action_values(
         risky_values=(1e-8, 1.0),
@@ -889,7 +901,9 @@ def test_bellman_keeps_the_safe_action_at_a_tiny_anchor_weight_float32(
     assert safe > risky
 
 
-def test_bellman_tiny_anchor_weight_matches_the_oracle_float64(x64_enabled: None):
+def test_bellman_tiny_anchor_weight_matches_the_oracle_float64(
+    x64_enabled: None,
+) -> None:
     """The near-degenerate float64 regime lottery evaluates to `7.1969e-48`."""
     risky, _ = _tiny_anchor_action_values(
         risky_values=(1e-50, 1.0),
@@ -900,7 +914,9 @@ def test_bellman_tiny_anchor_weight_matches_the_oracle_float64(x64_enabled: None
     np.testing.assert_allclose(risky, 7.196856730011521e-48, rtol=1e-12, atol=0.0)
 
 
-def test_bellman_tiny_anchor_weight_matches_the_oracle_float32(x64_disabled: None):
+def test_bellman_tiny_anchor_weight_matches_the_oracle_float32(
+    x64_disabled: None,
+) -> None:
     """The near-degenerate float32 regime lottery evaluates to `1.3895e-7`."""
     risky, _ = _tiny_anchor_action_values(
         risky_values=(1e-8, 1.0),
@@ -911,29 +927,7 @@ def test_bellman_tiny_anchor_weight_matches_the_oracle_float32(x64_disabled: Non
     np.testing.assert_allclose(risky, 1.3894954943731376e-7, rtol=5e-5, atol=0.0)
 
 
-def test_diagnostic_intermediates_reproduce_the_Bellman_Q(x64_enabled: None):
-    """The NaN diagnostics recompute the same `Q` the backward induction used."""
-    call_kwargs = _two_target_call_kwargs(
-        values=(1e-50, 2e-50),
-        regime_prob_low=0.25,
-        utility_level=3e-51,
-        risk_aversion=8.0,
-        dtype=jnp.float64,
-    )
-    Q_and_F = _build_two_target_closure(
-        builder=get_Q_and_F, certainty_equivalent=PowerMean()
-    )
-    compute_intermediates = _build_two_target_closure(
-        builder=get_compute_intermediates, certainty_equivalent=PowerMean()
-    )
-    Q_arr = jax.jit(lambda: Q_and_F(**call_kwargs)[0])()
-    diagnostic_Q_arr = jax.jit(lambda: compute_intermediates(**call_kwargs)[3])()
-    np.testing.assert_allclose(
-        np.asarray(diagnostic_Q_arr), np.asarray(Q_arr), rtol=0.0, atol=0.0
-    )
-
-
-def test_as_lottery_gives_a_degenerate_target_no_mass():
+def test_as_lottery_gives_a_degenerate_target_no_mass() -> None:
     """A target whose stochastic weights sum to zero contributes no probability.
 
     Its nodes must not become NaN: they are concatenated into the joint
@@ -1022,7 +1016,7 @@ def _solve_alive_at_log_level_off(
 )
 def test_solve_at_log_level_off_refuses_a_regime_transition_that_drops_mass(
     *, certainty_equivalent: CertaintyEquivalent, x64_enabled: None
-):
+) -> None:
     """A regime transition emitting 0.977 of unit mass is refused.
 
     Every aggregation route divides the continuation by the mass it received,
@@ -1063,7 +1057,7 @@ def test_solve_at_unit_regime_mass_reproduces_the_unchecked_arithmetic(
     certainty_equivalent: CertaintyEquivalent,
     expected: list[float],
     x64_enabled: None,
-):
+) -> None:
     """Unit regime mass reaches the value function the unchecked arithmetic gives.
 
     The tolerance is one part in `1e-15`, not exact equality: these are the
@@ -1083,7 +1077,7 @@ def test_solve_at_unit_regime_mass_reproduces_the_unchecked_arithmetic(
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
 def test_unit_regime_mass_divisor_is_exactly_one(
     *, dtype: DTypeLike, x64_enabled: None
-):
+) -> None:
     """At unit mass the per-target route divides by exactly `1.0`.
 
     Division by exactly one is the identity in IEEE754, so the check cannot
@@ -1102,7 +1096,7 @@ def test_unit_regime_mass_divisor_is_exactly_one(
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
 def test_unit_regime_mass_predicate_passes_accumulated_float_error(
     *, dtype: DTypeLike, x64_enabled: None
-):
+) -> None:
     """Mass that misses one by realistic accumulation error is accepted.
 
     The tolerance is a backstop against a misspecified model, not a numerical

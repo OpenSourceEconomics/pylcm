@@ -52,7 +52,9 @@ from _lcm.axis_boundaries import (
     resolve_axis_partition,
 )
 from _lcm.beartype_conf import REGIME_CONF
-from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
+from _lcm.certainty_equivalent import (
+    aggregates_nonlinearly,
+)
 from _lcm.constraints.dispositions import CompileBoundary
 from _lcm.constraints.ir import Compare, Const
 from _lcm.constraints.routes import ConstraintPlan, ConstraintRoute
@@ -975,7 +977,7 @@ class NBEGM(OneMarginSolver):
         # ride-along route above carries the Epstein-Zin kernels. Reject a
         # declared certainty equivalent here rather than silently solving the
         # additive recursion the regime did not declare.
-        if _aggregates_nonlinearly(context.certainty_equivalent):
+        if aggregates_nonlinearly(context.certainty_equivalent):
             msg = (
                 f"Regime {context.regime_name!r} declares a "
                 "`certainty_equivalent` but has no ride-along state, so NBEGM "
@@ -1530,7 +1532,7 @@ class NBEGM(OneMarginSolver):
             if key not in programs_by_key:
                 probe_arguments = _probe_arguments(context=resolved)
                 param_checks.extend(group_spec.param_checks)
-                if _aggregates_nonlinearly(resolved.certainty_equivalent):
+                if aggregates_nonlinearly(resolved.certainty_equivalent):
                     param_checks.append(
                         _deferred_probe(
                             probe=_fail_if_flow_not_single_power,
@@ -1567,7 +1569,7 @@ class NBEGM(OneMarginSolver):
                 # the combination here, at model build, rather than midway
                 # through a traced solve.
                 if (
-                    _aggregates_nonlinearly(resolved.certainty_equivalent)
+                    aggregates_nonlinearly(resolved.certainty_equivalent)
                     and statics.has_jump
                 ):
                     msg = (
@@ -1583,7 +1585,7 @@ class NBEGM(OneMarginSolver):
                 # combining it with a certainty equivalent would compare
                 # candidates under the wrong objective. Reject at model build.
                 if (
-                    _aggregates_nonlinearly(resolved.certainty_equivalent)
+                    aggregates_nonlinearly(resolved.certainty_equivalent)
                     and statics.continuation_reads_liquid
                 ):
                     msg = (
@@ -1612,9 +1614,7 @@ class NBEGM(OneMarginSolver):
                     else replace(group_spec, param_checks=()),
                     statics=statics,
                     materializer=materializer,
-                    is_epstein_zin=_aggregates_nonlinearly(
-                        context.certainty_equivalent
-                    ),
+                    is_epstein_zin=aggregates_nonlinearly(context.certainty_equivalent),
                     feasibility_constraints=group_constraints,
                     query_model=query_model,
                     current_floor=current_floor,
@@ -6485,7 +6485,7 @@ def _build_nbegm_continuation_plan(
     # `PowerMean`, takes that single argument); `None` keeps the linear read.
     risk_aversion_param_name = (
         "certainty_equivalent__risk_aversion"
-        if _aggregates_nonlinearly(context.certainty_equivalent)
+        if aggregates_nonlinearly(context.certainty_equivalent)
         else None
     )
     # A target's resources map is the child's own, read at its period `t + 1`.
@@ -10921,21 +10921,6 @@ def _build_ride_along_carry_template(
             else None
         ),
         policy=jnp.zeros_like(block) if carry_policy else None,
-    )
-
-
-def _aggregates_nonlinearly(
-    certainty_equivalent: CertaintyEquivalent | None,
-) -> bool:
-    """Whether the regime aggregates its continuation nonlinearly.
-
-    Every non-terminal regime carries a certainty equivalent, so presence
-    alone does not distinguish the Epstein-Zin kernels from the
-    expected-utility ones: `LinearExpectation` is the expected-utility
-    default and takes the ordinary route.
-    """
-    return certainty_equivalent is not None and not isinstance(
-        certainty_equivalent, LinearExpectation
     )
 
 

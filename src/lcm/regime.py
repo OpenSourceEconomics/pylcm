@@ -101,8 +101,10 @@ class _SlotsBesideFunctions(TypedDict, total=False):
     taste_shocks: ExtremeValueTasteShocks | None
     shocks: tuple[ShockGroupName, ...]
     exit: Exit | None
-    koopmans_aggregator: UserFunction | Phased | Decoupled | None
-    certainty_equivalent: CertaintyEquivalent | None
+    koopmans_aggregator: (
+        UserFunction | Phased | Decoupled | Mapping[str, UserFunction | Phased] | None
+    )
+    certainty_equivalent: CertaintyEquivalent | Mapping[str, CertaintyEquivalent] | None
     description: str
 
 
@@ -289,7 +291,9 @@ class Regime:
     certainty equivalent, and with `NEGM`, `NBEGM`, or `NNBEGM`.
     """
 
-    koopmans_aggregator: UserFunction | Phased | Decoupled | None = None
+    koopmans_aggregator: (
+        UserFunction | Phased | Decoupled | Mapping[str, UserFunction | Phased] | None
+    ) = None
     """Combines current-period utility with the certainty equivalent into `Q`.
 
     Signature `W(utility, CE, ...)`; further arguments are runtime params
@@ -297,12 +301,22 @@ class Regime:
     regime functions of the same name. `Phased(solve=..., simulate=...)`
     gives the two phases different aggregators. `Decoupled(objective=...,
     value=...)` chooses actions with one aggregator and stores the value of
-    another (time-inconsistent agents). `None` means the regime takes the model-level
-    aggregator (`lcm.LinearAggregator` unless the `Model` says otherwise). Terminal
-    regimes have no continuation and take none.
+    another (time-inconsistent agents); in a household, the household chooses
+    on the Pareto-weighted sum of its members' objectives and stores each
+    member's value. `None` means the regime takes the model-level aggregator
+    (`lcm.LinearAggregator` unless the `Model` says otherwise). Terminal regimes
+    have no continuation and take none.
+
+    A household (a `CollectiveUtility`) may instead give each member its own
+    aggregator, as a mapping from every member name to an aggregator or a
+    `Phased` one; member `m`'s params live under `koopmans_aggregator_<m>`. A
+    bare aggregator is the same function, with the same params, for every
+    member. A `Decoupled` aggregator cannot be given per member.
     """
 
-    certainty_equivalent: CertaintyEquivalent | None = None
+    certainty_equivalent: (
+        CertaintyEquivalent | Mapping[str, CertaintyEquivalent] | None
+    ) = None
     """Nonlinear certainty equivalent over the next-period value distribution.
 
     When set, the solve aggregates the continuation as
@@ -316,6 +330,12 @@ class Regime:
     route, current-period jumps, and liquid-dependent continuation reads are
     rejected. Other EGM-family solvers reject a nonlinear certainty
     equivalent. Terminal regimes have no continuation and cannot declare one.
+
+    A household may instead give each member its own certainty equivalent, as
+    a mapping from every member name to one; member `m`'s params live under
+    `certainty_equivalent_<m>`, and linear and nonlinear members may be mixed.
+    A bare certainty equivalent is the same one, with the same params, for every
+    member.
     """
 
     shocks: tuple[ShockGroupName, ...] = ()
@@ -353,15 +373,14 @@ class Regime:
     A collective regime's `decomposed_functions` view carries a
     per-member `utility_<s>` for each member `<s>`, together with a
     `pareto_objective`. Its solve reads off each member's own value at the
-    shared household argmax, and a non-terminal one aggregates the
-    per-member continuation `Q^s = W(u^s, E[V'^s])`. A non-terminal
+    shared household argmax, and a non-terminal one aggregates each member's
+    continuation `Q^s = W^s(u^s, CE^s)`. A non-terminal
     collective regime's transition targets must all be collective regimes with
     the identical `members` tuple — per-member current outside options
     are declared by an `Exit`. EV1 taste shocks with more than one member
-    carrying a positive weight and nonlinear certainty equivalents on a
-    collective regime raise `NotImplementedError`, as does a solver that does
-    not declare `supports_several_members` on a regime with more than one
-    member.
+    carrying a positive weight raise `NotImplementedError`, as does a solver
+    that does not declare `supports_several_members` on a regime with more
+    than one member.
 
     An `Exit` compares each member's value with its outside value in the current
     period.
@@ -421,6 +440,18 @@ class Regime:
         self._make_field_immutable(name="actions")
         self._make_field_immutable(name="constraints")
         self._make_field_immutable(name="derived_categoricals")
+        # A slot keyed by member is held in member order, the order of the
+        # member axis it is applied along.
+        for name in ("koopmans_aggregator", "certainty_equivalent"):
+            declared = getattr(self, name)
+            if isinstance(declared, Mapping):
+                object.__setattr__(
+                    self,
+                    name,
+                    MappingProxyType(
+                        {member: declared[member] for member in self.members}
+                    ),
+                )
 
     def lower_joint_normal_processes(self) -> Regime:
         """Return the regime the engine runs for its joint normal declarations.
@@ -612,15 +643,16 @@ class Regime:
     def get_koopmans_aggregator(
         self,
         phase: Literal["solve", "simulate"] = "solve",
-    ) -> UserFunction | None:
+    ) -> UserFunction | MappingProxyType[str, UserFunction] | None:
         """Get the Bellman aggregator this phase runs.
 
         Args:
             phase: Which variant to use when the declaration is `Phased`.
 
         Returns:
-            The aggregator, or `None` when the regime declares none (a
-            terminal regime, or one taking the model-level value).
+            The aggregator, each member's aggregator by member name when the
+            declaration is keyed by member, or `None` when the regime declares
+            none (a terminal regime, or one taking the model-level value).
 
         """
         value, _ = resolve_koopmans_aggregator(
