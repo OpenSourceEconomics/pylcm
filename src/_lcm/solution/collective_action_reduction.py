@@ -2,6 +2,7 @@
 
 from typing import Literal, NamedTuple
 
+import jax
 import jax.numpy as jnp
 
 from _lcm.regime_building.argmax import NO_ID, max_lexicographic_and_smallest_id
@@ -108,6 +109,19 @@ class CollectiveHardMaxReduction:
         right: CollectiveHardMaxAccumulator,
     ) -> CollectiveHardMaxAccumulator:
         """Merge partial household choices independently of block schedule."""
+        # A selection that never fires gives both partials the placement an
+        # elementwise operation on them takes, so they can be stacked.
+        never = jnp.zeros_like(left.any_feasible) & jnp.zeros_like(right.any_feasible)
+        left, right = (
+            jax.tree.map(
+                lambda a, b: jnp.where(
+                    jnp.reshape(never, never.shape + (1,) * (a.ndim - never.ndim)), b, a
+                ),
+                first,
+                second,
+            )
+            for first, second in ((left, right), (right, left))
+        )
         ids = jnp.stack(
             (left.best_global_action_id, right.best_global_action_id), axis=-1
         )

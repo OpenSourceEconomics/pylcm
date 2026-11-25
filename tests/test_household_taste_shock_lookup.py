@@ -374,14 +374,24 @@ def _toy_lookup(variant: str) -> tuple[PolicyLookup, np.ndarray]:
         period=0,
         regime_name="alive",
         states={"wealth": jnp.linspace(1.0, 10.0, _TOY_ROWS)},
+        keep_intermediates=("Q", "F", "U", "CE"),
     )
     return lookup, np.asarray(solution.values[0]["alive"])
+
+
+def _folded(part: FloatND | BoolND | None) -> FloatND:
+    """One row per state of an action part, a household's member axis folded in."""
+    return jnp.reshape(jnp.asarray(part, dtype=float), (_TOY_ROWS, -1))
 
 
 _TWIN_OUTPUTS: Mapping[str, Callable[[PolicyLookup], FloatND | None]] = {
     "value": lambda lookup: jnp.reshape(lookup.value, (_TOY_ROWS,)),
     "choice_probabilities": lambda lookup: lookup.choice_probabilities,
     "Qc": lambda lookup: lookup.Qc,
+    "Q": lambda lookup: _folded(lookup.Q),
+    "F": lambda lookup: _folded(lookup.F),
+    "U": lambda lookup: _folded(lookup.U),
+    "CE": lambda lookup: _folded(lookup.CE),
 }
 
 

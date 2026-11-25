@@ -464,7 +464,9 @@ def test_exact_layout_reference_rejects_misaligned_or_changed_values(
         )
 
 
-def _make_one_axis_collective_model(*, distributed: bool) -> Model:
+def _make_one_axis_collective_model(
+    *, distributed: bool, enable_jit: bool = True
+) -> Model:
     """Tiny collective GridSearch model with one four-device fixed-state axis."""
 
     @categorical(ordered=False)
@@ -520,6 +522,7 @@ def _make_one_axis_collective_model(*, distributed: bool) -> Model:
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=RegimeId,
+        enable_jit=enable_jit,
         states={"type1": DiscreteGrid(category_class=Type)},
         execution_config=ExecutionConfig(
             sharded_states=("type1",) if distributed else ()
@@ -1176,13 +1179,18 @@ def test_value_transfer_copies_a_named_target_onto_a_single_device_source() -> N
 
 
 @_skip_pytest_parallel
-def test_collective_grid_search_value_has_planned_state_layout() -> None:
-    """Collective V keeps its member axis replicated.
+@pytest.mark.parametrize("enable_jit", [True, False])
+def test_collective_grid_search_value_has_planned_state_layout(
+    *, enable_jit: bool
+) -> None:
+    """Collective V keeps its member axis replicated, compiled or eager.
 
     Values agree across differently fused device topologies to dtype-scale rounding;
     layout remains exact.
     """
-    distributed_model = _make_one_axis_collective_model(distributed=True)
+    distributed_model = _make_one_axis_collective_model(
+        distributed=True, enable_jit=enable_jit
+    )
     working_kernels = distributed_model._regimes["working"].solution.period_kernels
     assert working_kernels
     assert all(
@@ -1208,10 +1216,12 @@ def test_collective_grid_search_value_has_planned_state_layout() -> None:
     for period, regime_to_value in distributed_values.values.items():
         for regime_name, value in regime_to_value.items():
             assert value.shape == (4, 4, 2)
-            # `_RegimeSharding.V_arr_sharding` names only state axes: the
-            # replicated member entry is intentionally omitted.
+            # The state axis is split over the devices, the member axis is whole.
             assert isinstance(value.sharding, NamedSharding)
-            assert value.sharding.spec == PartitionSpec("type1", None)
+            assert value.sharding.is_equivalent_to(
+                NamedSharding(value.sharding.mesh, PartitionSpec("type1", None)),
+                value.ndim,
+            )
             reference = single_values.values[period][regime_name]
             eps = np.finfo(np.asarray(value).dtype).eps
             np.testing.assert_allclose(value, reference, rtol=2 * eps, atol=2 * eps)

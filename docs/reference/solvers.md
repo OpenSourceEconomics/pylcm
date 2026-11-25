@@ -223,13 +223,12 @@ This matrix uses exactly three disposition labels:
 | --- | --- | --- |
 | Singleton hard max | streamed | Action blocks feed the hard-max reduction. |
 | Collective hard max | streamed | Action blocks feed the household's hard-max reduction, which keeps candidate identity, member readout, and dissolution. |
-| Singleton EV1 with at least one discrete action | deliberately dense | Dense action reduction preserves canonical floating-point reduction order and winner identity; the blocked reference does not yet preserve that contract. |
+| EV1 with at least one discrete action, single or household | deliberately dense | Dense action reduction preserves canonical floating-point reduction order and winner identity; the blocked reference does not yet preserve that contract. |
 | Edge references or gated targets without a co-mapped state | streamed | Each target artifact and its exact source argument path is declared; the resolved transfer supplies it as a dynamic input to the streamed solve core. |
 | Ordinary co-mapped state route without a separate reference channel | streamed | Continuation leaves co-map with the state cell while actions stream. |
 | Co-mapped state plus a separate edge-reference channel | deliberately dense | The two data transports are not yet represented together by the streamed program. |
 | No action, or an action product containing at most one candidate | deliberately dense | Blocking a trivial product adds no useful execution choice. |
 | JIT disabled, including the raw execution path | deliberately dense | The action-streamed program is a JIT lowering route. |
-| Collective EV1 | unsupported | The action-streamed solve program has no collective EV1 reduction. |
 | EV1 without a discrete action | unsupported | The GridSearch EV1 reduction requires a discrete-choice axis. |
 | Any simulation-policy construction | deliberately dense | Simulation lies outside this solve-route classifier and continues to recompute policies on the dense action product. |
 

@@ -47,6 +47,7 @@ from _lcm.typing import ArgumentTree, PytreeValue, ShapeDtypePytree
 from _lcm.variables import from_regime
 from lcm import (
     AgeGrid,
+    CollectiveUtility,
     DiscreteGrid,
     ExecutionConfig,
     InvariantBlockSchedule,
@@ -226,11 +227,13 @@ def _regime(
     identity: bool,
     fixed_type: bool = False,
     bounds: tuple[float, float] = (-4, 19),
+    household: bool = False,
 ) -> Regime:
     """A living regime whose savings land inside the closed asset `bounds`.
 
     Next-period assets mirror current assets around the middle of `bounds`, so
-    every grid node on `bounds` keeps a feasible decision.
+    every grid node on `bounds` keeps a feasible decision. A `household` has two
+    members whose utilities differ in the decision.
     """
     low, high = bounds
     shift = low + high - 15
@@ -265,10 +268,21 @@ def _regime(
         # fixed type states the same annotation.
         utility.__annotations__["pref_type"] = DiscreteState
 
+    def partner(*, assets, decision, pref_type, spousal_income):
+        own = utility(
+            assets=assets,
+            decision=decision,
+            pref_type=pref_type,
+            spousal_income=spousal_income,
+        )
+        return own + (decision - 1) / 8
+
     return Regime(
         actions={"decision": DiscreteGrid(_Three)},
         functions={
-            "utility": utility,
+            "utility": CollectiveUtility(utilities={"a": utility, "b": partner})
+            if household
+            else utility,
             "landing": landing,
         },
         constraints={"feasible": lambda landing: (landing >= low) & (landing <= high)},
@@ -297,20 +311,30 @@ def _model(
     fixed_type: bool = False,
     invariant_block_widths: dict[str, int] | None = None,
     schedule: InvariantBlockSchedule = InvariantBlockSchedule.PERIOD_MAJOR,
+    household: bool = False,
 ) -> Model:
+    def terminal(*, assets, pref_type, spousal_income):
+        return -40 + pref_type + spousal_income / 4 - (assets - 5) ** 2 / 8
+
     return Model(
         regimes={
-            "r0": _regime(
-                source=0, identity=identity, fixed_type=fixed_type, bounds=bounds
-            ),
-            "r1": _regime(
-                source=1, identity=identity, fixed_type=fixed_type, bounds=bounds
-            ),
+            name: _regime(
+                source=source,
+                identity=identity,
+                fixed_type=fixed_type,
+                bounds=bounds,
+                household=household,
+            )
+            for source, name in enumerate(("r0", "r1"))
+        }
+        | {
             "terminal": Regime(
                 functions={
-                    "utility": lambda assets, pref_type, spousal_income: (
-                        -40 + pref_type + spousal_income / 4 - (assets - 5) ** 2 / 8
+                    "utility": CollectiveUtility(
+                        utilities={"a": terminal, "b": terminal}
                     )
+                    if household
+                    else terminal
                 },
             ),
         },
@@ -420,23 +444,28 @@ def _require_eight() -> None:
 
 
 def _assert_assets_shards(value: jax.Array) -> None:
-    assert value.shape == (3, 3, 24)
+    """Assets is split over the eight devices; a trailing member axis is whole."""
+    members = value.shape[3:]
+    assert value.shape == (3, 3, 24, *members)
     assert isinstance(value.sharding, jax.NamedSharding)
-    assert value.sharding.spec == jax.P(None, None, "assets")
+    assert value.sharding.spec in (
+        jax.P(None, None, "assets"),
+        jax.P(None, None, "assets", *(None for _ in members)),
+    )
     shards = value.addressable_shards
     assert len(shards) == 8
     mesh_order = [device.id for device in value.sharding.mesh.devices.flat]
     covered = []
-    global_ids = np.arange(216).reshape(3, 3, 24)
+    global_ids = np.arange(value.size).reshape(value.shape)
     for shard in shards:
         position = mesh_order.index(shard.device.id)
-        assert shard.data.shape == (3, 3, 3)
+        assert shard.data.shape == (3, 3, 3, *members)
         got = global_ids[shard.index]
         np.testing.assert_array_equal(
             got, global_ids[:, :, 3 * position : 3 * (position + 1)]
         )
         covered.extend(got.ravel().tolist())
-    assert sorted(covered) == list(range(216))
+    assert sorted(covered) == list(range(value.size))
 
 
 @pytest.mark.parametrize("streamed", [False, True])
@@ -886,20 +915,28 @@ _NONUNIFORM_GRIDS = {
 }
 
 
-@pytest.mark.parametrize("grid", sorted(_NONUNIFORM_GRIDS))
+@pytest.mark.parametrize(
+    ("grid", "household"),
+    [*((grid, False) for grid in sorted(_NONUNIFORM_GRIDS)), ("piecewise_log", True)],
+)
 def test_nonuniform_fixed_grid_shards_solve_and_simulate_like_one_device(
-    *, grid: str
+    *, grid: str, household: bool
 ) -> None:
     """Sharding a grid with fixed non-uniform nodes partitions the solve without
-    changing it: values and the simulated panel agree with the one-device solve.
+    changing it: values and the simulated panel agree with the one-device solve,
+    for a single and for a household of two members.
     """
     _require_eight()
     params = {"discount_factor": 0.5}
     assets = _NONUNIFORM_GRIDS[grid]
     points = np.asarray(assets.to_jax()).tolist()
     bounds = (points[0], points[-1])
-    reference_model = _model(devices=(0,), sharded=False, grid=assets, bounds=bounds)
-    model = _model(devices=tuple(range(8)), grid=assets, bounds=bounds)
+    reference_model = _model(
+        devices=(0,), sharded=False, grid=assets, bounds=bounds, household=household
+    )
+    model = _model(
+        devices=tuple(range(8)), grid=assets, bounds=bounds, household=household
+    )
     reference_solution = reference_model.solve(params=params, log_level="off")
     # Every node keeps a feasible decision whose landing lies on the grid, so a
     # non-finite value would be a defect, not an infeasible state.

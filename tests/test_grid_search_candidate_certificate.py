@@ -1068,7 +1068,6 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
         "streaming_width_builder:collision_validation_removed",
         "streaming_provider:co_map_route_disabled",
         "streaming_provider:co_map_reference_guard_bypassed",
-        "streaming_classifier:collective_ev1_admitted",
         "streaming_classifier:ev1_without_discrete_action_admitted",
         "streaming_classifier:jit_disabled_gate_reintroduced",
         "streaming_classifier:trivial_product_admitted",
@@ -1200,10 +1199,10 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
         for name in names
         if not name.startswith(("simulation_adapter:", "public_shell:"))
     }
-    assert len(original_names) == 374
+    assert len(original_names) == 373
     assert (
         hashlib.sha256(("\n".join(sorted(original_names)) + "\n").encode()).hexdigest()
-        == "52c58546d45cb3de4873e570f452f75e0763b9a7f5c8ff7feaa05bc8f0ae03ed"
+        == "4a70ab1ac474f1e2d6e73c819f9fba93cae61eccc1b753aac974b0de743ad412"
     )
     historical_names = {
         name
@@ -1214,17 +1213,17 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
             ("simulation_adapter:initial_physical_", "public_shell:")
         )
     }
-    assert len(historical_names) == 392
+    assert len(historical_names) == 391
     assert (
         hashlib.sha256(
             ("\n".join(sorted(historical_names)) + "\n").encode()
         ).hexdigest()
-        == "773253413c699c84f6d85f2ed210060100a3557b664dc473f4bb8d9d24833d4a"
+        == "094a68d47a1839fa75bd6ee61ea8d0f2349fc622f8feee6f2b61690146735007"
     )
-    assert len(names) == 409
+    assert len(names) == 408
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "298e100ca0b6e51223ce979c40d254ae4abf89dffc5692a1ab83ca12fea58e40"
+        == "f9f4ad84230d32132d5c446f8e3fccfdca25eceee0491ee018ae7b1b706c615a"
     )
 
 

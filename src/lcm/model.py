@@ -6992,12 +6992,12 @@ def _validate_sharded_state_capability(
         f"ExecutionConfig.sharded_states {sorted(sharded_states)!r}: "
         "Continuous sharding requires one model-level continuous grid with fixed "
         "nodes (linear, log, piecewise or fixed-point irregular) as "
-        "the sole sharded state, retained in every regime, with singleton hard-max "
+        "the sole sharded state, retained in every regime, with hard-max "
         "GridSearch. Unsharded states may include one static piecewise-linear "
         "coordinate, concrete discrete grids, fixed Gauss-Hermite "
         "normal/log-normal processes, fixed Rouwenhorst/Tauchen processes and "
         "carried linear grids. Runtime state grids, "
-        "mixed solvers, collective/gated/same-period routes, taste shocks and "
+        "mixed solvers, gated/same-period routes, taste shocks and "
         "`Decoupled` Koopmans aggregators are unsupported."
     )
     if len(sharded_states) != 1:
@@ -7013,7 +7013,6 @@ def _validate_sharded_state_capability(
                 regime=regime, sharded_state=name
             )
             or type(regime.solver) is not GridSearch
-            or regime.member_axis is not None
             or laws[regime_name].gated_edges
             or regime.taste_shocks is not None
             or isinstance(regime.koopmans_aggregator, Decoupled)

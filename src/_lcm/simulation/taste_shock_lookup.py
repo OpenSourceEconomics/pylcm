@@ -9,16 +9,14 @@ smoothed maximum equals the stored solve value at grid rows when both phases
 share those primitives and the action grid is the declared one.
 
 A household's body reduces on its decider's own action values with the solve's
-household readout, so it publishes one value per member.
+household readout, so it publishes one value per member, and the same parts.
 """
 
 import dataclasses
-import inspect
 from collections.abc import Callable
 from typing import ClassVar, cast
 
 import jax.numpy as jnp
-from dags import with_signature
 
 from _lcm.logsum import logsum_and_softmax
 from _lcm.regime_building.collective import (
@@ -28,15 +26,9 @@ from _lcm.regime_building.collective import (
 )
 from _lcm.regime_building.max_Q_over_a import (
     TASTE_SHOCK_SCALE_PARAM,
-    ActionFunction,
     _stacked_pareto_weights,
-    _with_bound_summary,
 )
-from _lcm.regime_building.Q_and_F import (
-    BoundedQAndF,
-    QAndFParts,
-    has_action_integrity,
-)
+from _lcm.regime_building.Q_and_F import QAndFParts
 from _lcm.simulation.program_types import (
     ACTION_PARTS_ROLES,
     CHOICE_PROBABILITIES,
@@ -44,12 +36,8 @@ from _lcm.simulation.program_types import (
     CONDITIONAL_VALUE,
     DECISION_VALUE,
 )
-from _lcm.solution.feasibility import BoundedResult
-from _lcm.typing import ActionName, PytreeValue, QAndFFunction, QAndFKwargs
-from _lcm.utils.dispatchers import productmap
+from _lcm.typing import PytreeValue, QAndFKwargs
 from lcm.typing import BoolND, FloatND, IntND, ScalarFloat
-
-type HouseholdLookupOutput = tuple[FloatND, FloatND, FloatND, IntND]
 
 # What the taste-shock lookup publishes, in the order its body returns them.
 TASTE_SHOCK_LOOKUP_OUTPUT_ROLES = (
@@ -108,50 +96,6 @@ class TasteShockLookup:
         )
 
 
-# What the household taste-shock lookup publishes, in the order its body returns
-# them. A household keeps no action parts.
-HOUSEHOLD_TASTE_SHOCK_LOOKUP_OUTPUT_ROLES = TASTE_SHOCK_LOOKUP_OUTPUT_ROLES[:4]
-
-
-def build_household_taste_shock_lookup(
-    *,
-    Q_and_F: QAndFFunction,
-    action_names: tuple[ActionName, ...],
-    n_discrete_action_axes: int,
-    member_axis: tuple[str, ...],
-    pareto_weights: ParetoWeights,
-) -> Callable[..., PytreeValue]:
-    """Return a household's lookup decision at one state cell.
-
-    The result maps `Q_and_F` once over the action product, as the simulated
-    draw does, and takes the arguments of that map plus every argument the
-    Pareto weights read, so a weight reading a parameter or state that no
-    utility reads is still bound.
-    """
-    bounded = has_action_integrity(function=Q_and_F)
-    mapped = productmap(
-        func=BoundedQAndF(function=Q_and_F) if bounded else Q_and_F,
-        variables=action_names,
-        batch_sizes=dict.fromkeys(action_names, 0),
-        bound_summary=bounded,
-    )
-    return with_signature(
-        HouseholdTasteShockLookup(
-            Q_and_F=mapped,
-            n_discrete_action_axes=n_discrete_action_axes,
-            member_axis=member_axis,
-            pareto_weights=pareto_weights,
-        ),
-        args=list(
-            dict.fromkeys(
-                (*inspect.signature(mapped).parameters, *pareto_weights.arg_names)
-            )
-        ),
-        return_annotation="tuple[FloatND | IntND, ...]",
-        enforce=False,
-    )
-
-
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
 class HouseholdTasteShockLookup:
     """The EV1 decision of a household's one decider at one state cell.
@@ -166,15 +110,17 @@ class HouseholdTasteShockLookup:
     - the choice probability `softmax(Qc / scale)` of each combination, zero
       for a combination whose `Qc` is `-inf`;
     - the flat index of the continuous action attaining `Qc`, which every
-      member shares (zero where no continuous action is feasible).
+      member shares (zero where no continuous action is feasible);
+    - the kernel's `Q`, `F`, `U` and `CE` over the action product, each value
+      with the trailing member axis.
     """
 
     __name__: ClassVar[str] = "household_logsum_and_softmax_Q_over_a"
     """Name `dags` reads off the callable when it reports an invalid argument."""
 
-    Q_and_F: ActionFunction
-    """The household's action values, with a trailing member axis, and their
-    feasibility, mapped over the action product."""
+    parts: Callable[..., QAndFParts]
+    """The household's parts, with a trailing member axis, mapped over the action
+    product."""
 
     n_discrete_action_axes: int
     """Number of leading discrete-action axes of the action product."""
@@ -187,13 +133,10 @@ class HouseholdTasteShockLookup:
 
     def __call__(
         self, **kwargs: PytreeValue
-    ) -> HouseholdLookupOutput | BoundedResult[HouseholdLookupOutput]:
-        """Return the member values, `Qc`, the probabilities and the index."""
-        evaluated = self.Q_and_F(**kwargs)
-        Q_arr, F_arr = cast(
-            "tuple[FloatND, BoolND]",
-            evaluated.output if type(evaluated) is BoundedResult else evaluated,
-        )
+    ) -> tuple[FloatND, FloatND, FloatND, IntND, FloatND, BoolND, FloatND, FloatND]:
+        """Return the member values, `Qc`, the probabilities, the index and parts."""
+        parts = self.parts(**kwargs)
+        Q_arr, F_arr = parts.Q, parts.F
         weights = _stacked_pareto_weights(
             pareto_weights=self.pareto_weights,
             member_axis=self.member_axis,
@@ -215,10 +158,13 @@ class HouseholdTasteShockLookup:
         )
         _smoothed, probabilities = logsum_and_softmax(values=Qc, scale=scale, axes=(0,))
         discrete_shape = F_arr.shape[: self.n_discrete_action_axes]
-        output = (
+        return (
             values,
             Qc.reshape(discrete_shape),
             probabilities.reshape(discrete_shape),
             conditional_index.reshape(discrete_shape),
+            parts.Q,
+            parts.F,
+            parts.U,
+            parts.CE,
         )
-        return _with_bound_summary(evaluated=evaluated, output=output)

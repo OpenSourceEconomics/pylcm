@@ -538,7 +538,6 @@ def get_streaming_max_Q_over_a(
         co_map_v_arr_in_axes=co_map_v_arr_in_axes,
     )
     _fail_if_full_V_streaming_route_is_unsupported(
-        has_taste_shocks=has_taste_shocks,
         member_axis=member_axis,
         pareto_weights=pareto_weights,
     )
@@ -1120,15 +1119,10 @@ def _fail_if_action_width_keyword_collides(
 
 def _fail_if_full_V_streaming_route_is_unsupported(
     *,
-    has_taste_shocks: bool,
     member_axis: tuple[str, ...] | None,
     pareto_weights: ParetoWeights | None,
 ) -> None:
     """Reject routes unsupported by full-value action streaming."""
-    if has_taste_shocks and member_axis is not None:
-        raise NotImplementedError(
-            "Full-V action streaming does not support collective EV1 regimes."
-        )
     if (member_axis is None) != (pareto_weights is None):
         raise ValueError(
             "Collective action streaming requires members and Pareto weights."

@@ -71,7 +71,10 @@ from _lcm.execution.value_transfer import (
     ValueInputChannel,
 )
 from _lcm.params.edges import regime_kernel_params
-from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
+from _lcm.solution.action_reduction import (
+    COLLECTIVE_HARD_MAX_REDUCTION,
+    HARD_MAX_REDUCTION,
+)
 from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.solution.contract import (
     ConstraintRouteContext,
@@ -143,7 +146,6 @@ class _ActionStreamingDisposition(StrEnum):
     )
     DENSE_OFF_GRID_RAISE_COUNT = "deliberately_dense:off_grid_raise_count"
     DENSE_DECOUPLED = "deliberately_dense:decoupled"
-    UNSUPPORTED_COLLECTIVE_EV1 = "unsupported:collective_ev1"
     UNSUPPORTED_EV1_WITHOUT_DISCRETE_ACTION = "unsupported:ev1_without_discrete_action"
 
     @property
@@ -491,7 +493,9 @@ class GridSearch(Solver):
                             coordinate_names=action_names,
                             coordinate_extents=action_extents,
                             canonical_order="c",
-                            reduction=HARD_MAX_REDUCTION,
+                            reduction=HARD_MAX_REDUCTION
+                            if context.member_axis is None
+                            else COLLECTIVE_HARD_MAX_REDUCTION,
                             width_keyword=action_width_keyword,
                         ),
                     )
@@ -723,9 +727,7 @@ def _classify_action_streaming(
     from _lcm.solution.landing_counts import landing_checks_of  # noqa: PLC0415
 
     action_extents = context.state_action_space.actions_grid_shapes
-    if context.has_taste_shocks and context.member_axis is not None:
-        disposition = _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_EV1
-    elif context.has_taste_shocks and not context.state_action_space.discrete_actions:
+    if context.has_taste_shocks and not context.state_action_space.discrete_actions:
         disposition = (
             _ActionStreamingDisposition.UNSUPPORTED_EV1_WITHOUT_DISCRETE_ACTION
         )

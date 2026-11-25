@@ -52,18 +52,16 @@ def test_uniform_controls_preserve_both_historical_mutation_populations() -> Non
     # supplemental s02_status:fold_weight_* controls with theirs; the dead-code
     # removal deleted the three streaming_ev1 semantic-key controls with
     # GridSearchEV1ActionReduction; the ValueDependentConstraint removal deleted
-    # value_access:grid_same_period_shifted with the same-period value access.
-    # Streaming the household solve deleted the three streaming_classifier controls
-    # of the dense collective disposition with that disposition and added
-    # streaming_classifier:household_sent_dense.
-    assert len(historical) == 392
+    # value_access:grid_same_period_shifted with the same-period value access;
+    # admitting household EV1 deleted streaming_classifier:collective_ev1_admitted.
+    assert len(historical) == 391
     assert (
         _name_digest(historical)
-        == "773253413c699c84f6d85f2ed210060100a3557b664dc473f4bb8d9d24833d4a"
+        == "094a68d47a1839fa75bd6ee61ea8d0f2349fc622f8feee6f2b61690146735007"
     )
-    assert len(registered) == 409
+    assert len(registered) == 408
     assert _name_digest(registered) == (
-        "298e100ca0b6e51223ce979c40d254ae4abf89dffc5692a1ab83ca12fea58e40"
+        "f9f4ad84230d32132d5c446f8e3fccfdca25eceee0491ee018ae7b1b706c615a"
     )
     assert len(supplemental) == 94
     assert _name_digest(supplemental) == (

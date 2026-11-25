@@ -1941,6 +1941,7 @@ def get_Q_and_F_collective(
             {"next_regime_to_V_arr", "period", "age"}
             | flat_param_names
             | continuation_arg_names
+            | _build_W_kwargs.arg_names
             | (
                 frozenset()
                 if build_objective_kwargs is None

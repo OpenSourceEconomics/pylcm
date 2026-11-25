@@ -62,6 +62,7 @@ from tests.solution.test_mutual_consent_settlement import _Singleton
 from tests.test_models import (
     n_nbegm_toy,
     nbegm_floor_toy,
+    nbegm_ride_along_toy,
     negm_kinked_toy,
     taste_shocks_toy,
 )
@@ -158,6 +159,20 @@ def _decoupled(*, taste_shocks: bool) -> Case:
     )
 
 
+def _aggregator_reads_state() -> Case:
+    # The aggregator alone reads the state `mood`.
+    return (
+        decoupled._mood_model(koopmans_aggregator=decoupled.mood_dependent_choice),
+        {"decide": {"koopmans_aggregator": {"delta": decoupled.DELTA}}},
+        {
+            "wealth": jnp.arange(_N_SUBJECTS) % 4,
+            "mood": jnp.arange(_N_SUBJECTS) % 2,
+            "regime_id": jnp.full(_N_SUBJECTS, decoupled.RegimeId.decide),
+            "period": jnp.zeros(_N_SUBJECTS, dtype=jnp.int32),
+        },
+    )
+
+
 def _epstein_zin() -> Case:
     # A nonlinear certainty equivalent over a stochastic regime and health draw.
     initial_conditions: InitialConditions = {
@@ -220,6 +235,20 @@ def _nbegm() -> Case:
         "regime_id": jnp.full(_N_SUBJECTS, NBEGMRegimeId.alive),
     }
     return model, nbegm_floor_toy.build_params(), initial_conditions
+
+
+def _nbegm_ride_along() -> Case:
+    # The schedule route with a ride-along state, whose periods share one program.
+    initial_conditions: InitialConditions = {
+        "age": jnp.zeros(_N_SUBJECTS),
+        "liquid": jnp.linspace(0.5, 25.0, _N_SUBJECTS),
+        "kind": jnp.arange(_N_SUBJECTS) % 2,
+        "regime_id": jnp.full(_N_SUBJECTS, NBEGMRegimeId.alive),
+    }
+    model = nbegm_ride_along_toy.build_model(
+        variant="nbegm", n_liquid=8, n_savings=10, n_consumption=12
+    )
+    return model, nbegm_ride_along_toy.build_params(), initial_conditions
 
 
 def _nnbegm() -> Case:
@@ -382,6 +411,7 @@ def _single_exit(
 
 _CASES: dict[str, Callable[[], Case]] = {
     "additive_shock": _additive_shock,
+    "aggregator_reads_state": _aggregator_reads_state,
     "collective_household": _collective_household,
     "dcegm": _dcegm,
     "decoupled": functools.partial(_decoupled, taste_shocks=False),
@@ -397,6 +427,7 @@ _CASES: dict[str, Callable[[], Case]] = {
     ),
     "gate_single_to_single": _gate_single_to_single,
     "nbegm": _nbegm,
+    "nbegm_ride_along": _nbegm_ride_along,
     "negm": _negm,
     "nnbegm": _nnbegm,
     "single_exit_each_action": functools.partial(_single_exit, compares="each_action"),

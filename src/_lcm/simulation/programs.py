@@ -96,12 +96,12 @@ from _lcm.simulation.program_types import (
     subject_axis,
 )
 from _lcm.simulation.taste_shock_lookup import (
-    HOUSEHOLD_TASTE_SHOCK_LOOKUP_OUTPUT_ROLES,
     TASTE_SHOCK_LOOKUP_OUTPUT_ROLES,
+    HouseholdTasteShockLookup,
     TasteShockLookup,
-    build_household_taste_shock_lookup,
 )
 from _lcm.solution.action_reduction import (
+    COLLECTIVE_HARD_MAX_REDUCTION,
     HARD_MAX_REDUCTION,
     CollectiveHardMaxResult,
     HardMaxResult,
@@ -263,33 +263,19 @@ def build_simulation_programs(
         )
         group = id(kernel)
         if group not in action_value_bodies:
-            if (
-                context.member_axis is None
-                or not context.has_taste_shocks
-                or has_objective_profile(Q_and_F=kernel)
-            ):
-                body, action_value_roles[group] = _lookup_body_and_roles(
-                    Q_and_F=kernel,
-                    has_taste_shocks=context.has_taste_shocks,
-                    n_discrete_action_axes=len(space.discrete_actions),
-                    member_axis=context.member_axis,
-                    pareto_weights=context.pareto_weights,
-                )
-                lookup = _decision_with_action_parts(
-                    Q_and_F=kernel,
-                    action_names=space.action_names,
-                    body=body,
-                    pareto_weights=context.pareto_weights,
-                )
-            else:
-                action_value_roles[group] = HOUSEHOLD_TASTE_SHOCK_LOOKUP_OUTPUT_ROLES
-                lookup = build_household_taste_shock_lookup(
-                    Q_and_F=kernel,
-                    action_names=space.action_names,
-                    n_discrete_action_axes=len(space.discrete_actions),
-                    member_axis=context.member_axis,
-                    pareto_weights=cast("ParetoWeights", context.pareto_weights),
-                )
+            body, action_value_roles[group] = _lookup_body_and_roles(
+                Q_and_F=kernel,
+                has_taste_shocks=context.has_taste_shocks,
+                n_discrete_action_axes=len(space.discrete_actions),
+                member_axis=context.member_axis,
+                pareto_weights=context.pareto_weights,
+            )
+            lookup = _decision_with_action_parts(
+                Q_and_F=kernel,
+                action_names=space.action_names,
+                body=body,
+                pareto_weights=context.pareto_weights,
+            )
             action_value_bodies[group] = _SubjectTiled(
                 func=lookup,
                 subject_arg_names=declared_lookup_subject_names,
@@ -420,7 +406,9 @@ def _decision_programs(
                             coordinate_names=action_names,
                             coordinate_extents=action_extents,
                             canonical_order="c",
-                            reduction=HARD_MAX_REDUCTION,
+                            reduction=HARD_MAX_REDUCTION
+                            if context.member_axis is None
+                            else COLLECTIVE_HARD_MAX_REDUCTION,
                             width_keyword=action_width_keyword,
                         ),
                     )
@@ -1008,8 +996,13 @@ def _lookup_body_and_roles(
             )
         case False, True:
             return (
-                partial(
-                    TasteShockLookup, n_discrete_action_axes=n_discrete_action_axes
+                partial(TasteShockLookup, n_discrete_action_axes=n_discrete_action_axes)
+                if member_axis is None
+                else partial(
+                    HouseholdTasteShockLookup,
+                    n_discrete_action_axes=n_discrete_action_axes,
+                    member_axis=member_axis,
+                    pareto_weights=cast("ParetoWeights", pareto_weights),
                 ),
                 TASTE_SHOCK_LOOKUP_OUTPUT_ROLES,
             )

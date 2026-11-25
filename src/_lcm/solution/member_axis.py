@@ -24,6 +24,9 @@ from _lcm.solution.contract import PeriodKernel, SolutionKernels
 from _lcm.typing import DataclassInstance, PytreeValue
 from lcm.typing import ReferenceName
 
+# The wrapper built for each core, keyed by the core's identity and value input.
+type _Wrappers = dict[tuple[int, ReferenceName | None], Callable[..., PytreeValue]]
+
 
 def publish_member_axis(
     *, kernels: SolutionKernels, member_axis: tuple[str, ...] | None
@@ -35,11 +38,15 @@ def publish_member_axis(
     """
     if member_axis is None:
         return kernels
+    # Periods sharing a core share its one wrapper, so they keep one callable.
+    wrappers: _Wrappers = {}
     return replace(
         kernels,
         period_kernels=MappingProxyType(
             {
-                period: _kernel_with_member_axis(kernel=kernel, member_axis=member_axis)
+                period: _kernel_with_member_axis(
+                    kernel=kernel, member_axis=member_axis, wrappers=wrappers
+                )
                 for period, kernel in kernels.period_kernels.items()
             }
         ),
@@ -51,34 +58,35 @@ def with_member_axis(
     program: CoreProgram,
     member_axis: tuple[str, ...] | None,
     value_input: ReferenceName | None = None,
+    wrappers: _Wrappers | None = None,
 ) -> CoreProgram:
     """Return `program` publishing its value with `member_axis`.
 
     `value_input` names an internal input holding another program's output whose
     first leaf is that program's value; the wrapped program reads the member's
-    slice of it. A program publishing no value is returned unchanged.
+    slice of it. `wrappers` holds the wrapper already built for a core, which is
+    reused. A program publishing no value is returned unchanged.
     """
     if member_axis is None or not publishes_value(program=program):
         return program
     member_index = _member_index(member_axis=member_axis)
+    wrappers = {} if wrappers is None else wrappers
+
+    def wrap(function: Callable[..., PytreeValue]) -> Callable[..., PytreeValue]:
+        key = (id(function), value_input)
+        if key not in wrappers:
+            wrappers[key] = _wrapped(
+                function=function, member_index=member_index, value_input=value_input
+            )
+        return wrappers[key]
+
     variant = program.checked_variant
     return replace(
         program,
-        function=_wrapped(
-            function=program.function,
-            member_index=member_index,
-            value_input=value_input,
-        ),
+        function=wrap(program.function),
         checked_variant=None
         if variant is None
-        else replace(
-            variant,
-            function=_wrapped(
-                function=variant.function,
-                member_index=member_index,
-                value_input=value_input,
-            ),
-        ),
+        else replace(variant, function=wrap(variant.function)),
     )
 
 
@@ -97,7 +105,7 @@ def drop_member_axis(
 
 
 def _kernel_with_member_axis(
-    *, kernel: PeriodKernel, member_axis: tuple[str, ...]
+    *, kernel: PeriodKernel, member_axis: tuple[str, ...], wrappers: _Wrappers
 ) -> PeriodKernel:
     """Return the dataclass `kernel` with each program publishing the member axis."""
     return cast(
@@ -106,7 +114,9 @@ def _kernel_with_member_axis(
             cast("DataclassInstance", kernel),
             _core_programs=MappingProxyType(
                 {
-                    name: with_member_axis(program=program, member_axis=member_axis)
+                    name: with_member_axis(
+                        program=program, member_axis=member_axis, wrappers=wrappers
+                    )
                     for name, program in cast("CoreProgramGraphAware", kernel)
                     .core_programs()
                     .items()

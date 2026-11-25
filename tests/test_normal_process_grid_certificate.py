@@ -159,7 +159,7 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
     # Streaming the household solve deleted the three streaming_classifier controls
     # of the dense collective disposition with that disposition and added
     # streaming_classifier:household_sent_dense.
-    assert len(historical) == 596
+    assert len(historical) == 595
     historical = historical - exact_count_controls
     added_feasibility_controls = {
         "feasibility_summary:published_value_changed",
@@ -191,13 +191,13 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
     # inverted and native_graph:collective_output_role_dropped with their targets;
     # the fold-machinery removal deleted ten streaming fold controls and two
     # supplemental s02_status:fold_weight_* controls with theirs.
-    assert len(historical) == 594
+    assert len(historical) == 593
     historical_before_s1 = historical - added_rng_controls - added_engine_controls
-    assert len(historical_before_s1) == 592
-    assert len(historical_before_s1 - added_initial_controls) == 580
+    assert len(historical_before_s1) == 591
+    assert len(historical_before_s1 - added_initial_controls) == 579
     assert (
         len(historical_before_s1 - added_initial_controls - added_feasibility_controls)
-        == 578
+        == 577
     )
     assert "src/_lcm/solution/feasibility.py" in direct_flow._CERTIFIED_CORRIDOR_SOURCES
     assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 182

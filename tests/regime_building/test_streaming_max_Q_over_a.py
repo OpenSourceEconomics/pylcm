@@ -23,6 +23,7 @@ from _lcm.regime_building.max_Q_over_a import (
     get_max_Q_over_a,
     get_streaming_max_Q_over_a,
 )
+from _lcm.solution.collective_action_reduction import COLLECTIVE_HARD_MAX_REDUCTION
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.solution.grid_search import (
     _ActionStreamingDisposition,
@@ -1032,12 +1033,9 @@ def _width_collision_Q_and_F(
                 "has_taste_shocks": True,
                 "member_axis": ("f", "m"),
                 "discrete_actions": ("action",),
-                "actions_grid_shapes": (1,),
-                "co_map_state_names": ("kind", "region"),
-                "edge_reference_regimes": ("reference",),
             },
-            _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_EV1,
-            id="unsupported-collective-ev1-precedes-dense-topology-gates",
+            _ActionStreamingDisposition.DENSE_EV1_NONCANONICAL,
+            id="household-ev1",
         ),
         pytest.param(
             {"has_taste_shocks": True, "discrete_actions": ()},
@@ -1236,12 +1234,12 @@ def test_households_stream_to_the_values_and_choices_of_the_whole_product(
     """Blocks of any width give the whole product's values and simulated choices.
 
     A two-member couple and a single, the household of the one member `"self"`,
-    solve and decide over their actions in blocks of `width`. The household
-    argmax is exact, so every solved value, every simulated action and state is
-    bit for bit the one a block covering all actions gives. A simulated value is
-    the action value at the winner, evaluated at the subject's own state by a
-    program compiled for the block's width, so it agrees to a few units in the
-    last place.
+    solve and decide over their actions in blocks of `width`, folded by the
+    household reduction. The household argmax is exact, so every solved value,
+    every simulated action and state is bit for bit the one a block covering all
+    actions gives. A simulated value is the action value at the winner,
+    evaluated at the subject's own state by a program compiled for the block's
+    width, so it agrees to a few units in the last place.
     """
     model, solution, frame = _solve_and_simulate_at_action_width(width)
     _, whole_solution, whole_frame = _solve_and_simulate_at_action_width(_N_ACTIONS)
@@ -1255,7 +1253,9 @@ def test_households_stream_to_the_values_and_choices_of_the_whole_product(
             kernel.core_programs()["main"],
             engine_regime.simulation.programs.decision[0],
         ):
-            assert ACTION_PRODUCT_AXIS in program.requirements.axis_names
+            (axis,) = program.requirements.reduced_axes
+            assert axis.name == ACTION_PRODUCT_AXIS
+            assert axis.reduction is COLLECTIVE_HARD_MAX_REDUCTION
     for period, values in whole_solution.values.items():
         for regime, expected in values.items():
             got = np.asarray(solution.values[period][regime])
