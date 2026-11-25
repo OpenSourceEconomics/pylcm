@@ -533,9 +533,16 @@ def _route_metadata(model: Model) -> _RouteMetadata:
         action_extents = tuple(
             _grid_extent(regime.solution.grids[name]) for name in action_names
         )
-        # Every regime runs the household path; a historical checkout marks the
-        # regimes that do with a `member_axis`.
-        collective = getattr(regime, "member_axis", ()) is not None
+        # A regime of more than one member is collective. A historical checkout
+        # names a collective regime's members in `member_axis` or `stakeholders`
+        # and leaves them `None` for a singleton.
+        members = (
+            getattr(regime, "members", None)
+            or getattr(regime, "member_axis", None)
+            or getattr(regime, "stakeholders", None)
+            or ()
+        )
+        collective = len(members) > 1
         has_taste_shocks = bool(regime.has_taste_shocks)
         if has_taste_shocks:
             taste_shock_regimes.append(regime_name)

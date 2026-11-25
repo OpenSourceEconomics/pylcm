@@ -43,7 +43,7 @@ class ScenarioSpec:
     name: ScenarioName
     description: str
     topology: Literal["selected-backend", "cpu-4"]
-    expected_collective: bool = True
+    expected_collective: bool = False
     expected_distributed: bool = False
     expected_head_disposition: Literal["planned", "dense"] = "planned"
     expected_head_disposition_reason: str | None = None
@@ -72,6 +72,7 @@ SCENARIOS = MappingProxyType(
             name="collective-gs-vd",
             description=("Collective household with value-dependent edges."),
             topology="selected-backend",
+            expected_collective=True,
             expected_head_streamed=False,
             expected_gs_vd=True,
         ),
