@@ -33,7 +33,7 @@ class ExitTarget:
     regime: RegimeName
     """Actual destination regime."""
     projection: Mapping[StateName, UserFunction] | Phased
-    """Complete destination-state mapping; Phased may change settlements."""
+    """Complete destination-state mapping; a `Phased` one reads no settlement."""
     role: ExitRole | None = None
     """Destination member, required for a collective destination."""
     utility_adjustment: UserFunction | None = None

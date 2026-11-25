@@ -677,3 +677,221 @@ def test_exit_without_pruned_states_drops_a_phased_projection_by_phase() -> None
         {"wealth": _half},
         {"wealth": _double},
     )
+
+
+def _gain_utility(gain: FloatND) -> FloatND:
+    return gain
+
+
+def _other_gain_utility(gain: FloatND) -> FloatND:
+    return 2.0 * gain
+
+
+def _zero_utility() -> float:
+    return 0.0
+
+
+def _penalty(gain: FloatND) -> FloatND:
+    return -gain
+
+
+def _other_penalty(gain: FloatND) -> FloatND:
+    return -2.0 * gain
+
+
+def _charge(penalty: FloatND) -> FloatND:
+    return penalty
+
+
+def _pays_penalty(penalty: FloatND) -> FloatND:
+    return penalty
+
+
+def _pays_charge(charge: FloatND) -> FloatND:
+    return charge
+
+
+def _pays_kept(kept: FloatND) -> FloatND:
+    return kept
+
+
+def _pays_next_gain(next_gain: FloatND) -> FloatND:
+    return next_gain
+
+
+def _pays_division(division: FloatND) -> FloatND:
+    return division
+
+
+def _open_at_penalty(penalty: FloatND) -> BoolND:
+    return penalty < 0.0
+
+
+def _lands_division(division: FloatND) -> FloatND:
+    return division
+
+
+def _lands_other_division(division: FloatND) -> FloatND:
+    return 2.0 * division
+
+
+def _keep_gain(gain: FloatND) -> FloatND:
+    return gain
+
+
+def _halve_gain(gain: FloatND) -> FloatND:
+    return 0.5 * gain
+
+
+_DIFFERS = ", which differs between solve and simulation"
+_PAYMENT = "The payment of the exit from regime 'couple' to target 'f_alone' reads "
+_AVAILABLE = "The availability condition of the exit from regime 'couple' reads "
+_DEFAULT = "The settlement default of the exit from regime 'couple' reads "
+_PROJECTION = (
+    "The projection of the exit from regime 'couple' to target 'f_alone' is "
+    "declared `Phased` and reads the settlement 'division'"
+)
+
+
+@pytest.mark.parametrize("differs", [False, True])
+@pytest.mark.parametrize(
+    ("form", "message"),
+    [
+        ("payment", f"{_PAYMENT}function 'penalty'{_DIFFERS}"),
+        ("helper", f"{_PAYMENT}function 'penalty'{_DIFFERS}"),
+        ("carried", f"{_PAYMENT}state 'kept'{_DIFFERS}"),
+        ("law", f"{_PAYMENT}function 'next_gain'{_DIFFERS}"),
+        ("available", f"{_AVAILABLE}function 'penalty'{_DIFFERS}"),
+        ("default", f"{_DEFAULT}function 'penalty'{_DIFFERS}"),
+        ("projection", _PROJECTION),
+    ],
+    ids=["payment", "helper", "carried", "law", "available", "default", "projection"],
+)
+def test_exit_payments_and_conditions_are_common_to_solve_and_simulation(
+    *, form: str, message: str, differs: bool
+) -> None:
+    """A payment, default or availability reading a phase-dependent name is refused.
+
+    So is a `Phased` projection reading the settlement. The same declaration builds
+    when the name it reads is the same in both phases, beside a member utility that
+    differs, and so does a `Phased` projection reading no settlement.
+    """
+    from lcm import (  # noqa: PLC0415
+        AgeGrid,
+        CollectiveUtility,
+        LinSpacedGrid,
+        MutualConsent,
+        Phased,
+        Regime,
+        Settlement,
+        fixed_transition,
+    )
+    from lcm.regime import (  # noqa: PLC0415
+        FunctionEntry,
+        StateEntry,
+        StateTransitionEntry,
+    )
+    from lcm.typing import ScalarInt  # noqa: PLC0415
+
+    @lcm.categorical(ordered=False)
+    class RegimeId:
+        couple: ScalarInt
+        couple_done: ScalarInt
+        f_alone: ScalarInt
+        m_alone: ScalarInt
+
+    grid = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)
+    penalty = Phased(solve=_penalty, simulate=_other_penalty) if differs else _penalty
+    payment = {
+        "payment": _pays_penalty,
+        "helper": _pays_charge,
+        "carried": _pays_kept,
+        "law": _pays_next_gain,
+        "default": _pays_division,
+        "projection": _pays_division,
+    }.get(form)
+    projection: Mapping[StateName, UserFunction] | Phased = {}
+    if form == "projection":
+        projection = Phased(
+            solve={"gain": _lands_division if differs else _keep_gain},
+            simulate={"gain": _lands_other_division if differs else _halve_gain},
+        )
+    states: dict[str, StateEntry] = {"gain": grid}
+    laws: dict[str, StateTransitionEntry] = {"gain": fixed_transition("gain")}
+    if form == "carried":
+        states["kept"] = Phased(solve=_keep_gain, simulate=grid) if differs else grid
+        laws["kept"] = fixed_transition("kept")
+    if form == "law" and differs:
+        laws["gain"] = Phased(solve=_keep_gain, simulate=_halve_gain)
+    helpers: dict[str, FunctionEntry] = {}
+    if form not in {"carried", "law", "projection"}:
+        helpers["penalty"] = penalty
+    if form == "helper":
+        helpers["charge"] = _charge
+
+    def build() -> Model:
+        return Model(
+            regimes={
+                "couple": Regime(
+                    states=states,
+                    state_transitions=laws,
+                    functions={
+                        "utility": CollectiveUtility(
+                            utilities={
+                                "f": Phased(
+                                    solve=_gain_utility, simulate=_other_gain_utility
+                                ),
+                                "m": _gain_utility,
+                            }
+                        ),
+                        **helpers,
+                    },
+                    exit=Exit(
+                        targets={
+                            "f": ExitTarget(
+                                regime="f_alone",
+                                projection=projection,
+                                utility_adjustment=payment,
+                            ),
+                            "m": ExitTarget(regime="m_alone", projection={}),
+                        },
+                        rule=MutualConsent(
+                            settle=Settlement(
+                                name="division",
+                                candidates=grid,
+                                default=_pays_penalty
+                                if form == "default"
+                                else _keep_gain,
+                            )
+                        )
+                        if form in {"default", "projection"}
+                        else Unilateral(),
+                        available=_open_at_penalty if form == "available" else None,
+                    ),
+                ),
+                "couple_done": Regime(
+                    states={"gain": grid},
+                    functions={
+                        "utility": CollectiveUtility(
+                            utilities={"f": _gain_utility, "m": _gain_utility}
+                        )
+                    },
+                ),
+                "f_alone": Regime(
+                    states={"gain": grid}, functions={"utility": _gain_utility}
+                )
+                if form == "projection"
+                else Regime(functions={"utility": _zero_utility}),
+                "m_alone": Regime(functions={"utility": _zero_utility}),
+            },
+            ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+            regime_id_class=RegimeId,
+            initial_nodes={0: "couple"},
+            edges={"couple": {"couple_done": 0}},
+        )
+
+    if not differs:
+        build()
+        return
+    with pytest.raises(RegimeInitializationError, match=message):
+        build()

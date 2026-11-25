@@ -156,6 +156,7 @@ def validate_exit_targets(
     from _lcm.exits import exit_for_phase  # noqa: PLC0415 - phase validator cycle
 
     for source, regime in regimes.items():
+        _validate_exit_is_common_to_both_phases(source=source, regime=regime)
         for phase in ("solve", "simulate"):
             declaration = exit_for_phase(declaration=regime.exit, phase=phase)
             if declaration is None:
@@ -189,6 +190,101 @@ def validate_exit_targets(
                 regimes=regimes,
                 laws=laws,
                 phase=phase,
+            )
+
+
+def _validate_exit_is_common_to_both_phases(
+    *, source: RegimeName, regime: Regime
+) -> None:
+    """Refuse an exit payment or condition that differs between solve and simulation.
+
+    The payment at an exit, the settlement's default and the availability condition
+    are common to the model the solve prices and the one the simulation realizes.
+    Each may read the regime's functions, directly or through other functions. A
+    name whose solve and simulate declarations differ is one of:
+
+    - a function declared `Phased`;
+    - a carried state, which the solve imputes and the simulation tracks;
+    - a `next_<state>` whose law of motion is declared `Phased`.
+
+    A projection that carries a settlement to a member is common in the same way,
+    so a `Phased` projection reads no settlement.
+    """
+    declaration = regime.exit
+    if declaration is None:
+        return
+    pool: dict[str, _TransitionValue] = {
+        **{f"next_{name}": law for name, law in regime.state_transitions.items()},
+        **{
+            name: grid
+            for name, grid in regime.states.items()
+            if isinstance(grid, Phased)
+            and not isinstance(grid.solve, _ContinuousStochasticProcess)
+        },
+        **regime.decomposed_constraints,
+        **regime.decomposed_functions,
+    }
+    differing = {
+        name
+        for name, value in pool.items()
+        if isinstance(value, Phased) and value.solve is not value.simulate
+    }
+    callbacks = [
+        (
+            f"payment of the exit from regime {source!r} to target {target.regime!r}",
+            "A payment",
+            target.utility_adjustment,
+        )
+        for target in declaration.targets.values()
+    ]
+    callbacks.append(
+        (
+            f"availability condition of the exit from regime {source!r}",
+            "An availability condition",
+            declaration.available,
+        )
+    )
+    if isinstance(declaration.rule, MutualConsent):
+        callbacks.append(
+            (
+                f"settlement default of the exit from regime {source!r}",
+                "A settlement default",
+                declaration.rule.settle.default,
+            )
+        )
+    if isinstance(declaration.rule, MutualConsent):
+        settlement = declaration.rule.settle.name
+        for target in declaration.targets.values():
+            projection = target.projection
+            if (
+                isinstance(projection, Phased)
+                and projection.solve is not projection.simulate
+                and _first_reached(
+                    start=_transition_node_arg_names(projection),
+                    pool=pool,
+                    wanted={settlement},
+                )
+            ):
+                raise RegimeInitializationError(
+                    f"The projection of the exit from regime {source!r} to target "
+                    f"{target.regime!r} is declared `Phased` and reads the settlement "
+                    f"{settlement!r}. What carries a settlement to the members must "
+                    "be the same in solve and simulation: declare this projection "
+                    "without `Phased`."
+                )
+    for what, kind, function in callbacks:
+        if function is None:
+            continue
+        name = _first_reached(
+            start=_transition_node_arg_names(function), pool=pool, wanted=differing
+        )
+        if name is not None:
+            raise RegimeInitializationError(
+                f"The {what} reads "
+                f"{'state' if name in regime.states else 'function'} {name!r}, which "
+                f"differs between solve and simulation. {kind} at an exit must be the "
+                f"same in both: declare {name!r} without `Phased`, or read a name "
+                "that is the same in both."
             )
 
 
@@ -927,14 +1023,28 @@ def _first_age_specialized_ancestor_of_transition(
     if transition is None or not specialized_names:
         return None
 
+    return _first_reached(
+        start=_transition_node_arg_names(transition),
+        pool=pool,
+        wanted=specialized_names,
+    )
+
+
+def _first_reached(
+    *,
+    start: tuple[str, ...],
+    pool: Mapping[str, _TransitionValue],
+    wanted: set[str],
+) -> str | None:
+    """Return a name in `wanted` that `start` reads, directly or through `pool`."""
     seen: set[str] = set()
-    stack = list(_transition_node_arg_names(transition))
+    stack = list(start)
     while stack:
         name = stack.pop()
         if name in seen:
             continue
         seen.add(name)
-        if name in specialized_names:
+        if name in wanted:
             return name
         if name in pool:
             stack.extend(_transition_node_arg_names(pool[name]))

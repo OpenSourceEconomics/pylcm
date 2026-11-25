@@ -306,20 +306,21 @@ remain in `Model(edges=...)`.
 - `ExitTarget(regime=..., projection=..., role=None, utility_adjustment=None)` names a
   real destination and maps its complete current state. A collective destination
   requires its member `role`. The adjustment reads source states and parameters and
-  enters the exit payoff once. A projection may use `Phased(solve=..., simulate=...)`
-  settlements; it does not change information. A projection names every state its
-  destination declares, model-level ones included. Where the destination does not read a
-  model-level state and pruning drops it, the projection onto it is dropped as well, as
-  a law of motion toward that destination is, so the same projection builds either way.
-  A projected continuous state follows its destination grid's `off_grid` rule, as a
-  realised next state does, in the solve and in the simulation alike. Under
-  `"clip_state"` the destination's problem is priced, its shock laws read and the mover
-  landed at the state capped to the grid's outer nodes. Under `"raise"` a read the exit
-  choice evaluates outside the grid raises `OffGridStateError`, even where the household
-  then stays; a read where the exit is unavailable, or at a shock node of zero mass,
-  does not. `"extrapolate"` and `"clip_lookup"` keep the projected state. A
-  `"clip_state"` or `"raise"` grid whose points are supplied at run time is refused when
-  the model is built.
+  enters the exit payoff once. A projection may be `Phased(solve=..., simulate=...)`; it
+  does not change information, and under `MutualConsent` a `Phased` projection that
+  reads the settlement, directly or through other functions, is refused when the model
+  is built. A projection names every state its destination declares, model-level ones
+  included. Where the destination does not read a model-level state and pruning drops
+  it, the projection onto it is dropped as well, as a law of motion toward that
+  destination is, so the same projection builds either way. A projected continuous state
+  follows its destination grid's `off_grid` rule, as a realised next state does, in the
+  solve and in the simulation alike. Under `"clip_state"` the destination's problem is
+  priced, its shock laws read and the mover landed at the state capped to the grid's
+  outer nodes. Under `"raise"` a read the exit choice evaluates outside the grid raises
+  `OffGridStateError`, even where the household then stays; a read where the exit is
+  unavailable, or at a shock node of zero mass, does not. `"extrapolate"` and
+  `"clip_lookup"` keep the projected state. A `"clip_state"` or `"raise"` grid whose
+  points are supplied at run time is refused when the model is built.
 - `Consent(counterparty=Counterparty(regime=..., role=..., projection=...))` compares
   each party's payoff at the destination's common Participating policy strictly against
   that party's Raw stay value. Equality keeps the original state. The counterparty's
@@ -413,6 +414,11 @@ evaluation. `observes` adds target information available at the exit choice. Hid
 target shocks are priced before the source choice and revealed when a mover executes the
 destination's action. Partial observation of a correlated group is refused; see the
 adopted [IID and exit contract](../development/iid-exits-redesign.md).
+
+A `utility_adjustment`, a settlement's `default` and `available` are the same in the
+solve and in the simulation. One that reads, directly or through other functions, a
+function or law of motion declared `Phased` or a carried state is refused when the model
+is built, with the regime, the target and the name it reads.
 
 When `available` reads nothing but discrete shocks of one group that the stay problem
 does not read, as an offer flag does, the solve enumerates that group's nodes where the

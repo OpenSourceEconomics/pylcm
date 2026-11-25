@@ -18,6 +18,14 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   reads a state the projection changes or is not proven to keep raises
   `ShockDeclarationError` when the model is built, naming the regimes, the group, the
   shock and the state; draw such a shock in the source and carry it as a state.
+- The payment at an exit is the same in the solve and in the simulation, and so are a
+  settlement's `default` and the exit's `available`: one that reads, directly or through
+  other functions, a function or law of motion declared `Phased` or a carried state
+  raises `RegimeInitializationError` when the model is built, naming the regime, the
+  target and the name it reads.
+- A `Phased` projection of an exit target does not read the settlement of a
+  `MutualConsent`: one that does raises `RegimeInitializationError` when the model is
+  built, naming the regime, the target and the settlement.
 - `MutualConsent` requires `settle`; mutual consent without a settlement is removed.
 - A household with a `Decoupled` aggregator and no taste shocks breaks ties in its
   weighted objective on the members' objectives and then on their stored values, each
