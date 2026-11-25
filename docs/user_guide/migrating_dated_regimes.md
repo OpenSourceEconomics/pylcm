@@ -309,9 +309,9 @@ A current exit declares one of the built-in rules, `Unilateral` or `MutualConsen
 household then takes its Pareto-weighted argmax among the kept actions.
 
 A regime declares at most one exit, as `Regime(exit=Exit(...))`; the mapping
-`Regime(exits={name: Exit(...)})` is removed. The rule strings `"unilateral"` and
-`"mutual"` are `Unilateral()` and `MutualConsent()`. Custom rule callables and
-`RuleResult` are removed, with no replacement.
+`Regime(exits={name: Exit(...)})` is removed. The rule string `"unilateral"` is
+`Unilateral()`; `"mutual"` is `MutualConsent(settle=...)`, which needs a settlement.
+Custom rule callables and `RuleResult` are removed, with no replacement.
 
 ### Gates route on states only
 

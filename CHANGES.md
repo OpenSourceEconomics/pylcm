@@ -5,6 +5,18 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Exits declare only what the members' rules define
+
+- A formation by `Consent` pays nothing: an `Exit` with a `Consent` rule whose target
+  declares a `utility_adjustment` is refused when it is declared.
+- An exit observes a shock group whole or not at all: `Exit(observes=...)` that names
+  some but not all shocks of one group raises `ShockDeclarationError` when the model is
+  built, naming the group, the observed and the missing shocks.
+- `MutualConsent` requires `settle`; mutual consent without a settlement is removed.
+- A household with a `Decoupled` aggregator and no taste shocks breaks ties in its
+  weighted objective on the members' objectives and then on their stored values, each
+  in member order, so its stored values do not depend on the order of the actions.
+
 ### Several decisions in one period
 
 - `Model(stages={stage_name: (regime_name, ...), ...})` declares the decisions taken one
@@ -131,9 +143,10 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ### A regime declares at most one exit, with a built-in rule
 
-- `Regime(exit=Exit(...))` replaces `Regime(exits={name: Exit(...)})`. The rule strings
-  `"unilateral"` and `"mutual"` are `Unilateral()` and `MutualConsent()`; custom rule
-  callables and `RuleResult` are removed, with no replacement.
+- `Regime(exit=Exit(...))` replaces `Regime(exits={name: Exit(...)})`. The rule string
+  `"unilateral"` is `Unilateral()`; `"mutual"` is `MutualConsent(settle=...)`, which
+  needs a settlement. Custom rule callables and `RuleResult` are removed, with no
+  replacement.
 - `Exit(nodes=MonteCarlo(...))` or `QuasiMonteCarlo(...)` replaces, in the solve, every
   shock group of the exit choice that the regime's own stay problem does not read by
   `n` draws from its law at the current state, shared by every row of the groups the
@@ -180,11 +193,11 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ### Exit rules compare at the optimum and settle before separation
 
-- `Unilateral(compares=...)` and `MutualConsent(compares=...)` say where each member's
-  stay value meets its outside value: `"each_action"` tests every stay action, as
-  before, and `"optimum"` only the household's unconstrained optimum, where
-  `Unilateral` separates when any member refuses and `MutualConsent` when every member
-  does. The default keeps every existing declaration, its values and its fingerprint.
+- `Unilateral(compares=...)` says where each member's stay value meets its outside
+  value: `"each_action"` tests every stay action, and `"optimum"` only the household's
+  unconstrained optimum, where `Unilateral` separates when any member refuses. The
+  default keeps every existing declaration, its values and its fingerprint.
+  `MutualConsent` always compares at the optimum, through its settlement.
 - `MutualConsent(settle=Settlement(name=..., candidates=..., default=...))` shifts a
   division read by the exit's projections and utility adjustments before the pair
   decides: when exactly one member wants to leave at the default, the pair separates at

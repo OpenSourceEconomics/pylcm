@@ -333,9 +333,11 @@ single's.
 `Decoupled(objective=..., value=...)` is declared for the household as a whole, never
 per member. Without taste shocks the household chooses the action that maximizes the
 Pareto-weighted sum of its members' objectives, and stores each member's `value` there.
-With taste shocks the one deciding member chooses on its own objective, as a single
-would; its stored value is its expectation at the noisy choice, and every other member's
-is the mean of its own `value` under the decider's choice probabilities.
+Ties in that sum go to the members' objectives and then to their values, each in member
+order, so the stored values do not depend on the order of the actions. With taste shocks
+the one deciding member chooses on its own objective, as a single would; its stored
+value is its expectation at the noisy choice, and every other member's is the mean of
+its own `value` under the decider's choice probabilities.
 
 `Model.lookup_policy(..., keep_intermediates=...)` and the NaN diagnostics of a failed
 solve work for a household as for a single. `Q`, `U` and `CE` carry a trailing member

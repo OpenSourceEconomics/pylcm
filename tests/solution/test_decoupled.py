@@ -113,6 +113,10 @@ def current_choice(
     return utility + beta * delta * CE
 
 
+def zero_utility() -> FloatND:
+    return jnp.asarray(0.0)
+
+
 def indifferent_utility(choice: DiscreteAction) -> FloatND:
     return jnp.zeros_like(jnp.asarray(choice, dtype=float))
 
@@ -684,7 +688,7 @@ def test_simulation_rejects_an_objective_with_no_feasible_action(
                 functions={"utility": first_choice_utility},
                 koopmans_aggregator=lcm.Decoupled(objective=additive, value=additive),
             ),
-            "end": lcm.Regime(functions={"utility": lambda: jnp.asarray(0.0)}),
+            "end": lcm.Regime(functions={"utility": zero_utility}),
         },
         regime_id_class=RegimeId,
         initial_nodes=lcm.InitialNodes(by_period={0: "decide"}),
@@ -784,6 +788,26 @@ def test_readout_follows_the_empty_tie_and_nan_contract(
         expected_index,
         "nan" if np.isnan(expected_value) else expected_value,
     )
+
+
+@pytest.mark.parametrize("order", [(0, 1, 2), (1, 0, 2), (2, 1, 0)])
+def test_household_ties_in_the_objectives_go_to_the_stored_values(
+    *, order: tuple[int, ...]
+) -> None:
+    """Actions 0 and 1 tie in every objective; f's higher stored value decides."""
+    from _lcm.regime_building.decoupled import (  # noqa: PLC0415
+        household_argmax_and_readout,
+    )
+
+    selection = jnp.asarray([[1.0, 2.0], [1.0, 2.0], [0.0, 0.0]])[jnp.asarray(order)]
+    readout = jnp.asarray([[3.0, 9.0], [4.0, 1.0], [8.0, 8.0]])[jnp.asarray(order)]
+    _, value = household_argmax_and_readout(
+        selection=selection,
+        readout=readout,
+        where=jnp.ones(3, dtype=bool),
+        weights=jnp.asarray([0.5, 0.5]),
+    )
+    assert_array_equal(value, [4.0, 1.0])
 
 
 @pytest.mark.parametrize("period", [0, 1])
@@ -1065,7 +1089,7 @@ def _gate_model(*, objective: UserFunction, enable_jit: bool) -> lcm.Model:
                 koopmans_aggregator=lcm.Decoupled(objective=objective, value=additive),
                 taste_shocks=lcm.ExtremeValueTasteShocks(),
             ),
-            "end": lcm.Regime(functions={"utility": lambda: jnp.asarray(0.0)}),
+            "end": lcm.Regime(functions={"utility": zero_utility}),
         },
         regime_id_class=RegimeId,
         initial_nodes=lcm.InitialNodes(by_period={0: "decide"}),
@@ -1305,7 +1329,7 @@ def _phase_aggregators(
     ],
 ]:
     regime = lcm.Regime(
-        functions={"utility": lambda: jnp.asarray(0.0)},
+        functions={"utility": zero_utility},
         koopmans_aggregator=declaration,
     )
     return {

@@ -163,7 +163,6 @@ def _model(
     *,
     n_match: int = 2,
     match_law: Law | None = None,
-    joint_match: bool = False,
     marry_available: Callable[..., BoolND] | None = None,
     couple_projection: Callable[..., IntND] = _experience,
     couple_f: Callable[..., FloatND] = _couple_f,
@@ -275,14 +274,6 @@ def _model(
             else None,
         )
     law = Normal(mu=0.0, sigma=0.3) if match_law is None else match_law
-    match = (
-        ShockGroup(
-            shocks={"match": law, "bonus": Normal(mu=0.0, sigma=0.1)},
-            nodes=Product(match=GaussHermite(n=n_match), bonus=GaussHermite(n=2)),
-        )
-        if joint_match
-        else _group(name="match", n=n_match, law=law)
-    )
     return Model(
         regimes=regimes,
         shocks={
@@ -292,7 +283,7 @@ def _model(
                 law=Normal(mu=0.0, sigma=_level_sigma if wage_level else 0.5),
             ),
             "wage_m": _group(name="wage_m", n=2, law=Normal(mu=0.0, sigma=0.4)),
-            "match": match,
+            "match": _group(name="match", n=n_match, law=law),
         },
         n_periods=2,
         regime_id_class=_DissolvingRegimes if dissolution else _Regimes,
@@ -638,19 +629,6 @@ def test_representative_landings_count_once_per_present_copy() -> None:
         counts=counts, copies=jnp.asarray([2, 0, 4], dtype=jnp.int32)
     )
     np.testing.assert_array_equal(scaled, [[4, 2], [0, 0], [2**31 - 1, 4]])
-
-
-def test_partly_observed_group_keeps_its_rows(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The exit observes match but not bonus, which shares match's joint group:
-    those rows genuinely differ, so they are all evaluated."""
-
-    def model() -> Model:
-        return _model(joint_match=True)
-
-    _assert_same_values(
-        got=_values(model()),
-        expected=_unpinned_scalar_values(model=model, monkeypatch=monkeypatch),
-    )
 
 
 def test_state_dependent_observed_law_pins_exactly(

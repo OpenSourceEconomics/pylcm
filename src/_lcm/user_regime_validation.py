@@ -250,7 +250,7 @@ def _validate_optimum_comparison(*, declaration: Exit, regime: Regime) -> None:
 def _validate_settlement(*, declaration: Exit, regime: Regime) -> None:
     """Require two members, a target that reads the settlement and a free name."""
     rule = declaration.rule
-    if not isinstance(rule, MutualConsent) or rule.settle is None:
+    if not isinstance(rule, MutualConsent):
         return
     name = rule.settle.name
     if len(regime.member_axis or ()) != 2:  # noqa: PLR2004 - directional two-member rule

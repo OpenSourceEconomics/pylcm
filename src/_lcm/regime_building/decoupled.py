@@ -30,10 +30,13 @@ from dags import with_signature
 from jax import Array
 
 from _lcm.logsum import logsum_and_softmax
-from _lcm.regime_building.argmax import argmax_and_max
+from _lcm.regime_building.argmax import (
+    argmax_and_max,
+    max_lexicographic_and_smallest_id,
+)
 from _lcm.regime_building.collective import (
     ParetoWeights,
-    collective_argmax_and_readout,
+    _weighted_sum,
     decider_choice,
 )
 from _lcm.regime_building.max_Q_over_a import (
@@ -114,12 +117,15 @@ def household_argmax_and_readout(
     `selection` and `readout` carry a trailing member axis that `where` does
     not; the action axes are reduced:
 
-    - the index is the flat index of the household's choice, as
-      `collective_readout` makes it on the weighted sum of `selection`;
+    - the household chooses on the weighted sum of `selection`; ties go to each
+      member's objective, then to each member's stored value, both in member
+      order, and then to the smallest flat index, so the published values do not
+      depend on the order in which the actions are declared;
     - each member's value is its `readout` at that index;
     - no feasible element gives index `-1` and value `-inf`;
-    - a NaN household objective at a feasible element makes every value NaN, and
-      a NaN in a member's own profiles at a feasible element makes its value NaN.
+    - a NaN household objective at a feasible element makes every value NaN and
+      the index zero, and a NaN in a member's own profiles at a feasible element
+      makes its value NaN.
 
     Args:
         selection: Each member's objective profile.
@@ -131,23 +137,26 @@ def household_argmax_and_readout(
         The flat index of the chosen element and each member's readout there.
 
     """
-    action_axes = tuple(range(where.ndim))
-    members = tuple(str(member) for member in range(weights.shape[0]))
-    index, chosen, empty = collective_argmax_and_readout(
-        member_Q={m: selection[..., i] for i, m in enumerate(members)},
-        feasibility=where,
-        weights={m: weights[i] for i, m in enumerate(members)},
-        action_axes=action_axes,
+    n_members = weights.shape[0]
+    objectives = jnp.reshape(selection, (-1, n_members)).T
+    stored = jnp.reshape(readout, (-1, n_members)).T
+    feasible = jnp.ravel(jnp.broadcast_to(where, selection.shape[:-1]))
+    objective = _weighted_sum(
+        member_Q={str(m): objectives[m] for m in range(n_members)},
+        weights={str(m): weights[m] for m in range(n_members)},
     )
-    feasible_nan = jnp.any(
-        where[..., None] & (jnp.isnan(selection) | jnp.isnan(readout)),
-        axis=action_axes,
+    values, index = max_lexicographic_and_smallest_id(
+        values=(objective, *objectives, *stored),
+        ids=jnp.arange(feasible.size, dtype=jnp.int32),
+        where=feasible,
     )
-    undefined = jnp.isnan(jnp.stack([chosen[m] for m in members]))
-    value = jnp.where(empty, -jnp.inf, jnp.reshape(readout, (-1, len(members)))[index])
+    empty = ~jnp.any(feasible)
+    household_nan = jnp.any(feasible & jnp.isnan(objective))
+    member_nan = jnp.any(feasible & (jnp.isnan(objectives) | jnp.isnan(stored)), axis=1)
+    value = jnp.where(empty, -jnp.inf, jnp.stack(values[-n_members:]))
     return (
-        jnp.where(empty, -1, index).astype(jnp.int32),
-        jnp.where(undefined | feasible_nan, jnp.nan, value),
+        jnp.where(empty, -1, jnp.where(household_nan, 0, index)).astype(jnp.int32),
+        jnp.where(household_nan | member_nan, jnp.nan, value),
     )
 
 

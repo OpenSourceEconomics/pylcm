@@ -106,17 +106,17 @@ member to the other. A household with taste shocks may not declare an `exit` or
 
 ## Dissolving in the current period: where the members compare
 
-A regime's `Exit` with `rule=Unilateral()` or `rule=MutualConsent()` decides before the
-period's action whether the household stays. `compares` says which stay values each
-member compares with its outside value (the
-[reference](../reference/model_and_regime.md#api-current-exits) has the details):
+A regime's `Exit` with `rule=Unilateral()` decides before the period's action whether
+the household stays. `compares` says which stay values each member compares with its
+outside value (the [reference](../reference/model_and_regime.md#api-current-exits) has
+the details):
 
 - `compares="each_action"`, the default without an adjustment: every stay action is
   tested, and the household takes its best action that passes the rule. It separates
   only if none passes.
 - `compares="optimum"`: only the household's unconstrained optimum is tested.
-  `Unilateral` separates when any member refuses there, `MutualConsent` when every
-  member does. A household that stays acts at its optimum.
+  `Unilateral` separates when any member refuses there. A household that stays acts at
+  its optimum.
 
 A member's outside value is its destination's problem at the state the exit target's
 `projection` gives, and a member who leaves lands there. That state follows the
@@ -124,9 +124,9 @@ destination grid's `off_grid` rule as a realised next state does: a `"clip_state
 caps it to its outer nodes for both the outside value and the landing, and a `"raise"`
 grid refuses a read outside it, even where the household then stays.
 
-Under mutual consent the members can also shift the division on separation before they
-decide. `Settlement` names it as an argument the exit's projections and utility
-adjustments read:
+Under mutual consent the members compare at the optimum and can shift the division on
+separation before they decide. `Settlement` names it as an argument the exit's
+projections and utility adjustments read:
 
 ```python
 from lcm import Exit, ExitTarget, LinSpacedGrid, MutualConsent, Settlement
@@ -295,13 +295,13 @@ because it cannot report a changed state or a separation; read the decision from
 ## Regimes that differ only in their exit
 
 Couples that face the same budget, preferences and laws of motion can still differ in
-how they may end the match, one dissolving unilaterally and another only by mutual
-consent, or in where they go next period. Each is its own regime, because initial
-conditions, edges and results name regimes, and each declares its slots itself. Ordinary
-Python builds them from one definition:
+how they may end the match, one keeping a member who is indifferent and another letting
+that member leave, or in where they go next period. Each is its own regime, because
+initial conditions, edges and results name regimes, and each declares its slots itself.
+Ordinary Python builds them from one definition:
 
 ```python
-from lcm import Exit, ExitTarget, MutualConsent, Regime, Unilateral
+from lcm import Exit, ExitTarget, Regime, Unilateral
 
 
 def couple(rule):
@@ -326,15 +326,15 @@ def couple(rule):
 
 
 regimes = {
-    "couple_unilateral": couple(Unilateral()),
-    "couple_mutual": couple(MutualConsent()),
+    "couple_stays": couple(Unilateral()),
+    "couple_leaves": couple(Unilateral(tie="leave")),
     # ... the singles
 }
 ```
 
 Each regime's value follows from its own exit and edges. Parameters stay per regime: the
 couple's functions appear under each regime's name in `get_params_template()`, here once
-under `couple_unilateral` and once under `couple_mutual`, and are set separately.
+under `couple_stays` and once under `couple_leaves`, and are set separately.
 
 ## Entering a household in a role
 

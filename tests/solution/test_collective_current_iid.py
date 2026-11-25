@@ -729,7 +729,7 @@ def test_formation_shares_both_current_offers_at_mapped_marital_history(
             source,
             exit=replace(
                 cast("Exit", source.exit),
-                observes=("offer_f", "offer_m") if observed else ("offer_f",),
+                observes=("offer_f", "offer_m") if observed else (),
             ),
         ),
         "couple": replace(

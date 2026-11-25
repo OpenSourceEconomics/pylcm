@@ -312,6 +312,9 @@ def create_shock_registry(  # noqa: C901 - bind declarations and phase-specific 
                 f"Regime {regime_name!r} references unknown shock groups "
                 f"{sorted(unknown)!r}."
             )
+        _fail_if_a_group_is_observed_in_part(
+            regime_name=regime_name, regime=regime, groups=groups
+        )
         continuous_codes = frozenset(
             f"{name}_code"
             for group_name in regime.shocks
@@ -576,6 +579,24 @@ def _create_legacy_adapters(
                         name=name,
                     )
     return MappingProxyType(records)
+
+
+def _fail_if_a_group_is_observed_in_part(
+    *,
+    regime_name: RegimeName,
+    regime: Regime,
+    groups: Mapping[ShockGroupName, ShockGroup],
+) -> None:
+    """Refuse an exit that observes some but not all shocks of one group."""
+    observed = frozenset(() if regime.exit is None else regime.exit.observes)
+    for group_name, group in groups.items():
+        seen = observed & group.shocks.keys()
+        if seen and seen != group.shocks.keys():
+            raise ShockDeclarationError(
+                f"The exit of {regime_name!r} observes {sorted(seen)!r} of shock "
+                f"group {group_name!r} but not {sorted(group.shocks.keys() - seen)!r}:"
+                " a group is observed whole or not at all."
+            )
 
 
 def _fail_if_shock_reads_are_unlowered(

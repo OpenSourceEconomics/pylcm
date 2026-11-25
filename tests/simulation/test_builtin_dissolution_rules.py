@@ -1,4 +1,4 @@
-"""Built-in dissolution rules differ when exactly one member wants to leave."""
+"""A unilateral dissolution ends the match when any member wants to leave."""
 
 from collections.abc import Callable
 
@@ -13,7 +13,6 @@ from lcm import (
     InitialNodes,
     LinSpacedGrid,
     Model,
-    MutualConsent,
     ParetoObjective,
     Regime,
     Unilateral,
@@ -108,8 +107,6 @@ def _simulated_regimes(*, model: Model) -> list[str]:
     [
         (Unilateral(), ["couple", "couple"]),
         (Unilateral(tie="leave"), ["single_f", "single_f"]),
-        (MutualConsent(), ["couple", "couple"]),
-        (MutualConsent(tie="leave"), ["single_f", "single_f"]),
     ],
 )
 def test_tie_setting_decides_a_member_indifferent_to_leaving(
@@ -131,19 +128,13 @@ def test_a_member_with_zero_pareto_weight_keeps_the_veto() -> None:
     assert _simulated_regimes(model=model) == ["single_f", "single_f"]
 
 
-@pytest.mark.parametrize("rule", [Unilateral(), MutualConsent()])
-def test_builtin_dissolution_rule_prices_and_settles_original_members(
-    *, rule: ExitRule
-) -> None:
-    """The husband can leave alone, but the wife vetoes a mutual dissolution."""
-    model = _model(rule=rule)
+def test_builtin_dissolution_rule_prices_and_settles_original_members() -> None:
+    """The husband can leave alone, and each member lands in its own single regime."""
+    model = _model(rule=Unilateral())
     solution = model.solve(params={}, retention=ResultRetention.VALUES, log_level="off")
-    expected_full = (
-        [[2.0, 2.0], [4.0, 4.0]]
-        if isinstance(rule, Unilateral)
-        else [[3.0, 1.0], [6.0, 2.0]]
+    np.testing.assert_array_equal(
+        solution.values[0]["couple"], [[2.0, 2.0], [4.0, 4.0]]
     )
-    np.testing.assert_array_equal(solution.values[0]["couple"], expected_full)
     roles = [model.member_names_to_ids[member] for member in ("f", "m", "f", "m")]
     frame = (
         model.simulate(
@@ -164,22 +155,7 @@ def test_builtin_dissolution_rule_prices_and_settles_original_members(
     np.testing.assert_array_equal(frame["subject_id"], [0, 1, 2, 3])
     np.testing.assert_array_equal(frame["period"], [0, 0, 0, 0])
     np.testing.assert_array_equal(frame["wealth"], [1.0, 1.0, 2.0, 2.0])
-    if isinstance(rule, Unilateral):
-        np.testing.assert_array_equal(
-            frame["regime_name"], ["single_f", "single_m", "single_f", "single_m"]
-        )
-        np.testing.assert_array_equal(frame["value"], [2.0, 2.0, 4.0, 4.0])
-    else:
-        np.testing.assert_array_equal(frame["regime_name"], ["couple"] * 4)
-        np.testing.assert_array_equal(frame["own_member"], roles)
-        np.testing.assert_array_equal(frame["value_f"], [3.0, 3.0, 6.0, 6.0])
-        np.testing.assert_array_equal(frame["value_m"], [1.0, 1.0, 2.0, 2.0])
-        np.testing.assert_array_equal(
-            [
-                frame["value_f"].iloc[0],
-                frame["value_m"].iloc[1],
-                frame["value_f"].iloc[2],
-                frame["value_m"].iloc[3],
-            ],
-            [3.0, 1.0, 6.0, 2.0],
-        )
+    np.testing.assert_array_equal(
+        frame["regime_name"], ["single_f", "single_m", "single_f", "single_m"]
+    )
+    np.testing.assert_array_equal(frame["value"], [2.0, 2.0, 4.0, 4.0])

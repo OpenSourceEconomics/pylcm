@@ -340,11 +340,7 @@ def _adapt_exit(
             ),
         )
     clock = source_grids.get("period")
-    if (
-        isinstance(rule, MutualConsent)
-        and rule.settle is not None
-        and isinstance(clock, StageClock)
-    ):
+    if isinstance(rule, MutualConsent) and isinstance(clock, StageClock):
         # The settlement default reads codes, and the period through the clock.
         rule = replace(
             rule,

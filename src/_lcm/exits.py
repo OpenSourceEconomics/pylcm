@@ -26,26 +26,24 @@ type ExitFunctionDemand = Mapping[
 def compares_at_optimum(rule: ExitRule | None) -> bool:
     """Return whether a rule compares at the household's unconstrained optimum.
 
-    An undeclared comparison point is the optimum when the rule adjusts before the
-    exit and every stay action otherwise.
+    `MutualConsent` settles first and so always compares there. An undeclared
+    comparison point of `Unilateral` is the optimum when it renegotiates and every
+    stay action otherwise.
     """
-    if not isinstance(rule, Unilateral | MutualConsent):
+    if isinstance(rule, MutualConsent):
+        return True
+    if not isinstance(rule, Unilateral):
         return False
     if rule.compares is not None:
         return rule.compares == "optimum"
-    return (
-        rule.renegotiate if isinstance(rule, Unilateral) else rule.settle
-    ) is not None
+    return rule.renegotiate is not None
 
 
 def settlement_names(declaration: Exit | None) -> frozenset[ReferenceName]:
     """Return the argument the exit's settlement binds; it is never a parameter."""
-    if declaration is None:
+    if declaration is None or not isinstance(declaration.rule, MutualConsent):
         return frozenset()
-    rule = declaration.rule
-    if isinstance(rule, MutualConsent) and rule.settle is not None:
-        return frozenset({rule.settle.name})
-    return frozenset()
+    return frozenset({declaration.rule.settle.name})
 
 
 def exit_for_phase(*, declaration: Exit | None, phase: Phase) -> Exit | None:
@@ -109,10 +107,7 @@ def exit_functions(
                 ).items()
             }
         )
-    if (
-        isinstance(declaration.rule, MutualConsent)
-        and declaration.rule.settle is not None
-    ):
+    if isinstance(declaration.rule, MutualConsent):
         functions["exit", "settle", "default"] = in_role(
             func=declaration.rule.settle.default,
             role=OutputRole.FLOAT,

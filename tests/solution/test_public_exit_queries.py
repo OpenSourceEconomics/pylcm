@@ -51,7 +51,6 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import (
-    ExecutionPlanningError,
     InvalidParamsError,
     OffGridStateError,
     RegimeInitializationError,
@@ -811,14 +810,7 @@ def _quarter(wealth: FloatND) -> FloatND:
     return 0.25 + 0 * wealth
 
 
-def _joint_information_model(
-    *,
-    observed: bool,
-    correlated: bool,
-    deterministic: bool,
-    complete: bool = False,
-    runtime: bool = False,
-) -> Model:
+def _joint_information_model(*, observes: tuple[str, ...], correlated: bool) -> Model:
     wealth = LinSpacedGrid(start=0, stop=1, n_points=2)
     return Model(
         regimes={
@@ -832,7 +824,7 @@ def _joint_information_model(
                         )
                     },
                     rule=Unilateral(),
-                    observes=("x", "y") if complete else ("x",) if observed else (),
+                    observes=observes,
                 ),
             ),
             "single_m": Regime(
@@ -844,17 +836,8 @@ def _joint_information_model(
         },
         shocks={
             "joint": ShockGroup(
-                shocks={
-                    "x": Normal(mu=0, sigma=0 if deterministic else 1),
-                    "y": Normal(mu=0, sigma=1),
-                },
-                **(
-                    {"correlation": None}
-                    if runtime
-                    else {"correlation": ((1.0, 0.5), (0.5, 1.0))}
-                    if correlated
-                    else {}
-                ),
+                shocks={"x": Normal(mu=0, sigma=1), "y": Normal(mu=0, sigma=1)},
+                **({"correlation": ((1.0, 0.5), (0.5, 1.0))} if correlated else {}),
                 nodes=UserNodes(
                     nodes=np.asarray([[-1.0, -1.0], [1.0, 1.0]]),
                     weights=np.asarray([0.5, 0.5]),
@@ -872,76 +855,27 @@ def _joint_information_model(
 @pytest.mark.parametrize("correlated", [False, True])
 def test_wholly_hidden_joint_group_keeps_its_original_rows(*, correlated: bool) -> None:
     """The joint numerical rule is kept intact when the source sees neither draw."""
-    result = _joint_information_model(
-        observed=False, correlated=correlated, deterministic=False
-    ).solve(params={}, log_level="off", runtime_checks=False)
+    result = _joint_information_model(observes=(), correlated=correlated).solve(
+        params={}, log_level="off", runtime_checks=False
+    )
     # Rows are (-1,-1),(1,1). Correlation transforms y=.5*x+sqrt(.75)*base_y.
     expected = 0.5 * (1.5 + np.sqrt(0.75)) if correlated else 1.0
     np.testing.assert_allclose(result.values[0]["single_f"], expected)
 
 
-@pytest.mark.coverage(
-    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
-)
-def test_independent_observation_projects_hidden_rows_without_empirical_filtering() -> (
-    None
-):
-    """At observed x=-1/1, integrating original y rows gives prices0/1."""
-    result = _joint_information_model(
-        observed=True, correlated=False, deterministic=False
-    ).solve(params={}, log_level="off", runtime_checks=False)
-    # Source averages max(.25,0) and max(.25,1), rather than matching row IDs.
-    np.testing.assert_allclose(result.values[0]["single_f"], 0.625)
-
-
-@pytest.mark.parametrize("correlated", [False, True])
-def test_deterministic_observation_does_not_reveal_a_hidden_base(
-    *, correlated: bool
-) -> None:
-    """A constant x=0 never reveals the retained address underlying that output."""
-    result = _joint_information_model(
-        observed=True, correlated=correlated, deterministic=True
-    ).solve(params={}, log_level="off", runtime_checks=False)
-    expected = 0.5 * (0.5 + np.sqrt(0.75)) if correlated else 0.5
-    np.testing.assert_allclose(result.values[0]["single_f"], expected)
-
-
-def test_partial_correlated_observation_refuses_mandatorily() -> None:
-    """An informative x with hidden correlated y needs deferred conditioning."""
-    model = _joint_information_model(
-        observed=True, correlated=True, deterministic=False
-    )
-    with pytest.raises(ExecutionPlanningError, match="unresolved numerical status"):
-        model.solve(params={}, log_level="off", runtime_checks=False)
-
-
-@pytest.mark.coverage(
-    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
-)
-def test_runtime_observation_checks_the_actual_admitted_correlation_each_call() -> None:
-    """The support marker stays engine-owned as actual identity changes per call."""
-    model = _joint_information_model(
-        observed=True, correlated=False, deterministic=False, runtime=True
-    )
-    result = model.solve(
-        params={"joint": {"corr": np.eye(2)}},
-        log_level="off",
-        runtime_checks=False,
-    )
-    np.testing.assert_allclose(result.values[0]["single_f"], 0.625)
-    with pytest.raises(ExecutionPlanningError, match="unresolved numerical status"):
-        model.solve(
-            params={"joint": {"corr": np.array([[1.0, 0.5], [0.5, 1.0]])}},
-            log_level="off",
-            runtime_checks=False,
-        )
+def test_an_exit_observing_part_of_a_shock_group_is_refused() -> None:
+    """A group is observed whole or not at all."""
+    with pytest.raises(
+        ShockDeclarationError, match=r"\['x'\] of shock group 'joint' but not \['y'\]"
+    ):
+        _joint_information_model(observes=("x",), correlated=False)
 
 
 def test_complete_correlated_observation_reuses_its_actual_joint_realization() -> None:
     """The source sees both coordinates, so no conditional Gaussian rule is needed."""
-    result = _joint_information_model(
-        observed=True, correlated=True, deterministic=False, complete=True
-    ).solve(params={}, log_level="off", runtime_checks=False)
+    result = _joint_information_model(observes=("x", "y"), correlated=True).solve(
+        params={}, log_level="off", runtime_checks=False
+    )
     np.testing.assert_allclose(
         result.values[0]["single_f"], 0.125 + 0.5 * (1.5 + np.sqrt(0.75))
     )
@@ -1012,8 +946,8 @@ def _unused_helper(toll: FloatND) -> FloatND:
     return toll
 
 
-def _ignored_formation_adjustment(*, unused_helper: FloatND, fee: FloatND) -> FloatND:
-    return unused_helper + fee
+def _ignored_formation_available(*, unused_helper: FloatND, fee: FloatND) -> BoolND:
+    return unused_helper + fee > 0
 
 
 def _reporter(report_toll: FloatND) -> FloatND:
@@ -1031,7 +965,6 @@ def test_raw_counterparty_omits_unread_formation_params(*, preserve: bool) -> No
                 regime="couple",
                 role="m",
                 projection={"wealth": _wealth, "married_last_period": _newlywed},
-                utility_adjustment=_ignored_formation_adjustment,
             )
         },
         rule=Consent(
@@ -1039,6 +972,7 @@ def test_raw_counterparty_omits_unread_formation_params(*, preserve: bool) -> No
                 regime="single_f", role="f", projection={"wealth": _wealth}
             )
         ),
+        available=_ignored_formation_available,
     )
     model = Model(
         regimes={

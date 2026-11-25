@@ -72,31 +72,19 @@ _SIMULATED = _INFEASIBLE
 
 _SEPARATE = _OUTSIDE
 
-# Hand-derived published values `(f, m)` per cell, by rule, comparison and tie.
+# Hand-derived published values `(f, m)` per cell, by comparison and tie.
 _EXPECTED = {
-    ("unilateral", "each_action", "stay"): (
+    ("each_action", "stay"): (
         (3, 4), (2, 3), _SEPARATE, (1, 5), (1, 2), (6, 1), _SEPARATE,
     ),
-    ("unilateral", "optimum", "stay"): (
+    ("optimum", "stay"): (
         (3, 4), _SEPARATE, _SEPARATE, (1, 5), (1, 2), (6, 1), _SEPARATE,
     ),
-    ("mutual", "each_action", "stay"): (
-        (3, 4), (6, 1), (4, -5), (1, 5), (1, 2), (6, 1), _SEPARATE,
-    ),
-    ("mutual", "optimum", "stay"): (
-        (3, 4), (6, 1), _SEPARATE, (1, 5), (1, 2), (6, 1), _SEPARATE,
-    ),
-    ("unilateral", "each_action", "leave"): (
+    ("each_action", "leave"): (
         (3, 4), (2, 3), _SEPARATE, (2, 3), _SEPARATE, (6, 1), _SEPARATE,
     ),
-    ("unilateral", "optimum", "leave"): (
+    ("optimum", "leave"): (
         (3, 4), _SEPARATE, _SEPARATE, _SEPARATE, _SEPARATE, (6, 1), _SEPARATE,
-    ),
-    ("mutual", "each_action", "leave"): (
-        (3, 4), (6, 1), (4, -5), (1, 5), (0, 2.5), (6, 1), _SEPARATE,
-    ),
-    ("mutual", "optimum", "leave"): (
-        (3, 4), (6, 1), _SEPARATE, (1, 5), _SEPARATE, (6, 1), _SEPARATE,
     ),
 }  # fmt: skip
 
@@ -104,10 +92,8 @@ _EXPECTED = {
 # `tie="stay"` publishes the outside values while staying, so only the route
 # tells the two apart.
 _SEPARATES = {
-    ("unilateral", "stay"): (False, True, True, False, False, False, True),
-    ("mutual", "stay"): (False, False, True, False, False, False, True),
-    ("unilateral", "leave"): (False, True, True, True, True, False, True),
-    ("mutual", "leave"): (False, False, True, False, True, False, True),
+    "stay": (False, True, True, False, False, False, True),
+    "leave": (False, True, True, True, True, False, True),
 }
 
 
@@ -133,17 +119,6 @@ def _feasible(*, case: IntND) -> BoolND:
 
 def _available(*, case: IntND) -> BoolND:
     return case != _UNAVAILABLE
-
-
-def _rule(
-    *,
-    rule: Literal["unilateral", "mutual"],
-    compares: Literal["each_action", "optimum"] | None,
-    tie: Literal["stay", "leave"],
-) -> ExitRule:
-    if rule == "unilateral":
-        return Unilateral(tie=tie, compares=compares)
-    return MutualConsent(tie=tie, compares=compares)
 
 
 def _comparison_model(*, rule: ExitRule) -> Model:
@@ -219,65 +194,52 @@ def _own_values(frame: pd.DataFrame) -> np.ndarray:
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("tie", ["stay", "leave"])
 @pytest.mark.parametrize("compares", ["each_action", "optimum"])
-@pytest.mark.parametrize("rule", ["unilateral", "mutual"])
 def test_comparison_point_decides_the_published_values(
-    *,
-    rule: Literal["unilateral", "mutual"],
-    compares: Literal["each_action", "optimum"],
-    tie: Literal["stay", "leave"],
+    *, compares: Literal["each_action", "optimum"], tie: Literal["stay", "leave"]
 ) -> None:
     """Each cell publishes the hand-derived stay or outside values of its rule."""
-    model = _comparison_model(rule=_rule(rule=rule, compares=compares, tie=tie))
+    model = _comparison_model(rule=Unilateral(tie=tie, compares=compares))
     solution = model.solve(params={}, log_level="off")
     np.testing.assert_array_almost_equal(
         solution.values[0]["couple"],
-        np.asarray(_EXPECTED[rule, compares, tie], dtype=float),
+        np.asarray(_EXPECTED[compares, tie], dtype=float),
         decimal=DECIMAL_PRECISION,
     )
 
 
-@pytest.mark.parametrize("rule", ["unilateral", "mutual"])
-def test_compares_none_without_adjustment_is_each_action(
-    *, rule: Literal["unilateral", "mutual"]
-) -> None:
+def test_compares_none_without_adjustment_is_each_action() -> None:
     """An undeclared comparison point keeps the per-action rule."""
-    model = _comparison_model(rule=_rule(rule=rule, compares=None, tie="stay"))
+    model = _comparison_model(rule=Unilateral())
     np.testing.assert_array_almost_equal(
         model.solve(params={}, log_level="off").values[0]["couple"],
-        np.asarray(_EXPECTED[rule, "each_action", "stay"], dtype=float),
+        np.asarray(_EXPECTED["each_action", "stay"], dtype=float),
         decimal=DECIMAL_PRECISION,
     )
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("tie", ["stay", "leave"])
-@pytest.mark.parametrize("rule", ["unilateral", "mutual"])
 def test_optimum_comparison_routes_simulated_members_as_the_solve_prices_them(
-    *, rule: Literal["unilateral", "mutual"], tie: Literal["stay", "leave"]
+    *, tie: Literal["stay", "leave"]
 ) -> None:
     """Separating cells land in the singles; every subject reports the solve's value."""
-    model = _comparison_model(rule=_rule(rule=rule, compares="optimum", tie=tie))
+    model = _comparison_model(rule=Unilateral(tie=tie, compares="optimum"))
     frame = _simulate_every_cell(model=model, n_cells=_SIMULATED)
-    separates = np.repeat(np.asarray(_SEPARATES[rule, tie][:_SIMULATED]), 2)
+    separates = np.repeat(np.asarray(_SEPARATES[tie][:_SIMULATED]), 2)
     expected_regimes = np.where(
         separates, np.tile(["single_f", "single_m"], _SIMULATED), "couple"
     )
     assert list(frame["regime_name"]) == list(expected_regimes)
     np.testing.assert_array_almost_equal(
         _own_values(frame),
-        np.asarray(_EXPECTED[rule, "optimum", tie][:_SIMULATED], dtype=float).reshape(
-            -1
-        ),
+        np.asarray(_EXPECTED["optimum", tie][:_SIMULATED], dtype=float).reshape(-1),
         decimal=DECIMAL_PRECISION,
     )
 
 
-@pytest.mark.parametrize("rule", ["unilateral", "mutual"])
-def test_optimum_comparison_stays_at_the_optimal_action(
-    *, rule: Literal["unilateral", "mutual"]
-) -> None:
+def test_optimum_comparison_stays_at_the_optimal_action() -> None:
     """A pair that stays acts at the household optimum, never at a passing action."""
-    model = _comparison_model(rule=_rule(rule=rule, compares="optimum", tie="stay"))
+    model = _comparison_model(rule=Unilateral(compares="optimum"))
     frame = _simulate_every_cell(model=model, n_cells=_SIMULATED)
     staying = frame["regime_name"] == "couple"
     np.testing.assert_array_equal(frame.loc[staying, "choice"], 0)
@@ -295,14 +257,6 @@ _DURABLE_FINGERPRINTS = (
         "7337f3697d2cd718a5629c9eb44928b47d6379adc26a6e38166c3677f6bc8ee5",
     ),
     (
-        MutualConsent(),
-        "0e895bc87e7f2a7f84438b4b43b49c9dcfaee3003333fa15211999051b57d17a",
-    ),
-    (
-        MutualConsent(tie="leave"),
-        "59cb3cb5a3f7fdb4ef9ab6ccd89777da157a60b31234ab04eac52957b3ad0154",
-    ),
-    (
         Unilateral(renegotiate=Renegotiate(state="mu")),
         "4b8cddfe7f3b1db2a56d82f0c2735d6a4328ec0e06815e8ae29f34250aad7e2e",
     ),
@@ -312,23 +266,19 @@ _DURABLE_FINGERPRINTS = (
 @pytest.mark.parametrize(
     ("rule", "fingerprint"),
     _DURABLE_FINGERPRINTS,
-    ids=("unilateral", "unilateral-leave", "mutual", "mutual-leave", "renegotiate"),
+    ids=("unilateral", "unilateral-leave", "renegotiate"),
 )
 def test_rules_without_the_new_fields_keep_their_durable_fingerprint(
     *, rule: ExitRule, fingerprint: str
 ) -> None:
-    """A rule leaving `compares` and `settle` unset hashes as before they existed."""
+    """A rule leaving `compares` unset hashes as before it existed."""
     assert _semantic_fingerprint(rule) == fingerprint
 
 
-@pytest.mark.parametrize("rule", ["unilateral", "mutual"])
-def test_explicit_comparison_point_is_part_of_the_durable_identity(
-    *, rule: Literal["unilateral", "mutual"]
-) -> None:
+def test_explicit_comparison_point_is_part_of_the_durable_identity() -> None:
     """Declaring where the rule compares changes the solution identity."""
-    default = _rule(rule=rule, compares=None, tie="stay")
-    assert _semantic_fingerprint(default) != _semantic_fingerprint(
-        replace(default, compares="optimum")
+    assert _semantic_fingerprint(Unilateral()) != _semantic_fingerprint(
+        Unilateral(compares="optimum")
     )
 
 
@@ -836,11 +786,10 @@ def test_settlement_refuses_a_per_action_comparison() -> None:
         MutualConsent(compares="each_action", settle=_settlement())
 
 
-def test_settlement_is_part_of_the_durable_identity() -> None:
-    """Declaring a settlement changes the rule's fingerprint."""
-    assert _semantic_fingerprint(MutualConsent()) != _semantic_fingerprint(
-        MutualConsent(settle=_settlement())
-    )
+def test_mutual_consent_requires_a_settlement() -> None:
+    """Mutual consent always settles before the pair separates."""
+    with pytest.raises(TypeError, match="settle"):
+        MutualConsent()  # ty: ignore[missing-argument] - the refused declaration
 
 
 # Cells of the indifferent-stayer family: a name giving the signs of

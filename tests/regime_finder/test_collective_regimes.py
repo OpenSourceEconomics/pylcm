@@ -34,7 +34,6 @@ from lcm import (
     InitialNodes,
     LinSpacedGrid,
     Model,
-    MutualConsent,
     Periods,
     Regime,
     Unilateral,
@@ -155,8 +154,8 @@ def _twin_outside(wealth: ContinuousState) -> FloatND:
 def _twin_regimes() -> dict[RegimeName, Regime]:
     """Two couples that differ only in the rule of their exit, and their singles.
 
-    One couple dissolves unless both members are willing to stay, the other only
-    if neither is. The couples read a current shock and the model-level state
+    One couple keeps an indifferent member, the other lets it leave. The couples
+    read a current shock and the model-level state
     `skill`; every regime moves on to a terminal regime of its kind.
     """
 
@@ -196,7 +195,7 @@ def _twin_regimes() -> dict[RegimeName, Regime]:
 
     return {
         "couple_u": couple(last=False, rule=Unilateral()),
-        "couple_m": couple(last=False, rule=MutualConsent()),
+        "couple_m": couple(last=False, rule=Unilateral(tie="leave")),
         "single_f": single(last=False),
         "single_m": single(last=False),
         "couple_end": couple(last=True, rule=None),
@@ -595,20 +594,19 @@ def test_evaluations_count_the_member_axis(backend: FactsBackendName) -> None:
     )
 
 
-def test_exit_rule_kind_tie_and_compares_enter_the_exit_identity() -> None:
-    """Eight exit rules of one couple give eight exit identities."""
+def test_exit_rule_tie_and_compares_enter_the_exit_identity() -> None:
+    """Four exit rules of one couple give four exit identities."""
     identities = set()
-    for rule in ("unilateral", "mutual"):
-        for compares in ("each_action", "optimum"):
-            for tie in ("stay", "leave"):
-                model = settlement._comparison_model(
-                    rule=settlement._rule(rule=rule, compares=compares, tie=tie)
-                )
-                cells = normalize_declarations(read_model(model))["cells"]
-                identities |= {
-                    c.get("exit_identity") for c in cells if c["regime"] == "couple"
-                }
-    assert len(identities - {None}) == 8
+    for compares in ("each_action", "optimum"):
+        for tie in ("stay", "leave"):
+            model = settlement._comparison_model(
+                rule=Unilateral(compares=compares, tie=tie)
+            )
+            cells = normalize_declarations(read_model(model))["cells"]
+            identities |= {
+                c.get("exit_identity") for c in cells if c["regime"] == "couple"
+            }
+    assert len(identities - {None}) == 4
 
 
 @pytest.mark.parametrize("backend", BACKENDS)

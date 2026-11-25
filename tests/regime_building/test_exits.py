@@ -12,7 +12,7 @@ from _lcm.exits import exit_without_pruned_states
 from _lcm.grids import Grid
 from lcm import Consent, Counterparty, Exit, ExitTarget, Model
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.exits import ExitRule, MutualConsent, Unilateral
+from lcm.exits import ExitRule, Unilateral
 from lcm.typing import BoolND, FloatND, IntND, StateName, UserFunction, UserParams
 
 _UNILATERAL = Unilateral()
@@ -65,9 +65,11 @@ def test_phased_projection_snapshots_both_settlements() -> None:
     assert target.projection.simulate["wealth"] is _half
 
 
-@pytest.mark.parametrize("kind", ["empty", "observes", "target_name"])
+@pytest.mark.parametrize(
+    "kind", ["empty", "observes", "target_name", "consent_payment"]
+)
 def test_malformed_exit_declarations_fail_at_construction(kind: str) -> None:
-    """Empty targets, invalid names and duplicate observations fail early."""
+    """Empty targets, invalid names, duplicate observations and a paid formation."""
     target = ExitTarget
     declaration = Exit
     with pytest.raises(RegimeInitializationError):  # noqa: PT012 - malformed constructor variants
@@ -78,6 +80,20 @@ def test_malformed_exit_declarations_fail_at_construction(kind: str) -> None:
                 targets={"self": target(regime="single", projection={})},
                 rule=Unilateral(),
                 observes=("offer", "offer"),
+            )
+        elif kind == "consent_payment":
+            declaration(
+                targets={
+                    "self": target(
+                        regime="couple",
+                        role="f",
+                        projection={},
+                        utility_adjustment=_cost,
+                    )
+                },
+                rule=Consent(
+                    counterparty=Counterparty(regime="single", role="m", projection={})
+                ),
             )
         else:
             target(regime="bad__regime", projection={})
@@ -494,7 +510,7 @@ def test_exit_declarations_enter_durable_model_identity(change: str) -> None:
     elif change == "information":
         changed = replace(base, observes=("offer",))
     else:
-        changed = replace(base, rule=MutualConsent())
+        changed = replace(base, rule=Unilateral(tie="leave"))
     regime = lcm.Regime(functions={"utility": _utility}, exit=base)
     law = bind_regime_law(None)
     assert _semantic_fingerprint(

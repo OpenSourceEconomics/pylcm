@@ -165,14 +165,10 @@ class MutualConsent:
     )
     """Where each member's stay value is compared with its outside value.
 
-    - `"each_action"`: at every stay action; the household keeps its best action
-      that passes the rule.
-    - `"optimum"`: at the household's unconstrained optimum only.
-    - `None`: `"optimum"` with `settle`, `"each_action"` otherwise.
+    Always the household's unconstrained optimum: `None` and `"optimum"` both mean
+    it, and `"each_action"` is refused.
     """
-    settle: Settlement | None = field(
-        default=None, metadata={"fingerprint_omit_if_default": True}
-    )
+    settle: Settlement
     """Division on separation that the members can shift before the exit.
 
     It needs no shift when the member who does not want to leave is exactly
@@ -180,9 +176,7 @@ class MutualConsent:
     """
 
     def __post_init__(self) -> None:
-        _fail_if_adjusted_each_action(
-            compares=self.compares, adjusted=self.settle is not None
-        )
+        _fail_if_adjusted_each_action(compares=self.compares, adjusted=True)
 
 
 type ExitRule = Unilateral | MutualConsent | Consent
@@ -219,6 +213,13 @@ class Exit:
         _validate_names(kind="Observed shock", names=self.observes)
         if len(set(self.observes)) != len(self.observes):
             raise RegimeInitializationError("Exit observes must name each shock once.")
+        if isinstance(self.rule, Consent) and any(
+            target.utility_adjustment is not None for target in self.targets.values()
+        ):
+            raise RegimeInitializationError(
+                "A formation by Consent pays nothing: its target cannot declare a "
+                "utility_adjustment."
+            )
         object.__setattr__(
             self, "targets", ensure_containers_are_immutable(self.targets)
         )

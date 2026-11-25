@@ -296,7 +296,8 @@ remain in `Model(edges=...)`.
   information included, is drawn `n` times from its law at the current state, and the
   same draws serve every row of the groups the stay problem reads, which keep their
   declared nodes. `None` integrates over the full product. Simulation uses the realized
-  shocks.
+  shocks. `observes` names every shock of a group or none of them; naming some of a
+  group raises `ShockDeclarationError` when the model is built.
 - `ExitTarget(regime=..., projection=..., role=None, utility_adjustment=None)` names a
   real destination and maps its complete current state. A collective destination
   requires its member `role`. The adjustment reads source states and parameters and
@@ -317,22 +318,22 @@ remain in `Model(edges=...)`.
 - `Consent(counterparty=Counterparty(regime=..., role=..., projection=...))` compares
   each party's payoff at the destination's common Participating policy strictly against
   that party's Raw stay value. Equality keeps the original state. The counterparty's
-  projection follows the same rule as a target's.
-- Built-in `rule=Unilateral()` keeps the match only if every member is willing to stay;
-  `rule=MutualConsent()` ends it only if every member is unwilling. A member is willing
-  when its stay value is above its exit payoff, or equal to it under the default
-  `tie="stay"`; `tie="leave"` makes an indifferent member leave. Among the kept stay
-  actions the household takes its Pareto-weighted argmax; with none kept, the exit is
-  taken.
+  projection follows the same rule as a target's. A formation pays nothing: its target
+  declares no `utility_adjustment`.
+- Built-in `rule=Unilateral()` keeps the match only if every member is willing to stay.
+  A member is willing when its stay value is above its exit payoff, or equal to it under
+  the default `tie="stay"`; `tie="leave"` makes an indifferent member leave. Among the
+  kept stay actions the household takes its Pareto-weighted argmax; with none kept, the
+  exit is taken. `rule=MutualConsent(settle=...)` needs a settlement, below.
 - `compares` says where that comparison is made. `"each_action"` tests every stay
   action, as just described. `"optimum"` tests only the household's unconstrained
-  optimum: `Unilateral` separates when any member refuses there, `MutualConsent` when
-  every member does, and a household that stays acts at its optimum. Where the exit is
-  not available the household stays at its optimum; with no feasible action and the exit
-  available it separates. A separation needs a feasible action in every destination
-  where the exit puts its member; without one the cell has no value, as under
-  `"each_action"`. The default `None` is `"optimum"` with `renegotiate` or `settle` and
-  `"each_action"` otherwise; `"each_action"` together with either is refused.
+  optimum: `Unilateral` separates when any member refuses there, and a household that
+  stays acts at its optimum. Where the exit is not available the household stays at its
+  optimum; with no feasible action and the exit available it separates. A separation
+  needs a feasible action in every destination where the exit puts its member; without
+  one the cell has no value, as under `"each_action"`. The default `None` is `"optimum"`
+  with `renegotiate` and `"each_action"` otherwise. `MutualConsent` always compares at
+  the optimum; `"each_action"` together with `renegotiate` or `settle` is refused.
 
 A subject moves at most once per period, so an exit payoff is the value of the
 destination's problem at the projected state, without the destination's own exit. The

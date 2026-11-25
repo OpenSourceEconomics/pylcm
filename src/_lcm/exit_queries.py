@@ -229,9 +229,7 @@ class _ExitReducer:
         or equal to it when the rule's `tie` is `"stay"`.
         """
         rule = None if self.declaration is None else self.declaration.rule
-        if compares_at_optimum(rule):
-            return jnp.asarray(a=True)
-        if not isinstance(rule, Unilateral | MutualConsent):
+        if compares_at_optimum(rule) or not isinstance(rule, Unilateral):
             return jnp.asarray(a=True)
         q = cast("FloatND", operands["q"])
         payoffs, active, _ = self._payoffs(operands=operands)
@@ -240,12 +238,7 @@ class _ExitReducer:
         comparisons = (
             member_q >= threshold if rule.tie == "stay" else member_q > threshold
         )
-        willing = (
-            jnp.all(comparisons)
-            if isinstance(rule, Unilateral)
-            else jnp.any(comparisons)
-        )
-        return ~active | willing
+        return ~active | jnp.all(comparisons)
 
     def __call__(self, **operands: PytreeValue) -> PolicyAnswer:
         """Route weak dissolution or strict consent, preserving common tuple/ID."""
