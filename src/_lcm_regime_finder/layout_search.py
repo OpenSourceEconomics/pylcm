@@ -18,19 +18,23 @@ def regime_kinds(declarations: Record) -> dict[str, Record]:
 
     A regime is terminal if none of its cells has a successor. Its kind is its
     stage, solver, operators (aggregator, certainty equivalent, Pareto
-    objective), members and exit (rule, tie, comparison, renegotiation,
-    settlement, targets with roles, observed shocks, availability), so a
-    collective regime never pools with a single-agent one and regimes with
-    different exits never pool; its law is its taste-shock declaration. It has a
-    discrete choice if it has a categorical action coordinate.
+    objective), members in their order, exit (rule, tie, comparison,
+    renegotiation, settlement, targets with roles, observed shocks,
+    availability) and the own-state list of a renegotiating exit (the
+    renegotiated state and the nodes of its grid), so a collective regime never
+    pools with a single-agent one and regimes with different exits or unequal
+    lists never pool; its law is its taste-shock declaration. It has a discrete
+    choice if it has a categorical action coordinate.
     """
     domains = declarations["domains"]
     kinds: dict[str, Record] = {}
     for cell in declarations["cells"]:
         operators = cell.get("operators", {})
+        lists = {name: domains[cell["states"][name]].get("values", cell["states"][name])
+                 for name in cell.get("renegotiated_states", [])}
         key = canonical([cell.get("stage"), cell.get("solver_identity"),
                          {k: v for k, v in operators.items() if k != "taste_shocks"},
-                         cell.get("member_axis"), cell.get("exit_identity")])
+                         cell.get("member_axis"), cell.get("exit_identity"), lists])
         record = kinds.setdefault(cell["regime"], {
             "terminal": True, "key": key, "taste_shocks": operators.get("taste_shocks"),
             "discrete_choice": False})

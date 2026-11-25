@@ -449,7 +449,7 @@ def test_legacy_decorator_with_unchanged_signature_stays_opaque() -> None:
         ScalarSource(meta).expression()
 
 
-def test_current_payoff_uses_truth_variant_and_next_state_provider() -> None:
+def test_current_payoff_roots_each_phase_variant_and_next_state_provider() -> None:
     x = snapshot()
     r = x["user_regimes"]["original"]["fields"]
     r["functions"]["utility"] = {
@@ -466,9 +466,12 @@ def test_current_payoff_uses_truth_variant_and_next_state_provider() -> None:
     }
     n = normalize_declarations(x)
     for c in n["cells"]:
-        roots = [v for v in c["consumers"] if v["kind"] == "reward"]
-        assert ([v["phase"] for v in roots]) == (["simulation"])
-        assert (n["callbacks"][roots[0]["callback"]]["reads"]) == (["next_x"])
+        roots = {
+            v["phase"]: n["callbacks"][v["callback"]]["reads"]
+            for v in c["consumers"]
+            if v["kind"] == "reward"
+        }
+        assert roots == {"solve": ["history"], "simulation": ["next_x"]}
         assert ("next_x") in (c["phase_functions"]["simulation"])
 
 

@@ -906,22 +906,20 @@ def normalize_declarations(snapshot,production_contract=None):
                     raise DeclarationError('Original shock group has no supported declaration: '+group)
                 cid = normal.callback(selected, pointer(pointer(base, 'shocks'), group), phase)
                 cell['consumers'].append({'kind':'shock_law', 'callback':cid, 'phase':phase, 'group':group})
-        # The pinned Phased contract supplies current utility/feasibility and
-        # the decision aggregator from the truth variant. Perceived variants
-        # enter only continuation kernels (and solve imputations).
-        for phase in ('simulation',):
-            for kind,mapping in [('reward',{'utility':declaration.get('functions',{}).get('utility')}),('feasible',declaration.get('constraints',{}))]:
-                for output,value in mapping.items():
-                    if value is not None:
-                        selected=_select(value,phase,period,date)
-                        cell['consumers'].append({'kind':kind,'callback':normal.callback(selected,pointer(pointer(fp,'functions' if kind=='reward' else 'constraints'),output),phase), 'phase':phase})
-                        if kind=='feasible':
-                            # The native current-feasibility contract uses the
-                            # truth callback in BOTH solve and simulation. Keep
-                            # applicability separate from provider selection.
-                            cell['consumers'][-1]['decision_phases']=['solve','simulation']
-            for output in declaration.get('output_only_functions',[]):
-                if output in declaration.get('functions',{}):cell['consumers'].append({'kind':'reporting','callback':normal.callback(_select(declaration['functions'][output],phase,period,date),pointer(pointer(fp,'functions'),output)),'phase':phase})
+        # The solve prices the solve variants of the utility, the aggregator,
+        # the household objective and the discount; the simulated choice prices
+        # their simulate variants. A state that either variant reads is live.
+        # Constraints are phase-invariant; reported outputs are simulated.
+        for output,value in declaration.get('constraints',{}).items():
+            if value is not None:
+                cell['consumers'].append({'kind':'feasible','callback':normal.callback(_select(value,'simulation',period,date),pointer(pointer(fp,'constraints'),output),'simulation'),
+                                          'phase':'simulation','decision_phases':['solve','simulation']})
+        for output in declaration.get('output_only_functions',[]):
+            if output in declaration.get('functions',{}):cell['consumers'].append({'kind':'reporting','callback':normal.callback(_select(declaration['functions'][output],'simulation',period,date),pointer(pointer(fp,'functions'),output)),'phase':'simulation'})
+        for phase in ('solve','simulation'):
+            utility=declaration.get('functions',{}).get('utility')
+            if utility is not None:
+                cell['consumers'].append({'kind':'reward','callback':normal.callback(_select(utility,phase,period,date),pointer(pointer(fp,'functions'),'utility'),phase),'phase':phase})
             for kind in ('koopmans_aggregator','pareto_objective'):
                 value=declaration.get(kind)
                 if value is not None:

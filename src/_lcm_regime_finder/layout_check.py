@@ -37,11 +37,15 @@ class _Model:
         regimes: dict[str, Record] = {}
         for cell in self.cells.values():
             ops = cell.get("operators", {})
-            # Members and the whole exit are part of a regime's kind.
+            # Members in their order, the whole exit and the renegotiated states
+            # with the nodes of their grids are part of a regime's kind.
+            own_lists = sorted((n, self.domains[cell["states"][n]].get("values", cell["states"][n]))
+                               for n in cell.get("renegotiated_states", []))
             r = regimes.setdefault(cell["regime"], {"terminal": True, "choice": False, "law": ops.get("taste_shocks"),
                                                     "kind": repr([cell.get("stage"), cell.get("solver_identity"),
                                                                   sorted((k, v) for k, v in ops.items() if k != "taste_shocks"),
-                                                                  cell.get("member_axis"), cell.get("exit_identity")])})
+                                                                  cell.get("member_axis"), cell.get("exit_identity"),
+                                                                  own_lists])})
             r["terminal"] = r["terminal"] and cell["terminal"]
             r["choice"] = r["choice"] or any(self.domains[d].get("kind") == "categorical" for d in cell["actions"].values())
         out: list[tuple[str, ...]] = [(n,) for n, r in regimes.items() if r["terminal"]]

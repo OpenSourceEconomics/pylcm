@@ -1508,8 +1508,8 @@ def _relation_id(
     return identifier
 
 
-def test_phased_utility_uses_its_simulate_variant_in_both_phases() -> None:
-    """Current-period utility is the truth variant, also in the solve (`lcm.Phased`)."""
+def test_phased_utility_reads_both_variants() -> None:
+    """The solve prices the solve variant, the simulated choice the simulate variant."""
     original = _original()
     _object(_fields(original)["functions"])["utility"] = {
         "kind": "dataclass",
@@ -1522,7 +1522,7 @@ def test_phased_utility_uses_its_simulate_variant_in_both_phases() -> None:
         },
     }
     result = _dense_reads(original, cell_id=_cell_id(original), statuses={})
-    assert result == frozenset({"history"})
+    assert result == frozenset({"x", "history"})
 
 
 def test_reported_output_is_a_direct_consumer() -> None:

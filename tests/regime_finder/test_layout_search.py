@@ -4,16 +4,40 @@ Dense regimes pool nonterminal regimes of one kind by the taste-shock steps
 (Def. "Dense model", :126-146); every terminal regime stays a regime of its own.
 """
 
+from copy import deepcopy
+
 import jax.numpy as jnp
 import pytest
 
+from _lcm_regime_finder import find_regimes, verify_certificate
 from _lcm_regime_finder.declarations import normalize_declarations
+from _lcm_regime_finder.facts import (
+    FACTS_BACKENDS,
+    FactsBackendName,
+    Record,
+    make_facts,
+)
 from _lcm_regime_finder.graph_scope import apply_scope
-from _lcm_regime_finder.facts import Record
-from _lcm_regime_finder.layout_search import LayoutProblem, dense_regimes, regime_kinds
+from _lcm_regime_finder.layout_search import (
+    LayoutProblem,
+    dense_regimes,
+    regime_kinds,
+    search_layouts,
+)
 from _lcm_regime_finder.model_snapshot import read_model
 from _lcm_regime_finder.records import JSONValue
-from lcm import DiscreteGrid, InitialNodes, Model, Periods, Regime, categorical
+from lcm import (
+    CollectiveUtility,
+    Decoupled,
+    DiscreteGrid,
+    InitialNodes,
+    LinSpacedGrid,
+    Model,
+    Periods,
+    Phased,
+    Regime,
+    categorical,
+)
 from lcm.typing import DiscreteState, FloatND, ScalarInt
 
 
@@ -547,3 +571,144 @@ def test_a_restricted_point_at_the_lowest_bound_is_exact() -> None:
     assert at_bound, "positive control: the restricted search reaches the bound here"
     assert all(p["exact"] for p in at_bound)
     assert result["floor"] == result["lower_bound"]
+
+
+@categorical(ordered=False)
+class _Flag:
+    off: ScalarInt
+    on: ScalarInt
+
+
+def _flag_utility(*, consumption: float, flag: DiscreteState) -> FloatND:
+    return jnp.log(consumption) + 0.5 * flag
+
+
+def _keep_flag(flag: DiscreteState) -> DiscreteState:
+    return flag
+
+
+def _keep_cash(cash: float) -> float:
+    return cash
+
+
+def _patient(utility: FloatND, CE: FloatND) -> FloatND:  # noqa: N803
+    return utility + 0.95 * CE
+
+
+def _flag_patient(*, utility: FloatND, CE: FloatND, flag: DiscreteState) -> FloatND:  # noqa: N803
+    return utility + (0.9 + 0.05 * flag) * CE
+
+
+def _discount() -> float:
+    return 0.95
+
+
+def _flag_discount(flag: DiscreteState) -> FloatND:
+    return 0.9 + 0.05 * flag
+
+
+def _phased_regime(slot: str) -> Regime:
+    """`flag` is read only by the solve variant of `slot`."""
+    phased_utility = Phased(solve=_flag_utility, simulate=_log_utility)
+    phased_aggregator = Phased(solve=_flag_patient, simulate=_patient)
+    utility = {
+        "utility": phased_utility,
+        "member_utility": CollectiveUtility(
+            utilities={"f": phased_utility, "m": _log_utility}
+        ),
+    }.get(slot, _log_utility)
+    functions = {"utility": utility}
+    if slot == "discount_factor":
+        functions["discount_factor"] = Phased(solve=_flag_discount, simulate=_discount)
+    return Regime(
+        states={
+            "cash": LinSpacedGrid(start=1.0, stop=4.0, n_points=3),
+            "flag": DiscreteGrid(_Flag),
+        },
+        state_transitions={"cash": _keep_cash, "flag": _keep_flag},
+        actions={"consumption": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
+        constraints={"affordable": _affordable},
+        functions=functions,
+        koopmans_aggregator={
+            "koopmans_aggregator": phased_aggregator,
+            "decoupled_objective": Decoupled(
+                objective=phased_aggregator, value=_patient
+            ),
+        }.get(slot),
+    )
+
+
+def _phased_model(slot: str) -> Model:
+    end = (
+        CollectiveUtility(utilities={"f": _zero, "m": _zero})
+        if slot == "member_utility"
+        else _zero
+    )
+    return Model(
+        n_periods=3,
+        regime_id_class=Ends,
+        regimes={
+            "young": _phased_regime(slot),
+            "dead": Regime(functions={"utility": end}),
+        },
+        initial_nodes=InitialNodes(by_period={0: "young"}),
+        edges={"young": {"young": Periods(values=(0,)), "dead": Periods(values=(1,))}},
+        fixed_params={"discount_factor": 1.0}
+        if slot in {"utility", "member_utility"}
+        else {},
+        enable_jit=False,
+    )
+
+
+_VALUE_ROOTS = {"reward", "koopmans_aggregator", "pareto_objective", "discount"}
+
+
+@pytest.mark.parametrize("backend", FACTS_BACKENDS)
+@pytest.mark.parametrize(
+    "slot",
+    [
+        "utility",
+        "member_utility",
+        "koopmans_aggregator",
+        "decoupled_objective",
+        "discount_factor",
+    ],
+)
+def test_a_state_read_by_a_solve_variant_is_kept_and_checked(
+    slot: str, backend: FactsBackendName
+) -> None:
+    """The solve prices the solve variants, so a state only they read stays live.
+
+    The altered layouts are searched without the solve variants' roots: the
+    layout check of the genuine declarations rejects them, and the source check
+    rejects declarations without those roots.
+    """
+    captured = read_model(_phased_model(slot))
+    report = find_regimes(captured, facts_backend=backend)
+    declarations = deepcopy(report["analysis"]["declarations"])
+    for cell in declarations["cells"]:
+        cell["consumers"] = [
+            c
+            for c in cell["consumers"]
+            if c["kind"] not in _VALUE_ROOTS or c["phase"] != "solve"
+        ]
+    limits = {"seconds": 120, "metadata_categories": 100_000}
+    facts = make_facts(backend, declarations, limits, lambda: None)
+    altered = deepcopy(report)
+    altered["layouts"] = search_layouts(declarations, facts, limits, lambda: None)
+    forged = deepcopy(altered)
+    forged["analysis"]["declarations"] = declarations
+    cells = {c["id"]: c for c in report["analysis"]["declarations"]["cells"]}
+    kept = {
+        "flag" in reads
+        for cid, reads in report["analysis"]["dependency_closure"].items()
+        if cells[cid]["regime"] == "young"
+    }
+    genuine = verify_certificate(captured, report)
+    assert (
+        kept,
+        genuine["source_semantics"]["status"],
+        genuine["layout_check"]["status"],
+        verify_certificate(captured, altered)["layout_check"]["status"],
+        verify_certificate(captured, forged)["source_semantics"]["status"],
+    ) == ({True}, "PASS", "PASS", "FAIL", "FAIL")

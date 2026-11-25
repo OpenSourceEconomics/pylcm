@@ -8,7 +8,8 @@ the independent replay rejects it.
 
 from collections.abc import Callable, Mapping
 from copy import deepcopy
-from functools import cache
+from dataclasses import replace
+from functools import cache, partial
 from math import prod
 
 import jax
@@ -36,6 +37,7 @@ from lcm import (
     Model,
     Periods,
     Regime,
+    Renegotiate,
     Unilateral,
     categorical,
     fixed_transition,
@@ -231,10 +233,41 @@ def _twin_model(regimes: Mapping[RegimeName, Regime]) -> Model:
     )
 
 
-def _equal_exit_couples() -> Model:
-    """The twin couples, both dissolving under one rule."""
+@categorical(ordered=True)
+class _Three:
+    no: ScalarInt
+    maybe: ScalarInt
+    yes: ScalarInt
+
+
+def _renegotiating_wife(
+    *, wealth: ContinuousState, match: FloatND, theta: DiscreteState
+) -> FloatND:
+    return wealth + match + theta
+
+
+def _renegotiating_couples(*, grid_m: type[_Binary | _Three]) -> Model:
+    """The twin couples renegotiating over `theta`, on `_Three` and on `grid_m`."""
     regimes = _twin_regimes()
-    regimes["couple_m"] = regimes["couple_u"]
+    couple = regimes["couple_u"]
+    assert couple.exit is not None
+    for name, grid in (("couple_u", _Three), ("couple_m", grid_m)):
+        regimes[name] = replace(
+            couple,
+            states={**couple.states, "theta": DiscreteGrid(grid)},
+            functions={
+                "utility": CollectiveUtility(
+                    utilities={"f": _renegotiating_wife, "m": _twin_husband}
+                )
+            },
+            state_transitions={
+                **couple.state_transitions,
+                "theta": fixed_transition("theta"),
+            },
+            exit=replace(
+                couple.exit, rule=Unilateral(renegotiate=Renegotiate(state="theta"))
+            ),
+        )
     return _twin_model(regimes)
 
 
@@ -324,7 +357,8 @@ _MODELS: dict[str, Callable[[], Model]] = {
     "exact_gate": lambda: transition_roles.build_model(edge_form="exact_gate"),
     "hand_gate": lambda: transition_roles.build_model(edge_form="hand_gate"),
     "twin": lambda: _twin_model(_twin_regimes()),
-    "equal_exits": _equal_exit_couples,
+    "equal_lists": partial(_renegotiating_couples, grid_m=_Three),
+    "unequal_lists": partial(_renegotiating_couples, grid_m=_Binary),
     "renegotiate_1p": lambda: renegotiation._model(values=renegotiation._VALUES),
     "renegotiate_2p": lambda: renegotiation._model(
         values=renegotiation._VALUES, n_periods=2
@@ -371,6 +405,11 @@ def _layouts_without(report: Report, *, key: str, contract: bool = True) -> Repo
     declarations = deepcopy(report["analysis"]["declarations"])
     for cell in declarations["cells"]:
         cell.pop(key, None)
+    return _search(report, declarations, contract=contract)
+
+
+def _search(report: Report, declarations: Record, *, contract: bool = True) -> Report:
+    """Search `declarations` with the report's facts backend."""
     limits = {"seconds": 60, "metadata_categories": 100_000}
     facts = make_facts(report["facts_backend"], declarations, limits, lambda: None)
     if contract:
@@ -426,9 +465,31 @@ def test_regimes_with_different_exits_do_not_pool(backend: FactsBackendName) -> 
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_regimes_with_equal_exits_still_pool(backend: FactsBackendName) -> None:
-    """Two couples with one member tuple and one exit pool."""
-    assert _pooled(_report("equal_exits", backend), "couple_m", "couple_u")
+def test_regimes_pool_only_on_equal_renegotiation_lists(
+    backend: FactsBackendName,
+) -> None:
+    """Couples with one member tuple and one exit pool iff their lists are equal."""
+    assert (
+        _pooled(_report("unequal_lists", backend), "couple_m", "couple_u"),
+        _pooled(_report("equal_lists", backend), "couple_m", "couple_u"),
+    ) == (False, True)
+
+
+def test_certificate_rejects_a_layout_that_pools_unequal_renegotiation_lists() -> None:
+    """A layout searched as if both couples renegotiated over one list fails the check."""
+    report = _report("unequal_lists", "dense")
+    declarations = deepcopy(report["analysis"]["declarations"])
+    grids = {c["regime"]: c["states"].get("theta") for c in declarations["cells"]}
+    domains = declarations["domains"]
+    domains[grids["couple_m"]]["values"] = domains[grids["couple_u"]]["values"]
+    layouts = _search(report, declarations)
+    genuine = verify_certificate(_captured("unequal_lists"), report)
+    altered = _verify_altered("unequal_lists", "dense", layouts=layouts)
+    assert (
+        genuine["layout_check"]["status"],
+        _pooled({"layouts": layouts}, "couple_m", "couple_u"),
+        altered["layout_check"]["status"],
+    ) == ("PASS", True, "FAIL")
 
 
 def test_normalized_cells_carry_their_members() -> None:

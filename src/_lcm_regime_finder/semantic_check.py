@@ -2407,17 +2407,17 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
                         fail('original intrinsic draw provider changed',cell=cell['id'],phase=phase,state=axis)
                     if not process_has_owner(record=record,regime=cell['regime'],axis=axis,phase=phase):
                         fail('original intrinsic draw provider owner changed',cell=cell['id'],phase=phase,state=axis)
-            if phase == "solve":
-                if declaration.get("certainty_equivalent") is not None:
-                    expected_roots.append(("certainty_equivalent", "solve", selected(declaration["certainty_equivalent"], "solve", period)))
-                continue
-            for kind, mapping in [("reward", {"utility": declaration.get("functions", {}).get("utility")}),
-                                  ("feasible", declaration.get("constraints", {}))]:
-                for value in mapping.values():
-                    if value is None: continue
-                    expected_roots.append((kind, phase, selected(value, phase, period)))
-            for name in declaration.get("output_only_functions", []):
-                if name in declaration.get("functions", {}): expected_roots.append(("reporting", phase, selected(declaration["functions"][name], phase, period)))
+            if phase == "solve" and declaration.get("certainty_equivalent") is not None:
+                expected_roots.append(("certainty_equivalent", "solve", selected(declaration["certainty_equivalent"], "solve", period)))
+            if phase == "simulation":
+                # Constraints are phase-invariant and reported outputs simulated.
+                expected_roots += [("feasible", phase, selected(value, phase, period))
+                                   for value in declaration.get("constraints", {}).values() if value is not None]
+                expected_roots += [("reporting", phase, selected(declaration["functions"][name], phase, period))
+                                   for name in declaration.get("output_only_functions", []) if name in declaration.get("functions", {})]
+            # Each phase's choice prices that phase's variant of these roots.
+            if declaration.get("functions", {}).get("utility") is not None:
+                expected_roots.append(("reward", phase, selected(declaration["functions"]["utility"], phase, period)))
             for name in ("koopmans_aggregator", "pareto_objective"):
                 if declaration.get(name) is not None: expected_roots.append((name, phase, selected(declaration[name], phase, period)))
             if "discount_factor" in declaration.get("functions", {}): expected_roots.append(("discount", phase, selected(declaration["functions"]["discount_factor"], phase, period)))
