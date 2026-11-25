@@ -490,12 +490,11 @@ and `DCEGM`. A collective regime admits it when exactly one member has a positiv
 weight; that member decides, and every other member's value is the mean of its action
 values under the decider's choice probabilities (see
 [Collective regimes](collective_regimes.md)). It is rejected for `NEGM`, `NBEGM`, and
-`NNBEGM`; on a collective regime with more than one positive weight, with an `exit` or
-with `shocks`, or whose decision another regime's exit reads; on the source regime of a
-gated transition; and together with a nonlinear certainty equivalent. These are semantic
-boundaries, not ignored options: the declaration is rejected during `Regime` declaration
-or `Model` construction, before solve, except that a weight declared as a function is
-checked at every solve.
+`NNBEGM`; on a collective regime with more than one positive weight; on the source
+regime of a gated transition; and together with a nonlinear certainty equivalent. These
+are semantic boundaries, not ignored options: the declaration is rejected during
+`Regime` declaration or `Model` construction, before solve, except that a weight
+declared as a function is checked at every solve.
 
 (api-euler-gamma)=
 

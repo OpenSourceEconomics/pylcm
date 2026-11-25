@@ -463,16 +463,14 @@ def test_other_solvers_refuse_a_decoupled_aggregator() -> None:
         )
 
 
-@pytest.mark.parametrize("period", [0, 1])
-def test_a_household_chooses_on_its_weighted_objectives(*, period: int) -> None:
-    """The deciding member's choices and values are the single's.
+def _household_model(single: lcm.Model) -> lcm.Model:
+    """`single`'s decision regime as a household that `f` decides.
 
     `f` carries all the Pareto weight; `m` gains nothing from spending, so its
     value is the discounted terminal value its share of `f`'s choices lead to.
     """
-    single = _model()
     regime = single.user_regimes["decide"]
-    household = lcm.Model(
+    return lcm.Model(
         n_periods=3,
         regimes={
             "decide": regime.replace(
@@ -501,6 +499,13 @@ def test_a_household_chooses_on_its_weighted_objectives(*, period: int) -> None:
             }
         },
     )
+
+
+@pytest.mark.parametrize("period", [0, 1])
+def test_a_household_chooses_on_its_weighted_objectives(*, period: int) -> None:
+    """The deciding member's choices and values are the single's."""
+    single = _model()
+    household = _household_model(single)
     params = _params(beta_tilde=0.7)
     values = household.solve(params=params, log_level="off").value(
         period=period, regime="decide"
@@ -897,6 +902,46 @@ def test_ev1_solve_stores_the_expected_value_at_the_noisy_objective(
     assert_array_almost_equal(
         solution.value(period=period, regime="decide"),
         _enumerate_ev1_values(beta_tilde=beta_tilde)[period],
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def _enumerate_ev1_household_values(*, beta_tilde: float) -> dict[int, np.ndarray]:
+    """Her EV1 values beside his, in member order.
+
+    Hers are the single's. His flow utility is zero, so his value is his
+    discounted continuation value, averaged under her choice probabilities.
+    """
+    hers = _enumerate_ev1_values(beta_tilde=beta_tilde)
+    his = {2: TERMINAL_VALUES}
+    for period in (1, 0):
+        V = np.empty(4)
+        for w in range(4):
+            u = np.array([0.0] if w == 0 else [SPEND_UTILITY, 0.0])
+            nexts = [min(w + 1, 3)] if w == 0 else [w - 1, min(w + 1, 3)]
+            perceived = u + beta_tilde * DELTA * hers[period + 1][nexts]
+            probabilities = np.exp(perceived / SCALE) / np.exp(perceived / SCALE).sum()
+            V[w] = probabilities @ (DELTA * his[period + 1][nexts])
+        his[period] = V
+    return {period: np.stack([hers[period], his[period]], axis=-1) for period in (0, 1)}
+
+
+@pytest.mark.parametrize("period", [0, 1])
+def test_ev1_household_publishes_the_deciders_value_and_the_others_mean(
+    *, period: int
+) -> None:
+    """Her value is the single's; his is his stored value under her probabilities."""
+    params = _ev1_params(beta_tilde=0.7)
+
+    values = (
+        _household_model(_ev1_model())
+        .solve(params=params, log_level="off")
+        .value(period=period, regime="decide")
+    )
+
+    assert_array_almost_equal(
+        values,
+        _enumerate_ev1_household_values(beta_tilde=0.7)[period],
         decimal=DECIMAL_PRECISION,
     )
 

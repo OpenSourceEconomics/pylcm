@@ -41,6 +41,7 @@ from lcm.exits import Unilateral
 from lcm.result import SimulationResult
 from lcm.solver_api import SolutionResult
 from lcm.solvers import EGM
+from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import FloatND, IntND, RegimeName, UserParamsNode
 from lcm_examples import (
     collective_household,
@@ -317,15 +318,24 @@ def _outside_utility(wealth: FloatND) -> FloatND:
     return 1.0 + 0.0 * wealth
 
 
+def _falling_outside_utility(wealth: FloatND) -> FloatND:
+    return 1.0 - wealth
+
+
 def _keep_wealth(wealth: FloatND) -> FloatND:
     return wealth
 
 
-def _single_exit(*, compares: Literal["each_action", "optimum"]) -> Case:
+def _single_exit(
+    *, compares: Literal["each_action", "optimum"], taste_shocks: bool = False
+) -> Case:
     """A single leaves for another single where staying pays less than one.
 
     The stay optimum pays `max(0, wealth - 0.5)`, so the source leaves at wealth
     0 and 1 and stays at wealth 2, under either comparison point.
+
+    With taste shocks, the outside pays `1 - wealth`: the source leaves at wealth
+    0, and above it chooses by its logit over both stays.
     """
     wealth = LinSpacedGrid(start=0.0, stop=2.0, n_points=3)
     model = Model(
@@ -334,6 +344,7 @@ def _single_exit(*, compares: Literal["each_action", "optimum"]) -> Case:
                 states={"wealth": wealth},
                 actions={"choice": DiscreteGrid(values=jnp.asarray([0, 1]))},
                 functions={"utility": _stay_utility},
+                taste_shocks=ExtremeValueTasteShocks() if taste_shocks else None,
                 exit=Exit(
                     targets={
                         "self": ExitTarget(
@@ -344,7 +355,12 @@ def _single_exit(*, compares: Literal["each_action", "optimum"]) -> Case:
                 ),
             ),
             "target": Regime(
-                states={"wealth": wealth}, functions={"utility": _outside_utility}
+                states={"wealth": wealth},
+                functions={
+                    "utility": _falling_outside_utility
+                    if taste_shocks
+                    else _outside_utility
+                },
             ),
         },
         n_periods=1,
@@ -358,7 +374,10 @@ def _single_exit(*, compares: Literal["each_action", "optimum"]) -> Case:
         "regime_id": jnp.zeros(_N_SUBJECTS, dtype=jnp.int32),
         "wealth": jnp.linspace(0.0, 2.0, _N_SUBJECTS),
     }
-    return model, {}, initial_conditions
+    params: dict[str, UserParamsNode] = (
+        {"source": {"taste_shocks": {"scale": 0.5}}} if taste_shocks else {}
+    )
+    return model, params, initial_conditions
 
 
 _CASES: dict[str, Callable[[], Case]] = {
@@ -382,6 +401,9 @@ _CASES: dict[str, Callable[[], Case]] = {
     "nnbegm": _nnbegm,
     "single_exit_each_action": functools.partial(_single_exit, compares="each_action"),
     "single_exit_at_optimum": functools.partial(_single_exit, compares="optimum"),
+    "single_exit_taste_shocks": functools.partial(
+        _single_exit, compares="each_action", taste_shocks=True
+    ),
     "precautionary_savings_health": _precautionary_savings_health,
     "stochastic_volatility": _stochastic_volatility,
     "taste_shocks_toy": _taste_shocks_toy,
@@ -546,6 +568,7 @@ def test_collective_household_cohort_forms_and_dissolves_couples(
         ("gate_single_to_single", {"target", "fallback"}),
         ("single_exit_each_action", {"source", "target"}),
         ("single_exit_at_optimum", {"source", "target"}),
+        ("single_exit_taste_shocks", {"source", "target"}),
     ],
 )
 def test_compared_frames_take_both_branches(

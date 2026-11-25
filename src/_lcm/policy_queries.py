@@ -44,8 +44,16 @@ from _lcm.off_grid import ProjectedGridRule, count_projected_off_grid
 from _lcm.output_roles import OutputRole, target_role
 from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
 from _lcm.regime_building.argmax import argmax_and_max
-from _lcm.regime_building.collective import ParetoWeights, collective_argmax_and_readout
-from _lcm.regime_building.max_Q_over_a import _evaluate_pareto_weights
+from _lcm.regime_building.collective import (
+    ParetoWeights,
+    collective_argmax_and_readout,
+    decider_choice,
+    decider_expected_values,
+)
+from _lcm.regime_building.max_Q_over_a import (
+    _evaluate_pareto_weights,
+    _stacked_pareto_weights,
+)
 from _lcm.regime_building.Q_and_F import (
     CanonicalActionKernel,
     EvaluatedQAndF,
@@ -1305,13 +1313,6 @@ def _admit_node(*, node: QueryNode, period: int) -> None:
         raise ValueError("The target action problem is inactive at this period.")
     _admit_query_objective(context=context, period=period)
     _fail_if_projection_incomplete(node=node, reader="A query")
-    if context.has_taste_shocks and context.member_axis is not None:
-        raise UnsupportedOperationError(
-            f"Regime {context.regime_name!r} is a household with EV1 taste shocks "
-            "whose decision an exit rule reads. Reading a household's decision "
-            "under taste shocks is not implemented: drop `taste_shocks` on this "
-            "regime, or the exit that reads it."
-        )
     if context.invariant_bindings or context.action_partitions != 1:
         raise UnsupportedOperationError(
             "This query closure needs an unblocked action problem."
@@ -2366,6 +2367,7 @@ def _active_query_cell(
                 TASTE_SHOCK_SCALE_PARAM,
             )
 
+            weights = _taste_weights(node=node, arguments=arguments)
             operands[_TASTE] = {
                 "scale": arguments[TASTE_SHOCK_SCALE_PARAM],
                 **(
@@ -2373,6 +2375,7 @@ def _active_query_cell(
                     if "taste_shock_key" in arguments
                     else {}
                 ),
+                **({} if weights is None else {"weights": weights}),
             }
         answer = node.decision(
             **{
@@ -2431,10 +2434,8 @@ def _taste_query_choice(
     arguments: Mapping[str, PytreeValue],
 ) -> tuple[IntND, FloatND, BoolND]:
     """Price hidden target taste at its logsum; draw only in the acting pass."""
-    from _lcm.logsum import logsum_and_softmax  # noqa: PLC0415
     from _lcm.regime_building.max_Q_over_a import (  # noqa: PLC0415
         TASTE_SHOCK_SCALE_PARAM,
-        draw_taste_shock_noise,
     )
 
     context = node.context
@@ -2444,29 +2445,108 @@ def _taste_query_choice(
     )
     if not n_discrete:
         raise ValueError("EV1 policy queries require a discrete action axis.")
-    discrete_values, identifiers = _taste_stay_roster(
-        q=q, feasible=feasible, n_discrete=n_discrete
+    discrete_values, identifiers, at_choice, decider = _taste_stay_roster(
+        q=q,
+        feasible=feasible,
+        n_discrete=n_discrete,
+        weights=_taste_weights(node=node, arguments=arguments),
     )
     scale = cast("FloatND", arguments[TASTE_SHOCK_SCALE_PARAM])
-    if arguments.get(_ACTING, False):
-        noise = draw_taste_shock_noise(
-            key=cast("jax.Array", arguments["taste_shock_key"]),
-            shape=discrete_values.shape,
-            scale=scale,
-        )
-        discrete = jnp.argmax(discrete_values + noise)
-        value = discrete_values[discrete]
-    else:
-        discrete = jnp.argmax(discrete_values)
-        value, _ = logsum_and_softmax(values=discrete_values, scale=scale, axes=(0,))
+    discrete, value = taste_choice(
+        values=discrete_values,
+        at_choice=at_choice,
+        decider=decider,
+        scale=scale,
+        key=cast("jax.Array", arguments["taste_shock_key"])
+        if arguments.get(_ACTING, False)
+        else None,
+    )
     action = identifiers[discrete]
     return action, value, jnp.all(jnp.isfinite(scale) & (scale > 0))
 
 
+def _taste_weights(
+    *, node: QueryNode, arguments: Mapping[str, PytreeValue]
+) -> FloatND | None:
+    """A household's Pareto weights in member order; `None` for a single."""
+    context = node.context
+    if context.member_axis is None:
+        return None
+    return _stacked_pareto_weights(
+        pareto_weights=context.pareto_weights,
+        member_axis=context.member_axis,
+        states_actions_params=cast("QAndFKwargs", arguments),
+    )
+
+
+def taste_choice(
+    *,
+    values: FloatND,
+    at_choice: FloatND,
+    decider: IntND | None,
+    scale: FloatND,
+    key: jax.Array | None,
+) -> tuple[jax.Array, FloatND]:
+    """Choose among the chooser's taste alternatives and publish their value.
+
+    With `key`, the chooser draws: it takes the alternative maximizing `values`
+    plus one mean-zero EV1 term each, and publishes `at_choice` there. Without
+    it, the choice is the noise-free argmax, and the value is the chooser's
+    log-sum, with every other member of a household at its mean of `at_choice`
+    under the decider's choice probabilities (`decider_expected_values`).
+
+    Args:
+        values: The chooser's value of each alternative.
+        at_choice: Each alternative's published value: `values` for a single,
+            every member's value in a trailing member axis for a household.
+        decider: A household decider's member index; `None` for a single.
+        scale: The taste-shock scale.
+        key: The acting draw's key, or `None` to price the alternatives.
+
+    Returns:
+        The index of the chosen alternative and the published value.
+    """
+    from _lcm.logsum import logsum_and_softmax  # noqa: PLC0415
+    from _lcm.regime_building.max_Q_over_a import (  # noqa: PLC0415
+        draw_taste_shock_noise,
+    )
+
+    if key is not None:
+        chosen = jnp.argmax(
+            values + draw_taste_shock_noise(key=key, shape=values.shape, scale=scale)
+        )
+        return chosen, at_choice[chosen]
+    chosen = jnp.argmax(values)
+    if decider is None:
+        value, _ = logsum_and_softmax(values=values, scale=scale, axes=(0,))
+        return chosen, value
+    return chosen, decider_expected_values(
+        decider=decider, Qc=values, at_choice=at_choice, scale=scale
+    )
+
+
 def _taste_stay_roster(
-    *, q: FloatND, feasible: BoolND, n_discrete: int
-) -> tuple[FloatND, IntND]:
-    """Optimize continuous actions before assigning one taste per discrete cell."""
+    *, q: FloatND, feasible: BoolND, n_discrete: int, weights: FloatND | None
+) -> tuple[FloatND, IntND, FloatND, IntND | None]:
+    """Optimize continuous actions before assigning one taste per discrete cell.
+
+    Returns the chooser's value of each discrete cell, the stable action ID
+    attaining it, the published value there (`taste_choice`) and a household's
+    decider. In a household the decider chooses, the member with the positive
+    weight (`decider_choice`).
+    """
+    if weights is not None:
+        decider, values, continuous, at_choice = decider_choice(
+            Q=q,
+            feasibility=feasible,
+            weights=weights,
+            n_discrete_action_axes=n_discrete,
+        )
+        continuous_cells = math.prod(feasible.shape[n_discrete:])
+        identifiers = (
+            jnp.arange(values.size, dtype=jnp.int32) * continuous_cells + continuous
+        ).astype(jnp.int32)
+        return values, identifiers, at_choice, decider
     discrete_cells = math.prod(q.shape[:n_discrete])
     continuous_cells = math.prod(q.shape[n_discrete:])
     masked = jnp.where(feasible, q, -jnp.inf).reshape(discrete_cells, continuous_cells)
@@ -2474,7 +2554,8 @@ def _taste_stay_roster(
     identifiers = (
         jnp.arange(discrete_cells, dtype=jnp.int32) * continuous_cells + continuous
     ).astype(jnp.int32)
-    return jnp.max(masked, axis=1), identifiers
+    values = jnp.max(masked, axis=1)
+    return values, identifiers, values, None
 
 
 def _mapped_query_states(

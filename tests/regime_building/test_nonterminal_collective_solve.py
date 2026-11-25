@@ -62,7 +62,6 @@ from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import PowerMean
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime
-from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.transition import StochasticTransition
 from lcm.typing import (
     ContinuousState,
@@ -475,22 +474,6 @@ def test_nonterminal_collective_regime_with_singleton_target_is_rejected() -> No
                 {"couple": jnp.int32(0), "single_terminal": jnp.int32(1)}
             ),
             enable_jit=False,
-        )
-
-
-def test_collective_regime_with_taste_shocks_is_rejected() -> None:
-    """EV1 taste shocks on a collective regime are out of scope."""
-    with pytest.raises(NotImplementedError, match="taste shocks"):
-        Regime(
-            taste_shocks=ExtremeValueTasteShocks(),
-            states={"wage": _WAGE_GRID},
-            state_transitions={"wage": _next_wage},
-            actions={"work": DiscreteGrid(category_class=Work)},
-            functions={
-                "utility": CollectiveUtility(
-                    utilities={"f": _utility_f, "m": _utility_m}
-                )
-            },
         )
 
 

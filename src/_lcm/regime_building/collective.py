@@ -275,9 +275,39 @@ def decider_smoothed_readout(
         weights=weights,
         n_discrete_action_axes=n_discrete_action_axes,
     )
+    dissolution = ~jnp.any(feasibility)
+    values = jnp.where(
+        dissolution,
+        -jnp.inf,
+        decider_expected_values(
+            decider=decider, Qc=Qc, at_choice=at_choice, scale=scale
+        ),
+    )
+    return values, dissolution
+
+
+def decider_expected_values(
+    *, decider: IntND, Qc: FloatND, at_choice: FloatND, scale: ScalarFloat
+) -> FloatND:
+    """Every member's value under the decider's logit over its alternatives.
+
+    The decider's value is the log-sum of its values `Qc`; every other member's
+    is the mean of its value `at_choice` under the decider's choice
+    probabilities, where an alternative of probability zero contributes exactly
+    zero. A decider without a finite alternative takes the first one with
+    probability one, the alternative its simulated draw takes.
+
+    Args:
+        decider: The decider's member index.
+        Qc: The decider's value of each alternative, shape `(n_alternatives,)`.
+        at_choice: Every member's value of each alternative, shape
+            `(n_alternatives, n_members)`.
+        scale: The taste-shock scale, strictly positive.
+
+    Returns:
+        The member values, shape `(n_members,)`.
+    """
     smoothed, probabilities = logsum_and_softmax(values=Qc, scale=scale, axes=(0,))
-    # A decider whose every feasible action is worth `-inf` has no choice
-    # probabilities; it takes the first discrete action, as its draw does.
     probabilities = jnp.where(
         jnp.isneginf(smoothed),
         jnp.arange(Qc.shape[0]) == jnp.argmax(Qc),
@@ -291,13 +321,7 @@ def decider_smoothed_readout(
         ),
         axis=0,
     )
-    dissolution = ~jnp.any(feasibility)
-    values = jnp.where(
-        dissolution,
-        -jnp.inf,
-        jnp.where(jnp.arange(Q.shape[-1]) == decider, smoothed, means),
-    )
-    return values, dissolution
+    return jnp.where(jnp.arange(at_choice.shape[-1]) == decider, smoothed, means)
 
 
 def _weighted_sum(

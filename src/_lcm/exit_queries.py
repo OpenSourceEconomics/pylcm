@@ -34,6 +34,7 @@ from _lcm.policy_queries import (
     _taste_stay_roster,
     build_policy_query_kernel,
     gated_query_targets,
+    taste_choice,
 )
 from _lcm.query_information import default_chunk_size
 from _lcm.regime_building.collective import landing_member_index
@@ -126,8 +127,6 @@ class _ExitReducer:
 
     Then the member index of the own and of the counterparty Raw value.
     """
-    weights: Callable[..., Mapping[str, FloatND]] | None
-    """Canonical source Pareto evaluator; singleton objective has weight one."""
     n_actions: int
     """Flattened canonical stay product; the exit takes the next ID."""
     n_discrete_action_axes: int = 0
@@ -468,16 +467,17 @@ class _ExitReducer:
         active: BoolND,
         valid: BoolND,
     ) -> PolicyAnswer:
-        """Append the exit component to the source's canonical discrete taste roster."""
-        from _lcm.logsum import logsum_and_softmax  # noqa: PLC0415
-        from _lcm.regime_building.max_Q_over_a import (  # noqa: PLC0415
-            draw_taste_shock_noise,
-        )
+        """Append the exit component to the source's canonical discrete taste roster.
 
-        stay_values, stay_ids = _taste_stay_roster(
+        In a household the decider's logit runs over its stay values and its own
+        exit payoff; every member's exit payoff is its value at the exit.
+        """
+        taste = cast("Mapping[str, FloatND]", operands[_TASTE])
+        stay_values, stay_ids, stay_at_choice, decider = _taste_stay_roster(
             q=cast("FloatND", operands["q"]),
             feasible=cast("BoolND", operands["feasible"]),
             n_discrete=self.n_discrete_action_axes,
+            weights=taste.get("weights"),
         )
         kept = jnp.any(cast("BoolND", operands["feasible"]))
         eligible, integrity = self._eligible(
@@ -486,31 +486,37 @@ class _ExitReducer:
         if not isinstance(cast("Exit", self.declaration).rule, Consent):
             eligible &= ~kept
         valid &= integrity
-        values = jnp.concatenate(
-            (stay_values, jnp.where(eligible, payoffs["self"], -jnp.inf)[None])
-        )
+        if decider is None:
+            values = jnp.concatenate(
+                (stay_values, jnp.where(eligible, payoffs["self"], -jnp.inf)[None])
+            )
+            at_choice = values
+        else:
+            outside = jnp.where(
+                eligible,
+                jnp.stack(tuple(payoffs[member] for member in self.members)),
+                -jnp.inf,
+            )
+            values = jnp.concatenate((stay_values, outside[decider][None]))
+            at_choice = jnp.concatenate((stay_at_choice, outside[None]))
         identifiers = jnp.concatenate(
             (stay_ids, jnp.asarray([self.n_actions], dtype=jnp.int32))
         )
-        taste = cast("Mapping[str, FloatND]", operands[_TASTE])
         scale = taste["scale"]
-        if "key" in taste:
-            chosen = jnp.argmax(
-                values
-                + draw_taste_shock_noise(
-                    key=taste["key"], shape=values.shape, scale=scale
-                )
-            )
-            value = values[chosen]
-        else:
-            chosen = jnp.argmax(values)
-            value, _ = logsum_and_softmax(values=values, scale=scale, axes=(0,))
+        chosen, value = taste_choice(
+            values=values,
+            at_choice=at_choice,
+            decider=decider,
+            scale=scale,
+            key=taste.get("key"),
+        )
         supported = kept | eligible
+        undefined = jnp.isnan(value) if decider is None else jnp.any(jnp.isnan(value))
         return (
             value,
             jnp.where(supported, identifiers[chosen], -1).astype(jnp.int32),
             supported,
-            valid & jnp.isfinite(scale) & (scale > 0) & ~jnp.isnan(value),
+            valid & jnp.isfinite(scale) & (scale > 0) & ~undefined,
             cast("PolicyAnswer", operands["answer"])[4],
         )
 
@@ -1054,9 +1060,6 @@ class _QueryGraphBuilder:
             consent_read=consent_read,
             renegotiation=renegotiation,
             settlement=settlement,
-            weights=None
-            if context.pareto_weights is None
-            else context.pareto_weights.compute,
             n_actions=math.prod(
                 value.size for value in context.state_action_space.actions.values()
             ),

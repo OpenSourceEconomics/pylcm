@@ -552,8 +552,7 @@ def _fail_if_taste_shocks_lack_one_decider(
     - undeclared weights are equal, so only a household of one has one decider;
     - constant weights must have exactly one positive entry;
     - a weight declared as a function is admitted, and the solve checks at
-      every cell that exactly one member's weight is positive;
-    - a household that declares an `exit` is refused, whatever its weights.
+      every cell that exactly one member's weight is positive.
 
     Raises:
         NotImplementedError: If the regime declares taste shocks and one of the
@@ -561,11 +560,6 @@ def _fail_if_taste_shocks_lack_one_decider(
     """
     if regime.taste_shocks is None:
         return
-    if regime.exit is not None:
-        raise NotImplementedError(
-            "EV1 taste shocks in a household that declares an `exit` are not "
-            "implemented. Drop `taste_shocks` or the `exit` on this regime."
-        )
     objective = regime.pareto_objective
     weights: Mapping[str, UserFunction | float] = (
         dict.fromkeys(members, 1.0 / len(members))

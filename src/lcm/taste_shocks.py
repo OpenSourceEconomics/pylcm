@@ -43,14 +43,14 @@ class ExtremeValueTasteShocks:
     Publication remains the selected unshocked value. Destination taste is
     separately hidden-priced at its logsum and drawn at its own address only
     when acting there. Arbitrary custom Full selectors with source EV1 taste
-    shocks are unsupported and explicitly refused.
+    shocks are unsupported and explicitly refused. In a household the roster is
+    the decider's, and every member's value at the exit is its own exit payoff.
 
     At least one discrete action is required. The implemented solver routes are
     `GridSearch` and `DCEGM`. The declaration is rejected for `NEGM`, `NBEGM`,
     and `NNBEGM`; for a household unless exactly one member has a positive
-    Pareto weight, and for a household with an `exit` or whose decision another
-    regime's exit reads; on a source regime with a
-    `Gate`; and together with a nonlinear certainty equivalent. These
+    Pareto weight; on a source regime with a `Gate`; and together with a
+    nonlinear certainty equivalent. These
     combinations are rejected during `Regime` declaration or `Model`
     construction, before solve, rather than silently dropping the shocks; only
     a Pareto weight declared as a function is checked when the model is solved,

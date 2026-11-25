@@ -286,9 +286,8 @@ class Regime:
     Pareto weight: that member decides, its value is its own smoothed maximum,
     and every other member's value is its mean action value under the
     decider's choice. They are rejected on a household with more than one
-    positive weight, on a household that declares an `exit` or `shocks`, or whose
-    decision another regime's exit reads, on the source of a `Gate`, with a nonlinear
-    certainty equivalent, and with `NEGM`, `NBEGM`, or `NNBEGM`.
+    positive weight, on the source of a `Gate`, with a nonlinear certainty
+    equivalent, and with `NEGM`, `NBEGM`, or `NNBEGM`.
     """
 
     koopmans_aggregator: (

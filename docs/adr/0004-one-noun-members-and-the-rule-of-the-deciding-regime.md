@@ -123,8 +123,9 @@ one.
 - A household admits taste shocks when exactly one member has a positive Pareto weight.
   That member decides: its value is its own expected maximum; every other member's value
   is the mean of its own action values under the decider's choice probabilities, at the
-  decider's best continuous action. Taste shocks stay refused in a household with an
-  exit or whose decision another regime's exit reads.
+  decider's best continuous action. With an exit, the decider's logit runs over the
+  stays and the exit, and every other member gets its expected value under the decider's
+  probabilities.
 
 ## Not shipped
 

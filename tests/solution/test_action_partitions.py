@@ -381,7 +381,7 @@ def _action_interval(
     )
 
 
-def test_more_participants_than_blocks_leaves_empty_partitions_that_change_nothing():
+def test_more_participants_than_blocks_leaves_harmless_empty_partitions() -> None:
     values, feasible = _draw_case(seed=3, n_cells=8, n_actions=5)
     layout = ActionPartitionLayout(n_actions=5, block_width=2, n_partitions=7)
     empty = [
@@ -466,7 +466,7 @@ def _local_accumulators(
     )
 
 
-def test_merging_partition_accumulators_in_any_order_publishes_the_same_bits():
+def test_merging_partition_accumulators_in_any_order_publishes_the_same_bits() -> None:
     values, feasible = _draw_case(seed=11, n_cells=32, n_actions=9)
     local = _local_accumulators(
         n_partitions=4, block_width=2, values=values, feasible=feasible
@@ -479,7 +479,7 @@ def test_merging_partition_accumulators_in_any_order_publishes_the_same_bits():
         _assert_results_identical(got=cast("HardMaxResult", got), expected=expected)
 
 
-def test_padded_action_slots_never_publish_an_identity_outside_the_product():
+def test_padded_action_slots_never_publish_an_identity_outside_the_product() -> None:
     # Seven actions in blocks of three over three participants: the last block
     # carries two padded slots, and every value there would win if it counted.
     dtype = jnp.zeros(()).dtype

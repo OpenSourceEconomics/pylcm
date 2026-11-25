@@ -26,12 +26,13 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.exceptions import InvalidParamsError, UnsupportedOperationError
+from lcm.exceptions import InvalidParamsError
 from lcm.exits import Unilateral
 from lcm.shocks import Normal, ShockGroup, UserNodes
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import (
     BoolND,
+    ContinuousState,
     DiscreteAction,
     DiscreteState,
     FloatND,
@@ -43,8 +44,6 @@ from tests.conftest import DECIMAL_PRECISION, assert_agrees_to_ulp
 from tests.simulation.initial_conditions.test_own_member_required import (
     ConsentRegimeId,
     _make_consent_regimes,
-    _u_married_f,
-    _u_married_m,
 )
 from tests.test_models import taste_shocks_toy
 
@@ -405,51 +404,171 @@ def test_a_weight_with_one_decider_at_every_cell_is_admitted() -> None:
     ]
 
 
-def test_a_household_with_taste_shocks_whose_decision_an_exit_reads_is_refused() -> (
-    None
-):
-    """A single's consented exit into a taste-shock household is refused.
+def _u_married_f_works(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    return 2.0 * wage + work
 
-    Her consent reads the household's decision, which is not implemented under
-    taste shocks; the message names the household.
+
+def _u_married_m_rests(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    return wage + 1.0 - work
+
+
+def test_a_single_consents_on_the_values_of_a_taste_shock_household() -> None:
+    """Her consent reads the household's values under its decider's logit.
+
+    She decides in the household: her married value is her log-sum
+    `2 w + s log(1 + e^(1/s))`, his is his mean value `w + 1 - P(work)`. At wage
+    1 both exceed their single values, 1 and 0.5, and she marries; at wage 2 his
+    single 5 exceeds his married value, and she stays single at her 2.
     """
+    scale = 0.5
     regimes = _make_consent_regimes()
-    married = regimes["married"]
-    regimes["married"] = married.replace(
+    regimes["married"] = regimes["married"].replace(
         functions={
             "utility": CollectiveUtility(
-                utilities={"f": _u_married_f, "m": _u_married_m},
+                utilities={"f": _u_married_f_works, "m": _u_married_m_rests},
                 objective=ParetoObjective(weights={"f": 1.0, "m": 0.0}),
             )
         },
         taste_shocks=ExtremeValueTasteShocks(),
     )
+    model = Model(
+        regimes=regimes,
+        n_periods=1,
+        regime_id_class=ConsentRegimeId,
+        initial_nodes=InitialNodes(by_period={0: "single_f"}),
+        edges={},
+    )
 
-    with pytest.raises(UnsupportedOperationError, match="'married' is a household"):
-        Model(
-            regimes=regimes,
-            n_periods=1,
-            regime_id_class=ConsentRegimeId,
-            initial_nodes=InitialNodes(by_period={0: "single_f"}),
-            edges={},
-        )
+    solution = model.solve(
+        params={"married": {"taste_shocks": {"scale": scale}}}, log_level="off"
+    )
+
+    aaae(
+        solution.values[0]["single_f"],
+        [2.0 + scale * np.log1p(np.exp(1.0 / scale)), 2.0],
+        decimal=DECIMAL_PRECISION,
+    )
 
 
-def test_taste_shocks_in_a_household_with_an_exit_are_refused() -> None:
-    """A household that may exit compares member values its smoothing does not own."""
-    with pytest.raises(NotImplementedError, match="exit"):
-        _couple(
-            objective=ParetoObjective(weights={"f": 1.0, "m": 0.0}),
-            utility_f=_utility_f_one,
-            utility_m=_utility_m_prefers_a,
-            exit_declaration=Exit(
-                targets={
-                    "f": ExitTarget(regime="single", projection={}),
-                    "m": ExitTarget(regime="single", projection={}),
-                },
-                rule=Unilateral(),
+@categorical(ordered=False)
+class Offer:
+    low: ScalarInt
+    mid: ScalarInt
+    high: ScalarInt
+
+
+@categorical(ordered=False)
+class ExitRegimeId:
+    couple: ScalarInt
+    single_f: ScalarInt
+    single_m: ScalarInt
+
+
+def _outside_f(offer: DiscreteState) -> FloatND:
+    return jnp.asarray([0.5, 2.0, 10.0])[offer]
+
+
+def _outside_m(offer: DiscreteState) -> FloatND:
+    return jnp.asarray([0.5, 0.5, 8.0])[offer]
+
+
+def _keep_offer(offer: DiscreteState) -> DiscreteState:
+    return offer
+
+
+def test_a_taste_shock_household_with_an_exit_smooths_over_the_kept_stays() -> None:
+    """She decides by her logit over the stays both accept, the exit as fallback.
+
+    At `a` she has 1 and he 5, at `b` she 3 and he 1. Each leaves for an outside
+    value that rises with the offer:
+
+    - low (both 0.5): both stays are kept; she has her log-sum over 1 and 3, he
+      his mean value under her choice probabilities;
+    - mid (she 2, he 0.5): only `b` is kept, worth 3 to her and 1 to him;
+    - high (she 10, he 8): no stay is kept and each takes the outside value.
+
+    A simulated row publishes both members' values at her drawn stay, and a row
+    at the high offer leaves for its own member's regime.
+    """
+    scale = 2.0
+    offer_grid = DiscreteGrid(category_class=Offer)
+    couple = _couple(
+        objective=ParetoObjective(weights={"f": 1.0, "m": 0.0}),
+        utility_f=_utility_f_one,
+        utility_m=_utility_m_prefers_a,
+        exit_declaration=Exit(
+            targets={
+                "f": ExitTarget(regime="single_f", projection={"offer": _keep_offer}),
+                "m": ExitTarget(regime="single_m", projection={"offer": _keep_offer}),
+            },
+            rule=Unilateral(),
+        ),
+    ).replace(states={"offer": offer_grid})
+    model = Model(
+        regimes={
+            "couple": couple,
+            "single_f": Regime(
+                states={"offer": offer_grid}, functions={"utility": _outside_f}
             ),
-        )
+            "single_m": Regime(
+                states={"offer": offer_grid}, functions={"utility": _outside_m}
+            ),
+        },
+        n_periods=1,
+        regime_id_class=ExitRegimeId,
+        initial_nodes=InitialNodes(by_period={0: "couple"}),
+        edges={},
+    )
+    params: dict[str, UserParamsNode] = {"couple": {"taste_shocks": {"scale": scale}}}
+    p_a = 1.0 / (1.0 + np.exp(2.0 / scale))
+
+    solution = model.solve(params=params, log_level="off")
+    roles = model.member_names_to_ids
+    frame = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions={
+            "period": jnp.zeros(60, dtype=jnp.int32),
+            "regime_id": jnp.zeros(60, dtype=jnp.int32),
+            "offer": jnp.asarray([0, 1, 2] * 20, dtype=jnp.int32),
+            "own_member": jnp.asarray(
+                [roles["f"]] * 30 + [roles["m"]] * 30, dtype=jnp.int32
+            ),
+        },
+        seed=3,
+        log_level="off",
+    ).to_dataframe(use_categorical_codes=True)
+    regime = frame["regime_name"].astype(str).to_numpy()
+    offer = frame["offer"].to_numpy()
+    takes_a = (frame["choice"] == Choice.a).to_numpy()
+    stays = regime == "couple"
+
+    aaae(
+        solution.values[0]["couple"],
+        [
+            [3.0 + scale * np.log1p(np.exp(-2.0 / scale)), p_a * 5.0 + (1 - p_a)],
+            [3.0, 1.0],
+            [10.0, 8.0],
+        ],
+        decimal=DECIMAL_PRECISION,
+    )
+    np.testing.assert_array_equal(stays, offer != Offer.high)
+    np.testing.assert_array_equal(
+        regime[~stays],
+        np.where(frame["subject_id"].to_numpy()[~stays] < 30, "single_f", "single_m"),
+    )
+    assert 0 < takes_a[offer == Offer.low].sum() < (offer == Offer.low).sum()
+    assert not takes_a[offer == Offer.mid].any()
+    aaae(
+        frame.loc[stays, "value_f"],
+        np.where(takes_a[stays], 1.0, 3.0),
+        decimal=DECIMAL_PRECISION,
+    )
+    aaae(
+        frame.loc[stays, "value_m"],
+        np.where(takes_a[stays], 5.0, 1.0),
+        decimal=DECIMAL_PRECISION,
+    )
 
 
 _EPS_NODES = np.asarray([-1.5, 0.5, 2.5])

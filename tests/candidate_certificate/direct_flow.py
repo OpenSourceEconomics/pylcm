@@ -633,7 +633,7 @@ _SOURCE_SEALS = {
     POST_DECISION_BOUND_SOURCE: "4ff8b8c7b64be2395c821acb5f328765c7a9ac2c5198fd0b2be3960227837f6c",
     BOUND_PROOF_SOURCE: "b001df34cfbeff170c40f7d052de76408508e03b50395531d77122ae4279d72a",
     BOUND_NORMALIZATION_SOURCE: "7850582e96a52661443c1d5b08a5d3dde0845af2c8598094affaab2ee1fc0c88",
-    USER_REGIME_BOUND_SOURCE: "f2b98882d5415a24ae06ac80845f8d01c2d6f4f70161b49e73ebf3161a6c88e5",
+    USER_REGIME_BOUND_SOURCE: "69909689716a028cc00ea6a8de2a329438cb629bf3bf4085873d3f76eaf08e99",
     LIQUID_BOUND_DECLARATION_SOURCE: "751e18767bccd13540094eb5e518503c0d029faed30bf05a818c1f8c1cc01e21",
     FEASIBILITY_SOURCE: "8cb8cb1ec3da487dac2b5eec451aa4ac61d5222f565c91986c6c2ca7baed1402",
     ACTION_GRID_SOURCE: "76a059f7cc7d7e7d2a99e0ffd626ddbd76b89724d5e24f3bb10ad86501268309",
@@ -701,7 +701,7 @@ _SOURCE_SEALS = {
     SIMULATION_RUNTIME_SOURCE: "0623ad63ded8ee0ae880003228814e7e300a7a4394b3abecb3f5dd27acc58009",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "c7a915405c53cd07ec21d494c15a74b07a018ca60ff4ede729e5d1391a7459ee",
-    COLLECTIVE_SOURCE: "4acbc46981b853058f2f90a91050d65dcdccacead0e74cde66f359aa41e8c18f",
+    COLLECTIVE_SOURCE: "7c9300e591d5582d8858504e413c6e752f7db83f93fcac84253c77ff76670b2f",
     MAX_Q_SOURCE: "531eedf100b7106bca74af50fd33c48362b288eb26ed4d9408a42d7a2852fbea",
     PROCESSING_SOURCE: "7be22e9a11477c0b809bb1483009c512b8a35c2159d9178b204c75a99b116733",
     GRID_SEARCH_SOURCE: "24ef67cce0d6b30465f8c8cfca525c0140347eff2435f73476fc610ed798f703",
@@ -10108,16 +10108,18 @@ def _decider_reducer_errors(tree: ast.Module) -> list[str]:
     maximized over the continuous actions in the one lexicographic reduction
     that also carries every member's value, and log-summed over the discrete
     ones; every member is read at the decider's continuous argmax and weighted
-    zero-safely by the decider's choice probabilities. No other
-    candidate-changing expression is admitted.
+    zero-safely by the decider's choice probabilities (`decider_expected_values`,
+    which the smoothed readout calls and an exit's taste roster shares). No
+    other candidate-changing expression is admitted.
     """
     errors: list[str] = []
     try:
         choice = _definition(tree=tree, name="decider_choice")
         readout = _definition(tree=tree, name="decider_smoothed_readout")
+        expected = _definition(tree=tree, name="decider_expected_values")
     except ValueError as error:
         return [f"decider reducer: {error}"]
-    if choice.decorator_list or readout.decorator_list:
+    if choice.decorator_list or readout.decorator_list or expected.decorator_list:
         errors.append("decider reducer: decorators are not allowlisted")
     signatures = (
         (
@@ -10129,6 +10131,11 @@ def _decider_reducer_errors(tree: ast.Module) -> list[str]:
             readout,
             ("Q", "feasibility", "weights", "n_discrete_action_axes", "scale"),
             "smoothed readout",
+        ),
+        (
+            expected,
+            ("decider", "Qc", "at_choice", "scale"),
+            "expected values",
         ),
     )
     for node, names, label in signatures:
@@ -10168,7 +10175,17 @@ return (
     weights=weights,
     n_discrete_action_axes=n_discrete_action_axes,
 )
-smoothed, probabilities = logsum_and_softmax(values=Qc, scale=scale, axes=(0,))
+dissolution = ~jnp.any(feasibility)
+values = jnp.where(
+    dissolution,
+    -jnp.inf,
+    decider_expected_values(
+        decider=decider, Qc=Qc, at_choice=at_choice, scale=scale
+    ),
+)
+return values, dissolution
+"""
+    expected_values = r"""smoothed, probabilities = logsum_and_softmax(values=Qc, scale=scale, axes=(0,))
 probabilities = jnp.where(
     jnp.isneginf(smoothed),
     jnp.arange(Qc.shape[0]) == jnp.argmax(Qc),
@@ -10182,17 +10199,12 @@ means = jnp.sum(
     ),
     axis=0,
 )
-dissolution = ~jnp.any(feasibility)
-values = jnp.where(
-    dissolution,
-    -jnp.inf,
-    jnp.where(jnp.arange(Q.shape[-1]) == decider, smoothed, means),
-)
-return values, dissolution
+return jnp.where(jnp.arange(at_choice.shape[-1]) == decider, smoothed, means)
 """
     for node, body, label in (
         (choice, expected_choice, "decider choice"),
         (readout, expected_readout, "smoothed readout"),
+        (expected, expected_values, "expected values"),
     ):
         if not _body_matches(node=node, expected_source=body):
             errors.append(
@@ -10200,7 +10212,12 @@ return values, dissolution
             )
     if any(
         isinstance(statement, ast.Assign | ast.AnnAssign | ast.AugAssign)
-        and {"decider_choice", "decider_smoothed_readout", "logsum_and_softmax"}
+        and {
+            "decider_choice",
+            "decider_smoothed_readout",
+            "decider_expected_values",
+            "logsum_and_softmax",
+        }
         & _assigned_names(statement)
         for statement in tree.body
     ):

@@ -52,8 +52,10 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   the conditional continuous actions all members share, and every member's value.
 - Constant weights with more than one positive entry are refused when the regime is
   constructed; a weight declared as a function is checked at every solve, at every cell.
-  Taste shocks stay refused on a household that declares an `exit` and on one whose
-  decision another regime's exit reads. A household that observes current-period
+  A household with an `exit` runs its decider's logit over the stays every member
+  accepts and the exit, and every member's value at the exit is its own exit payoff.
+  Another regime's exit reads the household's member values as its solve publishes
+  them. A household that observes current-period
   `shocks` takes the decider's smoothed choice at each shock node and integrates every
   member's value over the nodes.
 - Values of models without taste shocks in a household are unchanged.
