@@ -156,7 +156,10 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
     # The dead-code cleanup deleted the streamed EV1 reduction's `semantic_key` and
     # its three `streaming_ev1:` controls; the ValueDependentConstraint removal
     # deleted value_access:grid_same_period_shifted.
-    assert len(historical) == 598
+    # Streaming the household solve deleted the three streaming_classifier controls
+    # of the dense collective disposition with that disposition and added
+    # streaming_classifier:household_sent_dense.
+    assert len(historical) == 596
     historical = historical - exact_count_controls
     added_feasibility_controls = {
         "feasibility_summary:published_value_changed",
@@ -188,13 +191,13 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
     # inverted and native_graph:collective_output_role_dropped with their targets;
     # the fold-machinery removal deleted ten streaming fold controls and two
     # supplemental s02_status:fold_weight_* controls with theirs.
-    assert len(historical) == 596
+    assert len(historical) == 594
     historical_before_s1 = historical - added_rng_controls - added_engine_controls
-    assert len(historical_before_s1) == 594
-    assert len(historical_before_s1 - added_initial_controls) == 582
+    assert len(historical_before_s1) == 592
+    assert len(historical_before_s1 - added_initial_controls) == 580
     assert (
         len(historical_before_s1 - added_initial_controls - added_feasibility_controls)
-        == 580
+        == 578
     )
     assert "src/_lcm/solution/feasibility.py" in direct_flow._CERTIFIED_CORRIDOR_SOURCES
     assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 182

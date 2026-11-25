@@ -53,14 +53,17 @@ def test_uniform_controls_preserve_both_historical_mutation_populations() -> Non
     # removal deleted the three streaming_ev1 semantic-key controls with
     # GridSearchEV1ActionReduction; the ValueDependentConstraint removal deleted
     # value_access:grid_same_period_shifted with the same-period value access.
-    assert len(historical) == 394
+    # Streaming the household solve deleted the three streaming_classifier controls
+    # of the dense collective disposition with that disposition and added
+    # streaming_classifier:household_sent_dense.
+    assert len(historical) == 392
     assert (
         _name_digest(historical)
-        == "2f8d45afccfc746ab2fc3ad14505c7f087d4571092e83dedf2ce6dfc3780ff3b"
+        == "773253413c699c84f6d85f2ed210060100a3557b664dc473f4bb8d9d24833d4a"
     )
-    assert len(registered) == 411
+    assert len(registered) == 409
     assert _name_digest(registered) == (
-        "ce4f0914b5cf4530600d46264ffe50b13254137d44de1abe78b5f787c9957612"
+        "298e100ca0b6e51223ce979c40d254ae4abf89dffc5692a1ab83ca12fea58e40"
     )
     assert len(supplemental) == 94
     assert _name_digest(supplemental) == (

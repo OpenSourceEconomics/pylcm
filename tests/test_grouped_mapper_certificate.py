@@ -47,7 +47,10 @@ def test_grouped_mapper_population_is_independent() -> None:
     )
     # The ValueDependentConstraint removal deleted
     # value_access:grid_same_period_shifted with the same-period value access.
-    assert tuple(map(len, populations)) == (411, 94, 37, 10)
+    # Streaming the household solve deleted the three streaming_classifier controls
+    # of the dense collective disposition with that disposition and added
+    # streaming_classifier:household_sent_dense.
+    assert tuple(map(len, populations)) == (409, 94, 37, 10)
     grouped = direct_flow.grouped_mapper_mutation_specs(repo_root=root)
     assert len(grouped) == 18
     digest = hashlib.sha256(("\n".join(sorted(grouped)) + "\n").encode()).hexdigest()
