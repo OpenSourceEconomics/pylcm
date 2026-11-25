@@ -41,7 +41,7 @@ from lcm.typing import (
     UserInitialNodes,
     UserParams,
 )
-from tests.conftest import DECIMAL_PRECISION
+from tests.conftest import DECIMAL_PRECISION, assert_agrees_to_ulp
 
 pytestmark = pytest.mark.coverage(backends=("cpu",), precisions="both")
 
@@ -1131,6 +1131,10 @@ class Labor:
 
 
 _N_ECONOMIC_PERIODS = 3
+# Largest gap, in units of the spacing, between a model with a skipped stage and
+# its equivalent that reads every value once. The spacing is that of the larger of
+# the value and 1, the magnitude of the utilities a value near zero is a sum of.
+_SKIP_ULP = 8
 
 
 @lcm.time_varying_params("wage")
@@ -1250,6 +1254,7 @@ def _staged_model(
     regime_id_class: type[DataclassInstance] = StagedId,
     shocks: Mapping[str, ShockGroup] | None = None,
     composite_states: Mapping[str, lcm.CompositeState] | None = None,
+    discount_factor: float = 0.9,
 ) -> lcm.Model:
     last = _N_ECONOMIC_PERIODS - 1
     if clock == "hand":
@@ -1268,7 +1273,7 @@ def _staged_model(
                     "working": lcm.Periods(values=tuple(range(1, steps - 2, 2)))
                 },
             },
-            fixed_params={"discount_factor": 0.9},
+            fixed_params={"discount_factor": discount_factor},
         )
     by_age = clock == "age"
     selector = lcm.AgeRange if by_age else lcm.PeriodRange
@@ -1299,7 +1304,7 @@ def _staged_model(
         }
         if edges is None
         else edges,
-        fixed_params={"discount_factor": 0.9},
+        fixed_params={"discount_factor": discount_factor},
     )
 
 
@@ -2072,6 +2077,373 @@ def test_an_exit_reads_the_destination_at_its_occurrence_later_in_the_period() -
             np.stack([single, single], axis=-1),
             decimal=DECIMAL_PRECISION,
         )
+
+
+@lcm.categorical(ordered=False)
+class SaverId:
+    single: ScalarInt
+    single_final: ScalarInt
+
+
+@lcm.categorical(ordered=False)
+class IdleSaverId:
+    single: ScalarInt
+    single_final: ScalarInt
+    idle: ScalarInt
+    rest: ScalarInt
+
+
+def _saver_grid(period: int) -> lcm.LinSpacedGrid:
+    return lcm.LinSpacedGrid(start=1.0, stop=6.0 + period, n_points=6)
+
+
+def _saver(
+    *,
+    stages: Mapping[str, tuple[RegimeName, ...]] | None,
+    grid_by_period: bool = False,
+    discount_factor: float | None = 0.9,
+) -> lcm.Model:
+    """The marriage model's single alone: one spending decision per period.
+
+    Without `stages` the model declares no stages. With them, the regimes `idle`
+    and `rest` fill the stages the single sits out. `discount_factor=None` leaves
+    the discount factor to the parameters.
+    """
+    last = _N_ECONOMIC_PERIODS - 1
+    wealth = (
+        lcm.PeriodSpecializedGrid(build=_saver_grid, signature=int)
+        if grid_by_period
+        else _saver_grid(0)
+    )
+    regimes = {
+        "single": lcm.Regime(
+            states={"wealth": wealth},
+            actions={"share": lcm.LinSpacedGrid(start=0.1, stop=1.0, n_points=10)},
+            state_transitions={"wealth": _next_single_wealth},
+            functions={
+                "consumption": _shared_consumption,
+                "utility": _single_consumption_utility,
+            },
+        ),
+        "single_final": lcm.Regime(
+            states={"wealth": wealth}, functions={"utility": _final_utility}
+        ),
+    }
+    idle = () if stages is None else ("idle", "rest")
+    for name in idle:
+        regimes[name] = lcm.Regime(functions={"utility": _waiting})
+    return lcm.Model(
+        n_periods=_N_ECONOMIC_PERIODS,
+        stages=stages,
+        regimes=regimes,
+        regime_id_class=SaverId if stages is None else IdleSaverId,
+        initial_nodes=lcm.InitialNodes(by_period={0: ("single", *idle)}),
+        edges={
+            "single": {
+                "single": lcm.PeriodRange(exclusive_stop=last - 1),
+                "single_final": lcm.Periods(values=(last - 1,)),
+            }
+        },
+        fixed_params={}
+        if discount_factor is None
+        else {"discount_factor": discount_factor},
+    )
+
+
+_SAVER_SITS_OUT_FIRST = {
+    "wait": ("idle", "rest"),
+    "spend": ("single", "single_final"),
+}
+
+
+def _hand_saver_values(*, landing: int) -> dict[int, np.ndarray]:
+    """The saver's value on period-specific grids by backward recursion in NumPy.
+
+    Each period interpolates the next period's value once, linearly, and
+    discounts it once. `landing` is the number of periods ahead whose grid the
+    value read is taken to live on: 1 in the model, 0 for a read that lands on
+    the grid of the source's period.
+    """
+    last = _N_ECONOMIC_PERIODS - 1
+    shares = np.linspace(0.1, 1.0, 10)
+    nodes = {
+        period: np.linspace(1.0, 6.0 + period, 6)
+        for period in range(_N_ECONOMIC_PERIODS)
+    }
+    values = {last: np.log(nodes[last])}
+    for period in reversed(range(last)):
+        consumption = shares * nodes[period][:, None]
+        next_wealth = np.minimum(
+            1.05 * (nodes[period][:, None] - consumption) + 0.5, 6.0
+        )
+        ahead = nodes[period + landing]
+        position = (next_wealth - ahead[0]) / (ahead[1] - ahead[0])
+        lower = np.clip(np.floor(position).astype(int), 0, len(ahead) - 2)
+        weight = position - lower
+        read = values[period + 1]
+        continuation = (1.0 - weight) * read[lower] + weight * read[lower + 1]
+        values[period] = (np.log(consumption) + 0.9 * continuation).max(axis=1)
+    return values
+
+
+def test_a_crossing_edge_reads_the_grid_of_the_period_it_lands_in() -> None:
+    """A saver in the last stage reads its next value on the next period's grid.
+
+    The wealth grid widens with the period, and the saver sits out the first
+    stage. Oracle: a backward recursion in NumPy with one interpolation and one
+    discount per period. The same recursion reading on the grid of the source's
+    period is far from the model's values.
+    """
+    values = (
+        _saver(stages=_SAVER_SITS_OUT_FIRST, grid_by_period=True)
+        .solve(params={}, log_level="off")
+        .values
+    )
+    expected = _hand_saver_values(landing=1)
+    wrong = _hand_saver_values(landing=0)
+    for period in range(_N_ECONOMIC_PERIODS - 1):
+        got = np.asarray(values[2 * period + 1]["single"])[..., 0]
+        assert_agrees_to_ulp(
+            got=got,
+            expected=expected[period].astype(got.dtype),
+            n_ulp=_SKIP_ULP,
+            operand_magnitude=1.0,
+        )
+        assert np.abs(got - wrong[period]).max() > 1e-2
+
+
+@pytest.mark.parametrize("discount_factor", [1.0, 0.5])
+def test_a_landing_in_the_same_period_is_not_discounted(
+    discount_factor: float,
+) -> None:
+    """A work decision whose spending decision follows two stages later.
+
+    Oracle: the model without stages, one period per decision, in which the work
+    decision adds the spending decision's value undiscounted.
+    """
+    staged = _staged_model(
+        clock="staged",
+        stages={
+            "work": ("working",),
+            "rest": ("idle",),
+            "spend": ("spending", "final"),
+        },
+        regimes={
+            **_staged_regimes(clock="staged"),
+            "idle": lcm.Regime(functions={"utility": _waiting}),
+        },
+        regime_id_class=IdleId,
+        discount_factor=discount_factor,
+    )
+    staged_values = staged.solve(
+        params={"wage": _wage(steps=False)}, log_level="off"
+    ).values
+    hand_values = (
+        _staged_model(clock="hand", discount_factor=discount_factor)
+        .solve(params={"wage": _wage(steps=True)}, log_level="off")
+        .values
+    )
+    for step, regimes in hand_values.items():
+        for name, value in regimes.items():
+            assert_agrees_to_ulp(
+                got=staged_values[3 * (step // 2) + 2 * (step % 2)][name],
+                expected=value,
+                n_ulp=_SKIP_ULP,
+                operand_magnitude=1.0,
+            )
+
+
+@pytest.mark.parametrize(
+    "discount_factor",
+    [
+        0.5,
+        pytest.param(
+            None,
+            marks=pytest.mark.xfail(
+                strict=True,
+                raises=lcm.exceptions.InvalidParamsError,
+                reason="The discount factor of a regime that crosses the period "
+                "from a stage before the last sits on a generated regime: given "
+                "under the declared regime, it is reported as missing and unknown.",
+            ),
+        ),
+    ],
+)
+def test_a_crossing_edge_discounts_once_whatever_it_skips(
+    discount_factor: float | None,
+) -> None:
+    """A saver in the first of three stages equals the saver without stages.
+
+    Oracle: the model without stages, which interpolates and discounts once per
+    period. Without a fixed discount factor, the factor is a parameter of the
+    declared regime that discounts.
+    """
+    stages = {
+        "spend": ("single", "single_final"),
+        "wait": ("idle",),
+        "rest": ("rest",),
+    }
+    params: UserParams = (
+        {"single": {"koopmans_aggregator": {"discount_factor": 0.5}}}
+        if discount_factor is None
+        else {}
+    )
+    plain = _saver(stages=None, discount_factor=discount_factor)
+    plain_values = plain.solve(params=params, log_level="off").values
+    staged = _saver(stages=stages, discount_factor=discount_factor)
+    values = staged.solve(params=params, log_level="off").values
+    for period, regimes in plain_values.items():
+        for name, value in regimes.items():
+            assert_agrees_to_ulp(
+                got=values[3 * period][name],
+                expected=value,
+                n_ulp=_SKIP_ULP,
+                operand_magnitude=1.0,
+            )
+    assert (
+        staged.get_params_template()["single"]
+        == (plain.get_params_template()["single"])
+    )
+
+
+def test_an_exit_to_a_later_stage_gets_the_value_of_staying_or_leaving() -> None:
+    """A couple parts where a partner prefers the single's value of that period.
+
+    Oracle: a hand calculation per wealth node. Leaving gives each partner the
+    value of the saver without stages at half the couple's wealth, a node of the
+    saver's grid; staying gives the match quality plus the couple's value in the
+    spending stage. Both are undiscounted, and the couple parts where leaving is
+    strictly better for a partner.
+    """
+    love = 0.25
+    values = (
+        _marriage(hand=False)
+        .solve(params={"couple_sep": {"love": love}}, log_level="off")
+        .values
+    )
+    single_values = _saver(stages=None).solve(params={}, log_level="off").values
+    wealth = np.linspace(2.0, 12.0, 6)
+    for period in range(_N_ECONOMIC_PERIODS - 1):
+        couple = np.asarray(values[2 * period + 1]["couple"])
+        outside = np.asarray(single_values[period]["single"])
+        inside = (love - 0.05 * wealth[:, None]).astype(couple.dtype) + couple
+        leaves = (outside > inside).any(axis=-1, keepdims=True)
+        assert leaves.any()
+        assert not leaves.all()
+        assert_agrees_to_ulp(
+            got=values[2 * period]["couple_sep"],
+            expected=np.where(leaves, outside, inside),
+            n_ulp=_SKIP_ULP,
+            operand_magnitude=1.0,
+        )
+
+
+def test_a_subject_has_no_row_in_a_stage_its_regime_sits_out() -> None:
+    """A saver in the second stage is simulated as the saver without stages.
+
+    Its rows are those of its own stage, and its wealth and regime change only
+    there. The model has no shocks, and the objective is strictly concave in
+    the share consumed, so the paths depend on neither draws nor ties.
+    """
+    frames = {}
+    for staged in (False, True):
+        model = _saver(stages=_SAVER_SITS_OUT_FIRST if staged else None)
+        frames[staged] = model.simulate(
+            params={},
+            initial_conditions={
+                "period": jnp.zeros(4, dtype=jnp.int32),
+                "regime_id": jnp.full(
+                    4, model.regime_names_to_ids["single"], dtype=jnp.int32
+                ),
+                "wealth": jnp.array([1.3, 2.5, 4.0, 5.7]),
+            },
+            seed=3,
+            log_level="off",
+        ).to_dataframe()
+    assert set(frames[True]["stage"]) == {"spend"}
+    assert set(frames[False]["regime_name"]) == {"single", "single_final"}
+    for column in ("subject_id", "period", "regime_name", "share"):
+        np.testing.assert_array_equal(
+            np.asarray(frames[True][column]), np.asarray(frames[False][column])
+        )
+    for column in ("wealth", "value"):
+        assert_agrees_to_ulp(
+            got=frames[True][column],
+            expected=frames[False][column],
+            n_ulp=_SKIP_ULP,
+            operand_magnitude=1.0,
+        )
+
+
+@lcm.categorical(ordered=False)
+class LotteryId:
+    source: ScalarInt
+    idle: ScalarInt
+    high: ScalarInt
+    low: ScalarInt
+
+
+def _even_odds() -> FloatND:
+    return jnp.asarray([0.0, 0.0, 0.5, 0.5])
+
+
+@pytest.mark.parametrize(
+    "declared",
+    [
+        "model",
+        pytest.param(
+            "regime",
+            marks=pytest.mark.xfail(
+                strict=True,
+                raises=ModelInitializationError,
+                reason="A certainty equivalent declared only on the source is "
+                "refused as ambiguous: the regimes generated for the skipped "
+                "stage count as regimes with a continuation that lack one.",
+            ),
+        ),
+    ],
+)
+def test_a_source_applies_its_certainty_equivalent_once_to_a_later_stage(
+    declared: str,
+) -> None:
+    """A lottery over two regimes two stages later, valued by a power mean.
+
+    Oracle: a closed form. The source gets 1 and then 3 or 1 with even odds; at
+    a risk aversion of 2 the certainty equivalent is `1 / (0.5 / 3 + 0.5)`, and
+    the landing in the same period adds it undiscounted. The source is the only
+    regime with a continuation, so declaring the power mean on it or on the
+    model is the same model.
+    """
+    always = lcm.PeriodRange()
+    model = lcm.Model(
+        n_periods=1,
+        stages={"draw": ("source",), "wait": ("idle",), "land": ("high", "low")},
+        regimes={
+            "source": lcm.Regime(
+                functions={"utility": _one},
+                certainty_equivalent=lcm.PowerMean() if declared == "regime" else None,
+            ),
+            "idle": lcm.Regime(functions={"utility": _waiting}),
+            "high": lcm.Regime(functions={"utility": _three}),
+            "low": lcm.Regime(functions={"utility": _one}),
+        },
+        regime_id_class=LotteryId,
+        initial_nodes=lcm.InitialNodes(by_period={0: ("source", "idle")}),
+        edges={
+            "source": lcm.Transition(
+                targets={"high": always, "low": always},
+                law=lcm.StochasticTransition(func=_even_odds),
+            )
+        },
+        certainty_equivalent=lcm.PowerMean()
+        if declared == "model"
+        else lcm.LinearExpectation(),
+    )
+    values = model.solve(params={"risk_aversion": 2.0}, log_level="off").values
+    got = np.asarray(values[0]["source"])
+    assert_agrees_to_ulp(
+        got=got, expected=np.full_like(got, 1.0 + 1.0 / (0.5 / 3.0 + 0.5)), n_ulp=4
+    )
 
 
 @lcm.categorical(ordered=False)
