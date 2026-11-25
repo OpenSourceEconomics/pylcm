@@ -7,6 +7,7 @@ is kept, and says so on its own log-record attribute.
 
 import gc
 import logging
+from collections.abc import Mapping
 from types import MappingProxyType
 
 import jax
@@ -513,21 +514,6 @@ def _node(*, regime: RegimeName, program: str = "main") -> ScheduledNode:
     return ScheduledNode(period=3, regime=regime, program=program)
 
 
-def test_independent_units_on_disjoint_devices_share_one_wave() -> None:
-    """Two regimes on disjoint devices dispatch together."""
-    waves = plan_period_waves(
-        nodes=(_node(regime="a"), _node(regime="b")),
-        device_sets=MappingProxyType({"a": frozenset({0}), "b": frozenset({1})}),
-    )
-
-    assert waves == (
-        (
-            DispatchUnit(period=3, regime="a", programs=("main",)),
-            DispatchUnit(period=3, regime="b", programs=("main",)),
-        ),
-    )
-
-
 def test_units_sharing_a_device_dispatch_in_separate_waves() -> None:
     """Concurrency needs disjoint submeshes; a shared device serializes."""
     waves = plan_period_waves(
@@ -556,16 +542,68 @@ def test_the_programs_of_one_kernel_form_one_unit_in_topological_order() -> None
     )
 
 
-def test_declaration_order_breaks_ties_inside_a_wave() -> None:
-    """Independent units keep the order their regimes were declared in."""
+def _waves_of_reads(
+    *, reads: Mapping[RegimeName, frozenset[RegimeName]]
+) -> list[tuple[RegimeName, ...]]:
+    """Plan one program per regime, each on its own device, and name the waves."""
     waves = plan_period_waves(
-        nodes=(_node(regime="second"), _node(regime="first")),
+        nodes=tuple(
+            ScheduledNode(period=3, regime=regime, program="main", reads=read)
+            for regime, read in reads.items()
+        ),
         device_sets=MappingProxyType(
-            {"second": frozenset({0}), "first": frozenset({1})}
+            {regime: frozenset({index}) for index, regime in enumerate(reads)}
         ),
     )
+    return [tuple(unit.regime for unit in wave) for wave in waves]
 
-    assert tuple(unit.regime for unit in waves[0]) == ("second", "first")
+
+@pytest.mark.parametrize(
+    ("reads", "expected"),
+    [
+        pytest.param(
+            {"c": frozenset({"b"}), "b": frozenset({"a"}), "a": frozenset()},
+            [("a",), ("b",), ("c",)],
+            id="chain-of-three",
+        ),
+        pytest.param(
+            {
+                "d": frozenset({"b", "c"}),
+                "c": frozenset({"a"}),
+                "b": frozenset({"a"}),
+                "a": frozenset(),
+            },
+            [("a",), ("c", "b"), ("d",)],
+            id="diamond-keeps-declaration-order-in-a-wave",
+        ),
+        pytest.param(
+            {"a": frozenset({"a"}), "b": frozenset({"not_active"})},
+            [("a", "b")],
+            id="own-and-inactive-reads-leave-a-pair-in-one-wave",
+        ),
+    ],
+)
+def test_a_same_period_reader_dispatches_after_what_it_reads(
+    *,
+    reads: Mapping[RegimeName, frozenset[RegimeName]],
+    expected: list[tuple[RegimeName, ...]],
+) -> None:
+    """A reader waits for every other regime of the period it reads."""
+    assert _waves_of_reads(reads=reads) == expected
+
+
+def test_same_period_reads_in_a_cycle_are_refused_by_name() -> None:
+    """Two regimes reading each other cannot be ordered; both are named."""
+    with pytest.raises(
+        ExecutionPlanningError, match=r"cycle among regimes \('a', 'b'\)"
+    ):
+        _waves_of_reads(
+            reads={
+                "a": frozenset({"b"}),
+                "b": frozenset({"a"}),
+                "c": frozenset(),
+            }
+        )
 
 
 def test_a_regime_missing_from_device_sets_is_refused_by_name() -> None:

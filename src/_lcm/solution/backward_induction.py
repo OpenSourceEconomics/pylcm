@@ -137,6 +137,7 @@ from _lcm.execution.scheduler import (
     buffer_identity,
     plan_period_waves,
     release_closed_artifacts,
+    same_period_reads,
 )
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
@@ -868,16 +869,23 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     generation=transfer_generation,
                 )
 
-                # Regimes whose device sets are disjoint share a wave and dispatch
-                # back to back, which is what a submesh placement buys; regimes
-                # sharing a device keep one unit per wave, in declaration order.
+                # A regime reading another regime's value of this period runs in
+                # a later wave than that regime. Regimes whose device sets are
+                # disjoint share a wave and dispatch back to back, which is what a
+                # submesh placement buys; regimes sharing a device keep one unit
+                # per wave, in declaration order.
                 waves = plan_period_waves(
                     nodes=tuple(
                         ScheduledNode(
-                            period=period, regime=regime_name, program=core_key
+                            period=period,
+                            regime=regime_name,
+                            program=core_key,
+                            reads=same_period_reads(plan=core.input_transfer_plan),
                         )
                         for regime_name in active_regimes
-                        for core_key in compiled_functions[(regime_name, period)]
+                        for core_key, core in compiled_functions[
+                            (regime_name, period)
+                        ].items()
                     ),
                     device_sets=MappingProxyType(
                         {
@@ -4076,7 +4084,16 @@ def _scheduled_waves(
     }
     waves = plan_period_waves(
         nodes=tuple(
-            ScheduledNode(period=period, regime=regime_name, program=core_key)
+            ScheduledNode(
+                period=period,
+                regime=regime_name,
+                program=core_key,
+                reads=same_period_reads(
+                    plan=program_metadata[
+                        (regime_name, period, core_key)
+                    ].input_transfer_plan
+                ),
+            )
             for regime_name in active
             for core_key in program_keys_by_cell[(regime_name, period)]
         ),

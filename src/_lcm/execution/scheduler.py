@@ -7,9 +7,11 @@ ready, and how to delete a buffer without leaving a deleted array inside the
 rolling input mappings.
 
 It also turns one period's nodes into a ready list: `plan_period_waves` groups
-the period's dispatch units into waves, and units join one wave only while their
-device sets stay pairwise disjoint — the boundary that lets independent nodes
-dispatch back to back instead of one at a time.
+the period's dispatch units into waves such that a unit is ready only once every
+regime whose same-period value it reads has dispatched in an earlier wave, and
+units join one wave only while their device sets stay pairwise disjoint — the
+boundary that lets independent nodes dispatch back to back instead of one at a
+time.
 """
 
 import dataclasses
@@ -23,7 +25,11 @@ from jaxtyping import PyTree
 
 from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.execution.pending_work import BeforeArrayDelete
-from _lcm.execution.value_transfer import ResolvedValueTransfer, transfer_result_key
+from _lcm.execution.value_transfer import (
+    ResolvedValueTransfer,
+    ValueInputChannel,
+    transfer_result_key,
+)
 from _lcm.typing import FootprintTree, RegimeName
 from lcm.exceptions import ExecutionPlanningError
 
@@ -421,6 +427,20 @@ class ScheduledNode:
     program: str
     """The program's graph key inside the kernel."""
 
+    reads: frozenset[RegimeName] = frozenset()
+    """The regimes whose value of this period the program reads."""
+
+
+def same_period_reads(
+    *, plan: Iterable[ResolvedValueTransfer]
+) -> frozenset[RegimeName]:
+    """Name the regimes whose same-period value a program's transfer plan reads."""
+    return frozenset(
+        transfer.target.regime
+        for transfer in plan
+        if transfer.source.channel is ValueInputChannel.SAME_PERIOD_VALUE
+    )
+
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class DispatchUnit:
@@ -444,10 +464,13 @@ def plan_period_waves(
     """Group one period's nodes into waves of concurrently dispatchable units.
 
     The programs of one regime form one unit, in the order given, since a kernel
-    dispatches its own programs. Units join one wave while their device sets are
-    pairwise disjoint; a unit whose devices a wave already uses starts the next
-    wave. Order within a wave, and among waves, follows the order of `nodes`, so
-    declaration order breaks ties.
+    dispatches its own programs; a program reading its own regime's value reads
+    an earlier program of the unit. A unit is ready when every other regime of
+    the period it reads has dispatched in an earlier wave. Ready units join one
+    wave while their device sets are pairwise disjoint; a unit whose devices a
+    wave already uses starts the next wave. Order within a wave, and among
+    waves, follows the order of `nodes`, so declaration order breaks ties. Reads
+    that form a cycle are refused with the regimes left unplanned.
     """
     periods = {node.period for node in nodes}
     if len(periods) > 1:
@@ -459,8 +482,10 @@ def plan_period_waves(
         return ()
     period = next(iter(periods))
     programs_by_regime: dict[RegimeName, list[str]] = {}
+    reads_by_regime: dict[RegimeName, set[RegimeName]] = {}
     for node in nodes:
         programs_by_regime.setdefault(node.regime, []).append(node.program)
+        reads_by_regime.setdefault(node.regime, set()).update(node.reads)
     units = {
         regime: DispatchUnit(period=period, regime=regime, programs=tuple(programs))
         for regime, programs in programs_by_regime.items()
@@ -472,6 +497,11 @@ def plan_period_waves(
         wave: list[DispatchUnit] = []
         used_devices: set[int] = set()
         for regime in remaining:
+            if any(
+                read in units and read != regime and read not in dispatched
+                for read in reads_by_regime[regime]
+            ):
+                continue
             if regime not in device_sets:
                 msg = f"No device set was declared for regime {regime!r}."
                 raise ExecutionPlanningError(msg)
@@ -480,6 +510,12 @@ def plan_period_waves(
                 continue
             wave.append(units[regime])
             used_devices |= devices
+        if not wave:
+            msg = (
+                "Same-period reads form a cycle among regimes "
+                f"{tuple(remaining)!r}; no unit is ready."
+            )
+            raise ExecutionPlanningError(msg)
         dispatched.update(unit.regime for unit in wave)
         remaining = [regime for regime in remaining if regime not in dispatched]
         waves.append(tuple(wave))
