@@ -3,7 +3,8 @@
 The formation toy lives through three periods before its terminal one. The first
 two read a living next period and so trace the same chunk program; the third
 reads the terminal regimes and traces another. A single who marries is paid a
-gift, an exit adjustment the engine binds anew in every period.
+gift, an exit adjustment the engine binds anew in every period. The singles,
+which declare the formation exit, are the query roots.
 """
 
 from collections import Counter
@@ -20,7 +21,7 @@ from lcm.shocks import QuasiMonteCarlo
 from tests.conftest import assert_agrees_to_ulp
 from tests.solution.test_formation_read_classes import _model, _solve
 
-_ROOTS = ("couple", "single_f", "single_m")
+_ROOTS = ("single_f", "single_m")
 
 
 def _four_period_values() -> dict[str, np.ndarray]:

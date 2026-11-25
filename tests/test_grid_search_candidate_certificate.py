@@ -3252,8 +3252,8 @@ _CURRENT_IID_ADAPTER_MUTATIONS = (
     (
         "omit_solve_status",
         "src/_lcm/current_iid.py",
-        "return jnp.sum(terms), jnp.any(support & empty), ~valid",
-        "return jnp.sum(terms), jnp.any(support & empty), False",
+        "return jnp.sum(terms, axis=0), jnp.any(support & empty), ~valid",
+        "return jnp.sum(terms, axis=0), jnp.any(support & empty), False",
     ),
     (
         "omit_replay_status",

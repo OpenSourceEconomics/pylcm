@@ -1368,7 +1368,7 @@ class _NNBEGMPeriodKernel:
             period=period,
             ages=ages,
         )
-        output = self._solve_outer(
+        result = self._solve_outer(
             replay_capability=replay_capability,
             keeper_result=keeper_result,
             retain_replay="keeper:replay" in compiled_cores,
@@ -1382,8 +1382,8 @@ class _NNBEGMPeriodKernel:
             logger=logger,
         )
         if self.member_axis is None:
-            return output
-        return replace(output, value=jnp.expand_dims(output.value, -1))
+            return result
+        return replace(result, value=jnp.expand_dims(result.value, -1))
 
     def _solve_outer(
         self,
