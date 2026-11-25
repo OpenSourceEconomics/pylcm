@@ -193,7 +193,7 @@ class _RegimeId:
 def _law(*, source: int) -> StochasticTransition:
     """Living regime `source` moves to `r0` / `r1` at age 0 and ends at age 1."""
 
-    def probabilities(age):
+    def probabilities(age: jax.Array) -> jax.Array:
         weight = 0.25 if source == 0 else 0.75
         return jnp.where(
             age < 1, jnp.array([weight, 1 - weight, 0]), jnp.array([0.0, 0.0, 1.0])
@@ -208,11 +208,23 @@ _EDGES = {
 }
 
 
-def _landing(*, assets, decision, pref_type, spousal_income):
+def _landing(
+    *,
+    assets: jax.Array,
+    decision: jax.Array,
+    pref_type: jax.Array,
+    spousal_income: jax.Array,
+) -> jax.Array:
     return 15 - assets + (decision - 1) + (pref_type - spousal_income + 1) / 4
 
 
-def _fixed_type_landing(*, assets, decision, pref_type: DiscreteState, spousal_income):
+def _fixed_type_landing(
+    *,
+    assets: jax.Array,
+    decision: jax.Array,
+    pref_type: DiscreteState,
+    spousal_income: jax.Array,
+) -> jax.Array:
     return _landing(
         assets=assets,
         decision=decision,
@@ -241,7 +253,13 @@ def _regime(
     if shift:
         base = landing
 
-        def landing(*, assets, decision, pref_type, spousal_income):
+        def landing(
+            *,
+            assets: jax.Array,
+            decision: jax.Array,
+            pref_type: jax.Array,
+            spousal_income: jax.Array,
+        ) -> jax.Array:
             return shift + base(
                 assets=assets,
                 decision=decision,
@@ -252,7 +270,13 @@ def _regime(
         if fixed_type:
             landing.__annotations__["pref_type"] = DiscreteState
 
-    def utility(*, assets, decision, pref_type, spousal_income):
+    def utility(
+        *,
+        assets: jax.Array,
+        decision: jax.Array,
+        pref_type: jax.Array,
+        spousal_income: jax.Array,
+    ) -> jax.Array:
         desired = ((pref_type + 2 * spousal_income + source) % 3) - 1
         return (
             -10
@@ -268,7 +292,13 @@ def _regime(
         # fixed type states the same annotation.
         utility.__annotations__["pref_type"] = DiscreteState
 
-    def partner(*, assets, decision, pref_type, spousal_income):
+    def partner(
+        *,
+        assets: jax.Array,
+        decision: jax.Array,
+        pref_type: jax.Array,
+        spousal_income: jax.Array,
+    ) -> jax.Array:
         own = utility(
             assets=assets,
             decision=decision,
@@ -313,7 +343,9 @@ def _model(
     schedule: InvariantBlockSchedule = InvariantBlockSchedule.PERIOD_MAJOR,
     household: bool = False,
 ) -> Model:
-    def terminal(*, assets, pref_type, spousal_income):
+    def terminal(
+        *, assets: jax.Array, pref_type: jax.Array, spousal_income: jax.Array
+    ) -> jax.Array:
         return -40 + pref_type + spousal_income / 4 - (assets - 5) ** 2 / 8
 
     return Model(
