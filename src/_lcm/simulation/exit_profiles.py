@@ -191,7 +191,13 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
             "keys": keys,
             "overrides": overrides,
             "_holders": holders,
-            "taste_keys": {queries.root: tastes[name]} if name in tastes else {},
+            **(
+                {}
+                if family == "exit_full"
+                else {
+                    "taste_keys": {queries.root: tastes[name]} if name in tastes else {}
+                }
+            ),
             "query_arguments": {
                 query: {
                     key: abstract_tree(tree=value, sharding=shared)

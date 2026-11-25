@@ -176,9 +176,6 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                 "overrides": overrides,
                 "query_arguments": arguments,
                 "_holders": holders,
-                "taste_keys": {plan.full.root: taste_banks[name]}
-                if name in taste_banks
-                else {},
                 "group_params": {
                     group: dict(flat_params.get(group, {})) for group in bindings
                 },

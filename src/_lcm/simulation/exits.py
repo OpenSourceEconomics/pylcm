@@ -382,18 +382,9 @@ class OriginalExitDecision:
         group_params: Mapping[str, Mapping[str, LawInput | BoolND]],
         query_arguments: Mapping[str, Mapping[str, PytreeValue]],
         _holders: BoolND,
-        taste_keys: Mapping[str, jax.Array],
         overrides: Mapping[ShockName, CurrentIIDOverride] = MappingProxyType({}),
     ) -> OriginalExitOutput:
         """Publish the source frame and the destination coordinates replay validates."""
-
-        query_arguments = {
-            name: {
-                **row,
-                **({"taste_shock_key": taste_keys[name]} if name in taste_keys else {}),
-            }
-            for name, row in query_arguments.items()
-        }
         fixed = query_arguments[self.queries.root]
         source = {**states, "period": fixed["period"], "age": fixed["age"]}
         frame = _realise_frame(
@@ -872,8 +863,8 @@ def exit_policy_program(
             queries=queries, draw=draw, uniform_bases=uniform_bases
         )
     )
-    subject_inputs = ("states", "keys", "_holders", "taste_keys", "overrides") + (
-        () if original else ("held_bases", "produced")
+    subject_inputs = ("states", "keys", "_holders", "overrides") + (
+        () if original else ("taste_keys", "held_bases", "produced")
     )
     root = queries.definitions[queries.root]
     producing_bindings = query_producing_bindings(queries=queries)

@@ -23,7 +23,6 @@ from _lcm.off_grid import clip_projection, projected_grid_rules
 from _lcm.outside_values import UnalignedOutsideRead, align_outside_read
 from _lcm.policy_queries import (
     _PHYSICAL_CONTEXTS,
-    _TASTE,
     OutsideValueRead,
     PolicyAnswer,
     QueryKind,
@@ -31,10 +30,8 @@ from _lcm.policy_queries import (
     QueryRead,
     _PolicyQueryKernel,
     _QueryChunks,
-    _taste_stay_roster,
     build_policy_query_kernel,
     gated_query_targets,
-    taste_choice,
 )
 from _lcm.query_information import default_chunk_size
 from _lcm.regime_building.collective import landing_member_index
@@ -64,7 +61,6 @@ from lcm.exits import (
     Settlement,
     Unilateral,
 )
-from lcm.grids import DiscreteGrid
 from lcm.shocks import Discrete, ShockGroupName, ShockName, _fingerprint
 from lcm.typing import (
     BoolND,
@@ -129,8 +125,6 @@ class _ExitReducer:
     """
     n_actions: int
     """Flattened canonical stay product; the exit takes the next ID."""
-    n_discrete_action_axes: int = 0
-    """A source EV1 component belongs to a discrete combination, not a continuous ID."""
     renegotiation: RenegotiationQueries | None = None
     """Raw policies across a declared discrete state, before applying participation."""
     settlement: SettlementQueries | None = None
@@ -248,10 +242,6 @@ class _ExitReducer:
             )
         if compares_at_optimum(cast("Exit", self.declaration).rule):
             return self._at_optimum(
-                operands=operands, payoffs=payoffs, active=active, valid=valid
-            )
-        if _TASTE in operands and self.kind is QueryKind.FULL:
-            return self._full_taste(
                 operands=operands, payoffs=payoffs, active=active, valid=valid
             )
         eligible, integrity = self._eligible(
@@ -414,7 +404,7 @@ class _ExitReducer:
         payoffs: Mapping[str, FloatND],
         active: BoolND,
     ) -> tuple[BoolND, BoolND]:
-        """Share exit support and strict common-policy consent across taste routes."""
+        """Share exit support and strict common-policy consent."""
         if isinstance(cast("Exit", self.declaration).rule, Consent):
             if self.consent_read is None:
                 return jnp.asarray(a=False), jnp.asarray(a=True)
@@ -445,61 +435,6 @@ class _ExitReducer:
         )
         return active & support, jnp.asarray(a=True)
 
-    def _full_taste(
-        self,
-        *,
-        operands: Mapping[ReferenceName, PytreeValue],
-        payoffs: Mapping[str, FloatND],
-        active: BoolND,
-        valid: BoolND,
-    ) -> PolicyAnswer:
-        """Append the exit component to the source's canonical discrete taste roster.
-
-        In a household the decider's logit runs over its stay values and its own
-        exit payoff; every member's exit payoff is its value at the exit.
-        """
-        taste = cast("Mapping[str, FloatND]", operands[_TASTE])
-        stay_values, stay_ids, stay_at_choice, decider = _taste_stay_roster(
-            q=cast("FloatND", operands["q"]),
-            feasible=cast("BoolND", operands["feasible"]),
-            n_discrete=self.n_discrete_action_axes,
-            weights=taste["weights"],
-        )
-        kept = jnp.any(cast("BoolND", operands["feasible"]))
-        eligible, integrity = self._eligible(
-            operands=operands, payoffs=payoffs, active=active
-        )
-        if not isinstance(cast("Exit", self.declaration).rule, Consent):
-            eligible &= ~kept
-        valid &= integrity
-        outside = jnp.where(
-            eligible,
-            jnp.stack(tuple(payoffs[member] for member in self.members)),
-            -jnp.inf,
-        )
-        values = jnp.concatenate((stay_values, outside[decider][None]))
-        at_choice = jnp.concatenate((stay_at_choice, outside[None]))
-        identifiers = jnp.concatenate(
-            (stay_ids, jnp.asarray([self.n_actions], dtype=jnp.int32))
-        )
-        scale = taste["scale"]
-        chosen, value = taste_choice(
-            values=values,
-            at_choice=at_choice,
-            decider=decider,
-            scale=scale,
-            key=taste.get("key"),
-        )
-        supported = kept | eligible
-        undefined = jnp.any(jnp.isnan(value))
-        return (
-            value,
-            jnp.where(supported, identifiers[chosen], -1).astype(jnp.int32),
-            supported,
-            valid & jnp.isfinite(scale) & (scale > 0) & ~undefined,
-            cast("PolicyAnswer", operands["answer"])[4],
-        )
-
 
 def bind_exit_reducer(
     *,
@@ -510,7 +445,7 @@ def bind_exit_reducer(
     return (
         with_signature(
             reducer.keep,
-            args=["q", *(name for name in operand_names if name != _TASTE)],
+            args=["q", *operand_names],
             enforce=False,
         ),
         with_signature(
@@ -815,7 +750,6 @@ class _QueryGraphBuilder:
                     *context.state_action_space.action_names,
                     *physical_inputs,
                     _PHYSICAL_CONTEXTS,
-                    *((_TASTE,) if context.has_taste_shocks else ()),
                     "period",
                     "age",
                 )
@@ -1036,10 +970,6 @@ class _QueryGraphBuilder:
             settlement=settlement,
             n_actions=math.prod(
                 value.size for value in context.state_action_space.actions.values()
-            ),
-            n_discrete_action_axes=sum(
-                isinstance(context.grids[name], DiscreteGrid)
-                for name in context.state_action_space.action_names
             ),
         )
         return inputs, reducer

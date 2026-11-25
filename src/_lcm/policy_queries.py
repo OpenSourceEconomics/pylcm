@@ -101,7 +101,6 @@ _PHYSICAL_CONTEXTS = "_lcm_query_physical_contexts"
 _INFORMATION = "_lcm_query_information"
 _DRAWS = "_lcm_query_draws"
 _ACTING = "_lcm_query_acting"
-_TASTE = "_lcm_query_taste"
 _QUERY_ARGUMENTS = "query_arguments"
 _EVALUATED = "_lcm_query_evaluated"
 _OUTSIDE = "_lcm_query_outside"
@@ -1203,7 +1202,6 @@ def _own_raw_evaluation_sources(
         or raw.context is not context
         or context.koopmans_aggregator is not None
         or context.state_action_space.action_names
-        or context.has_taste_shocks
         or node.ancestors
         or raw.ancestors != (root,)
         or raw.inputs
@@ -2354,21 +2352,6 @@ def _active_query_cell(
             "feasible": feasible,
             "answer": answer,
         }
-        if context.has_taste_shocks:
-            from _lcm.regime_building.max_Q_over_a import (  # noqa: PLC0415
-                TASTE_SHOCK_SCALE_PARAM,
-            )
-
-            weights = _taste_weights(node=node, arguments=arguments)
-            operands[_TASTE] = {
-                "scale": arguments[TASTE_SHOCK_SCALE_PARAM],
-                **(
-                    {"key": arguments["taste_shock_key"]}
-                    if "taste_shock_key" in arguments
-                    else {}
-                ),
-                "weights": weights,
-            }
         answer = node.decision(
             **{
                 name: operands[name]
