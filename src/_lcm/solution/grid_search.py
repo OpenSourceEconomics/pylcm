@@ -3,9 +3,9 @@
 `GridSearch` runs the max-Q-over-a grid search. Its `build_period_kernels`
 returns one `PeriodKernel` per period. Eligible ordinary hard-max kernels declare their
 canonical action product for blockwise execution, and the engine binds the block width
-before lowering. Collective and EV1 kernels deliberately retain their canonical dense
-reduction order. Each streamed period program also names its exact value-input artifacts
-and argument paths so the engine can resolve their transfers.
+before lowering. EV1 kernels deliberately retain their canonical dense reduction
+order. Each streamed period program also names its exact value-input artifacts and
+argument paths so the engine can resolve their transfers.
 Fixed distributed states co-map ordinary continuation leaves with the streamed state
 cell. Co-map routes with separate same-period or edge-reference value channels retain
 the dense kernel. The adapter assembles the resulting `KernelOutput` outside JIT.
@@ -137,7 +137,6 @@ class _ActionStreamingDisposition(StrEnum):
 
     STREAMED = "streamed"
     DENSE_EV1_NONCANONICAL = "deliberately_dense:ev1_canonical_reduction_order"
-    DENSE_COLLECTIVE_RESOURCES = "deliberately_dense:collective_resource_regression"
     DENSE_TRIVIAL_ACTION_PRODUCT = "deliberately_dense:trivial_action_product"
     DENSE_CO_MAP_REFERENCE_CHANNEL = (
         "deliberately_dense:co_map_with_separate_reference_channel"
@@ -232,8 +231,8 @@ class GridSearch(Solver):
                 "joint lotteries"
             ),
             main_tradeoff=(
-                "Broad representation; eligible singleton hard-max routes stream "
-                "actions, while EV1 and collective reductions use dense actions"
+                "Broad representation; eligible hard-max routes stream actions, "
+                "while EV1 reductions use dense actions"
             ),
             reduced_axes=("action_product",),
             tiled_axes=("cell",),
@@ -442,6 +441,8 @@ class GridSearch(Solver):
                         untiled_state_names=untiled_state_names,
                         broadcast_state_names=broadcast_state_names,
                         return_feasibility=True,
+                        member_axis=context.member_axis,
+                        pareto_weights=context.pareto_weights,
                     )
                 else:
                     program_functions[q_id] = (
@@ -636,7 +637,7 @@ def _action_partition_mesh(
     """Return the regime's mesh when its action product is shared, else `None`.
 
     Model construction admits a partition request only on the ordinary
-    streamed singleton route without co-mapped states;
+    streamed route without co-mapped states;
     reaching here with anything else is an internal planning error.
     """
     if context.action_partitions == 1:
@@ -739,10 +740,6 @@ def _classify_action_streaming(
         disposition = _ActionStreamingDisposition.DENSE_DECOUPLED
     elif context.has_taste_shocks:
         disposition = _ActionStreamingDisposition.DENSE_EV1_NONCANONICAL
-    elif context.member_axis not in (None, ("self",)):
-        # A household of the one member `"self"` is a single run on the
-        # household kernels; its solve streams where the single's does.
-        disposition = _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES
     elif any(map(landing_checks_of, context.Q_and_F_functions.values())):
         # The dense reduction sums each action's raw raise-rule landings over
         # the feasible actions in the pass that takes the maximum.
@@ -750,20 +747,6 @@ def _classify_action_streaming(
     else:
         disposition = _ActionStreamingDisposition.STREAMED
     return disposition
-
-
-def _supports_action_streaming(*, context: SolverBuildContext) -> bool:
-    """Return whether the route's simulation decision streams its actions.
-
-    It streams where the solve does, except in a household: the household of
-    the one member `"self"` streams its solve, but its decision is the dense
-    household argmax.
-    """
-    return (
-        _classify_action_streaming(context=context)
-        is _ActionStreamingDisposition.STREAMED
-        and context.member_axis is None
-    )
 
 
 def grid_search_query_inputs(

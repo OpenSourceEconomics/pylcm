@@ -43,7 +43,7 @@ def fail_if_action_partition_route_is_unsupported(
     - a regime the model does not declare;
     - more devices than the model may use;
     - a terminal regime, a regime solved by another solver, or one declaring
-      taste shocks, members or gated edges;
+      taste shocks or gated edges;
     - a discrete sharded state;
     - an action product with fewer than two actions, or fewer actions than
       devices;
@@ -146,7 +146,6 @@ def _request_failures(
             f"is solved by {type(regime.solver).__name__}, not GridSearch",
         ),
         (regime.taste_shocks is not None, "declares taste shocks"),
-        (regime.member_axis is not None, "is a collective regime"),
         (bool(law.gated_edges), "declares gated edges"),
         (
             bool(discrete_sharded),

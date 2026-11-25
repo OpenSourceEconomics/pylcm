@@ -11,10 +11,12 @@ from copy import deepcopy
 from functools import cache
 from math import prod
 
+import jax
 import numpy as np
 import pytest
 
-import _lcm.regime_building.max_Q_over_a as max_Q_over_a
+import _lcm.solution.action_streaming as action_streaming
+from _lcm.typing import QAndFArg
 from _lcm_regime_finder import find_regimes, verify_certificate
 from _lcm_regime_finder.declarations import normalize_declarations
 from _lcm_regime_finder.facts import FactsBackendName, Record, make_facts
@@ -42,10 +44,12 @@ from lcm import (
 from lcm.exits import ExitRule
 from lcm.shocks import GaussHermite, Normal, Product, ShockGroup
 from lcm.typing import (
+    ActionName,
     BoolND,
     ContinuousState,
     DiscreteState,
     FloatND,
+    ReferenceName,
     RegimeName,
     ScalarInt,
 )
@@ -541,38 +545,32 @@ def test_certificate_rejects_a_layout_that_splits_the_renegotiation_state() -> N
 def _engine_counts() -> tuple[int, int]:
     """Solve the two-member model; return its stored values and action values.
 
-    The collective readout runs once per state node of each regime-period and
-    receives every member's action values there; the stored value carries
-    the state axes and a trailing member axis.
+    The household stream enumerates the action product once per state node of
+    each regime-period, every action carrying each member's value; the stored
+    value carries the state axes and a trailing member axis.
     """
-    per_node: list[int] = []
-    readout = max_Q_over_a.collective_readout
+    n_actions: list[int] = []
+    prepare = action_streaming._prepare_action_call
 
     def recording(
-        *,
-        member_Q: Mapping[str, FloatND],
-        feasibility: BoolND,
-        weights: Mapping[str, FloatND | float],
-        action_axes: tuple[int, ...],
-    ) -> tuple[dict[str, FloatND], BoolND]:
-        per_node.append(sum(prod(q.shape) for q in member_Q.values()))
-        return readout(
-            member_Q=member_Q,
-            feasibility=feasibility,
-            weights=weights,
-            action_axes=action_axes,
-        )
+        *, action_names: tuple[ActionName, ...], kwargs: dict[ReferenceName, QAndFArg]
+    ) -> tuple[
+        tuple[jax.Array, ...], dict[ReferenceName, QAndFArg], tuple[int, ...], int
+    ]:
+        prepared = prepare(action_names=action_names, kwargs=kwargs)
+        n_actions.append(prepared[-1])
+        return prepared
 
     model, params = make_two_member_model()
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(max_Q_over_a, "collective_readout", recording)
+        patch.setattr(action_streaming, "_prepare_action_call", recording)
         values = model.solve(params=params, log_level="off").values
     shapes = [
         np.asarray(v).shape for regimes in values.values() for v in regimes.values()
     ]
-    assert len(per_node) == len(shapes) and len(set(per_node)) == 1
+    assert len(n_actions) == len(shapes) and len(set(n_actions)) == 1
     stored = sum(prod(shape) for shape in shapes)
-    return stored, sum(prod(shape[:-1]) for shape in shapes) * per_node[0]
+    return stored, stored * n_actions[0]
 
 
 @pytest.mark.parametrize("backend", BACKENDS)

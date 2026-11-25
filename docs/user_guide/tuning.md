@@ -122,9 +122,9 @@ memory without capping its retained candidate bank.
 
 For `GridSearch`, `cell` tiles the flattened product of the states evaluated inside each
 sharded slice. Sharded states stay outside this product. `action_product` separately
-streams eligible hard-max action reductions; EV1 and collective models keep their
-canonical dense action reductions while tiling state cells. `DCEGM` uses the applicable
-axes listed above.
+streams eligible hard-max action reductions, a household's included; EV1 models keep
+their canonical dense action reductions while tiling state cells. `DCEGM` uses the
+applicable axes listed above.
 
 NBEGM also owns no compiled-width fields. Use its applicable axes in the table above:
 `interval` streams the continuation read together with the stable-identity candidate
@@ -362,9 +362,8 @@ of one, or an empty mapping, runs the ordinary route unchanged.
 The request is checked at model construction. It is refused, naming every reason, when:
 
 - it names a regime the model does not declare, or more devices than the model may use;
-- the regime is terminal, is not solved by `GridSearch`, is a collective regime,
-  declares taste shocks or gated edges, folds a process, or carries a discrete sharded
-  state;
+- the regime is terminal, is not solved by `GridSearch`, declares taste shocks or gated
+  edges, folds a process, or carries a discrete sharded state;
 - the action product has fewer than two actions or fewer actions than devices;
 - a fixed `action_product` width cuts the product into fewer blocks than devices.
 

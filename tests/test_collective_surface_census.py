@@ -276,6 +276,7 @@ _ENGINE_VOCABULARY_MODULES = frozenset(
     {
         "tests/regime_building/test_simulate_gate_param_and_leg_selection.py",
         "tests/regime_building/test_streaming_max_Q_over_a.py",
+        "tests/solution/test_action_partitions.py",
         "tests/solution/test_dynamic_bound_runtime.py",
         "tests/solution/test_edge_topologies_build_each_target_once.py",
     }

@@ -35,9 +35,6 @@ from lcm.typing import (
     ReferenceName,
     ScalarInt,
 )
-from tests.regime_building.test_collective_feasibility_is_shared import (
-    _make_model as _build_collective_model,
-)
 from tests.test_models import taste_shocks_toy
 
 
@@ -224,33 +221,6 @@ def test_eager_singleton_hard_max_never_builds_the_dense_oracle(
     assert program.disposition is CoreExecutionDisposition.PLANNED
     assert program.disposition_reason is None
     assert_array_equal(actual, jnp.asarray([14.0, 15.0]))
-
-
-def test_public_collective_solve_does_not_call_streamed_household_reduction(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """State tiling keeps the household's canonical dense action reduction."""
-
-    def fail_streamed_collective[UnusedArgument](**_kwargs: UnusedArgument) -> Never:
-        raise AssertionError("dense collective route called streamed reduction")
-
-    monkeypatch.setattr(
-        action_streaming,
-        "_evaluate_collective_block",
-        fail_streamed_collective,
-    )
-    model = _build_collective_model()
-    program = core_program_graph(
-        kernel=model._regimes["couple"].solution.period_kernels[0]
-    )["main"]
-    solution = model.solve(params={"discount_factor": 0.95}, log_level="debug")
-
-    assert (
-        program.disposition,
-        program.disposition_reason,
-        program.requirements.reduced_axes,
-        bool(jnp.all(jnp.isfinite(solution.values[0]["couple"]))),
-    ) == (CoreExecutionDisposition.PLANNED, None, (), True)
 
 
 def test_public_ev1_solve_does_not_call_streamed_branch_reduction(

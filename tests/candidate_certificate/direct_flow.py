@@ -696,21 +696,21 @@ _SOURCE_SEALS = {
     LIVENESS_SOURCE: "ee283c14ad41b8e9bc36b40ba7c6812269e14e92e0afc2b71e48d841271613af",
     CONTINUATION_READS_SOURCE: "35dfa6999f53742aa6b824578c5105a22c472884daeed0d33d4aaf195200e8e5",
     WORKSPACE_PLANNING_SOURCE: "496ffb297a535cbf6b13229eecdc1fbf52b87c63a64989cadb56f858b19c71bb",
-    SIMULATION_PROGRAMS_SOURCE: "9b09e927e3e63ab2300e8f9dbbaea28509661eba7899c71c82c21fdacb9f3b88",
+    SIMULATION_PROGRAMS_SOURCE: "89cd210cea3b61327dbf6f6267cdca49d23e3668816a1e58fdcab97e223d33dd",
     SIMULATION_PROGRAM_TYPES_SOURCE: "cd4a05da46ed5f3a6a2484c7a78961e8488af155f0ea14c5efb3aebbeecf116a",
     SIMULATION_RUNTIME_SOURCE: "0623ad63ded8ee0ae880003228814e7e300a7a4394b3abecb3f5dd27acc58009",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "c7a915405c53cd07ec21d494c15a74b07a018ca60ff4ede729e5d1391a7459ee",
     COLLECTIVE_SOURCE: "4acbc46981b853058f2f90a91050d65dcdccacead0e74cde66f359aa41e8c18f",
-    MAX_Q_SOURCE: "31bee4145b853589fa47c65ca898189e5d89a84f662aef18fd8c7b4464c466fb",
+    MAX_Q_SOURCE: "531eedf100b7106bca74af50fd33c48362b288eb26ed4d9408a42d7a2852fbea",
     PROCESSING_SOURCE: "7be22e9a11477c0b809bb1483009c512b8a35c2159d9178b204c75a99b116733",
-    GRID_SEARCH_SOURCE: "4e588dfde2370abcf4eb2d7d8d60de569ff4c029ebba7961e01f4e4f355f7b10",
+    GRID_SEARCH_SOURCE: "24ef67cce0d6b30465f8c8cfca525c0140347eff2435f73476fc610ed798f703",
     CORE_PROGRAM_SOURCE: "7d8197a3d2607a3380be63408ae4cf2b8d8ebbe68b043cc3aff76bf1f5c6b78a",
     OUTPUT_LAYOUT_SOURCE: "8c1c2da98d43d3a5b8155d01418899ecc3b99730aef73c274b3f959b8dced07b",
     VALUE_TRANSFER_SOURCE: "1edd44ea83af5a2cee0fc8a71760a997b13ac534ce5a3cf8e847d5883bcc50c6",
     FOOTPRINT_SOURCE: "e87cd4319089bbdcc17c02d437da5b2db7173f2e871462a5c61f9214641940fa",
     INTERNAL_OUTPUTS_SOURCE: "e41e5581295b427e22ecb3f533281c030fec77c01cf224d1a844ae6f54fe28e1",
-    ACTION_STREAMING_SOURCE: "65f38e93a3cd4681498217ef2c64d06a51dc7c7e26afd70d8fffb828194d597b",
+    ACTION_STREAMING_SOURCE: "843d8ec21685ac2a21e790a98f8bc71f43b2b2c43159be69c9d19cdb7353b44c",
     ACTION_REDUCTION_SOURCE: "26355ac3edf5da80a44b4f9754b71c29e8edffc68b1a7b7ac253b9bfbf749a0f",
     COLLECTIVE_ACTION_REDUCTION_SOURCE: "9f3e60d8006a5bbc80c9b7bed17f233584951668b80758af94f15de727712ea0",
     DISPATCHERS_SOURCE: "a78d5271fcfc7437b68bd755ce7c2b8b0b78d5f26ed00a3fb4424133725da8b2",
@@ -784,9 +784,9 @@ _SOURCE_SEALS = {
     "src/_lcm/simulation/current_iid_overrides.py": "c5b8d450cdad4980a694df285502b70cf1238762440f1302d664b2e84d964ced",
 }
 
-EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 411
+EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 409
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
-    "ce4f0914b5cf4530600d46264ffe50b13254137d44de1abe78b5f787c9957612"
+    "298e100ca0b6e51223ce979c40d254ae4abf89dffc5692a1ab83ca12fea58e40"
 )
 EXPECTED_SUPPLEMENTAL_MUTATION_COUNT = 94
 EXPECTED_SUPPLEMENTAL_MUTATION_NAMES_SHA256 = (
@@ -2303,17 +2303,16 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     GRID_SEARCH_SOURCE: (
-        "b3bca2b8d611f0f477e5d897a6a72fc4930c807271868157cd1982bb9dec087f",
+        "484b051c0291b18dc7574797690cfd0b1c53cd2a451b9e1a7dadd1c1ad3aa655",
         {
-            "GridSearch.build_period_kernels": "04699b30e71de01a54f30d6ae925bc76d0bc0bacdc4aacf8ac49248ff97706d9",
+            "GridSearch.build_period_kernels": "2a04dfc89c841e614bb42699588fde413543487a8d815e5f92b6b5f820f70ee8",
             "grid_search_query_inputs": "7455991bf53425e5f43fa71cc0980a542e0b94aaf1f4715b307d6158766813a1",
             "_action_partition_mesh": "d27f64ff5fc6a3e08d9fb316bafb2ad3579bf8db5adb00b977e0eccdbc9e79b1",
-            "_classify_action_streaming": "e4e177411197e240ab71bed072e9bb940030284830cc3ded2ec7845e5b07a9f6",
+            "_classify_action_streaming": "89df652e5c7022058b488e1c0607e359233688e97fbbcd5e2f6db4e7ed5c383f",
             "_select_action_width_keyword": "b45663df866d5a48c05b8955b6cdc68515697e8fa925566ae72afd06b3850104",
             "_select_cell_width_keyword": "f686d6cc7ae0d93dd1e3c301600872996943c7e3d6788c9d5098d39449793727",
             "_select_width_keyword": "00cd19cec6e137d7d9e044bc1625793b1d6f78bbdfc93d6858bb6f8e9d3c022f",
             "_edge_reference_regimes_for_targets": "9bd8c8de92411abd731020f62cb3c44ef814d4f3b64ab496b6299fcb925473e0",
-            "_supports_action_streaming": "566762d8b3e00017e2c5cb2b30f159a0c73c63c9170f959feade00422feb880d",
             "_value_reads": "f5fb7b70d83dabce842b5c21d57f2a6605467460b718cc15b41da5ad473dde7b",
             "_value_read": "082a372c7e48bf7a32d390079e2dd60b9ed5aa56868cbf9fbccf0b8f924b3bb6",
             "_GridSearchArgumentBuilder.__call__": "0ee2e71e76050dcef184f566b2c1903ea0b7546475d58ec8defb6462f5fa43a4",
@@ -2328,10 +2327,11 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MAX_Q_SOURCE: (
-        "a680b0a998a613eb84cbac64184ba1be0c7432d96f620c09f0530f8b28ed59fd",
+        "cdea3009c5d41d9753bfae1b28f72456988e0e8cdf16ea8b13e65d1f67b412fe",
         {
-            "get_action_partitioned_max_Q_over_a": "7e4b9b51294748528dbe9d26c80af48f4dc7ef8a8f75090e0d110d56eab6db80",
-            "_ActionPartitionedMaxQOverA.__call__": "9252a1202b3781ff23df05c28e65d4585e16274e0ac6abd6bcc0c4a7dfdfdbdc",
+            "get_action_partitioned_max_Q_over_a": "7d5054e95912c54ab6f8c650bf505e5c80c97c2a7cdefb2b5fc201a56c44d49e",
+            "_ActionPartitionedMaxQOverA.__call__": "414b6d9a0ae105c9f164a280c822cd2040f72281a74d43d74efd9004b4954158",
+            "_ActionPartitionedMaxQOverA._published": "8fe2e5551cf24ef81ba81587195ec96005d2000d85b2aae5fef96a881dfeecd8",
             "_arguments_named": "95c0088a6f36474a87a6dd5d4f0a72745787638106bcbb911a0f5aad35101365",
             "_OnActionPartitionAxis.__call__": "ebae3ad5db6e89feb499866aa7ff673a8e6cd934e55346a77f051bbbd20ec64b",
             "_call_with_operands": "c26f9db85ab67d1b4d6c730076cba1d0c6b64e2d7dd98159d9c4d37b21c24c0c",
@@ -2351,43 +2351,45 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     ACTION_STREAMING_SOURCE: (
-        "9eeec42a9f14d14aa4e3266e2ed4a55b4f44e46a3137776cb0e2a3a76ebc59dc",
+        "4f6c58a5cbca949796a44699265fcd38a3363a4520083bfe3a1a8638abdcc2ef",
         {
-            "build_partitioned_streaming_max_Q_over_a": "2b1ab2a3075916b37d825af02061dd985063823e47aa8f57589a47c9dba86548",
-            "merge_partition_accumulators": "490ff581c56b3c85bfbfc7d3824baed55adc1aa035970e5d15c6b433c6380098",
+            "build_partitioned_streaming_max_Q_over_a": "78fbb3ff24bcf150b031653baaaffc7c8ee298f60371faf15f3e70601a6eae2a",
+            "merge_partition_accumulators": "053966accc1ad23b6989081f27398678efbb9198d28d5f7e556ee2d51cf5fdac",
+            "_merge_in_order": "47f85ef84e0b69dd205548f518cdc09309d399ed688b8a0d8d4ba05b957fbb8e",
             "_fail_if_not_positive_int": "23eecceb2c4c24b75e70863f2a5f531c5a52e569400c090c382d5ba667cf6f9f",
             "ActionPartitionLayout.__post_init__": "9957631cd979a1ec48136310cb5e3cfb246b1c7367331544c68447b0b092539b",
             "ActionPartitionLayout.n_blocks": "269793628a54b8cd15b276fa360f884a97483ffbeb27bff2b68d4ba94ae055fe",
             "ActionPartitionLayout.blocks_per_partition": "b1109e10050ec6f186486a275a0467089c2c5101528b675c928ba0fd85d8b9b6",
-            "_PartitionedStreamingHardMax.__call__": "e994a31485519e2bd6ac6449d6bfd9a3bff214d556db0ff1c0c746ae2a90e410",
-            "_PartitionedStreamingHardMax.local": "974f0f5ae001649c22874bfccc8977564708c6d10e16c3c5eef1624631d207ad",
-            "_evaluate_owned_block": "1140bd553314c405280402990a4e59d4acfa7d6b6b4d22d0b2a4b43a46ad4214",
+            "_PartitionedStreamingHardMax.__call__": "2c32a6a8731982dbfb7feaf649716da73be6379ac4841f2bbbd2c340babfc405",
+            "_PartitionedStreamingHardMax.local": "0d5f27cc2bd11db6f99b6735b2b86e7541f081b70247a008adc10c9cc311c48c",
+            "_evaluate_owned_block": "e987725c2b89c2ddd3025b9a82b91ef74daaec316c4b87ba057b36a62e909fba",
             "_validate_streaming_configuration": "4f9f662fa73508293542ddd9e6ea428ac22f31f45376b80290f0e46b64a3f9b4",
             "_prepare_action_call": "27a8f85f8f16c7214846609213fdf9135bfb7118395aecdcf68ace17bea4e39c",
-            "_evaluate_block": "6d0cbdb8fedaf491b8cf6fb942b9e680b6be28dca7db24e550d91bdde47ac401",
+            "_evaluate_block": "21dbbca87aa22a3d159153470ffe06bcfb7ba20dc6ed6da70332f0f3918468b4",
             "_evaluate_one_action": "c12a6ab8b6f9a29c2b985f2eda18f9ff2bd86ef0c3d2dbd17d6f739b0219bc07",
             "_decode_action": "cd4d0f5f01fe2a5648faab36deda62d09452116e3e7cf1e691fe6214b8a692c5",
             "_validate_block_Q_and_F": "7f00abbccfe23768df403596eb22c715eb3542b4e43dd67593f7bd3e487fdeef",
-            "_trace_block": "f1d9a78339cd253ccd41e4e39611cdbb764c3855da2e1757c0101599d3d4b8bd",
+            "_trace_block": "8bb71d3b3d57bff7821219066e4ca8c08b36972b6bae7051f79d4a5d9a023f5c",
             "_empty_reduction": "4db3f3eddf997264f026501228275cd64447b58489a72b86d674ddf1ae047189",
+            "_empty_collective_reduction": "c1cdc9217993f46e3117664e75bd18d7f0e30bb964203f565c1715eec80243e2",
             "_typed_like": "fc7809b3ba41f45007a2464926696f92b1cf2f937c2933223c49ce4984d56b22",
             "_start_reduction": "034b3966dd04c0e0d66e085e8e2c4e16b127e1d8a9869ecfa039c3b5e7928b04",
             "_scan_one_block": "1901bdf24caccc5087081f15fc69e9138db76545ae7bb1794539d05adf5af7c9",
-            "_add_block": "a5047bea80275b77727b69b06d563bcdfea7e80c0f99dda34f6570948ccd1a72",
+            "_add_block": "15b2a8ed09f25a9d9bd77ed7220114890dab294a30a72a59858ba94d614778c2",
             "build_streaming_max_Q_over_a": "a7ec46f647dedcfda11093c0ea2f51a1f80e7bae468fa0cabfbfffe667c1fcda",
             "build_streaming_collective_max_Q_over_a": "f5688d7c319043580a52c9dd7b8650fe16cfb0709fdf52afcf1aedf6495b9345",
             "build_streaming_ev1_max_Q_over_a": "8498332dec9716b52427dabf6c22e0d624e33286b13327e22c5131f3e4c33fa8",
             "_StreamingHardMax.__call__": "9dc6c2b8c677935d4a043e8cb9f8d4137df32b15db83a20e39f8d29c2e5c1c0a",
-            "_StreamingCollectiveHardMax.__call__": "90c1b44f348dc15127d066b3fa55b6a628c76d7b9e2414adef3dc3dd064e5b34",
+            "_StreamingCollectiveHardMax.__call__": "d70935ec2d1ce7833ae89e54e72a4a55e8d112c5bd22865df5a644c58dd3f9a1",
             "_StreamingEV1ExpectedMax.__call__": "c4a4d4240ebd92be8d0ea2b20d1825f1e8c787219a4895acc5bc3866704f729c",
             "_evaluate_ev1_branch_block": "a683329a9f55c515c5df50283b7b7af3f2733bf3ce474bc9169f1cb3e42c6bb4",
-            "_evaluate_collective_block": "95fbb6f1b86c2a3441a62f066c070239e7718f38f6c5b2865d4d8c3de28d9604",
-            "_scan_blocks": "90d220fa12e133d9921aaad62053012fc47ab1917b16a623db2abea8a2ecc62f",
+            "_evaluate_collective_block": "9c5e40a688891aa4692769cf46b03e48ec0d755d4951eee225fe61712eb159db",
+            "_scan_blocks": "1b402fdef55baf8bf1d878418e16ba57a4518ae0d64c8d58d5ddf33f215bd45c",
             "_reduce_whole_product": "7a9d6038ddebf14aaec04a50f0962a6de9c4a3f7486c181e8b0821214128f9eb",
+            "_reduce_collective_whole_product": "e19def4ddcc670b0ba2b007b2c61ba250ceb7266c4cbf79b31a4aff29358ba82",
+            "_household_objectives": "10527e98e914680acd890cbe4b506523bd7a8036278f4e9ce86ca69b20110b92",
             "_reduce_no_action": "27a09e4e36247d95db9c565aaefa311f3c1ded3c88889f0ed305cb825bae243e",
-            "_start_collective_reduction": "050f38bd8ad639847cf9bd77784455eeb3185b66ec10d22541053256d7090c89",
-            "_scan_collective_blocks": "2af8554d14cb82cab0ccd29f86fe325860add8700fd726b33bffe92a95b4aa7a",
-            "_add_collective_block": "b13b3e6ce16cd8d1336f88df77b7e80604ae3a86464cec351147b8e0eff3e408",
+            "_start_collective_reduction": "9d5896d5ed93176bcf074cc6228fcdcd924b8d77714738ceef40c7f2a4634880",
             "_reduce_collective_no_action": "27a4af569b03dc2a5132c848d9e0373526fcf0bb9fc6fd2b4822d90eaa78635e",
             "_validate_scalar_Q_and_F": "a2b49855d9fe1572f7440248db7edfce283a2179394648ca55b6b8ce550f5364",
             "_validate_collective_scalar_Q_and_F": "81104da063d5f3e6c8d1668702d8a59d8f11b0d390819ddf701d6ae1121aadc6",
@@ -2482,21 +2484,22 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     SIMULATION_PROGRAMS_SOURCE: (
-        "7f4642e9139bf8b11139dbca76b92a05fd554c8cf09158169c843f0f467c405a",
+        "f9aa483866688c0ca6d0bba376278b49499ee5d054cd4b7a30f5a6c816993895",
         {
-            "build_simulation_programs": "6f9b852ea4e57e95649117c1df5f011409a0d1c490e0c78d2ac85d9ffd362879",
+            "build_simulation_programs": "24e8dd6778123ed9d6687f9879b2ee3063f9adc05b0f99a49d7122097007defd",
             "_decision_programs": "a1f66ecba211e4ad2a9871118bd991df57223f1ab6c08f2c1d9f60e33dd523aa",
             "attach_gated_simulation_programs": "e92be1be5b6628706b2a2c7cdfb749b3936ade622d352161fb72d9d949a59cfa",
             "gated_simulation_programs_ready": "fe5419d6b84ba1929acf26cde8dc2feedf9589a2345925a1ae6de25fde674def",
             "budgeted_simulation_programs_ready": "f20390a48d72f2454deb9cb050493d3170092196cd6f57bf96380a09cb68c89c",
             "_GateFoldBody.__call__": "5d0b319bdc495a2d914ee18b16f50946d6101317bb7aca7b433d4322eda3b4cb",
             "_GateRouteBody.__call__": "8edd6d3ba7dcf594e0e2a8bcc3d8656dd4d8ded83a15aaecccbdb8f3e1003d10",
-            "_fail_if_the_streamed_reduction_is_wrong": "ad75f79944f81211295928363a3e626a2ad4a9190c6a95dd734bbcc55814392b",
+            "_fail_if_the_streamed_reduction_is_wrong": "866bdf046f2b8dbe04e8bdb3d16e0f9c4c5099d5495df6789b6bfb63d38acd65",
             "_decision_subject_arg_names": "bcf384bb7218cb328b3494a3eda67a40b1f23bd438663562315a47c47272f803",
             "_decision_value_reads": "d65d0d1ce0e204300faa183c67ce1c993f5950f052d1dbb0dd514d52aad9e0b1",
-            "_decision_body": "52627da58e6da7fc90bf91601f65f99ec34977fd271b671706226554daed74b7",
-            "_StreamedArgmaxQOverA.__call__": "e2861ff5ccf4eb82ce58b4b4c043280952eb2d0ab29e657946bbe92b2ee456a8",
+            "_decision_body": "eb6b9d8ce2aa3807ffabd43c58ddc79ebb2ab96856e5157283435f7ecb7da437",
+            "_StreamedArgmaxQOverA.__call__": "9fb0b2a8d123045d1796b2864b24d0aa4d2ab350079e726dbcf9a4ef54a02e32",
             "_StreamedArgmaxQOverA._fold": "c4cdc93b6c3412703e9b5edbf4a213bc9beaed8f5bdc9132600fe7de398a143c",
+            "_StreamedArgmaxQOverA._household_fold": "b975433885404c9fcaf19f894f8c8a0cf269837a4d4ea66cddae8f911f529a8b",
             "_SubjectTiled.__call__": "1f11a7951bae020b368431c354dc7294cc4d7778c567ac646eb95bd59fbc5e75",
             "_evaluate_subject_tile": "da5ea37bc7faea1405b83b856ca8701e178e0daf0a26223eb70146589d6d26de",
             "_ArgumentsBoundAtDispatch.__call__": "46ee403fdfc0849f77b0727c94064168ad21c00f5072d34d15247e939594babd",
@@ -5864,8 +5867,9 @@ _ACTION_STREAMING_PINS = _callable_pins(
         "_reduce_whole_product",
         "_reduce_no_action",
         "_start_collective_reduction",
-        "_scan_collective_blocks",
-        "_add_collective_block",
+        "_reduce_collective_whole_product",
+        "_household_objectives",
+        "_empty_collective_reduction",
         "_reduce_collective_no_action",
         "_decode_action",
         "_validate_scalar_Q_and_F",
@@ -6026,7 +6030,6 @@ _GRID_SEARCH_STREAMED_PROVIDER_PINS = _callable_pins(
         "GridSearch.build_period_kernels",
         "_edge_reference_regimes_for_targets",
         "_classify_action_streaming",
-        "_supports_action_streaming",
         "_value_reads",
         "_value_read",
     ),
@@ -6098,7 +6101,6 @@ def _grid_search_caller_errors(tree: ast.Module) -> list[str]:
                 observed=disposition_body,
                 expected_source='''STREAMED = "streamed"
 DENSE_EV1_NONCANONICAL = "deliberately_dense:ev1_canonical_reduction_order"
-DENSE_COLLECTIVE_RESOURCES = "deliberately_dense:collective_resource_regression"
 DENSE_TRIVIAL_ACTION_PRODUCT = "deliberately_dense:trivial_action_product"
 DENSE_CO_MAP_REFERENCE_CHANNEL = "deliberately_dense:co_map_with_separate_reference_channel"
 DENSE_OFF_GRID_RAISE_COUNT = "deliberately_dense:off_grid_raise_count"
@@ -6941,6 +6943,7 @@ _SIMULATION_PROGRAM_CORRIDOR_CONTRACTS = _contracts(
             "_decision_body",
             "_StreamedArgmaxQOverA.__call__",
             "_StreamedArgmaxQOverA._fold",
+            "_StreamedArgmaxQOverA._household_fold",
             "_SubjectTiled.__call__",
             "_evaluate_subject_tile",
             "_ArgumentsBoundAtDispatch.__call__",
@@ -11065,6 +11068,14 @@ def _insert_before_nth(
     return text[:start] + insertion + text[start:]
 
 
+# The line where a household block's member values, feasibility and identities
+# enter its objective; the household block controls perturb what follows it.
+_HOUSEHOLD_BLOCK_UNPACK = (
+    "    member_values, feasible, global_ids = "
+    "evaluated.output if bounded else evaluated"
+)
+
+
 def _replace_nth(*, text: str, marker: str, replacement: str, occurrence: int) -> str:
     """Replace exactly the requested occurrence of one production marker."""
     start = -1
@@ -13514,15 +13525,17 @@ def allocation_reservation_mutation_specs(
     )
 
 
-# The action-partitioned singleton solve is its own corridor. GridSearch selects
+# The action-partitioned hard-max solve is its own corridor. GridSearch selects
 # it only for an admitted request; the device-mapped kernel hands Q_and_F
 # exactly its declared arguments and the planner-bound width; every device
 # streams the contiguous run of whole blocks the layout assigns it, every block
 # inside the scan as on the unpartitioned stream, with blocks it does not own
-# and padded slots infeasible; the per-device hard-max accumulators are
-# gathered over the action axis and merged in ascending partition order with the
-# exact hard-max law. Shared stream helpers are pinned here too, at the digests
-# the unpartitioned corridor pins them to, so the route is proved end to end.
+# and padded slots infeasible; the per-device hard-max accumulators, a single's
+# or a household's, are gathered over the action axis and merged in ascending
+# partition order with the exact law of their reduction. Shared stream helpers
+# are pinned here too, at the digests the unpartitioned corridor pins them to,
+# so the route is proved end to end; the household law is pinned with the
+# collective reducer.
 _ACTION_PARTITION_CONTRACTS = _contracts(
     {
         GRID_SEARCH_SOURCE: (
@@ -13535,6 +13548,7 @@ _ACTION_PARTITION_CONTRACTS = _contracts(
         MAX_Q_SOURCE: (
             "get_action_partitioned_max_Q_over_a",
             "_ActionPartitionedMaxQOverA.__call__",
+            "_ActionPartitionedMaxQOverA._published",
             "_arguments_named",
             "_OnActionPartitionAxis.__call__",
             "_call_with_operands",
@@ -13544,6 +13558,7 @@ _ACTION_PARTITION_CONTRACTS = _contracts(
         ACTION_STREAMING_SOURCE: (
             "build_partitioned_streaming_max_Q_over_a",
             "merge_partition_accumulators",
+            "_merge_in_order",
             "_fail_if_not_positive_int",
             "ActionPartitionLayout.__post_init__",
             "ActionPartitionLayout.n_blocks",
@@ -13551,6 +13566,8 @@ _ACTION_PARTITION_CONTRACTS = _contracts(
             "_PartitionedStreamingHardMax.__call__",
             "_PartitionedStreamingHardMax.local",
             "_evaluate_owned_block",
+            "_evaluate_collective_block",
+            "_household_objectives",
             "_validate_streaming_configuration",
             "_prepare_action_call",
             "_evaluate_block",
@@ -13559,6 +13576,7 @@ _ACTION_PARTITION_CONTRACTS = _contracts(
             "_validate_block_Q_and_F",
             "_trace_block",
             "_empty_reduction",
+            "_empty_collective_reduction",
             "_typed_like",
             "_scan_one_block",
             "_add_block",
@@ -13601,7 +13619,7 @@ _ACTION_PARTITION_MUTATIONS = {
     ),
     "action_partition:merge_starts_at_last_partition": (
         ACTION_STREAMING_SOURCE,
-        "merge_partition_accumulators",
+        "_merge_in_order",
         "expression",
         "order[0]",
         "order[-1]",
@@ -13609,7 +13627,7 @@ _ACTION_PARTITION_MUTATIONS = {
     ),
     "action_partition:merge_skips_last_partition": (
         ACTION_STREAMING_SOURCE,
-        "merge_partition_accumulators",
+        "_merge_in_order",
         "expression",
         "order[1:]",
         "order[1:-1]",
@@ -13617,10 +13635,10 @@ _ACTION_PARTITION_MUTATIONS = {
     ),
     "action_partition:elementwise_max_replaces_hard_max_merge": (
         ACTION_STREAMING_SOURCE,
-        "merge_partition_accumulators",
+        "_merge_in_order",
         "expression",
         (
-            "HARD_MAX_REDUCTION.merge(left=merged, right=jax.tree.map("
+            "reduction.merge(left=merged, right=jax.tree.map("
             "lambda leaf, index=partition: leaf[index], accumulators))"
         ),
         (
@@ -13631,11 +13649,11 @@ _ACTION_PARTITION_MUTATIONS = {
     ),
     "action_partition:merged_accumulator_discarded": (
         ACTION_STREAMING_SOURCE,
-        "merge_partition_accumulators",
+        "_merge_in_order",
         "expression",
-        "HARD_MAX_REDUCTION.finalize(accumulator=merged)",
+        "reduction.finalize(accumulator=merged)",
         (
-            "HARD_MAX_REDUCTION.finalize(accumulator=jax.tree.map("
+            "reduction.finalize(accumulator=jax.tree.map("
             "lambda leaf: leaf[order[0]], accumulators))"
         ),
         1,
@@ -13671,16 +13689,16 @@ _ACTION_PARTITION_MUTATIONS = {
         ACTION_STREAMING_SOURCE,
         "_PartitionedStreamingHardMax.local",
         "expression",
-        "(_empty_reduction(evaluate_block=evaluate_block), first_block_index)",
-        "(_empty_reduction(evaluate_block=evaluate_block), jnp.int32(0))",
+        "(empty_reduction(evaluate_block=evaluate_block), first_block_index)",
+        "(empty_reduction(evaluate_block=evaluate_block), jnp.int32(0))",
         1,
     ),
     "action_partition:scan_skips_first_owned_block": (
         ACTION_STREAMING_SOURCE,
         "_PartitionedStreamingHardMax.local",
         "expression",
-        "(_empty_reduction(evaluate_block=evaluate_block), first_block_index)",
-        "(_empty_reduction(evaluate_block=evaluate_block), first_block_index + 1)",
+        "(empty_reduction(evaluate_block=evaluate_block), first_block_index)",
+        "(empty_reduction(evaluate_block=evaluate_block), first_block_index + 1)",
         1,
     ),
     "action_partition:start_bound_off_by_one": (
@@ -15090,30 +15108,11 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             new=('    DENSE_EV1_NONCANONICAL = "deliberately_dense:ev1_noncanonical"'),
             label="EV1 dense reason",
         ),
-        "streaming_classifier:collective_reason_changed": replace_once(
-            source=grid_source,
-            old=(
-                "    DENSE_COLLECTIVE_RESOURCES = "
-                '"deliberately_dense:collective_resource_regression"'
-            ),
-            new=(
-                '    DENSE_COLLECTIVE_RESOURCES = "deliberately_dense:collective_slow"'
-            ),
-            label="collective dense reason",
-        ),
         "streaming_classifier:ev1_gate_bypassed": replace_once(
             source=grid_source,
             old="        disposition = _ActionStreamingDisposition.DENSE_EV1_NONCANONICAL",
             new="        disposition = _ActionStreamingDisposition.STREAMED",
             label="EV1 canonical-order gate",
-        ),
-        "streaming_classifier:collective_resource_gate_bypassed": replace_once(
-            source=grid_source,
-            old=(
-                "        disposition = _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES"
-            ),
-            new="        disposition = _ActionStreamingDisposition.STREAMED",
-            label="collective resource gate",
         ),
         "streaming_classifier:ev1_precedes_trivial_product": replace_once(
             source=grid_source,
@@ -15130,7 +15129,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             ),
             label="EV1/trivial precedence",
         ),
-        "streaming_classifier:collective_precedes_co_map": replace_once(
+        "streaming_classifier:household_sent_dense": replace_once(
             source=grid_source,
             old=(
                 "    elif context.co_map_state_names and context.edge_reference_regimes:"
@@ -15138,10 +15137,10 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             new=(
                 "    elif context.member_axis is not None:\n"
                 "        disposition = "
-                "_ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES\n"
+                "_ActionStreamingDisposition.DENSE_TRIVIAL_ACTION_PRODUCT\n"
                 "    elif context.co_map_state_names and context.edge_reference_regimes:"
             ),
-            label="collective/co-map precedence",
+            label="household hard-max disposition",
         ),
         "value_access:grid_reachable_targets_dropped": replace_once(
             source=grid_source,
@@ -15514,17 +15513,17 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             replacement="            n_blocks=n_blocks - 1,",
             occurrence=3,
         ),
-        "streaming_collective_blocks:admit_padded_tail": replace_once(
+        "streaming_collective_blocks:feasibility_mask_dropped": replace_once(
             source=action_streaming_source,
-            old=("    return objectives, member_values, feasible & valid, global_ids"),
-            new="    return objectives, member_values, feasible, global_ids",
-            label="streamed collective padded-tail mask",
+            old=_HOUSEHOLD_BLOCK_UNPACK,
+            new=f"{_HOUSEHOLD_BLOCK_UNPACK}\n    feasible = jnp.ones_like(feasible)",
+            label="streamed collective feasibility mask",
         ),
-        "streaming_collective_blocks:block_local_action_ids": _replace_nth(
-            text=action_streaming_source,
-            marker="    global_ids = block_start + safe_offsets",
-            replacement="    global_ids = safe_offsets",
-            occurrence=2,
+        "streaming_collective_blocks:block_local_action_ids": replace_once(
+            source=action_streaming_source,
+            old=_HOUSEHOLD_BLOCK_UNPACK,
+            new=f"{_HOUSEHOLD_BLOCK_UNPACK}\n    global_ids = global_ids - global_ids[0]",
+            label="streamed collective global action identity",
         ),
         "streaming_ev1:scale_rebound": replace_once(
             source=action_streaming_source,
@@ -15627,7 +15626,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         "streaming_collective_blocks:objective_uses_first_member": replace_once(
             source=action_streaming_source,
             old=(
-                "    objectives = _weighted_sum(\n"
+                "    return _weighted_sum(\n"
                 "        member_Q={\n"
                 "            name: member_values[..., index] for index, name in "
                 "enumerate(members)\n"
@@ -15635,7 +15634,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "        weights=weights,\n"
                 "    )"
             ),
-            new="    objectives = member_values[..., 0]",
+            new="    return member_values[..., 0]",
             label="streamed collective household objective",
         ),
     }
@@ -15664,12 +15663,10 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             f"streaming_collective_blocks:candidate_index_{index}"
         ] = replace_once(
             source=action_streaming_source,
-            old=("    return objectives, member_values, feasible & valid, global_ids"),
+            old=_HOUSEHOLD_BLOCK_UNPACK,
             new=(
-                "    feasible = feasible & (global_ids != "
-                f"{index})\n"
-                "    return objectives, member_values, feasible & valid, "
-                "global_ids"
+                f"{_HOUSEHOLD_BLOCK_UNPACK}\n"
+                f"    feasible = feasible & (global_ids != {index})"
             ),
             label=f"streamed collective candidate identity {index}",
         )
@@ -16116,8 +16113,11 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "path": SIMULATION_PROGRAMS_SOURCE,
                 "source": replace_once(
                     source=simulation_programs_source,
-                    old="            result.best_value,",
-                    new="            candidate_filter(result.best_value),",
+                    old="            result.best_value\n            if isinstance(result, HardMaxResult)",
+                    new=(
+                        "            candidate_filter(result.best_value)\n"
+                        "            if isinstance(result, HardMaxResult)"
+                    ),
                     label="streamed_value_filtered",
                 ),
             },
@@ -16152,8 +16152,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "path": SIMULATION_PROGRAMS_SOURCE,
                 "source": replace_once(
                     source=simulation_programs_source,
-                    old="    if not (has_taste_shocks or member_axis is not None):",
-                    new="    if True:",
+                    old="    if not has_taste_shocks:\n        return",
+                    new="    if True:\n        return",
                     label="streamed_guard_bypassed",
                 ),
             },

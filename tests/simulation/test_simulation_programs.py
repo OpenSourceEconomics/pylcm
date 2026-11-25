@@ -29,6 +29,7 @@ from _lcm.simulation.programs import (
     _SubjectTiled,
 )
 from _lcm.solution.contract import SolverBuildContext
+from _lcm.solution.grid_search import _ActionStreamingDisposition
 from _lcm.typing import ArgmaxQOverAFunction, PytreeValue, QAndFFunction
 from benchmarks.asv._simulation_witnesses import WITNESSES
 from lcm import (
@@ -42,10 +43,6 @@ from lcm import (
 from lcm.exceptions import ExecutionPlanningError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import ACTION_PRODUCT_AXIS
-
-# A regime whose solve kernel streams its action product, and one whose
-# collective kernel keeps the canonical dense reducer and whose routing a host
-# loop drives through the gated-edge folds.
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -59,6 +56,9 @@ from tests.conftest import assert_agrees_to_ulp
 from tests.simulation._profile_comparison import assert_values_agree
 from tests.test_models import taste_shocks_toy
 
+# A single whose decision streams its action product, and a household whose
+# decision streams too and whose routing a host loop drives through the
+# gated-edge folds.
 _STREAMED = ("multi_regime", "work")
 _COLLECTIVE = ("dissolution", "married")
 
@@ -81,9 +81,13 @@ def _cell_body(*, program: CoreProgram) -> Callable[..., PytreeValue]:
     return cast("_SubjectTiled", program.function).func
 
 
-def test_decision_program_declares_action_product_and_subject_axes() -> None:
-    """The decision program streams the action product and tiles subjects."""
-    program = _program(witness=_STREAMED[0], regime=_STREAMED[1], family="decision")
+@pytest.mark.parametrize(("witness", "regime"), [_STREAMED, _COLLECTIVE])
+def test_decision_program_declares_action_product_and_subject_axes(
+    *, witness: str, regime: RegimeName
+) -> None:
+    """A single's or a household's decision streams the action product and tiles
+    subjects."""
+    program = _program(witness=witness, regime=regime, family="decision")
     assert program.requirements.axis_names == (ACTION_PRODUCT_AXIS, SUBJECT_AXIS)
 
 
@@ -91,12 +95,6 @@ def test_decision_program_is_planned() -> None:
     """The engine, not the regime builder, owns the decision program's widths."""
     program = _program(witness=_STREAMED[0], regime=_STREAMED[1], family="decision")
     assert program.disposition is CoreExecutionDisposition.PLANNED
-
-
-def test_collective_decision_program_declares_the_subject_axis_only() -> None:
-    """A collective decision tiles subjects and keeps its action product dense."""
-    program = _program(witness=_COLLECTIVE[0], regime=_COLLECTIVE[1], family="decision")
-    assert program.requirements.axis_names == (SUBJECT_AXIS,)
 
 
 def test_taste_shock_decision_program_declares_the_subject_axis_only() -> None:
@@ -340,25 +338,24 @@ def test_decision_program_declares_one_role_per_published_array() -> None:
     assert program.output_roles == ("action_index", "decision_value")
 
 
-@pytest.mark.parametrize("route", ["ev1", "collective"])
 def test_a_streamed_decision_is_refused_where_the_hard_max_is_not_the_reduction(
-    *, route: str, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A public model build catches a classifier selecting the wrong reduction."""
-    original = simulation_programs._supports_action_streaming
-    regime_name = "alive" if route == "ev1" else "married"
+    """A public model build catches a classifier streaming a taste-shock decision."""
+    original = simulation_programs._classify_action_streaming
 
-    def force_wrong_reduction(*, context: SolverBuildContext) -> bool:
-        return context.regime_name == regime_name or original(context=context)
+    def force_wrong_reduction(
+        *, context: SolverBuildContext
+    ) -> _ActionStreamingDisposition:
+        if context.regime_name == "alive":
+            return _ActionStreamingDisposition.STREAMED
+        return original(context=context)
 
     monkeypatch.setattr(
-        simulation_programs, "_supports_action_streaming", force_wrong_reduction
+        simulation_programs, "_classify_action_streaming", force_wrong_reduction
     )
-    build_model = (
-        taste_shocks_toy.get_model if route == "ev1" else WITNESSES["dissolution"]
-    )
-    with pytest.raises(ExecutionPlanningError, match=repr(regime_name)):
-        build_model()
+    with pytest.raises(ExecutionPlanningError, match="'alive'"):
+        taste_shocks_toy.get_model()
 
 
 def _tiled_cell(*, position: FloatND, offset: FloatND) -> dict[str, FloatND | IntND]:

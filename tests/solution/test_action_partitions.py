@@ -7,7 +7,9 @@ compact accumulators, and every participant merges them in partition order.
 The published value, winning global action identity and feasibility flag equal
 both a literal scalar loop over every action and the unpartitioned streamed
 reduction at the same block width — bit for bit, including signed zeros,
-infinities, NaNs, ties and all-infeasible cells.
+infinities, NaNs, ties and all-infeasible cells. A household's participants
+publish the same winner, member values and feasibility as its unpartitioned
+stream.
 
 The participants here are the lanes of a named `jax.vmap` axis: the reduction
 reads its partition from the axis index and exchanges accumulators with
@@ -24,10 +26,15 @@ import pytest
 from jax.extend.core import ClosedJaxpr
 from numpy.testing import assert_array_equal
 
-from _lcm.solution.action_reduction import HardMaxAccumulator, HardMaxResult
+from _lcm.solution.action_reduction import (
+    CollectiveHardMaxResult,
+    HardMaxAccumulator,
+    HardMaxResult,
+)
 from _lcm.solution.action_streaming import (
     ActionPartitionLayout,
     build_partitioned_streaming_max_Q_over_a,
+    build_streaming_collective_max_Q_over_a,
     build_streaming_max_Q_over_a,
     merge_partition_accumulators,
 )
@@ -469,7 +476,7 @@ def test_merging_partition_accumulators_in_any_order_publishes_the_same_bits():
 
     for order in itertools.permutations(range(4)):
         got = merge_partition_accumulators(accumulators=stacked, order=order)
-        _assert_results_identical(got=got, expected=expected)
+        _assert_results_identical(got=cast("HardMaxResult", got), expected=expected)
 
 
 def test_padded_action_slots_never_publish_an_identity_outside_the_product():
@@ -553,3 +560,107 @@ def test_partitioned_reduction_scans_only_its_own_run(
         n_partitions=n_partitions, block_width=block_width, n_actions=n_actions
     )
     assert scan_lengths(jaxpr=jaxpr) == [layout.blocks_per_partition]
+
+
+_MEMBERS = ("f", "m")
+_HOUSEHOLD_WEIGHTS = {"f": 0.25, "m": 0.75}
+
+
+def _member_table_Q_and_F(
+    *, choice: jax.Array, cell: jax.Array, values: jax.Array, feasible: jax.Array
+) -> tuple[jax.Array, jax.Array]:
+    """Read one action cell's member values and feasibility from a table."""
+    return values[cell, choice], feasible[cell, choice]
+
+
+def _household_lanes(
+    *, n_partitions: int, block_width: int, values: np.ndarray, feasible: np.ndarray
+) -> CollectiveHardMaxResult:
+    """Run the partitioned household reduction with one lane per participant."""
+    n_cells, n_actions, _ = values.shape
+    reduce_cell = build_partitioned_streaming_max_Q_over_a(
+        Q_and_F=_member_table_Q_and_F,
+        action_names=("choice",),
+        block_width=block_width,
+        n_partitions=n_partitions,
+        axis_name=_AXIS,
+        members=_MEMBERS,
+        weights=_HOUSEHOLD_WEIGHTS,
+    )
+
+    def participant(_lane: jax.Array) -> CollectiveHardMaxResult:
+        return cast(
+            "CollectiveHardMaxResult",
+            jax.vmap(
+                lambda cell: reduce_cell(
+                    choice=jnp.arange(n_actions, dtype=jnp.int32),
+                    cell=cell,
+                    values=jnp.asarray(values),
+                    feasible=jnp.asarray(feasible),
+                )
+            )(jnp.arange(n_cells)),
+        )
+
+    return jax.jit(jax.vmap(participant, axis_name=_AXIS))(jnp.arange(n_partitions))
+
+
+def _unpartitioned_household(
+    *, block_width: int, values: np.ndarray, feasible: np.ndarray
+) -> CollectiveHardMaxResult:
+    """Run the single-participant streamed household reduction."""
+    n_cells, n_actions, _ = values.shape
+    reduce_cell = build_streaming_collective_max_Q_over_a(
+        Q_and_F=_member_table_Q_and_F,
+        action_names=("choice",),
+        block_width=block_width,
+        members=_MEMBERS,
+        weights=_HOUSEHOLD_WEIGHTS,
+    )
+    return cast(
+        "CollectiveHardMaxResult",
+        jax.jit(
+            jax.vmap(
+                lambda cell: reduce_cell(
+                    choice=jnp.arange(n_actions, dtype=jnp.int32),
+                    cell=cell,
+                    values=jnp.asarray(values),
+                    feasible=jnp.asarray(feasible),
+                )
+            )
+        )(jnp.arange(n_cells)),
+    )
+
+
+@pytest.mark.parametrize(
+    ("n_partitions", "block_width", "n_actions"),
+    [(2, 1, 6), (2, 3, 7), (3, 2, 13), (4, 5, 13), (7, 2, 5)],
+)
+def test_partitioned_household_equals_the_unpartitioned_stream_bit_for_bit(
+    *, n_partitions: int, block_width: int, n_actions: int
+) -> None:
+    """Every participant publishes the household winner and every member's value."""
+    rng = np.random.default_rng(seed=100 * n_partitions + 10 * block_width + n_actions)
+    dtype = jnp.zeros(()).dtype
+    pool = np.asarray(_VALUE_POOL, dtype=dtype)
+    values = pool[rng.integers(0, len(pool), size=(24, n_actions, len(_MEMBERS)))]
+    feasible = rng.random(size=(24, n_actions)) < 0.6
+    feasible[0] = False
+    expected = _unpartitioned_household(
+        block_width=block_width, values=values, feasible=feasible
+    )
+
+    lanes = _household_lanes(
+        n_partitions=n_partitions,
+        block_width=block_width,
+        values=values,
+        feasible=feasible,
+    )
+
+    for lane in range(n_partitions):
+        got = jax.tree.map(lambda leaf, index=lane: leaf[index], lanes)
+        for got_leaf, expected_leaf in zip(got, expected, strict=True):
+            host = np.asarray(expected_leaf)
+            if np.issubdtype(host.dtype, np.floating):
+                assert_array_equal(_bits(got_leaf), _bits(host))
+            else:
+                assert_array_equal(np.asarray(got_leaf), host)

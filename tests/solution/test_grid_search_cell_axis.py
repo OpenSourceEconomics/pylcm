@@ -142,7 +142,7 @@ def test_public_solve_dispatches_the_planned_cell_width(
 
 @pytest.mark.parametrize("kind", ["singleton", "ev1", "collective"])
 def test_state_tiling_leaves_action_reducer_declarations_distinct(*, kind: str) -> None:
-    """Dense canonical action reductions can share the planned state-cell loop."""
+    """Streamed and dense action reductions share the planned state-cell loop."""
     model = _model(kind=kind, width=4)
     program = core_program_graph(
         kernel=model._regimes["acting"].solution.period_kernels[0]
@@ -155,7 +155,7 @@ def test_state_tiling_leaves_action_reducer_declarations_distinct(*, kind: str) 
     ) == (
         CoreExecutionDisposition.PLANNED,
         None,
-        ("action_product",) if kind == "singleton" else (),
+        () if kind == "ev1" else ("action_product",),
         (("cell", 6),),
     )
 

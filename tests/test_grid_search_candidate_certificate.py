@@ -22,9 +22,9 @@ the sweep is sensitive to a dropped grid point wherever it is dropped — in the
 solver, in the product map, or upstream in the state-action space.
 
 The singleton, collective, and taste-shock reductions are separate code paths and
-all are swept. The native program graph selects streaming only for the ordinary
-hard-max production routes: collective and EV1 production remains deliberately dense,
-while their sealed streaming implementations are non-production references. The
+all are swept. The native program graph selects streaming for the hard-max
+production routes, a single's and a household's: EV1 production remains deliberately
+dense, while its sealed streaming implementation is a non-production reference. The
 taste-shock sweep uses candidate-distinct deterministic noise
 at the production draw seam, so it checks the continuous winner, the noisy
 discrete winner, the row-major flat index, and the returned unshocked value.
@@ -1074,11 +1074,9 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
         "streaming_classifier:trivial_product_admitted",
         "streaming_classifier:category_suffix_selected",
         "streaming_classifier:ev1_reason_changed",
-        "streaming_classifier:collective_reason_changed",
         "streaming_classifier:ev1_gate_bypassed",
-        "streaming_classifier:collective_resource_gate_bypassed",
         "streaming_classifier:ev1_precedes_trivial_product",
-        "streaming_classifier:collective_precedes_co_map",
+        "streaming_classifier:household_sent_dense",
         "streaming_co_map:inner_state_reincluded",
         "streaming_co_map:state_order_reversed",
         "streaming_co_map:continuation_axes_broadcast",
@@ -1120,7 +1118,7 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
         "streaming_blocks:reverse_coordinate_decode",
         "streaming_hard_max:filter_last_identity",
         "streaming_collective_blocks:skip_last_block",
-        "streaming_collective_blocks:admit_padded_tail",
+        "streaming_collective_blocks:feasibility_mask_dropped",
         "streaming_collective_blocks:block_local_action_ids",
         "streaming_collective_blocks:objective_uses_first_member",
         "streaming_hard_max:ignore_right_partial",
@@ -1202,10 +1200,10 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
         for name in names
         if not name.startswith(("simulation_adapter:", "public_shell:"))
     }
-    assert len(original_names) == 376
+    assert len(original_names) == 374
     assert (
         hashlib.sha256(("\n".join(sorted(original_names)) + "\n").encode()).hexdigest()
-        == "39e2aff2d982dde0ee2c6486eb9f1f783c5fe6648eeb35ed06d0e1303e55af69"
+        == "52c58546d45cb3de4873e570f452f75e0763b9a7f5c8ff7feaa05bc8f0ae03ed"
     )
     historical_names = {
         name
@@ -1216,17 +1214,17 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
             ("simulation_adapter:initial_physical_", "public_shell:")
         )
     }
-    assert len(historical_names) == 394
+    assert len(historical_names) == 392
     assert (
         hashlib.sha256(
             ("\n".join(sorted(historical_names)) + "\n").encode()
         ).hexdigest()
-        == "2f8d45afccfc746ab2fc3ad14505c7f087d4571092e83dedf2ce6dfc3780ff3b"
+        == "773253413c699c84f6d85f2ed210060100a3557b664dc473f4bb8d9d24833d4a"
     )
-    assert len(names) == 411
+    assert len(names) == 409
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "ce4f0914b5cf4530600d46264ffe50b13254137d44de1abe78b5f787c9957612"
+        == "298e100ca0b6e51223ce979c40d254ae4abf89dffc5692a1ab83ca12fea58e40"
     )
 
 

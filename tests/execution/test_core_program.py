@@ -50,9 +50,6 @@ from _lcm.solution.backward_induction import (
 from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm.solvers import GridSearch
 from lcm.typing import ContinuousState, FloatND, RegimeName
-from tests.regime_building.test_collective_feasibility_is_shared import (
-    _make_model as _build_collective_model,
-)
 from tests.test_models import taste_shocks_toy
 from tests.test_models.nbegm_common import (
     feasible,
@@ -579,54 +576,6 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
     assert isinstance(output, tuple)
     assert isinstance(output[0], jax.ShapeDtypeStruct)
     assert output[0].shape == next_V["alive"].shape
-
-
-def test_collective_grid_search_plans_cells_with_canonical_action_reduction() -> None:
-    """Collective state tiling preserves the canonical dense action reduction."""
-    model = _build_collective_model()
-    flat_params = model._process_params({"discount_factor": 0.95})
-    next_V, next_continuation, _next_edges = _build_continuation_templates(
-        regimes=model._regimes,
-        flat_params=flat_params,
-    )
-    next_V = _zero_values(templates=next_V)
-    regime = model._regimes["couple"]
-    kernel = regime.solution.period_kernels[0]
-    context = CoreBuildContext(
-        state_action_space=regime.solution.state_action_space(
-            regime_params=regime_kernel_params(flat_params, regime_name="couple")
-        ),
-        next_regime_to_V_arr=next_V,
-        next_regime_to_continuation=next_continuation,
-        flat_params=flat_params,
-        period=0,
-        ages=model.ages,
-    )
-
-    assert isinstance(kernel, CoreProgramGraphAware)
-    program = core_program_graph(kernel=kernel)["main"]
-    materialized = materialize_core_program(program=program, context=context)
-
-    assert program.disposition is CoreExecutionDisposition.PLANNED
-    assert program.disposition_reason is None
-    assert program.output_roles == (VALUE, *_FEASIBILITY_COUNT_ROLES)
-    assert program.requirements.reduced_axes == ()
-
-    resolved = resolve_core_program(
-        program=materialized,
-        tile_widths={axis.name: axis.extent for axis in program.requirements.axes},
-        input_transfer_plan=_resolve_value_input_transfer_plan(
-            program=materialized,
-            source_value_template=next_V["couple"],
-            source=("couple", 0, "main"),
-        ),
-    )
-    output = _eval_resolved_shape(resolved)
-
-    assert jax.tree.structure(output) == jax.tree.structure(program.output_roles)
-    assert isinstance(output, tuple)
-    assert isinstance(output[0], jax.ShapeDtypeStruct)
-    assert output[0].shape == next_V["couple"].shape
 
 
 def test_ev1_grid_search_plans_cells_with_canonical_action_reduction() -> None:

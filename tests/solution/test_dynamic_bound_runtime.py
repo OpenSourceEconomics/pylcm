@@ -1209,13 +1209,16 @@ def _marked_stream(
 
         def run_partitioned(income: FloatND) -> _MarkedStreamResult:
             return jax.vmap(
-                lambda _: partitioned(
-                    next_regime_to_V_arr=MappingProxyType({}),
-                    period=jnp.int32(0),
-                    age=jnp.asarray(0.0),
-                    income=income,
-                    work=work,
-                    consumption=consumption,
+                lambda _: cast(
+                    "_MarkedStreamResult",
+                    partitioned(
+                        next_regime_to_V_arr=MappingProxyType({}),
+                        period=jnp.int32(0),
+                        age=jnp.asarray(0.0),
+                        income=income,
+                        work=work,
+                        consumption=consumption,
+                    ),
                 ),
                 axis_name="owners",
             )(jnp.arange(2, dtype=jnp.int32))

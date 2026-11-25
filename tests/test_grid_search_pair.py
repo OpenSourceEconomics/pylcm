@@ -826,7 +826,10 @@ for name, spec in SCENARIOS.items():
     ]
     if name in {"singleton-ev1", "collective-gs-vd"}:
         dense_targets = [
-            row for row in nontrivial if row["has_taste_shocks"] or row["collective"]
+            row
+            for row in nontrivial
+            if row["has_taste_shocks"]
+            or (row["collective"] and row["regime"] in routes["gs_vd_regimes"])
         ]
         assert dense_targets and all(not row["streamed"] for row in dense_targets), (
             name, routes

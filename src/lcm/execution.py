@@ -343,10 +343,12 @@ class ExecutionConfig:
     whole action blocks, each device of the regime's action group reduces its
     own run with the exact hard maximum, and the devices exchange one compact
     accumulator per state cell — best value, winning action identity and
-    feasibility — which every device merges in partition order. Values and
-    the winning actions equal the unpartitioned solve: ties go to the lowest
-    action identity, feasible `-inf` stays distinct from an all-infeasible
-    cell, and signed zeros and NaNs keep their usual conventions.
+    feasibility, and a household's member values at its winner — which every
+    device merges in partition order. Values and the winning actions equal the
+    unpartitioned solve: ties go to a household's members in declared order,
+    then to the lowest action identity, feasible `-inf` stays distinct from
+    an all-infeasible cell, and signed zeros and NaNs keep their usual
+    conventions.
 
     The regime's devices form a mesh of its sharded-state axes times this
     count, so a regime without a sharded state uses exactly this many devices
@@ -357,8 +359,8 @@ class ExecutionConfig:
     A count of one is the ordinary route. Model construction refuses, before anything is
     lowered, a count larger than the visible devices or the action product, a regime
     that does not exist, and regimes the route does not serve: terminal regimes, another
-    solver, taste shocks, collective regimes, gated edges, a discrete sharded state, and
-    a fixed action width that leaves a device without a block.
+    solver, taste shocks, gated edges, a discrete sharded state, and a fixed action
+    width that leaves a device without a block.
     """
 
     devices: (

@@ -24,7 +24,6 @@ from _lcm.typing import DataclassInstance
 from lcm import ExecutionConfig, Model
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import RegimeName, UserInitialNodes, UserParams
-from tests import collective_fixtures
 from tests.test_models import dcegm_paper_twin, many_actions, taste_shocks_toy
 
 
@@ -152,16 +151,6 @@ def _rebuilt(
     )
 
 
-def _collective(**config: Unpack[_ExecutionOptions]) -> Model:
-    model, _ = collective_fixtures.make_two_member_model()
-    return _rebuilt(
-        model=model,
-        regime_id_class=collective_fixtures.CoupleRegimeId,
-        initial_nodes={0: "couple"},
-        **config,
-    )
-
-
 def _dcegm(**config: Unpack[_ExecutionOptions]) -> Model:
     return _rebuilt(
         model=dcegm_paper_twin.get_model("dcegm"),
@@ -193,10 +182,6 @@ _REFUSALS = {
     "another_solver": (
         lambda: _dcegm(action_partitions={"working_life": 2}),
         "regime 'working_life' (2 partitions) is solved by",
-    ),
-    "collective_regime": (
-        lambda: _collective(action_partitions={"couple": 2}),
-        "regime 'couple' (2 partitions) is a collective regime",
     ),
     "discrete_sharded_state": (
         lambda: many_actions.get_model(

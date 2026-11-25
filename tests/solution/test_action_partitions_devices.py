@@ -66,6 +66,11 @@ class _ChangedParams(TypedDict):
     differs_from_first: bool
 
 
+class _Household(TypedDict):
+    mismatches: list[str]
+    couple_layout: _Layout
+
+
 class _Program(TypedDict):
     all_gather_shapes: list[list[int]]
     temp_bytes: int
@@ -109,6 +114,7 @@ class _Report(TypedDict):
     invariant_blocks_state_by_action: _InvariantPartition
     simulation: dict[str, _Simulation]
     changed_params: _ChangedParams
+    household: _Household
     programs: dict[str, _Program]
     budget: _Budget
     block_major: dict[str, _BlockMajor]
@@ -252,6 +258,20 @@ def test_a_regime_without_a_request_stays_on_one_device(
         "n_devices": 1,
         "mesh": None,
         "spec": None,
+    }
+
+
+def test_a_household_shares_its_actions_and_publishes_the_ordinary_values(
+    report: _Report,
+) -> None:
+    """Both members' values equal the ordinary route bitwise, on two devices."""
+    assert report["household"] == {
+        "mismatches": [],
+        "couple_layout": {
+            "n_devices": 2,
+            "mesh": {_PARTITION_AXIS: 2},
+            "spec": ["None"],
+        },
     }
 
 

@@ -101,8 +101,15 @@ from _lcm.simulation.taste_shock_lookup import (
     TasteShockLookup,
     build_household_taste_shock_lookup,
 )
-from _lcm.solution.action_reduction import HARD_MAX_REDUCTION, HardMaxResult
-from _lcm.solution.action_streaming import build_streaming_max_Q_over_a
+from _lcm.solution.action_reduction import (
+    HARD_MAX_REDUCTION,
+    CollectiveHardMaxResult,
+    HardMaxResult,
+)
+from _lcm.solution.action_streaming import (
+    build_streaming_collective_max_Q_over_a,
+    build_streaming_max_Q_over_a,
+)
 from _lcm.solution.backward_induction import FoldAge
 from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.solution.contract import SolverBuildContext
@@ -113,9 +120,10 @@ from _lcm.solution.feasibility import (
 )
 from _lcm.solution.grid_search import (
     ACTION_PRODUCT_AXIS,
+    _ActionStreamingDisposition,
+    _classify_action_streaming,
     _edge_reference_regimes_for_targets,
     _select_action_width_keyword,
-    _supports_action_streaming,
     _value_reads,
 )
 from _lcm.typing import (
@@ -200,12 +208,14 @@ def build_simulation_programs(
 
     """
     del has_gated_edges
-    streams_actions = _supports_action_streaming(context=context)
+    streams_actions = (
+        _classify_action_streaming(context=context)
+        is _ActionStreamingDisposition.STREAMED
+    )
     if streams_actions:
         _fail_if_the_streamed_reduction_is_wrong(
             regime_name=context.regime_name,
             has_taste_shocks=context.has_taste_shocks,
-            member_axis=context.member_axis,
         )
     action_width_keyword = _select_action_width_keyword(context=context)
 
@@ -804,10 +814,7 @@ class _GateRouteBody:
 
 
 def _fail_if_the_streamed_reduction_is_wrong(
-    *,
-    regime_name: RegimeName,
-    has_taste_shocks: bool,
-    member_axis: tuple[str, ...] | None,
+    *, regime_name: RegimeName, has_taste_shocks: bool
 ) -> None:
     """Refuse a streamed decision whose reduction is not the exact hard max.
 
@@ -815,23 +822,17 @@ def _fail_if_the_streamed_reduction_is_wrong(
     kernel streams, so both reduce the same canonical product with the same
     exact hard max and a period's two phases cannot disagree about the winner.
     That mirror is sound only for a regime whose action reduction *is* that hard
-    max. A taste shock adds a per-subject Gumbel term to the choice and a
-    collective utility reduces the household over its members; either one
-    makes the streamed body answer a different question than the regime asks, so
-    the mismatch is refused here rather than left to the classifier's ordering.
+    max. A taste shock adds a per-subject Gumbel term to the choice, which makes
+    the streamed body answer a different question than the regime asks, so the
+    mismatch is refused here rather than left to the classifier's ordering.
     """
-    if not (has_taste_shocks or member_axis is not None):
+    if not has_taste_shocks:
         return
-    reduction = (
-        "taste shocks draw a per-subject Gumbel term"
-        if has_taste_shocks
-        else "a collective utility reduces over members"
-    )
     msg = (
         f"Regime {regime_name!r} would declare a streamed simulation "
-        f"decision, but {reduction}, so its action reduction is not the exact "
-        "hard max the streamed body folds. Declare a dense action product for "
-        "this regime instead."
+        "decision, but taste shocks draw a per-subject Gumbel term, so its "
+        "action reduction is not the exact hard max the streamed body folds. "
+        "Declare a dense action product for this regime instead."
     )
     raise ExecutionPlanningError(msg)
 
@@ -939,12 +940,18 @@ def _decision_body(
     extra_param_names = _get_extra_param_names(
         Q_and_F=Q_and_F, action_names=action_names, state_names=state_names
     )
+    if context.pareto_weights is not None:
+        extra_param_names = list(
+            dict.fromkeys((*extra_param_names, *context.pareto_weights.param_names))
+        )
     cell = with_signature(
         _StreamedArgmaxQOverA(
             Q_and_F=Q_and_F,
             action_names=action_names,
             q_and_f_arg_names=q_and_f_arg_names,
             action_width_keyword=action_width_keyword,
+            member_axis=context.member_axis,
+            pareto_weights=context.pareto_weights,
         ),
         args=[
             "next_regime_to_V_arr",
@@ -1270,7 +1277,9 @@ class _StreamedArgmaxQOverA:
     Publishes the flat identity of the winning action in the canonical C order
     of the action product, and the value it attains — the same pair the dense
     canonical reducer publishes, obtained by the exact hard-max stream of
-    `build_streaming_max_Q_over_a`. A block covering the whole product maps the
+    `build_streaming_max_Q_over_a`, or for a household by the exact household
+    stream of `build_streaming_collective_max_Q_over_a`, whose winner and tie rule
+    are the dense household argmax's. A block covering the whole product maps the
     named grids and is reduced as one block, so its value can differ from a
     narrower fold's by rounding. The identity is therefore not width-invariant
     either: on a near-tie, that rounding can make the two widths name different
@@ -1296,6 +1305,12 @@ class _StreamedArgmaxQOverA:
     action_width_keyword: str
     """Name of the planner-bound static action-block width in the call."""
 
+    member_axis: tuple[str, ...] | None = None
+    """Ordered member names of a household, or `None` for a single."""
+
+    pareto_weights: ParetoWeights | None = None
+    """The household's Pareto weight evaluator, or `None` for a single."""
+
     folds: dict[int, Callable[..., HardMaxResult | BoundedResult[HardMaxResult]]] = (
         dataclasses.field(default_factory=dict, repr=False)
     )
@@ -1307,23 +1322,33 @@ class _StreamedArgmaxQOverA:
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: PytreeValue,
     ) -> tuple[IntND, FloatND] | BoundedResult[tuple[IntND, FloatND]]:
-        """Return the chosen action's flat identity and the value it attains."""
+        """Return the chosen action's flat identity and the value it attains.
+
+        A household publishes every member's value at its one shared winner.
+        """
         block_width = cast("int", states_actions_params[self.action_width_keyword])
         q_and_f_params = {
             name: value
             for name, value in states_actions_params.items()
             if name in self.q_and_f_arg_names
         }
-        evaluated = self._fold(block_width=block_width)(
-            next_regime_to_V_arr=next_regime_to_V_arr, **q_and_f_params
+        fold = (
+            self._fold(block_width=block_width)
+            if self.member_axis is None
+            else self._household_fold(
+                states_actions_params=states_actions_params, block_width=block_width
+            )
         )
+        evaluated = fold(next_regime_to_V_arr=next_regime_to_V_arr, **q_and_f_params)
         result = cast(
-            "HardMaxResult",
+            "HardMaxResult | CollectiveHardMaxResult",
             evaluated.output if type(evaluated) is BoundedResult else evaluated,
         )
         output = (
             result.best_global_action_id.astype(jnp.int32),
-            result.best_value,
+            result.best_value
+            if isinstance(result, HardMaxResult)
+            else result.best_member_values,
         )
         return (
             BoundedResult[tuple[IntND, FloatND]](
@@ -1348,6 +1373,23 @@ class _StreamedArgmaxQOverA:
             )
             self.folds[block_width] = fold
         return fold
+
+    def _household_fold(
+        self, *, block_width: int, states_actions_params: Mapping[str, PytreeValue]
+    ) -> Callable[
+        ..., CollectiveHardMaxResult | BoundedResult[CollectiveHardMaxResult]
+    ]:
+        """Return the household stream at the cell's Pareto weights."""
+        weights = cast("ParetoWeights", self.pareto_weights)
+        return build_streaming_collective_max_Q_over_a(
+            Q_and_F=self.Q_and_F,
+            action_names=self.action_names,
+            block_width=block_width,
+            members=cast("tuple[str, ...]", self.member_axis),
+            weights=weights.compute(
+                **{name: states_actions_params[name] for name in weights.arg_names}
+            ),
+        )
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)

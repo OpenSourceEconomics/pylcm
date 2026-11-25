@@ -164,6 +164,7 @@ def _report() -> dict[str, JSONValue]:
         ),
     }
 
+    report["household"] = _household_report()
     report["programs"] = _program_report()
     report["budget"] = _budget_report()
     report["block_major"] = {
@@ -286,6 +287,33 @@ def _simulated_frames(
     return {
         "decisions_and_states_equal": bool(decisions[0].equals(decisions[1])),
         "value_max_ulp": float(np.max(np.abs(values[0] - values[1]) / spacing)),
+    }
+
+
+def _household_report() -> dict[str, JSONValue]:
+    """Solve the two-member household with and without its actions partitioned."""
+    from lcm import ExecutionConfig  # noqa: PLC0415
+    from tests import collective_fixtures  # noqa: PLC0415
+
+    model, params = collective_fixtures.make_two_member_model()
+    solutions = [
+        Model(
+            edges=model.edges,
+            regimes=dict(model.user_regimes),
+            ages=model.ages,
+            regime_id_class=collective_fixtures.CoupleRegimeId,
+            initial_nodes={0: "couple"},
+            execution_config=ExecutionConfig(
+                axis_widths={"action_product": 1}, action_partitions=partitions
+            ),
+        ).solve(params=params, log_level="off")
+        for partitions in ({"couple": 2}, {})
+    ]
+    return {
+        "mismatches": _bitwise_mismatches(
+            got=solutions[0].values, expected=solutions[1].values
+        ),
+        "couple_layout": _layout(solutions[0].values[0]["couple"]),
     }
 
 

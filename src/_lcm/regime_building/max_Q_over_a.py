@@ -37,7 +37,7 @@ from _lcm.regime_building.Q_and_F import (
     BoundedQAndF,
     has_action_integrity,
 )
-from _lcm.solution.action_reduction import HardMaxResult
+from _lcm.solution.action_reduction import CollectiveHardMaxResult, HardMaxResult
 from _lcm.solution.action_streaming import (
     build_partitioned_streaming_max_Q_over_a,
     build_streaming_collective_max_Q_over_a,
@@ -852,20 +852,24 @@ def get_action_partitioned_max_Q_over_a(
     untiled_state_names: tuple[StateName, ...] = (),
     broadcast_state_names: tuple[StateName, ...] = (),
     return_feasibility: bool = False,
+    member_axis: tuple[str, ...] | None = None,
+    pareto_weights: ParetoWeights | None = None,
 ) -> MaxQOverAFunction[BoundedMaxOutput]:
-    """Build a singleton hard-max V kernel whose action product devices share.
+    """Build a hard-max V kernel whose action product devices share.
 
     The returned callable has the argument layout of
-    `get_streaming_max_Q_over_a` for an ordinary singleton regime. It runs its
+    `get_streaming_max_Q_over_a` for an ordinary hard-max regime. It runs its
     body once per device of `mesh`'s `ACTION_PARTITION_AXIS`, with every input
     replicated along that axis and the regime's state axes left to the
     compiler. Each device streams the contiguous run of whole action blocks
     `ActionPartitionLayout` assigns it at the planner-bound width, gathers one
     hard-max accumulator per state cell from every device of the axis and
-    merges them in partition order, so all devices publish the same value.
+    merges them in partition order, so all devices publish the same value. A
+    household, named by `member_axis` and its `pareto_weights`, publishes every
+    member's value at its one shared winner and the dissolution flag.
 
-    Taste shocks, collective regimes and co-mapped states are
-    not served; model construction refuses them before this is called.
+    Taste shocks and co-mapped states are not served; model construction
+    refuses them before this is called.
     """
     if n_partitions < 2:  # noqa: PLR2004
         raise ValueError("An action-partitioned kernel needs at least two partitions.")
@@ -883,6 +887,10 @@ def get_action_partitioned_max_Q_over_a(
         action_names=action_names,
         state_names=state_names,
     )
+    if pareto_weights is not None:
+        extra_param_names = list(
+            dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
+        )
     # The keyword order differs from the streamed builder's call on purpose:
     # that call is a certified mutation anchor and must stay unique.
     _fail_if_action_width_keyword_collides(
@@ -891,6 +899,7 @@ def get_action_partitioned_max_Q_over_a(
         state_names=state_names,
         action_width_keyword=action_width_keyword,
     )
+    returns_pair = member_axis is not None or return_feasibility
     partitioned_max_Q_over_a = with_signature(
         _ActionPartitionedMaxQOverA(
             Q_and_F=Q_and_F,
@@ -899,6 +908,8 @@ def get_action_partitioned_max_Q_over_a(
             action_width_keyword=action_width_keyword,
             n_partitions=n_partitions,
             return_feasibility=return_feasibility,
+            member_axis=member_axis,
+            pareto_weights=pareto_weights,
         ),
         args=[
             "next_regime_to_V_arr",
@@ -907,9 +918,7 @@ def get_action_partitioned_max_Q_over_a(
             *extra_param_names,
             action_width_keyword,
         ],
-        return_annotation=(
-            "tuple[FloatND, BoolND]" if return_feasibility else "FloatND"
-        ),
+        return_annotation="tuple[FloatND, BoolND]" if returns_pair else "FloatND",
         enforce=False,
     )
     mapped = (
@@ -940,9 +949,7 @@ def get_action_partitioned_max_Q_over_a(
                 function=mapped, mesh=mesh, static_names=static_names
             ),
             args=list(inspect.signature(mapped).parameters),
-            return_annotation=(
-                "tuple[FloatND, BoolND]" if return_feasibility else "FloatND"
-            ),
+            return_annotation="tuple[FloatND, BoolND]" if returns_pair else "FloatND",
             enforce=False,
         ),
     )
@@ -975,7 +982,13 @@ class _ActionPartitionedMaxQOverA:
     """Devices along the action axis, each owning one run of blocks."""
 
     return_feasibility: bool = False
-    """Whether to return the merged empty-action-set mask beside the value."""
+    """Whether to return the merged empty-action-set mask beside a single's value."""
+
+    member_axis: tuple[str, ...] | None = None
+    """Ordered member names of a household, or `None` for a single."""
+
+    pareto_weights: ParetoWeights | None = None
+    """The household's Pareto weight evaluator, or `None` for a single."""
 
     def __call__(
         self,
@@ -983,13 +996,23 @@ class _ActionPartitionedMaxQOverA:
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
     ) -> BoundedMaxOutput:
-        """Return the cell's value after merging every device's accumulator."""
+        """Return the cell's value after merging every device's accumulator.
+
+        A household returns every member's value and the dissolution flag.
+        """
         reduce_cell = build_partitioned_streaming_max_Q_over_a(
             Q_and_F=self.Q_and_F,
             action_names=self.action_names,
             block_width=cast("int", states_actions_params[self.action_width_keyword]),
             n_partitions=self.n_partitions,
             axis_name=ACTION_PARTITION_AXIS,
+            members=self.member_axis,
+            weights=None
+            if self.member_axis is None
+            else _evaluate_pareto_weights(
+                pareto_weights=self.pareto_weights,
+                states_actions_params=states_actions_params,
+            ),
         )
         result = reduce_cell(
             next_regime_to_V_arr=next_regime_to_V_arr,
@@ -998,20 +1021,23 @@ class _ActionPartitionedMaxQOverA:
             ),
         )
         if isinstance(result, BoundedResult):
-            reduced = result.output
             return BoundedResult(
-                output=(
-                    (reduced.best_value, ~reduced.any_feasible)
-                    if self.return_feasibility
-                    else reduced.best_value
-                ),
+                output=self._published(reduced=result.output),
                 bound_status=result.bound_status,
                 query_status=result.query_status,
             )
+        return self._published(reduced=result)
+
+    def _published(
+        self, *, reduced: HardMaxResult | CollectiveHardMaxResult
+    ) -> MaxOutput:
+        """Return what the kernel publishes from the merged reduction."""
+        if isinstance(reduced, CollectiveHardMaxResult):
+            return reduced.best_member_values, ~reduced.any_feasible
         return (
-            (result.best_value, ~result.any_feasible)
+            (reduced.best_value, ~reduced.any_feasible)
             if self.return_feasibility
-            else result.best_value
+            else reduced.best_value
         )
 
 

@@ -9,11 +9,13 @@ from typing import NotRequired, TypedDict, cast
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
 from _lcm.engine import StateActionSpace
 from _lcm.logsum import logsum_and_softmax
+from _lcm.regime_building import processing
 from _lcm.regime_building.collective import ParetoWeights
 from _lcm.regime_building.max_Q_over_a import (
     BoundedMaxOutput,
@@ -25,17 +27,35 @@ from _lcm.solution.contract import SolverBuildContext
 from _lcm.solution.grid_search import (
     _ActionStreamingDisposition,
     _classify_action_streaming,
-    _supports_action_streaming,
+    _GridSearchPeriodKernel,
 )
 from _lcm.typing import MaxQOverAFunction, PytreeValue, QAndFFunction, QAndFKwargs
+from lcm import (
+    AgeGrid,
+    CollectiveUtility,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    categorical,
+)
+from lcm.execution import ExecutionConfig
+from lcm.solver_api import SolutionResult
+from lcm.solvers import ACTION_PRODUCT_AXIS
 from lcm.typing import (
     ActionName,
     BoolND,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteAction,
     FloatND,
     IntND,
     RegimeName,
+    ScalarInt,
     StateName,
 )
+from tests.collective_fixtures import Work
+from tests.conftest import assert_agrees_to_ulp
 
 
 class _KernelKwargs(TypedDict):
@@ -131,35 +151,6 @@ def test_full_V_streaming_matches_dense_over_states_and_partial_action_tail(
     assert_array_equal(actual, expected)
     assert_array_equal(actual[0], jnp.full((2,), -jnp.inf))
     assert_array_equal(actual[1], jnp.array([8.75, 10.0]))
-
-
-@pytest.mark.parametrize(
-    ("block_width", "decodes"), [(4, True), (6, False), (8, False)]
-)
-def test_full_width_action_block_maps_the_named_action_grids(
-    *, block_width: int, decodes: bool
-) -> None:
-    """A block covering the action product reads each grid instead of a flat index."""
-    arguments = {
-        "first": jnp.array([0, 1]),
-        "second": jnp.array([0, 1, 2]),
-        "row": jnp.array([0, 1, 2]),
-        "shift": jnp.array([-0.5, 0.75]),
-        "next_regime_to_V_arr": MappingProxyType({}),
-        "offset": jnp.float32(0.25),
-    }
-    raw_streamed = get_streaming_max_Q_over_a(
-        Q_and_F=_Q_and_F,
-        batch_sizes={"row": 0, "shift": 0},
-        action_names=("first", "second"),
-        state_names=("row", "shift"),
-    )
-    streamed = functools.partial(raw_streamed, _lcm_action_block_width=block_width)
-
-    jaxpr = str(jax.make_jaxpr(streamed)(**arguments))
-
-    assert ("gather" in jaxpr) is decodes
-    assert ("scan" in jaxpr) is decodes
 
 
 def _feasible_nan_Q_and_F(
@@ -367,6 +358,71 @@ def test_tied_household_objective_goes_to_the_first_member_at_every_width(
 
     assert_array_equal(values, jnp.array([[1.0, 0.0]]))
     assert_array_equal(dissolution, jnp.array([False]))
+
+
+_SHARES = jnp.asarray([0.0, 0.25, 0.5, 0.75, 1.0])
+
+# Each route's kernel and arguments; the single has 6 actions, the household 25.
+_FULL_WIDTH_ROUTES: dict[str, tuple[_KernelKwargs, QAndFKwargs]] = {
+    "single": (
+        {
+            "Q_and_F": _Q_and_F,
+            "batch_sizes": {"row": 0, "shift": 0},
+            "action_names": ("first", "second"),
+            "state_names": ("row", "shift"),
+        },
+        {
+            "first": jnp.array([0, 1]),
+            "second": jnp.array([0, 1, 2]),
+            "row": jnp.array([0, 1, 2]),
+            "shift": jnp.array([-0.5, 0.75]),
+            "next_regime_to_V_arr": MappingProxyType({}),
+            "offset": jnp.float32(0.25),
+        },
+    ),
+    "household": (
+        {
+            "Q_and_F": _tied_shares_Q_and_F,
+            "batch_sizes": {"row": 0},
+            "action_names": ("a", "b"),
+            "state_names": ("row",),
+            "member_axis": ("f", "m"),
+            "pareto_weights": _EQUAL_PARETO_WEIGHTS,
+        },
+        {
+            "a": _SHARES,
+            "b": _SHARES,
+            "row": jnp.array([0, 1], dtype=jnp.int32),
+            "next_regime_to_V_arr": MappingProxyType({}),
+        },
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("route", "block_width", "decodes"),
+    [
+        ("single", 4, True),
+        ("single", 6, False),
+        ("single", 8, False),
+        ("household", 7, True),
+        ("household", 25, False),
+        ("household", 30, False),
+    ],
+)
+def test_full_width_action_block_maps_the_named_action_grids(
+    *, route: str, block_width: int, decodes: bool
+) -> None:
+    """A block covering the action product reads each grid instead of a flat index,
+    and carries no accumulator across blocks."""
+    kernel_kwargs, arguments = _FULL_WIDTH_ROUTES[route]
+    raw_streamed = get_streaming_max_Q_over_a(**kernel_kwargs)
+    streamed = functools.partial(raw_streamed, _lcm_action_block_width=block_width)
+
+    jaxpr = str(jax.make_jaxpr(streamed)(**arguments))
+
+    assert ("gather" in jaxpr) is decodes
+    assert ("scan" in jaxpr) is decodes
 
 
 def _ev1_Q_and_F(
@@ -890,16 +946,8 @@ def _width_collision_Q_and_F(
         ),
         pytest.param(
             {"member_axis": ("f", "m")},
-            _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES,
-            id="collective-hard-max",
-        ),
-        pytest.param(
-            {
-                "member_axis": ("f", "m"),
-                "co_map_state_names": ("kind", "region"),
-            },
-            _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES,
-            id="collective-hard-max-plus-ordinary-co-map",
+            _ActionStreamingDisposition.STREAMED,
+            id="household-hard-max",
         ),
         pytest.param(
             {
@@ -933,11 +981,6 @@ def _width_collision_Q_and_F(
             id="singleton-hard-max-jit-disabled",
         ),
         pytest.param(
-            {"member_axis": ("f", "m"), "enable_jit": False},
-            _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES,
-            id="collective-hard-max-jit-disabled",
-        ),
-        pytest.param(
             {
                 "has_taste_shocks": True,
                 "discrete_actions": ("action",),
@@ -964,14 +1007,6 @@ def _width_collision_Q_and_F(
             },
             _ActionStreamingDisposition.DENSE_TRIVIAL_ACTION_PRODUCT,
             id="unit-action-product-precedes-ev1-gate",
-        ),
-        pytest.param(
-            {
-                "member_axis": ("f", "m"),
-                "actions_grid_shapes": (1,),
-            },
-            _ActionStreamingDisposition.DENSE_TRIVIAL_ACTION_PRODUCT,
-            id="unit-action-product-precedes-collective-gate",
         ),
         pytest.param(
             {
@@ -1017,10 +1052,8 @@ def test_action_streaming_route_classification_matrix(
     context = _action_streaming_route_context(**overrides)
 
     actual = inspect.unwrap(_classify_action_streaming)(context=context)
-    supported = inspect.unwrap(_supports_action_streaming)(context=context)
 
     assert actual is expected
-    assert supported is (expected is _ActionStreamingDisposition.STREAMED)
 
 
 def _evaluate_kernel(
@@ -1103,3 +1136,138 @@ def test_streaming_width_keyword_stays_separate_from_Q_parameter(
     assert selected_width_keyword not in arguments
     assert_allclose(actual, expected, rtol=8 * eps, atol=8 * eps)
     assert_allclose(actual, 10.5, rtol=8 * eps, atol=8 * eps)
+
+
+@categorical(ordered=False)
+class _WidthRegimeId:
+    couple: ScalarInt
+    couple_terminal: ScalarInt
+    single: ScalarInt
+    single_terminal: ScalarInt
+
+
+_WEALTH = LinSpacedGrid(start=1.0, stop=4.0, n_points=4)
+_N_ACTIONS = 18
+
+
+def _consumption(*, wealth: ContinuousState, share: ContinuousAction) -> FloatND:
+    return wealth * share
+
+
+def _utility_f(*, consumption: FloatND, work: DiscreteAction) -> FloatND:
+    return consumption - 0.25 * consumption**2 - 0.5 * work
+
+
+def _utility_m(*, consumption: FloatND, work: DiscreteAction) -> FloatND:
+    return 0.5 * consumption + work * (1.0 - consumption)
+
+
+def _next_wealth(
+    *, wealth: ContinuousState, consumption: FloatND, work: DiscreteAction
+) -> ContinuousState:
+    return 1.0 + 0.5 * (wealth - consumption) + work
+
+
+def _width_regime(*, household: bool, terminal: bool) -> Regime:
+    utility = (
+        CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
+        if household
+        else _utility_f
+    )
+    return Regime(
+        states={"wealth": _WEALTH},
+        state_transitions={} if terminal else {"wealth": _next_wealth},
+        actions={
+            "work": DiscreteGrid(category_class=Work),
+            "share": LinSpacedGrid(start=0.1, stop=0.9, n_points=_N_ACTIONS // 2),
+        },
+        functions={"consumption": _consumption, "utility": utility},
+    )
+
+
+@functools.cache
+def _solve_and_simulate_at_action_width(
+    width: int,
+) -> tuple[Model, SolutionResult, pd.DataFrame]:
+    """Solve and simulate a couple and a single, both on the household kernels."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(processing, "_SINGLE_ON_HOUSEHOLD_PATH", True)
+        model = Model(
+            regimes={
+                "couple": _width_regime(household=True, terminal=False),
+                "couple_terminal": _width_regime(household=True, terminal=True),
+                "single": _width_regime(household=False, terminal=False),
+                "single_terminal": _width_regime(household=False, terminal=True),
+            },
+            ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+            regime_id_class=_WidthRegimeId,
+            initial_nodes={0: ("couple", "single")},
+            edges={"couple": {"couple_terminal": 0}, "single": {"single_terminal": 0}},
+            execution_config=ExecutionConfig(axis_widths={"action_product": width}),
+        )
+        params = {
+            regime: {"koopmans_aggregator": {"discount_factor": 0.9}}
+            for regime in ("couple", "single")
+        }
+        solution = model.solve(params=params, log_level="off")
+        n_subjects = 8
+        frame = model.simulate(
+            params=params,
+            initial_conditions={
+                "wealth": jnp.linspace(1.0, 4.0, n_subjects),
+                "age": jnp.zeros(n_subjects),
+                "regime_id": jnp.where(
+                    jnp.arange(n_subjects) % 2 == 0,
+                    _WidthRegimeId.couple,
+                    _WidthRegimeId.single,
+                ).astype(jnp.int32),
+            },
+            solution=solution,
+            seed=0,
+            log_level="off",
+        ).to_dataframe()
+    return model, solution, frame
+
+
+@pytest.mark.parametrize("width", [1, 2, 7])
+def test_households_stream_to_the_values_and_choices_of_the_whole_product(
+    width: int,
+) -> None:
+    """Blocks of any width give the whole product's values and simulated choices.
+
+    A two-member couple and a single, the household of the one member `"self"`,
+    solve and decide over their actions in blocks of `width`. The household
+    argmax is exact, so every solved value, every simulated action and state is
+    bit for bit the one a block covering all actions gives. A simulated value is
+    the action value at the winner, evaluated at the subject's own state by a
+    program compiled for the block's width, so it agrees to a few units in the
+    last place.
+    """
+    model, solution, frame = _solve_and_simulate_at_action_width(width)
+    _, whole_solution, whole_frame = _solve_and_simulate_at_action_width(_N_ACTIONS)
+
+    for regime in ("couple", "single"):
+        engine_regime = model._regimes[regime]
+        kernel = cast(
+            "_GridSearchPeriodKernel", engine_regime.solution.period_kernels[0]
+        )
+        for program in (
+            kernel.core_programs()["main"],
+            engine_regime.simulation.programs.decision[0],
+        ):
+            assert ACTION_PRODUCT_AXIS in program.requirements.axis_names
+    for period, values in whole_solution.values.items():
+        for regime, expected in values.items():
+            got = np.asarray(solution.values[period][regime])
+            assert got.tobytes() == np.asarray(expected).tobytes(), (period, regime)
+    values = [column for column in frame.columns if column.startswith("value")]
+    pd.testing.assert_frame_equal(
+        frame.drop(columns=values), whole_frame.drop(columns=values), check_exact=True
+    )
+    for column in values:
+        assert_agrees_to_ulp(
+            got=frame[column].to_numpy(),
+            expected=whole_frame[column].to_numpy(),
+            n_ulp=4,
+            err_msg=column,
+        )
