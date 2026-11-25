@@ -398,10 +398,16 @@ class SolutionMetadata:
     """The public solver API version of that release."""
     solution_schema_version: int = SOLUTION_SCHEMA_VERSION
     """Version of the result container's schema."""
+    pass_throughs: frozenset[RegimeName] = frozenset()
+    """Generated regimes the result stores but never lists among its values."""
 
     def __post_init__(self) -> None:  # noqa: C901, PLR0912
         if self.n_periods < 1:
             raise ValueError("SolutionMetadata.n_periods must be positive.")
+        if not self.pass_throughs <= set(self.regime_names):
+            raise ValueError(
+                "SolutionMetadata.pass_throughs must name regimes of regime_names."
+            )
         if type(self.pylcm_version) is not str or not self.pylcm_version:
             raise ValueError("SolutionMetadata.pylcm_version must be a non-empty str.")
         if self.solution_schema_version < 1:

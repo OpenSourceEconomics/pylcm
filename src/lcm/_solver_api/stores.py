@@ -139,16 +139,16 @@ class _ValuePeriodView(Mapping[RegimeName, FloatND]):
         return self.store._load(period=self.period, regime=regime)  # noqa: SLF001
 
     def __iter__(self) -> Iterator[RegimeName]:
-        return iter(self.store._regimes_by_period[self.period])  # noqa: SLF001
+        return iter(self.store._listed(period=self.period))  # noqa: SLF001
 
     def __len__(self) -> int:
-        return len(self.store._regimes_by_period[self.period])  # noqa: SLF001
+        return len(self.store._listed(period=self.period))  # noqa: SLF001
 
     def __contains__(self, regime: object) -> bool:
         """Check one regime coordinate without materializing its value."""
         if type(regime) is not str or not regime:
             return False
-        return regime in self.store._regimes_by_period[self.period]  # noqa: SLF001
+        return regime in self.store._listed(period=self.period)  # noqa: SLF001
 
 
 @beartype(conf=SOLVER_API_CONF)
@@ -190,6 +190,8 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
     _regimes_by_period: MappingProxyType[int, tuple[RegimeName, ...]] = field(
         repr=False
     )
+    _hidden: frozenset[RegimeName] = field(default=frozenset(), repr=False)
+    """Regimes whose values are read by name but not listed: the pass-throughs."""
 
     def __init__(self, _entries: _ValueEntriesInput = MappingProxyType({})) -> None:
         # `__post_init__` replaces the supplied mapping with its canonical form.
@@ -274,6 +276,21 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
             ),
         )
 
+    def _hiding(self, *, regimes: frozenset[RegimeName]) -> _ValueStoreBoundary:
+        """The same values, with `regimes` left out of every listing."""
+        store = object.__new__(ValueStore)
+        object.__setattr__(store, "_entries", self._entries)
+        object.__setattr__(store, "_regimes_by_period", self._regimes_by_period)
+        object.__setattr__(store, "_hidden", regimes)
+        return store
+
+    def _listed(self, *, period: int) -> tuple[RegimeName, ...]:
+        return tuple(
+            regime
+            for regime in self._regimes_by_period.get(period, ())
+            if regime not in self._hidden
+        )
+
     def __getitem__(self, period: int) -> _RegimeValuesBoundary:
         period = _require_exact_value_period(period)
         if period not in self._regimes_by_period:
@@ -310,7 +327,7 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
         except KeyError:
             raise KeyError(
                 f"No stored value for regime {regime!r} in period {period}; "
-                f"stored regimes: {self._regimes_by_period.get(period, ())!r}."
+                f"stored regimes: {self._listed(period=period)!r}."
             ) from None
         if array_copier is not None and isinstance(entry, _LazyEntry):
             if type(entry) is _CanonicalValueEntry:
@@ -398,10 +415,10 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
                             array_copier=array_copier,
                             value_materializer=value_materializer,
                         )
-                        for regime in view
+                        for regime in regimes
                     }
                 )
-                for period, view in self.items()
+                for period, regimes in self._regimes_by_period.items()
             }
         )
 

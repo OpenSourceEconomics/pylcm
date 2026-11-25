@@ -190,14 +190,18 @@ and members, one action, no shocks, zero utility, the identity transition, and a
 to the next step, so its value passes the next step's value through unchanged,
 $W(u, c) = c$, also under a nonlinear certainty equivalent, since the law it averages is
 degenerate. A pass-through in the last stage discounts into the next period, as every
-regime of that stage does. The model generates the pass-throughs; they decide nothing
-and have no parameters, and the simulated frame has no rows for them. The solution's
-values, the raw simulation results, `model.regime_names_to_ids` and the parameter
-template list each under its own name, `<regime>_in_<stage>`, never under the regime's;
-so do the parameters of a per-target cell or state law on an edge that skips a stage. A
-model with a pass-through declares its functions, constraints, states, state transitions
-and actions on its regimes and its Koopmans aggregator and certainty equivalent on the
-model, and a gated edge does not skip a stage.
+regime of that stage does. The model generates the pass-throughs, and you never name or
+see one: they decide nothing and have no parameters, and the parameters of a per-target
+cell or state law on an edge that skips a stage sit under the declared target,
+`params["edges"][source][target]` and `params[source][target]`. The parameter template,
+`model.regime_names_to_ids`, `model.initial_nodes`, the solution's values, the raw
+simulation results and the simulated frame list only declared regimes, so they have no
+entry for a step the regime sits out, and a message names the regime and the stage it
+sits out. A model with a pass-through declares its functions, constraints, states, state
+transitions and actions on its regimes and its Koopmans aggregator and certainty
+equivalent on the model. A gated edge does not skip a stage, a regime with a continuous
+stochastic process does not sit out a stage, and an edge whose target's next occurrence
+lies beyond the last period is refused.
 
 - `period` and `age` are the period's wherever the model reads them: in functions,
   constraints and conditions, laws, gates, exits and settlements, Pareto weights and

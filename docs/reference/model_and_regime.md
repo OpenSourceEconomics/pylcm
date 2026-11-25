@@ -41,7 +41,8 @@ stage, an edge lands at its target's next occurrence, the first later step of th
 target's stage, and an exit enters a regime of its own or a later stage of its period.
 In every stage a regime sits out on the way, the subject is in the regime's generated
 pass-through: the same states and members, one action, no shocks, zero utility, the
-identity transition, its value the next step's passed through unchanged. Stages of one
+identity transition, its value the next step's passed through unchanged; parameters,
+regime codes, values and simulated results name only declared regimes. Stages of one
 period are linked without discounting, so crossing into the next period discounts once,
 and a regime of a stage before the last declares no Koopmans aggregator and uses no
 endogenous-grid solver. `period` and `age` mean the period in user functions,

@@ -159,7 +159,8 @@ into the regime lands.
 The generated regime a subject is in at a step of a stage its regime sits out on the way
 to its next occurrence: the regime's states and members, one action, no shocks, zero
 utility and the identity transition, so its value is the next step's passed through
-unchanged. The user never declares one, and the simulated frame has no rows for it.
+unchanged. The user never declares or sees one: parameters, regime codes, values and
+simulated results name only declared regimes.
 _Avoid_: waiting regime, dummy regime
 
 ### Parameters

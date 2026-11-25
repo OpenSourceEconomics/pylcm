@@ -154,6 +154,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
     component_values: RetainedComponentValues | None = None,
     device_memory_bytes: int | None = None,
     array_copier: _ArrayCopier | None = None,
+    pass_throughs: frozenset[RegimeName] = frozenset(),
 ) -> SolutionResult:
     """Label existing engine outputs without changing their numerical meaning.
 
@@ -162,6 +163,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
     engine outputs carry no value array. A host-storage solve's values carry
     `device_memory_bytes`, its per-device budget, so that placing all of them on
     the devices at once is admitted against it.
+    The values of `pass_throughs` are stored but not listed.
     """
     value_coordinates = (
         tuple(
@@ -383,6 +385,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
                     for period, regime_name in value_coordinates
                 }
             ),
+            pass_throughs=pass_throughs,
         ),
         omissions=MappingProxyType(omissions),
         diagnostics=own_artifact_store(

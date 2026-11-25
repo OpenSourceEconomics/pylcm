@@ -25,7 +25,7 @@ from lcm.persistence import PeriodCapture, load_period_capture
 from lcm.regime import RegimeReplacement
 from lcm.shocks import GaussHermite, Normal, Product, ShockGroup
 from lcm.solvers import EGM
-from lcm.transition import PeriodSelector
+from lcm.transition import AgeCaseLaw, AgeSelector, PeriodSelector, TransitionLaw
 from lcm.typing import (
     Age,
     BoolND,
@@ -34,6 +34,7 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FloatND,
+    IntND,
     Period,
     RegimeName,
     ScalarInt,
@@ -841,6 +842,10 @@ def test_by_period_owns_nested_law_mappings(wrapper: str) -> None:
     """The period schedule inherits the same owned law boundary as ByAge."""
     probability = lcm.StochasticTransition(func=_certain)
     probabilities = {"work": probability}
+
+    def to_probabilities(law: AgeCaseLaw) -> AgeCaseLaw:  # noqa: ARG001
+        return probabilities
+
     schedules = {
         "case": lcm.ByPeriod(cases={0: probabilities}),
         "default": lcm.ByPeriod(cases={}, default=probabilities),
@@ -849,7 +854,7 @@ def test_by_period_owns_nested_law_mappings(wrapper: str) -> None:
         ),
         "mapped-until": lcm.ByPeriod.until(
             stop_period_exclusive=2, law="work", then="done"
-        ).with_mapped_laws(func=lambda _: probabilities),
+        ).with_mapped_laws(func=to_probabilities),
     }
     probabilities.clear()
     law = cast(
@@ -1421,6 +1426,17 @@ def _wealth_savings(*, resources: FloatND, consumption: ContinuousAction) -> Flo
     return resources - consumption
 
 
+def _to_spending() -> IntND:
+    return jnp.asarray(StagedId.spending)
+
+
+def _to_spending_transition() -> lcm.Transition:
+    return lcm.Transition(
+        targets={"spending": lcm.PeriodRange()},
+        law=lcm.DeterministicTransition(func=_to_spending),
+    )
+
+
 def _wealth_kept(*, wealth: ContinuousState) -> ContinuousState:
     return wealth
 
@@ -1474,7 +1490,7 @@ def _out_of_stage_order(case: str) -> _StagedChange:
                 post_decision_state="savings",
             ),
         )
-    changes: dict[str, _StagedChange] = {
+    changes: dict[str, _StagedChange] = {  # ty: ignore[invalid-assignment]
         "missing": {"stages": {"work": ("working",), "spend": ("spending",)}},
         "repeated": {
             "stages": {"work": ("working", "final"), "spend": ("spending", "final")}
@@ -1491,6 +1507,39 @@ def _out_of_stage_order(case: str) -> _StagedChange:
         },
         "aggregator": {"regimes": regimes},
         "egm": {"regimes": regimes},
+        "process": {
+            "regimes": {
+                **regimes,
+                "spending": regimes["spending"].replace(
+                    states={
+                        **regimes["spending"].states,
+                        "income": lcm.NormalIIDProcess(
+                            n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0
+                        ),
+                    }
+                ),
+            },
+            "edges": {
+                "working": {
+                    "spending": lcm.PeriodRange(exclusive_stop=_N_ECONOMIC_PERIODS - 1),
+                    "final": lcm.PeriodRange(start=_N_ECONOMIC_PERIODS - 1),
+                },
+                "spending": {
+                    "spending": lcm.PeriodRange(exclusive_stop=_N_ECONOMIC_PERIODS - 2),
+                    "final": lcm.Periods(values=(_N_ECONOMIC_PERIODS - 2,)),
+                },
+            },
+        },
+        "beyond": {"stages": {"work": ("working", "final"), "spend": ("spending",)}},
+        "pair": {
+            "edges": {  # ty: ignore[invalid-argument-type]
+                "working": lcm.Phased(
+                    solve=_to_spending_transition(),
+                    simulate=_to_spending_transition(),
+                ),
+                "spending": {"working": lcm.PeriodRange()},
+            }
+        },
         "final": {
             "edges": {
                 "working": {
@@ -1513,33 +1562,18 @@ def _out_of_stage_order(case: str) -> _StagedChange:
         ("observes", r"observes \['eps'\] of 'spending', drawn in its later stage"),
         ("aggregator", r"'working' declares a Koopmans aggregator in stage 'work'"),
         ("egm", r"'working' uses an endogenous-grid solver in stage 'work'"),
+        ("process", r"'spending' sits out stage 'work' .* processes \['income'\]"),
+        ("beyond", r"requires 'final' sitting out stage 'spend' at age 2, which is"),
+        ("pair", r"'working' maps to a `Phased` pair of transitions. Phase"),
         ("final", r"'spending' → 'working' selects only the final age"),
     ],
 )
 def test_stages_refuse_declarations_out_of_stage_order(
     *, case: str, match: str
 ) -> None:
+    """A refusal names declared regimes and stages, never a generated regime."""
     with pytest.raises(ModelInitializationError, match=match):
         _staged_model(clock="staged", **_out_of_stage_order(case))
-
-
-def test_saved_staged_result_keeps_its_stages(tmp_path: Path) -> None:
-    model = _staged_model(clock="staged")
-    result = model.simulate(
-        params={"wage": _wage(steps=False)},
-        initial_conditions={
-            "period": jnp.array([0]),
-            "regime_id": jnp.array([StagedId.working]),
-            "wealth": jnp.array([2.0]),
-        },
-        seed=3,
-        log_level="off",
-    )
-    result.save(directory=tmp_path / "result")
-    restored = lcm.SimulationResult.load(directory=tmp_path / "result")
-    frame = restored.to_dataframe()
-    pd.testing.assert_frame_equal(frame, result.to_dataframe())
-    assert frame["stage"].tolist() == ["work", "spend"] * _N_ECONOMIC_PERIODS
 
 
 @lcm.categorical(ordered=False)
@@ -1793,11 +1827,60 @@ def _waiting() -> FloatND:
     return jnp.asarray(0.0)
 
 
-def _marriage(*, hand: bool) -> lcm.Model:
+def _single_next_regime(*, period: Period) -> IntND:
+    return jnp.where(
+        period < _N_ECONOMIC_PERIODS - 2, MarriageId.single, MarriageId.single_final
+    )
+
+
+def _single_regime_probabilities(*, period: Period) -> FloatND:
+    return jnp.where(
+        period < _N_ECONOMIC_PERIODS - 2,
+        jnp.asarray([0.0, 0.0, 0.0, 1.0, 0.0]),
+        jnp.asarray([0.0, 0.0, 0.0, 0.0, 1.0]),
+    )
+
+
+def _single_stays(*, stay: FloatND) -> FloatND:
+    return stay
+
+
+def _next_single_wealth_with_income(
+    *, wealth: ContinuousState, consumption: FloatND, income: FloatND
+) -> ContinuousState:
+    return jnp.minimum(1.05 * (wealth - consumption) + income, 6.0)
+
+
+def _single_edges(
+    *, variant: str, targets: Mapping[RegimeName, AgeSelector | PeriodSelector]
+) -> Mapping[RegimeName, AgeSelector | PeriodSelector] | lcm.Transition:
+    """The single's edges: selectors, or a law of the form `variant` names."""
+    law: TransitionLaw
+    if variant == "recoded":
+        law = lcm.DeterministicTransition(func=_single_next_regime)
+    elif variant == "spread":
+        law = lcm.StochasticTransition(func=_single_regime_probabilities)
+    elif variant == "cells":
+        law = lcm.ByPeriod(
+            cases={
+                targets["single"]: {
+                    "single": lcm.StochasticTransition(func=_single_stays)
+                },
+                targets["single_final"]: "single_final",
+            }
+        )
+    else:
+        return targets
+    return lcm.Transition(targets=targets, law=law)
+
+
+def _marriage(*, hand: bool, variant: str = "plain") -> lcm.Model:
     """Couples decide to part, then spend; singles only spend.
 
     `hand` writes the single's wait in the parting stage as a regime of its own,
-    with edges into and out of it.
+    with edges into and out of it. `variant` declares the same model by age, with
+    `Phased` edges, or with a regime law or per-target cells and state laws for
+    the single.
     """
     last = _N_ECONOMIC_PERIODS - 1
     couple_wealth = lcm.LinSpacedGrid(start=2.0, stop=12.0, n_points=6)
@@ -1848,7 +1931,14 @@ def _marriage(*, hand: bool) -> lcm.Model:
         "single": lcm.Regime(
             states={"wealth": single_wealth},
             actions={"share": share},
-            state_transitions={"wealth": _next_single_wealth},
+            state_transitions={
+                "wealth": {
+                    "single": _next_single_wealth_with_income,
+                    "single_final": _next_single_wealth,
+                }
+                if variant == "cells"
+                else _next_single_wealth
+            },
             functions={
                 "consumption": _shared_consumption,
                 "utility": _single_consumption_utility,
@@ -1864,21 +1954,41 @@ def _marriage(*, hand: bool) -> lcm.Model:
             state_transitions={"wealth": lcm.fixed_transition("wealth")},
             functions={"utility": _waiting},
         )
-    edges: dict[RegimeName, Mapping[RegimeName, PeriodSelector]] = {
-        "couple_sep": {"couple": lcm.PeriodRange()},
-        "couple": {
-            "couple_sep": lcm.PeriodRange(exclusive_stop=last - 1),
-            "couple_final": lcm.Periods(values=(last - 1,)),
-        },
-        "single": {
-            single: lcm.PeriodRange(exclusive_stop=last - 1),
-            "single_final": lcm.Periods(values=(last - 1,)),
-        },
+    by_age = variant == "age"
+    always, before_end, at_end = (
+        (
+            lcm.AgeRange(),
+            lcm.AgeRange(exclusive_stop=60 + last - 1),
+            lcm.AgeRange(start=60 + last - 1, exclusive_stop=60 + last),
+        )
+        if by_age
+        else (
+            lcm.PeriodRange(),
+            lcm.PeriodRange(exclusive_stop=last - 1),
+            lcm.Periods(values=(last - 1,)),
+        )
+    )
+    single_targets: dict[RegimeName, AgeSelector | PeriodSelector] = {
+        single: before_end,
+        "single_final": at_end,
+    }
+    edges: dict[
+        RegimeName, Mapping[RegimeName, AgeSelector | PeriodSelector] | lcm.Transition
+    ] = {
+        "couple_sep": {"couple": always},
+        "couple": {"couple_sep": before_end, "couple_final": at_end},
+        "single": _single_edges(variant=variant, targets=single_targets),
     }
     if hand:
-        edges["single_wait"] = {"single": lcm.PeriodRange()}
+        edges["single_wait"] = {"single": always}
+    clock: ClockKwargs = (
+        {"ages": lcm.AgeGrid(start=60, inclusive_stop=60 + last, step="Y")}
+        if by_age
+        else {"n_periods": _N_ECONOMIC_PERIODS}
+    )
+    starts = ("couple_sep", single)
     return lcm.Model(
-        n_periods=_N_ECONOMIC_PERIODS,
+        **clock,
         stages={
             "part": ("couple_sep", "couple_final", "single_final")
             + (("single_wait",) if hand else ()),
@@ -1886,8 +1996,10 @@ def _marriage(*, hand: bool) -> lcm.Model:
         },
         regimes=regimes,
         regime_id_class=HandMarriageId if hand else MarriageId,
-        initial_nodes=lcm.InitialNodes(by_period={0: ("couple_sep", single)}),
-        edges=edges,
+        initial_nodes=lcm.InitialNodes(by_age={60: starts})
+        if by_age
+        else lcm.InitialNodes(by_period={0: starts}),
+        edges=lcm.Phased(solve=edges, simulate=edges) if variant == "phased" else edges,
         fixed_params={"discount_factor": 0.9},
     )
 
@@ -1962,14 +2074,142 @@ def test_an_exit_reads_the_destination_at_its_occurrence_later_in_the_period() -
         )
 
 
+@lcm.categorical(ordered=False)
+class FormationId:
+    single: ScalarInt
+    partner: ScalarInt
+    couple: ScalarInt
+
+
+def _forming_utility(*, labor: DiscreteAction) -> FloatND:
+    return 2.0 * labor
+
+
+def _three() -> FloatND:
+    return jnp.asarray(3.0)
+
+
+def _one() -> FloatND:
+    return jnp.asarray(1.0)
+
+
+def _formation() -> lcm.Model:
+    """A single forms a couple of the later stage if a partner there consents."""
+    return lcm.Model(
+        n_periods=1,
+        stages={"meet": ("single",), "live": ("partner", "couple")},
+        regimes={
+            "single": lcm.Regime(
+                actions={"labor": lcm.DiscreteGrid(Labor)},
+                functions={"utility": _forming_utility},
+                exit=lcm.Exit(
+                    targets={
+                        "self": lcm.ExitTarget(regime="couple", role="f", projection={})
+                    },
+                    rule=lcm.Consent(
+                        counterparty=lcm.Counterparty(
+                            regime="partner", role="m", projection={}
+                        )
+                    ),
+                ),
+            ),
+            "partner": lcm.Regime(functions={"utility": _waiting}),
+            "couple": lcm.Regime(
+                functions={
+                    "utility": lcm.CollectiveUtility(utilities={"f": _three, "m": _one})
+                }
+            ),
+        },
+        regime_id_class=FormationId,
+        initial_nodes=lcm.InitialNodes(by_period={0: "single"}),
+        edges={"single": {"partner": lcm.PeriodRange()}},
+    )
+
+
+def _skipping_case(
+    variant: str,
+) -> tuple[lcm.Model, UserParams, pd.DataFrame, tuple[RegimeName, ...]]:
+    """A model with a regime that sits out a stage, its params, starts and regimes."""
+    if variant == "consent":
+        starts = pd.DataFrame({"period": [0, 0], "regime_name": ["single", "single"]})
+        return _formation(), {}, starts, tuple(FormationId.__dataclass_fields__)
+    params: UserParams = {"couple_sep": {"love": 0.2}}
+    if variant == "cells":
+        params = {
+            **params,
+            "single": {"single": {"next_wealth": {"income": 0.5}}},
+            "edges": {"single": {"single": {"stay": 1.0}}},
+        }
+    starts = pd.DataFrame(
+        {
+            "age" if variant == "age" else "period": [60 if variant == "age" else 0]
+            * 4,
+            "regime_name": ["couple_sep", "couple_sep", "single", "single"],
+            "own_member": ["f", "m", "f", "m"],
+            "wealth": [4.0, 10.0, 2.0, 5.0],
+        }
+    )
+    model = _marriage(hand=False, variant=variant)
+    return model, params, starts, tuple(MarriageId.__dataclass_fields__)
+
+
+@pytest.mark.parametrize(
+    "variant", ["plain", "age", "phased", "recoded", "spread", "cells", "consent"]
+)
+def test_the_user_never_sees_a_pass_through(*, variant: str, tmp_path: Path) -> None:
+    """A regime that sits out a stage is known only by the name the user declared.
+
+    The parameter template, the parameters of an edge that skips a stage, the
+    regime codes, the starts, a refusal of missing parameters, the values of a
+    solution and of its saved copy, the raw and tabulated simulation and its
+    saved copy name only declared regimes.
+    """
+    model, params, starts, declared = _skipping_case(variant)
+    generated = model._time.pass_throughs
+    assert generated
+    solution = model.solve(params=params, log_level="off")
+    loaded = lcm.load_solution(path=solution.save(path=tmp_path / "solution.lcm"))
+    result = model.simulate(
+        params=params,
+        initial_conditions=starts,
+        solution=loaded,
+        seed=5,
+        log_level="off",
+    )
+    result.save(directory=tmp_path / "result")
+    restored = lcm.SimulationResult.load(directory=tmp_path / "result")
+    frame = restored.to_dataframe()
+    pd.testing.assert_frame_equal(frame, result.to_dataframe())
+    assert tuple(model.regime_names_to_ids) == declared
+    assert tuple(frame["regime_name"].cat.categories) == declared
+    assert restored.regime_names == declared
+    seen = repr(
+        (
+            model.get_params_template(),
+            model.initial_nodes,
+            [list(regimes) for regimes in solution.values.values()],
+            [list(regimes) for regimes in loaded.values.values()],
+            list(result.raw_results),
+            list(restored.raw_results),
+        )
+    )
+    if params:
+        with pytest.raises(lcm.exceptions.InvalidParamsError) as missing:
+            model.validate_transitions(params={})
+        seen += str(missing.value)
+    assert [name for name in generated if name in seen] == []
+
+
 # The periods the readers below were called with, filled from inside the program.
 _PERIODS_READ: set[int] = set()
 
 
+def _record_periods(read: jax.Array) -> None:
+    _PERIODS_READ.update(np.asarray(read).ravel().tolist())
+
+
 def _read(period: Period) -> None:
-    jax.debug.callback(
-        lambda read: _PERIODS_READ.update(np.asarray(read).ravel().tolist()), period
-    )
+    jax.debug.callback(_record_periods, period)
 
 
 def _affordable_reading_period(

@@ -9,11 +9,14 @@ edge to the next step. Its value is the next step's value passed through
 unchanged; a pass-through of the last stage discounts into the next period as
 every regime of that stage does. The model's declarations are rewritten onto
 the pass-throughs, so every link of the engine's object leads to the next step.
+The user never names or sees a pass-through: params and their template, regime
+codes, starts, values, simulated results and messages name the declared regime.
 """
 
 import dataclasses
 import functools
 from collections.abc import Callable, Mapping
+from types import MappingProxyType
 from typing import cast
 
 import jax.numpy as jnp
@@ -25,11 +28,18 @@ from _lcm.grids.categorical import (
     get_category_codes,
     validate_category_class,
 )
+from _lcm.params.edges import EDGES
+from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.schedules import resolve_initial_nodes
 from _lcm.time import ModelTime
-from _lcm.typing import DataclassInstance, EconFunctionArg
+from _lcm.typing import (
+    DataclassInstance,
+    EconFunctionArg,
+    EdgeParamsTemplate,
+    ParamsTemplate,
+)
 from lcm.collective import CollectiveUtility
-from lcm.exceptions import ModelInitializationError
+from lcm.exceptions import ModelInitializationError, PyLCMError
 from lcm.exits import Consent, Exit
 from lcm.initial_nodes import UserInitialNodes
 from lcm.phased import Phased
@@ -40,11 +50,10 @@ from lcm.transition import (
     AgeRange,
     AgeSelector,
     ByAge,
+    DeclaredModelEdges,
     DeterministicTransition,
-    ModelEdges,
     PeriodRange,
     PeriodSelector,
-    PhaseEdges,
     StochasticTransition,
     Transition,
     TransitionLaw,
@@ -55,12 +64,17 @@ from lcm.typing import (
     IntND,
     RegimeName,
     ScalarInt,
+    UserAge,
     UserFunction,
     UserInitialConditions,
 )
 
 type _Renames = Mapping[RegimeName, RegimeName]
-type _EdgeDeclaration = Transition | Mapping[RegimeName, AgeSelector | PeriodSelector]
+# A source mapped to a `Phased` pair of transitions passes unchanged; the graph
+# refuses it naming the supported form.
+type _EdgeDeclaration = (
+    Transition | Mapping[RegimeName, AgeSelector | PeriodSelector] | Phased
+)
 
 
 def pass_through_utility() -> FloatND:
@@ -72,12 +86,14 @@ def with_pass_throughs(  # noqa: C901 - one pass over edges, exits and starts
     *,
     time: ModelTime,
     regimes: Mapping[RegimeName, Regime],
-    edges: ModelEdges,
+    edges: DeclaredModelEdges,
     initial_nodes: UserInitialNodes,
     regime_id_class: type[DataclassInstance],
     shocks: Mapping[ShockGroupName, ShockGroup],
     declares_model_slots: bool,
-) -> tuple[ModelTime, Mapping[RegimeName, Regime], ModelEdges, type[DataclassInstance]]:
+) -> tuple[
+    ModelTime, Mapping[RegimeName, Regime], DeclaredModelEdges, type[DataclassInstance]
+]:
     """Rewrite a staged model onto pass-throughs wherever it skips a stage.
 
     Returns the model unchanged when nothing skips a stage. Otherwise every edge
@@ -89,8 +105,6 @@ def with_pass_throughs(  # noqa: C901 - one pass over edges, exits and starts
         The clock, the regimes, the edges and the regime-code class.
 
     """
-    if not time.stages:
-        return time, regimes, edges, regime_id_class
     stage_of = time.stage_of
     stage_names = [name for name, _ in time.stages]
     added: dict[RegimeName, tuple[RegimeName, int]] = {}
@@ -151,6 +165,18 @@ def with_pass_throughs(  # noqa: C901 - one pass over edges, exits and starts
             f"The regimes {taken} are named like the pass-throughs the model "
             "generates; rename them."
         )
+    for target, stage in added.values():
+        if processes := sorted(
+            name
+            for name, grid in regimes[target].states.items()
+            if isinstance(grid, _ContinuousStochasticProcess)
+        ):
+            raise ModelInitializationError(
+                f"'{target}' sits out stage '{stage_names[stage]}' on the way to "
+                f"its next occurrence, where it cannot carry its continuous "
+                f"stochastic processes {processes} unchanged. Declare a regime "
+                f"of its own in stage '{stage_names[stage]}'."
+            )
     if declares_model_slots:
         raise ModelInitializationError(
             "A staged model whose regimes skip stages declares its functions, "
@@ -166,7 +192,9 @@ def with_pass_throughs(  # noqa: C901 - one pass over edges, exits and starts
         for name, (target, stage) in added.items()
     }
 
-    def rewritten(phase: PhaseEdges) -> PhaseEdges:
+    def rewritten(
+        phase: Mapping[RegimeName, _EdgeDeclaration],
+    ) -> Mapping[RegimeName, _EdgeDeclaration]:
         if not isinstance(phase, Mapping):
             return phase
         return {
@@ -214,9 +242,12 @@ def with_pass_throughs(  # noqa: C901 - one pass over edges, exits and starts
                 for name, (target, _) in added.items()
             },
         },
-        Phased(solve=rewritten(edges.solve), simulate=rewritten(edges.simulate))
-        if isinstance(edges, Phased)
-        else rewritten(edges),
+        cast(
+            "DeclaredModelEdges",
+            Phased(solve=rewritten(edges.solve), simulate=rewritten(edges.simulate))
+            if isinstance(edges, Phased)
+            else rewritten(edges),
+        ),
         cast(
             "type[DataclassInstance]",
             categorical(ordered=False)(
@@ -274,6 +305,102 @@ def enter_first_stage(
     for name, start in starts.items():
         entered[codes == regime_names_to_ids[name]] = regime_names_to_ids[start]
     return {**initial_conditions, "regime_id": entered}
+
+
+def declared_regime(*, name: RegimeName, time: ModelTime) -> RegimeName:
+    """The regime a pass-through belongs to; any other regime is its own."""
+    if name not in time.pass_throughs:
+        return name
+    return name.removesuffix(f"_in_{time.stages[time.stage_of[name]][0]}")
+
+
+def declared_codes(
+    *, codes: Mapping[RegimeName, ScalarInt], time: ModelTime
+) -> MappingProxyType[RegimeName, ScalarInt]:
+    """The codes of the declared regimes, which precede every pass-through's."""
+    return MappingProxyType(
+        {name: code for name, code in codes.items() if name not in time.pass_throughs}
+    )
+
+
+def declared_nodes(
+    *, pairs: frozenset[tuple[UserAge, RegimeName]], time: ModelTime
+) -> frozenset[tuple[UserAge, RegimeName]]:
+    """The starts as declared, each pass-through named by its regime."""
+    return frozenset(
+        (age, declared_regime(name=name, time=time)) for age, name in pairs
+    )
+
+
+def target_slots(
+    *, template: ParamsTemplate, time: ModelTime
+) -> dict[RegimeName, dict[RegimeName, RegimeName]]:
+    """Per source, each pass-through its slots name, with its declared regime."""
+    edges = cast("Mapping[RegimeName, EdgeParamsTemplate]", template.get(EDGES, {}))
+    return {
+        source: {
+            name: declared_regime(name=name, time=time)
+            for name in (*template.get(source, {}), *edges.get(source, {}))
+            if name in time.pass_throughs
+        }
+        for source in template
+        if source != EDGES
+    }
+
+
+# keyword-only-exempt: primary-argument=tree
+def renamed_slots[Node](
+    tree: Mapping[str, Node],
+    *,
+    slots: Mapping[RegimeName, Mapping[RegimeName, RegimeName]],
+    dropped: frozenset[RegimeName] = frozenset(),
+) -> dict[str, Node]:
+    """`tree` with the keys of each source's branch and edge branch renamed.
+
+    Params and templates name a target by the regime its edge lands in inside the
+    engine, and by its declared regime at the public boundary.
+    """
+
+    def branch(*, source: RegimeName, node: Node) -> Node:
+        renames = slots.get(source, {})
+        if not renames or not isinstance(node, Mapping):
+            return node
+        return cast(
+            "Node", {renames.get(key, key): value for key, value in node.items()}
+        )
+
+    return {
+        name: cast(
+            "Node",
+            {
+                source: branch(source=source, node=edges)
+                for source, edges in node.items()
+            },
+        )
+        if name == EDGES and isinstance(node, Mapping)
+        else branch(source=name, node=node)
+        for name, node in tree.items()
+        if name not in dropped
+    }
+
+
+def name_declared_regimes(*, error: PyLCMError, time: ModelTime | None) -> None:
+    """Name each pass-through in `error` by its declared regime, in place.
+
+    A quoted pass-through reads as its regime sitting out its stage; inside a
+    parameter path it reads as the regime, the path the user writes.
+    """
+    if time is None or not time.pass_throughs:
+        return
+    text = str(error)
+    for name in sorted(time.pass_throughs, key=len, reverse=True):
+        regime = declared_regime(name=name, time=time)
+        stage = time.stages[time.stage_of[name]][0]
+        text = text.replace(
+            f"'{name}'", f"'{regime}' sitting out stage '{stage}'"
+        ).replace(name, regime)
+    if text != str(error):
+        error.args = (text,)
 
 
 def _targets(declaration: _EdgeDeclaration) -> tuple[RegimeName, ...]:
@@ -416,7 +543,7 @@ def _recoded(*, func: UserFunction, codes: tuple[int, ...]) -> UserFunction:
 
     @functools.wraps(func)
     def recoded(**kwargs: EconFunctionArg) -> IntND:
-        return jnp.asarray(codes)[func(**kwargs)]
+        return jnp.asarray(codes, dtype=jnp.int32)[func(**kwargs)]
 
     return recoded
 

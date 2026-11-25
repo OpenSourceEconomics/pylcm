@@ -84,7 +84,16 @@ from _lcm.params.processing import (
 )
 from _lcm.params.regime_template import EdgeVocabulary, create_edge_vocabulary
 from _lcm.params.sequence_leaf import UserSequenceLeaf
-from _lcm.pass_through import enter_first_stage, first_stage_regime, with_pass_throughs
+from _lcm.pass_through import (
+    declared_codes,
+    declared_nodes,
+    enter_first_stage,
+    first_stage_regime,
+    name_declared_regimes,
+    renamed_slots,
+    target_slots,
+    with_pass_throughs,
+)
 from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
     _save_solve_snapshot,
@@ -368,6 +377,7 @@ from lcm.exceptions import (
     InvalidValueFunctionError,
     ModelInitializationError,
     NoFeasibleActionError,
+    PyLCMError,
     UnsupportedOperationError,
 )
 from lcm.execution import ExecutionConfig, InvariantBlockSchedule
@@ -994,7 +1004,7 @@ class Model:
     """Number of steps in the model: its periods times the stages of a period."""
 
     regime_names_to_ids: RegimeNamesToIds
-    """Immutable mapping from regime names to integer indices."""
+    """Immutable mapping from each declared regime's name to its integer code."""
 
     member_names_to_ids: MappingProxyType[str, int]
     """Immutable mapping from member names to integer role codes.
@@ -1307,22 +1317,26 @@ class Model:
             edges=edges,
             composite_states=composite_states,
         )
-        prepared = self._constructor_inputs.prepare(model=self)
-        self._declaration_preparation = prepared
-        built_regimes, template = build_regimes_and_template(
-            ages=self._time,
-            user_regimes=self._user_regimes,
-            regime_names_to_ids=self.regime_names_to_ids,
-            enable_jit=prepared.enable_jit,
-            fixed_params=prepared.fixed_params,
-            params_already_consumed=prepared.params_already_consumed,
-            prepared_structure=prepared.prepared_structure,
-            phase_transitions=self.declared_transitions,
-            execution=self._execution,
-        )
-        self._install_programs(
-            regimes=built_regimes, template=template, prepared=prepared
-        )
+        try:
+            prepared = self._constructor_inputs.prepare(model=self)
+            self._declaration_preparation = prepared
+            built_regimes, template = build_regimes_and_template(
+                ages=self._time,
+                user_regimes=self._user_regimes,
+                regime_names_to_ids=self._regime_codes,
+                enable_jit=prepared.enable_jit,
+                fixed_params=prepared.fixed_params,
+                params_already_consumed=prepared.params_already_consumed,
+                prepared_structure=prepared.prepared_structure,
+                phase_transitions=self.declared_transitions,
+                execution=self._execution,
+            )
+            self._install_programs(
+                regimes=built_regimes, template=template, prepared=prepared
+            )
+        except PyLCMError as error:
+            name_declared_regimes(error=error, time=getattr(self, "_time", None))
+            raise
 
     def _prepare_declarations(  # noqa: PLR0915
         self,
@@ -1398,17 +1412,18 @@ class Model:
             ages=ages, n_periods=n_periods, stages=stages, regime_names=tuple(regimes)
         )
         # An edge or exit that skips a stage passes through generated regimes.
-        self._time, regimes, edges, regime_id_class = with_pass_throughs(
-            time=self._time,
-            regimes=regimes,
-            edges=edges,
-            initial_nodes=initial_nodes,
-            regime_id_class=regime_id_class,
-            shocks=shocks,
-            declares_model_slots=any(
-                (functions, constraints, states, state_transitions, actions)
-            ),
-        )
+        if self._time.stages:
+            self._time, regimes, edges, regime_id_class = with_pass_throughs(
+                time=self._time,
+                regimes=regimes,
+                edges=edges,
+                initial_nodes=initial_nodes,
+                regime_id_class=regime_id_class,
+                shocks=shocks,
+                declares_model_slots=any(
+                    (functions, constraints, states, state_transitions, actions)
+                ),
+            )
         self.n_periods = self._time.n_periods
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
         # The graph declares every regime transition: bind each source's law
@@ -1743,7 +1758,10 @@ class Model:
             shock_node_states=self._node_state_names,
         )
         # A validated category class lists its codes 0, 1, ... in field order.
-        self.regime_names_to_ids = get_category_codes(regime_id_class)
+        self._regime_codes = get_category_codes(regime_id_class)
+        self.regime_names_to_ids = declared_codes(
+            codes=self._regime_codes, time=self._time
+        )
         self._execution = resolve_execution_config(
             config=execution_config,
             visible_device_ids=visible_device_ids(),
@@ -1830,7 +1848,8 @@ class Model:
         )
         self._resolved_initial_nodes = resolved_initial_nodes
         self.initial_nodes = InitialNodes._from_pairs(  # noqa: SLF001
-            pairs=resolved_initial_nodes, kind=self._time.kind
+            pairs=declared_nodes(pairs=resolved_initial_nodes, time=self._time),
+            kind=self._time.kind,
         )
         prepared_structure = dataclasses.replace(
             prepared_structure, current_iid_bindings=self._shock_registry.bindings
@@ -1944,7 +1963,7 @@ class Model:
             ages=self._time,
             user_regimes=self._user_regimes,
             laws=self._graph.laws,
-            regime_names_to_ids=self.regime_names_to_ids,
+            regime_names_to_ids=self._regime_codes,
             fixed_params=MappingProxyType(
                 {
                     name: regime.resolved_fixed_params
@@ -1971,7 +1990,7 @@ class Model:
         return canonical_generation_roots(
             declarations=(
                 self._time.values,  # noqa: PD011 - TimeAxis numeric values
-                self.regime_names_to_ids,
+                self._regime_codes,
                 self.fixed_params,
                 self._regimes,
                 self._sealed_numeric_roots,
@@ -2034,16 +2053,20 @@ class Model:
     ) -> tuple[FlatParams, CanonicalModelGeneration]:
         """Canonicalize once, acquire once, then validate the same real programs."""
         self._check_identity_runtime()
-        flat_params = self._canonicalize_params(
-            params,
-            array_writer=array_writer,
-            use_categorical_codes=use_categorical_codes,
-        )
-        self._validate_canonical_params(
-            flat_params=flat_params,
-            array_writer=array_writer,
-            runtime_checks=runtime_checks,
-        )
+        try:
+            flat_params = self._canonicalize_params(
+                params,
+                array_writer=array_writer,
+                use_categorical_codes=use_categorical_codes,
+            )
+            self._validate_canonical_params(
+                flat_params=flat_params,
+                array_writer=array_writer,
+                runtime_checks=runtime_checks,
+            )
+        except PyLCMError as error:
+            name_declared_regimes(error=error, time=self._time)
+            raise
         generation = self._acquire_generation(
             flat_params=flat_params,
             process_grid_resolver=(
@@ -2179,7 +2202,7 @@ class Model:
                 regimes=self._regimes,
                 user_regimes=self._user_regimes,
                 laws=self._graph.laws,
-                regime_names_to_ids=self.regime_names_to_ids,
+                regime_names_to_ids=self._regime_codes,
                 binding_recorder=recorder,
                 array_recorder=numeric_roots.append,
                 shock_groups=self.shocks,
@@ -2276,7 +2299,7 @@ class Model:
             _process_code_reads=self._process_code_reads,
             pruned_variables=self.pruned_variables,
             _user_regimes=self._user_regimes,
-            regime_names_to_ids=self.regime_names_to_ids,
+            regime_names_to_ids=self._regime_codes,
             _execution=self._execution,
             reachability=self.reachability,
             _query_periods_by_phase=self._query_periods_by_phase,
@@ -2347,9 +2370,14 @@ class Model:
                     "Rebuild this model with an explicit time coordinate."
                 )
             self._time = ModelTime.from_inputs(ages=self.ages, n_periods=None)
+        self._regime_codes = state["regime_names_to_ids"]
+        self.regime_names_to_ids = declared_codes(
+            codes=self._regime_codes, time=self._time
+        )
         self._resolved_initial_nodes = self.graph.initial_nodes
         self.initial_nodes = InitialNodes._from_pairs(  # noqa: SLF001
-            pairs=self._resolved_initial_nodes, kind=self._time.kind
+            pairs=declared_nodes(pairs=self._resolved_initial_nodes, time=self._time),
+            kind=self._time.kind,
         )
         if not self.durable_identity or "_solution_model_instance_id" not in state:
             self._solution_model_instance_id = uuid.uuid4().hex
@@ -2426,7 +2454,7 @@ class Model:
             regimes=self._regimes,
             user_regimes=self._user_regimes,
             laws=self._graph.laws,
-            regime_names_to_ids=self.regime_names_to_ids,
+            regime_names_to_ids=self._regime_codes,
             flat_params=flat_params,
             structure=self._model_structure_fingerprint,
             projection=self._solution_param_projection,
@@ -2445,7 +2473,7 @@ class Model:
             regimes=self._regimes,
             user_regimes=self._user_regimes,
             laws=self._graph.laws,
-            regime_names_to_ids=self.regime_names_to_ids,
+            regime_names_to_ids=self._regime_codes,
             flat_params=flat_params,
             structure=self._model_structure_fingerprint,
             process_grid_resolver=process_grid_resolver,
@@ -2497,7 +2525,12 @@ class Model:
             }
             for name, slots in self._shock_registry.params_template.items()
         }
-        return {**template, **group_templates}
+        declared = renamed_slots(
+            template,
+            slots=target_slots(template=self._params_template, time=self._time),
+            dropped=frozenset(self._time.pass_throughs),
+        )
+        return {**declared, **group_templates}
 
     @beartype(conf=PARAMS_CONF)
     def validate_transitions(
@@ -2549,7 +2582,7 @@ class Model:
             producers=self._simulate_entry_operations,
             flat_params=flat_params,
             regimes=self._regimes,
-            regime_names_to_ids=self.regime_names_to_ids,
+            regime_names_to_ids=self._regime_codes,
             ages=self._time,
         )
 
@@ -3066,6 +3099,7 @@ class Model:
                 flat_params=flat_params,
                 process_grid_resolver=process_grid_resolver,
                 device_memory_bytes=self._execution.device_memory_bytes,
+                pass_throughs=self._time.pass_throughs,
             )
 
     def _component_schedule(
@@ -3637,11 +3671,8 @@ class Model:
                 f"model: missing={missing}, unexpected={unexpected}."
             )
             raise InvalidSimulationInputError(msg)
-        actual_coverage = {
-            (period, regime_name)
-            for period, regime_to_value in value_store.items()
-            for regime_name in regime_to_value
-        }
+        # Every stored value, the pass-throughs the store does not list included.
+        actual_coverage = set(cast("ValueStore", value_store)._entries)  # noqa: SLF001
         self._check_solution_result_coverage(
             actual_coverage=actual_coverage,
             expected_coverage=expected_coverage,
@@ -4668,7 +4699,7 @@ class Model:
                     shock_paths=shock_paths,
                     seed=seed,
                     ages=self._time,
-                    regime_names_to_ids=self.regime_names_to_ids,
+                    regime_names_to_ids=self._regime_codes,
                     memory=node_input_memory,
                 )
             )
@@ -4715,7 +4746,7 @@ class Model:
         initial_conditions = enter_first_stage(
             initial_conditions=initial_conditions,
             time=self._time,
-            regime_names_to_ids=self.regime_names_to_ids,
+            regime_names_to_ids=self._regime_codes,
         )
         log = get_logger(log_level=log_level, runtime_checks=runtime_checks)
         call_id = new_call_id()
@@ -4809,12 +4840,12 @@ class Model:
                     initial_conditions=initial_conditions,
                     splits=self._fixed_component_splits,
                     user_regimes=self._user_regimes,
-                    regime_names_to_ids=self.regime_names_to_ids,
+                    regime_names_to_ids=self._regime_codes,
                 )
                 initial_conditions = lower_composite_initial_conditions(
                     initial_conditions=initial_conditions,
                     lowerings=self._composite_states,
-                    regime_names_to_ids=self.regime_names_to_ids,
+                    regime_names_to_ids=self._regime_codes,
                 )
                 initial_conditions = self._lower_joint_initial_conditions(
                     initial_conditions=initial_conditions,
@@ -4824,7 +4855,7 @@ class Model:
                     initial_conditions = initial_conditions_from_dataframe(
                         df=initial_conditions,
                         user_regimes=self._user_regimes,
-                        regime_names_to_ids=self.regime_names_to_ids,
+                        regime_names_to_ids=self._regime_codes,
                         array_writer=entry_allocations,
                         ages=self._time,
                         use_categorical_codes=use_categorical_codes,
@@ -4838,13 +4869,13 @@ class Model:
                     post_decision_shocks=self._post_decision_shocks,
                     params=flat_params,
                     ages=self._time,
-                    regime_names_to_ids=self.regime_names_to_ids,
+                    regime_names_to_ids=self._regime_codes,
                     process_code_reads=self._process_code_reads,
                 )
                 fail_if_an_initial_process_code_is_off_node(
                     initial=initial_conditions,
                     process_code_reads=self._process_code_reads,
-                    regime_names_to_ids=self.regime_names_to_ids,
+                    regime_names_to_ids=self._regime_codes,
                 )
                 initial_conditions = canonicalize_initial_conditions(
                     initial_conditions=initial_conditions,
@@ -4862,7 +4893,7 @@ class Model:
                     initial=initial_conditions,
                     regimes=self._regimes,
                     ages=self._time,
-                    regime_names_to_ids=self.regime_names_to_ids,
+                    regime_names_to_ids=self._regime_codes,
                 )
                 if seed is None:
                     seed = draw_random_seed()
@@ -4916,7 +4947,7 @@ class Model:
                     ),
                     initial_conditions=initial_conditions,
                     regimes=self._regimes,
-                    regime_names_to_ids=self.regime_names_to_ids,
+                    regime_names_to_ids=self._regime_codes,
                     flat_params=flat_params,
                     ages=self._time,
                     logger=log,
@@ -5084,7 +5115,7 @@ class Model:
                         policies=period_to_regime_to_sim_policy,
                         ages=self._time,
                         initial_conditions=initial_conditions,
-                        regime_names_to_ids=self.regime_names_to_ids,
+                        regime_names_to_ids=self._regime_codes,
                         original_population=original_n_subjects,
                         current_iid_override_schema=()
                         if current_iid_overrides is None
@@ -5138,7 +5169,7 @@ class Model:
                 flat_params=flat_params,
                 initial_conditions=initial_conditions,
                 regimes=simulate_regimes,
-                regime_names_to_ids=self.regime_names_to_ids,
+                regime_names_to_ids=self._regime_codes,
                 logger=log,
                 period_to_regime_to_V_arr=period_to_regime_to_V_arr,
                 period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
@@ -5225,7 +5256,7 @@ class Model:
                 solution=solution,
                 state_names={
                     name: self._axis_state_names(regime_name=name)
-                    for name in self.regime_names_to_ids
+                    for name in self._regime_codes
                 },
             ),
         )
@@ -5474,7 +5505,7 @@ class Model:
                     initial_conditions={
                         **states,
                         "regime_id": np.full(
-                            n_rows, int(self.regime_names_to_ids[regime_name])
+                            n_rows, int(self._regime_codes[regime_name])
                         ),
                     },
                     flat_params=flat_params,
@@ -6121,7 +6152,7 @@ class Model:
             initial_conditions=canonical,
             supplied_frames=supplied_frames,
             regimes=self._regimes,
-            regime_names_to_ids=self.regime_names_to_ids,
+            regime_names_to_ids=self._regime_codes,
             flat_params=flat_params,
             ages=self._time,
         )
@@ -6179,7 +6210,7 @@ class Model:
             initial_conditions=canonical,
             supplied_frames=supplied_frames,
             regimes=self._regimes,
-            regime_names_to_ids=self.regime_names_to_ids,
+            regime_names_to_ids=self._regime_codes,
             flat_params=flat_params,
             ages=self._time,
         )
@@ -6210,7 +6241,7 @@ class Model:
         initial_conditions = enter_first_stage(
             initial_conditions=initial_conditions,
             time=self._time,
-            regime_names_to_ids=self.regime_names_to_ids,
+            regime_names_to_ids=self._regime_codes,
         )
         self._fail_if_declared_entry_is_not_permitted(
             initial_conditions=initial_conditions
@@ -6222,12 +6253,12 @@ class Model:
             initial_conditions=initial_conditions,
             splits=self._fixed_component_splits,
             user_regimes=self._user_regimes,
-            regime_names_to_ids=self.regime_names_to_ids,
+            regime_names_to_ids=self._regime_codes,
         )
         initial_conditions = lower_composite_initial_conditions(
             initial_conditions=initial_conditions,
             lowerings=self._composite_states,
-            regime_names_to_ids=self.regime_names_to_ids,
+            regime_names_to_ids=self._regime_codes,
         )
         initial_conditions = self._lower_joint_initial_conditions(
             initial_conditions=initial_conditions,
@@ -6237,7 +6268,7 @@ class Model:
             initial_conditions = initial_conditions_from_dataframe(
                 df=initial_conditions,
                 user_regimes=self._user_regimes,
-                regime_names_to_ids=self.regime_names_to_ids,
+                regime_names_to_ids=self._regime_codes,
                 ages=self._time,
                 use_categorical_codes=use_categorical_codes,
             )
@@ -6254,7 +6285,7 @@ class Model:
             initial=canonical,
             regimes=self._regimes,
             ages=self._time,
-            regime_names_to_ids=self.regime_names_to_ids,
+            regime_names_to_ids=self._regime_codes,
         )
         return (
             canonical,
@@ -6282,7 +6313,7 @@ class Model:
         return encode_initial_values(
             initial_conditions=initial_conditions,
             user_regimes=self._user_regimes,
-            regime_names_to_ids=self.regime_names_to_ids,
+            regime_names_to_ids=self._regime_codes,
             use_categorical_codes=use_categorical_codes,
             error_type=InvalidInitialConditionsError,
         )
@@ -6309,7 +6340,7 @@ class Model:
                 )
                 for name, regime in self._regimes.items()
             },
-            regime_names_to_ids=self.regime_names_to_ids,
+            regime_names_to_ids=self._regime_codes,
             accept_coordinates=accept_coordinates,
         )
 
@@ -6327,10 +6358,10 @@ class Model:
             if not {"age", "regime_name"} <= set(initial_conditions.columns):
                 return
             names = initial_conditions["regime_name"].to_numpy()
-            known = np.isin(names, list(self.regime_names_to_ids))
+            known = np.isin(names, list(self._regime_codes))
             self._fail_if_start_pairs_are_not_permitted(
                 codes=np.asarray(
-                    [self.regime_names_to_ids[name] for name in names[known]],
+                    [self._regime_codes[name] for name in names[known]],
                     dtype=np.int64,
                 ),
                 ages=initial_conditions["age"].to_numpy()[known],
@@ -6372,9 +6403,7 @@ class Model:
         age_values = np.ravel(np.asarray(ages))
         if code_values.size != age_values.size:
             return
-        ids_to_names = {
-            int(code): name for name, code in self.regime_names_to_ids.items()
-        }
+        ids_to_names = {int(code): name for name, code in self._regime_codes.items()}
         periods, on_grid = resolve_initial_periods(
             ages=self._time, initial_ages=age_values
         )
@@ -6463,16 +6492,20 @@ class Model:
         use_categorical_codes: bool = False,
     ) -> FlatParams:
         """Keep ordinary helper callers on their original canonical checks."""
-        flat_params = self._canonicalize_params(
-            params,
-            array_writer=array_writer,
-            use_categorical_codes=use_categorical_codes,
-        )
-        self._validate_canonical_params(
-            flat_params=flat_params,
-            array_writer=array_writer,
-            runtime_checks=runtime_checks,
-        )
+        try:
+            flat_params = self._canonicalize_params(
+                params,
+                array_writer=array_writer,
+                use_categorical_codes=use_categorical_codes,
+            )
+            self._validate_canonical_params(
+                flat_params=flat_params,
+                array_writer=array_writer,
+                runtime_checks=runtime_checks,
+            )
+        except PyLCMError as error:
+            name_declared_regimes(error=error, time=self._time)
+            raise
         return flat_params
 
     # keyword-only-exempt: primary-argument=params
@@ -6496,9 +6529,16 @@ class Model:
         params = {
             name: value for name, value in params.items() if name not in self.shocks
         }
+        landing = {
+            source: {name: slot for slot, name in slots.items()}
+            for source, slots in target_slots(
+                template=self._params_template, time=self._time
+            ).items()
+        }
         flat_params = broadcast_to_template(
             params=rename_split_params(
-                params=params, splits=self._fixed_component_splits
+                params=renamed_slots(params, slots=landing),
+                splits=self._fixed_component_splits,
             ),
             template=self._params_template,
             required=True,
@@ -6508,7 +6548,7 @@ class Model:
             ages=self._time,
             user_regimes=self._user_regimes,
             laws=self._graph.laws,
-            regime_names_to_ids=self.regime_names_to_ids,
+            regime_names_to_ids=self._regime_codes,
             array_writer=array_writer,
             declared_transitions=self._declared_transitions,
             phase_transitions=self.declared_transitions,

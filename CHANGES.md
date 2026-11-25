@@ -31,7 +31,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   exit enters a regime of its own or a later stage of its period. In the stages a
   regime sits out on the way, the subject is in the regime's generated pass-through,
   which passes the next step's value through unchanged, so a regime with one decision
-  per period needs no regime of its own in the other stages. The stages of a period are
+  per period needs no regime of its own in the other stages; parameters, regime codes,
+  values and simulated results name only declared regimes. The stages of a period are
   linked without discounting; a regime of a stage before the last that declares a
   Koopmans aggregator or uses an endogenous-grid solver is refused, as is an exit into
   an earlier stage or one that observes a shock its destination draws later.

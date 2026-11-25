@@ -373,6 +373,7 @@ def snapshot_solution_metadata(metadata: SolutionMetadata) -> SolutionMetadata:
         pylcm_version=pylcm_version,
         solver_api_version=solver_api_version,
         solution_schema_version=solution_schema_version,
+        pass_throughs=frozenset(metadata.pass_throughs),
     )
 
 

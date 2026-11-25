@@ -29,7 +29,7 @@ from _lcm.simulation.result_dataframe import (
     _create_flat_dataframe,
 )
 from _lcm.simulation.result_metadata import ResultMetadata, _compute_metadata
-from _lcm.time import TimeAxis
+from _lcm.time import ModelTime, TimeAxis
 from _lcm.typing import ActionName, ArrayTree, FlatParams, RegimeName, StateName
 from lcm._solver_api.entries import _LazyEntry
 from lcm._solver_api.stores import ValueStore, _ValueStoreBoundary
@@ -167,6 +167,18 @@ class SimulationResult:
         nested_policy_regimes: frozenset[RegimeName] = frozenset(),
         randomness: Mapping[str, str] = MappingProxyType({}),
     ) -> None:
+        # A pass-through holds a subject between its regime's stages, unseen.
+        if isinstance(ages, ModelTime) and ages.pass_throughs:
+            hidden = ages.pass_throughs
+            raw_results = MappingProxyType(
+                {name: data for name, data in raw_results.items() if name not in hidden}
+            )
+            regimes = MappingProxyType(
+                {name: regime for name, regime in regimes.items() if name not in hidden}
+            )
+            period_to_regime_to_V_arr = _listed_values(
+                values=period_to_regime_to_V_arr, hidden=hidden
+            )
         self._raw_results = raw_results
         self._regimes = regimes
         self._terminal_regime_names = frozenset(
@@ -727,6 +739,22 @@ def _log_top_array_tree_leaves(
             file=sys.stderr,
             flush=True,
         )
+
+
+def _listed_values(
+    *, values: _PeriodValuesBoundary, hidden: frozenset[RegimeName]
+) -> _PeriodValuesBoundary:
+    """`values` without the `hidden` regimes; a value store keeps them unlisted."""
+    if type(values) is ValueStore:
+        return values._hiding(regimes=hidden)  # noqa: SLF001
+    return MappingProxyType(
+        {
+            period: MappingProxyType(
+                {name: value for name, value in regimes.items() if name not in hidden}
+            )
+            for period, regimes in values.items()
+        }
+    )
 
 
 def _save_period_to_regime_to_V_arr(

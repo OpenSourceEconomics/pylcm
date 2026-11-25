@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "7862cb76df07171a9f6a3ad4c1a093624dc71aff1ffb125adc8d2ccd2f1b4820",
+  "source_inventory_sha256": "bec0cf79e0c58f651df29f2010eb054ac7004d7a4765f1b4e00018567ecaeded",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -282,7 +282,7 @@
     },
     {
       "path": "src/_lcm/persistence/solution.py",
-      "sha256": "41397e5dac03d3c87e7b0478b2f6dc90447926d1a9b1df62280dbaeb153d8ab7"
+      "sha256": "dcc244610af4afc8f5efacc8cea91c74c9742220fb7dcfe0b5c9a65a65b438db"
     },
     {
       "path": "src/_lcm/post_decision_bound.py",
@@ -498,7 +498,7 @@
     },
     {
       "path": "src/_lcm/simulation/result_dataframe.py",
-      "sha256": "809f765caea9e59458c6f7c7a39e215f0f0c983ef44cd0b6d608ea8dc67cbb98"
+      "sha256": "fc3c01ebdf03841303af4777891c801ca12bc4b08f06d6b7bc752787c5ff6794"
     },
     {
       "path": "src/_lcm/simulation/result_metadata.py",
@@ -634,7 +634,7 @@
     },
     {
       "path": "src/_lcm/solution/result_snapshot.py",
-      "sha256": "5c37cfd9f8fc527d915387f85f0c0963e5c6a23787cc0a851a2fb7bb8f5402a9"
+      "sha256": "e8d207359c35f922a575f163e629bd7e5a9e32ba45ee3fcb1c9a554a9e4fa950"
     },
     {
       "path": "src/_lcm/solution/retained_buffers.py",
@@ -706,7 +706,7 @@
     },
     {
       "path": "src/lcm/_solver_api/stores.py",
-      "sha256": "6c7be7157d70fab084f524f93fd182cff90b612a96dddacaf6e05ef7a1bf9bf7"
+      "sha256": "6523f16b3fb8daacd7f383106fe7f71a29aedc7b9a8bd33cc151ce132d5f65e2"
     },
     {
       "path": "src/lcm/consumption_savings_regime.py",
@@ -718,7 +718,7 @@
     },
     {
       "path": "src/lcm/model.py",
-      "sha256": "c6409dbe02a88acedc7cd662c7534c63064d0730831892f62ccc65f29212c8eb"
+      "sha256": "381136ce85c54acb787c6796f75ad6788d7c3d8d12d4b7018df47636a7b3d895"
     },
     {
       "path": "src/lcm/processes.py",
@@ -730,7 +730,7 @@
     },
     {
       "path": "src/lcm/result.py",
-      "sha256": "5924dabd822d7387e85dde339225b8474dfa49ca574ac16bf5d84461619b8c6d"
+      "sha256": "029160731a46f4c7da254ece0e4610dfa5d38ee908c5694e97fd7b1cc091e249"
     },
     {
       "path": "src/lcm/shocks.py",
