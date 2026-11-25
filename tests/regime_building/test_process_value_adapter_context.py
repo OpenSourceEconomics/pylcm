@@ -42,7 +42,7 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.typing import DiscreteState, FloatND, ScalarInt, ValueND
+from lcm.typing import DiscreteState, FloatND, ScalarInt, UserFunction, ValueND
 
 
 @categorical(ordered=False)
@@ -130,30 +130,30 @@ def _model(*, reader_mode: str, reverse: bool, enable_jit: bool) -> Model:
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
 def test_complete_read_context_survives_callable_reuse(
     *, reader_mode: str, reverse: bool, enable_jit: bool
-):
+) -> None:
     model = _model(reader_mode=reader_mode, reverse=reverse, enable_jit=enable_jit)
     template = str(model.get_params_template())
     assert "k_code" not in template
     assert "z_code" not in template
     values = model.solve(params={"a": {}, "b": {}}, log_level="off").values[0]
     np.testing.assert_array_equal(
-        np.asarray(values["a"]), np.asarray((-4.0, -1.0, 0.0, -1.0, -4.0))
+        np.asarray(values["a"])[..., 0], np.asarray((-4.0, -1.0, 0.0, -1.0, -4.0))
     )
-    np.testing.assert_array_equal(np.asarray(values["b"]), np.asarray(0.0))
+    np.testing.assert_array_equal(np.asarray(values["b"])[..., 0], np.asarray(0.0))
 
 
 @pytest.mark.parametrize("reverse", [False, True], ids=["process-first", "value-first"])
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
 def test_local_process_positions_and_discrete_codes_remain_distinct(
     *, reverse: bool, enable_jit: bool
-):
+) -> None:
     model = _model(reader_mode="local_codes", reverse=reverse, enable_jit=enable_jit)
     assert "z_code" not in str(model.get_params_template())
     values = model.solve(params={"a": {}, "b": {}}, log_level="off").values[0]
     np.testing.assert_array_equal(
-        np.asarray(values["a"]), np.asarray((0.0, 1.0, 2.0, 3.0, 4.0))
+        np.asarray(values["a"])[..., 0], np.asarray((0.0, 1.0, 2.0, 3.0, 4.0))
     )
-    np.testing.assert_array_equal(np.asarray(values["b"]), np.asarray(1.0))
+    np.testing.assert_array_equal(np.asarray(values["b"])[..., 0], np.asarray(1.0))
 
 
 _LEVEL = DiscreteGrid(values=np.array([1, 2]))
@@ -169,7 +169,15 @@ def _level(*, x: DiscreteState) -> DiscreteState:
     return x
 
 
-def test_one_callable_reads_a_code_only_where_its_variable_is_discrete():
+def _build_level(_age: float) -> UserFunction:
+    return _level
+
+
+def _one_signature(_age: float) -> int:
+    return 0
+
+
+def test_one_callable_reads_a_code_only_where_its_variable_is_discrete() -> None:
     """`k_code` is the code of `k` where `k` is discrete, else an argument as named.
 
     Both readings decode `x` through one grid and share one adapter memo.
@@ -191,7 +199,7 @@ def test_one_callable_reads_a_code_only_where_its_variable_is_discrete():
     assert jnp.asarray(result).tolist() == 12
 
 
-def test_one_law_returns_the_code_on_each_encoding_grid():
+def test_one_law_returns_the_code_on_each_encoding_grid() -> None:
     """Value 2 is code 1 on (1, 2) and code 0 on (2, 5) for one law and input."""
     adapters = {}
     value_grids = {"x": _LEVEL, "low": _LOW_TARGET, "high": _HIGH_TARGET}
@@ -204,9 +212,9 @@ def test_one_law_returns_the_code_on_each_encoding_grid():
     assert jnp.asarray(high(x=jnp.int32(1))).tolist() == 0
 
 
-def test_one_age_specialized_marker_reads_each_binding_s_value_grid():
+def test_one_age_specialized_marker_reads_each_binding_s_value_grid() -> None:
     """A marker read through values (1, 2) and then (10, 20) decodes code 1 as 20."""
-    marker = AgeSpecializedFunction(build=lambda _age: _level, signature=lambda _age: 0)
+    marker = AgeSpecializedFunction(build=_build_level, signature=_one_signature)
     adapters = {}
     adapt_entry(entry=marker, value_grids={"x": _LEVEL}, encode=None, adapters=adapters)
     tens = adapt_entry(

@@ -63,7 +63,7 @@ MIN_FRACTION_WITHIN = 0.82
 @pytest.mark.parametrize("envelope", ["fues"])
 def test_app2_fues_matches_vfi_on_liquid_interior(
     envelope: Literal["fues", "ltm", "rfc"],
-):
+) -> None:
     """App.2 EGM-FUES agrees with its VFI twin on the liquid interior in bulk.
 
     The discrete-choice DC-EGM selects the optimal next-housing level by the FUES
@@ -110,8 +110,9 @@ def test_app2_fues_matches_vfi_on_liquid_interior(
 
     differences = []
     for period in scored_periods:
-        brute_V = np.asarray(brute_solution[period]["working"])
-        dcegm_V = np.asarray(dcegm_solution[period]["working"])
+        # The trailing member axis holds the single `"self"`.
+        brute_V = np.asarray(brute_solution[period]["working"])[..., 0]
+        dcegm_V = np.asarray(dcegm_solution[period]["working"])[..., 0]
         # V axes: (wage, housing, liquid).
         assert brute_V.shape == dcegm_V.shape
         differences.append(

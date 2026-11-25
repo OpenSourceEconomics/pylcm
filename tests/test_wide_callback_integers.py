@@ -99,7 +99,9 @@ def test_public_utility_matches_host_float_twin(
         got = np.asarray(actual[period][regime])
         assert got.dtype == expected.dtype
         np.testing.assert_array_equal(got, np.asarray(twin[period][regime]))
-        np.testing.assert_array_equal(got, np.full(2, oracle, dtype=expected.dtype))
+        np.testing.assert_array_equal(
+            got, np.full((2, 1), oracle, dtype=expected.dtype)
+        )
 
 
 @pytest.mark.parametrize(("raw", "exact"), _FLOAT_CASES)

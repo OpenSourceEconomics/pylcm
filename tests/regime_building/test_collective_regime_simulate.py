@@ -515,7 +515,9 @@ def test_consent_routing_simulate_matches_gate_exactly() -> None:
     # Period-0 own value matches the hand-computed / solve-verified path
     # (test_gated_edges_collective_solve.py::test_consent_gate_routes_...).
     period_0 = result.raw_results["single_f"][0]
-    np.testing.assert_allclose(np.asarray(period_0.V_arr), [2.9, 4.85], rtol=1e-6)
+    np.testing.assert_allclose(
+        np.asarray(period_0.V_arr)[..., 0], [2.9, 4.85], rtol=1e-6
+    )
 
     # wage=1 -> married_terminal (both consent); wage=2 -> stays in
     # single_f_terminal (he refuses).
@@ -1265,7 +1267,7 @@ def test_public_model_replays_the_households_exit_from_values_only() -> None:
     )
     np.testing.assert_array_equal(result.raw_results["single_f"][1].in_regime, [True])
     np.testing.assert_allclose(
-        result.raw_results["single_f"][1].V_arr, [5.0], rtol=1e-6
+        result.raw_results["single_f"][1].V_arr[..., 0], [5.0], rtol=1e-6
     )
 
 

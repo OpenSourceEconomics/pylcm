@@ -18228,7 +18228,6 @@
   "tests/solution/test_solution_result.py::test_model_instance_id_survives_pickle_for_result_replay",
   "tests/solution/test_solution_result.py::test_value_array_survives_save_and_load",
   "tests/solution/test_solution_result.py::test_value_frame_categorical_action_does_not_relabel_members",
-  "tests/solution/test_solution_result.py::test_value_frame_categorical_state_named_member_keeps_its_domain",
   "tests/solution/test_solution_result.py::test_value_frame_labels_grid_nodes",
   "tests/solution/test_solution_result_snapshot.py::test_pickled_authority_rebinds_without_template_callbacks",
   "tests/solution/test_solution_result_snapshot.py::test_save_normalizes_mapping_failure_before_lazy_load",

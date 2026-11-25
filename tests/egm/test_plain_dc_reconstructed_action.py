@@ -415,7 +415,10 @@ def test_dc_valuation_coverage_stays_in_its_owned_masked_target_slot(
                 model.solve(params=params, runtime_checks=False, log_level="off")
         else:
             solution = model.solve(params=params, runtime_checks=False, log_level="off")
-            _assert_close(actual=solution.values[0]["parent"], expected=reference[0])
+            _assert_close(
+                actual=np.asarray(solution.values[0]["parent"])[..., 0],
+                expected=reference[0],
+            )
         steps = [
             call.kwargs["step"]
             for call in valuation_calls.call_args_list
@@ -526,6 +529,10 @@ def _source_utility(*, consumption: ContinuousAction, shift: float) -> FloatND:
     return jnp.log(consumption) + shift
 
 
+def _age_signature(age: float) -> float:
+    return age
+
+
 def _available_at_age(age: float) -> UserFunction:
     slope = 2.0 + 0.25 * (age - 41.0)
 
@@ -592,7 +599,7 @@ def _model(*, literal: bool, active: bool) -> tuple[Model, UserParams]:
                     "utility": _utility,
                     "resources": _resources,
                     "available_wealth": AgeSpecializedFunction(
-                        build=_available_at_age, signature=lambda age: age
+                        build=_available_at_age, signature=_age_signature
                     ),
                 },
                 constraints={
@@ -656,7 +663,7 @@ def _capture(
 def _core(*, kernel: _EGMPeriodKernel) -> tuple[_EGMCore, _RegimeMassGuardedCore]:
     function = kernel.core_programs()["main"].function
     while isinstance(function, functools.partial):
-        function = function.func
+        function = function.keywords.get("_member_axis_core", function.func)
     function = getattr(function, "__wrapped__", function)
     assert isinstance(function, _RegimeMassGuardedCore)
     assert isinstance(function.core, _EGMCore)
@@ -831,7 +838,7 @@ def _assert_numeric(
     output: KernelOutput,
     reference: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
 ) -> None:
-    _assert_close(actual=output.value, expected=reference[0])
+    _assert_close(actual=np.asarray(output.value)[..., 0], expected=reference[0])
     carry = output.continuations[EGM_CONTINUATION]
     assert isinstance(carry, EGMCarry)
     _assert_close(actual=carry.marginal_utility, expected=reference[1])

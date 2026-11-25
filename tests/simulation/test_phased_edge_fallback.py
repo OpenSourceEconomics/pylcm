@@ -198,7 +198,7 @@ def test_a_routed_row_lands_in_the_simulate_legs_regime() -> None:
     solution = model.solve(params=_PARAMS, log_level="off")
 
     np.testing.assert_array_almost_equal(
-        np.asarray(solution.values[0]["worker"]),
+        np.asarray(solution.values[0]["worker"])[..., 0],
         np.array([0.0, 1.0, 20.0]),
         decimal=DECIMAL_PRECISION,
     )

@@ -200,7 +200,7 @@ def test_a_utility_of_the_code_takes_its_literal_values(
     # Over the state's two codes; for the action, the maximum at code 1, per
     # node of the unread state, which has been pruned.
     expected = [1.0, 3.0] if role == "state" else 3.0
-    np.testing.assert_array_equal(np.asarray(got[0]["live"]), expected)
+    np.testing.assert_array_equal(np.asarray(got[0]["live"])[..., 0], expected)
 
 
 @pytest.mark.parametrize("values", [False, True], ids=["category", "value-grid"])
@@ -234,4 +234,4 @@ def test_a_derived_code_read_takes_its_literal_values(
 ) -> None:
     model = _derived_model(placement=placement, enable_jit=enable_jit)
     got = model.solve(params={"discount_factor": 1.0}, log_level="off").values
-    np.testing.assert_array_equal(np.asarray(got[0]["live"]), [1.0, 3.0])
+    np.testing.assert_array_equal(np.asarray(got[0]["live"])[..., 0], [1.0, 3.0])

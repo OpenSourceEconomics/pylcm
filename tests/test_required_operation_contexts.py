@@ -220,7 +220,7 @@ def test_value_only_regime_value_ignores_its_realized_route() -> None:
     """`V_perceived(w) = 1 + 1.5 w`, so `V_source(w) = 0.5 + 1.75 w` on w in {0, 1}."""
     model = _demand_model(promote=False)
     values = model.solve(params=_VALUE_ONLY_PARAMS, log_level="off").values
-    np.testing.assert_array_equal(np.asarray(values[0]["source"]), [0.5, 2.25])
+    np.testing.assert_array_equal(np.asarray(values[0]["source"])[..., 0], [0.5, 2.25])
 
 
 _VALUE_ONLY_PARAMS = {
@@ -335,7 +335,7 @@ def test_value_only_regime_with_simulate_slots_keeps_its_value(*, slot: str) -> 
         choice=_slot_choice(slot),
     )
     values = model.solve(params=_VALUE_ONLY_PARAMS, log_level="off").values
-    np.testing.assert_array_equal(np.asarray(values[0]["source"]), [0.5, 2.25])
+    np.testing.assert_array_equal(np.asarray(values[0]["source"])[..., 0], [0.5, 2.25])
 
 
 @pytest.mark.parametrize(("promote", "ages"), [(False, set()), (True, {1.0})])
@@ -626,7 +626,9 @@ def test_probability_validation_accepts_a_law_valid_on_its_own_age_grid(
     solution = _age_grid_model(earlier_root=earlier_root, valid_late_law=True).solve(
         params={"discount_factor": 0.5}, log_level="off"
     )
-    np.testing.assert_array_equal(np.asarray(solution.values[1]["working"]), [0, 5])
+    np.testing.assert_array_equal(
+        np.asarray(solution.values[1]["working"])[..., 0], [0, 5]
+    )
 
 
 def _half() -> FloatND:
@@ -705,7 +707,9 @@ def test_realized_law_is_checked_on_the_carried_state_grid(
     solution = _carried_model().solve(
         params={"discount_factor": 0.5}, log_level=log_level
     )
-    np.testing.assert_array_equal(np.asarray(solution.values[0]["working"]), [2.5, 2.5])
+    np.testing.assert_array_equal(
+        np.asarray(solution.values[0]["working"])[..., 0], [2.5, 2.5]
+    )
 
 
 @pytest.mark.parametrize("seed", [0, 9])
@@ -821,7 +825,7 @@ def test_probability_check_skips_economically_infeasible_rows(
         .solve(params={"discount_factor": 0.5}, log_level=log_level)
         .values
     )
-    np.testing.assert_array_equal(np.asarray(values[0]["working"]), [2.5, 3.5])
+    np.testing.assert_array_equal(np.asarray(values[0]["working"])[..., 0], [2.5, 3.5])
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
@@ -836,7 +840,7 @@ def test_probability_check_skips_infeasible_rows_on_a_refined_grid(
         .values
     )
     np.testing.assert_array_equal(
-        np.asarray(values[0]["working"]), np.linspace(0.0, 1.0, n_points) + 2.5
+        np.asarray(values[0]["working"])[..., 0], np.linspace(0.0, 1.0, n_points) + 2.5
     )
 
 

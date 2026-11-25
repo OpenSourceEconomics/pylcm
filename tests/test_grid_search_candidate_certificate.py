@@ -83,7 +83,7 @@ from _lcm.simulation import taste_stream as taste_stream_module
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.solution import action_streaming as action_streaming_module
 from _lcm.solution import grid_search as grid_search_module
-from _lcm.solution.action_reduction import HardMaxResult
+from _lcm.solution.collective_action_reduction import CollectiveHardMaxResult
 from _lcm.typing import ArtifactPayload, PRNGKeyND, PytreeValue, QAndFArg
 from lcm import (
     AgeGrid,
@@ -1557,7 +1557,7 @@ def _solve_acting(
         function_name: Params key of the function reading the two targets.
 
     Returns:
-        The acting regime's period-0 value array.
+        The acting regime's period-0 value array, with its member axis last.
     """
     params = _mutable_params_template(model=model)
     params["acting"][function_name]["target_work"] = work
@@ -1657,7 +1657,11 @@ def test_every_declared_candidate_can_be_the_only_feasible_one(
         function_name="only_target",
     )
 
-    aaae(V_arr, _WEALTH_VALUES + consumption + 10.0 * work, decimal=DECIMAL_PRECISION)
+    aaae(
+        V_arr[..., 0],
+        _WEALTH_VALUES + consumption + 10.0 * work,
+        decimal=DECIMAL_PRECISION,
+    )
 
 
 @pytest.mark.parametrize(("work", "consumption"), _CANDIDATES)
@@ -1677,7 +1681,7 @@ def test_every_declared_candidate_can_win_the_maximization(
         function_name="utility",
     )
 
-    aaae(V_arr, _WEALTH_VALUES, decimal=DECIMAL_PRECISION)
+    aaae(V_arr[..., 0], _WEALTH_VALUES, decimal=DECIMAL_PRECISION)
 
 
 @pytest.mark.parametrize(("work", "consumption"), _CANDIDATES)
@@ -2067,7 +2071,7 @@ def test_singleton_solve_matches_reference_over_every_nonempty_feasibility_mask(
             observed = _solve_mask_case(
                 model=masked_singleton_model, mask=mask, ranks=ranks
             )
-            aaae(observed, _WEALTH_VALUES + value, decimal=DECIMAL_PRECISION)
+            aaae(observed[..., 0], _WEALTH_VALUES + value, decimal=DECIMAL_PRECISION)
 
 
 def test_singleton_simulate_matches_reference_over_every_nonempty_feasibility_mask(
@@ -2488,7 +2492,7 @@ def test_taste_shock_solve_matches_reference_for_every_candidate_and_support(
                 model=masked_taste_shock_model, mask=mask, ranks=ranks
             )
             aaae(
-                observed,
+                observed[..., 0],
                 _WEALTH_VALUES + solved,
                 decimal=DECIMAL_PRECISION,
             )
@@ -2621,15 +2625,17 @@ def _simulation_fold_masking_the_last_action_cell(
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
     action_names: tuple[ActionName, ...],
     block_width: int,
-) -> Callable[..., HardMaxResult]:
+    members: tuple[str, ...],
+    weights: Mapping[str, FloatND | float],
+) -> Callable[..., CollectiveHardMaxResult]:
     """Build the simulation fold with one candidate hidden; leave solve unchanged.
 
     The simulation module owns the patched builder binding. The solve module keeps
     its original builder, and terminal folds without actions pass through untouched.
     """
     return cast(
-        "Callable[..., HardMaxResult]",
-        action_streaming_module.build_streaming_max_Q_over_a(
+        "Callable[..., CollectiveHardMaxResult]",
+        action_streaming_module.build_streaming_collective_max_Q_over_a(
             Q_and_F=(
                 functools.partial(
                     _q_and_f_masking_the_last_action_cell, Q_and_F=Q_and_F
@@ -2639,6 +2645,8 @@ def _simulation_fold_masking_the_last_action_cell(
             ),
             action_names=action_names,
             block_width=block_width,
+            members=members,
+            weights=weights,
         ),
     )
 
@@ -2648,7 +2656,7 @@ def test_masking_the_only_simulate_candidate_raises() -> None:
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(
             simulation_programs_module,
-            "build_streaming_max_Q_over_a",
+            "build_streaming_collective_max_Q_over_a",
             _simulation_fold_masking_the_last_action_cell,
         )
         model = _build_model(
@@ -2676,7 +2684,7 @@ def test_masking_one_simulate_candidate_leaves_the_others_alone() -> None:
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(
             simulation_programs_module,
-            "build_streaming_max_Q_over_a",
+            "build_streaming_collective_max_Q_over_a",
             _simulation_fold_masking_the_last_action_cell,
         )
         model = _build_model(
@@ -2770,7 +2778,7 @@ def test_dropping_one_candidate_leaves_every_other_candidate_alone() -> None:
     )
 
     aaae(
-        V_arr,
+        V_arr[..., 0],
         _WEALTH_VALUES + _CONSUMPTION_VALUES[0] + 10.0 * _WORK_VALUES[0],
         decimal=DECIMAL_PRECISION,
     )

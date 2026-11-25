@@ -597,7 +597,7 @@ def test_each_member_aggregates_with_its_own_w_and_certainty_equivalent(
         for regime, expected in values.items():
             assert_agrees_to_ulp(
                 got=np.asarray(household.values[period][regime])[..., index],
-                expected=np.asarray(expected),
+                expected=np.asarray(expected)[..., 0],
                 n_ulp=16,
                 operand_magnitude=float(np.max(np.abs(expected))),
                 err_msg=f"period {period}, regime {regime!r}",

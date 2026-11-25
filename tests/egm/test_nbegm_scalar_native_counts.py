@@ -1,5 +1,6 @@
 """Native scalar NB consumers count their genuine paired continuation reads."""
 
+import functools
 import logging
 from typing import cast
 
@@ -70,9 +71,11 @@ def test_scalar_nbegm_native_checked_counts_preserve_ordinary_results() -> None:
     )
     assert isinstance(kernel, _EGMPeriodKernel)
     program = kernel.core_programs()["main"]
-    assert isinstance(program.function, _RegimeMassGuardedCore)
-    assert isinstance(program.function.core, _NBEGMOwnedSingleAxisCore)
-    assert program.function.core.continuation_plan.query_targets == ("child",)
+    assert isinstance(program.function, functools.partial)
+    guard = program.function.keywords["_member_axis_core"]
+    assert isinstance(guard, _RegimeMassGuardedCore)
+    assert isinstance(guard.core, _NBEGMOwnedSingleAxisCore)
+    assert guard.core.continuation_plan.query_targets == ("child",)
     child = context["next_regime_to_continuation"]["child"]
     assert isinstance(child, EGMCarry)
     np.testing.assert_array_equal(child.endog_grid[0], 0.25)

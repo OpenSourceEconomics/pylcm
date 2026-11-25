@@ -244,7 +244,7 @@ def test_grid_search_solves_named_floor_with_transitive_parameter(
     )
     values = model.solve(params={"floor_scale": 0.5}, log_level="off").values[0]["done"]
 
-    np.testing.assert_allclose(values, [[1.0, 0.5], [2.0, 1.5]], atol=1e-6)
+    np.testing.assert_allclose(values[..., 0], [[1.0, 0.5], [2.0, 1.5]], atol=1e-6)
 
 
 @pytest.mark.parametrize(
@@ -369,6 +369,11 @@ def _temporal_model(
     )
 
 
+def _identity_signature(coordinate: float) -> float:
+    """Key each age or period by its own coordinate."""
+    return coordinate
+
+
 @pytest.mark.parametrize("handwritten", [False, True])
 def test_generated_floor_preserves_age_specialization(*, handwritten: bool) -> None:
     """Named age-resolved floors keep their period-specific values in GridSearch."""
@@ -380,14 +385,16 @@ def test_generated_floor_preserves_age_specialization(*, handwritten: bool) -> N
         return floor
 
     model = _temporal_model(
-        lower_function=AgeSpecializedFunction(build=build, signature=lambda age: age),
+        lower_function=AgeSpecializedFunction(
+            build=build, signature=_identity_signature
+        ),
         handwritten=handwritten,
     )
     values = model.solve(params={"discount_factor": 1.0}, log_level="off").values[1][
         "saving"
     ]
 
-    np.testing.assert_allclose(values, [[0.75, 0.75], [1.75, 1.75]], atol=1e-6)
+    np.testing.assert_allclose(values[..., 0], [[0.75, 0.75], [1.75, 1.75]], atol=1e-6)
 
 
 @pytest.mark.parametrize("handwritten", [False, True])
@@ -400,7 +407,7 @@ def test_every_age_specific_floor_dependency_is_validated(*, handwritten: bool) 
     with pytest.raises(ModelInitializationError, match=r"borrowing.*wealth"):
         _temporal_model(
             lower_function=AgeSpecializedFunction(
-                build=build, signature=lambda age: age
+                build=build, signature=_identity_signature
             ),
             handwritten=handwritten,
         )
@@ -457,7 +464,7 @@ def test_floor_marker_keeps_its_clock_kind(
 
         return floor
 
-    declaration = marker(build=build, signature=lambda coordinate: coordinate)
+    declaration = marker(build=build, signature=_identity_signature)
     if accepted:
         model = _temporal_model(
             lower_function=declaration, clock=clock, handwritten=handwritten
@@ -466,7 +473,9 @@ def test_floor_marker_keeps_its_clock_kind(
             1
         ]["saving"]
 
-        np.testing.assert_allclose(values, [[0.75, 0.75], [1.75, 1.75]], atol=1e-6)
+        np.testing.assert_allclose(
+            values[..., 0], [[0.75, 0.75], [1.75, 1.75]], atol=1e-6
+        )
     else:
         with pytest.raises(ModelInitializationError, match=r"wrong coordinate kind"):
             _temporal_model(
@@ -803,7 +812,7 @@ def test_period_leaf_is_an_integer_in_abstract_floor_tracing() -> None:
         "saving"
     ]
 
-    np.testing.assert_allclose(values, [[0.75, 0.75], [1.75, 1.75]], atol=1e-6)
+    np.testing.assert_allclose(values[..., 0], [[0.75, 0.75], [1.75, 1.75]], atol=1e-6)
 
 
 @pytest.mark.parametrize("kind", ["vector_parameter", "boolean_parameter"])
@@ -828,7 +837,7 @@ def test_unknown_parameter_shape_is_checked_with_actual_inputs(kind: str) -> Non
     )
     values = model.solve(params=params, log_level="off").values[0]["done"]
 
-    np.testing.assert_allclose(values, [[0.5, 0.5], [1.5, 1.5]], atol=1e-6)
+    np.testing.assert_allclose(values[..., 0], [[0.5, 0.5], [1.5, 1.5]], atol=1e-6)
 
 
 @pytest.mark.parametrize("kind", ["boolean", "vector"])
@@ -956,4 +965,4 @@ def test_floor_reads_a_stochastic_process_at_its_node_values(process: str) -> No
         ]
         for eps in (-2.0, 0.0, 2.0)
     ]
-    np.testing.assert_allclose(values, expected, atol=1e-6)
+    np.testing.assert_allclose(values[..., 0], expected, atol=1e-6)

@@ -119,14 +119,14 @@ def _expected_V0(*, expected_continuation_shock_square: float) -> np.ndarray:
     `wealth` is fixed. Each joint node contributes the linear interpolation of
     that surface at the value the output names.
 
-    The axes are `(wage_shock, wealth)`, which is the regime's published solve
-    order — process states precede ordinary ones there, so the array is not
+    The axes are `(wage_shock, wealth, member)`, which is the regime's published
+    solve order — process states precede ordinary ones there, so the array is not
     built in the order the regime declares its states.
     """
     shock = np.asarray(_NODES)[:, None]
     wealth = np.asarray(_WEALTH)[None, :]
     continuation = wealth + expected_continuation_shock_square
-    return wealth + shock**2 + _DISCOUNT_FACTOR * continuation
+    return (wealth + shock**2 + _DISCOUNT_FACTOR * continuation)[..., None]
 
 
 def test_a_joint_output_naming_process_nodes_reads_those_nodes_alone() -> None:

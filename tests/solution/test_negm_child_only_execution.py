@@ -21,7 +21,7 @@ def _assert_child_terminal_values(
     *, solution: SolutionResult, literal_child: bool
 ) -> None:
     """The terminal-zero child consumes its budget at the winning outer target."""
-    np.testing.assert_array_equal(solution.values[2]["done"], np.zeros((4, 2)))
+    np.testing.assert_array_equal(solution.values[2]["done"], np.zeros((4, 2, 1)))
     liquid = np.asarray([0.0, 0.5, 1.0, 2.0])[:, None]
     stock = np.asarray([0.0, 1.0])[None, :]
     floor = np.zeros_like(stock) if literal_child else stock / 4.0
@@ -36,7 +36,7 @@ def _assert_child_terminal_values(
         )
     np.testing.assert_array_almost_equal(
         solution.values[1]["child"],
-        np.maximum.reduce(candidates),
+        np.maximum.reduce(candidates)[..., None],
         decimal=DECIMAL_PRECISION,
     )
 

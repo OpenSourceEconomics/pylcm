@@ -1484,7 +1484,7 @@ def test_egm_temporal_consumers_use_the_source_period(
     expected = 2.0 * np.log(consumption) + np.log(2.0 * (wealth - consumption))
     # The terminal log grid and savings interpolation approximate the closed form.
     np.testing.assert_allclose(
-        solution.value(period=source_period, regime="work"),
+        solution.value(period=source_period, regime="work")[..., 0],
         expected,
         atol=1e-3,
         rtol=0,
@@ -1537,14 +1537,17 @@ def test_egm_temporal_periods_share_a_core(solver_name: str) -> None:
     second = core_program_graph(kernel=kernels[2])["main"].function
     assert isinstance(first, partial)
     assert isinstance(second, partial)
-    assert first.func is second.func
+    assert first.keywords["_member_axis_core"] is second.keywords["_member_axis_core"]
     solution = model.solve(params=params, log_level="debug")
     wealth = np.asarray(wealth_grid.to_jax())
     for period, weight in ((0, 2.0), (2, 3.0)):
         consumption = weight / (weight + 1.0) * wealth
         expected = weight * np.log(consumption) + np.log(2.0 * (wealth - consumption))
         np.testing.assert_allclose(
-            solution.value(period=period, regime="work"), expected, atol=1e-3, rtol=0
+            solution.value(period=period, regime="work")[..., 0],
+            expected,
+            atol=1e-3,
+            rtol=0,
         )
 
 

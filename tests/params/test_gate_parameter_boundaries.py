@@ -170,7 +170,9 @@ def test_parameterized_coarse_law_can_have_a_separate_gate(kind: str) -> None:
         },
         log_level="debug",
     ).values
-    np.testing.assert_allclose(np.asarray(values[0]["src"]), [1.9, 1.45], rtol=1e-6)
+    np.testing.assert_allclose(
+        np.asarray(values[0]["src"])[..., 0], [1.9, 1.45], rtol=1e-6
+    )
 
 
 @pytest.mark.parametrize("kind", ["deterministic", "vector"])
@@ -273,4 +275,6 @@ def test_gate_free_param_is_not_a_source_only_declared_state(
         },
         log_level="debug",
     ).values
-    np.testing.assert_allclose(np.asarray(values[0]["src"]), expected, rtol=1e-6)
+    np.testing.assert_allclose(
+        np.asarray(values[0]["src"])[..., 0], expected, rtol=1e-6
+    )

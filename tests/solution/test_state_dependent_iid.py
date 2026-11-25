@@ -230,9 +230,9 @@ def test_carried_categorical_law_uses_its_canonical_domain(
     )
     params = {"discount_factor": 0.0}
     solution = model.solve(params=params, log_level="off", runtime_checks=False)
-    assert solution.values[0]["alive"].shape == (2,)
+    assert solution.values[0]["alive"].shape == (2, 1)
     assert_array_almost_equal(
-        solution.values[0]["alive"], [0.25, 0.5], decimal=DECIMAL_PRECISION
+        solution.values[0]["alive"][..., 0], [0.25, 0.5], decimal=DECIMAL_PRECISION
     )
     result = model.simulate(
         params=params,
@@ -330,7 +330,7 @@ def test_categorical_law_uses_current_date_and_original_uniform(width: int) -> N
     solution = model.solve(params=params, log_level="off", runtime_checks=False)
     for period, name in enumerate(("alive", "last")):
         assert_array_almost_equal(
-            solution.values[period][name],
+            solution.values[period][name][..., 0],
             0.25 + np.arange(3) / 8 + period / 8,
             decimal=DECIMAL_PRECISION,
         )
@@ -603,5 +603,5 @@ def test_declared_helper_takes_precedence_over_a_continuous_code_spelling() -> N
         params={"innovation": {"shift": 2.0}}, log_level="off", runtime_checks=False
     )
     assert_array_almost_equal(
-        solution.values[0]["alive"], [2.0, 3.0], decimal=DECIMAL_PRECISION
+        solution.values[0]["alive"][..., 0], [2.0, 3.0], decimal=DECIMAL_PRECISION
     )

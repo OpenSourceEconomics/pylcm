@@ -388,7 +388,7 @@ def _get_params() -> UserParams:
     }
 
 
-def test_action_dependent_resources_match_dense_brute_force():
+def test_action_dependent_resources_match_dense_brute_force() -> None:
     """A work bonus in the child's resources matches dense brute force.
 
     The work and rest carry rows of the self-targeting regime live in
@@ -409,7 +409,7 @@ def test_action_dependent_resources_match_dense_brute_force():
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["working_life"])
         dcegm_V = np.asarray(dcegm_solution[period]["working_life"])
-        assert brute_V.shape == dcegm_V.shape == (80,)
+        assert brute_V.shape == dcegm_V.shape == (80, 1)
         np.testing.assert_allclose(
             dcegm_V[N_BRUTE_UNSTABLE_NODES:],
             brute_V[N_BRUTE_UNSTABLE_NODES:],
@@ -419,7 +419,7 @@ def test_action_dependent_resources_match_dense_brute_force():
         )
 
 
-def test_action_and_passive_dependent_resources_match_dense_brute_force():
+def test_action_and_passive_dependent_resources_match_dense_brute_force() -> None:
     """A work bonus plus a skill pension in resources matches dense brute force.
 
     The child's resources read both a discrete action and a passive state, so
@@ -438,7 +438,7 @@ def test_action_and_passive_dependent_resources_match_dense_brute_force():
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["working_life"])
         dcegm_V = np.asarray(dcegm_solution[period]["working_life"])
-        assert brute_V.shape == dcegm_V.shape == (80, 7)
+        assert brute_V.shape == dcegm_V.shape == (80, 7, 1)
         np.testing.assert_allclose(
             dcegm_V[N_BRUTE_UNSTABLE_NODES:, :],
             brute_V[N_BRUTE_UNSTABLE_NODES:, :],
@@ -448,7 +448,7 @@ def test_action_and_passive_dependent_resources_match_dense_brute_force():
         )
 
 
-def test_age_dependent_resources_match_dense_brute_force():
+def test_age_dependent_resources_match_dense_brute_force() -> None:
     """A transfer growing with age in resources matches dense brute force.
 
     The child's resources read `age`, so the parent's carry read must evaluate
@@ -466,7 +466,7 @@ def test_age_dependent_resources_match_dense_brute_force():
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["working_life"])
         dcegm_V = np.asarray(dcegm_solution[period]["working_life"])
-        assert brute_V.shape == dcegm_V.shape == (80,)
+        assert brute_V.shape == dcegm_V.shape == (80, 1)
         np.testing.assert_allclose(
             dcegm_V[N_BRUTE_UNSTABLE_NODES:],
             brute_V[N_BRUTE_UNSTABLE_NODES:],

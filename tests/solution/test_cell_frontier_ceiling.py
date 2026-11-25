@@ -25,6 +25,7 @@ from _lcm.execution.workspace_planning import (
 from _lcm.solution.period_capture import _PAYLOAD_NAME
 from lcm import AgeGrid, DiscreteGrid, ExecutionConfig, LinSpacedGrid, Model
 from lcm.exceptions import ExecutionPlanningError
+from lcm.solver_api import SolutionResult
 from lcm.solvers import GridSearch
 from tests.conftest import assert_agrees_to_ulp
 from tests.execution.test_workspace_planning import _axis, _tiled
@@ -123,7 +124,7 @@ def _solve_capturing(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     axis_width_ceilings: Mapping[str, int],
-):
+) -> SolutionResult:
     """Solve while capturing the first working-life period's dispatched widths."""
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", _CAPTURE_TARGET)
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
@@ -138,7 +139,9 @@ def _captured_widths(tmp_path: Path) -> dict[str, dict[str, int]]:
         return cloudpickle.load(stream)["core_tile_widths"]
 
 
-def test_ceiling_caps_the_dispatched_cell_width(*, monkeypatch, tmp_path) -> None:
+def test_ceiling_caps_the_dispatched_cell_width(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """The solve tiles cells at the ceiling and keeps the unbounded action width."""
     _solve_capturing(
         monkeypatch=monkeypatch,
@@ -151,7 +154,9 @@ def test_ceiling_caps_the_dispatched_cell_width(*, monkeypatch, tmp_path) -> Non
     }
 
 
-def test_no_ceiling_keeps_the_bootstrap_cell_width(*, monkeypatch, tmp_path) -> None:
+def test_no_ceiling_keeps_the_bootstrap_cell_width(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Without a ceiling the same model tiles cells at its bootstrap width."""
     _solve_capturing(monkeypatch=monkeypatch, tmp_path=tmp_path, axis_width_ceilings={})
 
@@ -164,7 +169,7 @@ def test_ceiling_leaves_the_value_shape_unchanged() -> None:
         params=get_graph_only_params(n_periods=_N_PERIODS), log_level="off"
     )
 
-    assert np.asarray(bounded.values[0]["working_life"]).shape == (_N_WEALTH,)
+    assert np.asarray(bounded.values[0]["working_life"]).shape == (_N_WEALTH, 1)
 
 
 def test_ceiling_leaves_the_solved_values_unchanged() -> None:

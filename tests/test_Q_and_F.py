@@ -49,6 +49,8 @@ from lcm.regime import Regime as UserRegime
 from lcm.regime import StochasticTransition
 from lcm.typing import (
     BoolND,
+    ContinuousAction,
+    ContinuousState,
     DiscreteAction,
     DiscreteState,
     FloatND,
@@ -150,6 +152,10 @@ class _FeasibilityInputs(TypedDict, closed=True):
     constraints: MappingProxyType[str, UserFunction]
 
 
+def _zero_utility() -> FloatND:
+    return jnp.asarray(0.0)
+
+
 @pytest.fixture
 def internal_functions_illustrative() -> _FeasibilityInputs:
     def age(period: Period) -> int | Int1D:
@@ -189,7 +195,7 @@ def internal_functions_illustrative() -> _FeasibilityInputs:
         }
     )
 
-    functions = MappingProxyType({"utility": lambda: 0, "age": age})
+    functions = MappingProxyType({"utility": _zero_utility, "age": age})
 
     return {"functions": functions, "constraints": constraints}
 
@@ -296,7 +302,7 @@ def test_get_combined_constraint() -> None:
         return None
 
     combined_constraint = _get_feasibility(
-        functions=MappingProxyType({"utility": lambda: 0, "h": h}),  # ty: ignore[invalid-argument-type]
+        functions=MappingProxyType({"utility": _zero_utility, "h": h}),  # ty: ignore[invalid-argument-type]
         constraints=MappingProxyType({"f": f, "g": g}),  # ty: ignore[invalid-argument-type]
     )
     feasibility: BoolND = cast("BoolND", combined_constraint())
@@ -427,7 +433,7 @@ def _build_partial_coverage_model(
         functions={"utility": _utility},
     )
     dead_regime = UserRegime(
-        functions={"utility": lambda: 0.0},
+        functions={"utility": _zero_utility},
     )
 
     model = Model(
@@ -453,6 +459,14 @@ def _build_partial_coverage_model(
     return model, params
 
 
+def _work_before_age_two(age: float) -> FloatND:
+    return jnp.where(age >= 2, 0.0, 1.0)
+
+
+def _dead_from_age_two(age: float) -> FloatND:
+    return jnp.where(age >= 2, 1.0, 0.0)
+
+
 def test_partial_state_laws_solve_with_declared_targets() -> None:
     """Per-target state laws covering exactly the declared targets solve.
 
@@ -467,8 +481,8 @@ def test_partial_state_laws_solve_with_declared_targets() -> None:
         )
 
     work_transition = {
-        "work": StochasticTransition(func=lambda age: jnp.where(age >= 2, 0.0, 1.0)),
-        "dead": StochasticTransition(func=lambda age: jnp.where(age >= 2, 1.0, 0.0)),
+        "work": StochasticTransition(func=_work_before_age_two),
+        "dead": StochasticTransition(func=_dead_from_age_two),
     }
     model, params = _build_partial_coverage_model(
         work_transition=work_transition, next_regime_func=_next_regime
@@ -490,7 +504,7 @@ def test_partial_state_laws_solve_with_declared_targets() -> None:
     for period, expected in expected_alive.items():
         for regime_name in ("work", "retire"):
             V_arr = period_to_regime_to_V_arr.values[period][regime_name]
-            assert V_arr.shape == (2, 3)
+            assert V_arr.shape == (2, 3, 1)
             assert_allclose(V_arr, expected, atol=1e-5)
     dead_periods = [
         period
@@ -501,7 +515,7 @@ def test_partial_state_laws_solve_with_declared_targets() -> None:
     assert sorted(dead_periods) == [1, 2, 3]
     for period in dead_periods:
         dead_V = period_to_regime_to_V_arr.values[period]["dead"]
-        assert dead_V.shape == ()
+        assert dead_V.shape == (1,)
         assert_allclose(dead_V, 0.0, atol=1e-6)
 
 
@@ -949,6 +963,20 @@ class _MassRegimeId:
     dead: ScalarInt
 
 
+def _spend_wealth(
+    *, wealth: ContinuousState, consumption: ContinuousAction
+) -> ContinuousState:
+    return wealth - consumption
+
+
+def _consumption_utility(consumption: ContinuousAction) -> FloatND:
+    return consumption
+
+
+def _bequest_utility(wealth: ContinuousState) -> FloatND:
+    return wealth + 1.0
+
+
 def _model_emitting_total_regime_mass(
     *, total_mass: float, certainty_equivalent: CertaintyEquivalent
 ) -> Model:
@@ -961,29 +989,32 @@ def _model_emitting_total_regime_mass(
     certainty equivalent admits.
     """
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
-    to_dead = StochasticTransition(
-        func=lambda age: jnp.where(age < 1, total_mass * 0.4, total_mass)
-    )
+
+    def dead_probability(age: float) -> FloatND:
+        return jnp.where(age < 1, total_mass * 0.4, total_mass)
+
+    def alive_probability(age: float) -> FloatND:
+        return jnp.where(age < 1, total_mass * 0.6, 0.0)
+
+    to_dead = StochasticTransition(func=dead_probability)
     alive_law = ByAge.until(
         stop_age_exclusive=2,
         law={
-            "alive": StochasticTransition(
-                func=lambda age: jnp.where(age < 1, total_mass * 0.6, 0.0)
-            ),
+            "alive": StochasticTransition(func=alive_probability),
             "dead": to_dead,
         },
         then={"dead": to_dead},
     )
     alive = UserRegime(
         states={"wealth": wealth},
-        state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
+        state_transitions={"wealth": _spend_wealth},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
-        functions={"utility": lambda consumption: consumption},
+        functions={"utility": _consumption_utility},
         certainty_equivalent=certainty_equivalent,
     )
     dead = UserRegime(
         states={"wealth": wealth},
-        functions={"utility": lambda wealth: wealth + 1.0},
+        functions={"utility": _bequest_utility},
     )
     return Model(
         regimes={"alive": alive, "dead": dead},
@@ -999,7 +1030,7 @@ def _model_emitting_total_regime_mass(
 def _solve_alive_at_log_level_off(
     *, total_mass: float, certainty_equivalent: CertaintyEquivalent
 ) -> FloatND:
-    """Solve the model at `log_level="off"` and return `alive`'s first V array."""
+    """Solve at `log_level="off"` and return `alive`'s first V array for its member."""
     alive_params: dict[str, float | dict[str, float]] = {"discount_factor": 0.95}
     if not isinstance(certainty_equivalent, LinearExpectation):
         alive_params["certainty_equivalent"] = {"risk_aversion": 2.0}
@@ -1008,7 +1039,7 @@ def _solve_alive_at_log_level_off(
     )
     return model.solve(params={"alive": alive_params}, log_level="off").values[0][
         "alive"
-    ]
+    ][..., 0]
 
 
 @pytest.mark.parametrize(

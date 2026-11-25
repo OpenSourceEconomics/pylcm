@@ -236,7 +236,7 @@ def test_colliding_cell_names_keep_their_economic_values() -> None:
     result = _collision_model().solve(params={"discount_factor": 0.5}, log_level="off")
     assert_agrees_to_ulp(
         got=np.asarray(result.values[0]["acting"]),
-        expected=np.asarray([331.5, 334.5]),
+        expected=np.asarray([[331.5], [334.5]]),
         n_ulp=4,
     )
 

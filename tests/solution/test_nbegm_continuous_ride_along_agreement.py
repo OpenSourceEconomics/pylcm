@@ -65,7 +65,7 @@ def test_nbegm_continuous_ride_along_regime_builds() -> None:
     model = toy.build_model(variant="nbegm")
     solved = model.solve(params=toy.build_params(), log_level="debug").values
     period = _terminal_adjacent_period(solved)
-    assert np.asarray(solved[period]["alive"]).shape == (_N_LIQUID, _WAGE.size)
+    assert np.asarray(solved[period]["alive"]).shape == (_N_LIQUID, _WAGE.size, 1)
 
 
 def test_nbegm_continuous_co_state_matches_brute_across_the_cliff() -> None:

@@ -140,6 +140,30 @@ def test_importing_this_module_after_jax_init_leaves_the_platform_unpinned() -> 
     assert result.stdout.strip() == "''"
 
 
+def _log_consumption_utility(
+    *, wealth: ScalarFloat, consumption: ScalarFloat, type1: ScalarInt, type2: ScalarInt
+) -> ScalarFloat:
+    return (jnp.log(consumption) + wealth * 0.001) * type1 * type2
+
+
+def _spend_consumption(*, wealth: ScalarFloat, consumption: ScalarFloat) -> ScalarFloat:
+    return wealth - consumption
+
+
+def _flip_type2(*, type2: ScalarInt) -> ScalarInt:
+    return 1 - type2
+
+
+def _half_wealth_utility(*, wealth: ScalarFloat) -> ScalarFloat:
+    return wealth * 0.5
+
+
+def _half_wealth_by_types_utility(
+    *, wealth: ScalarFloat, type1: ScalarInt, type2: ScalarInt
+) -> ScalarFloat:
+    return (wealth * 0.5) * type1 * type2
+
+
 def _make_correct_distributed_model(
     *,
     distributed: bool = True,
@@ -155,6 +179,9 @@ def _make_correct_distributed_model(
     class RegimeId:
         working_life: ScalarInt
         retirement: ScalarInt
+
+    def next_regime(*, age: ScalarFloat) -> ScalarInt:
+        return jnp.where(age >= 4, RegimeId.retirement, RegimeId.working_life)
 
     if distribute_type2 is False:
 
@@ -176,18 +203,14 @@ def _make_correct_distributed_model(
         functions={
             "utility": _calculate_exact_layout_utility
             if exact_layout
-            else lambda wealth, consumption, type1, type2: (
-                (jnp.log(consumption) + wealth * 0.001) * type1 * type2
-            ),
+            else _log_consumption_utility,
         },
         states={
             "wealth": LinSpacedGrid(start=8, stop=72, n_points=9)
             if exact_layout
             else LinSpacedGrid(start=1, stop=100, n_points=10)
         },
-        state_transitions={
-            "wealth": lambda wealth, consumption: wealth - consumption,
-        },
+        state_transitions={"wealth": _spend_consumption},
         actions={
             "consumption": LinSpacedGrid(start=1, stop=9, n_points=9)
             if exact_layout
@@ -195,18 +218,13 @@ def _make_correct_distributed_model(
         },
     )
 
-    def retirement_utility_with_type2(
-        *, wealth: ScalarFloat, type1: ScalarInt, type2: ScalarInt
-    ) -> ScalarFloat:
-        return (wealth * 0.5) * type1 * type2
-
     def retirement_utility_without_type2(
         *, wealth: ScalarFloat, type1: ScalarInt
     ) -> ScalarFloat:
         return (wealth * 0.5) * type1
 
     retirement_utility = (
-        retirement_utility_with_type2
+        _half_wealth_by_types_utility
         if retirement_reads_type2
         else retirement_utility_without_type2
     )
@@ -230,9 +248,7 @@ def _make_correct_distributed_model(
         },
         state_transitions={
             "type1": fixed_transition("type1"),
-            "type2": (lambda type2: 1 - type2)
-            if move_type2
-            else fixed_transition("type2"),
+            "type2": _flip_type2 if move_type2 else fixed_transition("type2"),
         },
         execution_config=ExecutionConfig(
             axis_widths={
@@ -254,11 +270,7 @@ def _make_correct_distributed_model(
             if one_regime_per_period
             else Transition(
                 targets={"working_life": _STAY_AGES, "retirement": _EXIT_AGES},
-                law=DeterministicTransition(
-                    func=lambda age: jnp.where(
-                        age >= 4, RegimeId.retirement, RegimeId.working_life
-                    )
-                ),
+                law=DeterministicTransition(func=next_regime),
             )
         },
     )
@@ -293,6 +305,8 @@ def _get_exact_layout_values(
     denominator dividing 32, so expanded partial sums lie on the 1/512 lattice
     and have magnitude at most 729 + (149/8)*1296 = 24867. Their numerators
     stay below 2**24, within float32's significand under reassociation as well.
+
+    Each value carries the trailing member axis of the regime's one member.
     """
     if move_type2 and n_types != 2:
         raise ValueError("The moving type is the binary permutation 1 - type2.")
@@ -331,7 +345,10 @@ def _get_exact_layout_values(
         continuation = current
     for period in range(1, 6):
         values[period]["retirement"] = terminal_value
-    return values
+    return {
+        period: {regime: value[..., None] for regime, value in by_regime.items()}
+        for period, by_regime in values.items()
+    }
 
 
 def _assert_exact_layout_values(
@@ -501,9 +518,7 @@ def _make_one_axis_collective_model(
         regimes={
             "working": UserRegime(
                 states={"wealth": LinSpacedGrid(start=1, stop=4, n_points=4)},
-                state_transitions={
-                    "wealth": lambda wealth, consumption: wealth - consumption
-                },
+                state_transitions={"wealth": _spend_consumption},
                 actions={"consumption": LinSpacedGrid(start=0.5, stop=1, n_points=2)},
                 functions={
                     "utility": CollectiveUtility(
@@ -546,6 +561,9 @@ def _make_wrong_distributed_model() -> Model:
         working_life: ScalarInt
         retirement: ScalarInt
 
+    def next_regime(*, age: ScalarFloat) -> ScalarInt:
+        return jnp.where(age >= 4, RegimeId.retirement, RegimeId.working_life)
+
     @categorical(ordered=True)
     class Type:
         low: ScalarInt
@@ -554,9 +572,7 @@ def _make_wrong_distributed_model() -> Model:
 
     working_life = UserRegime(
         functions={
-            "utility": lambda wealth, consumption, type1, type2: (
-                (jnp.log(consumption) + wealth * 0.001) * type1 * type2
-            ),
+            "utility": _log_consumption_utility,
         },
         states={
             "wealth": LinSpacedGrid(
@@ -565,16 +581,12 @@ def _make_wrong_distributed_model() -> Model:
                 n_points=10,
             ),
         },
-        state_transitions={
-            "wealth": lambda wealth, consumption: wealth - consumption,
-        },
+        state_transitions={"wealth": _spend_consumption},
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
     )
 
     retirement = UserRegime(
-        functions={
-            "utility": lambda wealth, type1, type2: (wealth * 0.5) * type1 * type2
-        },
+        functions={"utility": _half_wealth_by_types_utility},
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
         },
@@ -597,11 +609,7 @@ def _make_wrong_distributed_model() -> Model:
         edges={
             "working_life": Transition(
                 targets={"working_life": _STAY_AGES, "retirement": _EXIT_AGES},
-                law=DeterministicTransition(
-                    func=lambda age: jnp.where(
-                        age >= 4, RegimeId.retirement, RegimeId.working_life
-                    )
-                ),
+                law=DeterministicTransition(func=next_regime),
             )
         },
     )
@@ -1492,6 +1500,9 @@ def _make_partially_distributed_model(*, distributed: bool) -> Model:
         working_life: ScalarInt
         retirement: ScalarInt
 
+    def next_regime(*, age: ScalarFloat) -> ScalarInt:
+        return jnp.where(age >= 4, RegimeId.retirement, RegimeId.working_life)
+
     @categorical(ordered=True)
     class Type:
         low: ScalarInt
@@ -1499,21 +1510,17 @@ def _make_partially_distributed_model(*, distributed: bool) -> Model:
 
     working_life = UserRegime(
         functions={
-            "utility": lambda wealth, consumption, type1, type2: (
-                (jnp.log(consumption) + wealth * 0.001) * type1 * type2
-            ),
+            "utility": _log_consumption_utility,
         },
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
         },
-        state_transitions={
-            "wealth": lambda wealth, consumption: wealth - consumption,
-        },
+        state_transitions={"wealth": _spend_consumption},
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
     )
 
     retirement = UserRegime(
-        functions={"utility": lambda wealth: wealth * 0.5},
+        functions={"utility": _half_wealth_utility},
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
     )
 
@@ -1536,11 +1543,7 @@ def _make_partially_distributed_model(*, distributed: bool) -> Model:
         edges={
             "working_life": Transition(
                 targets={"working_life": _STAY_AGES, "retirement": _EXIT_AGES},
-                law=DeterministicTransition(
-                    func=lambda age: jnp.where(
-                        age >= 4, RegimeId.retirement, RegimeId.working_life
-                    )
-                ),
+                law=DeterministicTransition(func=next_regime),
             )
         },
     )
@@ -1644,12 +1647,19 @@ def test_execution_config_cannot_shard_an_action() -> None:
         alive: ScalarInt
         dead: ScalarInt
 
+    def utility(*, wealth: ScalarFloat, choice: ScalarInt) -> ScalarFloat:
+        return wealth + choice
+
+    def next_wealth(*, wealth: ScalarFloat, choice: ScalarInt) -> ScalarFloat:
+        return wealth - choice
+
+    def dead_utility() -> ScalarFloat:
+        return jnp.asarray(0.0)
+
     regime = UserRegime(
-        functions={"utility": lambda wealth, choice: wealth + choice},
+        functions={"utility": utility},
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
-        state_transitions={
-            "wealth": lambda wealth, choice: wealth - choice,
-        },
+        state_transitions={"wealth": next_wealth},
         actions={
             "choice": DiscreteGrid(category_class=Choice),
         },
@@ -1658,7 +1668,7 @@ def test_execution_config_cannot_shard_an_action() -> None:
         Model(
             regimes={
                 "alive": regime,
-                "dead": UserRegime(functions={"utility": lambda: 0.0}),
+                "dead": UserRegime(functions={"utility": dead_utility}),
             },
             ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
             regime_id_class=RegimeId,

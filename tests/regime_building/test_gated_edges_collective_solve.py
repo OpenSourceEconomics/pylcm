@@ -302,7 +302,7 @@ def test_consent_routes_marriage_value_and_single_value() -> None:
         wage=1: 1 + 0.95*2 = 2.9;  wage=2: 2 + 0.95*3 = 4.85.
     """
     solution, _sim = _solve_consent()
-    V_single_f = np.asarray(solution[0]["single_f"])
+    V_single_f = np.asarray(solution[0]["single_f"])[..., 0]
     np.testing.assert_allclose(V_single_f, np.array([2.9, 4.85]), rtol=1e-6)
 
 
@@ -310,7 +310,7 @@ def test_consent_matches_under_jit() -> None:
     """The jitted path prices the same exit."""
     solution, _sim = _solve_consent(enable_jit=True)
     np.testing.assert_allclose(
-        np.asarray(solution[0]["single_f"]), np.array([2.9, 4.85]), rtol=1e-6
+        np.asarray(solution[0]["single_f"])[..., 0], np.array([2.9, 4.85]), rtol=1e-6
     )
 
 
@@ -444,7 +444,9 @@ def test_consent_model_builds_with_valid_routes() -> None:
         params={"discount_factor": _BETA}, log_level="off"
     )
     np.testing.assert_allclose(
-        np.asarray(solution.values[0]["single_f"]), np.array([2.9, 4.85]), rtol=1e-6
+        np.asarray(solution.values[0]["single_f"])[..., 0],
+        np.array([2.9, 4.85]),
+        rtol=1e-6,
     )
 
 
@@ -722,7 +724,7 @@ def test_full_ekl_topology_via_public_model_api() -> None:
     )
     # single_f period-0: continuation through her single_f_p1 consent exit.
     np.testing.assert_allclose(
-        np.asarray(solution[0]["single_f"]),
+        np.asarray(solution[0]["single_f"])[..., 0],
         np.array([2.425, 7.225, 8.7]),
         rtol=1e-6,
     )

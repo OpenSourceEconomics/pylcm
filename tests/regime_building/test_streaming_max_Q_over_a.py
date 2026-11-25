@@ -15,7 +15,6 @@ from numpy.testing import assert_allclose, assert_array_equal
 
 from _lcm.engine import StateActionSpace
 from _lcm.logsum import logsum_and_softmax
-from _lcm.regime_building import processing
 from _lcm.regime_building.collective import ParetoWeights
 from _lcm.regime_building.max_Q_over_a import (
     BoundedMaxOutput,
@@ -1188,42 +1187,40 @@ def _solve_and_simulate_at_action_width(
     width: int,
 ) -> tuple[Model, SolutionResult, pd.DataFrame]:
     """Solve and simulate a couple and a single, both on the household kernels."""
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(processing, "_SINGLE_ON_HOUSEHOLD_PATH", True)
-        model = Model(
-            regimes={
-                "couple": _width_regime(household=True, terminal=False),
-                "couple_terminal": _width_regime(household=True, terminal=True),
-                "single": _width_regime(household=False, terminal=False),
-                "single_terminal": _width_regime(household=False, terminal=True),
-            },
-            ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
-            regime_id_class=_WidthRegimeId,
-            initial_nodes={0: ("couple", "single")},
-            edges={"couple": {"couple_terminal": 0}, "single": {"single_terminal": 0}},
-            execution_config=ExecutionConfig(axis_widths={"action_product": width}),
-        )
-        params = {
-            regime: {"koopmans_aggregator": {"discount_factor": 0.9}}
-            for regime in ("couple", "single")
-        }
-        solution = model.solve(params=params, log_level="off")
-        n_subjects = 8
-        frame = model.simulate(
-            params=params,
-            initial_conditions={
-                "wealth": jnp.linspace(1.0, 4.0, n_subjects),
-                "age": jnp.zeros(n_subjects),
-                "regime_id": jnp.where(
-                    jnp.arange(n_subjects) % 2 == 0,
-                    _WidthRegimeId.couple,
-                    _WidthRegimeId.single,
-                ).astype(jnp.int32),
-            },
-            solution=solution,
-            seed=0,
-            log_level="off",
-        ).to_dataframe()
+    model = Model(
+        regimes={
+            "couple": _width_regime(household=True, terminal=False),
+            "couple_terminal": _width_regime(household=True, terminal=True),
+            "single": _width_regime(household=False, terminal=False),
+            "single_terminal": _width_regime(household=False, terminal=True),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=_WidthRegimeId,
+        initial_nodes={0: ("couple", "single")},
+        edges={"couple": {"couple_terminal": 0}, "single": {"single_terminal": 0}},
+        execution_config=ExecutionConfig(axis_widths={"action_product": width}),
+    )
+    params = {
+        regime: {"koopmans_aggregator": {"discount_factor": 0.9}}
+        for regime in ("couple", "single")
+    }
+    solution = model.solve(params=params, log_level="off")
+    n_subjects = 8
+    frame = model.simulate(
+        params=params,
+        initial_conditions={
+            "wealth": jnp.linspace(1.0, 4.0, n_subjects),
+            "age": jnp.zeros(n_subjects),
+            "regime_id": jnp.where(
+                jnp.arange(n_subjects) % 2 == 0,
+                _WidthRegimeId.couple,
+                _WidthRegimeId.single,
+            ).astype(jnp.int32),
+        },
+        solution=solution,
+        seed=0,
+        log_level="off",
+    ).to_dataframe()
     return model, solution, frame
 
 

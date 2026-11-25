@@ -52,13 +52,15 @@ MIN_FRACTION_WITHIN = 0.95
         (25.0, 0.525968 + 0.0294 * (25.0 - 20.0)),  # top bracket
     ],
 )
-def test_piecewise_tax_matches_the_bracket_schedule(*, assets: float, expected: float):
+def test_piecewise_tax_matches_the_bracket_schedule(
+    *, assets: float, expected: float
+) -> None:
     """`T(a)` returns `B + tau_a*(a - a0)` for the bracket containing `a`."""
     got = float(piecewise_capital_income_tax(jnp.asarray(assets)))
     np.testing.assert_allclose(got, expected, atol=_TAX_ATOL)
 
 
-def test_tax_schedule_has_three_level_discontinuities():
+def test_tax_schedule_has_three_level_discontinuities() -> None:
     """`T(a)` jumps up at a=3.87 and a=15 and drops down at a=6.97.
 
     The level jumps at a=3.87 (+0.10) and a=15 (+0.15) raise the tax; the
@@ -78,7 +80,7 @@ def test_tax_schedule_has_three_level_discontinuities():
     assert at_subsidy - below_subsidy < -0.1
 
 
-def test_app3_taxed_fues_matches_vfi_on_asset_interior():
+def test_app3_taxed_fues_matches_vfi_on_asset_interior() -> None:
     """With taxes, App.3 FUES agrees with its VFI twin on the asset interior.
 
     FUES resolves the tax jumps and kinks: the mean interior value difference is
@@ -115,8 +117,9 @@ def test_app3_taxed_fues_matches_vfi_on_asset_interior():
     for period in sorted(brute_solution)[:-1]:
         if "working" not in brute_solution[period]:
             continue
-        brute_V = np.asarray(brute_solution[period]["working"])
-        dcegm_V = np.asarray(dcegm_solution[period]["working"])
+        # The trailing member axis holds the single `"self"`.
+        brute_V = np.asarray(brute_solution[period]["working"])[..., 0]
+        dcegm_V = np.asarray(dcegm_solution[period]["working"])[..., 0]
         assert brute_V.shape == dcegm_V.shape
         differences.append(
             np.abs(dcegm_V[..., interior] - brute_V[..., interior]).ravel()

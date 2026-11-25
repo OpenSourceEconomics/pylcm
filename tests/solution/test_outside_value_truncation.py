@@ -143,7 +143,7 @@ def test_an_exit_reads_its_destination_s_problem_without_the_destination_s_exit(
     assert not np.allclose(problem_read, nested_read)
     solution = _chain_model().solve(params={}, log_level="off", runtime_checks=False)
     np.testing.assert_array_almost_equal(
-        solution.values[0]["source"], problem_read, decimal=DECIMAL_PRECISION
+        solution.values[0]["source"][..., 0], problem_read, decimal=DECIMAL_PRECISION
     )
 
 
@@ -262,7 +262,9 @@ def test_a_mover_acts_in_the_destination_problem_it_was_priced_at() -> None:
         "choice": frame["choice"].tolist(),
         "value": np.round(frame["value"].to_numpy(), DECIMAL_PRECISION).tolist(),
     }
-    priced = np.round(np.asarray(solution.values[0]["source"]), DECIMAL_PRECISION)
+    priced = np.round(
+        np.asarray(solution.values[0]["source"])[..., 0], DECIMAL_PRECISION
+    )
     assert observed == {
         "regime": ["destination", "destination"],
         "choice": [1, 1],

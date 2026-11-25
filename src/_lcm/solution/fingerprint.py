@@ -906,7 +906,7 @@ def fingerprint_model_structure(
         regimes=regimes,
     )
     record = (
-        ("pylcm-model-structure", 8),
+        ("pylcm-model-structure", 9),
         _clock_record(ages),
         {name: int(regime_id) for name, regime_id in regime_names_to_ids.items()},
         {

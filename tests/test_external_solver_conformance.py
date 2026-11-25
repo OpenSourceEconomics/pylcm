@@ -1064,7 +1064,7 @@ def test_reference_solver_scopes_planned_cores_to_requested_retention() -> None:
     for period in range(_N_PERIODS):
         remaining = _N_PERIODS - period
         np.testing.assert_array_equal(
-            solution.value(period=period, regime="active"),
+            np.asarray(solution.value(period=period, regime="active"))[..., 0],
             np.broadcast_to(
                 remaining * wealth,
                 (len(_WEALTH_GRID.to_jax()), len(_PRODUCTIVITY_GRID.to_jax())),
@@ -2618,7 +2618,7 @@ def test_declared_value_reads_feed_the_core_the_stored_next_values() -> None:
         best_next_value = float(expected.max())
     for period, expected in expected_by_period.items():
         np.testing.assert_array_almost_equal(
-            np.asarray(solution.values[period]["active"]),
+            np.asarray(solution.values[period]["active"])[..., 0],
             expected,
             decimal=DECIMAL_PRECISION,
         )

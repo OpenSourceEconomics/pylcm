@@ -294,7 +294,7 @@ def _alive_values(model: Model) -> dict[int, np.ndarray]:
     order = model.state_names(regime_name="alive")
     return {
         period: np.transpose(
-            np.asarray(arrays["alive"]),
+            np.asarray(arrays["alive"])[..., 0],
             [order.index("wealth"), order.index("health")],
         )
         for period, arrays in solution.values.items()
@@ -680,7 +680,7 @@ def test_additive_transition_preserves_each_certainty_equivalent(
             model = cloudpickle.loads(cloudpickle.dumps(model))
         values = model.solve(params=params, log_level="off").values[0]["alive"]
         np.testing.assert_array_almost_equal(
-            values, expected, decimal=DECIMAL_PRECISION
+            values[..., 0], expected, decimal=DECIMAL_PRECISION
         )
 
 

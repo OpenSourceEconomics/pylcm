@@ -63,6 +63,8 @@ from lcm.solvers import (
     StateAxesLeading,
 )
 from lcm.typing import (
+    ContinuousState,
+    DiscreteState,
     FlatParams,
     FloatND,
     ReferenceName,
@@ -183,8 +185,13 @@ class _TwoLeafCarry:
 
 
 def _state_sum(*, states: tuple[FloatND, ...]) -> FloatND:
-    """One value per state node: the sum of the node's own coordinates."""
-    return functools.reduce(operator.add, jnp.meshgrid(*states, indexing="ij"))
+    """One value per state node and member: the sum of the node's own coordinates.
+
+    Every state-shaped array of this module carries the regime's trailing member
+    axis of length one, so a published leaf can be the value buffer itself.
+    """
+    node_sum = functools.reduce(operator.add, jnp.meshgrid(*states, indexing="ij"))
+    return node_sum[..., None]
 
 
 def _value_and_fresh_carry(*, states: tuple[FloatND, ...]) -> tuple[FloatND, _Carry]:
@@ -287,7 +294,7 @@ def _terminal_template(*, context: SolverBuildContext) -> _Carry:
     states = tuple(context.state_action_space.states.values())
     return _Carry(
         count=_placed_zeros(
-            shape=tuple(int(node.size) for node in states),
+            shape=(*(int(node.size) for node in states), 1),
             state_names=tuple(context.state_action_space.states),
             context=context,
         )
@@ -610,6 +617,14 @@ class _TwoLeafReadingSolver(_ReadingSolver):
         )
 
 
+def _reading_utility(*, wealth: ContinuousState, type1: DiscreteState) -> FloatND:
+    return wealth * (type1 + 1.0)
+
+
+def _terminal_utility(*, wealth: ContinuousState, type1: DiscreteState) -> FloatND:
+    return 0.0 * wealth * type1
+
+
 def _model(
     *, solver: Solver | None = None, terminal_solver: Solver | None = None
 ) -> Model:
@@ -625,12 +640,12 @@ def _model(
             "alive": Regime(
                 states={"wealth": _WEALTH},
                 state_transitions={"wealth": next_wealth},
-                functions={"utility": lambda wealth, type1: wealth * (type1 + 1.0)},
+                functions={"utility": _reading_utility},
                 solver=solver if solver is not None else _ReadingSolver(),
             ),
             "dead": Regime(
                 states={"wealth": _WEALTH},
-                functions={"utility": lambda wealth, type1: 0.0 * wealth * type1},
+                functions={"utility": _terminal_utility},
                 solver=(
                     terminal_solver
                     if terminal_solver is not None

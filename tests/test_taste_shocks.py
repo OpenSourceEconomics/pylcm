@@ -33,7 +33,7 @@ from tests.conftest import DECIMAL_PRECISION
 from tests.test_models import taste_shocks_toy
 
 
-def test_logsum_matches_logsumexp_identity():
+def test_logsum_matches_logsumexp_identity() -> None:
     """`logsum_and_softmax` equals `scale * log(sum(exp(values / scale)))`."""
     values = jnp.array([[0.0, 1.0], [2.0, 3.0], [4.0, 5.0]])
     scale = 1.0
@@ -44,7 +44,7 @@ def test_logsum_matches_logsumexp_identity():
     aaae(got_logsum, expected, decimal=12)
 
 
-def test_logsum_small_scale_approaches_hard_max():
+def test_logsum_small_scale_approaches_hard_max() -> None:
     """With a small scale, the smoothed max is numerically the hard max."""
     values = jnp.array([[0.0, 1.0], [2.0, 3.0], [4.0, 5.0]])
 
@@ -53,7 +53,7 @@ def test_logsum_small_scale_approaches_hard_max():
     aaae(got_logsum, jnp.array([4.0, 5.0]), decimal=5)
 
 
-def test_logsum_small_scale_does_not_overflow():
+def test_logsum_small_scale_does_not_overflow() -> None:
     """A small positive scale keeps the smoothed value at the finite hard max.
 
     `values / scale` overflows to `inf` in float32 when the scale is small
@@ -72,7 +72,7 @@ def test_logsum_small_scale_does_not_overflow():
     aaae(got_probs, jnp.array([0.0, 1.0], dtype=jnp.float32), decimal=6)
 
 
-def test_logsum_multiple_axes():
+def test_logsum_multiple_axes() -> None:
     """Aggregation over all discrete axes collapses them jointly."""
     values = jnp.array([[0.0, 1.0], [2.0, 3.0], [4.0, 5.0]])
     scale = 0.5
@@ -83,7 +83,7 @@ def test_logsum_multiple_axes():
     aaae(got_logsum, expected, decimal=10)
 
 
-def test_logsum_masked_rows_get_zero_probability():
+def test_logsum_masked_rows_get_zero_probability() -> None:
     """`-inf` (infeasible) entries contribute zero probability and no NaN."""
     values = jnp.array([[1.0], [-jnp.inf]])
 
@@ -95,7 +95,7 @@ def test_logsum_masked_rows_get_zero_probability():
     aaae(got_probs, jnp.array([[1.0], [0.0]]), decimal=12)
 
 
-def test_logsum_all_masked_is_neg_inf_without_nan():
+def test_logsum_all_masked_is_neg_inf_without_nan() -> None:
     """A fully infeasible slice yields `-inf` value and finite (zero) probs."""
     values = jnp.array([[-jnp.inf], [-jnp.inf]])
 
@@ -131,7 +131,7 @@ def _reference_alive_V(*, scale: float, discount_factor: float) -> np.ndarray:
 
 
 @pytest.mark.slow
-def test_brute_force_solve_matches_reference_logsum_value_function():
+def test_brute_force_solve_matches_reference_logsum_value_function() -> None:
     """Solved V in the decision period equals the numpy logsum reference exactly.
 
     Both compute the same grid-restricted `Qc`, so agreement is up to float
@@ -144,13 +144,13 @@ def test_brute_force_solve_matches_reference_logsum_value_function():
 
     period_to_regime_to_V_arr = model.solve(params=params, log_level="debug").values
 
-    got = np.asarray(period_to_regime_to_V_arr[0]["alive"])
+    got = np.asarray(period_to_regime_to_V_arr[0]["alive"])[..., 0]
     expected = _reference_alive_V(scale=scale, discount_factor=discount_factor)
     np.testing.assert_allclose(got, expected, rtol=1e-5, atol=1e-8)
 
 
 @pytest.mark.slow
-def test_smoothed_value_weakly_exceeds_hard_max_value():
+def test_smoothed_value_weakly_exceeds_hard_max_value() -> None:
     """The EV1 expected maximum dominates the hard max pointwise.
 
     The smoothed value increases in the scale and tends to the hard max as the
@@ -167,7 +167,7 @@ def test_smoothed_value_weakly_exceeds_hard_max_value():
     assert bool(jnp.all(smoothed[0]["alive"] >= hard[0]["alive"] - 1e-12))
 
 
-def test_params_template_contains_taste_shock_scale():
+def test_params_template_contains_taste_shock_scale() -> None:
     """The params template exposes the scale under the `taste_shocks` pseudo-entry."""
     model = taste_shocks_toy.get_model()
 
@@ -176,7 +176,7 @@ def test_params_template_contains_taste_shock_scale():
     assert "scale" in template["alive"]["taste_shocks"]
 
 
-def test_taste_shock_noise_is_mean_zero():
+def test_taste_shock_noise_is_mean_zero() -> None:
     """The simulation taste-shock draw has mean zero.
 
     The solve uses `scale * logsumexp(Qc / scale)`, which equals the expected
@@ -189,7 +189,7 @@ def test_taste_shock_noise_is_mean_zero():
     np.testing.assert_allclose(float(jnp.mean(noise)), 0.0, atol=0.03)
 
 
-def test_expected_max_with_taste_shock_noise_matches_logsum():
+def test_expected_max_with_taste_shock_noise_matches_logsum() -> None:
     """The expected realized maximum equals the smoothed (logsum) solve value.
 
     With the centered draw, `E[max_d (v_d + noise_d)]` reproduces
@@ -211,7 +211,7 @@ def test_expected_max_with_taste_shock_noise_matches_logsum():
 
 @pytest.mark.slow
 @pytest.mark.parametrize("scale", [0.0, -0.1])
-def test_nonpositive_taste_shock_scale_raises(scale):
+def test_nonpositive_taste_shock_scale_raises(scale: float) -> None:
     """A taste-shock scale that is not strictly positive is rejected.
 
     Declaring taste shocks means opting into smoothing, so the scale must be
@@ -223,7 +223,7 @@ def test_nonpositive_taste_shock_scale_raises(scale):
         model.solve(params=params, log_level="debug")
 
 
-def test_taste_shocks_without_discrete_action_raises():
+def test_taste_shocks_without_discrete_action_raises() -> None:
     """Declaring taste shocks on a regime without discrete actions is an error."""
     no_discrete_action = taste_shocks_toy.alive.replace(
         actions={"consumption": taste_shocks_toy.CONSUMPTION_GRID},
@@ -266,7 +266,9 @@ def _get_location_zero_model() -> Model:
 
 
 @pytest.mark.slow
-def test_location_zero_utility_shift_moves_value_by_constant_and_keeps_choices():
+def test_location_zero_utility_shift_moves_value_by_constant_and_keeps_choices() -> (
+    None
+):
     """Adding `scale * EULER_GAMMA` to utility gives location-0 EV1 shocks.
 
     Under the default linear Koopmans aggregator, the constant enters every
@@ -448,13 +450,13 @@ def test_location_zero_shift_preserves_unshifted_constraint_inputs(
 
     mean_zero_value = mean_zero_model.solve(
         params=mean_zero_params, log_level="debug"
-    ).values[0]["alive"]
+    ).values[0]["alive"][..., 0]
     naive_value = naive_model.solve(
         params=location_zero_params, log_level="debug"
-    ).values[0]["alive"]
+    ).values[0]["alive"][..., 0]
     location_zero_value = location_zero_model.solve(
         params=location_zero_params, log_level="debug"
-    ).values[0]["alive"]
+    ).values[0]["alive"][..., 0]
 
     # Enumerate the two deterministic actions independently of the model DAG.
     base_values = np.array([0.0, 1.0]) - entry_cost

@@ -317,7 +317,7 @@ def test_generous_budget_preserves_values_actions_and_caller_arrays(
     )
     raw = result.raw_results["alive"][0]
     np.testing.assert_array_equal(raw.actions["saving"], [1.0, 1.0])
-    np.testing.assert_allclose(raw.V_arr, [2.0, 3.0])
+    np.testing.assert_allclose(raw.V_arr[..., 0], [2.0, 3.0])
     for name, snapshot in snapshots.items():
         np.testing.assert_array_equal(initial[name], snapshot)
 
@@ -374,7 +374,7 @@ def test_feasibility_reads_current_parameters_on_each_call(
     result = model.simulate(
         params=params, initial_conditions=initial, log_level="debug"
     )
-    np.testing.assert_allclose(result.raw_results["alive"][0].V_arr, [2.0, 3.0])
+    np.testing.assert_allclose(result.raw_results["alive"][0].V_arr[..., 0], [2.0, 3.0])
     params = {
         "alive": {
             "koopmans_aggregator": {"discount_factor": 0.9},

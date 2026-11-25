@@ -115,7 +115,7 @@ def test_fallback_covering_a_carried_state_solves() -> None:
     """
     model = _build_model(fallback_projects_career=True)
     solution = model.solve(params={"discount_factor": 0.5}, log_level="off")
-    np.testing.assert_array_equal(solution.values[0]["src"], [1.5, 2.0])
+    np.testing.assert_array_equal(solution.values[0]["src"][..., 0], [1.5, 2.0])
     frame = model.simulate(
         params={"discount_factor": 0.5},
         solution=solution,

@@ -116,6 +116,10 @@ def _utility_built_from_age_one(age: float) -> Callable[..., FloatND]:
     return _utility
 
 
+def _age_signature(age: float) -> float:
+    return age
+
+
 def _alive(
     *,
     utility: Callable[..., FloatND]
@@ -192,7 +196,7 @@ def _model_level_skill() -> Model:
 
 def _work_values(model: Model) -> np.ndarray:
     solution = model.solve(params={"discount_factor": 0.9}, log_level="off")
-    V = np.asarray(solution.values[0]["work"])
+    V = np.asarray(solution.values[0]["work"])[..., 0]
     order = model.state_names(regime_name="work")
     return np.transpose(V, [order.index(name) for name in ("wealth", "skill")])
 
@@ -515,7 +519,7 @@ def test_simulation_side_markers_resolve_at_an_age_the_regime_is_visited() -> No
             utility=Phased(
                 solve=_utility,
                 simulate=AgeSpecializedFunction(
-                    build=_utility_built_from_age_one, signature=lambda age: age
+                    build=_utility_built_from_age_one, signature=_age_signature
                 ),
             )
         )

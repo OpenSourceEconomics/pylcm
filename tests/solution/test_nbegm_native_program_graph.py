@@ -8,9 +8,9 @@ of them per solve, chosen by the result retention.
 """
 
 import functools
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import TypedDict, Unpack, cast
+from typing import TypedDict, Unpack
 
 import jax
 import numpy as np
@@ -134,7 +134,7 @@ def _run(
     return tuple(jax.jit(materialized.function)(**materialized.arguments))
 
 
-def test_the_graph_publishes_exactly_a_values_only_main_and_a_replay_program():
+def test_the_graph_publishes_exactly_a_values_only_main_and_a_replay_program() -> None:
     kernel, _ = _smooth_kernel()
     graph = core_program_graph(kernel=kernel)
 
@@ -173,7 +173,7 @@ def _carry_role_leaves(roles: EGMCarry) -> dict[str, StateAxesLeading | None]:
     return leaves
 
 
-def test_main_publishes_the_value_and_a_ride_axes_leading_carry():
+def test_main_publishes_the_value_and_a_ride_axes_leading_carry() -> None:
     kernel, _ = _smooth_kernel()
     value_role, carry_roles = _roles(kernel=kernel, name="main")
 
@@ -190,7 +190,7 @@ def test_main_publishes_the_value_and_a_ride_axes_leading_carry():
     }
 
 
-def test_a_jump_schedule_carries_breakpoints_and_no_policy_rows():
+def test_a_jump_schedule_carries_breakpoints_and_no_policy_rows() -> None:
     kernel, _ = _jump_kernel()
     _, carry_roles = _roles(kernel=kernel, name="main")
     assert isinstance(carry_roles, EGMCarry)
@@ -200,7 +200,7 @@ def test_a_jump_schedule_carries_breakpoints_and_no_policy_rows():
     assert carry_roles.policy is None
 
 
-def test_replay_adds_the_policy_on_the_value_layout():
+def test_replay_adds_the_policy_on_the_value_layout() -> None:
     kernel, _ = _smooth_kernel()
 
     main_roles = _roles(kernel=kernel, name="main")
@@ -211,7 +211,7 @@ def test_replay_adds_the_policy_on_the_value_layout():
     )
 
 
-def test_replay_adds_the_branch_banks_for_a_discrete_ride_action():
+def test_replay_adds_the_branch_banks_for_a_discrete_ride_action() -> None:
     kernel, _ = _discrete_kernel()
     replay_roles = _roles(kernel=kernel, name="replay")
 
@@ -224,7 +224,7 @@ def test_replay_adds_the_branch_banks_for_a_discrete_ride_action():
     )
 
 
-def test_the_builder_omits_target_values_and_filters_the_carry():
+def test_the_builder_omits_target_values_and_filters_the_carry() -> None:
     kernel, context = _smooth_kernel()
     materialized = materialize_core_program(
         program=core_program_graph(kernel=kernel)["main"],
@@ -237,7 +237,29 @@ def test_the_builder_omits_target_values_and_filters_the_carry():
     assert set(carry) == set(kernel.stateful_targets)
 
 
-def test_with_fixed_params_rebinds_both_programs():
+def _bindings(
+    function: Callable[..., PytreeValue],
+) -> tuple[Callable[..., PytreeValue], tuple[object, ...], dict[str, object]]:  # noqa: PAN001 - a partial binds values of any type
+    """The callable `function` finally calls and every argument its partials bind."""
+    args: tuple[object, ...] = ()  # noqa: PAN001 - a partial binds values of any type
+    keywords: dict[str, object] = {}  # noqa: PAN001 - a partial binds values of any type
+    while isinstance(function, functools.partial):
+        args = (*function.args, *args)
+        keywords = {**function.keywords, **keywords}
+        function = function.func
+    return function, args, keywords
+
+
+def _fixed_keywords(function: Callable[..., PytreeValue]) -> dict[str, object]:  # noqa: PAN001 - a partial binds values of any type
+    """The keywords `function` binds besides those of its member-axis wrapper."""
+    return {
+        key: value
+        for key, value in _bindings(function)[2].items()
+        if not key.startswith("_member_axis_")
+    }
+
+
+def test_with_fixed_params_rebinds_both_programs() -> None:
     kernel, _ = _smooth_kernel()
     graph = core_program_graph(kernel=kernel)
     fixed = MappingProxyType(
@@ -249,16 +271,20 @@ def test_with_fixed_params_rebinds_both_programs():
 
     for name, program in graph.items():
         function = bound_graph[name].function
+        bound_core, bound_args, bound_keywords = _bindings(function)
+        core, args, keywords = _bindings(program.function)
         assert isinstance(function, functools.partial)
-        assert function.func is program.function
-        assert function.keywords["beta"] == 0.9
-    main_bound = cast("functools.partial", bound_graph["main"].function)
-    replay_bound = cast("functools.partial", bound_graph["replay"].function)
-    assert main_bound.keywords == replay_bound.keywords
+        assert bound_core is core
+        assert bound_args == args
+        assert all(bound_keywords[key] is value for key, value in keywords.items())
+        assert bound_keywords["beta"] == 0.9
+    assert _fixed_keywords(bound_graph["main"].function) == _fixed_keywords(
+        bound_graph["replay"].function
+    )
     assert kernel.with_fixed_params(fixed_flat_params=MappingProxyType({})) is kernel
 
 
-def test_main_and_replay_publish_the_same_value_and_carry():
+def test_main_and_replay_publish_the_same_value_and_carry() -> None:
     kernel, context = _smooth_kernel()
     main_value, main_carry = _run(kernel=kernel, context=context, name="main")
     replay_value, replay_carry, _policy = _run(

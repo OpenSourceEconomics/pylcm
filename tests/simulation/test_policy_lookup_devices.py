@@ -436,9 +436,12 @@ def _lookup_on_devices(
 
 @pytest.mark.parametrize("n_devices", [1, 2, 8])
 def test_budgeted_stateless_lookup_returns_one_row_of_value(*, n_devices: int) -> None:
-    """The terminal `dead` regime's empty query is one row of zero on any devices."""
+    """The terminal `dead` regime's empty query is one row of zero on any devices.
+
+    The row carries the value of the regime's one member.
+    """
     got = _lookup_on_devices(n_devices=n_devices, keep_all_intermediates=False)
-    assert got == {"actions": [], "value": [0.0]}
+    assert got == {"actions": [], "value": [[0.0]]}
 
 
 @pytest.mark.parametrize("n_devices", [1, 2, 8])
@@ -449,11 +452,11 @@ def test_budgeted_stateless_lookup_returns_one_row_of_action_values(
     got = _lookup_on_devices(n_devices=n_devices, keep_all_intermediates=True)
     assert got == {
         "actions": [],
-        "value": [0.0],
-        "Q": [0.0],
+        "value": [[0.0]],
+        "Q": [[0.0]],
         "F": [True],
-        "U": [0.0],
-        "CE": [0.0],
+        "U": [[0.0]],
+        "CE": [[0.0]],
     }
 
 

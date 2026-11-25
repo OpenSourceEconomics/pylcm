@@ -158,9 +158,9 @@ def _bind_inputs(*, capture: NativeIncomeCapture, root: Path) -> _Inputs:
         assert grids[solver].shape == (2500,)
         saved = _load(root=root, filename=f"{solver}-public-values.npz")
         schemas = capture.solutions[solver].metadata.value_schemas
-        assert schemas[1, "saving"].axis_names == ("income", "liquid")
+        assert schemas[1, "saving"].axis_names == ("income", "liquid", "member")
         values[solver] = saved["p1__saving"]
-        assert values[solver].shape == (2, 120)
+        assert values[solver].shape == (2, 120, 1)
         np.testing.assert_array_equal(
             values[solver], capture.solutions[solver].values[1]["saving"]
         )
@@ -309,7 +309,7 @@ def _value_node(
     """Compare one actual NB physical node to the full structural V1 enclosure."""
     economics = reference.Economics()
     wealth = inputs.value_wealth[index]
-    observed = _number(inputs.values["nbegm"][code, index])
+    observed = _number(inputs.values["nbegm"][code, index, 0])
     for precision in (80, 160):
         truth = reference.last_period(
             economics=economics,

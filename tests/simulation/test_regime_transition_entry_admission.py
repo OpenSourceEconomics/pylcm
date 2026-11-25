@@ -270,7 +270,7 @@ def test_admitted_regime_probability_pytree_completes() -> None:
     assert not any(data.in_regime.any() for data in result.raw_results["gone"].values())
     for regime, period, value in (("alive", 0, 5), ("done", 1, 6)):
         data = result.raw_results[regime][period]
-        np.testing.assert_array_equal(data.V_arr, np.full(3, value))
+        np.testing.assert_array_equal(data.V_arr, np.full((3, 1), value))
         np.testing.assert_array_equal(data.in_regime, np.ones(3, dtype=bool))
     _assert_same_raw_results(actual=result, expected=expected)
     for name, value in initial.items():

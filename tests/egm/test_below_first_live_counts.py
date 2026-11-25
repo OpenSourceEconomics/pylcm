@@ -24,7 +24,7 @@ from _lcm.solution.egm import (
     _RegimeMassGuardedCore,
 )
 from _lcm.solution.feasibility import BoundInputStatus, ContinuationReadCounts
-from _lcm.typing import EconFunctionKwargs
+from _lcm.typing import EconFunctionKwargs, PytreeValue
 from lcm import (
     AgeGrid,
     ConsumptionSavingsRegime,
@@ -194,6 +194,12 @@ def _assert_first_tuple(*, carry: EGMCarry, policy: EGMSimPolicy) -> float:
     return float(grid[0])
 
 
+def _core(*, function: Callable[..., PytreeValue]) -> Callable[..., PytreeValue]:
+    """Return the core inside a program's member-axis publication wrapper."""
+    assert isinstance(function, functools.partial)
+    return function.keywords["_member_axis_core"]
+
+
 def _produced_row(*, literal: bool) -> tuple[EGMCarry, float]:
     model = _model(literal=literal)
     kernel, context = ride_along_kernel(
@@ -201,8 +207,9 @@ def _produced_row(*, literal: bool) -> tuple[EGMCarry, float]:
     )
     assert isinstance(kernel, _DCEGMPeriodKernel)
     program = kernel.core_programs()["replay"]
-    assert isinstance(program.function, _EGMStep)
-    assert program.function.pieces.feasibility_func is None
+    step = _core(function=program.function)
+    assert isinstance(step, _EGMStep)
+    assert step.pieces.feasibility_func is None
     output = kernel(
         compiled_cores={"replay": program.function},
         **context,
@@ -254,9 +261,10 @@ def _installed_reads(
     )
     assert isinstance(kernel, _EGMPeriodKernel)
     program = kernel.core_programs()["main"]
-    assert isinstance(program.function, _RegimeMassGuardedCore)
-    assert isinstance(program.function.core, _EGMCore)
-    query = program.function.core.next_dc_query
+    guard = _core(function=program.function)
+    assert isinstance(guard, _RegimeMassGuardedCore)
+    assert isinstance(guard.core, _EGMCore)
+    query = guard.core.next_dc_query
     assert isinstance(query, DCEGMQuery)
     assert query.model.authority.target_periods == (1,)
     materialized = materialize_core_program(

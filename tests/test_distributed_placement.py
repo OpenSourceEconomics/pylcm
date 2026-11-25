@@ -93,6 +93,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     Float1D,
+    FloatND,
     ScalarFloat,
     ScalarInt,
     UserParams,
@@ -707,6 +708,26 @@ def _constant_retired_value(*, wealth: jax.Array, type1: jax.Array) -> jax.Array
     return jnp.asarray(2.0)
 
 
+def _three_type_working_utility(
+    *, wealth: ContinuousState, consumption: ContinuousAction, type1: DiscreteState
+) -> FloatND:
+    return (jnp.log(consumption) + wealth * 0.001) * (type1 + 1)
+
+
+def _spend_consumption(
+    *, wealth: ContinuousState, consumption: ContinuousAction
+) -> ContinuousState:
+    return wealth - consumption
+
+
+def _half_wealth_utility(*, wealth: ContinuousState) -> FloatND:
+    return wealth * 0.5
+
+
+def _next_three_type_regime(*, age: ScalarFloat) -> ScalarInt:
+    return jnp.where(age >= 3, _ThreeTypeRegimeId.retired, _ThreeTypeRegimeId.working)
+
+
 def _make_three_type_model(
     *,
     distributed: bool,
@@ -729,21 +750,15 @@ def _make_three_type_model(
     """
     working = UserRegime(
         solver=GridSearch() if solver is None else solver,
-        functions={
-            "utility": lambda wealth, consumption, type1: (
-                (jnp.log(consumption) + wealth * 0.001) * (type1 + 1)
-            ),
-        },
+        functions={"utility": _three_type_working_utility},
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=12)},
-        state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
+        state_transitions={"wealth": _spend_consumption},
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
     )
     retired = UserRegime(
         functions={
             "utility": (
-                _constant_retired_value
-                if constant_retired
-                else (lambda wealth: wealth * 0.5)
+                _constant_retired_value if constant_retired else _half_wealth_utility
             )
         },
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=12)},
@@ -766,11 +781,7 @@ def _make_three_type_model(
         edges={
             "working": Transition(
                 targets={"working": (0, 1, 2), "retired": (0, 1, 2, 3)},
-                law=DeterministicTransition(
-                    func=lambda age: jnp.where(
-                        age >= 3, _ThreeTypeRegimeId.retired, _ThreeTypeRegimeId.working
-                    )
-                ),
+                law=DeterministicTransition(func=_next_three_type_regime),
             )
         },
     )
@@ -872,7 +883,9 @@ def test_solve_planning_keeps_descriptors_instead_of_transferred_buffers(
     for values in solution.values.values():
         if "retired" in values:
             expected = np.linspace(1.0, 100.0, 12) * 0.5
-            assert_agrees_to_ulp(got=values["retired"], expected=expected, n_ulp=8)
+            assert_agrees_to_ulp(
+                got=values["retired"], expected=expected[:, None], n_ulp=8
+            )
 
 
 def _assert_only_planning_descriptors[Key: Hashable](
@@ -1280,17 +1293,16 @@ def _make_two_mesh_model() -> Model:
     layout their shared mesh defines.
     """
 
+    def _utility(
+        *, wealth: ContinuousState, consumption: ContinuousAction, type1: DiscreteState
+    ) -> FloatND:
+        return jnp.log(consumption) + wealth * 0.001 * (type1 + 1)
+
     def _worker() -> UserRegime:
         return UserRegime(
-            functions={
-                "utility": lambda wealth, consumption, type1: (
-                    jnp.log(consumption) + wealth * 0.001 * (type1 + 1)
-                ),
-            },
+            functions={"utility": _utility},
             states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=8)},
-            state_transitions={
-                "wealth": lambda wealth, consumption: wealth - consumption
-            },
+            state_transitions={"wealth": _spend_consumption},
             actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=6)},
         )
 
@@ -1299,7 +1311,7 @@ def _make_two_mesh_model() -> Model:
             "alpha": _worker(),
             "beta": _worker(),
             "retired": UserRegime(
-                functions={"utility": lambda wealth: wealth * 0.5},
+                functions={"utility": _half_wealth_utility},
                 states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=8)},
             ),
         },
@@ -1471,10 +1483,16 @@ def _make_two_block_model(*, distributed: bool, exact_layout: bool = False) -> M
             },
         )
 
+    def _dead_utility(*, wealth: ContinuousState, type1: DiscreteState) -> FloatND:
+        return 0.0 * wealth * type1
+
+    def _next_regime(*, age: ScalarFloat) -> ScalarInt:
+        return jnp.where(age >= 3, _TwoBlockRegimeId.dead, _TwoBlockRegimeId.second)
+
     first = _worker()
     second = _worker()
     dead = UserRegime(
-        functions={"utility": lambda wealth, type1: 0.0 * wealth * type1},
+        functions={"utility": _dead_utility},
         states={
             "wealth": LinSpacedGrid(start=8, stop=72, n_points=9)
             if exact_layout
@@ -1495,11 +1513,7 @@ def _make_two_block_model(*, distributed: bool, exact_layout: bool = False) -> M
             "first": {"first": 0, "second": (1, 2)},
             "second": Transition(
                 targets={"second": (0, 1, 2), "dead": (0, 1, 2, 3)},
-                law=DeterministicTransition(
-                    func=lambda age: jnp.where(
-                        age >= 3, _TwoBlockRegimeId.dead, _TwoBlockRegimeId.second
-                    )
-                ),
+                law=DeterministicTransition(func=_next_regime),
             ),
         },
     )
@@ -1512,6 +1526,7 @@ def _get_exact_two_block_values() -> dict[int, np.ndarray]:
     wealth; enumerate every consumption action with discount one-half. Integer
     grids, spacing eight and bounded dyadic coefficients keep intermediate
     interpolation arithmetic exactly representable at both suite precisions.
+    Each value carries the trailing member axis of the regime's one member.
     """
     values = {period: np.empty((2, 9)) for period in range(4)}
     for type1 in range(2):
@@ -1525,7 +1540,7 @@ def _get_exact_two_block_values() -> dict[int, np.ndarray]:
             values[period][type1] = [
                 float(slope * wealth + intercept) for wealth in range(8, 73, 8)
             ]
-    return values
+    return {period: value[..., None] for period, value in values.items()}
 
 
 def _assert_exact_two_block_grids(*, model: Model) -> None:
@@ -1781,7 +1796,7 @@ def test_simulation_topology_reads_a_proper_submesh_on_all_subject_devices() -> 
     }
     stored = topologies["solve"]["working"]
     read = topologies["simulate"]["working"]
-    assert stored.shape == read.shape == (3, 12)
+    assert stored.shape == read.shape == (3, 12, 1)
     assert {device.id for device in stored.sharding.device_set} == {0, 1, 2}
     assert {device.id for device in read.sharding.device_set} == {0, 1, 2, 3}
     assert read.sharding.is_fully_replicated
@@ -2200,7 +2215,7 @@ def test_stateless_terminal_decision_preserves_scalar_profile_and_subject_rows(
     }
     solution = model.solve(params=params, log_level=log_level) if supplied else None
     if solution is not None:
-        assert solution.values[1]["done"].shape == ()
+        assert solution.values[1]["done"].shape == (1,)
         np.testing.assert_array_equal(solution.values[1]["done"], 4.0)
     result = model.simulate(
         params=params,
@@ -2214,9 +2229,9 @@ def test_stateless_terminal_decision_preserves_scalar_profile_and_subject_rows(
         [[1.0, 4.0], [1.0, 5.0], [1.0, 6.0]],
     )
     terminal = result.raw_results["done"][1]
-    assert terminal.V_arr.shape == (3,)
+    assert terminal.V_arr.shape == (3, 1)
     assert not terminal.actions
-    np.testing.assert_array_equal(terminal.V_arr, [4.0, 4.0, 4.0])
+    np.testing.assert_array_equal(terminal.V_arr[..., 0], [4.0, 4.0, 4.0])
     assert terminal.V_arr.devices() == {jax.devices()[device] for device in selected}
 
 

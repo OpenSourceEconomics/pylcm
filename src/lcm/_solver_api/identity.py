@@ -59,18 +59,19 @@ type ArtifactRuntimeType = type[ArtifactPayload]
 _SHA256_HEX_LENGTH = 64
 PYLCM_VERSION = __version__
 
-SOLVER_API_VERSION = 4
+SOLVER_API_VERSION = 5
 # Version of the public solver/plugin protocol implemented by this release.
 # It covers typed internal outputs between core programs, the host-driven
 # core-execution disposition, compilation keys formed from program identity, and
-# the regime's member axis: a value array of a regime with a member axis carries
-# it as its trailing axis, and `supports_several_members` declares whether a
-# solver solves more than one member.
+# the regime's members: every value array carries a trailing axis over the
+# regime's members, of length one for a regime of the one member `"self"`, and
+# `supports_several_members` declares whether a solver solves more than one
+# member.
 
-SOLUTION_SCHEMA_VERSION = 3
+SOLUTION_SCHEMA_VERSION = 4
 # Version of the labelled in-memory solution schema.
 
-SOLUTION_FORMAT_VERSION = 3
+SOLUTION_FORMAT_VERSION = 4
 # Version of the durable solution archive format.
 
 

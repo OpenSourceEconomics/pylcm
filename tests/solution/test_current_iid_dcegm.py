@@ -114,5 +114,5 @@ def test_resources_only_current_iid_dcegm_integrates_nodewise_log_optima() -> No
         ]
     )
     np.testing.assert_array_almost_equal(
-        solution.values[0]["saving"], expected, decimal=DECIMAL_PRECISION
+        solution.values[0]["saving"][..., 0], expected, decimal=DECIMAL_PRECISION
     )

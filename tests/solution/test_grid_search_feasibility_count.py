@@ -377,7 +377,7 @@ def test_public_query_padding_preserves_the_int32_last_position(
             "query_banks"
         ]
         assert isinstance(bank, jax.ShapeDtypeStruct)
-        assert bank.shape == (2, 1 << 31)
+        assert bank.shape == (2, 1 << 31, 1)
 
 
 @pytest.mark.parametrize(

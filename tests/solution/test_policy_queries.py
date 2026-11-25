@@ -1444,7 +1444,7 @@ def _information_mesh_inputs(
 
 
 def _information_native_keep(*, q: FloatND, outside: PolicyAnswer) -> BoolND:
-    return q >= outside[0]
+    return jnp.all(q >= outside[0])
 
 
 @pytest.mark.parametrize(

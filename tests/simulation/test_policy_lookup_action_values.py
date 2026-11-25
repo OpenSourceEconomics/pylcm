@@ -129,7 +129,10 @@ def lookup(
 def masked_max_and_argmax(
     *, Q: np.ndarray, F: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Max of `Q` over the entries `F` admits, and its first flat argmax, per row."""
+    """Max of `Q` over the entries `F` admits, and its first flat argmax, per row.
+
+    `Q` is one member's action values, without the trailing member axis.
+    """
     masked = np.where(F, Q, -np.inf).reshape(Q.shape[0], -1)
     return masked.max(axis=1), masked.argmax(axis=1)
 
@@ -222,7 +225,7 @@ def test_action_values_cover_the_action_grid_with_a_leading_row_axis(
     n_rows = len(got.value)
     action_shape = tuple(len(ACTION_GRIDS[name]) for name in got.actions)
     assert (got.Q.shape, got.F.shape, got.F.dtype) == (
-        (n_rows, *action_shape),
+        (n_rows, *action_shape, 1),
         (n_rows, *action_shape),
         np.dtype(bool),
     )
@@ -233,8 +236,10 @@ def test_value_is_the_max_of_feasible_action_values(
     *, solved: Solved, period: int
 ) -> None:
     got = lookup(solved=solved, period=period, keep_intermediates=ALL_INTERMEDIATES)
-    expected, _ = masked_max_and_argmax(Q=np.asarray(got.Q), F=np.asarray(got.F))
-    np.testing.assert_array_equal(np.asarray(got.value), expected)
+    expected, _ = masked_max_and_argmax(
+        Q=np.asarray(got.Q)[..., 0], F=np.asarray(got.F)
+    )
+    np.testing.assert_array_equal(np.asarray(got.value)[..., 0], expected)
 
 
 @pytest.mark.parametrize("period", [0, LAST_ALIVE_PERIOD])
@@ -244,8 +249,8 @@ def test_actions_are_the_argmax_of_feasible_action_values(
     got = lookup(solved=solved, period=period, keep_intermediates=ALL_INTERMEDIATES)
     assert got.actions is not None
     assert got.Q is not None
-    _, flat = masked_max_and_argmax(Q=np.asarray(got.Q), F=np.asarray(got.F))
-    indices = np.unravel_index(flat, got.Q.shape[1:])
+    _, flat = masked_max_and_argmax(Q=np.asarray(got.Q)[..., 0], F=np.asarray(got.F))
+    indices = np.unravel_index(flat, got.Q.shape[1:-1])
     chosen = {
         name: ACTION_GRIDS[name][indices[axis]] for axis, name in enumerate(got.actions)
     }
@@ -269,13 +274,13 @@ def test_requesting_action_values_leaves_actions_and_value_unchanged(
         np.stack(
             [
                 *(np.asarray(with_values.actions[n]) for n in plain.actions),
-                np.asarray(with_values.value),
+                np.asarray(with_values.value)[..., 0],
             ]
         ),
         np.stack(
             [
                 *(np.asarray(plain.actions[n]) for n in plain.actions),
-                np.asarray(plain.value),
+                np.asarray(plain.value)[..., 0],
             ]
         ),
     )
@@ -306,7 +311,7 @@ def test_action_values_of_a_regime_without_states_or_actions_have_one_row(
         np.asarray(got.Q).tolist(),
         got.F.shape,
         np.asarray(got.F).tolist(),
-    ) == ((1,), [0.0], (1,), [True])
+    ) == ((1, 1), [[0.0]], (1,), [True])
 
 
 def test_some_actions_are_infeasible(solved: Solved) -> None:
@@ -330,11 +335,12 @@ def test_infeasible_action_with_larger_raw_value_is_not_chosen(solved: Solved) -
         states=states,
         keep_intermediates=ALL_INTERMEDIATES,
     )
-    Q, F = np.asarray(got.Q), np.asarray(got.F)
+    Q, F = np.asarray(got.Q)[..., 0], np.asarray(got.F)
+    value = np.asarray(got.value)[..., 0]
     infeasible_max = np.where(F, -np.inf, Q).reshape(len(Q), -1).max(axis=1)
-    assert (infeasible_max > np.asarray(got.value)).any()
+    assert (infeasible_max > value).any()
     expected, _ = masked_max_and_argmax(Q=Q, F=F)
-    np.testing.assert_array_equal(np.asarray(got.value), expected)
+    np.testing.assert_array_equal(value, expected)
 
 
 @pytest.mark.parametrize("branch", [LaborSupply.work, LaborSupply.retire])
@@ -350,9 +356,11 @@ def test_restricted_action_grid_restricts_the_action_values(
     assert got.actions is not None
     assert got.Q is not None
     labor_axis = list(got.actions).index("labor_supply")
-    expected, _ = masked_max_and_argmax(Q=np.asarray(got.Q), F=np.asarray(got.F))
+    expected, _ = masked_max_and_argmax(
+        Q=np.asarray(got.Q)[..., 0], F=np.asarray(got.F)
+    )
     assert got.Q.shape[1 + labor_axis] == 1
-    np.testing.assert_array_equal(np.asarray(got.value), expected)
+    np.testing.assert_array_equal(np.asarray(got.value)[..., 0], expected)
 
 
 @pytest.mark.parametrize(
@@ -559,8 +567,8 @@ def test_flow_utility_is_the_utility_function_on_the_action_grid(
         - DISUTILITY_OF_WORK * working[:, None]
     )
     np.testing.assert_array_almost_equal(
-        np.asarray(got.U),
-        np.broadcast_to(table, got.U.shape),
+        np.asarray(got.U)[..., 0],
+        np.broadcast_to(table, got.U.shape[:-1]),
         decimal=DECIMAL_PRECISION,
     )
 
@@ -581,7 +589,7 @@ def test_terminal_regime_without_states_has_zero_continuation(
     )
     np.testing.assert_array_almost_equal(
         np.stack([np.asarray(got.U), np.asarray(got.CE)]),
-        np.zeros((2, 1)),
+        np.zeros((2, 1, 1)),
         decimal=DECIMAL_PRECISION,
     )
 
@@ -597,12 +605,10 @@ def test_infeasible_actions_keep_a_finite_flow_utility_and_continuation(
         states=states,
         keep_intermediates=ALL_INTERMEDIATES,
     )
-    Q, F = np.asarray(got.Q), np.asarray(got.F)
+    Q, U, CE = (np.asarray(x)[..., 0] for x in (got.Q, got.U, got.CE))
     finite = np.isfinite(Q)
-    assert (~F & finite).any()
-    assert (np.isfinite(np.asarray(got.U)) & np.isfinite(np.asarray(got.CE)))[
-        finite
-    ].all()
+    assert (~np.asarray(got.F) & finite).any()
+    assert (np.isfinite(U) & np.isfinite(CE))[finite].all()
 
 
 @pytest.mark.parametrize("branch", [LaborSupply.work, LaborSupply.retire])
@@ -715,11 +721,11 @@ def epstein_zin_continuation_oracle(
     )
     alive_axes = model.state_names(regime_name="alive")
     V_alive = np.moveaxis(
-        np.asarray(solution.values[period + 1]["alive"]),
+        np.asarray(solution.values[period + 1]["alive"])[..., 0],
         [alive_axes.index("wealth"), alive_axes.index("health")],
         [0, 1],
     )
-    V_dead = np.asarray(solution.values[period + 1]["dead"])
+    V_dead = np.asarray(solution.values[period + 1]["dead"])[..., 0]
     health_transition = np.asarray(epstein_zin.HEALTH_TRANSITION)
 
     def power(
@@ -774,7 +780,7 @@ def test_continuation_is_the_certainty_equivalent_of_next_values(
         health_rows=health_rows,
     )
     np.testing.assert_array_almost_equal(
-        np.asarray(got.CE), expected, decimal=DECIMAL_PRECISION
+        np.asarray(got.CE)[..., 0], expected, decimal=DECIMAL_PRECISION
     )
 
 
@@ -813,7 +819,7 @@ def test_terminal_regime_with_states_has_its_utility_as_action_value(
         keep_intermediates=ALL_INTERMEDIATES,
     )
     np.testing.assert_array_almost_equal(
-        np.stack([np.asarray(got.U), np.asarray(got.Q), np.asarray(got.CE)]),
+        np.stack([np.asarray(x)[..., 0] for x in (got.U, got.Q, got.CE)]),
         np.stack([np.sqrt(wealth), np.sqrt(wealth), np.zeros_like(wealth)]),
         decimal=DECIMAL_PRECISION,
     )
@@ -948,7 +954,9 @@ def test_action_values_keep_an_action_named_taste_shock_key() -> None:
         keep_intermediates=ALL_INTERMEDIATES,
     )
     np.testing.assert_array_almost_equal(
-        np.asarray(got.value), np.array([2.0, 2.5]), decimal=DECIMAL_PRECISION
+        np.asarray(got.value)[..., 0],
+        np.array([2.0, 2.5]),
+        decimal=DECIMAL_PRECISION,
     )
 
 
@@ -1004,14 +1012,19 @@ def test_actionless_row_with_infeasible_state_has_minus_infinity_value(
 ) -> None:
     """An infeasible state with no actions to choose has no admissible value."""
     got = lookup_actionless_terminal(keep_intermediates=keep_intermediates)
-    np.testing.assert_array_equal(np.asarray(got.value), [2.0, -np.inf])
+    np.testing.assert_array_equal(np.asarray(got.value)[..., 0], [2.0, -np.inf])
 
 
 def test_actionless_row_with_infeasible_state_keeps_its_raw_parts() -> None:
     """At an infeasible actionless row, `Q`, `U` and `CE` stay raw and `F` is false."""
     got = lookup_actionless_terminal(keep_intermediates=ALL_INTERMEDIATES)
     np.testing.assert_array_equal(
-        np.stack([np.asarray(x, dtype=float) for x in (got.Q, got.U, got.CE, got.F)]),
+        np.stack(
+            [
+                *(np.asarray(x)[..., 0] for x in (got.Q, got.U, got.CE)),
+                np.asarray(got.F, dtype=float),
+            ]
+        ),
         np.array([[2.0, 1.0], [2.0, 1.0], [0.0, 0.0], [1.0, 0.0]]),
     )
 

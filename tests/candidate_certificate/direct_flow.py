@@ -641,7 +641,7 @@ _SOURCE_SEALS = {
     SUPPORT_DIAGNOSTICS_SOURCE: "15aab27db77f3f9f9699697bc32f201a018f43b1a4653f9c3b2caee0e7ae16db",
     SUPPORT_PRECONDITIONS_SOURCE: "d621e34907d21364cdbdf99185525903e567dcf154e80a11f496875ad6e75d1b",
     SUPPORT_AUTHORITY_SOURCE: "d25dd5ef989c84bdccbd5a16c45cfa8106b1abdae2d10938e54ed029a7d7814a",
-    SUPPORT_FINGERPRINT_SOURCE: "d579d5e3061d19e283ec6ca42b99472ea2c4e672013ceb3028dd56065309ebef",
+    SUPPORT_FINGERPRINT_SOURCE: "92f6f97d8f5ea195ec3a658ee712c6e4e5cc1a20270a2cccc097a2f97c98e22f",
     UNIFORM_PROCESS_GRID_SOURCE: "3cd2faf78b21b2862946ee4c12ffb79f474a43430615e952e5f1c582cc02ac5a",
     EAGER_STAGE_SOURCE: "d0a52778e4966ecf9bbac4ecaee87f85f49df0aeb4bf7c390f8599bf7d97efa8",
     PROCESS_GRID_RESOLUTION_SOURCE: "2d00bbc058e022abc9150a60782b9689b8446d894029b30d99f916e5a7d128bf",
@@ -653,7 +653,7 @@ _SOURCE_SEALS = {
     RUNTIME_SHARDING_SOURCE: "13f6b68846532c6631f27db1c84b47f6c866a992e037dfd8e40c791c16f50f90",
     COMBINED_ABSTRACT_PROGRAM_INPUTS_SOURCE: "1ade513e829c0bd8e053b90ab312e53f7b51a5a4da6ae1000079c5684a8017e4",
     COMBINED_ASSEMBLY_SOURCE: "7e1a7967d013827a9fe51862d304e686105ae7886b3539122289ef3866f5f94a",
-    COMBINED_CHUNK_ADMISSION_SOURCE: "879aeef3cb4f860b10ce0005b1aa49d416719d2e206f3ff255aadbd2d77f2512",
+    COMBINED_CHUNK_ADMISSION_SOURCE: "a2c3e5f6b6aa163b649bdf78b37aead42b2cd2833fa5bca2c65b083c309b1751",
     COMBINED_CHUNK_OFFLOAD_SOURCE: "4afae1dea7452ecada529d2ffd60026bae24c945fcf9ac8c021445c4ec7e073c",
     COMBINED_CHUNK_OPERATIONS_SOURCE: "66134576b395622d6a25b76c66f5fa66766d3dbffb1796544019f5f55e8f86cd",
     COMBINED_CHUNK_PLANNING_SOURCE: "a1cbdc35b8a1a020010aa66baf59156fcba61f7f2539d8b73ae014e9ef5b5155",
@@ -701,9 +701,9 @@ _SOURCE_SEALS = {
     SIMULATION_RUNTIME_SOURCE: "0623ad63ded8ee0ae880003228814e7e300a7a4394b3abecb3f5dd27acc58009",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "c7a915405c53cd07ec21d494c15a74b07a018ca60ff4ede729e5d1391a7459ee",
-    COLLECTIVE_SOURCE: "7c9300e591d5582d8858504e413c6e752f7db83f93fcac84253c77ff76670b2f",
+    COLLECTIVE_SOURCE: "228ca11c312cdb2f9bed0dab908aac3a5025ce8bf029fb30022a51aaec8f0cb4",
     MAX_Q_SOURCE: "f2aa873ef6fdd53801b4a509dcff58d52458b0d7a6007b3e43f58cedb1c43f83",
-    PROCESSING_SOURCE: "7be22e9a11477c0b809bb1483009c512b8a35c2159d9178b204c75a99b116733",
+    PROCESSING_SOURCE: "e6ecf18f883ee610cef79472ad28de24d133921309cb39b67aff4586cfe86d09",
     GRID_SEARCH_SOURCE: "df35263eea0bd1b5a929818baebb39303d03719b7bcc5fb2c0aa2d7adeab2176",
     CORE_PROGRAM_SOURCE: "7d8197a3d2607a3380be63408ae4cf2b8d8ebbe68b043cc3aff76bf1f5c6b78a",
     OUTPUT_LAYOUT_SOURCE: "8c1c2da98d43d3a5b8155d01418899ecc3b99730aef73c274b3f959b8dced07b",
@@ -724,12 +724,12 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "8f5247e547ce7d4cf1f247b6e80f1d7773c71df8bdd901408468ec068edf98d1",
     SIMULATION_TRANSITIONS_SOURCE: "14ee0d02e2e9fe52771be7f11e709054a0560a4866c49bbe268dec1642067e62",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
-    MODEL_SOURCE: "381136ce85c54acb787c6796f75ad6788d7c3d8d12d4b7018df47636a7b3d895",
+    MODEL_SOURCE: "0eed67518694b634d378e4943dab4ab67db13c7d62d775190317e6ef39b25354",
     SOLVER_API_SOURCE: "65c8235466fdeda91e14b94863e8e8fa84eaa4fefc7b0e0fd30e5efcd514ffc5",
     BACKWARD_INDUCTION_SOURCE: "2de297e2d706f161fa24454fbc890ca3e3c595c62806f069069119442d5f22dc",
     PERIOD_REPLAY_SOURCE: "d82fc9e306d629595ef0b812e09c39eb60ca56831fbc5e95cd9bd1871e4f7e1e",
     INITIAL_CONDITIONS_SOURCE: "97ed8e28cc8e2d7c8cbba025dcdb037d16fb73d3f411281d5127799ce23b4ca0",
-    RESULT_SOURCE: "029160731a46f4c7da254ece0e4610dfa5d38ee908c5694e97fd7b1cc091e249",
+    RESULT_SOURCE: "06edabde95f6066b2d2e62ebaf1277c5444ab85c08a7f049e78ac6af6d2f2851",
     RESULT_DATAFRAME_SOURCE: "fc3c01ebdf03841303af4777891c801ca12bc4b08f06d6b7bc752787c5ff6794",
     RESULT_METADATA_SOURCE: "7ceb5a2c2f9139efff396a93f2dace10da89a6872c2de6417b35df8062d4fc72",
     ADDITIONAL_TARGETS_SOURCE: "3769b0eb0dad646767068fd4cf6e73a707115d2ede3ae5e3d9859b82b75d63fd",
@@ -1508,7 +1508,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         "1a84bbb9ccc915e2c018a7c76236dda8ee1635ce45d49c3b0ca26ee798fbd73f",
         {
             "_ChunkProfiler.profile_widths": "91957b47440cd6853f1cea41b04bfb1786db81f134dd91c3c9477d37d31e8eab",
-            "_simulation_chunk_profile_key": "f41b86c593aa5b63e4d3b9b971cd11ca7b6863819a8fb1dd20bd87338edff430",
+            "_simulation_chunk_profile_key": "873af9837d2ee9d3a4b9d929349b8c598f3baf401610c4dc6bda31425d57f3d2",
             "_independent_outer_candidates": "823294bb69d6649f9e4b3b9da1df9c070c39fc7e2945db56cd9bcbabac98da73",
             "_independent_anchor_widths": "1c9375085f39b01649366f937b1eb59c5fc120ba611efbe8870a4e0c9d40d078",
             "_plan_independent_chunks": "030a717fb2310c2c85cf9daa0a75ec918dc8e33dab682ba642fcbba27f723015",
@@ -1615,7 +1615,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "Model._canonicalize_params": "3d855aafffd0eb8fc64ee013aed19a228ed6aec495620fe40a3739eb7249485a",
             "Model._validate_canonical_params": "89153bcb94b9aea493b585b8f48918ab6390c5d8ddcfd10c98b5c47ac06c6b12",
             "_simulation_programs": "560e89640539f100707028fce75e1031cf9c33f55678c3085c94ea7f969914ab",
-            "Model._lookup_policy": "23a057f7f09da4d454b32133ed4e572d018a94673728d10d061f9b8607a83c13",
+            "Model._lookup_policy": "bfdd01b9bb5930548b8ef35ac5823995ffaa5693777d31be4f372e739d5f6519",
         },
     ),
     OUTPUT_LAYOUT_SOURCE: (
@@ -2150,7 +2150,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "fingerprint_solution_support": "7b96d4f0c60f892df96d252b6dd5c8e3454db6da5509990e9f8d7d7e25e21174",
             "fingerprint_model": "04c8f2960e52d4144353b1e3b962edbc17b00eb05fc68a3207cf4826acbbda51",
             "_grid_support": "9709180334fc4732e2193f6b736667d6a96648f1346401a886bd7da0f41b65bf",
-            "fingerprint_model_structure": "7de1088c45155fda77a6e39df54a3a28d04f674f83e9064d196a340ac7f7cc8c",
+            "fingerprint_model_structure": "9d285e9903ec49ac8624d69e99bb4337913276ad6d2fa0822dc303300277724e",
             "_query_semantic_descriptor": "602544e2ed8bb315d1bd8a9425e486338810ba663c55197bebcfbe1e9eccac0d",
             "_project_user_regime_declaration": "8d99e75c4efb879d6920ced6eb4dc92eed63d054c8ae6c67ca9754f7ce712a90",
             "_semantic_fingerprint": "75f98beb48082f6fda273258837d03a38221af56812f8d621163ebfdfdda893b",
@@ -2460,7 +2460,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     PROCESSING_SOURCE: (
-        "f9a87f680fd2e7e014c176ba98504f3f3f664c281d5fe076a56b0cde545a0195",
+        "76db15102150e1e158ee054c544181f963495459fa01b1f8ed97c1ceab5e478f",
         {
             "_build_per_subject_decisions_per_period": "f09974e02049bcdff59698a8ba571b21facee5dc483bce876702e544cd34269e",
             "process_regimes": "288b4375dff6c1f924dc3e646f38e3c4471887ce440c6b99f9528bf26129c67f",
@@ -10028,6 +10028,14 @@ objective = _weighted_sum(member_Q=member_Q, weights=weights)
 feasible = _actions_last(
     a=jnp.broadcast_to(feasibility, objective.shape), action_axes=action_axes
 )
+if not action_axes:
+    undefined = feasible[..., 0] & jnp.isnan(objective)
+    dissolution = ~feasible[..., 0]
+    values = {
+        name: jnp.where(undefined, jnp.nan, jnp.where(dissolution, -jnp.inf, q))
+        for name, q in member_Q.items()
+    }
+    return jnp.zeros(objective.shape, dtype=jnp.int32), values, dissolution
 objective = _actions_last(a=objective, action_axes=action_axes)
 (_, *best), argmax_flat = max_lexicographic_and_smallest_id(
     values=(
@@ -10058,8 +10066,8 @@ return values, dissolution
     expected_weighted = r"""names = list(member_Q)
 def _term(name: str) -> FloatND:
     return zero_safe_weighted_term(
-        weight=jnp.asarray(weights[name]),
-        value=member_Q[name],
+        weight=jax.lax.stop_gradient(jnp.asarray(weights[name])),
+        value=jax.lax.stop_gradient(member_Q[name]),
         subnormal_is_accounted_for=False,
     )
 return sum_in_value_order(

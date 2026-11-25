@@ -140,7 +140,7 @@ def _check_panel(*, result: SimulationResult) -> None:
         np.testing.assert_array_equal(
             np.asarray(record.states["wealth"]), [1.0, 1.5, 2.0]
         )
-        np.testing.assert_array_equal(np.asarray(record.V_arr), value)
+        np.testing.assert_array_equal(np.asarray(record.V_arr)[..., 0], value)
     for record in result.raw_results.get("latent", {}).values():
         assert not np.asarray(record.in_regime).any()
 
@@ -167,7 +167,7 @@ def exercise(
     for budgeted, model in models.items():
         solved[budgeted] = model.solve(params={"discount_factor": 0.5}, log_level="off")
         np.testing.assert_array_equal(
-            np.asarray(solved[budgeted].values[0]["main"]), [1.5, 2.25, 3.0]
+            np.asarray(solved[budgeted].values[0]["main"])[..., 0], [1.5, 2.25, 3.0]
         )
         if not promote:
             latent = model._regimes["latent"]

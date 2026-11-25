@@ -367,7 +367,7 @@ def test_full_household_nonterminal_collective_anchor() -> None:
             assert_array_almost_equal(
                 solution.values[period][
                     f"single_{member}{'_terminal' if period else ''}"
-                ],
+                ][..., 0],
                 [float(expected.V.single[member][period, e]) for e in range(3)],
                 decimal=DECIMAL_PRECISION,
             )

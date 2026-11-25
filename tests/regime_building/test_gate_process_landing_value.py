@@ -157,7 +157,7 @@ def test_a_gate_reads_the_landing_process_node_value(
     values = model.solve(params=_PARAMS, log_level="off")
     expected = weights[0] * 5.0 + weights[1] * 6.0 + weights[2] * 8.0
     np.testing.assert_allclose(
-        values.values[0]["source"], np.full(3, expected), rtol=0.0, atol=2e-6
+        values.values[0]["source"][..., 0], np.full(3, expected), rtol=0.0, atol=2e-6
     )
 
 

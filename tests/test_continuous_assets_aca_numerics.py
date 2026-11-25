@@ -116,17 +116,22 @@ def _reference(
 
 
 def _assert_shards(value: FloatND) -> None:
-    """Assert disjoint middle-axis assets shards, including the terminal rank."""
-    expected_shape = (2, 3, 3, 24, 4) if value.ndim == 5 else (2, 24)
+    """Assert disjoint middle-axis assets shards, including the terminal rank.
+
+    The trailing axis of every value is its replicated member axis.
+    """
+    expected_shape = (2, 3, 3, 24, 4, 1) if value.ndim == 6 else (2, 24, 1)
     assert value.shape == expected_shape
-    axis = 3 if value.ndim == 5 else 1
+    axis = 3 if value.ndim == 6 else 1
     expected_spec = (
-        jax.P(None, None, None, "assets", None)
-        if value.ndim == 5
-        else jax.P(None, "assets")
+        jax.P(None, None, None, "assets", None, None)
+        if value.ndim == 6
+        else jax.P(None, "assets", None)
     )
     assert isinstance(value.sharding, jax.sharding.NamedSharding)
-    assert value.sharding.spec == expected_spec
+    assert value.sharding.is_equivalent_to(
+        jax.NamedSharding(value.sharding.mesh, expected_spec), value.ndim
+    )
     assert len(value.addressable_shards) == 8
     intervals = []
     for shard in value.addressable_shards:
@@ -164,8 +169,8 @@ def test_two_coordinate_values_and_carried_simulation_match_reference(  # noqa: 
         result = original(**kwargs)
         for value in jax.tree.leaves(result):
             if isinstance(value, jax.Array) and value.shape in (
-                (2, 3, 3, 24, 4),
-                (2, 24),
+                (2, 3, 3, 24, 4, 1),
+                (2, 24, 1),
             ):
                 _assert_shards(value)
                 birth_shapes.append(value.shape)
@@ -187,7 +192,7 @@ def test_two_coordinate_values_and_carried_simulation_match_reference(  # noqa: 
     for period, values in solution.values.items():
         for name, value in values.items():
             _assert_shards(value)
-            observed = np.asarray(value)
+            observed = np.asarray(value)[..., 0]
             phase = model._regimes[name].solution
             coordinates = phase.state_action_space(
                 regime_params=MappingProxyType({})
@@ -200,7 +205,7 @@ def test_two_coordinate_values_and_carried_simulation_match_reference(  # noqa: 
             )
             control_phase = control_model._regimes[name].solution
             control_labelled = _labelled_values(
-                value=np.asarray(control.values[period][name]),
+                value=np.asarray(control.values[period][name])[..., 0],
                 state_names=control_phase.state_names,
                 coordinates=control_phase.state_action_space(
                     regime_params=MappingProxyType({})
@@ -221,7 +226,7 @@ def test_two_coordinate_values_and_carried_simulation_match_reference(  # noqa: 
                 rtol=tolerance,
                 atol=0,
             )
-            snapshots.append((value, observed.copy()))
+            snapshots.append((value, np.asarray(value).copy()))
     record_property(
         "oracle_value_count", sum(len(values) for values in reference.values())
     )

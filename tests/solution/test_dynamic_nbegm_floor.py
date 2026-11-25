@@ -143,7 +143,7 @@ def test_discrete_nbegm_resource_map_excludes_utility_only_choice() -> None:
     )
     assert -1.0 / 0.75 + 3.0 / 4.0 < 0.0
     np.testing.assert_array_almost_equal(
-        [solution.values[period]["saving"][0] for period in (0, 1)],
+        [solution.values[period]["saving"][0, 0] for period in (0, 1)],
         [math.log(3.0) + 1.0] * 2,
         decimal=DECIMAL_PRECISION,
     )
@@ -161,7 +161,7 @@ def test_schedule_discrete_nbegm_resource_map_excludes_utility_only_choice() -> 
     )
     assert -1.0 / (1.5 - 0.5) + 3.0 / 4.0 < 0.0
     np.testing.assert_array_almost_equal(
-        [solution.values[period]["saving"][1] for period in (0, 1)],
+        [solution.values[period]["saving"][1, 0] for period in (0, 1)],
         [math.log(4.0) + 1.0] * 2,
         decimal=DECIMAL_PRECISION,
     )
@@ -178,7 +178,7 @@ def test_scalar_nbegm_uses_each_source_period_floor(*, with_discrete: bool) -> N
     )
     assert -1.0 / 0.75 + 3.0 / 4.0 < 0.0
     np.testing.assert_array_almost_equal(
-        [control.values[period]["saving"][0] for period in (0, 1)],
+        [control.values[period]["saving"][0, 0] for period in (0, 1)],
         [math.log(3.0) + int(with_discrete)] * 2,
         decimal=DECIMAL_PRECISION,
     )
@@ -192,7 +192,7 @@ def test_scalar_nbegm_uses_each_source_period_floor(*, with_discrete: bool) -> N
             math.log(consumption) + math.log(3.0 * bound + 4.0) + int(with_discrete)
         )
     np.testing.assert_array_almost_equal(
-        [solution.values[period]["saving"][0] for period in (0, 1)],
+        [solution.values[period]["saving"][0, 0] for period in (0, 1)],
         expected,
         decimal=DECIMAL_PRECISION,
     )

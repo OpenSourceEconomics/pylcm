@@ -83,7 +83,7 @@ from lcm.solvers import (
 from lcm.solvers import (
     CoreExecutionRequirements as PublicRequirements,
 )
-from lcm.typing import Float1D, FloatND, ReferenceName, RegimeName, StateName
+from lcm.typing import Float1D, Float2D, FloatND, ReferenceName, RegimeName, StateName
 from tests.solution._callback_types import ConsumeOutputKwargs
 from tests.test_solver_api_out_of_tree import _N_PERIODS, _two_regime_model
 
@@ -125,21 +125,21 @@ class _Counter:
 
 def _value_from_one_read(
     *, wealth: Float1D, count: FloatND
-) -> tuple[Float1D, _Counter]:
+) -> tuple[Float2D, _Counter]:
     """Publish wealth plus the running count, and the count incremented."""
-    return wealth + count, _Counter(count=count + 1.0)
+    return (wealth + count)[:, None], _Counter(count=count + 1.0)
 
 
 def _value_from_two_reads(
     *, wealth: Float1D, count: FloatND, other: FloatND
-) -> tuple[Float1D, _Counter]:
+) -> tuple[Float2D, _Counter]:
     """Publish wealth plus both readings of the count, and it incremented."""
-    return wealth + 0.5 * count + 0.5 * other, _Counter(count=count + 1.0)
+    return (wealth + 0.5 * count + 0.5 * other)[:, None], _Counter(count=count + 1.0)
 
 
-def _sibling_sum(*, wealth: Float1D, other: FloatND) -> Float1D:
+def _sibling_sum(*, wealth: Float1D, other: FloatND) -> Float2D:
     """The non-donating sibling core's own reading of the same leaf."""
-    return wealth + other
+    return (wealth + other)[:, None]
 
 
 def _one_read_arguments(build: CoreBuildContext) -> Mapping[ReferenceName, PytreeValue]:
@@ -214,11 +214,11 @@ class _MainKernel:
             period=period,
             ages=ages,
         )
-        published: tuple[Float1D, _Counter] | None = None
+        published: tuple[Float2D, _Counter] | None = None
         for name, core in compiled_cores.items():
             output = core(**self.programs[name].argument_builder(context))
             if name == "main":
-                published = cast("tuple[Float1D, _Counter]", output)
+                published = cast("tuple[Float2D, _Counter]", output)
         assert published is not None
         return KernelOutput(value=published[0], continuations={_KEY: published[1]})
 

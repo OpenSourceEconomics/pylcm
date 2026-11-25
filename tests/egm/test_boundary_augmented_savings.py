@@ -230,7 +230,7 @@ def test_boundary_augmented_interior_uses_actual_law_value(
     """
     model = build_model(callable_floor=callable_floor, boundary_upper=boundary_upper)
     solution = model.solve(params={"discount_factor": 0.01}, log_level="off")
-    actual = np.asarray(solution.values[0]["parent"])
+    actual = np.asarray(solution.values[0]["parent"])[..., 0]
     np.testing.assert_array_almost_equal(
         actual,
         expected_interior_values(
@@ -284,7 +284,7 @@ def test_inactive_boundary_keeps_translated_domain_corner(
     solution = model.solve(params={"discount_factor": 0.01}, log_level="off")
     continuation = math.log(floor + 4.0) + 0.01 * math.log(4.0)
     np.testing.assert_array_almost_equal(
-        solution.values[0]["parent"],
+        np.asarray(solution.values[0]["parent"])[..., 0],
         np.log(np.asarray((0.25, 0.5))) + 0.01 * continuation,
         decimal=DECIMAL_PRECISION,
     )

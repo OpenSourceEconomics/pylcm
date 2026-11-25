@@ -367,12 +367,12 @@ def test_model_refuses_one_name_with_different_values() -> None:
                 "a": UserRegime(
                     states={"wealth": _WEALTH},
                     state_transitions={"wealth": _identity_wealth},
-                    functions={"utility": lambda: 0.0},
+                    functions={"utility": _zero_utility},
                 ),
                 "b": UserRegime(
                     states={"wealth": DiscreteGrid(values=np.array([0, 1, 2]))},
                     state_transitions={"wealth": _identity_wealth},
-                    functions={"utility": lambda: 0.0},
+                    functions={"utility": _zero_utility},
                 ),
             },
             derived_categoricals={},
@@ -411,7 +411,7 @@ def test_fixed_value_grid_state_repeats_the_reference_per_value(
         reference = np.asarray(expected.values[period]["working_life"])
         for bracket_code in (0, 1):
             np.testing.assert_array_equal(
-                np.asarray(got.values[period]["working_life"])[..., bracket_code],
+                np.asarray(got.values[period]["working_life"])[..., bracket_code, :],
                 reference,
             )
 
@@ -571,7 +571,7 @@ def test_off_grid_law_without_checks_reads_nan_where_it_leaves_the_grid() -> Non
         .values
     )
     nan_pattern = [
-        np.isnan(np.asarray(values[period]["working_life"])).tolist()
+        np.isnan(np.asarray(values[period]["working_life"])[..., 0]).tolist()
         for period in (0, 1, 2)
     ]
     assert nan_pattern == [
@@ -716,7 +716,9 @@ def _one_period_model(
 
 
 def _first_values(*, model: Model, params: UserParams) -> np.ndarray:
-    return np.asarray(model.solve(params=params, log_level="off").values[0]["working"])
+    return np.asarray(model.solve(params=params, log_level="off").values[0]["working"])[
+        ..., 0
+    ]
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
@@ -1328,7 +1330,7 @@ def test_markov_lottery_in_each_phase_form_passes_the_discrete_check(
     model.validate_transitions(params=_LOTTERY_PARAMS)
     got = model.solve(params=_LOTTERY_PARAMS, log_level="off", runtime_checks=True)
     np.testing.assert_array_equal(
-        np.asarray(got.values[0]["alive"]),
+        np.asarray(got.values[0]["alive"])[..., 0],
         _lottery_values(probabilities=(Fraction(1, 4), Fraction(1, 4), Fraction(1, 2))),
     )
 
@@ -1340,7 +1342,7 @@ def test_joint_output_is_checked_at_its_support_events(*, enable_jit: bool) -> N
     model.validate_transitions(params=_LOTTERY_PARAMS)
     got = model.solve(params=_LOTTERY_PARAMS, log_level="off", runtime_checks=True)
     np.testing.assert_array_equal(
-        np.asarray(got.values[0]["alive"]),
+        np.asarray(got.values[0]["alive"])[..., 0],
         _lottery_values(probabilities=(Fraction(1, 2), Fraction(1, 2))),
     )
 
@@ -1451,8 +1453,12 @@ def test_constant_category_law_may_return_a_python_int(
         params={"discount_factor": 0.5}, log_level="off", runtime_checks=runtime_checks
     )
     source_values, terminal_values = _constant_code_values(next_code=next_code)
-    np.testing.assert_array_equal(np.asarray(got.values[0]["source"]), source_values)
-    np.testing.assert_array_equal(np.asarray(got.values[1]["target"]), terminal_values)
+    np.testing.assert_array_equal(
+        np.asarray(got.values[0]["source"])[..., 0], source_values
+    )
+    np.testing.assert_array_equal(
+        np.asarray(got.values[1]["target"])[..., 0], terminal_values
+    )
 
 
 def _read_matrix_axis(
@@ -1774,10 +1780,10 @@ def test_source_only_markov_draw_validates_and_solves_exactly(
     )
     expected = _source_only_values(zero_mass_last=zero_mass_last)
     np.testing.assert_array_equal(
-        np.asarray(got.values[0]["source"]), expected["source"]
+        np.asarray(got.values[0]["source"])[..., 0], expected["source"]
     )
     np.testing.assert_array_equal(
-        np.asarray(got.values[1]["target"]), expected["terminal"]
+        np.asarray(got.values[1]["target"])[..., 0], expected["terminal"]
     )
 
 
@@ -2004,11 +2010,11 @@ def test_dcegm_continuation_reads_nan_at_an_off_grid_child_code() -> None:
         params={"discount_factor": 0.9}, log_level="off", runtime_checks=False
     ).values
     nan_pattern = [
-        np.isnan(np.asarray(values[period]["alive"])).all(axis=1).tolist()
+        np.isnan(np.asarray(values[period]["alive"])[..., 0]).all(axis=1).tolist()
         for period in (0, 1)
     ]
     finite_pattern = [
-        np.isfinite(np.asarray(values[period]["alive"])).all(axis=1).tolist()
+        np.isfinite(np.asarray(values[period]["alive"])[..., 0]).all(axis=1).tolist()
         for period in (0, 1)
     ]
     assert nan_pattern == [[True, True], [False, True]]
@@ -2159,7 +2165,9 @@ def test_on_grid_law_behind_a_gate_solves(
         law=_kind_stays,
         enable_jit=enable_jit,
     ).solve(params=_PARAMS_ONE, log_level="off", runtime_checks=True)
-    np.testing.assert_array_equal(np.asarray(got.values[0]["source"]), [20.0, 20.0])
+    np.testing.assert_array_equal(
+        np.asarray(got.values[0]["source"])[..., 0], [20.0, 20.0]
+    )
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
@@ -2174,7 +2182,9 @@ def test_ordinarily_excluded_off_grid_action_behind_a_gate_solves(
         enable_jit=enable_jit,
         forbid_working=True,
     ).solve(params=_PARAMS_ONE, log_level="off", runtime_checks=True)
-    np.testing.assert_array_equal(np.asarray(got.values[0]["source"]), [0.0, 0.0])
+    np.testing.assert_array_equal(
+        np.asarray(got.values[0]["source"])[..., 0], [0.0, 0.0]
+    )
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])

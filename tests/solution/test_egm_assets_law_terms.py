@@ -329,7 +329,7 @@ def _health_insurance_model(solver: str) -> Model:
     )
 
 
-def test_discrete_state_and_action_law_term_matches_brute_force():
+def test_discrete_state_and_action_law_term_matches_brute_force() -> None:
     """`next_wealth = savings + transfer(health) - oop(buy_private)` solves.
 
     The additive term reads a discrete state and a discrete action — both
@@ -410,7 +410,7 @@ def _means_test_model(solver: str) -> Model:
     )
 
 
-def test_euler_state_law_term_with_means_test_matches_brute_force():
+def test_euler_state_law_term_with_means_test_matches_brute_force() -> None:
     """A means-tested capital supplement in the law matches brute force.
 
     The additive term reads the current Euler state through a decision-time
@@ -527,7 +527,7 @@ def _per_target_model(solver: str) -> Model:
     )
 
 
-def test_per_target_law_term_asymmetry_matches_brute_force():
+def test_per_target_law_term_asymmetry_matches_brute_force() -> None:
     """The law term applies toward the live target and not toward `dead`.
 
     Wealth carried into death is `savings` alone (the bequest receives no
@@ -615,7 +615,7 @@ def _phased_law_model(solver: str) -> Model:
     )
 
 
-def test_phase_variant_law_term_solves_and_simulates_with_its_phase():
+def test_phase_variant_law_term_solves_and_simulates_with_its_phase() -> None:
     """A `Phased` law term uses its solve variant in V and zero in simulate.
 
     The solve-phase law adds a constant adjustment to savings; the
@@ -699,7 +699,7 @@ def _chained_law_model(solver: str) -> Model:
     )
 
 
-def test_chained_transition_law_term_matches_brute_force():
+def test_chained_transition_law_term_matches_brute_force() -> None:
     """`next_wealth = savings + accrual * next_aime` matches brute force.
 
     The law term consumes another state's transition output within the same
@@ -716,7 +716,7 @@ def test_chained_transition_law_term_matches_brute_force():
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["working_life"])
         dcegm_V = np.asarray(dcegm_solution[period]["working_life"])
-        assert brute_V.shape == dcegm_V.shape == (160, 7)
+        assert brute_V.shape == dcegm_V.shape == (160, 7, 1)
         np.testing.assert_allclose(
             dcegm_V[N_BRUTE_UNSTABLE_NODES:, :],
             brute_V[N_BRUTE_UNSTABLE_NODES:, :],

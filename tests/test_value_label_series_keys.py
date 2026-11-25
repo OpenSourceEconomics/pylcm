@@ -159,7 +159,7 @@ def _solve(
         params={"discount_factor": 1.0, "alive": {"utility": {"table": table}}},
         log_level="off",
     )
-    return np.asarray(solution.values[0]["alive"])
+    return np.asarray(solution.values[0]["alive"])[..., 0]
 
 
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])

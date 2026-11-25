@@ -393,8 +393,15 @@ def test_a_second_solve_with_changed_params_reuses_nothing_stale(
 def test_the_partitioned_program_gathers_one_accumulator_per_cell_and_device(
     report: _Report,
 ) -> None:
-    """Value, winning identity and feasibility of 8 wealth cells from 4 devices."""
-    assert report["programs"]["partitioned"]["all_gather_shapes"] == [[8, 4]] * 3
+    """The tie-rule keys, winning identity and feasibility of 8 cells from 4 devices.
+
+    The keys are the weighted objective, the member's objective and the member's
+    stored value, which alone carries the member axis.
+    """
+    assert report["programs"]["partitioned"]["all_gather_shapes"] == [
+        [8, 4, 1],
+        *[[8, 4]] * 4,
+    ]
 
 
 def test_the_ordinary_program_exchanges_nothing(report: _Report) -> None:
@@ -430,8 +437,9 @@ def test_a_partitioned_solve_at_its_exact_budget_publishes_terminal_bequests(
     report: _Report,
 ) -> None:
     """Terminal wealth nodes receive their square-root bequests."""
+    # Each node holds the value of the single member `"self"`.
     np.testing.assert_allclose(
-        report["budget"]["terminal_values"],
+        np.asarray(report["budget"]["terminal_values"])[..., 0],
         np.sqrt(np.linspace(1.0, 10.0, 8)),
         rtol=10**-conftest.DECIMAL_PRECISION,
         atol=0.0,

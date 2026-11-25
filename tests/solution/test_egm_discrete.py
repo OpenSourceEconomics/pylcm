@@ -35,6 +35,7 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FloatND,
+    RegimeName,
     ScalarInt,
     UserParams,
 )
@@ -190,7 +191,7 @@ def _get_must_retire_model() -> Model:
     )
 
 
-def test_discrete_state_slices_match_single_type_models():
+def test_discrete_state_slices_match_single_type_models() -> None:
     """Each skill slice of V equals the skill-free model solved at that wage.
 
     The skill state is fixed and scales the wage by 1 (low) or 2 (high), so
@@ -218,7 +219,7 @@ def test_discrete_state_slices_match_single_type_models():
 
     for period in sorted(skill_solution)[:-1]:
         V_skill = np.asarray(skill_solution[period]["working_life"])
-        assert V_skill.shape == (2, 100)
+        assert V_skill.shape == (2, 100, 1)
         for skill_index, label in [(0, "low"), (1, "high")]:
             np.testing.assert_allclose(
                 V_skill[skill_index],
@@ -229,7 +230,7 @@ def test_discrete_state_slices_match_single_type_models():
             )
 
 
-def test_infeasible_discrete_action_recovers_retirement_value():
+def test_infeasible_discrete_action_recovers_retirement_value() -> None:
     """With work forbidden everywhere, the worker's V equals the retiree's V.
 
     The discrete-only constraint makes the work combo infeasible at every
@@ -253,7 +254,7 @@ def test_infeasible_discrete_action_recovers_retirement_value():
 
 
 @pytest.mark.parametrize("regime_name", ["working_life", "retirement"])
-def test_discrete_state_layout_matches_brute_force(regime_name):
+def test_discrete_state_layout_matches_brute_force(regime_name: RegimeName) -> None:
     """The skill model's V arrays have brute-force layout and values.
 
     Discrete-state axes lead and the continuous state is last, exactly as the
@@ -315,7 +316,7 @@ def _death_prob_from_param(survival_rate: float) -> FloatND:
     return jnp.asarray(1.0 - survival_rate)
 
 
-def test_nan_regime_transition_prob_surfaces_as_error():
+def test_nan_regime_transition_prob_surfaces_as_error() -> None:
     """A NaN regime-transition probability raises instead of vanishing.
 
     Masking unreachable targets must not swallow a NaN probability (`NaN > 0`
@@ -376,7 +377,7 @@ def _lost_utility() -> FloatND:
     return jnp.asarray(-1000.0)
 
 
-def test_undeclared_stateless_regime_does_not_enter_the_continuation():
+def test_undeclared_stateless_regime_does_not_enter_the_continuation() -> None:
     """A stateless regime outside the declared targets contributes nothing.
 
     The DC-EGM retirement regime declares its reachable targets granularly
@@ -424,7 +425,7 @@ def _nothing_is_feasible(labor_supply: DiscreteAction) -> BoolND:
     return jnp.zeros_like(labor_supply, dtype=bool)
 
 
-def test_all_infeasible_regime_publishes_neg_inf_like_brute_force():
+def test_all_infeasible_regime_publishes_neg_inf_like_brute_force() -> None:
     """A regime whose every combo is infeasible publishes `-inf` V, never NaN.
 
     A discrete-only constraint that is false everywhere makes the regime's

@@ -12,11 +12,12 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
-from typing import NotRequired, TypedDict
+from typing import NoReturn, NotRequired, TypedDict
 
 import pytest
 
 from tests.solution._nb_scientific_capture_admission import (
+    ProcessedCall,
     admit_capture,
     bind_source_files,
     drain_owned_callbacks,
@@ -27,7 +28,12 @@ from tests.solution._nb_scientific_capture_admission import (
 
 type _Json = bool | int | float | str | list[_Json] | dict[str, _Json] | None
 
-type _ArrayRecord = dict[str, str | list[int]]
+
+class _ArrayRecord(TypedDict):
+    shape: list[int]
+    dtype: str
+    original_dtype: NotRequired[str]
+    encoding: NotRequired[str]
 
 
 class _SavedRecord(TypedDict):
@@ -35,6 +41,22 @@ class _SavedRecord(TypedDict):
     arrays: dict[str, _ArrayRecord]
     sha256: NotRequired[str]
     original_query_leaf_names: NotRequired[list[str]]
+
+
+class _Manifest(TypedDict, total=False):
+    provenance_scope: str
+    source_map_externally_admitted: bool
+    source_map_sha256: str | None
+    precision: int
+    source_files: dict[str, str]
+    original_assertion_retained: bool
+    original_comparison_role: str
+    original_budget: float
+    panels: dict[str, list[int]]
+    row_matches: list[list[int]]
+    rows: list[str]
+    saved: list[_SavedRecord]
+    processed_parameter_calls: list[ProcessedCall]
 
 
 def row_arrays() -> dict[str, _ArrayRecord]:
@@ -83,7 +105,7 @@ def row_arrays() -> dict[str, _ArrayRecord]:
     }
 
 
-def valid_manifest():
+def valid_manifest() -> _Manifest:
     """Finite metadata admission fixture, not a native numerical computation."""
     arrays = row_arrays()
     component_fields = {
@@ -129,9 +151,9 @@ def valid_manifest():
             "arrays": {
                 name: {"shape": shape, "dtype": "float32"}
                 for name, shape in (
-                    ("p0__saving", [2, 120]),
-                    ("p1__saving", [2, 120]),
-                    ("p2__done", [120]),
+                    ("p0__saving", [2, 120, 1]),
+                    ("p1__saving", [2, 120, 1]),
+                    ("p2__done", [120, 1]),
                 )
             },
         }
@@ -175,14 +197,14 @@ def valid_manifest():
     }
 
 
-def test_complete_typed_metadata_is_admitted():
+def test_complete_typed_metadata_is_admitted() -> None:
     assert "metadata admitted" in admit_capture(
         manifest=valid_manifest(), precision=32, source_sha="a" * 64
     )
 
 
 @pytest.mark.parametrize("field", list(row_arrays()))
-def test_every_original_row_input_and_corner_field_is_required(field):
+def test_every_original_row_input_and_corner_field_is_required(field: str) -> None:
     manifest = valid_manifest()
     row = next(
         entry for entry in manifest["saved"] if entry["file"] == manifest["rows"][0]
@@ -196,7 +218,7 @@ def test_every_original_row_input_and_corner_field_is_required(field):
     "mutation",
     ["whole_corner", "empty_W", "float_status", "duplicate_row", "extra_query_leaf"],
 )
-def test_incomplete_or_mistyped_rows_are_refused(mutation):
+def test_incomplete_or_mistyped_rows_are_refused(mutation: str) -> None:
     manifest = valid_manifest()
     row = next(
         entry for entry in manifest["saved"] if entry["file"] == manifest["rows"][0]
@@ -222,7 +244,7 @@ def test_incomplete_or_mistyped_rows_are_refused(mutation):
         admit_capture(manifest=manifest, precision=32, source_sha="a" * 64)
 
 
-def test_strings_are_encoded_losslessly():
+def test_strings_are_encoded_losslessly() -> None:
     values = ["saving", "done", "", "a\x00", "\u2603", '"\\']
     encoded, dtype = encode_object_strings(values)
     assert [json.loads(item) for item in encoded] == values
@@ -241,9 +263,13 @@ def test_strings_are_encoded_losslessly():
         ("source_files", {}),
     ],
 )
-def test_source_precision_panel_and_budget_mutations_are_refused(*, key, value):
+def test_source_precision_panel_and_budget_mutations_are_refused(
+    *, key: str, value: _Json
+) -> None:
     manifest = valid_manifest()
-    manifest[key] = value
+    # The parametrized key names one manifest field and its replacement value, a
+    # pairing a TypedDict key check cannot follow.
+    manifest[key] = value  # ty: ignore[invalid-key]
     with pytest.raises(ValueError, match=r"Source, precision"):
         admit_capture(manifest=manifest, precision=32, source_sha="a" * 64)
 
@@ -260,7 +286,7 @@ def test_source_precision_panel_and_budget_mutations_are_refused(*, key, value):
         "params",
     ],
 )
-def test_complete_capture_components_are_required(suffix):
+def test_complete_capture_components_are_required(suffix: str) -> None:
     manifest = valid_manifest()
     manifest["saved"] = [
         entry for entry in manifest["saved"] if entry["file"] != f"grid-{suffix}.npz"
@@ -269,7 +295,7 @@ def test_complete_capture_components_are_required(suffix):
         admit_capture(manifest=manifest, precision=32, source_sha="a" * 64)
 
 
-def make_npy(*, descriptor, shape, payload):
+def make_npy(*, descriptor: str, shape: tuple[int, ...], payload: bytes) -> bytes:
     header = repr({"descr": descriptor, "fortran_order": False, "shape": shape}) + "\n"
     return (
         b"\x93NUMPY\x01\x00"
@@ -287,14 +313,14 @@ def make_npy(*, descriptor, shape, payload):
     ],
 )
 def test_object_origin_requires_actual_unicode_json_string_payload(
-    *, tmp_path, payload, descriptor, dtype
-):
+    *, tmp_path: Path, payload: bytes, descriptor: str, dtype: str
+) -> None:
     path = tmp_path / "column.npz"
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr(
             "x.npy", make_npy(descriptor=descriptor, shape=(1,), payload=payload)
         )
-    manifest: dict[str, list[_SavedRecord]] = {
+    manifest: _Manifest = {
         "saved": [
             {
                 "file": path.name,
@@ -314,7 +340,7 @@ def test_object_origin_requires_actual_unicode_json_string_payload(
         verify_capture_files(manifest=manifest, root=tmp_path)
 
 
-def test_actual_unicode_json_payload_and_byte_mutations(tmp_path):
+def test_actual_unicode_json_payload_and_byte_mutations(tmp_path: Path) -> None:
     encoded, dtype = encode_object_strings(["saving\x00\u2603"])
     payload = encoded[0].encode("utf-32-le")
     path = tmp_path / "column.npz"
@@ -322,7 +348,7 @@ def test_actual_unicode_json_payload_and_byte_mutations(tmp_path):
         archive.writestr(
             "x.npy", make_npy(descriptor=dtype, shape=(1,), payload=payload)
         )
-    manifest: dict[str, list[_SavedRecord]] = {
+    manifest: _Manifest = {
         "saved": [
             {
                 "file": path.name,
@@ -343,7 +369,9 @@ def test_actual_unicode_json_payload_and_byte_mutations(tmp_path):
     )
     for field, value in (("shape", [2]), ("dtype", "float64")):
         mutated = copy.deepcopy(manifest)
-        mutated["saved"][0]["arrays"]["x"][field] = value
+        # Each field is paired with its own replacement, which the per-key type
+        # check cannot follow through the loop.
+        mutated["saved"][0]["arrays"]["x"][field] = value  # ty: ignore[invalid-assignment]
         with pytest.raises(ValueError, match=r"NPY shape|NPY dtype"):
             verify_capture_files(manifest=mutated, root=tmp_path)
     manifest["saved"][0]["sha256"] = "0" * 64
@@ -351,11 +379,11 @@ def test_actual_unicode_json_payload_and_byte_mutations(tmp_path):
         verify_capture_files(manifest=manifest, root=tmp_path)
 
 
-def test_provenance_uses_real_source_of_decorated_original():
-    def original():
+def test_provenance_uses_real_source_of_decorated_original() -> None:
+    def original() -> str:
         return "actual"
 
-    def wrapper():
+    def wrapper() -> str:
         return "wrapper"
 
     wrapper.__code__ = wrapper.__code__.replace(co_filename="<beartype-pseudo>")
@@ -366,7 +394,7 @@ def test_provenance_uses_real_source_of_decorated_original():
     assert wrapped() == "wrapper"
 
 
-def test_source_file_identity_must_match_expected_immutable_map(tmp_path):
+def test_source_file_identity_must_match_expected_immutable_map(tmp_path: Path) -> None:
     path = tmp_path / "module.py"
     path.write_text("x = 1\n")
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -383,8 +411,8 @@ def test_source_file_identity_must_match_expected_immutable_map(tmp_path):
         )
 
 
-def test_failure_drain_preserves_primary_error():
-    def fail_drain():
+def test_failure_drain_preserves_primary_error() -> None:
+    def fail_drain() -> NoReturn:
         raise RuntimeError("drain failure")
 
     with (
@@ -485,7 +513,7 @@ print(json.dumps({
     }
 
 
-def _limited_manifest(*, source: Path) -> dict[str, _Json]:
+def _limited_manifest(*, source: Path) -> _Manifest:
     """Describe limited observed modules without inventing a whole-source map."""
     manifest = valid_manifest()
     manifest["provenance_scope"] = "observed_module_sources"
@@ -554,7 +582,7 @@ def test_limited_module_scope_cannot_claim_external_map_authentication(
         admit_capture(manifest=manifest, precision=32, source_sha=None)
 
 
-def _retired_manifest() -> dict[str, _Json]:
+def _retired_manifest() -> _Manifest:
     """Use the existing finite admission fixture with explicit retired-gate wording."""
     manifest = valid_manifest()
     manifest["original_assertion_retained"] = False

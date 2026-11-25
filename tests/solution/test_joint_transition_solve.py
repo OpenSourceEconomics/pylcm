@@ -92,6 +92,14 @@ def _next_income(match: Mapping[str, FloatND]) -> FloatND:
     return match["income"]
 
 
+def _zero_utility() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def _target_utility(*, wealth: ContinuousState, income: ContinuousState) -> FloatND:
+    return wealth + 2 * income
+
+
 def _build_model(
     *,
     enable_jit: bool,
@@ -101,7 +109,7 @@ def _build_model(
     return Model(
         regimes={
             "source": Regime(
-                functions={"utility": lambda: jnp.asarray(0.0)},
+                functions={"utility": _zero_utility},
                 joint_transitions={
                     "target": {
                         "match": JointTransition(
@@ -121,7 +129,7 @@ def _build_model(
                     "wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
                     "income": LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
                 },
-                functions={"utility": lambda wealth, income: wealth + 2 * income},
+                functions={"utility": _target_utility},
             ),
         },
         ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
@@ -485,7 +493,7 @@ def test_bdy_joint_match_matches_scalar_oracle_without_a_stored_match_axis(
         oracle, _BDY_EXPECTED, decimal=DECIMAL_PRECISION
     )
     np.testing.assert_array_almost_equal(
-        np.asarray(solution.values[0]["single"]),
+        np.asarray(solution.values[0]["single"])[..., 0],
         0.95 * _BDY_EXPECTED,
         decimal=DECIMAL_PRECISION,
     )
@@ -540,7 +548,7 @@ def test_bdy_simulation_samples_one_shared_match_and_agrees_with_solve() -> None
     np.testing.assert_array_equal(couple["wealth"], expected_wealth)
 
     folded_node_values = np.where(expected_wealth == 2.25, 9.375, 12.625)
-    solved_continuation = float(np.asarray(solution.values[0]["single"])[2] / 0.95)
+    solved_continuation = float(np.asarray(solution.values[0]["single"])[2, 0] / 0.95)
     assert abs(folded_node_values.mean() - solved_continuation) < 0.08
     assert "partner_match" not in frame.columns
     assert "partner_match" not in result.state_names

@@ -93,9 +93,16 @@ def test_public_capabilities_share_one_dependency_safe_type() -> None:
     )
 
 
-def test_member_axis_contract_is_solver_api_version_four() -> None:
-    """A plugin must explicitly target the contract whose values carry members."""
-    assert solver_api.SOLVER_API_VERSION == 4
+def test_member_axis_contract_is_solver_api_version_five() -> None:
+    """A plugin must target the contract in which every value carries its members.
+
+    The solution schema and the archive format are those of that contract too.
+    """
+    assert (
+        solver_api.SOLVER_API_VERSION,
+        solver_api.SOLUTION_SCHEMA_VERSION,
+        solver_api.SOLUTION_FORMAT_VERSION,
+    ) == (5, 4, 4)
 
 
 def test_solver_requires_explicit_capability_metadata() -> None:

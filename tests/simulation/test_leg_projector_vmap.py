@@ -359,7 +359,7 @@ def test_solve_side_fold_projects_one_settlement_per_health_state() -> None:
         regimes=regimes, flat_params=flat_params, solution=solution
     )
     aaae(
-        np.asarray(wbar),
+        np.asarray(wbar)[..., 0],
         np.asarray(_SETTLEMENT_BY_HEALTH),
         decimal=DECIMAL_PRECISION,
     )
@@ -405,7 +405,7 @@ def test_router_writes_each_subject_its_own_projected_fallback_state() -> None:
     )
     aaae(
         np.asarray(states["fallback"]["settlement"]),
-        np.asarray(wbar),
+        np.asarray(wbar)[..., 0],
         decimal=DECIMAL_PRECISION,
     )
 

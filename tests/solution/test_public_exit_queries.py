@@ -29,7 +29,6 @@ from _lcm.policy_queries import (
     _QueryCore,
     build_policy_query_kernel,
 )
-from _lcm.regime_building import processing
 from _lcm.regime_building.Q_and_F import CanonicalActionKernel, EvaluatedQAndF
 from _lcm.solution.fingerprint import _semantic_fingerprint
 from _lcm.typing import FlatParams, PytreeValue
@@ -549,7 +548,7 @@ def test_shared_offer_uses_the_same_category_at_identical_law_inputs() -> None:
     result = _offer_model(observed=False, shared=True).solve(
         params={}, log_level="off", runtime_checks=False
     )
-    np.testing.assert_allclose(result.values[0]["single_f"], [0.75, 1.5])
+    np.testing.assert_allclose(result.values[0]["single_f"][..., 0], [0.75, 1.5])
 
 
 def test_shared_offer_refuses_a_projection_that_changes_its_cdf() -> None:
@@ -887,7 +886,7 @@ def test_nested_outside_projection_reads_the_already_mapped_marital_history() ->
     result = model.solve(params={}, log_level="off", runtime_checks=False)
     # At lag0 neither couple action gives both members their schooling outside7.
     # A root source must therefore stay, rather than price the lag1 policy.
-    np.testing.assert_allclose(result.values[0]["single_f"], [5.0, 7.0])
+    np.testing.assert_allclose(result.values[0]["single_f"][..., 0], [5.0, 7.0])
     couple = model._regimes["couple"]
     by_lag = np.moveaxis(
         np.asarray(result.values[0]["couple"]),
@@ -1268,7 +1267,7 @@ def test_false_ancestor_protects_a_poisoned_mapped_child_availability() -> None:
         execution_config=ExecutionConfig(device_memory_bytes=None),
     )
     result = model.solve(params={}, log_level="off", runtime_checks=False)
-    np.testing.assert_allclose(result.values[0]["single_f"], [5.0, 6.0])
+    np.testing.assert_allclose(result.values[0]["single_f"][..., 0], [5.0, 6.0])
 
 
 def _formation_f(wealth: FloatND) -> FloatND:
@@ -1423,7 +1422,7 @@ def test_outside_choice_ignores_padded_query_lanes(*, n_points: int) -> None:
     )
     result = model.solve(params={}, log_level="off", runtime_checks=True)
     np.testing.assert_array_equal(
-        result.values[0]["single_f"], np.full((n_points,), 5.0)
+        result.values[0]["single_f"], np.full((n_points, 1), 5.0)
     )
 
 
@@ -1596,7 +1595,7 @@ def test_nested_information_uses_each_ancestors_settlement_operands(
         middle = 10.0 + source_wealth[:, None] + shift + np.asarray([-1.0, 1.0])
         forms = (source_wealth[:, None] >= threshold) & (middle >= descendant)
         expected = np.where(forms, middle, -100.0).mean(axis=1)
-        np.testing.assert_allclose(solution.values[0]["single_f"], expected)
+        np.testing.assert_allclose(solution.values[0]["single_f"][..., 0], expected)
         assert np.all(np.isfinite(solution.values[0]["single_f"]))
 
 
@@ -1731,7 +1730,7 @@ def test_own_raw_and_full_evaluate_canonical_problem_once(  # noqa: PLR0915 - ke
     eligible = exit_queries._ExitReducer._eligible
 
     def record_numerical(value: np.ndarray) -> None:
-        numerical_calls.append(float(value))
+        numerical_calls.append(float(value[0]))
 
     def observed_evaluation(
         *, function: CanonicalActionKernel, arguments: Mapping[str, PytreeValue]
@@ -1782,22 +1781,22 @@ def test_own_raw_and_full_evaluate_canonical_problem_once(  # noqa: PLR0915 - ke
         )
     )
     bank, statuses, counts = jax.jit(program.function)(
-        bank=jnp.zeros((2,)),
+        bank=jnp.zeros((2, 1)),
         **operands,
     )
     jax.block_until_ready((bank, statuses, counts))
     jax.effects_barrier()
-    expected = np.asarray([5.0, 7.0], dtype=bank.dtype)
+    expected = np.asarray([[5.0], [7.0]], dtype=bank.dtype)
     assert np.asarray(bank).tobytes() == expected.tobytes()
     assert set(caller_answers) == {kernel.root, own_key, outside_key}
     for name, answer in caller_answers.items():
         caller_expected = (
-            np.asarray([7.0, 7.0], dtype=expected.dtype)
+            np.asarray([[7.0], [7.0]], dtype=expected.dtype)
             if name == outside_key
             else expected
         )
         assert answer[0].dtype == expected.dtype
-        assert answer[0].shape == (2,)
+        assert answer[0].shape == (2, 1)
         assert answer[0].tobytes() == caller_expected.tobytes()
         np.testing.assert_array_equal(answer[1], np.asarray([0, 0], np.int32))
         np.testing.assert_array_equal(answer[2], [True, True])
@@ -1934,7 +1933,7 @@ def test_static_single_sharing_preserves_uninstrumented_chunks(
         arguments = _sharing_chunk_arguments(kernel=kernel)
         with jax.disable_jit(disable=not compiled):
             output = run(
-                bank=jnp.zeros((padded,)),
+                bank=jnp.zeros((padded, 1)),
                 states=cast("Mapping[str, FloatND | IntND]", arguments["states"]),
                 query_arguments=cast(
                     "Mapping[str, Mapping[str, PytreeValue]]",
@@ -1950,65 +1949,13 @@ def test_static_single_sharing_preserves_uninstrumented_chunks(
         assert np.asarray(control).tobytes() == np.asarray(shared).tobytes()
     expected = np.asarray(
         [5.0, 7.0] if state_count == 2 else [5.0, 6.0, 7.0], dtype=outputs[1][0].dtype
-    )
+    )[:, None]
     if constrained:
         expected[0] = -np.inf
     assert np.asarray(outputs[1][0][:state_count]).tobytes() == expected.tobytes()
     assert np.all(np.isneginf(outputs[1][0][state_count:]))
     np.testing.assert_array_equal(outputs[1][1], np.ones(len(source.definitions), bool))
     assert len(outputs[1][2]) == len(source.definitions)
-
-
-@pytest.mark.parametrize("chunk_size", [1, 2])
-def test_own_raw_sharing_serves_a_source_with_a_member_axis(
-    *, chunk_size: int, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A terminal no-action source of one member shares its own Raw evaluation.
-
-    Built on the household kernels, the single's value carries the member axis
-    `("self",)`; the shared loop returns the bytes of the unshared one.
-    The couple reads the single's outside value at its point.
-    """
-    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", False)
-    monkeypatch.setattr(processing, "_SINGLE_ON_HOUSEHOLD_PATH", True)
-    model = _sharing_control_model(state_count=3)
-    source = model._regimes["single_f"].solution.period_kernels[0]
-    assert isinstance(source, _PolicyQueryKernel)
-    assert source.root_context.member_axis == ("self",)
-    definitions = dict(source.definitions)
-    root = definitions[source.root]
-    outputs = []
-    for reuse in (False, True):
-        definitions[source.root] = root if reuse else replace(root, own_raw=None)
-        kernel = build_policy_query_kernel(
-            root_context=source.root_context,
-            period=0,
-            definitions=definitions.copy(),
-            root=source.root,
-            chunk_size=chunk_size,
-        ).with_fixed_params(fixed_flat_params=source.fixed_flat_params)
-        function = cast("_QueryChunks", kernel.programs["_chunks"].function)
-        assert bool(function.raw_sources) is reuse
-        arguments = _sharing_chunk_arguments(kernel=kernel)
-        outputs.append(
-            jax.block_until_ready(
-                jax.jit(function)(
-                    bank=jnp.zeros((4 if chunk_size == 2 else 3, 1)),
-                    states=cast("Mapping[str, FloatND | IntND]", arguments["states"]),
-                    query_arguments=cast(
-                        "Mapping[str, Mapping[str, PytreeValue]]",
-                        arguments["query_arguments"],
-                    ),
-                )
-            )
-        )
-    for control, shared in zip(
-        jax.tree.leaves(outputs[0]), jax.tree.leaves(outputs[1]), strict=True
-    ):
-        assert (shared.shape, shared.dtype) == (control.shape, control.dtype)
-        assert np.asarray(shared).tobytes() == np.asarray(control).tobytes()
-    expected = np.asarray([[5.0], [6.0], [7.0]], dtype=outputs[1][0].dtype)
-    assert np.asarray(outputs[1][0][:3]).tobytes() == expected.tobytes()
 
 
 @pytest.mark.parametrize(
@@ -2084,8 +2031,8 @@ def test_static_single_sharing_retains_guard_and_projection_fallback(
     function = cast("_QueryChunks", kernel.programs["_chunks"].function)
     assert not function.raw_sources
     arguments = _sharing_chunk_arguments(kernel=kernel)
-    bank, statuses, counts = jax.jit(function)(bank=jnp.zeros((2,)), **arguments)
-    np.testing.assert_array_equal(bank, np.asarray([5.0, 7.0], dtype=bank.dtype))
+    bank, statuses, counts = jax.jit(function)(bank=jnp.zeros((2, 1)), **arguments)
+    np.testing.assert_array_equal(bank, np.asarray([[5.0], [7.0]], dtype=bank.dtype))
     np.testing.assert_array_equal(statuses, np.ones(len(definitions), bool))
     assert len(counts) == len(definitions)
     own_core = function.cores[root.own_raw]
@@ -2096,7 +2043,9 @@ def test_static_single_sharing_retains_guard_and_projection_fallback(
         _lcm_query_source={"wealth": jnp.asarray([0.0, 1.0])},
         _lcm_query_live=jnp.asarray([True, True]),
     )
-    np.testing.assert_array_equal(own[0], [-np.inf, 7.0] if guarded else [7.0, 5.0])
+    np.testing.assert_array_equal(
+        own[0][..., 0], [-np.inf, 7.0] if guarded else [7.0, 5.0]
+    )
     np.testing.assert_array_equal(own[1], [-1, 0] if guarded else [0, 0])
     np.testing.assert_array_equal(own[2], [False, True] if guarded else [True, True])
     assert bool(own[3])
@@ -2131,9 +2080,9 @@ def test_static_single_sharing_reads_changed_params_and_preserves_jvp(
 
     def values(level: FloatND) -> FloatND:
         return function(
-            bank=jnp.zeros((padded,)),
+            bank=jnp.zeros((padded, 1)),
             **_sharing_chunk_arguments(kernel=kernel, level=level),
-        )[0][:state_count]
+        )[0][:state_count, 0]
 
     def total_value(level: FloatND) -> FloatND:
         return jnp.sum(values(level))
@@ -2147,7 +2096,7 @@ def test_static_single_sharing_reads_changed_params_and_preserves_jvp(
             log_level="off",
             runtime_checks=False,
         )
-        .values[0]["single_f"]
+        .values[0]["single_f"][..., 0]
     )
     increments = np.linspace(0.0, 2.0, state_count, dtype=baseline.dtype)
     np.testing.assert_array_equal(baseline, 5.0 + increments)
@@ -2627,5 +2576,5 @@ def test_consent_formation_prices_the_couple_at_the_capped_dissolution_landing(
     """
     solution = _formation_model(rule=rule).solve(params={}, log_level="off")
     np.testing.assert_array_almost_equal(
-        solution.values[0]["single"], expected, decimal=DECIMAL_PRECISION
+        solution.values[0]["single"][..., 0], expected, decimal=DECIMAL_PRECISION
     )

@@ -311,7 +311,7 @@ def test_blocked_solve_matches_the_enumerated_oracle() -> None:
 
     np.testing.assert_allclose(
         np.stack([np.asarray(values[period]["working"]) for period in (0, 1, 2)]),
-        np.asarray([oracle[period] for period in (0, 1, 2)]),
+        np.asarray([oracle[period] for period in (0, 1, 2)])[..., None],
         rtol=1e-5,
     )
 

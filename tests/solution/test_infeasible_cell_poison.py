@@ -823,7 +823,7 @@ def test_raw_domain_invalid_utility_matches_post_decision_and_literal_oracle() -
     order = model.state_names(regime_name="alive")
     for period, expected in _post_decision_enumerated_oracle().items():
         actual = np.transpose(
-            np.asarray(poisoned.values[period]["alive"]),
+            np.asarray(poisoned.values[period]["alive"])[..., 0],
             [order.index("wealth"), order.index("health")],
         )
         np.testing.assert_array_almost_equal(

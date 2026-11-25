@@ -192,7 +192,7 @@ def test_source_values_follow_the_perceived_backward_law(
     )
     values = model.solve(params=_params(promote=promote), log_level="off").values
     np.testing.assert_array_equal(
-        np.stack([np.asarray(values[period]["source"]) for period in (0, 1)]),
+        np.stack([np.asarray(values[period]["source"])[..., 0] for period in (0, 1)]),
         [[0.5, 2.25], [0.5, 2.25]],
     )
 

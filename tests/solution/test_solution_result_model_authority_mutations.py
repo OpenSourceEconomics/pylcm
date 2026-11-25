@@ -14,6 +14,7 @@ import lcm.model as model_module
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.typing import ArtifactPayload
+from lcm import Model
 from lcm.exceptions import InvalidSimulationInputError
 from lcm.solver_api import (
     EGM_CONTINUATION,
@@ -22,7 +23,9 @@ from lcm.solver_api import (
     ArtifactRef,
     ArtifactStore,
     AxisRole,
+    SolutionResult,
 )
+from lcm.typing import UserInitialConditions, UserParams
 from tests.simulation.test_nnbegm_split_workflow_parity import (
     _INITIAL as _ADAPTIVE_INITIAL,
 )
@@ -45,6 +48,17 @@ _INITIAL = {
     "age": jnp.full(3, 20.0),
     "regime_id": jnp.full(3, RegimeId.alive, dtype=jnp.int32),
 }
+
+type _FiniteAuthority = tuple[Model, SolutionResult, ArtifactRef, NNBEGMSimPolicy]
+type _AdaptiveAuthority = tuple[Model, SolutionResult, ArtifactRef, NestedEGMSimPolicy]
+type _OrdinaryEGM = tuple[
+    Model,
+    UserParams,
+    UserInitialConditions,
+    SolutionResult,
+    ArtifactRef,
+    EGMSimPolicy,
+]
 
 
 class _EGMSimPolicySubclass(EGMSimPolicy):
@@ -91,7 +105,7 @@ def _must_not_run[Argument](**_kwargs: Argument) -> None:
     raise AssertionError("forward simulation ran before mutation rejection")
 
 
-def _fixture():
+def _fixture() -> _FiniteAuthority:
     model = toy.build_model(variant="n_nbegm", n_periods=2)
     solution = model.solve(params=_PARAMS, log_level="off")
     ref = next(ref for ref in solution.replay_artifacts if ref.key == SIMULATION_POLICY)
@@ -99,7 +113,9 @@ def _fixture():
     return model, solution, ref, policy
 
 
-def _with_policy(*, solution, ref: ArtifactRef, policy: ArtifactPayload):
+def _with_policy(
+    *, solution: SolutionResult, ref: ArtifactRef, policy: ArtifactPayload
+) -> SolutionResult:
     """Replace one replay policy without changing any other result channel."""
     return replace(
         solution,
@@ -176,7 +192,7 @@ def _as_egm_subclass(policy: EGMSimPolicy) -> EGMSimPolicy:
 
 
 @pytest.fixture(scope="module")
-def ordinary_egm_fixture():
+def ordinary_egm_fixture() -> _OrdinaryEGM:
     """A genuine ordinary-EGM result on the policy-first read route."""
     get_full_model.cache_clear()
     model = get_full_model(solver="dcegm", n_periods=2, envelope="rfc")
@@ -200,7 +216,7 @@ def ordinary_egm_fixture():
     return model, params, initial_conditions, solution, ref, policy
 
 
-def _adaptive_fixture():
+def _adaptive_fixture() -> _AdaptiveAuthority:
     model = _build("adaptive")
     solution = model.solve(params=_ADAPTIVE_PARAMS, log_level="off")
     ref = next(ref for ref in solution.replay_artifacts if ref.key == SIMULATION_POLICY)
@@ -209,7 +225,7 @@ def _adaptive_fixture():
 
 
 def test_stateless_terminal_carry_uses_a_synthetic_node_axis(
-    ordinary_egm_fixture,
+    ordinary_egm_fixture: _OrdinaryEGM,
 ) -> None:
     """A stateless terminal carry's two padding nodes are not model state nodes."""
     _model, _params, _initial, solution, _policy_ref, _policy = ordinary_egm_fixture
@@ -229,13 +245,13 @@ def test_stateless_terminal_carry_uses_a_synthetic_node_axis(
 
 
 @pytest.fixture(scope="module")
-def finite_authority_fixture():
+def finite_authority_fixture() -> _FiniteAuthority:
     """Share one finite producer result across the broader mutation families."""
     return _fixture()
 
 
 @pytest.fixture(scope="module")
-def adaptive_authority_fixture():
+def adaptive_authority_fixture() -> _AdaptiveAuthority:
     """Share one nested producer result across recursive payload mutations."""
     return _adaptive_fixture()
 
@@ -327,7 +343,7 @@ def test_axis_and_action_identity_mutations_are_rejected(
 def test_ordinary_egm_model_authority_rejects_self_consistent_row_mutations(
     *,
     mutation: str,
-    ordinary_egm_fixture,
+    ordinary_egm_fixture: _OrdinaryEGM,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model, params, initial_conditions, solution, ref, policy = ordinary_egm_fixture
@@ -378,7 +394,7 @@ def test_ordinary_egm_model_authority_rejects_self_consistent_row_mutations(
 def test_nested_egm_authority_rejects_coherent_recursive_and_role_mutations(
     *,
     mutation: str,
-    adaptive_authority_fixture,
+    adaptive_authority_fixture: _AdaptiveAuthority,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model, solution, ref, policy = adaptive_authority_fixture
@@ -457,7 +473,7 @@ def test_nested_egm_authority_rejects_coherent_recursive_and_role_mutations(
 
 def test_nested_egm_authority_rejects_changed_adaptive_outer_coordinate(
     *,
-    adaptive_authority_fixture,
+    adaptive_authority_fixture: _AdaptiveAuthority,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The payload cannot move one adaptive node while retaining its policy bank."""
@@ -495,7 +511,7 @@ def test_nested_egm_authority_rejects_changed_adaptive_outer_coordinate(
 
 def test_nested_egm_authority_requires_exact_recursive_container_types(
     *,
-    adaptive_authority_fixture,
+    adaptive_authority_fixture: _AdaptiveAuthority,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model, solution, ref, policy = adaptive_authority_fixture
@@ -522,7 +538,7 @@ def test_nested_egm_authority_requires_exact_recursive_container_types(
 def test_finite_nnbegm_rejects_payload_owned_inverse_coefficient(
     *,
     coefficient: Fraction,
-    finite_authority_fixture,
+    finite_authority_fixture: _FiniteAuthority,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model, solution, ref, policy = finite_authority_fixture
@@ -552,7 +568,7 @@ def test_finite_nnbegm_rejects_payload_owned_inverse_coefficient(
 def test_nested_nnbegm_rejects_payload_owned_inverse_coefficient(
     *,
     coefficient: Fraction,
-    adaptive_authority_fixture,
+    adaptive_authority_fixture: _AdaptiveAuthority,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model, solution, ref, policy = adaptive_authority_fixture
@@ -590,7 +606,7 @@ def test_nested_nnbegm_rejects_payload_owned_inverse_coefficient(
 def test_finite_nnbegm_rejects_legal_but_model_wrong_candidate_metadata(
     *,
     mutation: str,
-    finite_authority_fixture,
+    finite_authority_fixture: _FiniteAuthority,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model, solution, ref, policy = finite_authority_fixture
@@ -651,7 +667,7 @@ def test_finite_nnbegm_rejects_legal_but_model_wrong_candidate_metadata(
 def test_simulation_policy_identity_and_channel_are_model_owned(
     *,
     mutation: str,
-    finite_authority_fixture,
+    finite_authority_fixture: _FiniteAuthority,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model, solution, ref, policy = finite_authority_fixture
@@ -692,16 +708,22 @@ def test_simulation_policy_identity_and_channel_are_model_owned(
         )
 
 
+def _with_state_axes_swapped[Axis](axes: tuple[Axis, ...]) -> tuple[Axis, ...]:
+    """Swap the two state axes and keep the trailing member axis in place."""
+    first, second, member = axes
+    return (second, first, member)
+
+
 def test_co_mutated_value_shape_and_axis_schema_is_rejected_before_forward(
     *,
-    finite_authority_fixture,
+    finite_authority_fixture: _FiniteAuthority,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model, solution, _ref, _policy = finite_authority_fixture
     coordinate = next(
         coordinate
         for coordinate, schema in solution.metadata.value_schemas.items()
-        if coordinate[1] == "alive" and len(schema.axis_names) == 2
+        if coordinate[1] == "alive" and schema.axis_names[2:] == ("member",)
     )
     period, regime_name = coordinate
     original = solution.values[period][regime_name]
@@ -710,8 +732,8 @@ def test_co_mutated_value_shape_and_axis_schema_is_rejected_before_forward(
     replacement_schema = replace(
         original_schema,
         shape=tuple(replacement.shape),
-        axis_names=tuple(reversed(original_schema.axis_names)),
-        named_axes=tuple(reversed(original_schema.named_axes)),
+        axis_names=_with_state_axes_swapped(original_schema.axis_names),
+        named_axes=_with_state_axes_swapped(original_schema.named_axes),
     )
     values = {
         outer_period: dict(regime_to_value)
@@ -746,7 +768,7 @@ def test_solution_metadata_versions_require_exact_int(
     *,
     field: str,
     bad_value: bool | float | np.int64,
-    finite_authority_fixture,
+    finite_authority_fixture: _FiniteAuthority,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Value equality cannot substitute for the metadata version's exact type."""
@@ -772,7 +794,7 @@ def test_solution_metadata_versions_require_exact_int(
 def test_solution_identity_strings_require_exact_str(
     *,
     field: str,
-    finite_authority_fixture,
+    finite_authority_fixture: _FiniteAuthority,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A value-equal str subclass cannot enter identity or authority-cache checks."""
@@ -805,7 +827,7 @@ def test_solution_identity_strings_require_exact_str(
 def test_builtin_artifact_key_schema_version_requires_exact_int(
     *,
     bad_version: bool | float,
-    finite_authority_fixture,
+    finite_authority_fixture: _FiniteAuthority,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A constructor-bypassed built-in key must retain an exact integer version."""
@@ -839,7 +861,7 @@ def test_builtin_artifact_key_schema_version_requires_exact_int(
 def test_solution_result_requires_exact_artifact_store_types(
     *,
     field: str,
-    finite_authority_fixture,
+    finite_authority_fixture: _FiniteAuthority,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """No result channel may delegate authority checks to a store subclass."""
@@ -861,7 +883,7 @@ def test_solution_result_requires_exact_artifact_store_types(
 
 def test_alternating_project_store_is_rejected_before_projection(
     *,
-    finite_authority_fixture,
+    finite_authority_fixture: _FiniteAuthority,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A hostile store cannot change its answer between validation and replay."""
@@ -884,7 +906,7 @@ def test_alternating_project_store_is_rejected_before_projection(
 
 def test_nnbegm_replay_metadata_and_capability_require_exact_runtime_types(
     *,
-    finite_authority_fixture,
+    finite_authority_fixture: _FiniteAuthority,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Equal hostile scalar and container types cannot authenticate replay facts."""

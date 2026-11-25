@@ -4,6 +4,7 @@ from pathlib import Path
 from types import MappingProxyType, ModuleType
 from unittest.mock import patch
 
+import cloudpickle
 import h5py
 import jax
 import jax.numpy as jnp
@@ -29,7 +30,7 @@ from lcm import (
     categorical,
     load_snapshot,
 )
-from lcm.exceptions import SolutionIntegrityError
+from lcm.exceptions import IncompatibleSolutionError, SolutionIntegrityError
 from lcm.persistence import load_legacy_solution, load_solution, save_solution
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult as _PublicSimulationResult
@@ -178,9 +179,10 @@ def _save_cpu_checkpoint(
             jax.sharding.Mesh(
                 np.asarray(jax.local_devices(backend="cpu")), ("subject",)
             ),
-            jax.sharding.PartitionSpec("subject"),
+            jax.sharding.PartitionSpec("subject", None),
         )
-    values = jax.device_put(np.array([-0.0, 3.125], dtype=np.float32), placement)
+    # The regime's one member `"self"` is the trailing value axis.
+    values = jax.device_put(np.array([[-0.0], [3.125]], dtype=np.float32), placement)
     model, _params = _build_tiny_model(enable_jit=False)
     raw = PeriodRegimeSimulationData(
         V_arr=values,
@@ -222,6 +224,21 @@ def test_load_restores_the_subject_rows_of_the_saved_result(
     assert repr(loaded._subject_rows) == repr(subject_rows)
 
 
+def test_load_refuses_a_result_saved_without_the_current_format_version(
+    tmp_path: Path,
+) -> None:
+    """A saved result whose metadata names no format version does not load."""
+    directory, _values = _save_cpu_checkpoint(tmp_path=tmp_path)
+    with (directory / "metadata.pkl").open("rb") as fh:
+        metadata = cloudpickle.load(fh)
+    vars(metadata).pop("format_version", None)
+    with (directory / "metadata.pkl").open("wb") as fh:
+        cloudpickle.dump(metadata, fh)
+
+    with pytest.raises(IncompatibleSolutionError, match="format version"):
+        _PublicSimulationResult.load(directory=directory)
+
+
 @pytest.mark.parametrize("solution_only", [False, True])
 @pytest.mark.parametrize("named", [False, True])
 def test_cpu_checkpoint_preserves_its_device_when_default_enumeration_excludes_cpu(
@@ -248,9 +265,9 @@ def test_cpu_checkpoint_preserves_its_device_when_default_enumeration_excludes_c
         np.asarray(restored).tobytes(),
         restored.sharding,
     ) == (
-        (2,),
+        (2, 1),
         np.dtype("float32"),
-        np.array([-0.0, 3.125], dtype=np.float32).tobytes(),
+        np.array([[-0.0], [3.125]], dtype=np.float32).tobytes(),
         values.sharding,
     )
 

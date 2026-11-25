@@ -71,6 +71,7 @@ from lcm.typing import (
     BoolND,
     ContinuousAction,
     ContinuousState,
+    DiscreteAction,
     DiscreteState,
     FloatND,
     FunctionName,
@@ -190,14 +191,10 @@ class _RegimeId:
     terminal: ScalarInt
 
 
-# The model functions below carry no annotations: dags compares the annotations
-# of every function in a regime, and the lambdas beside them cannot carry any.
-
-
 def _law(*, source: int) -> StochasticTransition:
     """Living regime `source` moves to `r0` / `r1` at age 0 and ends at age 1."""
 
-    def probabilities(age):  # noqa: ANN001, ANN202, RUF100
+    def probabilities(age: FloatND) -> FloatND:
         weight = 0.25 if source == 0 else 0.75
         return jnp.where(
             age < 1, jnp.array([weight, 1 - weight, 0]), jnp.array([0.0, 0.0, 1.0])
@@ -212,17 +209,22 @@ _EDGES = {
 }
 
 
-def _landing(*, assets, decision, pref_type, spousal_income):  # noqa: ANN001, ANN202, RUF100
+def _landing(
+    *,
+    assets: ContinuousState,
+    decision: DiscreteAction,
+    pref_type: DiscreteState,
+    spousal_income: DiscreteState,
+) -> FloatND:
     return 15 - assets + (decision - 1) + (pref_type - spousal_income + 1) / 4
 
 
-def _fixed_type_landing(*, assets, decision, pref_type: DiscreteState, spousal_income):  # noqa: ANN001, ANN202, RUF100
-    return _landing(
-        assets=assets,
-        decision=decision,
-        pref_type=pref_type,
-        spousal_income=spousal_income,
-    )
+def _next_assets(landing: FloatND) -> ContinuousState:
+    return landing
+
+
+def _next_spousal_income(spousal_income: DiscreteState) -> DiscreteState:
+    return (spousal_income + 2) % 3
 
 
 def _regime(
@@ -241,22 +243,28 @@ def _regime(
     """
     low, high = bounds
     shift = low + high - 15
-    landing = _fixed_type_landing if fixed_type else _landing
-    if shift:
-        base = landing
 
-        def landing(*, assets, decision, pref_type, spousal_income):  # noqa: ANN001, ANN202, RUF100
-            return shift + base(
-                assets=assets,
-                decision=decision,
-                pref_type=pref_type,
-                spousal_income=spousal_income,
-            )
+    def landing(
+        *,
+        assets: ContinuousState,
+        decision: DiscreteAction,
+        pref_type: DiscreteState,
+        spousal_income: DiscreteState,
+    ) -> FloatND:
+        return shift + _landing(
+            assets=assets,
+            decision=decision,
+            pref_type=pref_type,
+            spousal_income=spousal_income,
+        )
 
-        if fixed_type:
-            landing.__annotations__["pref_type"] = DiscreteState
-
-    def utility(*, assets, decision, pref_type, spousal_income):  # noqa: ANN001, ANN202, RUF100
+    def utility(
+        *,
+        assets: ContinuousState,
+        decision: DiscreteAction,
+        pref_type: DiscreteState,
+        spousal_income: DiscreteState,
+    ) -> FloatND:
         desired = ((pref_type + 2 * spousal_income + source) % 3) - 1
         return (
             -10
@@ -267,12 +275,13 @@ def _regime(
             + source / 2
         )
 
-    if fixed_type:
-        # The identity law is annotated from the grid, so every reader of the
-        # fixed type states the same annotation.
-        utility.__annotations__["pref_type"] = DiscreteState
-
-    def partner(*, assets, decision, pref_type, spousal_income):  # noqa: ANN001, ANN202, RUF100
+    def partner(
+        *,
+        assets: ContinuousState,
+        decision: DiscreteAction,
+        pref_type: DiscreteState,
+        spousal_income: DiscreteState,
+    ) -> FloatND:
         own = utility(
             assets=assets,
             decision=decision,
@@ -281,23 +290,27 @@ def _regime(
         )
         return own + (decision - 1) / 8
 
+    def feasible(landing: FloatND) -> BoolND:
+        return (landing >= low) & (landing <= high)
+
+    def next_pref_type(pref_type: DiscreteState) -> DiscreteState:
+        return (pref_type + 1 + source) % 3
+
     return Regime(
         actions={"decision": DiscreteGrid(_Three)},
         functions={
             "utility": CollectiveUtility(utilities={"a": utility, "b": partner})
             if household
             else utility,
-            "landing": landing,
+            "landing": landing if shift else _landing,
         },
-        constraints={"feasible": lambda landing: (landing >= low) & (landing <= high)},
+        constraints={"feasible": feasible},
         state_transitions={
-            "assets": fixed_transition("assets")
-            if identity
-            else lambda landing: landing,
+            "assets": fixed_transition("assets") if identity else _next_assets,
             "pref_type": fixed_transition("pref_type")
             if fixed_type
-            else lambda pref_type: (pref_type + 1 + source) % 3,
-            "spousal_income": lambda spousal_income: (spousal_income + 2) % 3,
+            else next_pref_type,
+            "spousal_income": _next_spousal_income,
         },
     )
 
@@ -317,7 +330,12 @@ def _model(
     schedule: InvariantBlockSchedule = InvariantBlockSchedule.PERIOD_MAJOR,
     household: bool = False,
 ) -> Model:
-    def terminal(*, assets, pref_type, spousal_income):  # noqa: ANN001, ANN202, RUF100
+    def terminal(
+        *,
+        assets: ContinuousState,
+        pref_type: DiscreteState,
+        spousal_income: DiscreteState,
+    ) -> FloatND:
         return -40 + pref_type + spousal_income / 4 - (assets - 5) ** 2 / 8
 
     return Model(
@@ -569,7 +587,7 @@ def test_eight_assets_shards_use_full_reads_and_match_exact_bellman_reference(  
     def observe_birth(**call: Unpack[ExecuteWithPendingWorkKwargs]) -> PytreeValue:
         output = execute(**call)
         for leaf in jax.tree.leaves(output):
-            if isinstance(leaf, jax.Array) and leaf.shape == (3, 3, 24):
+            if isinstance(leaf, jax.Array) and leaf.shape == (3, 3, 24, 1):
                 _assert_assets_shards(leaf)
                 born.append(leaf.shape)
         return output
@@ -593,7 +611,7 @@ def test_eight_assets_shards_use_full_reads_and_match_exact_bellman_reference(  
             originals.append((value, snapshot))
             expected = np.array(
                 [float(x) for x in exact[period, regime].values()], dtype=snapshot.dtype
-            ).reshape(3, 3, 24)
+            ).reshape(3, 3, 24, 1)
             assert_agrees_to_ulp(got=snapshot, expected=expected, n_ulp=8)
             assert_agrees_to_ulp(
                 got=snapshot,
@@ -1022,6 +1040,12 @@ def test_budget_below_full_replica_refuses_without_transfer_and_preserves_owner(
         np.testing.assert_array_equal(value, snapshot)
 
 
+def _liquid_utility(
+    *, liquid: ContinuousState, pref_type: DiscreteState, spousal_income: DiscreteState
+) -> FloatND:
+    return liquid + pref_type + spousal_income
+
+
 def test_renamed_trailing_axis_maps_blocks_in_mesh_order() -> None:
     """Cheap canonical/layout check; the public producer is tested separately."""
 
@@ -1032,11 +1056,7 @@ def test_renamed_trailing_axis_maps_blocks_in_mesh_order() -> None:
             "pref_type": DiscreteGrid(_Three),
             "spousal_income": DiscreteGrid(_Three),
         },
-        functions={
-            "utility": lambda liquid, pref_type, spousal_income: (
-                liquid + pref_type + spousal_income
-            )
-        },
+        functions={"utility": _liquid_utility},
     )
     variables = from_regime(
         user_regime=regime, sharded_state_names=frozenset({"liquid"})
@@ -1048,7 +1068,7 @@ def test_renamed_trailing_axis_maps_blocks_in_mesh_order() -> None:
         jax.P(None, None, "liquid"),
     )
     index_map = sharding.devices_indices_map((3, 3, 24))
-    global_ids = np.arange(216).reshape(3, 3, 24)
+    global_ids = np.arange(216).reshape(3, 3, 24, 1)
     for position, device in enumerate(mesh_devices):
         np.testing.assert_array_equal(
             global_ids[index_map[device]],
@@ -1113,16 +1133,19 @@ def _assert_renamed_values(
         for regime, value in values.items():
             _assert_assets_shards(value)
             actual = renamed.values[period][regime]
-            assert actual.shape == (3, 3, 24)
+            assert actual.shape == (3, 3, 24, 1)
             assert isinstance(actual.sharding, jax.NamedSharding)
-            assert actual.sharding.spec == jax.P(None, None, "liquid")
+            assert actual.sharding.spec in (
+                jax.P(None, None, "liquid"),
+                jax.P(None, None, "liquid", None),
+            )
             assert tuple(
                 device.id for device in actual.sharding.mesh.devices.flat
             ) == tuple(range(8))
             assert len(actual.addressable_shards) == 8
-            cells = np.arange(216).reshape(3, 3, 24)
+            cells = np.arange(216).reshape(3, 3, 24, 1)
             for shard in actual.addressable_shards:
-                assert shard.data.shape == (3, 3, 3)
+                assert shard.data.shape == (3, 3, 3, 1)
                 position = shard.device.id
                 np.testing.assert_array_equal(
                     cells[shard.index], cells[:, :, 3 * position : 3 * (position + 1)]
@@ -1130,7 +1153,7 @@ def _assert_renamed_values(
             assert_agrees_to_ulp(got=actual, expected=value, n_ulp=8)
             expected = np.array(
                 [float(x) for x in exact[period, regime].values()], dtype=actual.dtype
-            ).reshape(3, 3, 24)
+            ).reshape(3, 3, 24, 1)
             assert_agrees_to_ulp(got=actual, expected=expected, n_ulp=8)
 
 
@@ -1249,7 +1272,7 @@ def test_shared_native_all_gather_releases_after_both_consumers_are_ready(  # no
             assert copied.is_fully_replicated
             assert len(copied.addressable_shards) == 8
             assert all(
-                shard.data.shape == (3, 3, 24) for shard in copied.addressable_shards
+                shard.data.shape == (3, 3, 24, 1) for shard in copied.addressable_shards
             )
             aliased = scheduler.shares_a_buffer(first=copied, second=stored)
             record_property("native_all_gather_aliases_source", aliased)
@@ -1389,7 +1412,7 @@ def test_tauchen_and_log_normal_nodes_solve_like_the_unsharded_model(
             got = np.asarray(value)
             want = np.transpose(
                 np.asarray(control.values[period][regime]),
-                [control_names.index(name) for name in names],
+                [*(control_names.index(name) for name in names), len(names)],
             )
             assert np.isfinite(want).all()
             max_abs = max(max_abs, float(np.max(np.abs(got - want))))

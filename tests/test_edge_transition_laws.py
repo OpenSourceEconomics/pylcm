@@ -124,7 +124,7 @@ def _model(*, edges: ModelEdges) -> Model:
 def _values(model: Model) -> dict[tuple[int, RegimeName], np.ndarray]:
     solved = model.solve(params=PARAMS, log_level="off").values
     return {
-        (period, regime): np.asarray(values)
+        (period, regime): np.asarray(values)[..., 0]
         for period, by_regime in solved.items()
         for regime, values in by_regime.items()
     }

@@ -1564,9 +1564,9 @@ def test_declared_shock_solves_nested_egm_on_the_node_axis(*, solver: str) -> No
     expected = np.mean(
         [_oracle(wealth=2.0, housing=1.0, shock=z)[0] for z in (0.0, 3.0)]
     )
-    assert np.shape(solution.values[1]["child"]) == (3, 3)
+    assert np.shape(solution.values[1]["child"]) == (3, 3, 1)
     np.testing.assert_almost_equal(
-        solution.values[1]["child"][1, 1], expected, decimal=DECIMAL_PRECISION
+        solution.values[1]["child"][1, 1, 0], expected, decimal=DECIMAL_PRECISION
     )
     physical = jnp.asarray([0.0, 2.0, 3.0])
     result = model.simulate(
@@ -1831,13 +1831,15 @@ def test_realising_omitted_draws_again_traces_no_new_program(
 
     simulate()
     jitted: list[str] = []
-    jit = jax.jit
 
-    def spy(function, *args, **kwargs):
-        jitted.append(getattr(function, "__name__", repr(function)))
-        return jit(function, *args, **kwargs)
+    def recording[**P, R](jit: Callable[P, R]) -> Callable[P, R]:
+        def spy(*args: P.args, **kwargs: P.kwargs) -> R:
+            jitted.append(getattr(args[0], "__name__", repr(args[0])))
+            return jit(*args, **kwargs)
 
-    monkeypatch.setattr(jax, "jit", spy)
+        return spy
+
+    monkeypatch.setattr(jax, "jit", recording(jax.jit))
 
     simulate()
 

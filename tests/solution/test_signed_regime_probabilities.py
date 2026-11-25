@@ -60,7 +60,12 @@ def _pays_ten_times(wealth: ScalarFloat) -> ScalarFloat:
     return 10.0 * wealth
 
 
-def _build(*, probability_a, probability_b, certainty_equivalent=None) -> Model:
+def _build(
+    *,
+    probability_a: float,
+    probability_b: float,
+    certainty_equivalent: PowerMean | None = None,
+) -> Model:
     def _to_a() -> ScalarFloat:
         return jnp.float32(probability_a)
 
@@ -99,7 +104,7 @@ def _build(*, probability_a, probability_b, certainty_equivalent=None) -> Model:
     "certainty_equivalent", [None, PowerMean()], ids=["linear", "power_mean"]
 )
 def test_a_negative_regime_probability_is_refused_even_at_unit_mass(
-    certainty_equivalent,
+    certainty_equivalent: PowerMean | None,
 ) -> None:
     """`1.5` on one target and `-0.5` on another is not a distribution.
 
@@ -126,7 +131,7 @@ def test_a_well_formed_regime_transition_is_untouched() -> None:
     V = model.solve(params=_PARAMS, log_level="off").values
 
     np.testing.assert_allclose(
-        np.asarray(V[0]["source"]),
+        np.asarray(V[0]["source"])[..., 0],
         np.asarray([7.75, 15.5, 23.25, 31.0]),
         rtol=1e-6,
     )
@@ -180,7 +185,7 @@ def test_runtime_checks_control_invalid_regime_probabilities(
             log_level=log_level,
             runtime_checks=runtime_checks,
         )
-        assert solution.values[0]["source"].shape == (4,)
+        assert solution.values[0]["source"].shape == (4, 1)
 
 
 @categorical(ordered=False)

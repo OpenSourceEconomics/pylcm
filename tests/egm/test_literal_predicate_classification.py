@@ -178,13 +178,13 @@ def test_literal_combo_masks_preserve_four_leaf_publication(
         model._regimes["child"].solution.period_kernels[1], _DCEGMPeriodKernel
     )
     np.testing.assert_array_almost_equal(
-        context["next_regime_to_V_arr"]["child"][0],
+        context["next_regime_to_V_arr"]["child"][0, ..., 0],
         np.full((2, 3), child_value),
         decimal=DECIMAL_PRECISION,
     )
     output = _run_installed(kernel=kernel, context=context)
     np.testing.assert_array_almost_equal(
-        output.value[1],
+        output.value[1, ..., 0],
         np.full((2, 3), parent_value),
         decimal=DECIMAL_PRECISION,
     )
@@ -229,7 +229,7 @@ def test_hidden_state_predicates_retain_false_at_saved_nodes_branch(
         model._regimes["child"].solution.period_kernels[1], _DCEGMPeriodKernel
     )
     np.testing.assert_array_almost_equal(
-        context["next_regime_to_V_arr"]["child"][0],
+        context["next_regime_to_V_arr"]["child"][0, ..., 0],
         np.zeros((2, 3)),
         decimal=DECIMAL_PRECISION,
     )
@@ -255,7 +255,7 @@ def test_hidden_state_predicates_retain_false_at_saved_nodes_branch(
     )
     output = _run_installed(kernel=kernel, context=context)
     np.testing.assert_array_almost_equal(
-        output.value[1],
+        output.value[1, ..., 0],
         np.full((2, 3), parent_value),
         decimal=DECIMAL_PRECISION,
     )

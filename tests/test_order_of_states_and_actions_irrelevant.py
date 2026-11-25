@@ -5,10 +5,14 @@ existing groups. Within a state group, declaration order is stable except for
 explicitly sharded states, which lead. Execution widths never reorder axes.
 """
 
+from collections.abc import Mapping
+from typing import TypedDict, Unpack
+
 import numpy as np
 import pytest
 
 from lcm import ExecutionConfig, LinSpacedGrid, Model
+from lcm.typing import FloatND, RegimeName
 from tests.conftest import assert_agrees_to_ulp
 from tests.test_models.deterministic.ds_pension import RegimeId, get_model, get_params
 from tests.test_models.initial_nodes import initial_nodes_of
@@ -18,7 +22,16 @@ _N_BOTH = 8
 _PLAIN = LinSpacedGrid(start=0.0, stop=15.0, n_points=_N_BOTH)
 
 
-def _solve(*, reverse_working_states=False, cell_width=1, **overrides):
+class _ModelOverrides(TypedDict, total=False):
+    working_pension_grid: LinSpacedGrid
+
+
+def _solve(
+    *,
+    reverse_working_states: bool = False,
+    cell_width: int = 1,
+    **overrides: Unpack[_ModelOverrides],
+) -> Mapping[int, Mapping[str, FloatND]]:
     model = get_model(
         n_periods=_N_PERIODS, n_liquid=_N_BOTH, n_pension=_N_BOTH, **overrides
     )
@@ -38,11 +51,13 @@ def _solve(*, reverse_working_states=False, cell_width=1, **overrides):
     return reordered.solve(params=get_params(), log_level="off").values
 
 
-def _periods_with(*, solution, regime):
+def _periods_with(
+    *, solution: Mapping[int, Mapping[RegimeName, FloatND]], regime: RegimeName
+) -> list[int]:
     return [period for period, regimes in solution.items() if regime in regimes]
 
 
-def test_declaring_the_pension_grid_explicitly_changes_nothing():
+def test_declaring_the_pension_grid_explicitly_changes_nothing() -> None:
     """An override with the same outcome-space definition preserves the result."""
     default = _solve()
     explicit = _solve(working_pension_grid=_PLAIN)
@@ -56,7 +71,9 @@ def test_declaring_the_pension_grid_explicitly_changes_nothing():
 
 
 @pytest.mark.parametrize("cell_width", [1, 3])
-def test_reversed_working_state_declarations_transpose_values(cell_width):
+def test_reversed_working_state_declarations_transpose_values(
+    cell_width: int,
+) -> None:
     """The continuous-state declaration order fixes output axes at every width."""
     plain = _solve(working_pension_grid=_PLAIN)
     reordered = _solve(reverse_working_states=True, cell_width=cell_width)
@@ -65,13 +82,15 @@ def test_reversed_working_state_declarations_transpose_values(cell_width):
     for period in periods:
         assert_agrees_to_ulp(
             got=reordered[period]["working"],
-            expected=np.asarray(plain[period]["working"]).T,
+            expected=np.swapaxes(np.asarray(plain[period]["working"]), 0, 1),
             n_ulp=8,
         )
 
 
 @pytest.mark.parametrize("regime", ["retired", "dead"])
-def test_reordering_working_states_preserves_other_regimes(regime):
+def test_reordering_working_states_preserves_other_regimes(
+    regime: RegimeName,
+) -> None:
     """A state-axis permutation stays local to the regime whose order changed."""
     plain = _solve()
     reordered = _solve(reverse_working_states=True)

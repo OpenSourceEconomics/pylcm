@@ -290,7 +290,7 @@ def test_finite_policy_authenticates_actual_period_floors(
     # At liquid0/stock1 the exact keeper/O2 maxima are log2 then log(5/2).
     # Beta0 isolates the actual current floor while retaining genuine publication.
     np.testing.assert_array_almost_equal(
-        [result.values[period]["alive"][0, 1] for period in (1, 2)],
+        [result.values[period]["alive"][0, 1, 0] for period in (1, 2)],
         np.log((2.0, 2.5)),
         decimal=DECIMAL_PRECISION,
     )

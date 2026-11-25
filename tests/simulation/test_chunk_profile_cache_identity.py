@@ -351,7 +351,7 @@ def test_key_is_stable_and_versioned() -> None:
     second = _simulation_chunk_profile_key(**key_kwargs)
     assert first == second
     assert hash(first) == hash(second)
-    assert first[0] == ("chunk-profile-key", 5)
+    assert first[0] == ("chunk-profile-key", 6)
 
 
 @pytest.mark.parametrize("role", ["seed", "taste_shock_seed"])

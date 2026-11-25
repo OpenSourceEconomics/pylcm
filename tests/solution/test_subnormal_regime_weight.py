@@ -147,7 +147,7 @@ def _source_value(
         model.solve(
             params=_PARAMS, log_level=log_level, runtime_checks=runtime_checks
         ).values[0]["source"]
-    )
+    )[..., 0]
 
 
 def test_a_subnormal_weight_on_a_finite_value_drops() -> None:
@@ -284,7 +284,14 @@ def _pays_the_smallest_normal(shock: ScalarFloat) -> FloatND:
     )
 
 
-def test_a_user_written_certainty_equivalent_prices_a_weight_the_dtype_cannot_use():
+def _reciprocal(value: FloatND) -> FloatND:
+    """The harmonic transform, its own inverse."""
+    return 1.0 / value
+
+
+def test_a_user_written_certainty_equivalent_prices_a_weight_the_dtype_cannot_use() -> (
+    None
+):
     """A rare target reaches a user's `aggregate` at the share the model gave it.
 
     `transform` is arbitrary user code and can be unbounded, so a weight below
@@ -300,8 +307,8 @@ def test_a_user_written_certainty_equivalent_prices_a_weight_the_dtype_cannot_us
         rare_probability=_largest_subnormal,
         rare_payoff=_pays_the_smallest_normal,
         certainty_equivalent=QuasiArithmeticMean(
-            transform=lambda value: 1.0 / value,
-            inverse=lambda value: 1.0 / value,
+            transform=_reciprocal,
+            inverse=_reciprocal,
         ),
     )
 

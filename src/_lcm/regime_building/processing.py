@@ -373,13 +373,6 @@ from lcm.typing import (
     UserFunction,
 )
 
-# Whether a regime declared with a plain utility function runs the household
-# kernels. A private measurement switch, off by default and read when a model is
-# built. Set, every such regime is built as the household of its one member
-# `"self"` with Pareto weight 1.0, so its values carry a trailing member axis of
-# length one.
-_SINGLE_ON_HOUSEHOLD_PATH = False
-
 type _TransitionBundles = MappingProxyType[
     RegimeName,
     MappingProxyType[TransitionFunctionName, UserFunction | _CoarseTransitionCell],
@@ -1431,7 +1424,7 @@ class _CanonicalRegimeBuilder:
         # undeclared) and thread the member names / weights into both
         # phase builds. Both are `None` for a singleton (non-collective)
         # regime, which is what the downstream builds branch on.
-        member_axis = _engine_member_axis(user_regime)
+        member_axis = user_regime.members
         pareto_weights = _resolve_pareto_weights(user_regime=user_regime, spec=spec)
         # A gated edge's leg fallbacks are read where
         # the SOURCE lands, inside the source's own kernel — but the value
@@ -1553,7 +1546,7 @@ class _CanonicalRegimeBuilder:
         granular_param_expansions = self.regime_to_granular_param_expansions[
             regime_name
         ]
-        member_axis = _engine_member_axis(user_regime)
+        member_axis = user_regime.members
         pareto_weights = prepared.solution.pareto_weights
         edge_reference_regimes = prepared.solution.context.edge_reference_regimes
         invariant_bindings = prepared.invariant_bindings
@@ -2834,7 +2827,7 @@ def _attach_gated_edge_folds(
                     target_functions=target_solution.functions,
                     target_deterministic_transitions=target_deterministic_transitions,
                     reference_v_info=v_info,
-                    target_member_axis=_engine_member_axis(user_regimes[target_name]),
+                    target_member_axis=user_regimes[target_name].members,
                 )
                 # Only the grid-level half is jitted here. The combiner runs
                 # inside the source's own decision kernel, which is jitted as a
@@ -2859,7 +2852,7 @@ def _attach_gated_edge_folds(
                     target_v_info=v_info[target_name],
                     target_functions=target_solution.functions,
                     target_deterministic_transitions=target_deterministic_transitions,
-                    target_member_axis=_engine_member_axis(user_regimes[target_name]),
+                    target_member_axis=user_regimes[target_name].members,
                 )
             folds_by_period = expand_groups_to_periods(
                 grouped_periods=grouped_fold_periods, built_by_group=folds_by_group
@@ -3022,15 +3015,15 @@ def _resolve_gated_edge(
     OPEN-branch target component and its fallback member become trailing-
     axis indices on the engine regime's member axis.
     """
-    target_member_axis = _engine_member_axis(user_regimes[target_name])
-    source_member_axis = _engine_member_axis(user_regimes[source_name])
+    target_member_axis = user_regimes[target_name].members
+    source_member_axis = user_regimes[source_name].members
 
     def _resolve_ref(ref: ProjectedRegimeValue) -> ResolvedProjectedRegimeValue:
         return ResolvedProjectedRegimeValue(
             regime=ref.regime,
             projection=ref.projection,
             member_index=landing_member_index(
-                members=_engine_member_axis(user_regimes[ref.regime]),
+                members=user_regimes[ref.regime].members,
                 role=ref.member,
             ),
             member=ref.member,
@@ -3128,7 +3121,7 @@ def _resolve_pareto_weights(
         ModelInitializationError: If a weight reads one of the regime's
             actions.
     """
-    member_axis = _engine_member_axis(user_regime)
+    member_axis = user_regime.members
     if member_axis is None:
         return None
     _fail_if_a_pareto_weight_reads_an_action(user_regime)
@@ -3144,18 +3137,6 @@ def _resolve_pareto_weights(
         ),
         solve_functions=spec.solution.functions,
     )
-
-
-def _engine_member_axis(user_regime: UserRegime) -> tuple[str, ...] | None:
-    """Return the member axis the engine builds a regime with.
-
-    A household's own members. For a regime declared with a plain utility
-    function `None`, or its one member `"self"` while `_SINGLE_ON_HOUSEHOLD_PATH`
-    is set.
-    """
-    if user_regime.member_axis is None and _SINGLE_ON_HOUSEHOLD_PATH:
-        return user_regime.members
-    return user_regime.member_axis
 
 
 def _fail_if_a_pareto_weight_reads_an_action(user_regime: UserRegime) -> None:
@@ -5087,7 +5068,7 @@ def _finish_solution_phase(
         # The parent shares the target's one member and reads that member's value.
         user_regime = prepared.user_regimes[prepared.regime_name]
         member_index = landing_member_index(
-            members=_engine_member_axis(user_regime), role=user_regime.members[0]
+            members=user_regime.members, role=user_regime.members[0]
         )
         period_kernels = MappingProxyType(
             {

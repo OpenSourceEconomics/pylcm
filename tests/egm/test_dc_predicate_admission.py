@@ -198,13 +198,13 @@ def _assert_unconditional_control(
         monkeypatch=monkeypatch,
     )
     np.testing.assert_array_almost_equal(
-        context["next_regime_to_V_arr"]["child"][0],
+        context["next_regime_to_V_arr"]["child"][0, ..., 0],
         np.full((2, 3), 10.0),
         decimal=DECIMAL_PRECISION,
     )
     output = _run_installed(kernel=kernel, context=context)
     np.testing.assert_array_almost_equal(
-        output.value[1],
+        output.value[1, ..., 0],
         np.full((2, 3), parent_value),
         decimal=DECIMAL_PRECISION,
     )
@@ -325,7 +325,7 @@ def _assert_real_query(
     )
     assert isinstance(kernel, _DCEGMPeriodKernel)
     np.testing.assert_array_almost_equal(
-        context["next_regime_to_V_arr"]["child"][0],
+        context["next_regime_to_V_arr"]["child"][0, ..., 0],
         child_publication,
         decimal=DECIMAL_PRECISION,
     )
@@ -385,7 +385,7 @@ def _assert_real_query(
             decimal=DECIMAL_PRECISION,
         )
     np.testing.assert_array_almost_equal(
-        output.value[1],
+        output.value[1, ..., 0],
         np.full((2, 3), parent_value),
         decimal=DECIMAL_PRECISION,
     )

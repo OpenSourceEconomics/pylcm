@@ -817,16 +817,20 @@ def test_automatic_solution_keeps_supplied_axis_zero_signs(
         runtime_checks=True,
     )
     assert result.solution is not None
-    axes = result.solution.metadata.value_schemas[(0, "done")].named_axes
+    *state_axes, member_axis = result.solution.metadata.value_schemas[
+        (0, "done")
+    ].named_axes
     observed = (
         _array_identity(result.solution.values[0]["done"]),
         *(
             _array_identity(np.asarray(axis.coordinates, dtype=expected.dtype))
-            for axis in axes
+            for axis in state_axes
         ),
+        tuple(member_axis.coordinates),
     )
     assert observed == (
-        _array_identity(expected),
+        _array_identity(expected[..., None]),
         _array_identity(jax.numpy.asarray(x_nodes)),
         _array_identity(jax.numpy.asarray(y_nodes)),
+        ("self",),
     )

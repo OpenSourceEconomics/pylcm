@@ -10,15 +10,20 @@ serves as the reference route.
 """
 
 import dataclasses
-from collections.abc import Hashable, Mapping
+from collections.abc import Callable, Hashable, Mapping
+from typing import Any, cast
 
+import jax
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
 import _lcm.simulation.simulate as simulation
 import lcm_examples.iskhakov_et_al_2017 as iskhakov
+from _lcm.engine import PeriodRegimeSimulationData
 from _lcm.simulation import host_operations
+from _lcm.typing import PytreeValue, StatesPerRegime
 from lcm import (
     AgeGrid,
     ConsumptionSavingsRegime,
@@ -42,6 +47,7 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FloatND,
+    Int1D,
     ScalarInt,
 )
 from lcm_examples.iskhakov_et_al_2017 import CONSUMPTION_GRID, dead, get_edges
@@ -94,14 +100,29 @@ def _decision_program_owners(*, monkeypatch: pytest.MonkeyPatch) -> list[str]:
     run_regime = simulation._simulate_regime_in_period
     run_program = simulation.execute_simulation_program
 
-    def record_regime(**kwargs):
+    def record_regime(
+        **kwargs: Any,  # noqa: PAN002 - forwards whatever the regime step receives
+    ) -> tuple[
+        PeriodRegimeSimulationData,
+        StatesPerRegime,
+        Int1D,
+        Int1D,
+        Int1D,
+        Int1D,
+        Int1D | None,
+        Int1D | None,
+    ]:
         running.append(kwargs["regime_name"])
         try:
             return run_regime(**kwargs)
         finally:
             running.pop()
 
-    def record_program(*, family: str, **kwargs):
+    def record_program(
+        *,
+        family: str,
+        **kwargs: Any,  # noqa: PAN002 - forwards whatever the program receives
+    ) -> PytreeValue:
         if family == "decision":
             executed.append(running[-1])
         return run_program(family=family, **kwargs)
@@ -111,7 +132,7 @@ def _decision_program_owners(*, monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return executed
 
 
-def _simulate(*, model: Model, wealth: np.ndarray):
+def _simulate(*, model: Model, wealth: np.ndarray) -> pd.DataFrame:
     return model.simulate(
         params=get_full_params(n_periods=_N_PERIODS),
         initial_conditions=_initial_conditions(wealth=wealth),
@@ -150,11 +171,14 @@ def _consumption_step() -> float:
     return float(np.max(np.diff(nodes)))
 
 
-def _per_period_means(frame) -> Mapping[int, tuple[float, float]]:
+def _per_period_means(frame: pd.DataFrame) -> Mapping[int, tuple[float, float]]:
     alive = frame[frame["regime_name"].isin(_EGM_REGIMES)]
     grouped = alive.groupby("period")
     return {
-        int(period): (float(group["consumption"].mean()), float(group["value"].mean()))
+        int(cast("int", period)): (
+            float(group["consumption"].mean()),
+            float(group["value"].mean()),
+        )
         for period, group in grouped
     }
 
@@ -269,7 +293,7 @@ def test_lookup_policy_on_default_dcegm_returns_the_simulated_decision() -> None
         )
         for got, expected in (
             (lookup.actions["consumption"], rows["consumption"]),
-            (lookup.value, rows["value"]),
+            (lookup.value[..., 0], rows["value"]),
         ):
             reference = expected.to_numpy()
             rtol, atol = invariance_tolerances(reference)
@@ -403,7 +427,7 @@ def _node_state_model(
     )
 
 
-def _simulate_node_state(*, model: Model, n_subjects: int = 200):
+def _simulate_node_state(*, model: Model, n_subjects: int = 200) -> pd.DataFrame:
     """Period-0 rows of a panel whose shock draws are continuous (off node)."""
     rng = np.random.default_rng(0)
     initial_conditions = {
@@ -601,7 +625,11 @@ def test_budgeted_warm_simulate_reuses_the_policy_read_executable(
     lowered: list[str] = []
     lower = host_operations._lower_operation
 
-    def record(*, function, **kwargs):
+    def record(
+        *,
+        function: Callable[..., PytreeValue],
+        **kwargs: Any,  # noqa: PAN002 - forwards whatever the lowering receives
+    ) -> jax.stages.Lowered:
         lowered.append(getattr(getattr(function, "func", function), "__name__", ""))
         return lower(function=function, **kwargs)
 
@@ -612,7 +640,7 @@ def test_budgeted_warm_simulate_reuses_the_policy_read_executable(
     assert "_policy_first_body" not in lowered, lowered
 
 
-def _producer_identity(regime) -> Hashable:
+def _producer_identity(regime: object) -> Hashable:  # noqa: PAN001 - any bound value
     return host_operations._bound_identity(regime)
 
 

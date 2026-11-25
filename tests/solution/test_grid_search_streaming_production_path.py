@@ -160,6 +160,7 @@ def test_public_singleton_solve_uses_streamed_action_blocks(
         n_actions: int,
         block_width: int,
         block_offsets: jax.Array,
+        n_members: int | None = None,
     ) -> tuple[jax.Array, jax.Array, jax.Array]:
         values, feasible, global_ids = cast(
             "tuple[jax.Array, jax.Array, jax.Array]",
@@ -173,6 +174,7 @@ def test_public_singleton_solve_uses_streamed_action_blocks(
                 n_actions=n_actions,
                 block_width=block_width,
                 block_offsets=block_offsets,
+                n_members=n_members,
             ),
         )
         return values, feasible & (global_ids != 5), global_ids
@@ -187,7 +189,7 @@ def test_public_singleton_solve_uses_streamed_action_blocks(
     untouched = _solve_target(model=model, work=0.0, consumption=1.0)
     omitted = _solve_target(model=model, work=1.0, consumption=3.0)
 
-    assert_array_equal(untouched, jnp.asarray([2.0, 3.0]))
+    assert_array_equal(untouched, jnp.asarray([[2.0], [3.0]]))
     assert bool(jnp.all(jnp.isneginf(omitted)))
 
 
@@ -220,7 +222,7 @@ def test_eager_singleton_hard_max_never_builds_the_dense_oracle(
     )["main"]
     assert program.disposition is CoreExecutionDisposition.PLANNED
     assert program.disposition_reason is None
-    assert_array_equal(actual, jnp.asarray([14.0, 15.0]))
+    assert_array_equal(actual, jnp.asarray([[14.0], [15.0]]))
 
 
 def test_public_ev1_solve_does_not_call_streamed_branch_reduction(

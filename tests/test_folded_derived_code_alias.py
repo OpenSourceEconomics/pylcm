@@ -248,7 +248,9 @@ def test_derived_code_value_is_the_literal_utility(
     )
     solution = model.solve(params={"discount_factor": 1.0}, log_level="off")
     expected = [1.0, 1.0] if code_phase == "simulate" else [1.0, 3.0]
-    np.testing.assert_array_equal(np.asarray(solution.values[0]["live"]), expected)
+    np.testing.assert_array_equal(
+        np.asarray(solution.values[0]["live"])[..., 0], expected
+    )
 
 
 @_NUMERICAL_CASES

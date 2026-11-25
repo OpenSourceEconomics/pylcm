@@ -506,7 +506,7 @@ def test_period_grid_specialization_receives_integer_period() -> None:
         edges={},
     )
     solution = model.solve(params={}, log_level="off")
-    np.testing.assert_allclose(solution.values[1]["work"], [1, 2, 3])
+    np.testing.assert_allclose(solution.values[1]["work"][..., 0], [1, 2, 3])
 
 
 def _typed_flow(*, pref_type: DiscreteState, period: Period) -> FloatND:
@@ -2066,7 +2066,7 @@ def test_an_exit_reads_the_destination_at_its_occurrence_later_in_the_period() -
         .values
     )
     for period in range(_N_ECONOMIC_PERIODS - 1):
-        single = np.asarray(values[2 * period + 1]["single"])
+        single = np.asarray(values[2 * period + 1]["single"])[..., 0]
         np.testing.assert_array_almost_equal(
             values[2 * period]["couple_sep"],
             np.stack([single, single], axis=-1),

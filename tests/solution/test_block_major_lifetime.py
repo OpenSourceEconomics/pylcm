@@ -269,7 +269,9 @@ def test_block_major_values_match_the_enumerated_oracle() -> None:
     values = _solution(model=model, params=params).values
 
     np.testing.assert_array_almost_equal(
-        np.stack([np.asarray(values[period]["working"]) for period in (0, 1, 2)]),
+        np.stack(
+            [np.asarray(values[period]["working"])[..., 0] for period in (0, 1, 2)]
+        ),
         np.asarray([oracle[period] for period in (0, 1, 2)]),
         decimal=test_config.DECIMAL_PRECISION,
     )
@@ -948,7 +950,7 @@ def test_materializing_every_value_above_the_budget_is_refused_before_upload(
     assert assemblies.calls == []
 
     value = solution.value(period=0, regime="working")
-    assert value.shape == (6, int(_LONG_WEALTH.n_points))
+    assert value.shape == (6, int(_LONG_WEALTH.n_points), 1)
     assert assemblies.calls == [(0, "working")]
 
 

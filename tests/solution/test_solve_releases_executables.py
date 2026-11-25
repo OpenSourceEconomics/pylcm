@@ -256,7 +256,7 @@ def test_public_queries_without_continuations_do_not_collect(
     )
     for _ in range(2):
         result = model.solve(params={}, runtime_checks=False, log_level="off")
-        np.testing.assert_array_equal(result.values[0]["single_f"], expected)
+        np.testing.assert_array_equal(result.values[0]["single_f"][..., 0], expected)
         assert not result.retained_continuations
         del result
     assert events == []

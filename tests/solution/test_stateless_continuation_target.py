@@ -11,6 +11,8 @@ whose top node is `1.0`, a parent leaving for the stateless regime is worth exac
 another solve.
 """
 
+from collections.abc import Mapping
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -27,7 +29,13 @@ from lcm import (
     Transition,
     categorical,
 )
-from lcm.typing import FloatND, ScalarInt
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    FloatND,
+    ScalarInt,
+)
 from tests.conftest import DECIMAL_PRECISION
 
 _DISCOUNT = 0.95
@@ -42,15 +50,17 @@ class RegimeId:
     gone: ScalarInt
 
 
-def _utility(consumption):
+def _utility(consumption: ContinuousAction) -> FloatND:
     return jnp.log(consumption)
 
 
-def _next_wealth(*, wealth, consumption):
+def _next_wealth(
+    *, wealth: ContinuousState, consumption: ContinuousAction
+) -> ContinuousState:
     return wealth - consumption
 
 
-def _next_regime(*, wealth, age):
+def _next_regime(*, wealth: ContinuousState, age: float) -> ScalarInt:
     # Wealth at or above the threshold leaves for the stateless regime; everyone
     # leaves after the last age at which `alive` is active, so no probability mass
     # is ever sent to an inactive regime.
@@ -68,7 +78,7 @@ def _enter_shock() -> FloatND:
     return jnp.asarray(0.0)
 
 
-def _solve_with_bequest(bequest: float):
+def _solve_with_bequest(bequest: float) -> Mapping[int, Mapping[str, FloatND]]:
     """Solve a two-regime model whose terminal regime carries no state."""
     alive_law = DeterministicTransition(func=_next_regime)
     alive = Regime(
@@ -77,7 +87,11 @@ def _solve_with_bequest(bequest: float):
         state_transitions={"wealth": _next_wealth},
         functions={"utility": _utility},
     )
-    gone = Regime(functions={"utility": lambda: jnp.array(bequest)})
+
+    def _bequest() -> FloatND:
+        return jnp.array(bequest)
+
+    gone = Regime(functions={"utility": _bequest})
     model = Model(
         regimes={"alive": alive, "gone": gone},
         edges={
@@ -98,7 +112,7 @@ def _solve_with_bequest(bequest: float):
     return model.solve(params=params, log_level="debug").values
 
 
-def test_a_stateless_regime_carries_its_own_value():
+def test_a_stateless_regime_carries_its_own_value() -> None:
     """The stateless regime's value is its utility, not zero."""
     solution = _solve_with_bequest(10.0)
     np.testing.assert_array_almost_equal(
@@ -107,13 +121,13 @@ def test_a_stateless_regime_carries_its_own_value():
 
 
 @pytest.mark.parametrize("bequest", [0.0, 4.0, 10.0])
-def test_a_parent_leaving_for_a_stateless_regime_gets_its_value(bequest):
+def test_a_parent_leaving_for_a_stateless_regime_gets_its_value(bequest: float) -> None:
     """At wealth levels that leave, the parent's value is `beta * bequest`."""
     solution = _solve_with_bequest(bequest)
     wealth = np.asarray(_WEALTH_GRID.to_jax())
     leaving = wealth >= _LEAVE_AT_WEALTH
 
-    alive = np.asarray(solution[0]["alive"])
+    alive = np.asarray(solution[0]["alive"])[..., 0]
     np.testing.assert_array_almost_equal(
         alive[leaving],
         np.full(int(leaving.sum()), _DISCOUNT * bequest),
@@ -121,7 +135,7 @@ def test_a_parent_leaving_for_a_stateless_regime_gets_its_value(bequest):
     )
 
 
-def test_the_stateless_bequest_moves_the_parent():
+def test_the_stateless_bequest_moves_the_parent() -> None:
     """Changing the bequest changes the parent's value function.
 
     Without this, the checks above would still pass if the continuation were
@@ -139,7 +153,9 @@ class _ThreeRegimeId:
     limbo: ScalarInt
 
 
-def _solve_with_an_unreachable_stateless_regime(limbo_bequest: float):
+def _solve_with_an_unreachable_stateless_regime(
+    limbo_bequest: float,
+) -> Mapping[int, Mapping[str, FloatND]]:
     """Solve a model holding a stateless regime the parent cannot reach.
 
     The graph gives `alive` edges only to `alive` and `gone`, so `limbo` is
@@ -147,18 +163,20 @@ def _solve_with_an_unreachable_stateless_regime(limbo_bequest: float):
     a perfectly ordinary active stateless regime with a large payoff.
     """
 
-    def _leaves(*, wealth, age):
+    def _leaves(*, wealth: ContinuousState, age: float) -> BoolND:
         return (wealth >= _LEAVE_AT_WEALTH) | (age >= _LAST_AGE - 1)
+
+    def _stays(*, wealth: ContinuousState, age: float) -> FloatND:
+        return 1.0 - _leaves(wealth=wealth, age=age)
+
+    def _goes(*, wealth: ContinuousState, age: float) -> FloatND:
+        return 1.0 * _leaves(wealth=wealth, age=age)
 
     alive_law = ByAge.until(
         stop_age_exclusive=_LAST_AGE,
         law={
-            "alive": StochasticTransition(
-                func=lambda wealth, age: 1.0 - _leaves(wealth=wealth, age=age)
-            ),
-            "gone": StochasticTransition(
-                func=lambda wealth, age: 1.0 * _leaves(wealth=wealth, age=age)
-            ),
+            "alive": StochasticTransition(func=_stays),
+            "gone": StochasticTransition(func=_goes),
         },
         then="gone",
     )
@@ -168,8 +186,15 @@ def _solve_with_an_unreachable_stateless_regime(limbo_bequest: float):
         state_transitions={"wealth": _next_wealth},
         functions={"utility": _utility},
     )
-    gone = Regime(functions={"utility": lambda: jnp.array(10.0)})
-    limbo = Regime(functions={"utility": lambda: jnp.array(limbo_bequest)})
+
+    def _ten() -> FloatND:
+        return jnp.array(10.0)
+
+    def _limbo_bequest() -> FloatND:
+        return jnp.array(limbo_bequest)
+
+    gone = Regime(functions={"utility": _ten})
+    limbo = Regime(functions={"utility": _limbo_bequest})
     model = Model(
         regimes={"alive": alive, "gone": gone, "limbo": limbo},
         edges={
@@ -191,7 +216,7 @@ def _solve_with_an_unreachable_stateless_regime(limbo_bequest: float):
     return model.solve(params=params, log_level="debug").values
 
 
-def test_an_unreachable_stateless_regime_stays_out_of_the_continuation():
+def test_an_unreachable_stateless_regime_stays_out_of_the_continuation() -> None:
     """A stateless regime the transition never names contributes nothing.
 
     The discriminator between the two candidate rules. *Declared reachability ∩
@@ -206,12 +231,18 @@ def test_an_unreachable_stateless_regime_stays_out_of_the_continuation():
     np.testing.assert_array_almost_equal(poor, rich, decimal=DECIMAL_PRECISION)
 
 
-def _solve_with_process_only_target(level: float):
+def _solve_with_process_only_target(
+    level: float,
+) -> Mapping[int, Mapping[str, FloatND]]:
     """Solve a model whose terminal regime's only state is a stochastic process.
 
     The source supplies an explicit entry law because it does not carry the
     target's process. Once entered, the process carries its own intrinsic law.
     """
+
+    def _level_plus_shock(shock: ContinuousState) -> FloatND:
+        return shock + level
+
     alive_law = DeterministicTransition(func=_next_regime)
     alive = Regime(
         states={"wealth": _WEALTH_GRID},
@@ -231,7 +262,7 @@ def _solve_with_process_only_target(level: float):
                 n_points=3, gauss_hermite=False, rho=0.9, sigma=1.0, mu=0.0, n_std=2
             )
         },
-        functions={"utility": lambda shock: shock + level},
+        functions={"utility": _level_plus_shock},
     )
     model = Model(
         regimes={"alive": alive, "gone": retired},
@@ -254,7 +285,7 @@ def _solve_with_process_only_target(level: float):
     return model.solve(params=params, log_level="debug").values
 
 
-def test_a_process_only_regime_carries_its_own_value():
+def test_a_process_only_regime_carries_its_own_value() -> None:
     """The process-only regime's value varies with the shock, centred on the level."""
     solution = _solve_with_process_only_target(10.0)
     retired = np.asarray(solution[1]["gone"]).ravel()
@@ -263,7 +294,7 @@ def test_a_process_only_regime_carries_its_own_value():
     assert retired[0] < retired[1] < retired[2]
 
 
-def test_the_process_only_level_moves_the_parent():
+def test_the_process_only_level_moves_the_parent() -> None:
     """Shifting the process-only regime's level changes the parent's value.
 
     A symmetric shock alone cannot show this: its expectation is zero either way, so

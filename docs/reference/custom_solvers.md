@@ -16,7 +16,7 @@ adapter or automatic migration across versions is not implied.
 A solver derives from `Solver` and implements the `capabilities` property and
 `build_period_kernels` method. The shipped solvers are frozen dataclasses because they
 carry numerical configuration; a solver with no configuration needs no fields. Solver
-API version 4 requires both declarations. Between them, a solver and its kernels answer
+API version 5 requires both declarations. Between them, a solver and its kernels answer
 the following questions.
 
 - **What can this configuration execute?** `capabilities` returns frozen
@@ -30,11 +30,11 @@ the following questions.
   of a `CollectiveUtility` otherwise.
   `SolverExecutionCapabilities.supports_several_members` declares whether the solver
   solves a regime with more than one member; model construction refuses a regime with
-  several members whose solver does not. When the build context's `member_axis` is set,
-  the regime's value arrays carry a trailing axis over those members, and every program
-  publishing the value includes it: a solver of one member appends an axis of length one
-  to its value and reads its member's slice of each value array it reads. That member's
-  utility function is named `utility_<member>`, or `utility` for the member `"self"`.
+  several members whose solver does not. The regime's value arrays carry a trailing axis
+  over its members, the build context's `member_axis`, and every program publishing the
+  value includes it: a solver of one member appends an axis of length one to its value
+  and reads its member's slice of each value array it reads. That member's utility
+  function is named `utility_<member>`, or `utility` for the member `"self"`.
 
 - **Which continuations do I read?** `required_continuation_keys` returns a frozenset of
   `ArtifactKey`. Model building checks every key against what each reachable target
@@ -76,8 +76,9 @@ the following questions.
 ## A minimal solver
 
 The solver below publishes one dense program whose value is the regime's own wealth
-grid. It is the shape every custom solver starts from: declare the program, build its
-arguments from the build context, return a `KernelOutput`.
+grid, for its one member `"self"`. It is the shape every custom solver starts from:
+declare the program, build its arguments from the build context, return a
+`KernelOutput`.
 
 ```python
 import dataclasses
@@ -98,12 +99,17 @@ from lcm.solvers import (
     SolverExecutionCapabilities,
     SolverIdentity,
 )
-from lcm.typing import Float1D
+from lcm.typing import Float1D, Float2D
 
 
-def wealth_value(*, wealth: Float1D) -> Float1D:
-    """One value per state node: the wealth itself."""
-    return wealth
+def wealth_value(*, wealth: Float1D) -> Float2D:
+    """One value per state node and member: the wealth itself."""
+    return wealth[:, None]
+
+
+def wealth_arguments(build: object) -> dict[str, object]:
+    """Bind the regime's wealth grid from the build context."""
+    return {"wealth": build.state_action_space.states["wealth"]}
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -166,9 +172,7 @@ class WealthSolver(Solver):
         program = CoreProgram(
             name="main",
             function=wealth_value,
-            argument_builder=lambda build: {
-                "wealth": build.state_action_space.states["wealth"]
-            },
+            argument_builder=wealth_arguments,
             requirements=CoreExecutionRequirements(),
             output_roles=OutputRole.VALUE,
             disposition=CoreExecutionDisposition.DENSE,

@@ -251,7 +251,7 @@ def _same_grid_markov_model(solver: str) -> Model:
     )
 
 
-def test_same_grid_markov_state_matches_brute_force():
+def test_same_grid_markov_state_matches_brute_force() -> None:
     """A Markov health state carried into the same grid matches brute force.
 
     The child's health node is distributed per the `StochasticTransition` weights
@@ -420,7 +420,7 @@ def _cross_grid_markov_model(solver: str) -> Model:
     )
 
 
-def test_cross_grid_markov_state_matches_brute_force():
+def test_cross_grid_markov_state_matches_brute_force() -> None:
     """A three-level Markov health remapped onto a two-level child grid solves.
 
     The early regime's `next_health` weight vector has the late (target)
@@ -445,7 +445,7 @@ def test_cross_grid_markov_state_matches_brute_force():
     for period in early_periods:
         brute_V = np.asarray(brute_solution[period]["early"])
         dcegm_V = np.asarray(dcegm_solution[period]["early"])
-        assert brute_V.shape == dcegm_V.shape == (3, 160)
+        assert brute_V.shape == dcegm_V.shape == (3, 160, 1)
         np.testing.assert_allclose(
             dcegm_V[:, N_BRUTE_UNSTABLE_NODES:],
             brute_V[:, N_BRUTE_UNSTABLE_NODES:],
@@ -561,7 +561,7 @@ def _joint_params() -> UserParams:
     }
 
 
-def test_joint_process_and_markov_state_matches_brute_force():
+def test_joint_process_and_markov_state_matches_brute_force() -> None:
     """An AR(1) process and a Markov state on one target match brute force.
 
     The child read integrates over the joint income-by-health node mesh: the
@@ -584,7 +584,7 @@ def test_joint_process_and_markov_state_matches_brute_force():
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["working_life"])
         dcegm_V = np.asarray(dcegm_solution[period]["working_life"])
-        assert brute_V.shape == dcegm_V.shape == (N_INCOME_NODES, 2, 160)
+        assert brute_V.shape == dcegm_V.shape == (N_INCOME_NODES, 2, 160, 1)
         np.testing.assert_allclose(
             dcegm_V[..., N_BRUTE_UNSTABLE_NODES:],
             brute_V[..., N_BRUTE_UNSTABLE_NODES:],
@@ -680,7 +680,7 @@ def _point_mass_floor_model(solver: str) -> Model:
     )
 
 
-def test_point_mass_markov_with_income_floor_matches_brute_force():
+def test_point_mass_markov_with_income_floor_matches_brute_force() -> None:
     """A degenerate Markov row in a consumption-floor model matches brute force.
 
     The Markov health row places all mass on `good`, so the integration over

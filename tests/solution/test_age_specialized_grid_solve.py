@@ -21,6 +21,7 @@ Contracts tested here:
 """
 
 import dataclasses
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 import jax
@@ -48,7 +49,16 @@ from lcm import (
 )
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import Regime
-from lcm.typing import ScalarInt
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    Float1D,
+    FloatND,
+    Period,
+    ScalarInt,
+    UserFunction,
+)
 from tests.conftest import DECIMAL_PRECISION
 
 _N = 6  # ages 20..25; working ages 20..24, terminal at 25
@@ -69,24 +79,30 @@ class RegimeId:
     dead: ScalarInt
 
 
-def _utility(consumption):
+def _utility(consumption: ContinuousAction) -> FloatND:
     return jnp.log(consumption)
 
 
-def _next_wealth(*, wealth, consumption, interest_rate):
+def _next_wealth(
+    *, wealth: ContinuousState, consumption: ContinuousAction, interest_rate: float
+) -> ContinuousState:
     return (1 + interest_rate) * (wealth - consumption) + 1.0
 
 
-def _bc(*, consumption, wealth):
+def _bc(*, consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
     return consumption <= wealth
 
 
-def _next_regime(*, period, last):
+def _next_regime(*, period: Period, last: int) -> ScalarInt:
     return jnp.where(period >= last, RegimeId.dead, RegimeId.alive)
 
 
+def _dead_utility() -> float:
+    return 0.0
+
+
 _DEAD = Regime(
-    functions={"utility": lambda: 0.0},
+    functions={"utility": _dead_utility},
 )
 
 
@@ -101,7 +117,11 @@ _EDGES = {
 }
 
 
-def _alive_regime(*, wealth_grid, functions=None):
+def _alive_regime(
+    *,
+    wealth_grid: ContinuousGrid | AgeSpecializedGrid,
+    functions: Mapping[str, UserFunction | AgeSpecializedFunction] | None = None,
+) -> Regime:
     return Regime(
         states={"wealth": wealth_grid},
         actions={"consumption": _CGRID},
@@ -111,7 +131,7 @@ def _alive_regime(*, wealth_grid, functions=None):
     )
 
 
-def _model(wealth_grid):
+def _model(wealth_grid: ContinuousGrid | AgeSpecializedGrid) -> Model:
     return Model(
         regimes={"alive": _alive_regime(wealth_grid=wealth_grid), "dead": _DEAD},
         ages=_AGES,
@@ -122,7 +142,7 @@ def _model(wealth_grid):
     )
 
 
-def test_under_specified_signature_merging_distinct_grids_is_rejected():
+def test_under_specified_signature_merging_distinct_grids_is_rejected() -> None:
     """Two periods sharing a `signature(age)` but resolving to distinct grids raise.
 
     `signature(age)` is a cheap, user-supplied dedup pre-filter, not a substitute
@@ -131,7 +151,7 @@ def test_under_specified_signature_merging_distinct_grids_is_rejected():
     silently solved against the wrong period's continuation grid.
     """
 
-    def floor(age):
+    def floor(age: float) -> float:
         return -2.0 + 0.3 * (age - 20)
 
     under_specified = AgeSpecializedGrid(
@@ -142,7 +162,7 @@ def test_under_specified_signature_merging_distinct_grids_is_rejected():
         _model(under_specified).solve(params=_PARAMS, log_level="debug")
 
 
-def test_age_invariant_grid_reproduces_plain_solve():
+def test_age_invariant_grid_reproduces_plain_solve() -> None:
     """An age-invariant `AgeSpecializedGrid` equals the plain fixed-grid solve."""
     grid = LinSpacedGrid(start=0.5, stop=25.0, n_points=15)
     v_plain = _model(grid).solve(params=_PARAMS, log_level="debug").values
@@ -162,10 +182,10 @@ def test_age_invariant_grid_reproduces_plain_solve():
         np.testing.assert_array_equal(a[finite], b[finite])
 
 
-def _moving_floor_grid():
+def _moving_floor_grid() -> AgeSpecializedGrid:
     # Floor tightens with age; every grid cell is >= the age's floor, so every cell
     # is a feasible asset level (a fixed grid spanning the loosest floor would not be).
-    def floor(age):
+    def floor(age: float) -> float:
         return -2.0 + 0.3 * (age - 20)
 
     return AgeSpecializedGrid(
@@ -174,7 +194,7 @@ def _moving_floor_grid():
     )
 
 
-def test_default_signature_reproduces_explicit_signature_solve():
+def test_default_signature_reproduces_explicit_signature_solve() -> None:
     """A grid without `signature` solves to the same V, bit for bit, as with one.
 
     The explicit `floor` signature is correct for this grid: it distinguishes
@@ -194,7 +214,7 @@ def test_default_signature_reproduces_explicit_signature_solve():
         )
 
 
-def test_moving_floor_no_nan_poisoning():
+def test_moving_floor_no_nan_poisoning() -> None:
     """An age-tracking floor solves without `NaN` poisoning the value function.
 
     This is the feature's reason to exist. On a single fixed grid spanning the loosest
@@ -214,7 +234,7 @@ def test_moving_floor_no_nan_poisoning():
         assert np.isfinite(arr).any(), f"period {period} has no finite V at all"
 
 
-def test_moving_floor_solves_on_each_periods_own_nodes():
+def test_moving_floor_solves_on_each_periods_own_nodes() -> None:
     """Period `t`'s value function is tabulated on period `t`'s grid, not the base one.
 
     The rest of this file cannot see which nodes the solve actually used: a solve on the
@@ -238,7 +258,7 @@ def test_moving_floor_solves_on_each_periods_own_nodes():
             continue
         nodes = np.asarray(grid.build(_AGES.period_to_age(period)).to_jax())
         expected_infeasible = nodes < _CGRID.start
-        got_infeasible = np.isneginf(np.asarray(v.values[period]["alive"]))
+        got_infeasible = np.isneginf(np.asarray(v.values[period]["alive"])[..., 0])
         np.testing.assert_array_equal(
             got_infeasible,
             expected_infeasible,
@@ -249,7 +269,7 @@ def test_moving_floor_solves_on_each_periods_own_nodes():
         )
 
 
-def test_moving_floor_value_monotone_in_wealth():
+def test_moving_floor_value_monotone_in_wealth() -> None:
     """V is nondecreasing in wealth at every working age (economic sanity)."""
     v = _model(_moving_floor_grid()).solve(params=_PARAMS, log_level="debug")
     for period in range(_N):
@@ -264,7 +284,7 @@ def test_moving_floor_value_monotone_in_wealth():
         )
 
 
-def test_moving_floor_simulates_positive_consumption():
+def test_moving_floor_simulates_positive_consumption() -> None:
     """Forward simulation runs and gives finite, positive consumption for alive rows."""
     model = _model(_moving_floor_grid())
     v = model.solve(params=_PARAMS, log_level="debug")
@@ -287,11 +307,11 @@ def test_moving_floor_simulates_positive_consumption():
     assert (alive_consumption > 0).all()
 
 
-def _moving_window_grid():
+def _moving_window_grid() -> AgeSpecializedGrid:
     # A window that slides far enough that no two ages' grids overlap. Every node is
     # a strictly positive wealth level affording some feasible consumption, so a solve
     # that tabulates each period on its own grid is finite everywhere.
-    def low(age):
+    def low(age: float) -> float:
         return 3.0 * (age - 20)
 
     return AgeSpecializedGrid(
@@ -303,7 +323,9 @@ def _moving_window_grid():
 
 
 @pytest.mark.parametrize("grid_factory", [_moving_window_grid, _moving_floor_grid])
-def test_last_working_age_value_is_tabulated_on_that_ages_own_nodes(grid_factory):
+def test_last_working_age_value_is_tabulated_on_that_ages_own_nodes(
+    grid_factory: Callable[[], AgeSpecializedGrid],
+) -> None:
     """The last working age's V is the analytic terminal value at that age's wealth.
 
     The regime transitions into a terminal regime with zero utility, so the last
@@ -329,14 +351,14 @@ def test_last_working_age_value_is_tabulated_on_that_ages_own_nodes(grid_factory
             for w in wealth
         ]
     )
-    got = np.asarray(v.values[last_working]["alive"])
+    got = np.asarray(v.values[last_working]["alive"])[..., 0]
 
     np.testing.assert_array_equal(np.isneginf(got), np.isneginf(expected))
     finite = np.isfinite(expected)
     aaae(got[finite], expected[finite], decimal=DECIMAL_PRECISION)
 
 
-def test_non_shape_invariant_grid_is_rejected():
+def test_non_shape_invariant_grid_is_rejected() -> None:
     """Varying `n_points` across ages raises at model construction."""
     bad = AgeSpecializedGrid(
         build=lambda age: LinSpacedGrid(start=0.5, stop=25.0, n_points=int(age) - 5),
@@ -346,7 +368,7 @@ def test_non_shape_invariant_grid_is_rejected():
         _model(bad).solve(params=_PARAMS, log_level="debug")
 
 
-def test_weak_type_change_across_ages_is_rejected():
+def test_weak_type_change_across_ages_is_rejected() -> None:
     """JAX `weak_type` steers promotion but is erased by `np.asarray`.
 
     Two axes can agree on dtype, shape and raw bytes yet promote differently in
@@ -360,7 +382,7 @@ def test_weak_type_change_across_ages_is_rejected():
     class _WeakTypeGrid(ContinuousGrid):
         weak: bool = False
 
-        def to_jax(self):
+        def to_jax(self) -> Float1D:
             # Stacking Python scalars yields a weak array; converting it to its own
             # dtype strips the weak flag and nothing else. Deriving the strong array
             # from the weak one keeps the pair identical at either --precision.
@@ -369,7 +391,9 @@ def test_weak_type_change_across_ages_is_rejected():
                 return nodes
             return jax.lax.convert_element_type(nodes, nodes.dtype)
 
-        def get_coordinate(self, value):  # pragma: no cover - not exercised here
+        def get_coordinate(
+            self, value: FloatND
+        ) -> FloatND:  # pragma: no cover - not exercised here
             raise NotImplementedError
 
     weak, strong = _WeakTypeGrid(weak=True), _WeakTypeGrid(weak=False)
@@ -389,7 +413,7 @@ def test_weak_type_change_across_ages_is_rejected():
         _model(grid).solve(params=_PARAMS, log_level="debug")
 
 
-def test_every_grid_trait_is_described():
+def test_every_grid_trait_is_described() -> None:
     """Every invariant trait must have a mismatch message.
 
     `_GridTraits` and `_TRAIT_DESCRIPTIONS` are two lists of the same thing, so a trait
@@ -400,7 +424,7 @@ def test_every_grid_trait_is_described():
     assert {f.name for f in dataclasses.fields(_GridTraits)} == described
 
 
-def test_builtin_grids_are_never_weak_typed():
+def test_builtin_grids_are_never_weak_typed() -> None:
     """The weak-type key cannot split a supported grid.
 
     Guards the claim that justifies keying on `weak_type` at all: no built-in grid
@@ -414,7 +438,7 @@ def test_builtin_grids_are_never_weak_typed():
         assert not built_in.to_jax().weak_type
 
 
-def test_validation_rejects_actual_node_count_change_without_n_points():
+def test_validation_rejects_actual_node_count_change_without_n_points() -> None:
     """A custom grid with no `n_points` must be validated on its resolved array.
 
     `n_points` is not part of the `Grid` base contract — only `to_jax()` is — so
@@ -428,10 +452,12 @@ def test_validation_rejects_actual_node_count_change_without_n_points():
     class _NoNPointsGrid(ContinuousGrid):
         nodes: tuple[float, ...] = (0.0, 1.0)
 
-        def to_jax(self):
+        def to_jax(self) -> Float1D:
             return jnp.asarray(self.nodes)
 
-        def get_coordinate(self, value):  # pragma: no cover - not exercised here
+        def get_coordinate(
+            self, value: FloatND
+        ) -> FloatND:  # pragma: no cover - not exercised here
             raise NotImplementedError
 
     grid = AgeSpecializedGrid(
@@ -444,7 +470,7 @@ def test_validation_rejects_actual_node_count_change_without_n_points():
         _model(grid).solve(params=_PARAMS, log_level="debug")
 
 
-def test_validation_rejects_node_dtype_change():
+def test_validation_rejects_node_dtype_change() -> None:
     """A dtype change at constant `n_points` must be rejected.
 
     The shared kernel is lowered against the representative axis, so a later period axis
@@ -456,10 +482,12 @@ def test_validation_rejects_node_dtype_change():
         n_points: int = 3
         dtype: str = "float32"
 
-        def to_jax(self):
+        def to_jax(self) -> Float1D:
             return jnp.linspace(0.5, 25.0, self.n_points, dtype=jnp.dtype(self.dtype))
 
-        def get_coordinate(self, value):  # pragma: no cover - not exercised here
+        def get_coordinate(
+            self, value: FloatND
+        ) -> FloatND:  # pragma: no cover - not exercised here
             raise NotImplementedError
 
     grid = AgeSpecializedGrid(
@@ -470,17 +498,19 @@ def test_validation_rejects_node_dtype_change():
         _model(grid).solve(params=_PARAMS, log_level="debug")
 
 
-def test_validation_rejects_declared_n_points_disagreeing_with_nodes():
+def test_validation_rejects_declared_n_points_disagreeing_with_nodes() -> None:
     """A grid whose declared `n_points` contradicts its own `to_jax()` is rejected."""
 
     @dataclass(frozen=True)
     class _LyingGrid(ContinuousGrid):
         n_points: int = 15
 
-        def to_jax(self):
+        def to_jax(self) -> Float1D:
             return jnp.linspace(0.5, 25.0, 4)
 
-        def get_coordinate(self, value):  # pragma: no cover - not exercised here
+        def get_coordinate(
+            self, value: FloatND
+        ) -> FloatND:  # pragma: no cover - not exercised here
             raise NotImplementedError
 
     grid = AgeSpecializedGrid(build=lambda _age: _LyingGrid(), signature=lambda _age: 0)
@@ -488,7 +518,7 @@ def test_validation_rejects_declared_n_points_disagreeing_with_nodes():
         _model(grid).solve(params=_PARAMS, log_level="debug")
 
 
-def test_grid_mode_switch_across_ages_is_rejected():
+def test_grid_mode_switch_across_ages_is_rejected() -> None:
     """A grid may not supply points concretely at one age and at runtime at another.
 
     Class and `n_points` stay equal, so the shape check alone cannot catch this;
@@ -497,7 +527,7 @@ def test_grid_mode_switch_across_ages_is_rejected():
     wrong cause entirely.
     """
 
-    def build(age):
+    def build(age: float) -> IrregSpacedGrid:
         if age == 20:
             return IrregSpacedGrid(points=np.array([0.5, 5.0, 25.0]))
         return IrregSpacedGrid(n_points=3)  # points supplied at runtime
@@ -555,7 +585,7 @@ def test_age_specialized_marker_on_never_solved_regime_is_rejected(
         )
 
 
-def test_builder_undefined_outside_covered_ages_still_solves():
+def test_builder_undefined_outside_covered_ages_still_solves() -> None:
     """A grid builder that is undefined outside its regime's covered ages must still
     build and solve.
 
@@ -568,7 +598,7 @@ def test_builder_undefined_outside_covered_ages_still_solves():
     """
     inactive_age = 20 + _N - 1  # the terminal (dead) age; alive is not solved here
 
-    def build(age):
+    def build(age: float) -> LinSpacedGrid:
         if age >= inactive_age:
             raise ValueError(f"grid undefined at inactive age {age}")
         return LinSpacedGrid(start=0.5, stop=25.0, n_points=15)

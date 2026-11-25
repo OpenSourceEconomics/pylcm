@@ -182,7 +182,7 @@ def _continuation_plan(
         assert id(step) not in seen, "the replay program wraps no EGM step"
         seen.add(id(step))
         if isinstance(step, functools.partial):
-            step = step.func
+            step = step.keywords.get("_member_axis_core", step.func)
         else:
             assert hasattr(step, "__wrapped__")
             step = step.__wrapped__

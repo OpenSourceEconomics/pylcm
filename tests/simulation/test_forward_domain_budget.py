@@ -6,11 +6,14 @@ profile and dispatch exactly the forward pairs the unbudgeted path dispatches,
 while the solved-only pair's value stays available to the decision reading it.
 """
 
+from typing import cast
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.simulation.runtime import SimulationRuntime
 from lcm import (
     AgeGrid,
     ExecutionConfig,
@@ -21,6 +24,8 @@ from lcm import (
     categorical,
     fixed_transition,
 )
+from lcm.result import SimulationResult
+from lcm.solver_api import SolutionResult
 from lcm.transition import AgeSelector
 from lcm.typing import ContinuousState, FloatND, ScalarInt
 
@@ -41,7 +46,7 @@ def _perceived_utility(*, wealth: ContinuousState) -> FloatND:
     return wealth + 1.0
 
 
-def _regime(*, terminal=False, perceived=False):
+def _regime(*, terminal: bool = False, perceived: bool = False) -> Regime:
     return Regime(
         states={"wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={} if terminal else {"wealth": fixed_transition("wealth")},
@@ -49,7 +54,7 @@ def _regime(*, terminal=False, perceived=False):
     )
 
 
-def _model(*, budgeted, promote, reverse, width):
+def _model(*, budgeted: bool, promote: bool, reverse: bool, width: int) -> Model:
     regimes = {
         "source": _regime(),
         "perceived": _regime(perceived=True),
@@ -92,7 +97,9 @@ def _model(*, budgeted, promote, reverse, width):
     )
 
 
-def _simulate(*, model, solution, workers):
+def _simulate(
+    *, model: Model, solution: SolutionResult, workers: int
+) -> SimulationResult:
     return model.simulate(
         params={"discount_factor": 0.5},
         solution=solution,
@@ -107,7 +114,7 @@ def _simulate(*, model, solution, workers):
     )
 
 
-def _check_result(*, result):
+def _check_result(*, result: SimulationResult) -> None:
     # Realized transitions, never the perceived/valuation branch.
     for period, name in enumerate(("source", "realized", "end")):
         record = result.raw_results[name][period]
@@ -117,14 +124,18 @@ def _check_result(*, result):
         assert not np.asarray(result.raw_results["perceived"][1].in_regime).any()
 
 
-def _cache_size(*, model):
+def _cache_size(*, model: Model) -> int:
+    executors = {
+        id(executor): executor
+        for regimes in model._simulate_runtime_regimes.values()
+        for regime in regimes.values()
+        for executor in (
+            cast("SimulationRuntime", regime.simulation.programs.executor),
+        )
+    }
     return sum(
         len(executor.cache) + len(executor.operations.cache)
-        for executor in {
-            id(regime.simulation.programs.executor): regime.simulation.programs.executor
-            for regimes in model._simulate_runtime_regimes.values()
-            for regime in regimes.values()
-        }.values()
+        for executor in executors.values()
     ) + len(model._simulate_entry_operations.cache)
 
 
@@ -132,7 +143,9 @@ def _cache_size(*, model):
 @pytest.mark.parametrize("reverse", [False, True])
 @pytest.mark.parametrize("width", [1, 2, 3])
 @pytest.mark.parametrize("workers", [1, 2])
-def test_budgeted_forward_domain(*, promote, reverse, width, workers):
+def test_budgeted_forward_domain(
+    *, promote: bool, reverse: bool, width: int, workers: int
+) -> None:
     """Budgeted and unbudgeted simulation agree across roots, order, widths, workers."""
     baseline = _model(budgeted=False, promote=promote, reverse=reverse, width=width)
     budgeted = _model(budgeted=True, promote=promote, reverse=reverse, width=width)
@@ -151,7 +164,9 @@ def test_budgeted_forward_domain(*, promote, reverse, width, workers):
     )
     # Solved-only operands must remain available: filtering all of S is wrong.
     for sol in (base_solution, solution):
-        np.testing.assert_array_equal(np.asarray(sol.values[0]["source"]), [0.5, 2.25])
+        np.testing.assert_array_equal(
+            np.asarray(sol.values[0]["source"])[..., 0], [0.5, 2.25]
+        )
     reference = _simulate(model=baseline, solution=base_solution, workers=workers)
     _check_result(result=reference)
     first = _simulate(model=budgeted, solution=solution, workers=workers)

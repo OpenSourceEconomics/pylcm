@@ -45,7 +45,7 @@ from lcm.solvers import (
     SolverBuildContext,
     StateAxesLeading,
 )
-from lcm.typing import Float1D, FloatND, ReferenceName, StateName
+from lcm.typing import Float1D, Float2D, FloatND, ReferenceName, StateName
 from tests.execution._buffer_registry import declared_shards
 from tests.solution._callback_types import ConsumeOutputKwargs
 from tests.solution.test_compilation_identity import _lowering_key
@@ -92,9 +92,9 @@ class _ReadableCounter:
 
 def _counting_value(
     *, wealth: Float1D, count: FloatND
-) -> tuple[Float1D, _ReadableCounter]:
+) -> tuple[Float2D, _ReadableCounter]:
     """Publish wealth plus the running count, and the count incremented."""
-    return wealth + count, _ReadableCounter(count=count + 1.0)
+    return (wealth + count)[:, None], _ReadableCounter(count=count + 1.0)
 
 
 def _counting_arguments(build: CoreBuildContext) -> Mapping[ReferenceName, PytreeValue]:

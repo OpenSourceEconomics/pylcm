@@ -109,6 +109,7 @@ class _TerminalKwargs(TypedDict):
     flat_param_names: frozenset[QualifiedName]
     functions: EconFunctionsMapping
     constraints: ConstraintFunctionsMapping
+    members: tuple[str, ...]
     bound_specs: tuple[PostDecisionBoundSpec, ...]
 
 
@@ -150,12 +151,13 @@ def test_public_policy_lookup_keeps_integrity_with_retained_action_parts(
     )
     assert result.actions is not None
     np.testing.assert_array_equal(result.actions["consumption"], [2.0, 2.0, 2.0])
-    np.testing.assert_array_equal(result.value, [2.0, 2.0, 2.0])
+    np.testing.assert_array_equal(result.value[..., 0], [2.0, 2.0, 2.0])
     if kept:
         expected = np.broadcast_to(np.arange(0.25, 2.25, 0.25), (3, 8))
-        np.testing.assert_array_equal(result.Q, expected)
-        np.testing.assert_array_equal(result.U, expected)
-        np.testing.assert_array_equal(result.CE, np.zeros((3, 8)))
+        # Q, U and CE carry the trailing member axis of `"self"`.
+        np.testing.assert_array_equal(np.asarray(result.Q)[..., 0], expected)
+        np.testing.assert_array_equal(np.asarray(result.U)[..., 0], expected)
+        np.testing.assert_array_equal(np.asarray(result.CE)[..., 0], np.zeros((3, 8)))
         np.testing.assert_array_equal(result.F, np.ones((3, 8), dtype=bool))
     else:
         assert result.Q is result.F is result.U is result.CE is None
@@ -460,7 +462,7 @@ def test_actual_invariant_dispatch_keeps_floor_integrity_across_code_outputs(
             runtime_checks=runtime_checks,
         )
         np.testing.assert_array_equal(
-            solution.values[0]["saving"], [[4.0, 5.0], [4.0, 5.0]]
+            solution.values[0]["saving"][..., 0], [[4.0, 5.0], [4.0, 5.0]]
         )
 
 
@@ -610,7 +612,9 @@ def test_decorated_floor_cohorts_never_use_wrong_period_evaluator(
     )
     params = {"discount_factor": 1.0}
     solution = model.solve(params=params, log_level="off")
-    np.testing.assert_allclose(solution.values[1]["saving"], [[1.0, 1.0], [2.0, 2.0]])
+    np.testing.assert_allclose(
+        solution.values[1]["saving"][..., 0], [[1.0, 1.0], [2.0, 2.0]]
+    )
     with pytest.raises(InvalidValueFunctionError, match="floor"):
         model.simulate(
             params=params,
@@ -848,7 +852,9 @@ def test_simulation_rejects_invalid_floor_only_at_actual_subject(
         functions={"floor": floor} if handwritten else None,
     )
     solution = model.solve(params={}, log_level="off")
-    np.testing.assert_allclose(solution.values[0]["done"], [[1.0, 1.0], [2.0, 2.0]])
+    np.testing.assert_allclose(
+        solution.values[0]["done"][..., 0], [[1.0, 1.0], [2.0, 2.0]]
+    )
     with pytest.raises(InvalidValueFunctionError, match="floor"):
         model.simulate(
             params={},
@@ -877,7 +883,9 @@ def test_later_subject_decision_rejects_invalid_floor_before_empty_actions(
     model = _temporal_model(lower_function=floor, handwritten=handwritten)
     params = {"discount_factor": 1.0}
     solution = model.solve(params=params, log_level="off")
-    np.testing.assert_allclose(solution.values[1]["saving"], [[1.0, 1.0], [2.0, 2.0]])
+    np.testing.assert_allclose(
+        solution.values[1]["saving"][..., 0], [[1.0, 1.0], [2.0, 2.0]]
+    )
     with pytest.raises(InvalidValueFunctionError, match="floor"):
         model.simulate(
             params=params,
@@ -1093,14 +1101,14 @@ def test_canonical_action_builders_receive_only_runtime_bound_authority(
     *, spelling: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Both actual phase builders bind DAG floors while literal models stay ordinary."""
-    original = processing.get_Q_and_F_terminal
+    original = processing.get_Q_and_F_terminal_collective
     requests = []
 
     def capture(*args: Never, **kwargs: Unpack[_TerminalKwargs]) -> QAndFFunction:
         requests.append(kwargs.get("bound_specs", ()))
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(processing, "get_Q_and_F_terminal", capture)
+    monkeypatch.setattr(processing, "get_Q_and_F_terminal_collective", capture)
     declaration = (
         ref("savings") >= ref("floor")
         if spelling == "handwritten"
@@ -1371,4 +1379,4 @@ def test_external_replay_scores_integrity_only_for_actual_regime_holders(
 
     actions, values = evaluate()
     np.testing.assert_array_equal(actions["consumption"], [1.0, 1.0, 1.0])
-    np.testing.assert_array_equal(values[holders], [1.0, 1.0])
+    np.testing.assert_array_equal(values[holders][..., 0], [1.0, 1.0])

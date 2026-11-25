@@ -71,6 +71,7 @@ from lcm.typing import (
     ContinuousState,
     FlatParams,
     Float1D,
+    Float2D,
     FloatND,
     RegimeName,
     ScalarFloat,
@@ -98,13 +99,17 @@ def next_wealth(wealth: ContinuousState) -> ContinuousState:
     return wealth
 
 
+def dead_utility(wealth: ContinuousState) -> FloatND:
+    return 0.0 * wealth
+
+
 def next_regime_dead(age: ScalarFloat) -> ScalarInt:  # noqa: ARG001
     return RegimeId.dead
 
 
-def _wealth_value(*, wealth: Float1D) -> Float1D:
-    """One value per state node: the wealth itself."""
-    return wealth
+def _wealth_value(*, wealth: Float1D) -> Float2D:
+    """One value per state node and member: the wealth itself."""
+    return wealth[:, None]
 
 
 def _wealth_arguments(build: CoreBuildContext) -> Mapping[str, jax.Array]:
@@ -225,8 +230,8 @@ class TerminalPublisher(Solver):
             raise TypeError("The terminal publisher's parent publishes nothing.")
         template = spec.template
 
-        def terminal_value(*, wealth: Float1D) -> tuple[Float1D, ContinuationArtifact]:
-            return jnp.zeros_like(wealth), template
+        def terminal_value(*, wealth: Float1D) -> tuple[Float2D, ContinuationArtifact]:
+            return jnp.zeros_like(wealth)[:, None], template
 
         program = CoreProgram(
             name="main",
@@ -288,7 +293,7 @@ def _two_regime_model(*, solver: Solver, self_looping: bool = False) -> Model:
                 else Regime
             )(
                 states={"wealth": _WEALTH},
-                functions={"utility": lambda wealth: 0.0 * wealth},
+                functions={"utility": dead_utility},
             ),
         },
         ages=AgeGrid(start=0, inclusive_stop=last_age, step="Y"),
@@ -299,18 +304,19 @@ def _two_regime_model(*, solver: Solver, self_looping: bool = False) -> Model:
     )
 
 
-def test_a_solver_written_against_lcm_solvers_alone_solves_a_two_period_model():
+def test_a_solver_written_against_lcm_solvers_alone_solves_a_two_period_model() -> None:
     """The engine runs an out-of-tree kernel's declared program in every period."""
     solution = _two_regime_model(solver=WealthSolver()).solve(
         params={"discount_factor": 1.0}, log_level="off"
     )
     for period in range(_N_PERIODS - 1):
         np.testing.assert_array_equal(
-            np.asarray(solution.values[period]["alive"]), np.asarray(_WEALTH.to_jax())
+            np.asarray(solution.values[period]["alive"]),
+            np.asarray(_WEALTH.to_jax())[:, None],
         )
 
 
-def test_this_module_imports_nothing_from_the_engine_package():
+def test_this_module_imports_nothing_from_the_engine_package() -> None:
     """The solver above is written against the public surface only."""
     tree = ast.parse(Path(__file__).read_text())
     engine_imports = [
@@ -336,7 +342,7 @@ class _OtherVersionSolver(WealthSolver):
         return frozenset({_OTHER_VERSION})
 
 
-def test_a_parent_requiring_a_version_a_child_does_not_publish_is_refused():
+def test_a_parent_requiring_a_version_a_child_does_not_publish_is_refused() -> None:
     """A continuation demand is matched against the target's published key at build."""
     assert _OTHER_VERSION.schema_version != EGM_CONTINUATION.schema_version
     with pytest.raises(RegimeInitializationError) as excinfo:
@@ -364,8 +370,8 @@ class _Counter:
         return _COUNTER
 
 
-def _counting_value(*, wealth: Float1D, count: FloatND) -> tuple[Float1D, _Counter]:
-    return wealth + count, _Counter(count=count + 1.0)
+def _counting_value(*, wealth: Float1D, count: FloatND) -> tuple[Float2D, _Counter]:
+    return (wealth + count)[:, None], _Counter(count=count + 1.0)
 
 
 def _counting_arguments(build: CoreBuildContext) -> Mapping[str, jax.Array]:
@@ -425,7 +431,7 @@ class _CountingSolver(Solver):
         )
 
 
-def test_engine_rolls_a_non_egm_continuation_artifact_opaquely():
+def test_engine_rolls_a_non_egm_continuation_artifact_opaquely() -> None:
     """A self-declared artifact reaches the previous period unchanged in type."""
     assert isinstance(_Counter(count=jnp.zeros(())), ContinuationArtifact)
     model = _two_regime_model(solver=_CountingSolver(), self_looping=True)
@@ -434,7 +440,8 @@ def test_engine_rolls_a_non_egm_continuation_artifact_opaquely():
     for period in range(_N_PERIODS):
         periods_ahead = _N_PERIODS - 1 - period
         np.testing.assert_array_equal(
-            np.asarray(solution.values[period]["alive"]), wealth + periods_ahead
+            np.asarray(solution.values[period]["alive"]),
+            (wealth + periods_ahead)[:, None],
         )
 
 
@@ -462,7 +469,9 @@ def _nnbegm_model() -> Model:
     ],
     ids=["out_of_tree", "nnbegm_finite"],
 )
-def test_every_regime_declares_exactly_one_replay_mode(*, model: Model, expected_modes):
+def test_every_regime_declares_exactly_one_replay_mode(
+    *, model: Model, expected_modes: Mapping[str, ReplayMode]
+) -> None:
     """Every regime's declared route names one replay mode and its payload type."""
     assert {mode.name for mode in ReplayMode} == {
         "EXACT_REPLAY",
@@ -481,7 +490,7 @@ def test_every_regime_declares_exactly_one_replay_mode(*, model: Model, expected
         ), name
 
 
-def test_a_route_without_a_payload_simulates_on_the_grid():
+def test_a_route_without_a_payload_simulates_on_the_grid() -> None:
     """With no payload the decision is recomputed on the regime's action grid."""
     model = _two_regime_model(solver=WealthSolver())
     result = model.simulate(
@@ -499,7 +508,9 @@ def test_a_route_without_a_payload_simulates_on_the_grid():
     )
 
 
-def test_a_payload_of_another_type_than_the_route_declares_fails_the_preflight():
+def test_a_payload_of_another_type_than_the_route_declares_fails_the_preflight() -> (
+    None
+):
     """Simulation refuses a replay artifact whose type is not the route's."""
     model = _nnbegm_model()
     solution = model.solve(params={"discount_factor": 0.95}, log_level="off")
@@ -539,7 +550,7 @@ def test_a_payload_of_another_type_than_the_route_declares_fails_the_preflight()
 )
 def test_an_unkept_continuation_is_recorded_under_the_key_its_solver_declared(
     *, retention: ResultRetention
-):
+) -> None:
     """An omission names the artifact the solver publishes, at its own cell."""
     model = _two_regime_model(solver=_CountingSolver(), self_looping=True)
     solution = model.solve(
@@ -558,7 +569,7 @@ def test_an_unkept_continuation_is_recorded_under_the_key_its_solver_declared(
 )
 def test_no_omission_names_an_artifact_the_model_never_declared(
     *, retention: ResultRetention
-):
+) -> None:
     """Every omitted key belongs to the running model's own artifact authority."""
     model = _two_regime_model(solver=_CountingSolver(), self_looping=True)
     solution = model.solve(
@@ -586,8 +597,8 @@ class _MislabelledCounter:
 
 def _mislabelled_value(
     *, wealth: Float1D, count: FloatND
-) -> tuple[Float1D, _MislabelledCounter]:
-    return wealth + count, _MislabelledCounter(count=count + 1.0)
+) -> tuple[Float2D, _MislabelledCounter]:
+    return (wealth + count)[:, None], _MislabelledCounter(count=count + 1.0)
 
 
 class _MislabellingSolver(Solver):
@@ -637,7 +648,7 @@ class _MislabellingSolver(Solver):
         )
 
 
-def test_a_continuation_published_under_a_key_it_does_not_claim_is_refused():
+def test_a_continuation_published_under_a_key_it_does_not_claim_is_refused() -> None:
     """A payload whose own key differs from its publication key names both keys."""
     model = _two_regime_model(solver=_MislabellingSolver(), self_looping=True)
     with pytest.raises(RuntimeError, match=re.escape(_MISLABELLED.type_id)) as excinfo:
@@ -756,7 +767,7 @@ def _continuation_target_model(*, target_solver: Solver) -> Model:
             ),
             "dead": Regime(
                 states={"wealth": _WEALTH},
-                functions={"utility": lambda wealth: 0.0 * wealth},
+                functions={"utility": dead_utility},
                 solver=target_solver,
             ),
         },
@@ -787,7 +798,7 @@ class _UndeclaredReplaySolver(WealthSolver):
         return SolutionKernels(period_kernels=kernels.period_kernels)
 
 
-def test_an_external_solver_declaring_no_replay_route_is_refused_at_build():
+def test_an_external_solver_declaring_no_replay_route_is_refused_at_build() -> None:
     """Silence about replay is a build error naming the regime and the solver."""
     with pytest.raises(ModelInitializationError) as excinfo:
         _two_regime_model(solver=_UndeclaredReplaySolver())
@@ -833,7 +844,7 @@ def _choice_model(*, solver: Solver) -> Model:
             ),
             "dead": Regime(
                 states={"wealth": _WEALTH},
-                functions={"utility": lambda wealth: 0.0 * wealth},
+                functions={"utility": dead_utility},
             ),
         },
         ages=AgeGrid(start=0, inclusive_stop=_N_PERIODS - 1, step="Y"),
@@ -842,7 +853,9 @@ def _choice_model(*, solver: Solver) -> Model:
     )
 
 
-def test_grid_recomputation_replay_takes_the_argmax_over_the_declared_action_grid():
+def test_grid_recomputation_replay_takes_the_argmax_over_the_declared_action_grid() -> (
+    None
+):
     """A `GRID_RECOMPUTATION` solver's simulated action is the grid argmax."""
     result = _choice_model(solver=WealthSolver()).simulate(
         params={"discount_factor": 1.0},
@@ -871,7 +884,7 @@ class _UnsupportedReplaySolver(WealthSolver):
         )
 
 
-def test_a_solver_declaring_unsupported_replay_solves_but_refuses_to_simulate():
+def test_a_solver_declaring_unsupported_replay_solves_but_refuses_to_simulate() -> None:
     """`UNSUPPORTED` keeps the solve and refuses simulation before any forward step."""
     model = _choice_model(solver=_UnsupportedReplaySolver())
     assert model._regimes["alive"].simulation.replay_route.replay_mode is (
@@ -879,7 +892,7 @@ def test_a_solver_declaring_unsupported_replay_solves_but_refuses_to_simulate():
     )
     solution = model.solve(params={"discount_factor": 1.0}, log_level="off")
     np.testing.assert_array_equal(
-        np.asarray(solution.values[0]["alive"]), np.asarray(_WEALTH.to_jax())
+        np.asarray(solution.values[0]["alive"]), np.asarray(_WEALTH.to_jax())[:, None]
     )
     with pytest.raises(UnsupportedOperationError) as excinfo:
         model.simulate(

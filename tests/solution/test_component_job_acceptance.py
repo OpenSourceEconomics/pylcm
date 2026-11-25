@@ -163,10 +163,15 @@ def _assert_collected_result_meets_the_contract(
     assert fields["live_choice"] == [1] * len(codes)
     assert fields["live_pref_type"] == list(codes)
     np.testing.assert_allclose(fields["live_wealth"], wealth, rtol=rtol)
+    # Each simulated value carries the trailing member axis of the single `"self"`.
     np.testing.assert_allclose(
-        fields["live_value"], 1.9 * (wealth + pref_type) + 1.0, rtol=rtol
+        np.asarray(fields["live_value"])[..., 0],
+        1.9 * (wealth + pref_type) + 1.0,
+        rtol=rtol,
     )
-    np.testing.assert_allclose(fields["dead_value"], wealth + pref_type, rtol=rtol)
+    np.testing.assert_allclose(
+        np.asarray(fields["dead_value"])[..., 0], wealth + pref_type, rtol=rtol
+    )
 
     assert {key: reloaded[key] for key in ("raw", "values", "panels", "fields")} == {
         key: produced[key] for key in ("raw", "values", "panels", "fields")

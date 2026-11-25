@@ -293,7 +293,7 @@ def test_an_accepted_gate_model_keeps_its_values() -> None:
         log_level="off",
     )
     aaae(
-        solution.values[0]["single_f"],
+        solution.values[0]["single_f"][..., 0],
         np.array([2.425, 7.225, 8.7]),
         decimal=DECIMAL_PRECISION,
     )

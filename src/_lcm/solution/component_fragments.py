@@ -50,7 +50,7 @@ PLAN_FILE: Final = "plan.json"
 FRAGMENT_DIRECTORY: Final = "fragments"
 PLAN_FORMAT: Final = "pylcm-component-job-plan"
 FRAGMENT_FORMAT: Final = "pylcm-component-fragment"
-FORMAT_VERSION: Final = 2
+FORMAT_VERSION: Final = 3
 
 _MANIFEST: Final = "manifest"
 _VALUES: Final = "values"

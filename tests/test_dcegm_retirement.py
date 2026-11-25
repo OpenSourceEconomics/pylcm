@@ -11,6 +11,7 @@ envelope) and compared against:
 """
 
 from collections.abc import Mapping
+from typing import TypedDict
 
 import jax.numpy as jnp
 import numpy as np
@@ -33,7 +34,13 @@ pytestmark = [
     pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON),
 ]
 
-ANALYTICAL_CASES = {
+
+class _AnalyticalCase(TypedDict):
+    n_periods: int
+    disutility_of_work: float
+
+
+ANALYTICAL_CASES: dict[str, _AnalyticalCase] = {
     "iskhakov_2017_five_periods": {"n_periods": 6, "disutility_of_work": 1.0},
     "iskhakov_2017_low_delta": {"n_periods": 4, "disutility_of_work": 0.1},
 }
@@ -52,11 +59,13 @@ def _stack_regime_V(
     regime: RegimeName,
 ) -> np.ndarray:
     periods = sorted(period_to_regime_to_V_arr)[:-1]
-    return np.stack([np.asarray(period_to_regime_to_V_arr[p][regime]) for p in periods])
+    return np.stack(
+        [np.asarray(period_to_regime_to_V_arr[p][regime])[..., 0] for p in periods]
+    )
 
 
 @pytest.mark.parametrize(("case", "spec"), ANALYTICAL_CASES.items())
-def test_dcegm_matches_analytical_solution(*, case, spec):
+def test_dcegm_matches_analytical_solution(*, case: str, spec: _AnalyticalCase) -> None:
     """DC-EGM reproduces the analytical worker and retired value functions.
 
     Tighter than the brute-force tolerance: the secondary kinks from the
@@ -91,7 +100,7 @@ def _retirement_death_prob(*, age: float, final_age_alive: float) -> FloatND:
     return jnp.where(age >= final_age_alive, 1.0, 0.0)
 
 
-def test_brute_force_regime_targeting_dcegm_regime_agrees_with_all_brute():
+def test_brute_force_regime_targeting_dcegm_regime_agrees_with_all_brute() -> None:
     """A brute-force worker targeting a DC-EGM retiree solves to brute values.
 
     Brute-force regimes may target DC-EGM regimes (they only read the
@@ -154,7 +163,9 @@ def test_brute_force_regime_targeting_dcegm_regime_agrees_with_all_brute():
             )
 
 
-def _smoothed_model_pair(*, n_periods: int, shocks) -> dict[str, Model]:
+def _smoothed_model_pair(
+    *, n_periods: int, shocks: ExtremeValueTasteShocks
+) -> dict[str, Model]:
     """Equivalent-spec pair with EV1 taste shocks on the working regime."""
     ages = AgeGrid(start=40, inclusive_stop=40 + (n_periods - 1) * 10, step="10Y")
 
@@ -185,7 +196,7 @@ def _smoothed_model_pair(*, n_periods: int, shocks) -> dict[str, Model]:
     return {"brute_force": brute, "dcegm": dcegm}
 
 
-def test_smoothed_model_brute_and_dcegm_agree():
+def test_smoothed_model_brute_and_dcegm_agree() -> None:
     """With taste shocks, brute force and DC-EGM solve the same smoothed model.
 
     Brute computes `λ·logsumexp(Qc/λ)` on the consumption grid; DC-EGM computes

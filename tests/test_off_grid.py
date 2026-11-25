@@ -399,7 +399,7 @@ def test_clipped_continuation_matches_hand_capped_value_and_choice(
         decimal=DECIMAL_PRECISION,
     )
     np.testing.assert_array_almost_equal(
-        solution.values[0]["alive"],
+        solution.values[0]["alive"][..., 0],
         [2, 2.75, 6] if runtime_grid else [2, 4, 6],
         decimal=DECIMAL_PRECISION,
     )
@@ -729,7 +729,7 @@ def test_explicit_raise_accepts_economically_capped_transitions(
         params=params, runtime_checks=runtime_checks, log_level="off"
     )
     np.testing.assert_array_almost_equal(
-        solution.values[0]["alive"], [2, 4, 6], decimal=DECIMAL_PRECISION
+        solution.values[0]["alive"][..., 0], [2, 4, 6], decimal=DECIMAL_PRECISION
     )
 
 
@@ -751,7 +751,7 @@ def test_raise_excludes_infeasible_exterior_transition_cells(
         log_level="debug",
     )
     np.testing.assert_array_almost_equal(
-        solution.values[0]["alive"], [2, 4, 6], decimal=DECIMAL_PRECISION
+        solution.values[0]["alive"][..., 0], [2, 4, 6], decimal=DECIMAL_PRECISION
     )
     rows = [
         record.getMessage()

@@ -1261,7 +1261,7 @@ def test_reciprocal_unilateral_exits_read_each_other_s_problem() -> None:
     )
     assert_array_almost_equal(
         np.stack((solution.values[0]["source"], solution.values[0]["target"])),
-        [[15.75, 75.5, 150.0], [30.0, 76.0, 150.0]],
+        [[[15.75], [75.5], [150.0]], [[30.0], [76.0], [150.0]]],
         decimal=DECIMAL_PRECISION,
     )
 

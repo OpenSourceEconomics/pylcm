@@ -103,11 +103,11 @@ _WHOLE = "whole"
 _PLANNED = "planned"
 _CASES = tuple((n_habits, arm) for n_habits in (2, 3) for arm in (_WHOLE, _PLANNED))
 # `stablehlo.reduce(%x init: %c) applies stablehlo.<op> across dimensions = [..] :
-# (tensor<AxBx..xf32>, ...` — the reduction's body operation, its operand shape
-# and the kind of its element type (`f`, `i`, ...).
+# (tensor<AxBx..xf32>, ...` — the reduction's body operation, its reduced dimensions,
+# its operand shape and the kind of its element type (`f`, `i`, ...).
 _REDUCE = re.compile(
     r"stablehlo\.reduce\(%[^ ]+ init: %[^)]+\) applies stablehlo\.(\w+) "
-    r"across dimensions = \[[\d, ]*\] : \(tensor<([\dx]*)x?([a-z]+)\d+>"
+    r"across dimensions = \[([\d, ]*)\] : \(tensor<([\dx]*)x?([a-z]+)\d+>"
 )
 
 
@@ -190,6 +190,10 @@ def _borrowing_constraint(
     return consumption <= wealth
 
 
+def _dead_utility() -> float:
+    return 0.0
+
+
 def _build(*, n_habits: int, arm: str) -> tuple[Model, UserParams]:
     """Build the model with `n_habits` habit points and its parameters."""
     model = _model(
@@ -225,7 +229,7 @@ def _model(*, n_habits: int, execution_config: ExecutionConfig) -> Model:
         constraints={"borrowing_constraint": _borrowing_constraint},
         functions={"utility": _utility},
     )
-    dead = Regime(functions={"utility": lambda: 0.0})
+    dead = Regime(functions={"utility": _dead_utility})
     return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, inclusive_stop=_FINAL_AGE_ALIVE + 1, step="Y"),
@@ -344,14 +348,31 @@ def _reduce_shapes(
     """Body operation and operand shape of every additive or other reduction.
 
     Integer sums are left out: they are the solver's feasibility counts, which
-    count every state cell and so grow with every state by construction.
+    count every state cell and so grow with every state by construction. So is a
+    float sum across one axis of extent one: it is the household objective
+    `Σ_s λ_s Q^s` of the single member `"self"`, which sees every state utility
+    reads, `habit` included, as the argmax does.
     """
     return sorted(
         (operation, shape)
         for text in lowered
-        for operation, shape, kind in _REDUCE.findall(text)
-        if (operation == "add") is additive and not (additive and kind == "i")
+        for operation, dimensions, shape, kind in _REDUCE.findall(text)
+        if (operation == "add") is additive
+        and not (
+            additive
+            and (
+                kind == "i"
+                or _sums_one_point(dimensions=dimensions, operand_shape=shape)
+            )
+        )
     )
+
+
+def _sums_one_point(*, dimensions: str, operand_shape: str) -> bool:
+    """Whether a reduction runs across exactly one axis, of extent one."""
+    extents = operand_shape.rstrip("x").split("x")
+    axes = [int(axis) for axis in dimensions.split(",") if axis.strip()]
+    return len(axes) == 1 and extents[axes[0]] == "1"
 
 
 def _case_id(case: tuple[int, str]) -> str:

@@ -607,7 +607,9 @@ def test_a_table_entry_is_the_problem_value_at_its_observed_node(
         + np.maximum(1.0 + seen, 0.5)[None, :]
         + np.sum(weights * unseen**2)
     )
-    np.testing.assert_array_almost_equal(values, expected, decimal=DECIMAL_PRECISION)
+    np.testing.assert_array_almost_equal(
+        values[..., 0], expected, decimal=DECIMAL_PRECISION
+    )
 
 
 def test_a_table_marks_a_failed_cell_nan_and_keeps_its_neighbours(
@@ -631,7 +633,7 @@ def test_a_table_marks_a_failed_cell_nan_and_keeps_its_neighbours(
         expected = np.sqrt(wealth - 0.25) + 0.3 + np.sum(weights * unseen**2)
     # A cell without support would read minus infinity instead of its value.
     np.testing.assert_array_almost_equal(
-        np.where(support, values, -np.inf), expected, decimal=DECIMAL_PRECISION
+        np.where(support, values[..., 0], -np.inf), expected, decimal=DECIMAL_PRECISION
     )
 
 
@@ -1151,7 +1153,7 @@ def test_a_failed_kept_node_fails_no_read_of_another_node(
     )
     assert (bool(stored.tables), point.tables) == (True, set())
     np.testing.assert_array_almost_equal(
-        point.values["0/source"],
+        point.values["0/source"][..., 0],
         intercept + np.linspace(0, 1, 3),
         decimal=DECIMAL_PRECISION,
     )
@@ -1196,7 +1198,9 @@ def test_a_table_marks_only_the_failed_kept_node_nan(
         np.broadcast_arrays(np.nan, 3.0 + np.add.outer(wealth, 0.2 * other)), axis=-1
     )
     assert support.all()
-    np.testing.assert_array_almost_equal(values, expected, decimal=DECIMAL_PRECISION)
+    np.testing.assert_array_almost_equal(
+        values[..., 0], expected, decimal=DECIMAL_PRECISION
+    )
 
 
 def test_a_failed_law_fails_every_kept_node(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1385,7 +1389,7 @@ def test_the_leaving_destination_on_the_grid_solves_both_modes_alike(
     point = _solve_arm(model=model, stored=False, monkeypatch=monkeypatch, params=_BETA)
     stored = _solve_arm(model=model, stored=True, monkeypatch=monkeypatch, params=_BETA)
     destination = point.values["0/destination"].reshape(3, -1)
-    elsewhere = point.values["0/elsewhere"][:, None]
+    elsewhere = point.values["0/elsewhere"]
     assert (destination[2] == elsewhere[2]).all()
     assert (destination[:2] > elsewhere[:2]).all()
     assert "_outside:destination" in stored.tables

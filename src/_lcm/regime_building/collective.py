@@ -24,6 +24,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
+import jax
 import jax.numpy as jnp
 from dags import concatenate_functions, rename_arguments, with_signature
 
@@ -83,6 +84,16 @@ def collective_argmax_and_readout(
     feasible = _actions_last(
         a=jnp.broadcast_to(feasibility, objective.shape), action_axes=action_axes
     )
+    if not action_axes:
+        # Each cell's one candidate is its choice: the member values are read
+        # without a reduction, so they keep their exact bits and their derivative.
+        undefined = feasible[..., 0] & jnp.isnan(objective)
+        dissolution = ~feasible[..., 0]
+        values = {
+            name: jnp.where(undefined, jnp.nan, jnp.where(dissolution, -jnp.inf, q))
+            for name, q in member_Q.items()
+        }
+        return jnp.zeros(objective.shape, dtype=jnp.int32), values, dissolution
     objective = _actions_last(a=objective, action_axes=action_axes)
     (_, *best), argmax_flat = max_lexicographic_and_smallest_id(
         values=(
@@ -349,10 +360,15 @@ def _weighted_sum(
     # the model chose and nothing upstream has put it on a scale, so the term
     # moves the exponent itself rather than let a below-normal weight flush and
     # price a member out of the household objective entirely.
+    #
+    # The objective only selects the household's action; a value's derivative
+    # flows through the member values read at that action. Its operands are
+    # therefore held constant under differentiation, which the weighted term,
+    # computed on bit patterns, could not differentiate otherwise.
     def _term(name: str) -> FloatND:
         return zero_safe_weighted_term(
-            weight=jnp.asarray(weights[name]),
-            value=member_Q[name],
+            weight=jax.lax.stop_gradient(jnp.asarray(weights[name])),
+            value=jax.lax.stop_gradient(member_Q[name]),
             subnormal_is_accounted_for=False,
         )
 

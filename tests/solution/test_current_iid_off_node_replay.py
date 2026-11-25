@@ -518,7 +518,7 @@ def test_public_case_r_replay_saves_the_floor_exactly_at_the_corner() -> None:
     np.testing.assert_allclose(
         saving, resources - _corner_consumption(resources), rtol=0, atol=tolerance
     )
-    value = np.asarray(child.V_arr)
+    value = np.asarray(child.V_arr)[..., 0]
     expected = _corner_value(resources)
     np.testing.assert_array_less(
         np.abs(value - expected) / np.maximum(1.0, np.abs(expected)),

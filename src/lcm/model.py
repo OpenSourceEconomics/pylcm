@@ -5723,7 +5723,7 @@ class Model:
         # grid argmax over the requested grid instead.
         policy_first = None
         if reads_policy_first and not keep_intermediates and action_grids is None:
-            policy_first = _read_egm_policy_first(
+            policy_actions, policy_value, accepted = _read_egm_policy_first(
                 regime=runtime_regime,
                 sim_policy=cast("EGMSimPolicy | NBEGMGridPolicy", sim_policy),
                 states=MappingProxyType(
@@ -5739,6 +5739,9 @@ class Model:
                 in_regime=jnp.ones(n_rows, dtype=bool),
                 referenced_value_kwargs=references,
             )
+            # The replayed decision is the one member's; published values carry
+            # the regime's member axis.
+            policy_first = (policy_actions, policy_value[..., None], accepted)
             if bool(jnp.all(policy_first[2])):
                 if unit is not None:
                     unit.close()
@@ -5886,7 +5889,7 @@ class Model:
                     for name, grid_action in actions.items()
                 }
             )
-            value = jnp.where(accepted, policy_value, value)
+            value = jnp.where(accepted[..., None], policy_value, value)
         return _trim_lookup_rows(
             lookup=PolicyLookup(
                 actions=None if regime.has_taste_shocks else actions,

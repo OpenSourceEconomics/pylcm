@@ -236,7 +236,7 @@ def _living_values(model: Model) -> dict[tuple[int, str], np.ndarray]:
                 order = model.state_names(regime_name=regime)
                 axes = [order.index(name) for name in ("wealth", "shock")]
                 values[(period, regime)] = np.transpose(
-                    np.asarray(by_regime[regime]), axes
+                    np.asarray(by_regime[regime])[..., 0], axes
                 )
     return values
 

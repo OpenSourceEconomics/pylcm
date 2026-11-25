@@ -202,7 +202,7 @@ def test_egm_value_matches_the_analytical_solution(period: int) -> None:
     _, expected = _closed_form(
         wealth=wealth, periods_of_consumption=_N_PERIODS - period
     )
-    got = np.asarray(solution[period]["saving"])[_UNCONSTRAINED]
+    got = np.asarray(solution[period]["saving"])[_UNCONSTRAINED, 0]
     np.testing.assert_allclose(got, expected, rtol=1e-2)
 
 
@@ -233,7 +233,7 @@ def test_egm_agrees_with_dense_grid_search() -> None:
 def test_egm_solves_a_household_of_one_member_as_its_plain_utility_model() -> None:
     """A one-member `CollectiveUtility` regime solves to its plain-utility values.
 
-    The member's value carries the trailing member axis; the endogenous-grid
+    Both values carry the trailing member axis of length one; the endogenous-grid
     solver reads the member's utility under its member name.
     """
     plain = (
@@ -254,6 +254,6 @@ def test_egm_solves_a_household_of_one_member_as_its_plain_utility_model() -> No
     )
     for period in (0, 1, 2):
         np.testing.assert_array_equal(
-            np.asarray(household[period]["saving"])[..., 0],
+            np.asarray(household[period]["saving"]),
             np.asarray(plain[period]["saving"]),
         )

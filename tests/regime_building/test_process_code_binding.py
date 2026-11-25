@@ -199,7 +199,7 @@ def test_gate_and_fallback_read_the_landing_targets_nodes(
         for z, weight in zip(NODES, _normal_node_weights(), strict=True)
     )
     np.testing.assert_allclose(
-        values[0]["young"], np.full(5, expected), rtol=0, atol=1e-5
+        values[0]["young"][..., 0], np.full(5, expected), rtol=0, atol=1e-5
     )
 
 
@@ -213,6 +213,14 @@ def _position_payoff(z_code: DiscreteState) -> FloatND:
     if z_code.dtype != jnp.dtype("int32"):
         raise TypeError(z_code.dtype)
     return jnp.asarray(z_code, dtype=float)
+
+
+def _build_position_payoff(_age: float) -> UserFunction:
+    return _position_payoff
+
+
+def _one_signature(_age: float) -> int:
+    return 0
 
 
 # (node count, mean in a, mean in b, sigma, n_std): coincident, overlapping,
@@ -259,7 +267,7 @@ def test_one_callable_in_two_regimes_reads_each_regimes_positions(
     values = model.solve(params={"a": {}, "b": {}}, log_level="off")
     materialized = values.values[0]
     np.testing.assert_array_equal(
-        np.stack([materialized["a"], materialized["b"]]),
+        np.stack([materialized["a"], materialized["b"]])[..., 0],
         np.stack([np.arange(count, dtype=float)] * 2),
     )
 
@@ -286,8 +294,8 @@ def test_an_age_specialized_reader_of_a_process_code_is_refused() -> None:
                     functions={
                         "utility": _payoff_utility,
                         "payoff": AgeSpecializedFunction(
-                            build=lambda _age: _position_payoff,
-                            signature=lambda _age: 0,
+                            build=_build_position_payoff,
+                            signature=_one_signature,
                         ),
                     },
                 ),
@@ -324,7 +332,9 @@ def test_a_foreign_continuous_process_does_not_refuse_a_local_code_read() -> Non
         regime_id_class=TwoRegimes,
     )
     values = model.solve(params={"a": {}, "b": {}}, log_level="off")
-    np.testing.assert_array_equal(values.values[0]["a"], np.arange(5, dtype=float))
+    np.testing.assert_array_equal(
+        values.values[0]["a"][..., 0], np.arange(5, dtype=float)
+    )
 
 
 def test_phased_process_on_different_nodes_is_refused() -> None:
@@ -393,7 +403,7 @@ def _worker_model(
 
 def _terminal_worker_values(model: Model) -> np.ndarray:
     solution = model.solve(params={"only": {}}, log_level="off")
-    return np.asarray(solution.values[0]["only"])
+    return np.asarray(solution.values[0]["only"])[..., 0]
 
 
 @pytest.mark.parametrize("binding", ["constructor", "model_fixed"])
@@ -463,7 +473,7 @@ def test_utility_process_code_is_not_a_parameter() -> None:
 def test_utility_process_code_reads_positions() -> None:
     model = _only_model({"utility": _position_payoff})
     values = model.solve(params={"only": {}}, log_level="off").values
-    np.testing.assert_array_equal(values[0]["only"], np.arange(5, dtype=float))
+    np.testing.assert_array_equal(values[0]["only"][..., 0], np.arange(5, dtype=float))
 
 
 def _zero(z: ContinuousState) -> FloatND:
@@ -537,7 +547,7 @@ def _landing_source_values(*, model: Model, runtime: bool) -> np.ndarray:
         params["source"]["z"] = {"stop": 1.0}
         params["target"]["z"] = {"stop": 1.0}
     solution = model.solve(params=params, log_level="off")
-    return np.asarray(solution.values[0]["source"])
+    return np.asarray(solution.values[0]["source"])[..., 0]
 
 
 def test_gate_reads_the_landing_value_of_a_fixed_process() -> None:

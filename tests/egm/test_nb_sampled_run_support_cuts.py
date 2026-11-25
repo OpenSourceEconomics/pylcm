@@ -60,7 +60,7 @@ def _produce(
     np.testing.assert_array_equal(data.side_id, [0, 0, 0])
     np.testing.assert_array_equal(data.link_valid, [False, True])
     np.testing.assert_array_equal(data.floor_used, 0.5)
-    np.testing.assert_array_equal(carry.value, solution.values[1]["child"])
+    np.testing.assert_array_equal(carry.value, solution.values[1]["child"][..., 0])
     return carry, core
 
 
@@ -93,7 +93,10 @@ def _assert_preserved(*, actual: EGMCarry, original: EGMCarry) -> None:
 @pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
 @pytest.mark.parametrize("cut", ["none", "pad", "same_owner_false"])
 def test_sampled_producer_preserves_independent_support_cuts(
-    *, continuous_source, compiled: bool, cut: str
+    *,
+    continuous_source: tuple[EGMCarry, nb._NBEGMContinuousCore],
+    compiled: bool,
+    cut: str,
 ) -> None:
     """A continuous budget join cannot fill a missing node or an independent gap."""
     carry, core = continuous_source
@@ -129,7 +132,10 @@ def test_sampled_producer_preserves_independent_support_cuts(
 @pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
 @pytest.mark.parametrize("guard", ["one_sided", "negative_owner", "owner_overflow"])
 def test_sampled_producer_preserves_whole_noncanonical_record(
-    *, continuous_source, compiled: bool, guard: str
+    *,
+    continuous_source: tuple[EGMCarry, nb._NBEGMContinuousCore],
+    compiled: bool,
+    guard: str,
 ) -> None:
     """One represented noncanonical record prevents row-wide relabeling."""
     carry, core = continuous_source
@@ -150,11 +156,13 @@ def test_sampled_producer_preserves_whole_noncanonical_record(
     np.testing.assert_array_equal(actual.link_valid, data.link_valid)
 
 
-def _installed_raw_core(*, model: Model, regime_name: RegimeName, period: int):
+def _installed_raw_core(
+    *, model: Model, regime_name: RegimeName, period: int
+) -> nb._NBEGMContinuousCore | nb._NBEGMCaseCore:
     function = core_program_graph(
         kernel=model._regimes[regime_name].solution.period_kernels[period]
     )["main"].function
-    seen = set()
+    seen: set[int] = set()
     while not isinstance(function, nb._NBEGMContinuousCore | nb._NBEGMCaseCore):
         assert id(function) not in seen
         seen.add(id(function))
@@ -163,7 +171,7 @@ def _installed_raw_core(*, model: Model, regime_name: RegimeName, period: int):
         elif isinstance(function, _RegimeMassGuardedCore):
             function = function.core
         elif isinstance(function, functools.partial):
-            function = function.func
+            function = function.keywords.get("_member_axis_core", function.func)
         else:
             assert hasattr(function, "__wrapped__")
             function = function.__wrapped__
@@ -171,7 +179,7 @@ def _installed_raw_core(*, model: Model, regime_name: RegimeName, period: int):
 
 
 @pytest.fixture(scope="module")
-def excluded_cores():
+def excluded_cores() -> dict[str, nb._NBEGMContinuousCore | nb._NBEGMCaseCore]:
     base = _model(kind="continuous_kink", callable_floor=False)
     child = base.user_regimes["child"]
     child = replace(
@@ -196,7 +204,12 @@ def excluded_cores():
 @pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
 @pytest.mark.parametrize("route", ["jump", "case", "compiled_boundary"])
 def test_sampled_producer_retains_excluded_native_routes(
-    *, continuous_source, jump_source, excluded_cores, compiled: bool, route: str
+    *,
+    continuous_source: tuple[EGMCarry, nb._NBEGMContinuousCore],
+    jump_source: tuple[EGMCarry, nb._NBEGMContinuousCore],
+    excluded_cores: dict[str, nb._NBEGMContinuousCore | nb._NBEGMCaseCore],
+    compiled: bool,
+    route: str,
 ) -> None:
     """Real jump, case and compiled-boundary cores retain the full input record."""
     if route == "jump":

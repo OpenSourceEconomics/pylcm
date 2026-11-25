@@ -35,7 +35,6 @@ from _lcm.execution.core_program import CoreProgram
 from _lcm.execution.output_layout import PlannedCore
 from _lcm.execution.workspace_planning import _tiled_bootstrap_cap, bootstrap_width
 from _lcm.params.edges import regime_kernel_params
-from _lcm.regime_building import processing
 from _lcm.solution import backward_induction, period_replay, public_period_capture
 from _lcm.typing import PytreeValue
 from lcm import AgeGrid, ExecutionConfig, LinSpacedGrid, Model
@@ -766,11 +765,9 @@ def _couple_capture_model() -> Model:
     )
 
 
-def _single_on_household_path_capture_model() -> Model:
-    """The public retirement fixture built through the household kernels."""
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(processing, "_SINGLE_ON_HOUSEHOLD_PATH", True)
-        return _make_public_capture_model()
+def _single_capture_model() -> Model:
+    """The public retirement fixture, a household of the one member `"self"`."""
+    return _make_public_capture_model()
 
 
 _MEMBER_AXIS_CAPTURES: dict[
@@ -788,8 +785,8 @@ _MEMBER_AXIS_CAPTURES: dict[
         (("couple", 0), ("couple_terminal", 1)),
         2,
     ),
-    "single_on_household_path": (
-        _single_on_household_path_capture_model,
+    "single": (
+        _single_capture_model,
         retirement_model.get_params(n_periods=_N_PERIODS),
         (("retirement", 1), ("working_life", 0)),
         1,

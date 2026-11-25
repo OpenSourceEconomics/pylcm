@@ -13,6 +13,9 @@ pylcm's solved V on the twin model at the fixture's wealth nodes:
   agreement certifies the implementation, not the accuracy of every node.
 """
 
+from collections.abc import Iterable
+from typing import cast
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -66,7 +69,7 @@ def _wealth_node_indices(wealth_points: np.ndarray) -> np.ndarray:
 
 
 @pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
-def test_clustered_savings_grid_resolves_excluded_low_wealth_nodes():
+def test_clustered_savings_grid_resolves_excluded_low_wealth_nodes() -> None:
     """A savings grid clustered toward the borrowing limit fixes the low-wealth rows.
 
     The fixture comparison excludes the retiree rows at wealth 1 because the
@@ -118,7 +121,9 @@ def test_clustered_savings_grid_resolves_excluded_low_wealth_nodes():
         ),
     ],
 )
-def test_twin_smoothed_value_matches_dcegm_reference(*, solver, rtol, atol, reference):
+def test_twin_smoothed_value_matches_dcegm_reference(
+    *, solver: str, rtol: float, atol: float, reference: pd.DataFrame
+) -> None:
     """pylcm's smoothed V equals the independent `dcegm` solution.
 
     Tolerances are looser for brute force (consumption-grid resolution) than for
@@ -129,9 +134,11 @@ def test_twin_smoothed_value_matches_dcegm_reference(*, solver, rtol, atol, refe
 
     period_to_regime_to_V_arr = model.solve(params=params, log_level="debug").values
 
-    for (period, lagged_choice), group in reference.groupby(
-        ["period", "lagged_choice"]
-    ):
+    groups = cast(
+        "Iterable[tuple[tuple[int, int], pd.DataFrame]]",
+        reference.groupby(["period", "lagged_choice"]),
+    )
+    for (period, lagged_choice), group in groups:
         regime = REGIME_FOR_LAGGED_CHOICE[lagged_choice]
         rows = group
         if solver == "dcegm" and lagged_choice == 1:
@@ -144,7 +151,7 @@ def test_twin_smoothed_value_matches_dcegm_reference(*, solver, rtol, atol, refe
             # pylcm -4.9236, recursion -4.9237). Those rows certify accuracy,
             # not cross-implementation agreement, so they are excluded here.
             rows = group.query("wealth > 5.0")
-        v_arr = np.asarray(period_to_regime_to_V_arr[period][regime])
+        v_arr = np.asarray(period_to_regime_to_V_arr[period][regime])[..., 0]
         node_indices = _wealth_node_indices(rows["wealth"].to_numpy())
         np.testing.assert_allclose(
             v_arr[node_indices],

@@ -140,7 +140,7 @@ def test_one_period_terminal_root_model_solves() -> None:
         edges={},
     )
     np.testing.assert_array_equal(
-        np.asarray(model.solve(params={}, log_level="off").values[0]["dead"]),
+        np.asarray(model.solve(params={}, log_level="off").values[0]["dead"])[..., 0],
         np.asarray([0.0, 1.0]),
     )
 
@@ -250,7 +250,9 @@ def test_terminal_utility_is_not_evaluated_at_unrequired_ages(
     )
     params = _PARAMS if "retirement" in initial_nodes.values() else {}
     values = model.solve(params=params, log_level="debug").values
-    np.testing.assert_array_equal(np.asarray(values[5]["dead"]), np.asarray([0.0, 1.0]))
+    np.testing.assert_array_equal(
+        np.asarray(values[5]["dead"])[..., 0], np.asarray([0.0, 1.0])
+    )
 
 
 def test_terminal_utility_required_at_an_unfinite_age_trips_the_nan_check() -> None:

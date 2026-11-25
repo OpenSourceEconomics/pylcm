@@ -97,7 +97,9 @@ def boundary_model(*, final_metadata: str, mutation: str = "none") -> Model:
 
 
 @pytest.mark.parametrize("final_metadata", ["none", "left", "right", "both"])
-def test_only_final_age_selector_metadata_is_ignored(*, final_metadata, request):
+def test_only_final_age_selector_metadata_is_ignored(
+    *, final_metadata: str, request: pytest.FixtureRequest
+) -> None:
     """Naming the final age in a selector leaves the edges and values unchanged."""
     instance = boundary_model(final_metadata=final_metadata)
     expected = {"left": frozenset({0, 2}), "right": frozenset({1, 2})}
@@ -110,15 +112,17 @@ def test_only_final_age_selector_metadata_is_ignored(*, final_metadata, request)
     dtype = np.dtype(f"float{request.config.getoption('--precision')}")
     for period, expected_value in enumerate((0.5, 1.0, 0.75)):
         actual = np.asarray(values[period]["source"])
-        expected = np.asarray(expected_value, dtype=dtype)
-        assert actual.shape == ()
+        expected = np.asarray([expected_value], dtype=dtype)
+        assert actual.shape == (1,)
         assert actual.dtype == dtype
         assert actual.tobytes(order="C") == expected.tobytes(order="C")
 
 
 @pytest.mark.parametrize("final_metadata", ["none", "left", "right", "both"])
 @pytest.mark.parametrize("mutation", ["remove-nonfinal", "add-nonfinal"])
-def test_real_nonfinal_support_mismatch_is_never_ignored(*, final_metadata, mutation):
+def test_real_nonfinal_support_mismatch_is_never_ignored(
+    *, final_metadata: str, mutation: str
+) -> None:
     """Removing or adding a non-final age is refused, final-age naming or not."""
     # Both left selectors still include 0, so neither the empty-selector nor the
     # final-age-only-selector guard can accidentally satisfy this assertion.
@@ -133,7 +137,9 @@ def test_real_nonfinal_support_mismatch_is_never_ignored(*, final_metadata, muta
 
 
 @pytest.mark.parametrize("inclusive_stop", [62, 63, 64])
-def test_mortal_fixture_exits_with_unit_mass_at_its_last_source_age(inclusive_stop):
+def test_mortal_fixture_exits_with_unit_mass_at_its_last_source_age(
+    inclusive_stop: int,
+) -> None:
     """The mortal fixture dies for sure out of its last source age."""
     # These are the current helper's supported 3/4/5-period test configurations.
     instance = _mortal_model(
@@ -152,7 +158,7 @@ def test_mortal_fixture_exits_with_unit_mass_at_its_last_source_age(inclusive_st
     assert "working" in values[0]
 
 
-def test_retirement_fixture_forces_retirement_before_the_final_death():
+def test_retirement_fixture_forces_retirement_before_the_final_death() -> None:
     """The retirement fixture retires out of its last working age."""
     instance = _retirement_model()
     support = instance.graph.edges.solve
@@ -168,7 +174,9 @@ def test_retirement_fixture_forces_retirement_before_the_final_death():
 
 
 @pytest.mark.parametrize("n_periods", [2, 3, 4])
-def test_horizon_fixture_forces_unit_mass_into_terminal_retirement(n_periods):
+def test_horizon_fixture_forces_unit_mass_into_terminal_retirement(
+    n_periods: int,
+) -> None:
     """The horizon fixture retires for sure out of its last source age."""
     instance = _horizon_retirement_model(n_periods=n_periods)
     last_source = 58 + n_periods

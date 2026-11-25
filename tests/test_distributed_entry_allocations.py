@@ -300,8 +300,10 @@ def test_native_archive_upload_and_copy_keep_actual_device_ownership(
     loaded = load_solution(path=solution.save(path=tmp_path / "values.h5"))
     entries = tuple(_native_entries(loaded).values())
     source_mesh = jax.make_mesh((3,), ("native_source",), devices=devices)
-    source_layout = jax.NamedSharding(source_mesh, jax.P("native_source"))
-    scalar_layout = jax.NamedSharding(source_mesh, jax.P())
+    # Value leaves end in their member axis, which stays replicated; a stateless
+    # regime's value is that axis alone and is replicated whole.
+    source_layout = jax.NamedSharding(source_mesh, jax.P("native_source", None))
+    scalar_layout = jax.NamedSharding(source_mesh, jax.P(None))
     if preloaded:
         # This explicitly constructs an already-loaded caller cache on its source
         # mesh before the budgeted public call; it is not a budgeted upload claim.
@@ -310,7 +312,7 @@ def test_native_archive_upload_and_copy_keep_actual_device_ownership(
         ) -> jax.Array:
             del name
             assert value.dtype == dtype
-            layout = scalar_layout if value.ndim == 0 else source_layout
+            layout = scalar_layout if value.ndim == 1 else source_layout
             return jax.device_put(value, layout)
 
         for entry in entries:
@@ -322,19 +324,19 @@ def test_native_archive_upload_and_copy_keep_actual_device_ownership(
     ).to_dataframe()
     assert_frame_equal(actual, expected)
     cache_arrays = tuple(_native_cache(entry).leaves[0] for entry in entries)
-    assert {value.ndim for value in cache_arrays} == {0, 1}
+    assert {value.ndim for value in cache_arrays} == {1, 2}
     if preloaded:
         for value in cache_arrays:
-            expected_layout = scalar_layout if value.ndim == 0 else source_layout
+            expected_layout = scalar_layout if value.ndim == 1 else source_layout
             assert value.sharding == expected_layout
             assert isinstance(value.sharding, jax.NamedSharding)
             assert tuple(value.sharding.mesh.devices.flat) == devices
-            if value.ndim == 1:
+            if value.ndim == 2:
                 shards = value.addressable_shards
                 assert len(shards) == 3
                 assert {shard.device for shard in shards} == set(devices)
                 assert len({repr(shard.index) for shard in shards}) == 3
-                assert all(shard.data.shape == (1,) for shard in shards)
+                assert all(shard.data.shape == (1, 1) for shard in shards)
                 assert not value.sharding.is_fully_replicated
     else:
         # The public model resolves selected IDs in ascending order; staging uses
@@ -398,7 +400,7 @@ def test_native_source_budget_includes_retained_bank_and_future_copy_scratch(
     ) -> jax.Array:
         del name
         assert value.dtype == dtype
-        spec = jax.P() if value.ndim == 0 else jax.P("native_source")
+        spec = jax.P(None) if value.ndim == 1 else jax.P("native_source", None)
         return jax.device_put(value, jax.NamedSharding(source_mesh, spec))
 
     for entry in entries:

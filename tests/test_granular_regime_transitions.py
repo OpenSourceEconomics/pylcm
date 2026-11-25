@@ -68,6 +68,70 @@ def _prob_dead(age: int) -> ScalarFloat:
     return jnp.asarray(1.0 - _prob_work(age) - _prob_retired(age))
 
 
+def _retired_stay_prob(age: int) -> ScalarFloat:
+    return jnp.where(age < 2, 0.5, 0.0)
+
+
+def _retired_dead_prob(age: int) -> ScalarFloat:
+    return jnp.where(age < 2, 0.5, 1.0)
+
+
+def _zero_utility() -> float:
+    return 0.0
+
+
+def _probability_zero() -> ScalarFloat:
+    return jnp.asarray(0.0)
+
+
+def _probability_three_tenths() -> ScalarFloat:
+    return jnp.asarray(0.3)
+
+
+def _probability_half() -> ScalarFloat:
+    return jnp.asarray(0.5)
+
+
+def _probability_seven_tenths() -> ScalarFloat:
+    return jnp.asarray(0.7)
+
+
+def _probability_one() -> float:
+    return 1.0
+
+
+def _fixed_probability(probability: float) -> FloatND:
+    return jnp.asarray(probability)
+
+
+def _perceived_probability(perceived_mass: float) -> FloatND:
+    return jnp.asarray(perceived_mass)
+
+
+def _realized_probability(realized_mass: float) -> FloatND:
+    return jnp.asarray(realized_mass)
+
+
+def _keep_wealth(wealth: float) -> float:
+    return wealth
+
+
+def _invest(investment: float) -> float:
+    return investment
+
+
+def _zero_wealth_utility(wealth: float) -> float:
+    return 0.0 * wealth
+
+
+def _wealth_utility(wealth: float) -> float:
+    return wealth
+
+
+def _negative_wealth_utility(wealth: float) -> float:
+    return -wealth
+
+
 def _granular_transition() -> ByAge:
     return ByAge(
         cases={
@@ -107,15 +171,11 @@ def _build_model(
     # `retired` outlives `work` by one age so that the mass `work` sends it in
     # its final transition lands on an active regime, and hands everything to
     # `dead` in its own final transition.
-    retired_dead = StochasticTransition(
-        func=lambda age: jnp.where(age < 2, 0.5, 1.0),
-    )
+    retired_dead = StochasticTransition(func=_retired_dead_prob)
     retired_law = ByAge(
         cases={
             (0, 1): {
-                "retired": StochasticTransition(
-                    func=lambda age: jnp.where(age < 2, 0.5, 0.0),
-                ),
+                "retired": StochasticTransition(func=_retired_stay_prob),
                 "dead": retired_dead,
             },
             2: {"dead": retired_dead},
@@ -125,7 +185,7 @@ def _build_model(
         regimes={
             "work": work,
             "retired": _build_regime(),
-            "dead": UserRegime(functions={"utility": lambda: 0.0}),
+            "dead": UserRegime(functions={"utility": _zero_utility}),
         },
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         regime_id_class=_RegimeId,
@@ -171,16 +231,15 @@ def test_template_has_per_target_regime_transition_keys() -> None:
     def _prob_dead_with_param(*, age: int, hazard: float) -> ScalarFloat:
         return jnp.clip(hazard * (1.0 + age), 0.0, 1.0)
 
+    def _prob_work_with_param(*, age: int, hazard: float) -> ScalarFloat:
+        return 1.0 - _prob_dead_with_param(age=age, hazard=hazard)
+
     model = _build_model(
         work=_build_regime(),
         work_law=ByAge(
             cases={
                 (0, 1): {
-                    "work": StochasticTransition(
-                        func=lambda age, hazard: (
-                            1.0 - _prob_dead_with_param(age=age, hazard=hazard)
-                        )
-                    ),
+                    "work": StochasticTransition(func=_prob_work_with_param),
                     "dead": StochasticTransition(func=_prob_dead_with_param),
                 },
                 2: {"dead": StochasticTransition(func=_prob_dead_with_param)},
@@ -200,7 +259,7 @@ def test_plain_callable_cell_is_rejected() -> None:
     with pytest.raises(RegimeInitializationError, match=r"StochasticTransition"):
         validate_regime_law(
             _build_regime(),
-            law=bind_regime_law({"work": lambda age: 1.0}),  # noqa: ARG005
+            law=bind_regime_law({"work": _probability_one}),
         )
 
 
@@ -219,8 +278,8 @@ def test_unknown_target_in_granular_dict_raises() -> None:
         _build_model(
             work=_build_regime(),
             work_law={
-                "work": StochasticTransition(func=lambda age: jnp.asarray(0.5)),  # noqa: ARG005
-                "valhalla": StochasticTransition(func=lambda age: jnp.asarray(0.5)),  # noqa: ARG005
+                "work": StochasticTransition(func=_probability_half),
+                "valhalla": StochasticTransition(func=_probability_half),
             },
             work_edges={"work": (0, 1, 2), "valhalla": (0, 1, 2)},
         )
@@ -246,7 +305,7 @@ def test_disjoint_phase_targets_price_perceived_choice_and_realize_exit(
             simulate={"retired": realized_handoff},
         )
         if phase_local_handoffs
-        else lambda investment: investment
+        else _invest
     )
     model = Model(
         regimes={
@@ -254,15 +313,15 @@ def test_disjoint_phase_targets_price_perceived_choice_and_realize_exit(
                 states={"wealth": grid},
                 actions={"investment": grid},
                 state_transitions={"wealth": state_law},
-                functions={"utility": lambda wealth: 0.0 * wealth},
+                functions={"utility": _zero_wealth_utility},
             ),
             "dead": UserRegime(
                 states={"wealth": grid},
-                functions={"utility": lambda wealth: wealth},
+                functions={"utility": _wealth_utility},
             ),
             "retired": UserRegime(
                 states={"wealth": grid},
-                functions={"utility": lambda wealth: -wealth},
+                functions={"utility": _negative_wealth_utility},
             ),
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
@@ -274,10 +333,8 @@ def test_disjoint_phase_targets_price_perceived_choice_and_realize_exit(
                 "work": Transition(
                     targets={"dead": 0, "retired": 0},
                     law={
-                        "dead": StochasticTransition(
-                            func=lambda perceived_mass: perceived_mass
-                        ),
-                        "retired": StochasticTransition(func=lambda: jnp.asarray(0.0)),
+                        "dead": StochasticTransition(func=_perceived_probability),
+                        "retired": StochasticTransition(func=_probability_zero),
                     },
                 )
             },
@@ -285,10 +342,8 @@ def test_disjoint_phase_targets_price_perceived_choice_and_realize_exit(
                 "work": Transition(
                     targets={"dead": 0, "retired": 0},
                     law={
-                        "dead": StochasticTransition(func=lambda: jnp.asarray(0.0)),
-                        "retired": StochasticTransition(
-                            func=lambda realized_mass: realized_mass
-                        ),
+                        "dead": StochasticTransition(func=_probability_zero),
+                        "retired": StochasticTransition(func=_realized_probability),
                     },
                 )
             },
@@ -303,7 +358,7 @@ def test_disjoint_phase_targets_price_perceived_choice_and_realize_exit(
     if phase_local_handoffs:
         params |= {"perceived_scale": 1.0, "realized_scale": 1.0}
     solution = model.solve(params=params, log_level="debug")
-    np.testing.assert_array_equal(solution.values[0]["work"], jnp.ones(2))
+    np.testing.assert_array_equal(solution.values[0]["work"][..., 0], jnp.ones(2))
     assert model.reachability.solution.targets(period=0, source="work") == ("dead",)
     assert model.reachability.simulation.targets(period=0, source="work") == (
         "retired",
@@ -335,7 +390,7 @@ def test_model_accepts_initial_nodes_as_age_regime_pair_rules() -> None:
     model = Model(
         regimes={
             "dead": UserRegime(
-                functions={"utility": lambda: 0.0},
+                functions={"utility": _zero_utility},
             )
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
@@ -349,8 +404,8 @@ def test_model_accepts_initial_nodes_as_age_regime_pair_rules() -> None:
 
 def test_fixed_zero_probability_does_not_hide_an_invalid_empty_distribution() -> None:
     """Retain every edge of an all-zero law and refuse its zero total probability."""
-    terminal = UserRegime(functions={"utility": lambda: 0.0})
-    zero = StochasticTransition(func=lambda probability: probability)
+    terminal = UserRegime(functions={"utility": _zero_utility})
+    zero = StochasticTransition(func=_fixed_probability)
     model = Model(
         regimes={"work": _build_regime(), "retired": terminal, "dead": terminal},
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
@@ -380,18 +435,18 @@ def test_simulation_only_regime_prices_its_perceived_continuation() -> None:
         regimes={
             "work": UserRegime(
                 states={"wealth": grid},
-                state_transitions={"wealth": lambda wealth: wealth},
-                functions={"utility": lambda wealth: 0.0 * wealth},
+                state_transitions={"wealth": _keep_wealth},
+                functions={"utility": _zero_wealth_utility},
             ),
             "retired": UserRegime(
                 states={"wealth": grid},
                 actions={"investment": grid},
-                state_transitions={"wealth": lambda investment: investment},
-                functions={"utility": lambda wealth: 0.0 * wealth},
+                state_transitions={"wealth": _invest},
+                functions={"utility": _zero_wealth_utility},
             ),
             "dead": UserRegime(
                 states={"wealth": grid},
-                functions={"utility": lambda wealth: wealth},
+                functions={"utility": _wealth_utility},
             ),
         },
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
@@ -411,7 +466,7 @@ def test_simulation_only_regime_prices_its_perceived_continuation() -> None:
     )
     params = {"discount_factor": 1.0}
     solution = model.solve(params=params, log_level="debug")
-    np.testing.assert_array_equal(solution.values[1]["retired"], jnp.ones(2))
+    np.testing.assert_array_equal(solution.values[1]["retired"][..., 0], jnp.ones(2))
     result = model.simulate(
         params=params,
         solution=solution,
@@ -447,10 +502,10 @@ def test_granular_keys_narrow_reachability() -> None:
         work_law=ByAge(
             cases={
                 (0, 1): {
-                    "retired": StochasticTransition(func=lambda age: jnp.asarray(0.7)),  # noqa: ARG005
-                    "dead": StochasticTransition(func=lambda age: jnp.asarray(0.3)),  # noqa: ARG005
+                    "retired": StochasticTransition(func=_probability_seven_tenths),
+                    "dead": StochasticTransition(func=_probability_three_tenths),
                 },
-                2: {"dead": StochasticTransition(func=lambda age: jnp.asarray(0.3))},  # noqa: ARG005
+                2: {"dead": StochasticTransition(func=_probability_three_tenths)},
             }
         ),
         work_edges={"retired": (0, 1), "dead": (0, 1, 2)},

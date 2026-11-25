@@ -426,7 +426,7 @@ def _simulation_chunk_profile_key(
       that leaves every covered shape untouched (extremely unlikely given how
       regimes are constructed) would not be distinguished by this key.
     """
-    version = 5  # bump when any component below changes meaning
+    version = 6  # bump when any component below changes meaning
     key_version = ("chunk-profile-key", version)
     program_identity = (
         tuple(sorted(regimes)),

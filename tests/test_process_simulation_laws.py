@@ -64,13 +64,25 @@ def _utility(income: ContinuousState) -> FloatND:
     return income**2
 
 
+def _zero_utility() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def _half() -> FloatND:
+    return jnp.asarray(0.5)
+
+
+def _nodes_income_utility(nodes_income: ContinuousState) -> FloatND:
+    return nodes_income**2
+
+
 def _model(process: _ContinuousStochasticProcess | Phased) -> Model:
     return Model(
         regimes={
             "alive": Regime(
                 states={"income": process}, functions={"utility": _utility}
             ),
-            "dead": Regime(functions={"utility": lambda: jnp.asarray(0.0)}),
+            "dead": Regime(functions={"utility": _zero_utility}),
         },
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         initial_nodes={0: "alive"},
@@ -260,7 +272,7 @@ def test_unsupported_phased_process_forms_fail_at_declaration(invalid: str) -> N
     other = (
         replace(process, mu=1.0, simulated_draws="nodes")
         if invalid == "nodes"
-        else lambda: 0.0
+        else _zero_utility
     )
     with pytest.raises(RegimeInitializationError):
         Regime(
@@ -308,7 +320,7 @@ def test_phased_process_conditioning_is_an_intrinsic_state_dependency() -> None:
                 state_transitions={"health": fixed_transition("health")},
                 functions={"utility": _utility},
             ),
-            "dead": Regime(functions={"utility": lambda: jnp.asarray(0.0)}),
+            "dead": Regime(functions={"utility": _zero_utility}),
         },
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         initial_nodes={0: "alive"},
@@ -338,9 +350,9 @@ def test_node_operand_names_do_not_unmap_similarly_named_states() -> None:
         regimes={
             "alive": Regime(
                 states={"nodes_income": process},
-                functions={"utility": lambda nodes_income: nodes_income**2},
+                functions={"utility": _nodes_income_utility},
             ),
-            "dead": Regime(functions={"utility": lambda: jnp.asarray(0.0)}),
+            "dead": Regime(functions={"utility": _zero_utility}),
         },
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         initial_nodes={0: "alive"},
@@ -635,7 +647,7 @@ def _work_retired_model(
         regimes={
             "work": regime({"income": work} | (extra_work_states or {})),
             "retired": regime({"income": retired} | (extra_retired_states or {})),
-            "dead": Regime(functions={"utility": lambda: jnp.asarray(0.0)}),
+            "dead": Regime(functions={"utility": _zero_utility}),
         },
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
         initial_nodes={0: "work"},
@@ -752,7 +764,9 @@ def _binned_row(cdf_at_midpoints: np.ndarray) -> np.ndarray:
     )
 
 
-def _reference_row(*, process: _ContinuousStochasticProcess, value: float):
+def _reference_row(
+    *, process: _ContinuousStochasticProcess, value: float
+) -> np.ndarray:
     """The process's transition row from `value`, written from the law itself."""
     params = {k: float(v) for k, v in process.params.items()}
     nodes = np.asarray(process.get_gridpoints(), dtype=np.float64)
@@ -945,7 +959,7 @@ def _period_zero_continuations(
                 functions={"utility": _positive_utility},
                 certainty_equivalent=certainty_equivalent,
             ),
-            "dead": Regime(functions={"utility": lambda: jnp.asarray(0.0)}),
+            "dead": Regime(functions={"utility": _zero_utility}),
         },
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         initial_nodes={0: "alive"},
@@ -1080,8 +1094,8 @@ def _fork_model(
             "source": Transition(
                 targets={"left": 0, "right": 0},
                 law={
-                    "left": StochasticTransition(func=lambda: jnp.asarray(0.5)),
-                    "right": StochasticTransition(func=lambda: jnp.asarray(0.5)),
+                    "left": StochasticTransition(func=_half),
+                    "right": StochasticTransition(func=_half),
                 },
             )
         },
@@ -1277,10 +1291,10 @@ def test_linear_process_edges_read_only_each_targets_local_corners(
         {
             "left": jnp.asarray(
                 [[5.0, 3.0], [3.0, 5.0]] if two_coordinates else [1.0, 2.0]
-            ),
+            )[..., None],
             "right": jnp.asarray(
                 [[8.0, 4.0], [4.0, 8.0]] if two_coordinates else [1.0, 4.0]
-            ),
+            )[..., None],
         }
     )
     reader_calls = 0
@@ -1360,8 +1374,8 @@ def test_process_edge_corners_keep_nonfinite_and_zero_semantics(
         right = [2.0, 2.0] if case == "negative-inf" else [0.0, -0.0]
     values = MappingProxyType(
         {
-            "left": jnp.asarray(left, dtype=dtype),
-            "right": jnp.asarray(right, dtype=dtype),
+            "left": jnp.asarray(left, dtype=dtype)[..., None],
+            "right": jnp.asarray(right, dtype=dtype)[..., None],
         }
     )
 
@@ -1373,7 +1387,7 @@ def test_process_edge_corners_keep_nonfinite_and_zero_semantics(
                 states_actions_params=MappingProxyType({"income": 3.0 * nodes[-1]}),
             )
             assert isinstance(aggregate, tuple)
-            return aggregate[0]
+            return aggregate[0][..., 0]
 
         return np.asarray(jax.jit(read)(values) if compiled else read(values))
 
@@ -1468,10 +1482,10 @@ def test_process_edges_retain_the_original_cartesian_corners(
         {
             "left": jnp.asarray(
                 [[5.0, 3.0], [3.0, 5.0]] if two_coordinates else [1.0, 2.0]
-            ),
+            )[..., None],
             "right": jnp.asarray(
                 [[8.0, 4.0], [4.0, 8.0]] if two_coordinates else [1.0, 4.0]
-            ),
+            )[..., None],
         }
     )
     states = MappingProxyType(
@@ -1479,7 +1493,12 @@ def test_process_edges_retain_the_original_cartesian_corners(
             "income": jnp.asarray(3.0),
             **({"wage": jnp.asarray(3.0)} if two_coordinates else {}),
             **{
-                name: jnp.asarray(-1.0) for name in compute.ce_flat_param_names.values()
+                name: jnp.asarray(-1.0)
+                for names in (
+                    compute.ce_flat_param_names,
+                    *(flat for _, flat in compute.member_certainty_equivalents),
+                )
+                for name in names.values()
             },
         }
     )
@@ -1644,13 +1663,16 @@ def test_process_edge_program_observes_another_targets_row(
         )
         result = read(
             next_regime_to_V_arr=MappingProxyType(
-                {"left": jnp.asarray([1.0, 2.0]), "right": jnp.asarray([1.0, 4.0])}
+                {
+                    "left": jnp.asarray([[1.0], [2.0]]),
+                    "right": jnp.asarray([[1.0], [4.0]]),
+                }
             ),
             zero=jnp.asarray(0.0),
             states_actions_params=MappingProxyType({"income": jnp.asarray(3.0)}),
         )
         assert isinstance(result, tuple)
-        return result[0]
+        return result[0][..., 0]
 
     # Literal two-node probabilities for the four joint edge/neighbour rows.
     np.testing.assert_allclose(

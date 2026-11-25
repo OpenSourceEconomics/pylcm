@@ -156,7 +156,7 @@ def _assert_values(*, model: Model, alive: np.ndarray, final: np.ndarray) -> Non
     values = model.solve(params=_PARAMS, log_level="off").values
     for got, expected in ((values[0]["alive"], alive), (values[1]["final"], final)):
         assert jnp.issubdtype(got.dtype, jnp.floating)
-        np.testing.assert_array_equal(np.asarray(got), expected)
+        np.testing.assert_array_equal(np.asarray(got)[..., 0], expected)
 
 
 def _simulated(model: Model) -> pd.DataFrame:
@@ -354,7 +354,7 @@ def test_constant_discrete_next_state_names_a_code(*, form: str) -> None:
     values = _health_model(health_law=next_health).solve(
         params=_PARAMS, log_level="off"
     )
-    np.testing.assert_array_equal(values.values[0]["alive"], [1.0, 1.0])
+    np.testing.assert_array_equal(values.values[0]["alive"][..., 0], [1.0, 1.0])
 
 
 @pytest.mark.parametrize("form", ["int_array", "float_array"])
@@ -372,7 +372,7 @@ def test_integer_stochastic_weights_match_their_float_twin(*, form: str) -> None
     model = _health_model(health_law=StochasticTransition(func=next_health))
     values = model.solve(params=_PARAMS, log_level="off").values
     assert jnp.issubdtype(values[0]["alive"].dtype, jnp.floating)
-    np.testing.assert_array_equal(values[0]["alive"], [1.0, 1.0])
+    np.testing.assert_array_equal(values[0]["alive"][..., 0], [1.0, 1.0])
 
 
 @categorical(ordered=False)
@@ -426,7 +426,7 @@ def test_constant_per_target_regime_probability(*, form: str) -> None:
     )
     values = model.solve(params=_BRANCH_PARAMS, log_level="off").values
     assert jnp.issubdtype(values[0]["alive"].dtype, jnp.floating)
-    np.testing.assert_array_equal(values[0]["alive"], [1.0, 2.0])
+    np.testing.assert_array_equal(values[0]["alive"][..., 0], [1.0, 2.0])
     df = (
         model.simulate(
             params=_BRANCH_PARAMS,
@@ -456,7 +456,7 @@ def test_integer_regime_probability_vector(*, form: str) -> None:
 
     model = _regime_model(law=StochasticTransition(func=next_regime))
     values = model.solve(params=_BRANCH_PARAMS, log_level="off").values
-    np.testing.assert_array_equal(values[0]["alive"], [1.0, 2.0])
+    np.testing.assert_array_equal(values[0]["alive"][..., 0], [1.0, 2.0])
 
 
 @pytest.mark.parametrize("form", ["python_int", "int_array"])
@@ -470,7 +470,7 @@ def test_constant_deterministic_regime_code(*, form: str) -> None:
     values = _regime_model(law=next_regime).solve(
         params=_BRANCH_PARAMS, log_level="off"
     )
-    np.testing.assert_array_equal(values.values[0]["alive"], [1.0, 2.0])
+    np.testing.assert_array_equal(values.values[0]["alive"][..., 0], [1.0, 2.0])
 
 
 @pytest.mark.parametrize("form", ["python_float", "float_array"])
@@ -545,7 +545,7 @@ def test_constant_exit_utility_adjustment(*, form: str) -> None:
 
     model = _exit_model(adjustment=adjustment)
     values = model.solve(params={}, log_level="off")
-    np.testing.assert_array_equal(values.values[0]["source"], [1.0, 1.0, 2.0])
+    np.testing.assert_array_equal(values.values[0]["source"][..., 0], [1.0, 1.0, 2.0])
     df = model.simulate(
         params={},
         initial_conditions={
@@ -617,7 +617,7 @@ def test_constant_exit_projection_lands_on_its_float_node(*, form: str) -> None:
 
     model = _exit_model(adjustment=no_adjustment, projection=projection)
     values = model.solve(params={}, log_level="off").values
-    np.testing.assert_array_equal(values[0]["source"], [2.0, 2.0, 2.0])
+    np.testing.assert_array_equal(values[0]["source"][..., 0], [2.0, 2.0, 2.0])
 
 
 def test_boolean_exit_projection_is_refused() -> None:
@@ -722,7 +722,7 @@ def test_constant_exit_availability(
     model = _exit_model(
         adjustment=_no_adjustment, available=by_state if reads_state else constant
     )
-    values = model.solve(params={}, log_level="off").values[0]["source"]
+    values = model.solve(params={}, log_level="off").values[0]["source"][..., 0]
     np.testing.assert_array_equal(values, [1.0, 1.0, 2.0] if value else [1.0] * 3)
 
 
@@ -796,7 +796,7 @@ def _gate_model(*, predicate: UserFunction, fallback: UserFunction = _stay) -> M
 
 def _gated_values(model: Model) -> np.ndarray:
     values = model.solve(params={"discount_factor": 1.0}, log_level="off").values
-    return np.asarray(values[0]["source"])
+    return np.asarray(values[0]["source"])[..., 0]
 
 
 def _gated_landings(model: Model) -> pd.DataFrame:
@@ -1192,7 +1192,7 @@ def test_boolean_discrete_next_state_names_codes_zero_and_one() -> None:
     values = _health_model(health_law=next_health).solve(
         params=_PARAMS, log_level="off"
     )
-    np.testing.assert_array_equal(values.values[0]["alive"], [1.0, 1.0])
+    np.testing.assert_array_equal(values.values[0]["alive"][..., 0], [1.0, 1.0])
 
 
 def test_boolean_exit_utility_adjustment_is_refused() -> None:

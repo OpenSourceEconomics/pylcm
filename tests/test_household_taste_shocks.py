@@ -40,7 +40,7 @@ from lcm.typing import (
     UserFunction,
     UserParamsNode,
 )
-from tests.conftest import DECIMAL_PRECISION, assert_agrees_to_ulp
+from tests.conftest import DECIMAL_PRECISION
 from tests.simulation.initial_conditions.test_own_member_required import (
     ConsentRegimeId,
     _make_consent_regimes,
@@ -93,32 +93,6 @@ def _reference_household_V(
             at_best = np.take_along_axis(q[name], best_c[:, :, None], axis=2)[..., 0]
             values[name] = np.sum(probabilities * at_best, axis=1)
     return np.stack([values[name] for name in names], axis=-1)
-
-
-def test_household_of_one_decider_agrees_with_the_single() -> None:
-    """A household of one member with weight 1 has the single's smoothed value.
-
-    The same model written once with a plain utility and once as a household
-    of one: the published values agree to within 16 units in the last place.
-    """
-    single = taste_shocks_toy.get_model().solve(
-        params=taste_shocks_toy.get_params(
-            scale=_SCALE, discount_factor=_DISCOUNT_FACTOR
-        ),
-        log_level="debug",
-    )
-    household = taste_shocks_toy.get_household_model(weights={"x": 1.0}).solve(
-        params=taste_shocks_toy.get_household_params(
-            scale=_SCALE, discount_factor=_DISCOUNT_FACTOR
-        ),
-        log_level="debug",
-    )
-
-    assert_agrees_to_ulp(
-        got=np.asarray(household.values[0]["alive"])[..., 0],
-        expected=np.asarray(single.values[0]["alive"]),
-        n_ulp=16,
-    )
 
 
 @pytest.mark.parametrize(
@@ -444,7 +418,7 @@ def test_a_single_consents_on_the_values_of_a_taste_shock_household() -> None:
     )
 
     aaae(
-        solution.values[0]["single_f"],
+        solution.values[0]["single_f"][..., 0],
         [2.0 + scale * np.log1p(np.exp(1.0 / scale)), 2.0],
         decimal=DECIMAL_PRECISION,
     )

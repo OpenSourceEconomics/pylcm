@@ -227,7 +227,7 @@ def test_solve_stores_the_value_at_the_objective(*, agent: str, period: int) -> 
     beta_tilde = AGENTS[agent]
     solution = _model().solve(params=_params(beta_tilde=beta_tilde), log_level="off")
     assert_array_almost_equal(
-        solution.value(period=period, regime="decide"),
+        solution.value(period=period, regime="decide")[..., 0],
         _enumerate_values(beta_tilde=beta_tilde)[period],
         decimal=DECIMAL_PRECISION,
     )
@@ -260,22 +260,25 @@ def test_identical_objective_and_value_solve_like_the_plain_aggregator(
 
 
 @pytest.mark.parametrize("period", [0, 1])
-def test_tied_objective_takes_the_first_feasible_action(*, period: int) -> None:
-    """An objective tied across actions picks spend wherever it is feasible."""
+def test_tied_objective_takes_the_action_of_larger_stored_value(*, period: int) -> None:
+    """An objective tied across actions picks the action whose stored value is larger.
+
+    The household tie rule ranks tied actions by the member's own value, here
+    `long_run`; spending needs wealth, saving adds one unit up to the top.
+    """
     solution = _model(
         koopmans_aggregator=lcm.Decoupled(objective=indifferent, value=long_run)
     ).solve(
         params={"decide": {"koopmans_aggregator": {"delta": DELTA}}},
         log_level="off",
     )
-    next_values = (
-        TERMINAL_VALUES if period == 1 else np.array([0.9, 1.5, 2.4, 3.3])
-    )  # always spend at period 1
-    expected = [DELTA * next_values[1]] + [
-        SPEND_UTILITY + DELTA * next_values[w - 1] for w in (1, 2, 3)
+    next_values = TERMINAL_VALUES if period == 1 else np.array([0.9, 1.8, 3.6, 3.6])
+    save = [DELTA * next_values[min(w + 1, 3)] for w in range(4)]
+    expected = [save[0]] + [
+        max(SPEND_UTILITY + DELTA * next_values[w - 1], save[w]) for w in (1, 2, 3)
     ]
     assert_array_almost_equal(
-        solution.value(period=period, regime="decide"),
+        solution.value(period=period, regime="decide")[..., 0],
         expected,
         decimal=DECIMAL_PRECISION,
     )
@@ -392,7 +395,7 @@ def test_lookup_publishes_the_stored_value_of_the_choice(
     """The looked-up value is `u + δ·CE` at today's choice."""
     got = _lookup(keep_intermediates=keep_intermediates)
     assert_array_almost_equal(
-        got.value, NAIVE_LONG_RUN_VALUES, decimal=DECIMAL_PRECISION
+        got.value[..., 0], NAIVE_LONG_RUN_VALUES, decimal=DECIMAL_PRECISION
     )
 
 
@@ -518,7 +521,7 @@ def test_a_household_chooses_on_its_weighted_objectives(*, period: int) -> None:
         values[..., 0],
         single.solve(params=params, log_level="off").value(
             period=period, regime="decide"
-        ),
+        )[..., 0],
         decimal=DECIMAL_PRECISION,
     )
     df = _first_period(_simulate(model=household, params=params))
@@ -586,7 +589,7 @@ def test_a_state_read_only_by_the_objective_is_used() -> None:
         params={"decide": {"koopmans_aggregator": {"delta": DELTA}}}, log_level="off"
     )
     assert_array_almost_equal(
-        solution.value(period=1, regime="decide"),
+        solution.value(period=1, regime="decide")[..., 0],
         np.stack(
             [
                 _enumerate_values(beta_tilde=1.0)[1],
@@ -604,7 +607,7 @@ def test_a_state_read_only_by_the_koopmans_aggregator_is_used() -> None:
         params={"decide": {"koopmans_aggregator": {"delta": DELTA}}}, log_level="off"
     )
     assert_array_almost_equal(
-        solution.value(period=1, regime="decide")[:, Mood.patient],
+        solution.value(period=1, regime="decide")[:, Mood.patient, 0],
         _enumerate_values(beta_tilde=1.0)[1],
         decimal=DECIMAL_PRECISION,
     )
@@ -636,7 +639,7 @@ def test_a_labelled_objective_parameter_is_read_by_label() -> None:
         log_level="off",
     )
     assert_array_almost_equal(
-        solution.value(period=1, regime="decide")[:, Mood.impatient],
+        solution.value(period=1, regime="decide")[:, Mood.impatient, 0],
         _enumerate_values(beta_tilde=BETA)[1],
         decimal=DECIMAL_PRECISION,
     )
@@ -924,7 +927,7 @@ def test_ev1_solve_stores_the_expected_value_at_the_noisy_objective(
         params=_ev1_params(beta_tilde=beta_tilde), log_level="off"
     )
     assert_array_almost_equal(
-        solution.value(period=period, regime="decide"),
+        solution.value(period=period, regime="decide")[..., 0],
         _enumerate_ev1_values(beta_tilde=beta_tilde)[period],
         decimal=DECIMAL_PRECISION,
     )
@@ -1031,9 +1034,11 @@ def test_ev1_lookup_publishes_the_acting_selfs_choice_probabilities() -> None:
         decimal=DECIMAL_PRECISION,
     )
     assert_array_almost_equal(
-        cast("FloatND", got.Qc)[0], expected_qc, decimal=DECIMAL_PRECISION
+        cast("FloatND", got.Qc)[0, :, 0], expected_qc, decimal=DECIMAL_PRECISION
     )
-    assert_array_almost_equal(got.value, [expected_value], decimal=DECIMAL_PRECISION)
+    assert_array_almost_equal(
+        got.value[..., 0], [expected_value], decimal=DECIMAL_PRECISION
+    )
 
 
 def test_ev1_simulated_choices_follow_the_acting_selfs_probabilities() -> None:
@@ -1148,8 +1153,8 @@ def test_ev1_stored_value_survives_a_large_objective_translation(
         regime_name="decide",
         states={},
     )
-    assert float(np.asarray(solution.value(period=0, regime="decide"))) == 1.0
-    assert_array_equal(np.asarray(lookup.value), [1.0])
+    assert float(np.asarray(solution.value(period=0, regime="decide"))[..., 0]) == 1.0
+    assert_array_equal(np.asarray(lookup.value)[..., 0], [1.0])
 
 
 def _entropy_oracle(
@@ -1563,7 +1568,7 @@ def test_callable_floor_decoupled_keeps_objective_choice_and_stored_value(
         else 0.25
     )
     assert_array_almost_equal(
-        solution.value(period=0, regime="decide"),
+        solution.value(period=0, regime="decide")[..., 0],
         np.full((2, 2), expected_value),
         decimal=DECIMAL_PRECISION,
     )
@@ -1578,19 +1583,22 @@ def test_callable_floor_decoupled_keeps_objective_choice_and_stored_value(
     consumption = np.arange(0.25, 2.25, 0.25)
     Q = np.stack((consumption, consumption + 1.0))[None, ...]
     F = np.broadcast_to(consumption <= 0.5, Q.shape)
-    assert_array_almost_equal(got.value, [expected_value], decimal=DECIMAL_PRECISION)
-    assert_array_equal(got.Q, Q)
-    assert_array_equal(got.U, Q)
-    assert_array_equal(got.CE, np.zeros_like(Q))
+    assert_array_almost_equal(
+        got.value[..., 0], [expected_value], decimal=DECIMAL_PRECISION
+    )
+    # Every value intermediate carries the trailing member axis of `"self"`.
+    assert_array_equal(np.asarray(got.Q)[..., 0], Q)
+    assert_array_equal(np.asarray(got.U)[..., 0], Q)
+    assert_array_equal(np.asarray(got.CE)[..., 0], np.zeros_like(Q))
     assert_array_equal(got.F, F)
-    assert_array_equal(got.Q_objective, -Q)
+    assert_array_equal(np.asarray(got.Q_objective)[..., 0], -Q)
     if taste_shocks:
         assert_array_almost_equal(
             cast("FloatND", got.choice_probabilities)[0],
             probabilities,
             decimal=DECIMAL_PRECISION,
         )
-        assert_array_equal(cast("FloatND", got.Qc)[0], [0.25, 1.25])
+        assert_array_equal(cast("FloatND", got.Qc)[0, :, 0], [0.25, 1.25])
     else:
         assert got.actions is not None
         assert_array_equal(got.actions["choice"], [Choice.spend])

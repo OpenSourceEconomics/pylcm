@@ -144,7 +144,7 @@ def _reference_V() -> np.ndarray:
 def _active_V(model: Model) -> np.ndarray:
     """`active`'s value at period 0, axes reordered to `(wealth, zeta)`."""
     solution = model.solve(params=_params(), log_level="off")
-    V = np.asarray(solution.values[0]["active"])
+    V = np.asarray(solution.values[0]["active"])[..., 0]
     order = model.state_names(regime_name="active")
     return np.transpose(V, [order.index(name) for name in ("wealth", "zeta")])
 

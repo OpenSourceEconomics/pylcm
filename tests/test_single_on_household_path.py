@@ -1,27 +1,20 @@
-"""A single regime built through the household kernels as the household of `"self"`.
+"""A regime declared with a plain utility function is the household of `"self"`.
 
-The private switch `_SINGLE_ON_HOUSEHOLD_PATH` in
-`_lcm.regime_building.processing` builds every regime declared with a plain
-utility function as a household whose one member `"self"` carries Pareto weight
-1.0. Its value arrays then carry a trailing member axis of length one; its
-simulated frame keeps the short names of a single.
+Its one member `"self"` carries Pareto weight 1.0. Its value arrays carry a
+trailing member axis of length one; its simulated frame and its names keep the
+short forms: `value`, no `own_member`, `V_target`.
 """
 
 import copy
 import functools
 from collections.abc import Callable
-from types import MappingProxyType
 from typing import Literal, cast
 
 import jax.numpy as jnp
-import numpy as np
-import pandas as pd
 import pytest
 
-from _lcm.regime_building import processing
 from _lcm.regime_building.collective import NO_ROLE, build_role_vocabulary
 from _lcm.simulation.gated_routing import _role_code
-from _lcm.solution.grid_search import _GridSearchPeriodKernel
 from _lcm_regime_finder.model_adapter import adapt_snapshot
 from _lcm_regime_finder.model_snapshot import read_model
 from _lcm_regime_finder.records import JSONValue
@@ -42,7 +35,7 @@ from lcm.result import SimulationResult
 from lcm.solver_api import SolutionResult
 from lcm.solvers import EGM
 from lcm.taste_shocks import ExtremeValueTasteShocks
-from lcm.typing import FloatND, IntND, RegimeName, UserParamsNode
+from lcm.typing import FloatND, IntND, UserParamsNode
 from lcm_examples import (
     collective_household,
     epstein_zin,
@@ -50,14 +43,11 @@ from lcm_examples import (
     stochastic_volatility,
 )
 from tests import test_transition_roles as single_to_household
-from tests.conftest import assert_agrees_to_ulp
 from tests.regime_building import test_additive_shock_transition as additive_shock
 from tests.regime_building import test_gate_shared_fallback as household_to_single
 from tests.regime_building import test_gated_edge_params_are_per_edge as single_gate
 from tests.solution import test_decoupled as decoupled
 from tests.solution import test_egm_solver as egm_closed_form
-from tests.solution.test_fingerprint_pin import _MODELS as PINNED_MODELS
-from tests.solution.test_fingerprint_pin import _pinned
 from tests.solution.test_mutual_consent_settlement import _Singleton
 from tests.test_models import (
     n_nbegm_toy,
@@ -441,256 +431,81 @@ _CASES: dict[str, Callable[[], Case]] = {
 }
 
 
-def _solve_and_simulate(
-    *, name: str, on_household_path: bool
-) -> tuple[SolutionResult, SimulationResult]:
-    """Build the case afresh with the switch set, then solve and simulate it."""
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(processing, "_SINGLE_ON_HOUSEHOLD_PATH", on_household_path)
-        model, params, initial_conditions = _CASES[name]()
-        solution = model.solve(params=params, log_level="off")
-        simulation = model.simulate(
-            params=params,
-            initial_conditions=initial_conditions,
-            solution=solution,
-            log_level="off",
-            seed=_SEED,
-        )
-    return solution, simulation
+type _Run = tuple[Model, SolutionResult, SimulationResult]
 
 
-class _Runs(dict[tuple[str, bool], tuple[SolutionResult, SimulationResult]]):
+def _solve_and_simulate(*, name: str) -> _Run:
+    """Build the case, then solve and simulate it."""
+    model, params, initial_conditions = _CASES[name]()
+    solution = model.solve(params=params, log_level="off")
+    simulation = model.simulate(
+        params=params,
+        initial_conditions=initial_conditions,
+        solution=solution,
+        log_level="off",
+        seed=_SEED,
+    )
+    return model, solution, simulation
+
+
+class _Runs(dict[str, _Run]):
     """Each case solved and simulated on first use, so one failing case fails alone."""
 
-    def __missing__(
-        self, key: tuple[str, bool]
-    ) -> tuple[SolutionResult, SimulationResult]:
-        name, on_household_path = key
-        self[key] = _solve_and_simulate(name=name, on_household_path=on_household_path)
+    def __missing__(self, key: str) -> _Run:
+        self[key] = _solve_and_simulate(name=key)
         return self[key]
 
 
 @pytest.fixture(scope="module")
-def runs() -> dict[tuple[str, bool], tuple[SolutionResult, SimulationResult]]:
-    """Each case solved and simulated once with the switch off and once on."""
+def runs() -> dict[str, _Run]:
+    """Each case solved and simulated once."""
     return _Runs()
 
 
-def _value_shapes(
-    solution: SolutionResult,
-) -> MappingProxyType[int, MappingProxyType[str, tuple[int, ...]]]:
-    return MappingProxyType(
-        {
-            period: MappingProxyType(
-                {regime: tuple(np.shape(v)) for regime, v in values.items()}
-            )
-            for period, values in solution.values.items()
-        }
-    )
-
-
-def _is_declared_household(
-    *, solution: SolutionResult, period: int, regime: RegimeName
-) -> bool:
-    """Whether the switch-off value array already carries the member axis."""
-    return "member" in solution.value_array(period=period, regime=regime).dims
-
-
 @pytest.mark.parametrize("name", sorted(_CASES))
-def test_single_on_household_path_values_carry_a_member_axis_of_length_one(
-    *,
-    name: str,
-    runs: dict[tuple[str, bool], tuple[SolutionResult, SimulationResult]],
+def test_every_value_array_ends_in_the_members_of_its_regime(
+    *, name: str, runs: dict[str, _Run]
 ) -> None:
-    """Every single's value array gains one trailing axis of length one.
+    """The trailing value axis is `member`, its coordinates the regime's members."""
+    model, solution, _ = runs[name]
+    members = {regime: user.members for regime, user in model.user_regimes.items()}
 
-    A declared household's array keeps its shape.
-    """
-    solution = runs[name, False][0]
-    single = _value_shapes(solution)
-    expected = {
-        period: {
-            regime: shape
-            if _is_declared_household(solution=solution, period=period, regime=regime)
-            else (*shape, 1)
-            for regime, shape in shapes.items()
-        }
-        for period, shapes in single.items()
+    got = {
+        (period, regime): (
+            solution.value_array(period=period, regime=regime).dims[-1],
+            tuple(
+                solution.value_array(period=period, regime=regime)
+                .coords["member"]
+                .values.tolist()
+            ),
+        )
+        for period, values in solution.values.items()
+        for regime in values
     }
 
-    got = _value_shapes(runs[name, True][0])
-
-    assert got == expected
-
-
-@pytest.mark.parametrize("name", sorted(_CASES))
-def test_single_on_household_path_names_its_member_self(
-    *,
-    name: str,
-    runs: dict[tuple[str, bool], tuple[SolutionResult, SimulationResult]],
-) -> None:
-    """The trailing value axis is the dimension `member` with coordinate `self`."""
-    single = runs[name, False][0]
-    solution = runs[name, True][0]
-    period, regime = min(
-        (period, regime)
-        for period, values in single.values.items()
-        for regime in values
-        if not _is_declared_household(solution=single, period=period, regime=regime)
-    )
-
-    array = solution.value_array(period=period, regime=regime)
-
-    assert array.coords["member"].values.tolist() == ["self"]
-
-
-@pytest.mark.parametrize("name", sorted(_CASES))
-def test_single_on_household_path_simulates_with_the_short_value_column(
-    *,
-    name: str,
-    runs: dict[tuple[str, bool], tuple[SolutionResult, SimulationResult]],
-) -> None:
-    """The frame has the single's columns: `value`, no `value_self`, no `own_member`."""
-    single = runs[name, False][1].to_dataframe()
-
-    frame = runs[name, True][1].to_dataframe()
-
-    assert list(frame.columns) == list(single.columns)
-
-
-@pytest.mark.parametrize("name", sorted(_CASES))
-def test_single_on_household_path_simulates_the_same_discrete_choices(
-    *,
-    name: str,
-    runs: dict[tuple[str, bool], tuple[SolutionResult, SimulationResult]],
-) -> None:
-    """With one seed, the discrete actions, states and regimes are the single's."""
-    single = runs[name, False][1].to_dataframe()
-    frame = runs[name, True][1].to_dataframe()
-    discrete = [
-        column
-        for column in single.columns
-        if isinstance(single[column].dtype, pd.CategoricalDtype)
-    ]
-
-    pd.testing.assert_frame_equal(frame[discrete], single[discrete])
-
-
-def test_collective_household_cohort_forms_and_dissolves_couples(
-    runs: dict[tuple[str, bool], tuple[SolutionResult, SimulationResult]],
-) -> None:
-    """The compared frames contain a consented formation and a dissolution."""
-    frame = (
-        runs["collective_household", False][1]
-        .to_dataframe()
-        .sort_values(["subject_id", "period"])
-    )
-    regime = frame["regime_name"].astype(str)
-    previous = regime.groupby(frame["subject_id"]).shift()
-    singles = ["single_f", "single_m"]
-
-    assert (previous.isin(singles) & (regime == "couple")).any()
-    assert ((previous == "couple") & regime.isin(singles)).any()
+    assert got == {
+        (period, regime): ("member", members[regime]) for period, regime in got
+    }
 
 
 @pytest.mark.parametrize(
-    ("name", "branches"),
-    [
-        ("gate_single_to_single", {"target", "fallback"}),
-        ("single_exit_each_action", {"source", "target"}),
-        ("single_exit_at_optimum", {"source", "target"}),
-        ("single_exit_taste_shocks", {"source", "target"}),
-    ],
+    "name",
+    ["gate_single_to_single", "single_exit_each_action", "single_exit_at_optimum"],
 )
-def test_compared_frames_take_both_branches(
-    *,
-    name: str,
-    branches: set[str],
-    runs: dict[tuple[str, bool], tuple[SolutionResult, SimulationResult]],
+def test_a_model_of_singles_simulates_with_value_and_no_own_member(
+    *, name: str, runs: dict[str, _Run]
 ) -> None:
-    """The compared frames hold rows down the open and the closed branch."""
-    frame = runs[name, False][1].to_dataframe()
+    """A model of singles publishes the column `value` and no `own_member`."""
+    columns = set(runs[name][2].to_dataframe().columns)
 
-    assert branches <= set(frame["regime_name"].astype(str))
-
-
-@pytest.mark.parametrize("name", sorted(_CASES))
-def test_single_on_household_path_values_agree_with_the_single_to_16_ulp(
-    *,
-    name: str,
-    runs: dict[tuple[str, bool], tuple[SolutionResult, SimulationResult]],
-) -> None:
-    """Every value is within 16 ULP, at the model's value scale, of the single's."""
-    solution = runs[name, False][0]
-    single = solution.values
-    household = runs[name, True][0].values
-    magnitude = max(
-        float(np.nanmax(np.abs(np.where(np.isfinite(v), v, np.nan))))
-        for values in single.values()
-        for v in values.values()
-        if np.isfinite(v).any()
-    )
-
-    for period, values in single.items():
-        for regime, expected in values.items():
-            got = np.asarray(household[period][regime])
-            if not _is_declared_household(
-                solution=solution, period=period, regime=regime
-            ):
-                got = got[..., 0]
-            assert_agrees_to_ulp(
-                got=got,
-                expected=np.asarray(expected),
-                n_ulp=16,
-                operand_magnitude=magnitude,
-                err_msg=f"period {period}, regime {regime!r}",
-            )
+    assert ("value" in columns, "own_member" in columns) == (True, False)
 
 
-def test_switch_off_keeps_the_pinned_fingerprint() -> None:
-    """With the switch off, a single-agent model keeps its checked-in fingerprint."""
-    fingerprint = PINNED_MODELS["multi_regime_normal"]()._model_structure_fingerprint
-
-    assert fingerprint == _pinned()["multi_regime_normal"]
-
-
-def test_switch_on_solves_a_single_with_current_shocks_by_grid_search() -> None:
-    """A single observing current-period shocks keeps its grid-search kernels."""
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(processing, "_SINGLE_ON_HOUSEHOLD_PATH", True)
-        model = _stochastic_volatility()[0]
-
-    kernels = model._regimes["alive"].solution.period_kernels
-
-    assert model._regimes["alive"].member_axis == ("self",)
-    assert kernels
-    assert all(
-        isinstance(kernel, _GridSearchPeriodKernel) for kernel in kernels.values()
-    )
-
-
-def test_switch_on_gives_the_engine_regime_the_member_self() -> None:
+def test_the_engine_regime_of_a_single_carries_the_member_self() -> None:
     """The engine regime of a single carries the member axis `("self",)`."""
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(processing, "_SINGLE_ON_HOUSEHOLD_PATH", True)
-        model = taste_shocks_toy.get_model()
+    model = taste_shocks_toy.get_model()
 
     assert model._regimes["alive"].member_axis == ("self",)
-
-
-def _build(*, name: str, on_household_path: bool) -> Case:
-    """Build the case afresh with the switch set, without solving it."""
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(processing, "_SINGLE_ON_HOUSEHOLD_PATH", on_household_path)
-        return _CASES[name]()
-
-
-_GATE_CASES = (
-    "gate_household_to_single",
-    "gate_single_to_household_member_route",
-    "gate_single_to_household_roles",
-    "gate_single_to_single",
-)
 
 
 def test_role_vocabulary_gives_the_member_self_no_role() -> None:
@@ -705,33 +520,6 @@ def test_role_vocabulary_gives_the_member_self_no_role() -> None:
 def test_gated_route_of_the_member_self_carries_no_role() -> None:
     """A leg naming the member `"self"` routes a row with the no-role code."""
     assert _role_code(name="self", role_ids={"f": 0, "m": 1}) == NO_ROLE
-
-
-@pytest.mark.parametrize("name", sorted(_CASES))
-def test_switch_on_keeps_the_params_template(name: str) -> None:
-    """A single's parameters keep their short keys, such as `utility__<name>`."""
-    single = _build(name=name, on_household_path=False)[0].get_params_template()
-
-    template = _build(name=name, on_household_path=True)[0].get_params_template()
-
-    assert template == single
-
-
-def _snapshot_records(model: Model) -> dict[str, JSONValue]:
-    """The regime finder's records of a model, without the capture's timings."""
-    records = read_model(model)
-    del records["capture_report"]
-    return records
-
-
-@pytest.mark.parametrize("name", _GATE_CASES)
-def test_switch_on_keeps_the_regime_finder_records(name: str) -> None:
-    """The regime finder records a model the same with the switch on or off."""
-    single = _snapshot_records(_build(name=name, on_household_path=False)[0])
-
-    records = _snapshot_records(_build(name=name, on_household_path=True)[0])
-
-    assert records == single
 
 
 def _adapted_without_input_digest(snapshot: dict[str, JSONValue]) -> JSONValue:
@@ -749,7 +537,7 @@ def test_regime_finder_reads_a_recorded_member_self_as_an_individual(
     name: str,
 ) -> None:
     """A regime recorded with the one member `"self"` adapts as an individual."""
-    snapshot = read_model(_build(name=name, on_household_path=False)[0])
+    snapshot = read_model(_CASES[name]()[0])
     with_self = copy.deepcopy(snapshot)
     for regime in cast(
         "dict[str, dict[str, dict[str, JSONValue]]]", with_self["user_regimes"]
@@ -762,24 +550,9 @@ def test_regime_finder_reads_a_recorded_member_self_as_an_individual(
     assert adapted == _adapted_without_input_digest(snapshot)
 
 
-@pytest.mark.parametrize(
-    "name",
-    ["gate_single_to_single", "single_exit_each_action", "single_exit_at_optimum"],
-)
-def test_switch_on_simulates_a_single_with_value_and_no_own_member(
-    *,
-    name: str,
-    runs: dict[tuple[str, bool], tuple[SolutionResult, SimulationResult]],
-) -> None:
-    """A model of singles publishes the column `value` and no `own_member`."""
-    columns = set(runs[name, True][1].to_dataframe().columns)
-
-    assert ("value" in columns, "own_member" in columns) == (True, False)
-
-
-def test_switch_on_names_the_gate_component_of_a_single_target_v_target() -> None:
+def test_the_gate_component_of_a_single_target_is_v_target() -> None:
     """The gated edge into a single reads the target's value as `V_target`."""
-    model = _build(name="gate_single_to_single", on_household_path=True)[0]
+    model = _gate_single_to_single()[0]
     folds = model._regimes["source"].gated_edges["target"].folds_by_period
 
     assert {fold.channels.component_names for fold in folds.values()} == {("V_target",)}
@@ -789,25 +562,17 @@ def _without_own_member(initial_conditions: InitialConditions) -> InitialConditi
     return {k: v for k, v in initial_conditions.items() if k != "own_member"}
 
 
-@pytest.mark.parametrize("on_household_path", [False, True])
-def test_singles_start_without_own_member(*, on_household_path: bool) -> None:
+def test_singles_start_without_own_member() -> None:
     """Subjects that all start single need no `own_member`."""
-    model, params, initial_conditions = _build(
-        name="collective_household", on_household_path=on_household_path
-    )
+    model, params, initial_conditions = _collective_household()
     singles = {k: v[:32] for k, v in _without_own_member(initial_conditions).items()}
 
     model.validate_initial_conditions(initial_conditions=singles, params=params)
 
 
-@pytest.mark.parametrize("on_household_path", [False, True])
-def test_a_household_start_still_requires_own_member(
-    *, on_household_path: bool
-) -> None:
+def test_a_household_start_still_requires_own_member() -> None:
     """Subjects starting in a couple that can dissolve must name their role."""
-    model, params, initial_conditions = _build(
-        name="collective_household", on_household_path=on_household_path
-    )
+    model, params, initial_conditions = _collective_household()
 
     with pytest.raises(InvalidInitialConditionsError, match="need an `own_member`"):
         model.validate_initial_conditions(
@@ -815,14 +580,9 @@ def test_a_household_start_still_requires_own_member(
         )
 
 
-@pytest.mark.parametrize("on_household_path", [False, True])
-def test_a_single_start_is_not_checked_against_a_role(
-    *, on_household_path: bool
-) -> None:
+def test_a_single_start_is_not_checked_against_a_role() -> None:
     """The member `"self"` is no role, so a single's row is not role-checked."""
-    model, params, initial_conditions = _build(
-        name="collective_household", on_household_path=on_household_path
-    )
+    model, params, initial_conditions = _collective_household()
     wives = dict(initial_conditions)
     wives["own_member"] = jnp.full_like(
         initial_conditions["own_member"], model.member_names_to_ids["f"]

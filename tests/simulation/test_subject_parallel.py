@@ -4,7 +4,7 @@ import gc
 import inspect
 import weakref
 from types import MappingProxyType
-from typing import cast
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -89,7 +89,7 @@ def test_native_action_partition_replicates_active_owner_integrity(
         axis_name=ACTION_PARTITION_AXIS,
     )
 
-    def local_flags():
+    def local_flags() -> tuple[jax.Array, jax.Array]:
         local = partitioned.local(
             partition=jax.lax.axis_index(ACTION_PARTITION_AXIS).astype(jnp.int32),
             **arguments,
@@ -154,11 +154,16 @@ def test_public_subject_sharding_keeps_callable_floor_integrity(
     )
     params = {"discount_factor": 1.0}
     solution = model.solve(params=params, log_level="off")
-    np.testing.assert_allclose(solution.values[1]["saving"], [[1.0, 1.0], [2.0, 2.0]])
+    np.testing.assert_allclose(
+        np.asarray(solution.values[1]["saving"])[..., 0], [[1.0, 1.0], [2.0, 2.0]]
+    )
     observed = []
     dispatch = SimulationRuntime.dispatch
 
-    def observe(self: SimulationRuntime, **kwargs):
+    def observe(
+        self: SimulationRuntime,
+        **kwargs: Any,  # noqa: PAN002 - forwards whatever dispatch receives
+    ) -> PytreeValue:
         result = dispatch(self, **kwargs)
         if self.execution.simulation_sharding == "subjects":
             scalar_flags = tuple(

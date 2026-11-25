@@ -494,6 +494,7 @@ def _same_period_wbar(
             for arg in reader.other_args
         },
     )
+    # The source has one member, so `Wbar` is its slice of the member axis.
     return combine(
         **{EDGE_CHANNELS_ARG: channels},
         **projected,
@@ -502,7 +503,7 @@ def _same_period_wbar(
             for name in get_union_of_args([combine])
             if name != EDGE_CHANNELS_ARG and name not in projected
         },
-    )
+    )[..., 0]
 
 
 def _same_period_channels(

@@ -995,11 +995,11 @@ def test_the_two_regimes_take_meshes_of_their_own_extents(
 def test_each_regimes_value_leads_with_its_own_category_axis(
     two_axis: _PlacementReport,
 ) -> None:
-    """A regime's value carries the axis of the state it retains, and no other."""
+    """A regime's value carries the axis of the state it retains and its member axis."""
     assert (
         two_axis["value_shapes"]["working"],
         two_axis["value_shapes"]["retired"],
-    ) == ([_A_EXTENT, _N_WEALTH], [_B_EXTENT, _N_WEALTH])
+    ) == ([_A_EXTENT, _N_WEALTH, 1], [_B_EXTENT, _N_WEALTH, 1])
 
 
 def test_a_value_stored_on_another_mesh_is_read_as_a_cross_mesh_copy(

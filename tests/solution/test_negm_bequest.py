@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from lcm import Model
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models import negm_bequest_toy
 
@@ -19,29 +20,29 @@ pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_R
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
 
 
-def _solve_period0_alive(model) -> jnp.ndarray:
+def _solve_period0_alive(model: Model) -> jnp.ndarray:
     return model.solve(params=_PARAMS, log_level="debug").values[0]["alive"]
 
 
-def test_negm_solves_with_a_two_continuous_state_terminal_bequest():
+def test_negm_solves_with_a_two_continuous_state_terminal_bequest() -> None:
     """The bequest NEGM model solves to a finite, well-shaped value array.
 
     The terminal `dead` regime carries both `wealth` and `illiquid`; the EGM
     parent reads the durable as a passive leading axis of the terminal carry.
     """
     v0 = _solve_period0_alive(negm_bequest_toy.build_negm_model())
-    assert v0.shape == (negm_bequest_toy.N_X, negm_bequest_toy.N_Z)
+    assert v0.shape == (negm_bequest_toy.N_X, negm_bequest_toy.N_Z, 1)
     assert bool(jnp.all(jnp.isfinite(v0)))
 
 
-def test_negm_value_is_monotone_increasing_in_both_assets():
+def test_negm_value_is_monotone_increasing_in_both_assets() -> None:
     """The period-0 value rises with both liquid wealth and the durable stock."""
     v0 = _solve_period0_alive(negm_bequest_toy.build_negm_model())
     assert bool(jnp.all(jnp.diff(v0, axis=0) >= -1e-6))
     assert bool(jnp.all(jnp.diff(v0, axis=1) >= -1e-6))
 
 
-def test_negm_value_matches_the_dense_brute_optimum():
+def test_negm_value_matches_the_dense_brute_optimum() -> None:
     """NEGM reproduces the dense grid-search optimum within the grid band."""
     v_negm = np.asarray(_solve_period0_alive(negm_bequest_toy.build_negm_model()))
     v_brute = np.asarray(_solve_period0_alive(negm_bequest_toy.build_brute_model()))

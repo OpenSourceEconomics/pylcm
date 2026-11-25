@@ -153,7 +153,7 @@ def _solve(*, node_is_reachable: bool) -> FloatND:
         )
         .values
     )
-    return jnp.asarray(V[0]["alive"])
+    return jnp.asarray(V[0]["alive"])[..., 0]
 
 
 def test_the_witness_rests_on_a_joint_node_below_the_normal_range() -> None:

@@ -257,7 +257,7 @@ def test_a_shock_read_only_as_its_draw_leaves_no_axis_in_any_period(
     values = _alive_values(_model(as_state=as_state))
     shapes = {period: V.shape for period, V in values.items()}
 
-    assert shapes == dict.fromkeys((0, 1, 2), (len(WEALTH_GRID.to_jax()),))
+    assert shapes == dict.fromkeys((0, 1, 2), (len(WEALTH_GRID.to_jax()), 1))
 
 
 @pytest.mark.parametrize("as_state", [False, True], ids=["group", "iid-state"])
@@ -267,7 +267,9 @@ def test_the_integrated_value_matches_the_literal_backward_induction(
 ) -> None:
     V = _alive_values(_model(as_state=as_state))[period]
 
-    np.testing.assert_allclose(V, _reference_alive_values()[period], rtol=0, atol=_ATOL)
+    np.testing.assert_allclose(
+        V[..., 0], _reference_alive_values()[period], rtol=0, atol=_ATOL
+    )
 
 
 def test_the_model_repr_lists_the_integrated_shock() -> None:

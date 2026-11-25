@@ -13,6 +13,7 @@ from pathlib import Path
 
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 
@@ -31,7 +32,12 @@ from lcm import (
     fixed_transition,
 )
 from lcm.persistence import load_solution, save_solution
-from lcm.solver_api import SIMULATION_POLICY, PersistencePolicy, ResultRetention
+from lcm.solver_api import (
+    SIMULATION_POLICY,
+    PersistencePolicy,
+    ResultRetention,
+    SolutionResult,
+)
 from lcm.solvers import NBEGM
 from lcm.typing import (
     ContinuousAction,
@@ -172,19 +178,25 @@ def _initial_conditions(
     return conditions
 
 
-def _simulate(*, model: Model, ride: str, n_subjects: int = 200, **kwargs):
+def _simulate(
+    *,
+    model: Model,
+    ride: str,
+    n_subjects: int = 200,
+    solution: SolutionResult | None = None,
+) -> pd.DataFrame:
     """Panel of a simulate run, sorted by subject and period."""
     frame = model.simulate(
         params={},
         initial_conditions=_initial_conditions(ride=ride, n_subjects=n_subjects),
         seed=0,
         log_level="off",
-        **kwargs,
+        solution=solution,
     ).to_dataframe(use_categorical_codes=True)
     return frame.sort_values(["subject_id", "period"]).reset_index(drop=True)
 
 
-def _resources(*, first, ride: str) -> np.ndarray:
+def _resources(*, first: pd.DataFrame, ride: str) -> np.ndarray:
     wealth = first["wealth"].to_numpy(dtype=float)
     if ride == "health":
         return wealth + 2.0 + 0.5 * first["health"].to_numpy(dtype=float)
@@ -330,7 +342,7 @@ def test_lookup_policy_on_nbegm_returns_the_simulated_decision() -> None:
     )
     for got, expected in (
         (lookup.actions["consumption"], first["consumption"]),
-        (lookup.value, first["value"]),
+        (lookup.value[..., 0], first["value"]),
     ):
         reference = expected.to_numpy(dtype=float)
         rtol, atol = invariance_tolerances(reference)

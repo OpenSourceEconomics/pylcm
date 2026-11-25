@@ -1,5 +1,6 @@
 """Test analytical solution and simulation with only discrete, deterministic actions."""
 
+from collections.abc import Mapping
 from typing import cast
 
 import jax.numpy as jnp
@@ -7,6 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
+from numpy.typing import NDArray
 from pandas.testing import assert_frame_equal
 
 from lcm import (
@@ -25,9 +27,12 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FloatND,
+    ScalarFloat,
     ScalarInt,
 )
 from tests.conftest import DECIMAL_PRECISION
+
+type AnalyticalParams = Mapping[str, float | ScalarFloat]
 
 
 @categorical(ordered=False)
@@ -98,18 +103,27 @@ alive_deterministic = UserRegime(
     },
 )
 
+
+def zero_utility() -> FloatND:
+    return jnp.asarray(0.0)
+
+
 dead = UserRegime(
-    functions={"utility": lambda: 0.0},
+    functions={"utility": zero_utility},
 )
 
 
-def value_second_period_deterministic(wealth):
+def value_second_period_deterministic(
+    wealth: NDArray[np.floating],
+) -> NDArray[np.floating]:
     """Value function in the second (last) period. Computed using pen and paper."""
     consumption = np.minimum(1, np.floor(wealth))
     return np.log(1 + consumption)
 
 
-def policy_second_period_deterministic(wealth):
+def policy_second_period_deterministic(
+    wealth: NDArray[np.floating],
+) -> dict[str, NDArray[np.integer]]:
     """Policy function in the second (last) period. Computed using pen and paper.
 
     First column corresponds to consumption choice, second to work choice.
@@ -123,7 +137,9 @@ def policy_second_period_deterministic(wealth):
     )
 
 
-def value_first_period_deterministic(*, wealth, params):
+def value_first_period_deterministic(
+    *, wealth: NDArray[np.floating], params: AnalyticalParams
+) -> NDArray[np.floating]:
     """Value function in the first period. Computed using pen and paper."""
     index = np.floor(wealth).astype(int)  # map wealth to index 0, 1 and 2
     values = np.array(
@@ -136,7 +152,9 @@ def value_first_period_deterministic(*, wealth, params):
     return values[index]
 
 
-def policy_first_period_deterministic(*, wealth, params):
+def policy_first_period_deterministic(
+    *, wealth: NDArray[np.floating], params: AnalyticalParams
+) -> dict[str, NDArray[np.integer]]:
     """Policy function in the first period. Computed using pen and paper."""
     index = np.floor(wealth).astype(int)  # map wealth to indices 0, 1 and 2
     policies = np.array(
@@ -153,13 +171,17 @@ def policy_first_period_deterministic(*, wealth, params):
     )
 
 
-def analytical_solve_deterministic(*, wealth_grid, params):
+def analytical_solve_deterministic(
+    *, wealth_grid: NDArray[np.floating], params: AnalyticalParams
+) -> list[NDArray[np.floating]]:
     V_arr_0 = value_first_period_deterministic(wealth=wealth_grid, params=params)
     V_arr_1 = value_second_period_deterministic(wealth_grid)
     return [V_arr_0, V_arr_1]
 
 
-def analytical_simulate_deterministic(*, initial_wealth, params):
+def analytical_simulate_deterministic(
+    *, initial_wealth: NDArray[np.floating], params: AnalyticalParams
+) -> pd.DataFrame:
     """Compute analytical simulation results in the same format as to_dataframe().
 
     Returns DataFrame with columns: period, subject_id, regime_name, value, wealth,
@@ -172,8 +194,8 @@ def analytical_simulate_deterministic(*, initial_wealth, params):
     V_arr_0 = value_first_period_deterministic(wealth=initial_wealth, params=params)
     policy_0 = policy_first_period_deterministic(wealth=initial_wealth, params=params)
 
-    # Period 1
-    wealth_1 = next_wealth(wealth=initial_wealth, **policy_0)
+    # Period 1: the wealth law `next_wealth`, evaluated on the numpy arrays
+    wealth_1 = initial_wealth - policy_0["consumption"] + policy_0["labor_supply"]
     V_arr_1 = value_second_period_deterministic(wealth_1)
     policy_1 = policy_second_period_deterministic(wealth_1)
 
@@ -210,7 +232,9 @@ def analytical_simulate_deterministic(*, initial_wealth, params):
     return df.sort_values(["subject_id", "period"]).reset_index(drop=True)
 
 
-def matrix_to_dict_of_vectors(*, arr, col_names):
+def matrix_to_dict_of_vectors(
+    *, arr: NDArray[np.integer], col_names: list[str]
+) -> dict[str, NDArray[np.integer]]:
     """Transform a matrix into a dict of vectors."""
     if arr.ndim != 2:
         raise ValueError("arr must be a two-dimensional array (matrix).")
@@ -225,14 +249,16 @@ THREE_PERIOD_EDGES = {
 }
 
 
-def dict_of_vectors_to_matrix(d):
+def dict_of_vectors_to_matrix(
+    d: Mapping[str, NDArray[np.integer]],
+) -> NDArray[np.integer]:
     """Transform a dict of vectors into a matrix."""
     return np.column_stack(list(d.values()))
 
 
 @pytest.mark.parametrize("discount_factor", [0.0, 0.5, 0.9, 1.0])
 @pytest.mark.parametrize("n_wealth_points", [100, 1_000])
-def test_deterministic_solve(*, discount_factor, n_wealth_points):
+def test_deterministic_solve(*, discount_factor: float, n_wealth_points: int) -> None:
     n_periods = 3
     ages = AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y")
     new_states = dict(alive_deterministic.states)
@@ -268,7 +294,7 @@ def test_deterministic_solve(*, discount_factor, n_wealth_points):
         stop=wealth_grid_class.stop,
         num=wealth_grid_class.n_points,
     )
-    analytical_params = {"discount_factor": discount_factor, **params_alive}
+    analytical_params = {"discount_factor": discount_factor}
     expected = analytical_solve_deterministic(
         wealth_grid=wealth_grid, params=analytical_params
     )
@@ -276,16 +302,18 @@ def test_deterministic_solve(*, discount_factor, n_wealth_points):
     # Do not assert that in the first period, the arrays have the same values on the
     # first and last index: TODO (@timmens): THIS IS A BUG AND NEEDS TO BE INVESTIGATED.
     aaae(
-        got[0]["alive"][slice(1, -1)],
+        got[0]["alive"][slice(1, -1), 0],
         expected[0][slice(1, -1)],
         decimal=DECIMAL_PRECISION,
     )
-    aaae(got[1]["alive"], expected[1], decimal=DECIMAL_PRECISION)
+    aaae(got[1]["alive"][..., 0], expected[1], decimal=DECIMAL_PRECISION)
 
 
 @pytest.mark.parametrize("discount_factor", [0.0, 0.5, 0.9, 1.0])
 @pytest.mark.parametrize("n_wealth_points", [100, 1_000])
-def test_deterministic_simulate(*, discount_factor, n_wealth_points):
+def test_deterministic_simulate(
+    *, discount_factor: float, n_wealth_points: int
+) -> None:
     n_periods = 3
     ages = AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y")
     new_states = dict(alive_deterministic.states)
@@ -327,7 +355,7 @@ def test_deterministic_simulate(*, discount_factor, n_wealth_points):
         .reset_index(drop=True)
     )
 
-    analytical_params = {"discount_factor": discount_factor, **params_alive}
+    analytical_params = {"discount_factor": discount_factor}
     expected = analytical_simulate_deterministic(
         initial_wealth=np.array([0.25, 0.75, 1.25, 1.75]),
         params=analytical_params,

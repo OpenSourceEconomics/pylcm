@@ -21,7 +21,7 @@ import pandas as pd
 import pytest
 
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.regime_building.Q_and_F import _QAndF
+from _lcm.regime_building.Q_and_F import _CollectiveQAndF
 from _lcm.simulation.programs import _StreamedArgmaxQOverA, _SubjectTiled
 from _lcm.typing import (
     FlatParams,
@@ -105,7 +105,13 @@ def _unwrap(
         elif inspect.ismethod(function):
             owner = function.__self__
             assert isinstance(
-                owner, (_SubjectTiled, _StreamedArgmaxQOverA, _QAndF, LinearAggregator)
+                owner,
+                (
+                    _SubjectTiled,
+                    _StreamedArgmaxQOverA,
+                    _CollectiveQAndF,
+                    LinearAggregator,
+                ),
             )
             function = owner
         else:
@@ -117,21 +123,21 @@ def _unwrap(
 
 def _decision_q(
     function: Callable[..., PytreeValue],
-) -> tuple[_QAndF, dict[str, QAndFArg]]:
+) -> tuple[_CollectiveQAndF, dict[str, QAndFArg]]:
     """Reach the declared streamed decision's original canonical Q functor."""
     subject, bound = _unwrap(function)
     assert isinstance(subject, _SubjectTiled)
     reducer, reducer_bound = _unwrap(subject.func)
     assert isinstance(reducer, _StreamedArgmaxQOverA)
     q, q_bound = _unwrap(reducer.Q_and_F)
-    assert isinstance(q, _QAndF)
+    assert isinstance(q, _CollectiveQAndF)
     aggregator, _ = _unwrap(q.koopmans_aggregator)
     assert type(aggregator) is LinearAggregator
     return q, q_bound | reducer_bound | bound
 
 
 def _evaluate_operands(
-    q: _QAndF,
+    q: _CollectiveQAndF,
 ) -> Callable[..., tuple[jax.Array | bool, jax.Array, jax.Array, jax.Array | bool]]:
     """Evaluate actual canonical U and CE; never infer CE from a reported value."""
 
@@ -141,14 +147,9 @@ def _evaluate_operands(
         cell: dict[str, QAndFArg],
         values: MappingProxyType[RegimeName, FloatND],
     ) -> tuple[jax.Array | bool, jax.Array, jax.Array, jax.Array | bool]:
-        utility, feasible = q.U_and_F(**cell)
-        result = q.compute_CE(
-            next_regime_to_V_arr=values,
-            zero=jnp.zeros_like(utility),
-            states_actions_params=cell,
-        )
-        assert isinstance(result, tuple)
-        continuation = result[0]
+        parts = q.parts(next_regime_to_V_arr=values, **cell)
+        utility = parts.U[..., 0]
+        continuation = parts.CE[..., 0]
         aggregation = q.build_W_kwargs(cell)
         assert len(aggregation) == 1
         name, discount = next(iter(aggregation.items()))
@@ -156,7 +157,7 @@ def _evaluate_operands(
         assert isinstance(discount, jax.Array)
         return cast(
             "tuple[jax.Array | bool, jax.Array, jax.Array, jax.Array | bool]",
-            (utility, continuation, discount, feasible),
+            (utility, continuation, discount, parts.F),
         )
 
     return evaluate

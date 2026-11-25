@@ -15,6 +15,8 @@ plus terms in the other states, so the chosen hours are `20` at level `0.5` and
 """
 
 import functools
+from collections.abc import Callable
+from pathlib import Path
 from types import MappingProxyType
 
 import jax
@@ -100,6 +102,10 @@ def _stay_health(*, health: DiscreteState) -> DiscreteState:
     return health
 
 
+def _zero_utility() -> float:
+    return 0.0
+
+
 def _next_regime(*, age: float) -> ScalarInt:
     return jnp.where(age >= 1, _RegimeId.dead, _RegimeId.alive)
 
@@ -121,7 +127,7 @@ def _model() -> Model:
         },
         functions={"utility": _utility},
     )
-    dead = Regime(functions={"utility": lambda: 0.0})
+    dead = Regime(functions={"utility": _zero_utility})
     return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(exact_values=(0, 1, 2)),
@@ -252,7 +258,9 @@ def test_initial_values_simulate_as_their_codes() -> None:
 
 
 @pytest.mark.parametrize("container", [pd.Series, jnp.asarray])
-def test_initial_values_accept_series_and_jax_arrays(container) -> None:
+def test_initial_values_accept_series_and_jax_arrays(
+    container: Callable[[list[float]], pd.Series | jax.Array],
+) -> None:
     """A Series or a JAX array of values is matched like a NumPy array."""
     start = {
         **_VALUE_START,
@@ -676,7 +684,15 @@ def test_value_array_matches_simulated_values(solution: SolutionResult) -> None:
     array = solution.value_array(period=0, regime="alive")
     frame = _first_alive_rows(_reference())
     got = [
-        float(array.sel(experience=experience, level=level, rank=rank, health=health))
+        float(
+            array.sel(
+                experience=experience,
+                level=level,
+                rank=rank,
+                health=health,
+                member="self",
+            )
+        )
         for experience, level, rank, health in zip(
             _VALUE_START["experience"],
             _VALUE_START["level"],
@@ -688,7 +704,7 @@ def test_value_array_matches_simulated_values(solution: SolutionResult) -> None:
     aaae(got, frame["value"].to_numpy(), DECIMAL_PRECISION)
 
 
-def test_saved_frame_keeps_value_grid_categories(tmp_path) -> None:
+def test_saved_frame_keeps_value_grid_categories(tmp_path: Path) -> None:
     """The Feather table `save` writes keeps a value grid's numeric categories."""
     result = _MODEL.simulate(
         params=_PARAMS, initial_conditions=_VALUE_START, log_level="off", seed=0

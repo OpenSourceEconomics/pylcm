@@ -85,7 +85,7 @@ def test_gate_scalar_parameter_is_a_model_parameter() -> None:
         log_level="debug",
     ).values
     aaae(
-        np.asarray(solution[0]["single_f"]),
+        np.asarray(solution[0]["single_f"])[..., 0],
         np.array([2.9, 5.8]),
         decimal=DECIMAL_PRECISION,
     )
@@ -117,7 +117,7 @@ def test_leg_fallback_projection_scalar_parameter_is_a_model_parameter() -> None
         log_level="debug",
     ).values
     aaae(
-        np.asarray(solution[0]["single_f"]),
+        np.asarray(solution[0]["single_f"])[..., 0],
         np.array([2.9, 4.28]),
         decimal=DECIMAL_PRECISION,
     )
@@ -339,7 +339,7 @@ def test_series_valued_gate_parameter_converts_and_solves() -> None:
         log_level="debug",
     ).values
     aaae(
-        np.asarray(solution[0]["single_f"]),
+        np.asarray(solution[0]["single_f"])[..., 0],
         np.array([2.9, 5.8]),
         decimal=DECIMAL_PRECISION,
     )

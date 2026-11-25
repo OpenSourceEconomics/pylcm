@@ -47,6 +47,7 @@ from _lcm.solution.backward_induction import (
     _build_continuation_templates,
     _resolve_value_input_transfer_plan,
 )
+from _lcm.solution.collective_action_reduction import COLLECTIVE_HARD_MAX_REDUCTION
 from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm.solvers import GridSearch
 from lcm.typing import ContinuousState, FloatND, RegimeName
@@ -552,7 +553,7 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
             coordinate_names=("consumption",),
             coordinate_extents=(4,),
             canonical_order="c",
-            reduction=HARD_MAX_REDUCTION,
+            reduction=COLLECTIVE_HARD_MAX_REDUCTION,
             width_keyword=_WIDTH_KEYWORD,
         ),
     )

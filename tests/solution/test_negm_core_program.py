@@ -17,7 +17,7 @@ being a vmap width and nothing else.
 
 import functools
 import logging
-from collections.abc import Hashable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType
@@ -275,6 +275,28 @@ def test_the_graph_publishes_the_keeper_and_the_outer_sweep(
     }
 
 
+def _member_axis_parts(
+    function: Callable[..., PytreeValue],
+) -> tuple[Callable[..., PytreeValue], tuple[object, ...], dict[str, object]]:  # noqa: PAN001 - a partial binds values of any type
+    """The core, positional and keyword bindings of `function`.
+
+    A member-axis wrapper is looked through to the core whose value it publishes,
+    and its own keywords are dropped.
+    """
+    if not isinstance(function, functools.partial):
+        return function, (), {}
+    keywords = {
+        key: value
+        for key, value in function.keywords.items()
+        if not key.startswith("_member_axis_")
+    }
+    return (
+        function.keywords.get("_member_axis_core", function.func),
+        function.args,
+        keywords,
+    )
+
+
 def test_the_keeper_program_is_the_inner_keepers_program_under_a_new_name(
     *, captured: tuple[_NEGMPeriodKernel, OracleContext]
 ) -> None:
@@ -283,7 +305,12 @@ def test_the_keeper_program_is_the_inner_keepers_program_under_a_new_name(
     inner = core_program_graph(kernel=kernel.keeper_kernel)["main"]
 
     assert keeper.name == "keeper"
-    assert keeper.function is inner.function
+    keeper_core, keeper_args, keeper_keywords = _member_axis_parts(keeper.function)
+    inner_core, inner_args, inner_keywords = _member_axis_parts(inner.function)
+    assert keeper_core is inner_core
+    assert keeper_args == inner_args
+    assert keeper_keywords.keys() == inner_keywords.keys()
+    assert all(keeper_keywords[key] is value for key, value in inner_keywords.items())
     assert keeper.argument_builder is inner.argument_builder
     assert keeper.output_roles == inner.output_roles
 
@@ -407,7 +434,7 @@ def test_the_compiled_sweep_value_agrees_with_the_per_node_loop(
     output = _call(kernel=kernel, context=context, width=width)
 
     assert_agrees_to_ulp(
-        got=output.value, expected=expected_value, n_ulp=_INVARIANCE_ULP
+        got=output.value, expected=expected_value[..., None], n_ulp=_INVARIANCE_ULP
     )
 
 

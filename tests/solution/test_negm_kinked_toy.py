@@ -98,6 +98,10 @@ _EDGES = {
 }
 
 
+def _zero_utility() -> float:
+    return 0.0
+
+
 def _grid(*, start: float, stop: float, n_points: int) -> LinSpacedGrid:
     return LinSpacedGrid(start=start, stop=stop, n_points=n_points)
 
@@ -152,7 +156,7 @@ def _build_matched_negm_model(*, savings_n: int = 80, outer_n: int = 40) -> Mode
         ),
     )
     dead = Regime(
-        functions={"utility": lambda: 0.0},
+        functions={"utility": _zero_utility},
     )
     return Model(
         regimes={"alive": alive, "dead": dead},
@@ -236,7 +240,7 @@ def _build_matched_brute_model(*, n_consumption: int, n_investment: int) -> Mode
         },
     )
     dead = Regime(
-        functions={"utility": lambda: 0.0},
+        functions={"utility": _zero_utility},
     )
     return Model(
         regimes={"alive": alive, "dead": dead},
@@ -312,7 +316,7 @@ def test_brute_oracle_reproduces_its_pinned_values(oracle_value: FloatND) -> Non
         pytest.skip("Oracle constants are pinned on CPU x64 (grid-search argmax ties).")
     for (ix, iz), expected in _ORACLE_CELLS.items():
         np.testing.assert_allclose(
-            float(oracle_value[ix, iz]), expected, rtol=1e-4, atol=1e-6
+            float(oracle_value[ix, iz, 0]), expected, rtol=1e-4, atol=1e-6
         )
     np.testing.assert_allclose(float(jnp.sum(oracle_value)), _ORACLE_SUM, rtol=1e-4)
     np.testing.assert_allclose(float(jnp.min(oracle_value)), _ORACLE_MIN, rtol=1e-4)
@@ -384,7 +388,7 @@ def test_brute_value_converges_up_to_negm_as_grids_refine(
 
 @pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 @pytest.mark.parametrize("width", [1, 8])
-def test_outer_candidate_width_leaves_value_function_unchanged(*, width: int):
+def test_outer_candidate_width_leaves_value_function_unchanged(*, width: int) -> None:
     """Blocking the NEGM outer sweep leaves the solved value function unchanged.
 
     The outer sweep maps the inner adjuster over the outer-grid nodes in blocks

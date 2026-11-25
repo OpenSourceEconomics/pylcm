@@ -560,7 +560,7 @@ def test_public_shape_seed_and_state_mutations(
         [float(income) + 1.0 for income in changed["income"]],
         dtype=canonical_float_dtype(),
     )
-    np.testing.assert_array_equal(current.V_arr, expected)
+    np.testing.assert_array_equal(current.V_arr, expected[:, None])
     np.testing.assert_array_equal(current.actions["saving"], np.ones(subjects))
     np.testing.assert_array_equal(current.in_regime, np.ones(subjects, dtype=bool))
     np.testing.assert_array_equal(

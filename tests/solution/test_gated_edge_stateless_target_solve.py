@@ -148,6 +148,6 @@ def test_stateless_gated_target_pays_the_branch_its_gate_selects(
 
     np.testing.assert_array_almost_equal(
         np.asarray(solution.values[0]["src"]),
-        np.full(2, _BETA * landing_value),
+        np.full((2, 1), _BETA * landing_value),
         decimal=DECIMAL_PRECISION,
     )

@@ -1731,31 +1731,12 @@ def test_value_frame_rejects_colliding_column_names(
 
 
 def test_value_frame_scalar_and_collective() -> None:
-    """Scalar values have one row and collective values identify members."""
-
-    @categorical(ordered=False)
-    class Household:
-        alone: ScalarInt
-        couple: ScalarInt
-
-    model = Model(
-        regimes={
-            "alone": Regime(functions={"utility": lambda: 7.0}),
-            "couple": Regime(
-                functions={
-                    "utility": CollectiveUtility(
-                        utilities={"f": lambda: 3.0, "m": lambda: 5.0}
-                    )
-                }
-            ),
-        },
-        ages=AgeGrid(exact_values=(18,)),
-        edges={},
-        initial_nodes=((18, "alone"), (18, "couple")),
-        regime_id_class=Household,
-    )
-    result = model.solve(params={}, log_level="off")
-    assert result.value_frame(period=0, regime="alone").to_dict("list") == {"V": [7.0]}
+    """Scalar values have one row per member, labelled by that member."""
+    result = _solve_scalar_and_collective_model()
+    assert result.value_frame(period=0, regime="alone").to_dict("list") == {
+        "member": ["self"],
+        "V": [7.0],
+    }
     assert result.value_frame(period=0, regime="couple").to_dict("list") == {
         "member": ["f", "m"],
         "V": [3.0, 5.0],
@@ -1769,7 +1750,11 @@ def test_value_frame_scalar_and_collective() -> None:
 def test_value_frame_preserves_state_named_member(
     *, collective: bool, categorical_state: bool
 ) -> None:
-    """The collective axis is appended after the ordinary state axes."""
+    """The member axis is appended after the ordinary state axes.
+
+    A state called `member` keeps its axis in the value array, and the value
+    frame refuses the two axes of one name.
+    """
 
     @categorical(ordered=False)
     class Alive:
@@ -1811,18 +1796,25 @@ def test_value_frame_preserves_state_named_member(
     result = model.solve(params={}, log_level="off")
     axes = result.metadata.value_schemas[0, "alive"].named_axes
     assert axes[0].role is AxisRole.STATE
-    if collective:
-        assert axes[-1].role is AxisRole.MEMBER
-        np.testing.assert_array_equal(
-            result.value(period=0, regime="alive"),
-            np.repeat(np.asarray(coordinates)[:, None], 2, axis=1),
-        )
-        with pytest.raises(ValueError, match="unique"):
-            result.value_frame(period=0, regime="alive")
-    else:
-        frame = result.value_frame(period=0, regime="alive", use_categorical_codes=True)
-        np.testing.assert_array_equal(frame["member"], coordinates)
-        np.testing.assert_array_equal(frame["V"], coordinates)
+    assert axes[-1].role is AxisRole.MEMBER
+    np.testing.assert_array_equal(
+        result.value(period=0, regime="alive"),
+        np.repeat(np.asarray(coordinates)[:, None], 2 if collective else 1, axis=1),
+    )
+    with pytest.raises(ValueError, match="unique"):
+        result.value_frame(period=0, regime="alive")
+
+
+def _wealth_grid_at_age(age: float) -> LinSpacedGrid:
+    return LinSpacedGrid(start=float(age), stop=float(age) + 2, n_points=3)
+
+
+def _age_signature(age: float) -> float:
+    return age
+
+
+def _wealth(wealth: FloatND) -> FloatND:
+    return wealth
 
 
 @pytest.mark.parametrize("grid_kind", ["process", "age"])
@@ -1837,18 +1829,11 @@ def test_value_frame_uses_resolved_grid_coordinates(*, grid_kind: str) -> None:
     grid = (
         NormalIIDProcess(n_points=3, gauss_hermite=False)
         if grid_kind == "process"
-        else AgeSpecializedGrid(
-            build=lambda age: LinSpacedGrid(
-                start=float(age), stop=float(age) + 2, n_points=3
-            ),
-            signature=lambda age: age,
-        )
+        else AgeSpecializedGrid(build=_wealth_grid_at_age, signature=_age_signature)
     )
     model = Model(
         regimes={
-            "alive": Regime(
-                states={"wealth": grid}, functions={"utility": lambda wealth: wealth}
-            )
+            "alive": Regime(states={"wealth": grid}, functions={"utility": _wealth})
         },
         ages=AgeGrid(exact_values=(18, 19)),
         regime_id_class=Alive,
@@ -2045,55 +2030,6 @@ def test_value_frame_categorical_action_does_not_relabel_members(
     )
 
 
-@pytest.mark.parametrize("ordered", [False, True])
-def test_value_frame_categorical_state_named_member_keeps_its_domain(
-    *, ordered: bool, tmp_path: Path
-) -> None:
-    """An ordinary state called `member` retains labels, codes and ordering."""
-
-    @categorical(ordered=ordered)
-    class Kind:
-        low: ScalarInt
-        high: ScalarInt
-
-    @categorical(ordered=False)
-    class Alive:
-        alive: ScalarInt
-
-    def utility(*, member: ScalarInt) -> FloatND:
-        return 1.0 + 2.0 * member
-
-    model = Model(
-        regimes={
-            "alive": Regime(
-                states={"member": DiscreteGrid(Kind)},
-                functions={"utility": utility},
-            )
-        },
-        ages=AgeGrid(exact_values=(18,)),
-        regime_id_class=Alive,
-        edges={},
-        initial_nodes=((18, "alive"),),
-    )
-    result = model.solve(params={}, log_level="off")
-    restored = load_solution(path=result.save(path=tmp_path / "ordinary-state"))
-    for candidate in (result, restored):
-        schema = candidate.metadata.value_schemas[0, "alive"]
-        assert schema.named_axes[0].role is AxisRole.STATE
-        assert set(schema.categorical_domains) == {"member"}
-        frame = candidate.value_frame(period=0, regime="alive")
-        assert frame.to_dict("list") == {
-            "member": ["low", "high"],
-            "V": [1.0, 3.0],
-        }
-        assert tuple(frame["member"].cat.categories) == ("low", "high")
-        assert frame["member"].cat.ordered is ordered
-        codes = candidate.value_frame(
-            period=0, regime="alive", use_categorical_codes=True
-        )
-        assert codes.to_dict("list") == {"member": [0, 1], "V": [1.0, 3.0]}
-
-
 def _reference_value_frame(
     *,
     result: SolutionResult,
@@ -2152,6 +2088,18 @@ def _solve_labelled_model() -> SolutionResult:
     return model.solve(params={}, log_level="off")
 
 
+def _seven() -> float:
+    return 7.0
+
+
+def _three() -> float:
+    return 3.0
+
+
+def _five() -> float:
+    return 5.0
+
+
 def _solve_scalar_and_collective_model() -> SolutionResult:
     @categorical(ordered=False)
     class Household:
@@ -2160,12 +2108,10 @@ def _solve_scalar_and_collective_model() -> SolutionResult:
 
     model = Model(
         regimes={
-            "alone": Regime(functions={"utility": lambda: 7.0}),
+            "alone": Regime(functions={"utility": _seven}),
             "couple": Regime(
                 functions={
-                    "utility": CollectiveUtility(
-                        utilities={"f": lambda: 3.0, "m": lambda: 5.0}
-                    )
+                    "utility": CollectiveUtility(utilities={"f": _three, "m": _five})
                 }
             ),
         },
@@ -2202,15 +2148,17 @@ def test_value_array_categorical_coordinates(
     np.testing.assert_array_equal(default_array["wealth"], [1.0, 2.0, 3.0])
     assert isinstance(default_array.indexes["kind"], pd.CategoricalIndex)
     assert default_array.indexes["kind"].ordered
-    np.testing.assert_array_equal(default_array.sel(kind="high"), [11.0, 12.0, 13.0])
+    np.testing.assert_array_equal(
+        default_array.sel(kind="high", member="self"), [11.0, 12.0, 13.0]
+    )
     assert isinstance(default_array.data, jax.Array)
 
 
-def test_value_array_scalar_regime_has_no_dimensions() -> None:
-    """A regime without states yields a zero-dimensional array."""
+def test_value_array_scalar_regime_has_only_the_member_dimension() -> None:
+    """A regime without states yields an array over its one member."""
     result = _solve_scalar_and_collective_model()
     array = result.value_array(period=0, regime="alone")
-    assert (array.dims, float(array)) == ((), 7.0)
+    assert (array.dims, float(array.sel(member="self"))) == (("member",), 7.0)
 
 
 def test_value_array_collective_regime_labels_members() -> None:

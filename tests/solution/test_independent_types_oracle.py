@@ -32,7 +32,11 @@ def test_values_match_the_enumerated_oracle(period: int) -> None:
     oracle, _ = independent_types.solve_by_enumeration()
 
     (published,) = values[period].values()
-    aaae(np.asarray(published), np.asarray(oracle[period]), decimal=DECIMAL_PRECISION)
+    aaae(
+        np.asarray(published)[..., 0],
+        np.asarray(oracle[period]),
+        decimal=DECIMAL_PRECISION,
+    )
 
 
 def test_simulated_consumption_follows_the_enumerated_policy() -> None:
@@ -122,7 +126,7 @@ def test_the_oracle_comparison_rejects_a_different_discount_factor() -> None:
 
     with pytest.raises(AssertionError):
         aaae(
-            np.asarray(values[0]["working"]),
+            np.asarray(values[0]["working"])[..., 0],
             np.asarray(perturbed[0]),
             decimal=DECIMAL_PRECISION,
         )

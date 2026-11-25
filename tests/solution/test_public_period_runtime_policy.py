@@ -153,7 +153,7 @@ def test_public_replay_accepts_a_completed_unchecked_capture(
     assert record.reference is not None
     if target == ("done", 1):
         # A different earlier law is invalid; the selected terminal value is exact.
-        np.testing.assert_array_equal(record.reference, np.array([1.0, 2.0]))
+        np.testing.assert_array_equal(record.reference, np.array([[1.0], [2.0]]))
     elif probability_mass == 0.5:
         assert np.isfinite(record.reference).all()
     else:

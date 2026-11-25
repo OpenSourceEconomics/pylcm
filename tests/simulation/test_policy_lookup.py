@@ -106,7 +106,7 @@ def test_lookup_policy_last_alive_period_value_is_log_consumption(
     got = _lookup(solved, period=LAST_ALIVE_PERIOD, states={"wealth": WEALTH})
     grid = np.asarray(DEFAULT_CONSUMPTION_GRID.to_jax())
     expected_v = np.log([grid[grid <= w].max() for w in np.asarray(WEALTH)])
-    np.testing.assert_allclose(got.value, expected_v, rtol=1e-5)
+    np.testing.assert_allclose(got.value[..., 0], expected_v, rtol=1e-5)
 
 
 def test_lookup_policy_last_alive_period_retires(solved: Solved) -> None:
@@ -141,7 +141,7 @@ def test_lookup_policy_equals_what_simulate_records(
             states={"wealth": jnp.asarray(rows["wealth"].to_numpy())},
         )
         assert lookup.actions is not None
-        values = lookup.value if column == "value" else lookup.actions[column]
+        values = lookup.value[..., 0] if column == "value" else lookup.actions[column]
         got.append(np.asarray(values, dtype=float))
         expected.append(rows[column].to_numpy(dtype=float))
     np.testing.assert_allclose(np.concatenate(got), np.concatenate(expected))
@@ -185,7 +185,7 @@ def test_lookup_policy_without_states_or_actions_returns_one_row_of_value(
 ) -> None:
     """`dead` has neither states nor actions: its empty query is one row of zero."""
     got = _lookup(solved, regime_name="dead", period=period, states={})
-    assert (got.value.shape, np.asarray(got.value).tolist()) == ((1,), [0.0])
+    assert (got.value.shape, np.asarray(got.value).tolist()) == ((1, 1), [[0.0]])
 
 
 @categorical(ordered=False)
@@ -241,7 +241,7 @@ def test_lookup_policy_without_states_returns_one_row_of_actions_and_value(
     assert (
         np.asarray(got.actions["labor_supply"]).tolist(),
         np.asarray(got.value).tolist(),
-    ) == ([LaborSupply.work], [1.0])
+    ) == ([LaborSupply.work], [[1.0]])
 
 
 def test_lookup_policy_without_states_returns_one_row_of_action_values(
@@ -250,7 +250,7 @@ def test_lookup_policy_without_states_returns_one_row_of_action_values(
     """`Q` holds each labor supply's utility in grid order, all feasible, in one row."""
     got = _lookup_stateless(solved_stateless, keep_intermediates=("Q", "F"))
     assert (np.asarray(got.Q).tolist(), np.asarray(got.F).tolist()) == (
-        [[1.0, 0.25]],
+        [[[1.0], [0.25]]],
         [[True, True]],
     )
 
@@ -423,7 +423,7 @@ def test_value_array_indexed_in_state_names_order_matches_lookup(
             name: nodes[name][i : i + 1] for name, i in zip(nodes, index, strict=True)
         },
     )
-    np.testing.assert_allclose(got.value, V[index], rtol=1e-6)
+    np.testing.assert_allclose(got.value, V[index][None], rtol=1e-6)
 
 
 @pytest.fixture(scope="module")
@@ -448,7 +448,8 @@ def test_value_array_shape_follows_state_names_order(solved_two_states: Solved) 
     model, params, solution = solved_two_states
     nodes = _nodes_in_state_names_order(model=model, params=params)
     shape = tuple(len(grid) for grid in nodes.values())
-    assert solution.values[0]["alive"].shape == shape != shape[::-1]
+    assert solution.values[0]["alive"].shape == (*shape, 1)
+    assert shape != shape[::-1]
 
 
 def test_value_array_indexed_in_state_names_order_matches_lookup_two_states(
@@ -467,7 +468,7 @@ def test_value_array_indexed_in_state_names_order_matches_lookup_two_states(
         },
     )
     V = solution.values[0]["alive"]
-    np.testing.assert_allclose(got.value, V[index], rtol=1e-5)
+    np.testing.assert_allclose(got.value, V[index][None], rtol=1e-5)
     assert not np.isclose(V[index], V[index[::-1]], rtol=1e-5)
 
 
@@ -495,7 +496,11 @@ def test_lookup_policy_under_a_device_budget_has_analytic_last_decision_policy()
     # All successors are dead with utility zero; c <= wealth leaves c in {1, 2}
     # and work subtracts 0.5, so the optimum is c = 2, retire, value log(2).
     np.testing.assert_allclose(
-        [got.actions["consumption"][0], got.actions["labor_supply"][0], got.value[0]],
+        [
+            got.actions["consumption"][0],
+            got.actions["labor_supply"][0],
+            got.value[0, 0],
+        ],
         [2.0, 1.0, log(2)],
         rtol=1e-5,
     )
@@ -572,8 +577,8 @@ def test_restored_budgeted_lookup_has_analytic_last_decision_policy(
     assert before.params_fingerprint == solved.metadata.params_fingerprint
     schema = before.value_schemas[1, "working_life"]
     assert (schema.shape, schema.axis_names, schema.dtype) == (
-        (3,),
-        ("wealth",),
+        (3, 1),
+        ("wealth", "member"),
         dtype.name,
     )
     record_property(
@@ -613,7 +618,7 @@ def test_restored_budgeted_lookup_has_analytic_last_decision_policy(
         np.testing.assert_array_equal(result.actions["consumption"], [2.0])
         np.testing.assert_array_equal(result.actions["labor_supply"], [1])
         np.testing.assert_allclose(
-            result.value, [log(2)], rtol=1e-12 if dtype.itemsize == 8 else 1e-5
+            result.value, [[log(2)]], rtol=1e-12 if dtype.itemsize == 8 else 1e-5
         )
         assert result.value.dtype == dtype
         assert result.actions["consumption"].dtype == dtype
@@ -744,7 +749,7 @@ def test_restored_budgeted_lookup_refuses_after_other_consumers_add_views(
         [
             first.actions["consumption"][0],
             first.actions["labor_supply"][0],
-            first.value[0],
+            first.value[0, 0],
         ],
         [2.0, 1.0, log(2)],
         rtol=1e-5,
@@ -778,6 +783,6 @@ def test_restored_lookup_under_a_generous_budget_has_analytic_policy_on_repeat(
     for r in got:
         assert r.actions is not None
         rows.append(
-            [r.actions["consumption"][0], r.actions["labor_supply"][0], r.value[0]]
+            [r.actions["consumption"][0], r.actions["labor_supply"][0], r.value[0, 0]]
         )
     np.testing.assert_allclose(rows, [[2.0, 1.0, log(2)]] * 2, rtol=1e-5)

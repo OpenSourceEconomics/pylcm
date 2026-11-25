@@ -964,7 +964,7 @@ def test_the_reader_publishes_its_value_split_along_the_kind(
         solved["devices"]["source"],
         solved["replicated"]["source"],
         solved["shard_shapes"]["source"],
-    ) == ([0, 1], False, [[1, 3], [1, 3]])
+    ) == ([0, 1], False, [[1, 3, 1], [1, 3, 1]])
 
 
 @pytest.mark.parametrize("case", list(_FIXED_CASES))

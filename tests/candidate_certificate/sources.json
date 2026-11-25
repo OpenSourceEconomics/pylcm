@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "bec0cf79e0c58f651df29f2010eb054ac7004d7a4765f1b4e00018567ecaeded",
+  "source_inventory_sha256": "794d7dfb6e57e0e9c876ea2249699cee8648e5a948f9dbe6d7dab3fb80ba19b5",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -334,7 +334,7 @@
     },
     {
       "path": "src/_lcm/regime_building/collective.py",
-      "sha256": "7c9300e591d5582d8858504e413c6e752f7db83f93fcac84253c77ff76670b2f"
+      "sha256": "228ca11c312cdb2f9bed0dab908aac3a5025ce8bf029fb30022a51aaec8f0cb4"
     },
     {
       "path": "src/_lcm/regime_building/decoupled.py",
@@ -346,7 +346,7 @@
     },
     {
       "path": "src/_lcm/regime_building/processing.py",
-      "sha256": "7be22e9a11477c0b809bb1483009c512b8a35c2159d9178b204c75a99b116733"
+      "sha256": "e6ecf18f883ee610cef79472ad28de24d133921309cb39b67aff4586cfe86d09"
     },
     {
       "path": "src/_lcm/regime_building/zero_safe.py",
@@ -370,7 +370,7 @@
     },
     {
       "path": "src/_lcm/simulation/chunk_admission.py",
-      "sha256": "879aeef3cb4f860b10ce0005b1aa49d416719d2e206f3ff255aadbd2d77f2512"
+      "sha256": "a2c3e5f6b6aa163b649bdf78b37aead42b2cd2833fa5bca2c65b083c309b1751"
     },
     {
       "path": "src/_lcm/simulation/chunk_inputs.py",
@@ -586,7 +586,7 @@
     },
     {
       "path": "src/_lcm/solution/fingerprint.py",
-      "sha256": "d579d5e3061d19e283ec6ca42b99472ea2c4e672013ceb3028dd56065309ebef"
+      "sha256": "92f6f97d8f5ea195ec3a658ee712c6e4e5cc1a20270a2cccc097a2f97c98e22f"
     },
     {
       "path": "src/_lcm/solution/grid_search.py",
@@ -718,7 +718,7 @@
     },
     {
       "path": "src/lcm/model.py",
-      "sha256": "381136ce85c54acb787c6796f75ad6788d7c3d8d12d4b7018df47636a7b3d895"
+      "sha256": "0eed67518694b634d378e4943dab4ab67db13c7d62d775190317e6ef39b25354"
     },
     {
       "path": "src/lcm/processes.py",
@@ -730,7 +730,7 @@
     },
     {
       "path": "src/lcm/result.py",
-      "sha256": "029160731a46f4c7da254ece0e4610dfa5d38ee908c5694e97fd7b1cc091e249"
+      "sha256": "06edabde95f6066b2d2e62ebaf1277c5444ab85c08a7f049e78ac6af6d2f2851"
     },
     {
       "path": "src/lcm/shocks.py",

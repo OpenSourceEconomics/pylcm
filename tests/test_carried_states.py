@@ -97,7 +97,11 @@ def _build_pension_regime() -> UserRegime:
     )
 
 
-_DEAD = UserRegime(functions={"utility": lambda: 0.0})
+def _zero_utility() -> float:
+    return 0.0
+
+
+_DEAD = UserRegime(functions={"utility": _zero_utility})
 
 
 def _build_pension_model(*, pension_as_pair: bool) -> Model:
@@ -262,7 +266,7 @@ def _retired_utility(pension_wealth: float) -> FloatND:
     return jnp.log(pension_wealth)
 
 
-_DEAD3 = UserRegime(functions={"utility": lambda: 0.0})
+_DEAD3 = UserRegime(functions={"utility": _zero_utility})
 
 
 def _build_handover_model() -> Model:
@@ -351,8 +355,9 @@ def test_solve_V_axis_order_follows_canonical_state_order() -> None:
     solution = _solve_pension_model(model)
     for regime_to_V in solution.values():
         if "working" in regime_to_V:
-            # wealth has 10 points, aime 5; pension_wealth contributes no axis.
-            assert regime_to_V["working"].shape == (10, 5)
+            # wealth has 10 points, aime 5; pension_wealth contributes no axis;
+            # the trailing axis is the member axis.
+            assert regime_to_V["working"].shape == (10, 5, 1)
 
 
 def _pension_double(pension_wealth: float) -> float:

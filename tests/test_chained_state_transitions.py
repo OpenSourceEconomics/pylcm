@@ -71,7 +71,11 @@ _active = UserRegime(
 )
 
 
-_dead = UserRegime(functions={"utility": lambda: jnp.array(0.0)})
+def _zero_utility() -> FloatND:
+    return jnp.array(0.0)
+
+
+_dead = UserRegime(functions={"utility": _zero_utility})
 
 
 def _build_model() -> Model:
@@ -217,7 +221,7 @@ def _f2_build_model() -> Model:
         functions={"utility": _f2_utility},
     )
     last = UserRegime(
-        functions={"utility": lambda: jnp.array(0.0)},
+        functions={"utility": _zero_utility},
     )
     return Model(
         regimes={"live": live, "last": last},
@@ -244,7 +248,7 @@ def test_stochastic_weight_reading_deterministic_next_state_solves() -> None:
     model = _f2_build_model()
     V = model.solve(params={"discount_factor": 0.95}, log_level="debug").values
 
-    v_live = V[0]["live"]
+    v_live = V[0]["live"][..., 0]
     # Analytical value: from period 0, investing (or already being at high capital)
     # deterministically makes next period's `good` state "good", so
     # V[0]["live"](good, capital) = good + 0.95 * 1 for every capital -- period 1's

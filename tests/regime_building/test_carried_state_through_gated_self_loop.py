@@ -184,10 +184,10 @@ def test_gated_self_loop_carries_career_once_before_ordinary_exit() -> None:
         params=params, retention=ResultRetention.VALUES, log_level="off"
     )
     np.testing.assert_array_almost_equal(
-        solution.values[0]["src"], [1.095, 4.8025], decimal=DECIMAL_PRECISION
+        solution.values[0]["src"][..., 0], [1.095, 4.8025], decimal=DECIMAL_PRECISION
     )
     np.testing.assert_array_almost_equal(
-        solution.values[1]["src"], [1.475, 2.95], decimal=DECIMAL_PRECISION
+        solution.values[1]["src"][..., 0], [1.475, 2.95], decimal=DECIMAL_PRECISION
     )
     assert "src" not in solution.values[2]
     result = model.simulate(

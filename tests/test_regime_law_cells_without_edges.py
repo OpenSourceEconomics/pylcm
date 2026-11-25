@@ -78,7 +78,9 @@ def _model(
 def test_declared_edge_solves_to_the_hand_computed_value() -> None:
     solution = _model(a_to_b_ages=(0, 1)).solve(params={}, log_level="off")
 
-    assert float(solution.value(period=0, regime="A")) == pytest.approx(7.75, abs=1e-6)
+    assert float(solution.value(period=0, regime="A")[0]) == pytest.approx(
+        7.75, abs=1e-6
+    )
 
 
 def test_targets_omitting_a_cell_of_the_law_are_refused() -> None:

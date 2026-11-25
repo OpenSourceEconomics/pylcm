@@ -48,6 +48,9 @@ else:
     # whose lazy contents the runtime annotation check must not inspect.
     type _SolutionResultBoundary = object
 
+# Version of the directory layout `SimulationResult.save` writes and `load` reads.
+_SAVED_RESULT_FORMAT_VERSION = 1
+
 
 @dataclass(frozen=True, kw_only=True)
 class PolicyLookup:
@@ -463,6 +466,7 @@ class SimulationResult:
         # in-memory copy can be released afterwards.
         metadata = _SavedMetadata(
             regimes=self._regimes,
+            format_version=_SAVED_RESULT_FORMAT_VERSION,
             flat_params=self._flat_params,
             ages=self._ages,
             result_metadata=self._metadata,
@@ -555,6 +559,7 @@ class SimulationResult:
 
         with (source / "metadata.pkl").open("rb") as fh:
             metadata: _SavedMetadata = cloudpickle.load(fh)
+        _fail_if_saved_in_another_format(metadata=metadata, directory=source)
 
         array_tree = _restore_array_tree(input_dir=source / "arrays")
 
@@ -622,12 +627,36 @@ class _SavedMetadata:
     available_targets: tuple[FunctionName, ...]
     """Names of all additional targets exposed via `to_dataframe`."""
 
+    format_version: int
+    """Version of the layout the result was saved in."""
+
     subject_batch_size: int | None = None
     """Subject chunk size from `simulate`, reused to bound `to_dataframe` targets."""
 
     subject_rows: np.ndarray | None = None
     """Original rows of a simulation of selected codes; `None` for the whole
     population."""
+
+
+def _fail_if_saved_in_another_format(
+    *, metadata: _SavedMetadata, directory: Path
+) -> None:
+    """Refuse a saved result whose layout is not the one this pylcm writes.
+
+    Raises:
+        IncompatibleSolutionError: If the metadata names another format version
+            or none.
+    """
+    # A result saved before results carried a version unpickles without the field.
+    version = vars(metadata).get("format_version")
+    if version != _SAVED_RESULT_FORMAT_VERSION:
+        from lcm.exceptions import IncompatibleSolutionError  # noqa: PLC0415
+
+        raise IncompatibleSolutionError(
+            f"The simulation result in {directory} was saved in format version "
+            f"{version!r}; this pylcm reads format version "
+            f"{_SAVED_RESULT_FORMAT_VERSION} only. Simulate the model again."
+        )
 
 
 @dataclass(frozen=True)

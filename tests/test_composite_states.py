@@ -290,7 +290,7 @@ def test_value_array_has_one_entry_per_code_and_other_state_cell() -> None:
     composite = _composite()
     values = composite.solve(params=_PARAMS, log_level="off").values
     n_codes = len(composite._composite_states["history"].table)
-    assert np.asarray(values[0]["alive"]).shape == (n_codes, 2, 4)
+    assert np.asarray(values[0]["alive"]).shape == (n_codes, 2, 4, 1)
 
 
 def test_code_unreachable_at_its_period_is_infeasible() -> None:

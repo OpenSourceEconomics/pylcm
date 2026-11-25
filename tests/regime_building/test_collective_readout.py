@@ -16,6 +16,7 @@ import pytest
 
 from _lcm.regime_building.collective import (
     _weighted_sum,
+    collective_argmax_and_readout,
     collective_readout,
     decider_choice,
 )
@@ -307,3 +308,32 @@ def test_decider_tie_over_continuous_actions_goes_to_the_members_in_order() -> N
     np.testing.assert_array_equal(Qc, [1.0])
     np.testing.assert_array_equal(continuous_argmax, [1])
     np.testing.assert_array_equal(at_choice, [[1.0, 4.0]])
+
+
+def test_one_candidate_value_carries_the_derivative_of_the_selected_candidate() -> None:
+    """With no action axis, a member's published value differentiates as its own Q.
+
+    The household objective only selects; neither a member's Q nor a Pareto weight
+    reaches the published value through it. An infeasible cell publishes `-inf`
+    with no derivative.
+    """
+    q_self = jnp.array([1.0, 2.0, 3.0])
+    q_other = jnp.array([4.0, -1.0, 0.5])
+    feasibility = jnp.array([True, True, False])
+
+    # keyword-only-exempt: library-callback=jax.jvp
+    def published(q: jax.Array, weight: jax.Array) -> jax.Array:
+        _argmax, values, _dissolution = collective_argmax_and_readout(
+            member_Q={"self": q, "other": q_other},
+            feasibility=feasibility,
+            weights={"self": weight, "other": 1.0 - weight},
+            action_axes=(),
+        )
+        return values["self"]
+
+    q_tangent = jnp.array([0.5, -1.0, 2.0])
+    primal, tangent = jax.jvp(
+        published, (q_self, jnp.asarray(0.25)), (q_tangent, jnp.asarray(1.0))
+    )
+    np.testing.assert_array_equal(primal, [1.0, 2.0, -np.inf])
+    np.testing.assert_array_equal(tangent, [0.5, -1.0, 0.0])

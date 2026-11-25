@@ -306,7 +306,7 @@ def test_stochastic_marriage_offer_forms_couple_via_kernel() -> None:
     spouse types.
     """
     solution, _sim, _dissolution_flags = _solve_offer_regimes()
-    V_single_f = np.asarray(solution[0]["single_f"])
+    V_single_f = np.asarray(solution[0]["single_f"])[..., 0]
     np.testing.assert_allclose(V_single_f, _EXPECTED_V_SINGLE_F_PERIOD_0, rtol=1e-6)
 
 
@@ -329,7 +329,7 @@ def test_stochastic_marriage_offer_matches_public_model_api() -> None:
     )
     solution = model.solve(params={"discount_factor": _BETA}, log_level="off").values
     np.testing.assert_allclose(
-        np.asarray(solution[0]["single_f"]),
+        np.asarray(solution[0]["single_f"])[..., 0],
         _EXPECTED_V_SINGLE_F_PERIOD_0,
         rtol=1e-6,
     )
@@ -339,7 +339,7 @@ def test_stochastic_marriage_offer_matches_under_jit() -> None:
     """The jitted kernel path folds and averages the same offer draw."""
     solution, _sim, _dissolution = _solve_offer_regimes(enable_jit=True)
     np.testing.assert_allclose(
-        np.asarray(solution[0]["single_f"]),
+        np.asarray(solution[0]["single_f"])[..., 0],
         _EXPECTED_V_SINGLE_F_PERIOD_0,
         rtol=1e-6,
     )
@@ -417,7 +417,7 @@ def test_job_offer_gates_feasible_actions_and_solves() -> None:
     )
     solution = model.solve(params={"discount_factor": _BETA}, log_level="off").values
     np.testing.assert_allclose(
-        np.asarray(solution[0]["job"]), _EXPECTED_V_JOB_PERIOD_0, rtol=1e-6
+        np.asarray(solution[0]["job"])[..., 0], _EXPECTED_V_JOB_PERIOD_0, rtol=1e-6
     )
 
 

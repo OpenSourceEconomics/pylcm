@@ -304,7 +304,7 @@ def _solved_alive_values(
     solution = model.solve(params=_params(final_z=final_z), log_level="off")
     names = model.state_names(regime_name="alive")
     return np.transpose(
-        np.asarray(solution.values[0]["alive"]),
+        np.asarray(solution.values[0]["alive"])[..., 0],
         [names.index(name) for name in ("wealth", "z", "income", "q", "w", "y")],
     )
 

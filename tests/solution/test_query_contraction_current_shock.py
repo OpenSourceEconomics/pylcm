@@ -189,7 +189,7 @@ def _values(model: Model) -> dict[str, np.ndarray]:
         params={"discount_factor": 0.9}, log_level="off", runtime_checks=False
     )
     return {
-        f"{period}/{regime}": np.asarray(value)
+        f"{period}/{regime}": np.asarray(value)[..., 0]
         for period, by_regime in solution.values.items()
         for regime, value in by_regime.items()
     }

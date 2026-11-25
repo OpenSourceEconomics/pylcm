@@ -132,7 +132,9 @@ def discount_factor_from_type(
     return discount_factor_by_type[pref_type]
 
 
-def _make_model(*, custom_W=None, with_pref_type: bool = False):
+def _make_model(
+    *, custom_W: UserFunction | None = None, with_pref_type: bool = False
+) -> Model:
     """Create a simple model, optionally with a custom `W` and pref_type state.
 
     When `with_pref_type=True`, the working-life regime gains a
@@ -208,7 +210,7 @@ def _make_model(*, custom_W=None, with_pref_type: bool = False):
     )
 
 
-def test_custom_ces_aggregator_differs_from_default():
+def test_custom_ces_aggregator_differs_from_default() -> None:
     """A CES aggregator with ies != 1 should produce different value functions."""
     model_default = _make_model()
     model_ces = _make_model(custom_W=ces_W)
@@ -245,12 +247,20 @@ def test_custom_ces_aggregator_differs_from_default():
     )
 
 
-def test_default_H_injected_for_non_terminal():
+def _zero_utility() -> float:
+    return 0.0
+
+
+def _always_to_a() -> dict[str, float]:
+    return {"a": 1.0}
+
+
+def test_default_H_injected_for_non_terminal() -> None:
     """The model-level aggregator is injected on the non-terminal finalized regime."""
-    regime = UserRegime(functions={"utility": lambda: 0.0})
+    regime = UserRegime(functions={"utility": _zero_utility})
     finalized = finalize_regimes(
         user_regimes={"regime": regime},
-        laws=bind_laws({"regime": lambda: {"a": 1.0}}),
+        laws=bind_laws({"regime": _always_to_a}),
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
@@ -258,9 +268,9 @@ def test_default_H_injected_for_non_terminal():
     assert finalized.koopmans_aggregator == LinearAggregator()
 
 
-def test_default_W_not_injected_for_terminal():
+def test_default_W_not_injected_for_terminal() -> None:
     """Terminal regimes have no continuation, so they get no aggregator."""
-    r = UserRegime(functions={"utility": lambda: 0.0})
+    r = UserRegime(functions={"utility": _zero_utility})
     finalized = finalize_regimes(
         user_regimes={"regime": r},
         laws=bind_laws({"regime": None}),
@@ -271,19 +281,19 @@ def test_default_W_not_injected_for_terminal():
     assert finalized.koopmans_aggregator is None
 
 
-def test_custom_W_not_overwritten():
+def test_custom_W_not_overwritten() -> None:
     """A regime-level aggregator survives finalization."""
 
     def my_W(*, utility: float, CE: float) -> float:
         return utility + CE
 
     r = UserRegime(
-        functions={"utility": lambda: 0.0},
+        functions={"utility": _zero_utility},
         koopmans_aggregator=my_W,
     )
     finalized = finalize_regimes(
         user_regimes={"regime": r},
-        laws=bind_laws({"regime": lambda: {"a": 1.0}}),
+        laws=bind_laws({"regime": _always_to_a}),
         derived_categoricals={},
         koopmans_aggregator=LinearAggregator(),
         certainty_equivalent=LinearExpectation(),
@@ -291,14 +301,14 @@ def test_custom_W_not_overwritten():
     assert finalized.koopmans_aggregator is my_W
 
 
-def test_params_template_includes_W():
+def test_params_template_includes_W() -> None:
     """The default aggregator's `discount_factor` surfaces in the template."""
     model = _make_model()
     template = model._params_template
     assert "discount_factor" in template["working_life"]["koopmans_aggregator"]
 
 
-def test_params_template_custom_W():
+def test_params_template_custom_W() -> None:
     """A custom aggregator's params should appear in the template."""
     model = _make_model(custom_W=ces_W)
     template = model._params_template
@@ -306,7 +316,7 @@ def test_params_template_custom_W():
     assert "ies" in template["working_life"]["koopmans_aggregator"]
 
 
-def test_terminal_regime_value_unchanged_by_W():
+def test_terminal_regime_value_unchanged_by_W() -> None:
     """Terminal regimes have no aggregator, so varying it leaves their values alone."""
     model_default = _make_model()
     model_ces = _make_model(custom_W=ces_W)
@@ -340,7 +350,7 @@ def test_terminal_regime_value_unchanged_by_W():
 # indexes a per-type Series by the `pref_type` state.
 
 
-def test_model_constructs_when_state_reachable_only_via_w_dag():
+def test_model_constructs_when_state_reachable_only_via_w_dag() -> None:
     """State reached only via the aggregator's DAG deps passes the usage check.
 
     `pref_type` is used by `discount_factor_from_type`, whose output
@@ -352,7 +362,7 @@ def test_model_constructs_when_state_reachable_only_via_w_dag():
     _make_model(with_pref_type=True)
 
 
-def test_dag_output_feeds_default_h_monotone_in_discount_factor():
+def test_dag_output_feeds_default_h_monotone_in_discount_factor() -> None:
     """Higher per-type discount factor ⇒ higher value function.
 
     The working-life regime uses the default `W` (which expects a scalar
@@ -374,10 +384,11 @@ def test_dag_output_feeds_default_h_monotone_in_discount_factor():
     non_terminal_periods = [p for p in V if p < max(V.keys())]
     assert non_terminal_periods
     for period in non_terminal_periods:
-        # Shape is (..., n_pref_type). Compare averages across the
-        # other axes so the comparison is robust to the grid layout.
-        v = V[period]["working_life"]
-        # pref_type is the innermost batched state ⇒ last axis.
+        # Shape is (..., n_pref_type, 1), the last axis the single member. Compare
+        # averages across the other axes so the comparison is robust to the grid
+        # layout.
+        v = V[period]["working_life"][..., 0]
+        # pref_type is the innermost batched state ⇒ last axis of the member slice.
         v_type_0 = jnp.mean(v[..., 0])
         v_type_1 = jnp.mean(v[..., 1])
         v_type_2 = jnp.mean(v[..., 2])
@@ -403,7 +414,7 @@ def wealth_W(
     return utility + discount_factor * CE + wealth_weight * wealth
 
 
-def test_h_consumes_continuous_state():
+def test_h_consumes_continuous_state() -> None:
     """Solve when `W` names a continuous state; exact lift at the last period.
 
     Regression guard against a refactor that narrows `_H_accepted_params`
@@ -438,7 +449,7 @@ def test_h_consumes_continuous_state():
     ).values
     lift_at_terminal = (
         V_pos[FINAL_AGE_ALIVE]["working_life"] - V_zero[FINAL_AGE_ALIVE]["working_life"]
-    )
+    )[..., 0]
     expected = 0.1 * jnp.linspace(0.5, 10.0, 30)
     assert bool(jnp.allclose(lift_at_terminal, expected, atol=1e-5))
 
@@ -454,7 +465,7 @@ def consumption_W(
     return utility + discount_factor * CE + action_weight * consumption
 
 
-def test_h_consumes_continuous_action():
+def test_h_consumes_continuous_action() -> None:
     """`W` may name a continuous action; non-zero weight shifts V.
 
     Regression guard: when `W` names `consumption`, the scalar at the
@@ -506,7 +517,7 @@ def labor_supply_W(
     return utility + discount_factor * CE + bonus * labor_supply.astype(jnp.float32)
 
 
-def test_h_consumes_discrete_action():
+def test_h_consumes_discrete_action() -> None:
     """`W` may name a discrete action; solve compiles and V shapes match baseline.
 
     Regression guard: discrete action scalars reach `W` via
@@ -551,7 +562,7 @@ def pref_type_direct_W(
     return utility + discount_factor * CE + 0.1 * pref_type.astype(jnp.float32)
 
 
-def test_h_consumes_discrete_state():
+def test_h_consumes_discrete_state() -> None:
     """`W` may name a discrete state directly, without a DAG function of that name.
 
     Regression guard: `pref_type` reaches `W` as a scalar per
@@ -596,7 +607,7 @@ def mixed_W(
     return combined + 1e-3 * pref_type.astype(jnp.float32)
 
 
-def test_h_consumes_flat_param_state_action_and_dag_output():
+def test_h_consumes_flat_param_state_action_and_dag_output() -> None:
     """`W` may name a flat param, a state, an action, and a DAG output at once.
 
     Regression guard: every kwarg-resolution path fires at once —
@@ -630,6 +641,28 @@ class _AgeIndexedRegimeId:
     dead: ScalarInt
 
 
+def _wealth_after_consumption(
+    *, wealth: ContinuousState, consumption: ContinuousAction
+) -> ContinuousState:
+    return wealth - consumption
+
+
+def _consumption_utility(consumption: ContinuousAction) -> FloatND:
+    return consumption
+
+
+def _wealth_bequest(wealth: ContinuousState) -> FloatND:
+    return wealth + 1.0
+
+
+def _alive_before_age_41(age: float) -> ScalarInt:
+    return jnp.where(age < 41, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead)
+
+
+def _alive_before_age_1(age: float) -> ScalarInt:
+    return jnp.where(age < 1, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead)
+
+
 def _W_age_varying_discount(
     *, utility: FloatND, CE: FloatND, discount_factor: FloatND, period: Period
 ) -> FloatND:
@@ -654,14 +687,14 @@ def _solve_with_age_varying_discount(
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
     alive = UserRegime(
         states={"wealth": wealth},
-        state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
+        state_transitions={"wealth": _wealth_after_consumption},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
-        functions={"utility": lambda consumption: consumption},
+        functions={"utility": _consumption_utility},
         koopmans_aggregator=koopmans_aggregator,
     )
     dead = UserRegime(
         states={"wealth": wealth},
-        functions={"utility": lambda wealth: wealth + 1.0},
+        functions={"utility": _wealth_bequest},
     )
     model = Model(
         regimes={"alive": alive, "dead": dead},
@@ -671,11 +704,7 @@ def _solve_with_age_varying_discount(
         edges={
             "alive": Transition(
                 targets={"alive": 40, "dead": (40, 41)},
-                law=DeterministicTransition(
-                    func=lambda age: jnp.where(
-                        age < 41, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
-                    )
-                ),
+                law=DeterministicTransition(func=_alive_before_age_41),
             )
         },
     )
@@ -686,7 +715,9 @@ def _solve_with_age_varying_discount(
     return model.solve(params=params, log_level="debug").values[0]["alive"]
 
 
-def test_callable_object_aggregator_indexing_a_series_matches_the_function_form():
+def test_callable_object_aggregator_indexing_a_series_matches_the_function_form() -> (
+    None
+):
     """A callable-object aggregator resolves a `Series` parameter like a function.
 
     The `Series` is scattered into an array along the axis its subscript
@@ -706,15 +737,15 @@ def _solve_with_aggregator_slot(
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
     alive = UserRegime(
         states={"wealth": wealth},
-        state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
+        state_transitions={"wealth": _wealth_after_consumption},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
-        functions={"utility": lambda consumption: consumption},
+        functions={"utility": _consumption_utility},
         koopmans_aggregator=koopmans_aggregator,
         certainty_equivalent=PowerMean(),
     )
     dead = UserRegime(
         states={"wealth": wealth},
-        functions={"utility": lambda wealth: wealth + 1.0},
+        functions={"utility": _wealth_bequest},
     )
     model = Model(
         regimes={"alive": alive, "dead": dead},
@@ -724,11 +755,7 @@ def _solve_with_aggregator_slot(
         edges={
             "alive": Transition(
                 targets={"alive": 0, "dead": (0, 1)},
-                law=DeterministicTransition(
-                    func=lambda age: jnp.where(
-                        age < 1, _AgeIndexedRegimeId.alive, _AgeIndexedRegimeId.dead
-                    )
-                ),
+                law=DeterministicTransition(func=_alive_before_age_1),
             )
         },
     )
@@ -752,7 +779,7 @@ _PHASED_AGGREGATOR_PARAMS = {
 }
 
 
-def test_phased_aggregator_objects_declare_the_union_of_their_parameters():
+def test_phased_aggregator_objects_declare_the_union_of_their_parameters() -> None:
     """`Phased` over two aggregator objects surfaces both variants' parameters."""
     template, _ = _solve_with_aggregator_slot(
         koopmans_aggregator=Phased(solve=LinearAggregator(), simulate=CESAggregator()),
@@ -761,7 +788,7 @@ def test_phased_aggregator_objects_declare_the_union_of_their_parameters():
     assert set(template) == set(_PHASED_AGGREGATOR_PARAMS)
 
 
-def test_phased_aggregator_objects_solve_with_the_solve_variant():
+def test_phased_aggregator_objects_solve_with_the_solve_variant() -> None:
     """Backward induction uses the `solve` variant of a phased aggregator slot."""
     _, phased_V_arr = _solve_with_aggregator_slot(
         koopmans_aggregator=Phased(solve=LinearAggregator(), simulate=CESAggregator()),

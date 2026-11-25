@@ -206,7 +206,7 @@ def test_bound_exit_model_cannot_silently_run_a_stay_only_problem() -> None:
         params={"share": 1.0, "realized_share": 1.0, "threshold": 0.0, "cost": 0.0},
         log_level="off",
     )
-    np.testing.assert_array_equal(solution.values[0]["source"], [1.0, 1.0, 2.0])
+    np.testing.assert_array_equal(solution.values[0]["source"][..., 0], [1.0, 1.0, 2.0])
 
 
 def _switch_wealth(wealth: FloatND) -> FloatND:

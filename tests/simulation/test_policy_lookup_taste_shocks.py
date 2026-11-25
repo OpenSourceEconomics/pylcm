@@ -20,6 +20,8 @@ The hand model has one decision period and a terminal bequest regime:
 
 import math
 from collections.abc import Callable
+from types import MappingProxyType
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -36,8 +38,11 @@ from lcm import (
 from lcm.exceptions import InvalidSimulationInputError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
+from lcm.result import PolicyLookup
+from lcm.solver_api import SolutionResult
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import (
+    ActionName,
     BoolND,
     ContinuousAction,
     ContinuousState,
@@ -45,6 +50,7 @@ from lcm.typing import (
     FloatND,
     FunctionName,
     ScalarInt,
+    UserParams,
     UserParamsNode,
 )
 from tests.conftest import DECIMAL_PRECISION
@@ -63,6 +69,9 @@ EXPECTED_PROBABILITIES = np.array([[0.34351593, 0.65648407], [0.42080099, 0.5791
 EXPECTED_VALUE = np.array([0.53426089, 1.20318134])
 # Hand values carry eight decimals.
 HAND_DECIMALS = min(DECIMAL_PRECISION, 7)
+
+# A solved hand model with the params it was solved at.
+type Solved = tuple[Model, UserParams, SolutionResult]
 
 
 @categorical(ordered=False)
@@ -159,7 +168,13 @@ def get_params(*, scale: float = SCALE) -> dict[str, UserParamsNode]:
     }
 
 
-def lookup(*, model, params, solution=None, **kwargs):
+def lookup(
+    *,
+    model: Model,
+    params: UserParams,
+    solution: SolutionResult | None = None,
+    **kwargs: Any,  # noqa: PAN002 - forwards lookup options
+) -> PolicyLookup:
     """Look up `alive` in period 0 at both wealth nodes."""
     if solution is None:
         solution = model.solve(params=params, log_level="off")
@@ -173,8 +188,14 @@ def lookup(*, model, params, solution=None, **kwargs):
     )
 
 
+def _conditional_actions(got: PolicyLookup) -> MappingProxyType[ActionName, FloatND]:
+    """The conditional actions of a taste-shock lookup, which always has them."""
+    assert got.conditional_actions is not None
+    return got.conditional_actions
+
+
 @pytest.fixture(scope="module")
-def solved():
+def solved() -> Solved:
     model = get_model()
     params = get_params()
     solution = model.solve(params=params, log_level="off")
@@ -182,37 +203,43 @@ def solved():
 
 
 @pytest.fixture(scope="module")
-def looked_up(solved):
+def looked_up(solved: Solved) -> PolicyLookup:
     model, params, solution = solved
     return lookup(model=model, params=params, solution=solution)
 
 
-def test_lookup_returns_no_single_action(looked_up):
+def test_lookup_returns_no_single_action(looked_up: PolicyLookup) -> None:
     assert looked_up.actions is None
 
 
-def test_lookup_outputs_have_one_axis_per_discrete_action(looked_up):
+def test_lookup_outputs_have_one_axis_per_discrete_action(
+    looked_up: PolicyLookup,
+) -> None:
     assert (
-        looked_up.Qc.shape,
-        looked_up.choice_probabilities.shape,
-        {name: a.shape for name, a in looked_up.conditional_actions.items()},
+        np.asarray(looked_up.Qc).shape,
+        np.asarray(looked_up.choice_probabilities).shape,
+        {name: a.shape for name, a in _conditional_actions(looked_up).items()},
     ) == ((2, 2), (2, 2), {"consumption": (2, 2)})
 
 
-def test_lookup_Qc_is_the_conditional_max_over_consumption(looked_up):
+def test_lookup_Qc_is_the_conditional_max_over_consumption(
+    looked_up: PolicyLookup,
+) -> None:
     np.testing.assert_array_almost_equal(
         np.asarray(looked_up.Qc), EXPECTED_QC, decimal=HAND_DECIMALS
     )
 
 
-def test_lookup_conditional_consumption_attains_Qc(looked_up):
+def test_lookup_conditional_consumption_attains_Qc(looked_up: PolicyLookup) -> None:
     np.testing.assert_array_equal(
-        np.asarray(looked_up.conditional_actions["consumption"]),
+        np.asarray(_conditional_actions(looked_up)["consumption"]),
         EXPECTED_CONSUMPTION,
     )
 
 
-def test_lookup_choice_probabilities_are_the_softmax_of_Qc(looked_up):
+def test_lookup_choice_probabilities_are_the_softmax_of_Qc(
+    looked_up: PolicyLookup,
+) -> None:
     np.testing.assert_array_almost_equal(
         np.asarray(looked_up.choice_probabilities),
         EXPECTED_PROBABILITIES,
@@ -220,13 +247,15 @@ def test_lookup_choice_probabilities_are_the_softmax_of_Qc(looked_up):
     )
 
 
-def test_lookup_value_is_the_logsum_of_Qc(looked_up):
+def test_lookup_value_is_the_logsum_of_Qc(looked_up: PolicyLookup) -> None:
     np.testing.assert_array_almost_equal(
-        np.asarray(looked_up.value), EXPECTED_VALUE, decimal=HAND_DECIMALS
+        np.asarray(looked_up.value)[..., 0], EXPECTED_VALUE, decimal=HAND_DECIMALS
     )
 
 
-def test_lookup_value_equals_the_solved_value_at_grid_rows(*, solved, looked_up):
+def test_lookup_value_equals_the_solved_value_at_grid_rows(
+    *, solved: Solved, looked_up: PolicyLookup
+) -> None:
     _, _, solution = solved
     np.testing.assert_array_almost_equal(
         np.asarray(looked_up.value),
@@ -236,14 +265,14 @@ def test_lookup_value_equals_the_solved_value_at_grid_rows(*, solved, looked_up)
 
 
 @pytest.fixture(scope="module")
-def no_work_when_rich_lookup():
+def no_work_when_rich_lookup() -> PolicyLookup:
     model = get_model(extra_constraints={"no_work_when_rich": no_work_when_rich})
     return lookup(model=model, params=get_params())
 
 
 def test_lookup_infeasible_combination_has_probability_exactly_zero(
-    no_work_when_rich_lookup,
-):
+    no_work_when_rich_lookup: PolicyLookup,
+) -> None:
     np.testing.assert_array_equal(
         np.asarray(no_work_when_rich_lookup.choice_probabilities)[1],
         np.array([1.0, 0.0]),
@@ -251,42 +280,42 @@ def test_lookup_infeasible_combination_has_probability_exactly_zero(
 
 
 def test_lookup_infeasible_combination_leaves_value_at_the_feasible_Qc(
-    no_work_when_rich_lookup,
-):
+    no_work_when_rich_lookup: PolicyLookup,
+) -> None:
     got = no_work_when_rich_lookup
-    assert (float(got.Qc[1, 1]), float(got.value[1])) == (
+    assert (float(np.asarray(got.Qc)[1, 1]), float(got.value[1, 0])) == (
         float("-inf"),
-        float(got.Qc[1, 0]),
+        float(np.asarray(got.Qc)[1, 0]),
     )
 
 
-def test_lookup_row_without_feasible_combination_has_no_mass_and_no_value():
+def test_lookup_row_without_feasible_combination_has_no_mass_and_no_value() -> None:
     model = get_model(extra_constraints={"high_consumption": high_consumption})
     got = lookup(model=model, params=get_params())
     assert (
-        float(got.value[0]),
+        float(got.value[0, 0]),
         np.asarray(got.choice_probabilities)[0].tolist(),
-        np.asarray(got.conditional_actions["consumption"])[0].tolist(),
+        np.asarray(_conditional_actions(got)["consumption"])[0].tolist(),
     ) == (float("-inf"), [0.0, 0.0], [0.5, 0.5])
 
 
-def test_lookup_under_a_device_budget_decodes_the_same_conditional_actions():
+def test_lookup_under_a_device_budget_decodes_the_same_conditional_actions() -> None:
     model = get_model(execution_config=ExecutionConfig(device_memory_bytes=2**30))
     got = lookup(model=model, params=get_params())
     np.testing.assert_array_equal(
-        np.asarray(got.conditional_actions["consumption"]), EXPECTED_CONSUMPTION
+        np.asarray(_conditional_actions(got)["consumption"]), EXPECTED_CONSUMPTION
     )
     for name, expected in (
         ("Qc", EXPECTED_QC),
         ("choice_probabilities", EXPECTED_PROBABILITIES),
-        ("value", EXPECTED_VALUE),
+        ("value", EXPECTED_VALUE[:, None]),
     ):
         np.testing.assert_array_almost_equal(
             np.asarray(getattr(got, name)), expected, decimal=HAND_DECIMALS
         )
 
 
-def test_lookup_small_scale_puts_all_mass_on_the_best_combination():
+def test_lookup_small_scale_puts_all_mass_on_the_best_combination() -> None:
     model = get_model()
     got = lookup(model=model, params=get_params(scale=1e-3))
     np.testing.assert_array_almost_equal(
@@ -296,7 +325,7 @@ def test_lookup_small_scale_puts_all_mass_on_the_best_combination():
     )
 
 
-def test_lookup_restricted_work_grid_shrinks_the_discrete_axis(solved):
+def test_lookup_restricted_work_grid_shrinks_the_discrete_axis(solved: Solved) -> None:
     model, params, solution = solved
     got = lookup(
         model=model,
@@ -304,7 +333,10 @@ def test_lookup_restricted_work_grid_shrinks_the_discrete_axis(solved):
         solution=solution,
         action_grids={"work": jnp.asarray([Work.on])},
     )
-    assert (got.Qc.shape, np.asarray(got.choice_probabilities).tolist()) == (
+    assert (
+        np.asarray(got.Qc).shape,
+        np.asarray(got.choice_probabilities).tolist(),
+    ) == (
         (2, 1),
         [[1.0], [1.0]],
     )
@@ -315,15 +347,15 @@ def test_lookup_restricted_work_grid_shrinks_the_discrete_axis(solved):
         np.asarray(got.Qc), expected_Qc, decimal=HAND_DECIMALS
     )
     np.testing.assert_array_almost_equal(
-        np.asarray(got.value), expected_Qc[:, 0], decimal=HAND_DECIMALS
+        np.asarray(got.value)[..., 0], expected_Qc[:, 0], decimal=HAND_DECIMALS
     )
     np.testing.assert_array_equal(
-        np.asarray(got.conditional_actions["consumption"]),
+        np.asarray(_conditional_actions(got)["consumption"]),
         EXPECTED_CONSUMPTION[:, column : column + 1],
     )
 
 
-def test_lookup_keeps_no_intermediates_unless_requested(solved):
+def test_lookup_keeps_no_intermediates_unless_requested(solved: Solved) -> None:
     """The choice distribution is always published; `Q`, `F`, `U`, `CE` on request."""
     model, params, solution = solved
     got = lookup(model=model, params=params, solution=solution)
@@ -332,7 +364,7 @@ def test_lookup_keeps_no_intermediates_unless_requested(solved):
     assert got.choice_probabilities is not None
 
 
-def test_lookup_keeps_only_the_requested_intermediates(solved):
+def test_lookup_keeps_only_the_requested_intermediates(solved: Solved) -> None:
     model, params, solution = solved
     full = lookup(
         model=model,
@@ -351,7 +383,9 @@ def test_lookup_keeps_only_the_requested_intermediates(solved):
     np.testing.assert_array_equal(np.asarray(got.value), np.asarray(full.value))
 
 
-def test_lookup_with_action_values_has_Qc_as_the_masked_max_of_Q(solved):
+def test_lookup_with_action_values_has_Qc_as_the_masked_max_of_Q(
+    solved: Solved,
+) -> None:
     model, params, solution = solved
     got = lookup(
         model=model,
@@ -359,11 +393,11 @@ def test_lookup_with_action_values_has_Qc_as_the_masked_max_of_Q(solved):
         solution=solution,
         keep_intermediates=("Q", "F", "U", "CE"),
     )
-    masked = np.where(np.asarray(got.F), np.asarray(got.Q), -np.inf)
+    masked = np.where(np.asarray(got.F), np.asarray(got.Q)[..., 0], -np.inf)
     np.testing.assert_array_equal(np.asarray(got.Qc), masked.max(axis=2))
 
 
-def test_lookup_flow_utility_is_the_utility_of_each_action(solved):
+def test_lookup_flow_utility_is_the_utility_of_each_action(solved: Solved) -> None:
     model, params, solution = solved
     got = lookup(
         model=model,
@@ -373,13 +407,15 @@ def test_lookup_flow_utility_is_the_utility_of_each_action(solved):
     )
     expected = np.log(CONSUMPTION)[None, :] - 0.3 * np.array([0.0, 1.0])[:, None]
     np.testing.assert_array_almost_equal(
-        np.asarray(got.U),
+        np.asarray(got.U)[..., 0],
         np.broadcast_to(expected, (2, 2, 3)),
         decimal=DECIMAL_PRECISION,
     )
 
 
-def test_lookup_continuation_is_the_terminal_value_at_feasible_actions(solved):
+def test_lookup_continuation_is_the_terminal_value_at_feasible_actions(
+    solved: Solved,
+) -> None:
     model, params, solution = solved
     got = lookup(
         model=model,
@@ -394,26 +430,26 @@ def test_lookup_continuation_is_the_terminal_value_at_feasible_actions(solved):
     )
     feasible = np.asarray(got.F)
     np.testing.assert_array_almost_equal(
-        np.asarray(got.CE)[feasible],
+        np.asarray(got.CE)[..., 0][feasible],
         np.log(next_wealth_values + 1.0)[feasible],
         decimal=DECIMAL_PRECISION,
     )
 
 
-def test_lookup_conditional_consumption_differs_across_discrete_choices():
+def test_lookup_conditional_consumption_differs_across_discrete_choices() -> None:
     """Working costs half a unit of wealth, so at w = 1 it caps consumption at 0.5."""
     model = get_model(
         extra_constraints={"work_costs_half_a_unit": work_costs_half_a_unit}
     )
     got = lookup(model=model, params=get_params())
     np.testing.assert_array_equal(
-        np.asarray(got.conditional_actions["consumption"]),
+        np.asarray(_conditional_actions(got)["consumption"]),
         np.array([[1.0, 0.5], [1.5, 1.5]]),
     )
 
 
 @pytest.fixture(scope="module")
-def phased_solved():
+def phased_solved() -> tuple[SolutionResult, PolicyLookup]:
     """Working pays `log(3)` more in the simulate phase than in the solve phase."""
     model = get_model(
         utility=Phased(solve=utility_alive, simulate=utility_alive_with_work_bonus)
@@ -423,7 +459,9 @@ def phased_solved():
     return solution, lookup(model=model, params=params, solution=solution)
 
 
-def test_lookup_with_phased_utility_uses_the_simulated_utility(phased_solved):
+def test_lookup_with_phased_utility_uses_the_simulated_utility(
+    phased_solved: tuple[SolutionResult, PolicyLookup],
+) -> None:
     _, got = phased_solved
     np.testing.assert_array_almost_equal(
         np.asarray(got.Qc),
@@ -432,12 +470,14 @@ def test_lookup_with_phased_utility_uses_the_simulated_utility(phased_solved):
     )
 
 
-def test_lookup_with_phased_utility_smooths_the_simulated_Qc(phased_solved):
+def test_lookup_with_phased_utility_smooths_the_simulated_Qc(
+    phased_solved: tuple[SolutionResult, PolicyLookup],
+) -> None:
     _, got = phased_solved
     simulated_Qc = EXPECTED_QC + np.array([0.0, math.log(3.0)])
     expected = SCALE * np.log(np.exp(simulated_Qc / SCALE).sum(axis=1))
     np.testing.assert_array_almost_equal(
-        np.asarray(got.value), expected, decimal=HAND_DECIMALS
+        np.asarray(got.value)[..., 0], expected, decimal=HAND_DECIMALS
     )
     weights = np.exp((simulated_Qc - simulated_Qc.max(axis=1, keepdims=True)) / SCALE)
     expected_probabilities = weights / weights.sum(axis=1, keepdims=True)
@@ -448,10 +488,14 @@ def test_lookup_with_phased_utility_smooths_the_simulated_Qc(phased_solved):
     )
 
 
-def test_solve_with_phased_utility_stores_the_solve_phase_value(phased_solved):
+def test_solve_with_phased_utility_stores_the_solve_phase_value(
+    phased_solved: tuple[SolutionResult, PolicyLookup],
+) -> None:
     solution, _ = phased_solved
     np.testing.assert_array_almost_equal(
-        np.asarray(solution.values[0]["alive"]), EXPECTED_VALUE, decimal=HAND_DECIMALS
+        np.asarray(solution.values[0]["alive"])[..., 0],
+        EXPECTED_VALUE,
+        decimal=HAND_DECIMALS,
     )
 
 
@@ -516,7 +560,7 @@ def two_axis_reference() -> dict[str, np.ndarray]:
 
     Axes are row, work, job, consumption, training. Returns the conditional value,
     the conditional consumption and training, the choice probabilities and the
-    smoothed value per row.
+    smoothed value per row with its trailing member axis.
     """
     wealth = WEALTH[:, None, None, None, None]
     work = np.array([0.0, 1.0])[None, :, None, None, None]
@@ -537,28 +581,30 @@ def two_axis_reference() -> dict[str, np.ndarray]:
         "consumption": CONSUMPTION[best // len(TRAINING)],
         "training": TRAINING[best % len(TRAINING)],
         "choice_probabilities": weights / total,
-        "value": (top + SCALE * np.log(total)).reshape(-1),
+        "value": (top + SCALE * np.log(total)).reshape(-1, 1),
     }
 
 
 @pytest.fixture(scope="module")
-def two_axis_looked_up():
+def two_axis_looked_up() -> PolicyLookup:
     return lookup(model=get_two_axis_model(), params=get_params())
 
 
-def test_lookup_keeps_one_axis_per_discrete_action_of_two(two_axis_looked_up):
+def test_lookup_keeps_one_axis_per_discrete_action_of_two(
+    two_axis_looked_up: PolicyLookup,
+) -> None:
     """`Qc`, the probabilities and both conditional actions are (row, work, job)."""
     got = two_axis_looked_up
     assert (
-        got.Qc.shape,
-        got.choice_probabilities.shape,
-        {name: a.shape for name, a in got.conditional_actions.items()},
+        np.asarray(got.Qc).shape,
+        np.asarray(got.choice_probabilities).shape,
+        {name: a.shape for name, a in _conditional_actions(got).items()},
     ) == ((2, 2, 3), (2, 2, 3), {"consumption": (2, 2, 3), "training": (2, 2, 3)})
 
 
 def test_lookup_with_two_discrete_actions_matches_the_enumerated_reference(
-    two_axis_looked_up,
-):
+    two_axis_looked_up: PolicyLookup,
+) -> None:
     """Every combination of `work` and `job` gets its own `Qc` and probability."""
     got, expected = two_axis_looked_up, two_axis_reference()
     for name in ("Qc", "choice_probabilities", "value"):
@@ -567,21 +613,21 @@ def test_lookup_with_two_discrete_actions_matches_the_enumerated_reference(
         )
     for name in ("consumption", "training"):
         np.testing.assert_array_equal(
-            np.asarray(got.conditional_actions[name]), expected[name]
+            np.asarray(_conditional_actions(got)[name]), expected[name]
         )
 
 
 def test_lookup_with_two_discrete_actions_trains_one_above_the_job(
-    two_axis_looked_up,
-):
+    two_axis_looked_up: PolicyLookup,
+) -> None:
     """The conditional training is `job + 1` in every row and `work` column."""
     np.testing.assert_array_equal(
-        np.asarray(two_axis_looked_up.conditional_actions["training"]),
+        np.asarray(_conditional_actions(two_axis_looked_up)["training"]),
         np.broadcast_to(JOB_CODES + 1.0, (2, 2, 3)),
     )
 
 
-def test_lookup_without_action_values_returns_no_Q(looked_up):
+def test_lookup_without_action_values_returns_no_Q(looked_up: PolicyLookup) -> None:
     assert (looked_up.Q, looked_up.F, looked_up.U, looked_up.CE) == (
         None,
         None,
@@ -591,7 +637,7 @@ def test_lookup_without_action_values_returns_no_Q(looked_up):
 
 
 @pytest.mark.slow
-def test_lookup_work_probability_matches_the_toy_reference():
+def test_lookup_work_probability_matches_the_toy_reference() -> None:
     scale = 0.2
     discount_factor = 0.95
     model = taste_shocks_toy.get_model()
@@ -619,7 +665,7 @@ def test_lookup_work_probability_matches_the_toy_reference():
 
 
 @pytest.mark.slow
-def test_lookup_refuses_a_taste_shock_regime_not_solved_by_grid_search():
+def test_lookup_refuses_a_taste_shock_regime_not_solved_by_grid_search() -> None:
     model = dcegm_paper_twin.get_model("dcegm")
     params = dcegm_paper_twin.get_params()
     solution = model.solve(params=params, log_level="off")

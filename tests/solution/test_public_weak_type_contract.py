@@ -80,14 +80,15 @@ def _reduced_row(*, x: FloatND, candidate: FloatND, width: int) -> FloatND:
     """Return the state row shifted by the candidate maximum, at any legal width.
 
     The block count follows the planner's width and the padded tail is `-inf`,
-    so the row itself is the same subtree at every width of the frontier.
+    so the row itself is the same subtree at every width of the frontier. The
+    row carries the regime's trailing member axis of length one.
     """
     pad = (-candidate.shape[0]) % width
     blocks = jnp.pad(candidate, (0, pad), constant_values=-jnp.inf).reshape((-1, width))
     best = jnp.asarray(-jnp.inf, dtype=x.dtype)
     for index in range(blocks.shape[0]):
         best = jnp.maximum(best, jnp.max(blocks[index]))
-    return x + best
+    return x[:, None] + best
 
 
 def _weak_scalar_body(
@@ -127,8 +128,8 @@ _PRODUCER_BODIES = MappingProxyType(
 
 
 def _reader_body(*, x: FloatND, scalar: FloatND) -> FloatND:
-    """Publish the state row shifted by the scalar its producer handed over."""
-    return x + scalar
+    """Publish the state row, with its member axis, shifted by the handed scalar."""
+    return (x + scalar)[:, None]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -431,7 +432,7 @@ def test_a_width_dependent_published_weak_typing_is_refused_where_it_binds(
 
     aaae(
         np.asarray(result.values[0]["working_life"]),
-        np.linspace(1.0, float(_N_WEALTH), _N_WEALTH) + 1.0,
+        np.linspace(1.0, float(_N_WEALTH), _N_WEALTH)[:, None] + 1.0,
         decimal=DECIMAL_PRECISION,
     )
     assert {
@@ -465,6 +466,6 @@ def test_a_uniformly_typed_published_scalar_solves_to_its_consumers_row(
 
     aaae(
         np.asarray(result.values[0]["working_life"]),
-        np.linspace(1.0, float(_N_WEALTH), _N_WEALTH) + 1.0,
+        np.linspace(1.0, float(_N_WEALTH), _N_WEALTH)[:, None] + 1.0,
         decimal=DECIMAL_PRECISION,
     )

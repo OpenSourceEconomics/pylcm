@@ -8,16 +8,24 @@ https://doi.org/10.3982/QE643).
 """
 
 from collections.abc import Mapping
+from typing import TypedDict
 
 import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.config import TEST_DATA
-from lcm.typing import FloatND
+from lcm import Model
+from lcm.typing import FloatND, UserParams
 from tests.test_models.deterministic.base import get_model, get_params
 
-TEST_CASES = {
+
+class _Case(TypedDict):
+    model: Model
+    params: UserParams
+
+
+TEST_CASES: dict[str, _Case] = {
     "iskhakov_2017_five_periods": {
         "model": get_model(n_periods=6),
         "params": get_params(
@@ -41,12 +49,14 @@ TEST_CASES = {
 }
 
 
-def mean_square_error(*, x, y, axis=None):
+def mean_square_error(
+    *, x: np.ndarray, y: np.ndarray, axis: int | None = None
+) -> np.ndarray:
     return np.mean((x - y) ** 2, axis=axis)
 
 
 @pytest.mark.parametrize(("model_name", "model_and_params"), TEST_CASES.items())
-def test_analytical_solution(*, model_name, model_and_params):
+def test_analytical_solution(*, model_name: str, model_and_params: _Case) -> None:
     """Test that the numerical solution matches the analytical solution.
 
     The analytical solution is from Iskhakov et al (2017) and is generated
@@ -67,14 +77,14 @@ def test_analytical_solution(*, model_name, model_and_params):
 
     V_arr_worker = np.stack(
         [
-            regime_to_V_arr["working_life"]
+            regime_to_V_arr["working_life"][..., 0]
             for regime_to_V_arr in period_to_regime_to_V_arr_list[:-1]
         ]
     )
 
     V_arr_retired = np.stack(
         [
-            regime_to_V_arr["retirement"]
+            regime_to_V_arr["retirement"][..., 0]
             for regime_to_V_arr in period_to_regime_to_V_arr_list[:-1]
         ]
     )

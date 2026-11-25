@@ -104,7 +104,7 @@ def test_the_documented_page_defines_the_solver_it_describes(
 def test_the_documented_solver_publishes_the_wealth_grid_as_its_value(
     documented: DocumentationNamespace,
 ) -> None:
-    """Every alive period's value equals the regime's own wealth grid."""
+    """Every alive period's value is the wealth grid, for the member `"self"`."""
     model = Model(
         regimes={
             "alive": Regime(
@@ -133,7 +133,7 @@ def test_the_documented_solver_publishes_the_wealth_grid_as_its_value(
     )
     solution = model.solve(params={"discount_factor": 1.0}, log_level="debug")
 
-    expected = np.asarray(_WEALTH.to_jax())
+    expected = np.asarray(_WEALTH.to_jax())[:, None]
     for period in range(_N_PERIODS - 1):
         np.testing.assert_array_equal(
             np.asarray(solution.values[period]["alive"]), expected

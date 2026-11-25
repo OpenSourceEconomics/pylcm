@@ -8,7 +8,7 @@ solves the model by hand, by backward induction over the three nodes, and reads 
 premium by label, so it shares no indexing path with pylcm.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 import jax.numpy as jnp
 import numpy as np
@@ -27,7 +27,7 @@ from lcm import (
     ref,
 )
 from lcm.exceptions import RegimeInitializationError
-from lcm.regime import Regime
+from lcm.regime import ConstraintEntry, Regime
 from lcm.typing import (
     DiscreteAction,
     DiscreteState,
@@ -87,6 +87,10 @@ def _utility(
     return (wage - disutility_of_work) * work
 
 
+def _zero_utility() -> float:
+    return 0.0
+
+
 def _next_experience(
     *, experience: DiscreteState, work: DiscreteAction
 ) -> DiscreteState:
@@ -104,7 +108,11 @@ def _next_regime(*, age: float) -> ScalarInt:
 
 
 def _model(
-    *, experience: DiscreteGrid, wage, next_experience, constraints=None
+    *,
+    experience: DiscreteGrid,
+    wage: UserFunction | AgeSpecializedFunction,
+    next_experience: UserFunction,
+    constraints: Mapping[str, ConstraintEntry] | None = None,
 ) -> Model:
     ages = AgeGrid(start=0, inclusive_stop=_LAST_WORKING_AGE + 1, step="Y")
     working_life = Regime(
@@ -117,7 +125,7 @@ def _model(
     return Model(
         regimes={
             "working_life": working_life,
-            "dead": Regime(functions={"utility": lambda: 0.0}),
+            "dead": Regime(functions={"utility": _zero_utility}),
         },
         ages=ages,
         regime_id_class=_RegimeId,
@@ -145,7 +153,9 @@ def _params(premium: pd.Series) -> UserParams:
 
 
 def _value_case(
-    *, specialize: bool = False, constraints=None
+    *,
+    specialize: bool = False,
+    constraints: Mapping[str, ConstraintEntry] | None = None,
 ) -> tuple[Model, UserParams, tuple[float, ...]]:
     model = _model(
         experience=DiscreteGrid(values=jnp.array([0, 5, 10])),
@@ -164,7 +174,9 @@ def _value_case(
 
 
 def _label_case(
-    *, specialize: bool = False, constraints=None
+    *,
+    specialize: bool = False,
+    constraints: Mapping[str, ConstraintEntry] | None = None,
 ) -> tuple[Model, UserParams, tuple[float, ...]]:
     model = _model(
         experience=DiscreteGrid(category_class=_Level),
@@ -184,7 +196,16 @@ def _label_case(
 
 def _specialized(function: UserFunction) -> AgeSpecializedFunction:
     """The same concrete function at every age, behind an age-specialization marker."""
-    return AgeSpecializedFunction(build=lambda _age: function, signature=lambda _age: 0)
+
+    def build(age: float) -> UserFunction:
+        del age
+        return function
+
+    def signature(age: float) -> int:
+        del age
+        return 0
+
+    return AgeSpecializedFunction(build=build, signature=signature)
 
 
 _CASES = {"value-grid": _value_case, "category-class": _label_case}
@@ -221,26 +242,36 @@ def _reference_solution(
 
 @pytest.mark.parametrize("case", list(_CASES))
 @pytest.mark.parametrize("period", range(_LAST_WORKING_AGE + 1))
-def test_code_indexed_series_solves_to_the_reference_value_function(*, case, period):
+def test_code_indexed_series_solves_to_the_reference_value_function(
+    *, case: str, period: int
+) -> None:
     """`wage_premium[experience_code]` reads the premium of each node's label."""
     model, params, wages = _CASES[case]()
     got = model.solve(params=params, log_level="off").values[period]["working_life"]
-    aaae(np.asarray(got), _reference_solution(wages)[0][period], DECIMAL_PRECISION)
+    aaae(
+        np.asarray(got)[..., 0],
+        _reference_solution(wages)[0][period],
+        DECIMAL_PRECISION,
+    )
 
 
 @pytest.mark.parametrize("case", list(_CASES))
 @pytest.mark.parametrize("period", range(_LAST_WORKING_AGE + 1))
 def test_an_age_specialized_code_reader_solves_to_the_reference_value_function(
-    *, case, period
-):
+    *, case: str, period: int
+) -> None:
     """An age-specialized wage reads `experience_code` as a plain function does."""
     model, params, wages = _CASES[case](specialize=True)
     got = model.solve(params=params, log_level="off").values[period]["working_life"]
-    aaae(np.asarray(got), _reference_solution(wages)[0][period], DECIMAL_PRECISION)
+    aaae(
+        np.asarray(got)[..., 0],
+        _reference_solution(wages)[0][period],
+        DECIMAL_PRECISION,
+    )
 
 
 @pytest.mark.parametrize("case", list(_CASES))
-def test_a_condition_reading_a_code_is_refused(case):
+def test_a_condition_reading_a_code_is_refused(case: str) -> None:
     """A condition names `experience_code`, which no node of the model provides."""
     with pytest.raises(
         RegimeInitializationError, match=r"condition constraint 'cap'.*experience_code"
@@ -249,7 +280,7 @@ def test_a_condition_reading_a_code_is_refused(case):
 
 
 @pytest.mark.parametrize("case", list(_CASES))
-def test_code_indexed_series_simulates_the_reference_choices(case):
+def test_code_indexed_series_simulates_the_reference_choices(case: str) -> None:
     """Every subject works exactly where the reference policy works."""
     model, params, wages = _CASES[case]()
     frame = (
@@ -284,7 +315,7 @@ def _wage_by_value(
     return base_wage * (1 + wage_premium[experience])
 
 
-def test_indexing_a_param_by_the_value_of_a_value_grid_is_refused():
+def test_indexing_a_param_by_the_value_of_a_value_grid_is_refused() -> None:
     """`table[experience]` on a value grid names `experience_code` as the fix."""
     with pytest.raises(RegimeInitializationError, match="experience_code"):
         _model(
@@ -334,14 +365,14 @@ def _regime_with_a_code_named_state() -> Regime:
     "make_regime", [_regime_with_a_code_named_function, _regime_with_a_code_named_state]
 )
 def test_a_variable_named_like_the_code_of_a_discrete_variable_is_refused(
-    make_regime,
-):
+    make_regime: Callable[[], Regime],
+) -> None:
     """`experience_code` collides with the code of the discrete `experience`."""
     with pytest.raises(RegimeInitializationError, match="experience_code"):
         Model(
             regimes={
                 "working_life": make_regime(),
-                "dead": Regime(functions={"utility": lambda: 0.0}),
+                "dead": Regime(functions={"utility": _zero_utility}),
             },
             ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
             regime_id_class=_RegimeId,
@@ -401,7 +432,9 @@ def _constrained_values(
 
 
 @pytest.mark.parametrize("period", range(_LAST_WORKING_AGE + 1))
-def test_code_reads_in_a_constraint_and_a_regime_law_match_value_reads(period):
+def test_code_reads_in_a_constraint_and_a_regime_law_match_value_reads(
+    period: int,
+) -> None:
     """A constraint and a regime law reading `experience_code` act as value reads."""
     by_code = _constrained_values(
         constraint=_no_work_at_the_top_by_code, regime_law=_next_regime_by_code

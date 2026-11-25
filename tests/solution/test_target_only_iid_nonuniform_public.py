@@ -46,7 +46,7 @@ def _oracle() -> float:
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
-def test_target_only_lognormal_iid_uses_quadrature_weights(*, enable_jit):
+def test_target_only_lognormal_iid_uses_quadrature_weights(*, enable_jit: bool) -> None:
     process = LogNormalIIDProcess(
         n_points=3,
         gauss_hermite=True,
@@ -71,5 +71,5 @@ def test_target_only_lognormal_iid_uses_quadrature_weights(*, enable_jit):
         initial_nodes={20: "source"},
     )
     solution = model.solve(params={"discount_factor": 1.0}, log_level="debug").values
-    got = float(np.asarray(solution[0]["source"]))
+    got = float(np.asarray(solution[0]["source"])[..., 0])
     np.testing.assert_allclose(got, _oracle(), rtol=2e-6)

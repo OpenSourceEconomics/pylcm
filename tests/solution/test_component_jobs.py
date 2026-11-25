@@ -633,10 +633,11 @@ def test_collector_validates_model_owned_fixed_raw_fields(
                     continue
                 array = np.asarray(file[leaf["dataset"]][()])
                 if corruption.endswith("shape"):
-                    if array.ndim != 1:
-                        msg = "The shape witness requires a singleton raw array."
+                    # A subject's mask is a scalar; its value carries the member axis.
+                    if array.ndim != (2 if corruption == "value-shape" else 1):
+                        msg = "The shape witness requires a known raw array rank."
                         raise ValueError(msg)
-                    array = array[:, None]
+                    array = array[..., None]
                 elif corruption == "role-dtype":
                     array = array.astype(np.float64)
                 elif corruption == "mask-dtype":

@@ -18,14 +18,14 @@ import numpy as np
 import pytest
 
 from lcm import AgeGrid, DiscreteGrid, Model, NormalIIDProcess, Regime
-from lcm.typing import DiscreteState, FloatND, ValueND
+from lcm.typing import DiscreteState, FloatND, UserFunction, ValueND
 from tests.regime_building.test_process_value_adapter_context import (
     BinaryChoice,
     RegimeIds,
 )
 
 
-def _make_payoff(center: float):
+def _make_payoff(center: float) -> UserFunction:
     def payoff(*, z: ValueND, k_code: DiscreteState) -> FloatND:
         return -((z - center) ** 2) + 0.0 * k_code
 
@@ -39,7 +39,7 @@ def _make_payoff(center: float):
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
 def test_complete_binding_is_invariant_under_callable_reuse(
     *, center: float, foreign_kind: str, shared: bool, reverse: bool, enable_jit: bool
-):
+) -> None:
     process_reader = _make_payoff(center)
     foreign_reader = process_reader if shared else _make_payoff(center)
     a = Regime(
@@ -79,7 +79,9 @@ def test_complete_binding_is_invariant_under_callable_reuse(
     assert "z_code" not in str(model.get_params_template())
     values = model.solve(params={"a": {}, "b": {}}, log_level="off").values[0]
     np.testing.assert_array_equal(
-        np.asarray(values["a"]), np.asarray((-4.0, -1.0, 0.0, -1.0, -4.0))
+        np.asarray(values["a"])[..., 0], np.asarray((-4.0, -1.0, 0.0, -1.0, -4.0))
     )
     expected_foreign = (0.0, -100.0) if foreign_kind == "state" else 0.0
-    np.testing.assert_array_equal(np.asarray(values["b"]), np.asarray(expected_foreign))
+    np.testing.assert_array_equal(
+        np.asarray(values["b"])[..., 0], np.asarray(expected_foreign)
+    )

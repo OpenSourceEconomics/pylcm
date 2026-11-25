@@ -114,5 +114,5 @@ def test_a_model_whose_joint_node_underflows_still_solves() -> None:
     ).values
 
     np.testing.assert_allclose(
-        np.asarray(V[0]["alive"]), np.broadcast_to(_WEALTH_VALUES, (2, 2, 4))
+        np.asarray(V[0]["alive"])[..., 0], np.broadcast_to(_WEALTH_VALUES, (2, 2, 4))
     )

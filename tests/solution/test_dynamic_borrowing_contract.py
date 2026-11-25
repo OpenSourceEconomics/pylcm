@@ -137,10 +137,13 @@ def test_plain_markov_floor(*, dynamic: bool) -> None:
     """The income-specific floor binds at liquid resources of one half."""
     model = make_model(dynamic=dynamic)
     result = model.solve(params={"discount_factor": 1.0}, log_level="off")
-    values = np.asarray(result.values[0]["saving"])
+    published = np.asarray(result.values[0]["saving"])
     assert tuple(model.user_regimes["saving"].states) == ("income", "liquid")
     assert tuple(model.user_regimes["done"].states) == ("liquid", "income")
-    assert values.shape == (2, 4), "The source axes are income, then liquid."
+    assert published.shape == (2, 4, 1), (
+        "The source axes are income, then liquid, then the member."
+    )
+    values = published[..., 0]
     floors = (0.0, 0.25 if dynamic else 0.0)
     expected = []
     for bound, weights in zip(floors, ((0.8, 0.2), (0.2, 0.8)), strict=True):

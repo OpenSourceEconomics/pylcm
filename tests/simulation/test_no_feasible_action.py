@@ -228,7 +228,7 @@ def test_solve_counts_empty_sets_separately_from_feasible_negative_infinity(
     result = model.solve(params={"discount_factor": 0.5}, log_level="warning")
     if check == "values":
         np.testing.assert_array_equal(
-            np.asarray(result.values[1]["working"]), [-np.inf, -np.inf, 2.0]
+            np.asarray(result.values[1]["working"]), [[-np.inf], [-np.inf], [2.0]]
         )
         return
     messages = [record.getMessage() for record in caplog.records]

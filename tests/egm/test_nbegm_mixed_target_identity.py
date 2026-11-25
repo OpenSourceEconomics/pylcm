@@ -81,7 +81,7 @@ def test_equal_shaped_living_and_terminal_targets_keep_distinct_marginals() -> N
         np.testing.assert_array_equal(carry.endog_grid, expected_grid)
         np.testing.assert_array_equal(carry.value, expected_values)
         np.testing.assert_array_equal(
-            context["next_regime_to_V_arr"][target], expected_values.T
+            context["next_regime_to_V_arr"][target][..., 0], expected_values.T
         )
         carries[target] = carry
     np.testing.assert_array_equal(

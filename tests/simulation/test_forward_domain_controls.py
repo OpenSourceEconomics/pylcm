@@ -306,11 +306,13 @@ def test_budgeted_forward_units_are_exactly_the_visited_pairs(
     for (period, name), expected_values in spec["value_only_values"].items():
         # The value-only pair's solved value stays published.
         np.testing.assert_allclose(
-            np.asarray(solution.values[period][name]), expected_values, rtol=1e-6
+            np.asarray(solution.values[period][name])[..., 0],
+            expected_values,
+            rtol=1e-6,
         )
     if spec["source_values"] is not None:
         np.testing.assert_allclose(
-            np.asarray(solution.values[0]["source"]),
+            np.asarray(solution.values[0]["source"])[..., 0],
             spec["source_values"],
             rtol=1e-6,
         )

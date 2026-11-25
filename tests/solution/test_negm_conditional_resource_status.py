@@ -95,7 +95,7 @@ def test_nested_nonfinite_resources_survive_false_current_predicate(
         directory=tmp_path, monkeypatch=monkeypatch
     )
     healthy = _run_child(kernel=kernel, context=context)
-    np.testing.assert_array_equal(healthy.value, np.full((4, 2), -np.inf))
+    np.testing.assert_array_equal(healthy.value, np.full((4, 2, 1), -np.inf))
     assert healthy.bound_status
     for status in healthy.bound_status:
         np.testing.assert_array_equal(status, [False, False])
@@ -127,7 +127,7 @@ def test_nested_nonfinite_resources_survive_false_current_predicate(
         ),
     }
     output = _run_child(kernel=kernel, context=changed)
-    np.testing.assert_array_equal(output.value, np.full((4, 2), -np.inf))
+    np.testing.assert_array_equal(output.value, np.full((4, 2, 1), -np.inf))
     for status in output.bound_status:
         np.testing.assert_array_equal(status, [False, False])
     assert output.query_status is not None
