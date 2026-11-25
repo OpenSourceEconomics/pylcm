@@ -58,10 +58,10 @@ def _edge(
         legs=tuple(
             ResolvedMemberRoute(
                 route=f"leg_{index}",
-                source_member=None,
-                target_component_index=None,
+                source_member="self",
+                target_component_index=0,
                 fallback=ResolvedProjectedRegimeValue(
-                    regime=fallback, projection={}, member_index=None
+                    regime=fallback, projection={}, member_index=0
                 ),
             )
             for index, fallback in enumerate(fallbacks)

@@ -722,7 +722,9 @@ def _readout_oracle(
 ) -> tuple[int | None, float]:
     """Scan the flat elements in order, as the contract states it.
 
-    The index is `None` where the value is NaN: a poisoned cell has no choice.
+    A tie in the objective goes to the larger stored value, then to the first
+    element. The index is `None` where the value is NaN: a poisoned cell has no
+    choice.
     """
     flat_selection = np.ravel(selection)
     flat_readout = np.ravel(readout)
@@ -734,7 +736,10 @@ def _readout_oracle(
         return None, np.nan
     best = feasible[0]
     for k in feasible[1:]:
-        if flat_selection[k] > flat_selection[best]:
+        if (flat_selection[k], flat_readout[k]) > (
+            flat_selection[best],
+            flat_readout[best],
+        ):
             best = k
     return best, float(flat_readout[best])
 
@@ -768,18 +773,27 @@ READOUT_CASES = {
 def test_readout_follows_the_empty_tie_and_nan_contract(
     *, case: str, enable_jit: bool
 ) -> None:
-    """Index `-1` and `-inf` without a feasible action; a feasible NaN poisons."""
+    """A single's readout: index `-1` and `-inf` without a feasible action, and a
+    feasible NaN poisons."""
     import jax  # noqa: PLC0415
 
-    from _lcm.regime_building.decoupled import argmax_and_readout  # noqa: PLC0415
+    from _lcm.regime_building.decoupled import (  # noqa: PLC0415
+        household_argmax_and_readout,
+    )
 
     selection, readout, where = (np.asarray(part) for part in READOUT_CASES[case])
-    function = jax.jit(argmax_and_readout) if enable_jit else argmax_and_readout
-    index, value = function(
-        selection=jnp.asarray(selection),
-        readout=jnp.asarray(readout),
-        where=jnp.asarray(where),
+    function = (
+        jax.jit(household_argmax_and_readout)
+        if enable_jit
+        else household_argmax_and_readout
     )
+    index, values = function(
+        selection=jnp.asarray(selection)[..., jnp.newaxis],
+        readout=jnp.asarray(readout)[..., jnp.newaxis],
+        where=jnp.asarray(where),
+        weights=jnp.ones(1),
+    )
+    value = values[0]
     expected_index, expected_value = _readout_oracle(
         selection=selection, readout=readout, where=where
     )
@@ -1179,12 +1193,6 @@ def test_ev1_stored_value_is_invariant_to_objective_translations(*, seed: int) -
     Objectives sit on a quarter grid within `[-4, 4]`, so `objective + 2**20`
     is exact in float32 and the translated choice problem is the same one.
     """
-    from _lcm.regime_building.decoupled import (  # noqa: PLC0415
-        decoupled_logsum,
-        get_conditional_profiles,
-    )
-    from _lcm.regime_building.Q_and_F import QAndFParts  # noqa: PLC0415
-
     rng = np.random.default_rng(seed)
     shape = (4, 3)
     objective = rng.integers(-16, 17, size=shape) / 4.0
@@ -1201,17 +1209,11 @@ def test_ev1_stored_value_is_invariant_to_objective_translations(*, seed: int) -
         * (1.0 + np.abs(value).max() + scale * np.log(value.size))
     )
     for offset in (0.0, 2.0**20):
-        parts = QAndFParts(
-            U=jnp.asarray(value),
-            F=jnp.asarray(feasible),
-            CE=jnp.zeros(shape),
-            Q=jnp.asarray(value),
-            Q_objective=jnp.asarray(objective + offset),
-        )
-        got, _ = decoupled_logsum(
-            conditional=get_conditional_profiles(parts=parts, n_discrete_action_axes=1),
-            scale=jnp.asarray(scale),
-            parts=parts,
+        got = _ev1_cell_value(
+            objective=jnp.asarray(objective + offset),
+            value=jnp.asarray(value),
+            feasible=jnp.asarray(feasible),
+            scale=scale,
         )
         assert abs(float(got) - expected) <= tolerance, (offset, float(got), expected)
 
@@ -1219,83 +1221,27 @@ def test_ev1_stored_value_is_invariant_to_objective_translations(*, seed: int) -
 def _ev1_cell_value(
     *, objective: FloatND, value: FloatND, feasible: BoolND, scale: float
 ) -> FloatND:
-    """The stored EV1 value of a cell with one continuous candidate per combination."""
+    """A single's stored EV1 value of a cell, its leading axis the discrete one."""
     from _lcm.regime_building.decoupled import (  # noqa: PLC0415
-        decoupled_logsum,
-        get_conditional_profiles,
+        smoothed_logsum,
+        smoothed_profiles,
     )
     from _lcm.regime_building.Q_and_F import QAndFParts  # noqa: PLC0415
 
     parts = QAndFParts(
-        U=value,
+        U=value[..., jnp.newaxis],
         F=feasible,
-        CE=jnp.zeros_like(value),
-        Q=value,
-        Q_objective=objective,
+        CE=jnp.zeros_like(value)[..., jnp.newaxis],
+        Q=value[..., jnp.newaxis],
+        Q_objective=objective[..., jnp.newaxis],
     )
-    stored, _ = decoupled_logsum(
-        conditional=get_conditional_profiles(parts=parts, n_discrete_action_axes=1),
+    stored, _ = smoothed_logsum(
+        smoothed=smoothed_profiles(
+            parts=parts, weights=jnp.ones(1), n_discrete_action_axes=1
+        ),
         scale=jnp.asarray(scale),
-        parts=parts,
     )
-    return stored
-
-
-@pytest.mark.parametrize("enable_jit", [False, True])
-def test_ev1_objective_gradient_ignores_an_empty_combination(
-    *, enable_jit: bool
-) -> None:
-    """An infeasible combination's `-inf` readout leaves the gradient finite.
-
-    With feasibility `[F, T, T]`, objective `[0, theta, 0]` and value `[7, 1, 3]`,
-    the stored value at `theta = 0` is `2 + log 2` and its derivative is `-1/2`.
-    """
-    import jax  # noqa: PLC0415
-
-    def stored(theta: FloatND) -> FloatND:
-        return _ev1_cell_value(
-            objective=jnp.stack([jnp.zeros_like(theta), theta, jnp.zeros_like(theta)]),
-            value=jnp.asarray([7.0, 1.0, 3.0]),
-            feasible=jnp.asarray([False, True, True]),
-            scale=1.0,
-        )
-
-    gradient = jax.grad(stored)
-    if enable_jit:
-        gradient = jax.jit(gradient)
-    assert_array_almost_equal(stored(jnp.asarray(0.0)), 2.0 + np.log(2.0))
-    assert_array_almost_equal(gradient(jnp.asarray(0.0)), -0.5)
-
-
-@pytest.mark.parametrize("seed", range(6))
-def test_ev1_objective_gradient_matches_finite_differences(*, seed: int) -> None:
-    """Menus with empty combinations: the gradient matches a central difference."""
-    import jax  # noqa: PLC0415
-
-    if jnp.asarray(0.0).dtype != jnp.float64:
-        pytest.skip("central differences need float64")
-    rng = np.random.default_rng(seed)
-    n = 5
-    base = jnp.asarray(rng.normal(size=n))
-    direction = jnp.asarray(rng.normal(size=n))
-    value = jnp.asarray(rng.normal(size=n) * 2.0)
-    mask = rng.uniform(size=n) > 0.4
-    mask[0], mask[1] = True, False
-    feasible = jnp.asarray(mask)
-
-    def along(step: FloatND) -> FloatND:
-        return _ev1_cell_value(
-            objective=base + step * direction,
-            value=value,
-            feasible=feasible,
-            scale=0.7,
-        )
-
-    h = 1e-6
-    central = (along(jnp.asarray(h)) - along(jnp.asarray(-h))) / (2 * h)
-    got = jax.grad(along)(jnp.asarray(0.0))
-    assert np.isfinite(float(got))
-    assert abs(float(got) - float(central)) < 1e-6
+    return stored[0]
 
 
 @pytest.mark.parametrize(

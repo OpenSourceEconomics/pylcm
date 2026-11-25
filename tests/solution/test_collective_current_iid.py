@@ -962,7 +962,7 @@ def test_collective_current_policy_preserves_names_under_reversed_declarations()
     """Reordering regimes and members keeps named values and one joint action."""
     model = _model(enable_jit=True, width=3, reverse=True)
     solution = model.solve(params={}, log_level="off", runtime_checks=False)
-    members = model._regimes["couple"].member_axis
+    members = model._regimes["couple"].members
     assert members == ("m", "f")
     for member, expected in (("f", [4.0, 4.0, 8.0]), ("m", [4.0, 4.0, 4.0])):
         assert_array_almost_equal(

@@ -584,16 +584,15 @@ class NNBEGM(TwoMarginSolver):
                         solver_path=("nnbegm", "adjuster")
                     )
                 ),
-                # The inner kernels publish values without the member axis; the
-                # republished programs append it.
-                member_axis=None,
             )
             if inner_models is not None:
                 adjuster_context = replace(
                     adjuster_context,
                     nbegm_source_query_model=inner_models["adjuster"],
                 )
-            adjuster_group = bound.inner.build_period_kernels(
+            # The inner kernels publish values without the member axis; the
+            # republished programs append it.
+            adjuster_group = bound.inner.build_inner_period_kernels(
                 context=adjuster_context, materializer=materializer
             )
             no_adjustment_func = (
@@ -618,14 +617,13 @@ class NNBEGM(TwoMarginSolver):
                         solver_path=("nnbegm", "keeper")
                     )
                 ),
-                member_axis=None,
             )
             if inner_models is not None:
                 keeper_context = replace(
                     keeper_context,
                     nbegm_source_query_model=inner_models["keeper"],
                 )
-            keeper_group = bound.inner.build_period_kernels(
+            keeper_group = bound.inner.build_inner_period_kernels(
                 context=keeper_context, materializer=materializer
             )
             _merge_nnbegm_reader_contracts(
@@ -848,7 +846,7 @@ class NNBEGM(TwoMarginSolver):
                     branch_fixed_cost=branch_aggregation_by_period[period][0],
                     branch_scale_function=branch_aggregation_by_period[period][1],
                     query_model=query_model,
-                    member_axis=context.member_axis,
+                    members=context.members,
                 )
                 for period, adjuster_kernel in adjuster_by_period.items()
             }
@@ -1203,10 +1201,8 @@ class _NNBEGMPeriodKernel:
     own graph key.
     """
 
-    member_axis: tuple[str, ...] | None = field(
-        default=None, metadata={"fingerprint_omit_if_default": True}
-    )
-    """The regime's member axis, which the published value carries, or `None`.
+    members: tuple[str, ...]
+    """The regime's members, the axis the published value carries.
 
     Every republished program appends it; the inner kernels read their programs'
     values without it, and the kernel appends it to the collapsed value.
@@ -1296,7 +1292,7 @@ class _NNBEGMPeriodKernel:
                     retained_artifact_payload_types=(retained_artifact_payload_types),
                 )
                 programs[graph_key] = with_member_axis(
-                    program=programs[graph_key], member_axis=self.member_axis
+                    program=programs[graph_key], members=self.members
                 )
         object.__setattr__(self, "_core_programs", MappingProxyType(programs))
 
@@ -1381,8 +1377,6 @@ class _NNBEGMPeriodKernel:
             ages=ages,
             logger=logger,
         )
-        if self.member_axis is None:
-            return result
         return replace(result, value=jnp.expand_dims(result.value, -1))
 
     def _solve_outer(
@@ -1408,12 +1402,10 @@ class _NNBEGMPeriodKernel:
     ) -> Mapping[str, Callable[..., PytreeValue]]:
         """Select one role's inner cores, each value read without the member axis."""
         cores = _subcores(compiled_cores=compiled_cores, role=role)
-        if self.member_axis is None:
-            return cores
         return MappingProxyType(
             {
                 name: functools.partial(
-                    _core_without_member_axis, core=core, member_axis=self.member_axis
+                    _core_without_member_axis, core=core, members=self.members
                 )
                 if publishes_value(program=self._core_programs[f"{role}:{name}"])
                 else core
@@ -2778,11 +2770,11 @@ def _fail_if_the_outer_search_leaves_the_outer_state_domain(
 def _core_without_member_axis(
     *,
     core: Callable[..., PytreeValue],
-    member_axis: tuple[str, ...],
+    members: tuple[str, ...],
     **arguments: PytreeValue,
 ) -> PytreeValue:
     """Run one compiled inner core and read its value without the member axis."""
-    return drop_member_axis(output=core(**arguments), member_axis=member_axis)
+    return drop_member_axis(output=core(**arguments), members=members)
 
 
 def _subcores(

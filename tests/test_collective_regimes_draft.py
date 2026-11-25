@@ -100,7 +100,7 @@ def test_declaring_non_terminal_members_constructs() -> None:
     )
     law = bind_regime_law(_some_transition)
     validate_regime_law(regime, law=law)
-    assert regime.member_axis == ("f", "m")
+    assert regime.members == ("f", "m")
     assert not law.terminal
 
 
@@ -144,13 +144,8 @@ def test_terminal_members_without_per_member_utility_is_rejected() -> None:
         )
 
 
-def test_singleton_default_is_untouched() -> None:
-    """A regime that declares no members is a plain singleton regime.
-
-    Omitting `members` leaves the field `None` and construction takes the
-    ordinary single-value path — the collective branch is reached only by an
-    explicit declaration, never by default.
-    """
+def test_a_plain_utility_declares_the_one_member_self() -> None:
+    """A regime that declares a plain utility has the one member `"self"`."""
 
     def utility(consumption: ContinuousAction) -> FloatND:
         return jnp.log(consumption)
@@ -160,12 +155,12 @@ def test_singleton_default_is_untouched() -> None:
         actions={"consumption": _CONSUMPTION},
         functions={"utility": utility},
     )
-    assert regime.member_axis is None
+    assert regime.members == ("self",)
 
 
 def test_members_is_not_a_constructor_parameter() -> None:
     """A regime's members are declared in its utility, and only there."""
-    assert "member_axis" not in inspect.signature(Regime).parameters
+    assert "members" not in inspect.signature(Regime).parameters
 
 
 @pytest.mark.parametrize(

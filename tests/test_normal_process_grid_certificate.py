@@ -159,7 +159,11 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
     # Streaming the household solve deleted the three streaming_classifier controls
     # of the dense collective disposition with that disposition and added
     # streaming_classifier:household_sent_dense.
-    assert len(historical) == 595
+    # The one engine path deleted the singleton, streamed-EV1, streamed-logsumexp
+    # and argmax_and_max controls with their reducers and the logsumexp corridor
+    # source, and moved the singleton rank and gap filters onto the household
+    # routes.
+    assert len(historical) == 552
     historical = historical - exact_count_controls
     added_feasibility_controls = {
         "feasibility_summary:published_value_changed",
@@ -191,16 +195,16 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
     # inverted and native_graph:collective_output_role_dropped with their targets;
     # the fold-machinery removal deleted ten streaming fold controls and two
     # supplemental s02_status:fold_weight_* controls with theirs.
-    assert len(historical) == 593
+    assert len(historical) == 550
     historical_before_s1 = historical - added_rng_controls - added_engine_controls
-    assert len(historical_before_s1) == 591
-    assert len(historical_before_s1 - added_initial_controls) == 579
+    assert len(historical_before_s1) == 548
+    assert len(historical_before_s1 - added_initial_controls) == 536
     assert (
         len(historical_before_s1 - added_initial_controls - added_feasibility_controls)
-        == 577
+        == 534
     )
     assert "src/_lcm/solution/feasibility.py" in direct_flow._CERTIFIED_CORRIDOR_SOURCES
-    assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 182
+    assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 181
     added_corridor_sources = (
         set(_S1_CORRIDOR_SOURCES)
         | set(_CURRENT_IID_CORRIDOR_SOURCES)
@@ -220,14 +224,15 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
         and relative not in _NESTED_CORRIDOR_SOURCES
         and relative not in added_corridor_sources
     )
-    assert len(original_corridor_sources) == 116
+    assert len(original_corridor_sources) == 115
     # Exact ordered source roster from 0a39539fd628bb60dcae2d3cca601816fe4832f4,
-    # less src/_lcm/simulation/policy_diagnostics.py, deleted with its control.
+    # less src/_lcm/simulation/policy_diagnostics.py, deleted with its control, and
+    # src/_lcm/solution/logsumexp_action_reduction.py, deleted with its reducer.
     assert (
         hashlib.sha256(
             ("\n".join(original_corridor_sources) + "\n").encode()
         ).hexdigest()
-        == "88e96568e7985d187373f1bd1accb4d9dd9b5b0c8176e2695b9d6dbe3f7fb87f"
+        == "9e05b2f949630ac924546ea1ad9ed4cd8e5d63debf9f36d48b9b4eb1831a9e4c"
     )
 
 

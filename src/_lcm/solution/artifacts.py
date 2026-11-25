@@ -535,7 +535,7 @@ def _update_digest_value(
 def _canonical_value_axis_names(*, regime: Regime) -> tuple[str, ...]:
     """Return the public names of the axes in one canonical stored value."""
     state_axes = tuple(regime.solution.state_names)
-    return (*state_axes, "member") if regime.member_axis is not None else state_axes
+    return (*state_axes, "member")
 
 
 def _value_axes(
@@ -556,11 +556,9 @@ def _value_axes(
         states = {**states, **period_axes.get(period, {})}
     axes = []
     for index, name in enumerate(axis_names):
-        member = regime.member_axis is not None and index == len(axis_names) - 1
+        member = index == len(axis_names) - 1
         if member:
-            if regime.member_axis is None:
-                raise ValueError("A member value axis requires member names.")
-            coordinates = regime.member_axis
+            coordinates = regime.members
         else:
             coordinates = tuple(np.asarray(states[name]).tolist())
         axes.append(

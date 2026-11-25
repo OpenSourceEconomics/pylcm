@@ -498,19 +498,14 @@ class SolverBuildContext:
     """
 
     members: tuple[str, ...]
-    """The regime's members (`Regime.members`); `("self",)` for a singleton."""
+    """The regime's members (`Regime.members`), the trailing axis of its value.
 
-    member_axis: tuple[str, ...] | None = None
-    """Ordered member names for a collective regime, or `None` (singleton).
-
-    When set, the grid-search kernel reads off each
-    member's own value at the shared household argmax of the Pareto-weighted
-    scalarization, and the regime's value-function array gains a trailing
-    member axis.
+    The grid-search kernel reads off each member's own value at the shared
+    household argmax of the Pareto-weighted scalarization.
     """
 
-    pareto_weights: ParetoWeights | None = None
-    """The household's Pareto weight evaluator; set together with `member_axis`."""
+    pareto_weights: ParetoWeights
+    """The household's Pareto weight evaluator, one weight per member."""
 
     edge_target_regimes: tuple[RegimeName, ...] = ()
     """Target regimes this regime reaches through a gated edge, or empty.

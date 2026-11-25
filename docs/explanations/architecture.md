@@ -436,8 +436,7 @@ _lcm/solution/
 ├── contract.py            ← the seam a solver meets the loop through
 ├── grid_search.py, egm.py, dcegm.py, negm.py, nbegm.py, nnbegm.py
 │                          ← the shipped solvers; shipped_solvers.py lists them
-├── action_reduction.py, action_streaming.py, logsumexp_action_reduction.py,
-│   collective_action_reduction.py
+├── action_reduction.py, action_streaming.py, collective_action_reduction.py
 │                          ← the blockwise reductions over the action product
 ├── model_authority.py, replay_validation.py, native_values.py, period_capture.py,
 │   period_replay.py       ← what a replay route may assume, and the preflight of it

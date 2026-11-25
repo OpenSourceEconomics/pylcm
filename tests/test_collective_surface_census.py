@@ -238,9 +238,14 @@ _ENGINE_CONSTRUCTORS = frozenset(
     {
         "MockRegime",
         "_MockRegime",
+        "_StreamedArgmaxQOverA",
         "build_pareto_weights",
+        "build_partitioned_streaming_max_Q_over_a",
         "build_streaming_collective_max_Q_over_a",
+        "get_action_partitioned_max_Q_over_a",
+        "get_argmax_and_max_Q_over_a",
         "get_max_Q_over_a",
+        "get_Q_and_F_collective",
         "get_Q_and_F_terminal_collective",
         "get_streaming_max_Q_over_a",
     }
@@ -267,7 +272,7 @@ def test_partial_binding_preserves_the_engine_vocabulary_boundary(
 
 #: Modules that build or directly exercise the ENGINE form rather than the
 #: author form, and so write the engine vocabulary on purpose. One replaces
-#: `member_axis` on a canonical regime the solver already produced, one mocks a
+#: `members` on a canonical regime the solver already produced, one mocks a
 #: canonical regime outright, and others unit-test lowered GridSearch reducers,
 #: provider context and mandatory bound integrity at the household kernel owner.
 #: No exempt write reaches `Regime.__init__`, so none is a second way to
@@ -275,8 +280,6 @@ def test_partial_binding_preserves_the_engine_vocabulary_boundary(
 _ENGINE_VOCABULARY_MODULES = frozenset(
     {
         "tests/regime_building/test_simulate_gate_param_and_leg_selection.py",
-        "tests/regime_building/test_streaming_max_Q_over_a.py",
-        "tests/solution/test_action_partitions.py",
         "tests/solution/test_dynamic_bound_runtime.py",
         "tests/solution/test_edge_topologies_build_each_target_once.py",
     }

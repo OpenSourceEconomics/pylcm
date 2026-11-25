@@ -73,22 +73,15 @@ class ResultMetadata:
     ]
     """Immutable mapping of (regime_name, var_name) to per-regime categories."""
 
-    regime_to_member_axis: MappingProxyType[RegimeName, tuple[str, ...] | None] = (
-        MappingProxyType({})
+    regime_to_members: MappingProxyType[RegimeName, tuple[str, ...]] = MappingProxyType(
+        {}
     )
     """Immutable mapping of regime names to their ordered member names.
 
-    `None` for a singleton regime. Captured at `SimulationResult.__init__` time
-    (when `regimes` is always fully populated) so `to_dataframe` can tell a
-    collective regime's recorded `value` apart from a singleton's even after
-    `save()` has dropped the `Regime` objects themselves — see
-    `_lcm.simulation.result_dataframe._process_regime`.
-
-    The default is empty, so a saved artifact whose metadata payload carries no
-    such mapping still loads. Every regime then reads as a singleton, which is
-    the only reading available; a regime whose recorded value does carry a
-    member axis is reported by `_lcm.simulation.result_dataframe`, naming
-    this field, instead of being published under a wrong column layout.
+    Captured at `SimulationResult.__init__` time (when `regimes` is always fully
+    populated) so `to_dataframe` can split a regime's recorded `value` into its
+    members' columns even after `save()` has dropped the `Regime` objects
+    themselves — see `_lcm.simulation.result_dataframe._process_regime`.
     """
 
     member_names_to_ids: MappingProxyType[str, int] = MappingProxyType({})
@@ -237,8 +230,8 @@ def _compute_metadata(
                 grid.categories if values is None else values
             )
 
-    regime_to_member_axis: dict[RegimeName, tuple[str, ...] | None] = {
-        regime_name: regime.member_axis for regime_name, regime in regimes.items()
+    regime_to_members = {
+        regime_name: regime.members for regime_name, regime in regimes.items()
     }
     member_names_to_ids = next(
         (regime.member_names_to_ids for regime in regimes.values()),
@@ -262,7 +255,7 @@ def _compute_metadata(
         discrete_categories=MappingProxyType(discrete_categories),
         discrete_ordered=MappingProxyType(discrete_ordered),
         regime_discrete_categories=MappingProxyType(regime_discrete_categories),
-        regime_to_member_axis=MappingProxyType(regime_to_member_axis),
+        regime_to_members=MappingProxyType(regime_to_members),
         member_names_to_ids=member_names_to_ids,
         regime_to_joint_normals=MappingProxyType(
             {name: _output_joint_laws(regime) for name, regime in regimes.items()}

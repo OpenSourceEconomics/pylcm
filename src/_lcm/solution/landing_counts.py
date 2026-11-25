@@ -108,12 +108,11 @@ def get_landing_counting_max_Q_over_a(
     has_taste_shocks: bool = False,
     co_map_state_names: tuple[StateName, ...] = (),
     co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = (),
-    member_axis: tuple[str, ...] | None = None,
-    pareto_weights: ParetoWeights | None = None,
+    members: tuple[str, ...],
+    pareto_weights: ParetoWeights,
     cell_width_keyword: str | None = None,
     untiled_state_names: tuple[StateName, ...] = (),
     broadcast_state_names: tuple[StateName, ...] = (),
-    return_feasibility: bool = True,
 ) -> MaxQOverAFunction:
     """Build `get_max_Q_over_a`'s dense reduction for a landing-counting kernel.
 
@@ -121,25 +120,16 @@ def get_landing_counting_max_Q_over_a(
     product, the hard or EV1-smoothed reducer, the state product and the
     co-map. The reducer is wrapped so the landing counts ride
     beside the value, and the result returns them after the feasibility output.
-
-    Raises:
-        ValueError: `return_feasibility` is off; only the solve, which always
-            returns feasibility, counts landings.
-
     """
-    if not return_feasibility:
-        msg = "A landing-counting reduction returns feasibility beside the value."
-        raise ValueError(msg)
     _fail_if_co_map_states_not_leading(
         state_names=state_names, co_map_state_names=co_map_state_names
     )
     extra_param_names = _get_extra_param_names(
         Q_and_F=Q_and_F, action_names=action_names, state_names=state_names
     )
-    if pareto_weights is not None:
-        extra_param_names = list(
-            dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
-        )
+    extra_param_names = list(
+        dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
+    )
     bounded = bool(runtime_bound_specs(function=Q_and_F))
     action_mapped = productmap(
         func=BoundedQAndF(function=Q_and_F, landings=True) if bounded else Q_and_F,
@@ -151,16 +141,14 @@ def get_landing_counting_max_Q_over_a(
         _SmoothedMaxQOverA(
             Q_and_F=action_mapped,
             n_discrete_action_axes=n_discrete_action_axes,
-            member_axis=member_axis,
+            members=members,
             pareto_weights=pareto_weights,
-            return_feasibility=True,
         )
         if has_taste_shocks
         else _HardMaxQOverA(
             Q_and_F=action_mapped,
-            member_axis=member_axis,
+            members=members,
             pareto_weights=pareto_weights,
-            return_feasibility=True,
         )
     )
     max_Q_over_a = with_signature(

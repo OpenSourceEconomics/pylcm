@@ -23,10 +23,6 @@ from _lcm.solution.collective_action_reduction import (
     COLLECTIVE_HARD_MAX_REDUCTION,
     CollectiveHardMaxResult,
 )
-from _lcm.solution.logsumexp_action_reduction import (
-    LOGSUMEXP_REDUCTION,
-    LogSumExpResult,
-)
 from lcm.typing import BoolND, FloatND, Int1D, IntND
 from tests.conftest import DECIMAL_PRECISION, assert_agrees_to_ulp
 from tests.solution._reduced_maximum_probe import (
@@ -36,7 +32,6 @@ from tests.solution._reduced_maximum_probe import (
 _N_STATES = 3
 _N_ACTIONS = 10
 _N_MEMBERS = 2
-_SCALE = 0.5
 _PARTITIONS = ((4, 4, 2), (3, 3, 3, 1))
 
 
@@ -142,39 +137,6 @@ def test_hard_max_block_fold_selects_the_dense_winner_identity(
     np.testing.assert_array_equal(
         np.asarray(_folded_hard_max(partition=partition).best_global_action_id),
         expected,
-    )
-
-
-def _dense_logsumexp(*, values: FloatND) -> np.ndarray:
-    """Sum the unshifted exponential mass over the whole axis at once."""
-    observed = np.asarray(values)
-    scale = observed.dtype.type(_SCALE)
-    return scale * np.log(np.exp(observed / scale).sum(axis=-1))
-
-
-def _folded_logsumexp(*, partition: tuple[int, ...]) -> LogSumExpResult:
-    """Fold the branch axis at one scale in the blocks a partition cuts."""
-    values = _values()
-    scale = jnp.asarray(_SCALE, dtype=values.dtype)
-    accumulator = LOGSUMEXP_REDUCTION.initialize(value_template=jnp.zeros(_N_STATES))
-    for start, stop in _blocks(partition=partition):
-        accumulator = LOGSUMEXP_REDUCTION.add(
-            accumulator=accumulator,
-            values=values[:, start:stop],
-            scale=scale,
-        )
-    return LOGSUMEXP_REDUCTION.finalize(accumulator=accumulator, scale=scale)
-
-
-@pytest.mark.parametrize("partition", _PARTITIONS, ids=("width-four", "width-three"))
-def test_logsumexp_block_fold_matches_the_dense_smoothed_maximum(
-    *, partition: tuple[int, ...]
-) -> None:
-    """Blockwise log-sum-exp agrees with one unshifted pass to a few ULP."""
-    assert_agrees_to_ulp(
-        got=np.asarray(_folded_logsumexp(partition=partition).smoothed_value),
-        expected=_dense_logsumexp(values=_values()),
-        n_ulp=16,
     )
 
 

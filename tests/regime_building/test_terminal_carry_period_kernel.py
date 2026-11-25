@@ -93,10 +93,11 @@ def _wrap(output: object) -> _TerminalCarryPeriodKernel:  # noqa: PAN001 - rejec
         base=_StubKernel(output),  # ty: ignore[invalid-argument-type]
         carry_producer=lambda **kwargs: _carry(),  # noqa: ARG005
         regime_name="dead",
+        member_index=0,
     )
 
 
-def test_terminal_carry_decorator_delegates_exact_core_program_graph():
+def test_terminal_carry_decorator_delegates_exact_core_program_graph() -> None:
     """A wrapped native kernel keeps its exact program declaration."""
     program = CoreProgram(
         name="main",
@@ -117,7 +118,7 @@ def test_terminal_carry_decorator_delegates_exact_core_program_graph():
     assert actual["main"] is program
 
 
-def test_the_decorator_adds_the_carry_and_forwards_every_channel():
+def test_the_decorator_adds_the_carry_and_forwards_every_channel() -> None:
     """Every artifact stays on its channel; the carry joins the continuations."""
     grid = jnp.linspace(1.0, 4.0, 4)
     published = EGMSimPolicy(
@@ -148,7 +149,7 @@ def test_the_decorator_adds_the_carry_and_forwards_every_channel():
     assert output.auxiliary[auxiliary_key] is auxiliary
 
 
-def test_the_decorator_keeps_a_base_continuation_under_another_key():
+def test_the_decorator_keeps_a_base_continuation_under_another_key() -> None:
     other = ArtifactKey(type_id="example.continuation")
     payload = cast("ArtifactPayload", object())
     base_output = KernelOutput(value=jnp.zeros(4), continuations={other: payload})
@@ -160,7 +161,7 @@ def test_the_decorator_keeps_a_base_continuation_under_another_key():
     assert output.continuations[other] is payload
 
 
-def test_the_decorator_refuses_a_base_that_already_publishes_the_carry():
+def test_the_decorator_refuses_a_base_that_already_publishes_the_carry() -> None:
     base_output = KernelOutput(
         value=jnp.zeros(4), continuations={EGM_CONTINUATION: _carry()}
     )

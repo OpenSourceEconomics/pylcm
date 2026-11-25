@@ -36,6 +36,7 @@ from lcm import (
 from lcm.exceptions import ExecutionPlanningError
 from lcm.regime import StateEntry
 from lcm.typing import BoolND, FloatND, IntND, RegimeName, ScalarInt
+from tests.single_member import SELF, SELF_PARETO_WEIGHTS, with_member_axis
 
 
 @categorical(ordered=False)
@@ -281,12 +282,17 @@ def test_middle_assets_axis_retains_named_coordinates(
         ) ** 2, jnp.asarray(pref_type >= 0)
 
     builder = (
-        partial(get_streaming_max_Q_over_a, action_width_keyword="action_width")
+        partial(
+            get_streaming_max_Q_over_a,
+            action_width_keyword="action_width",
+            members=SELF,
+            pareto_weights=SELF_PARETO_WEIGHTS,
+        )
         if streamed
-        else get_max_Q_over_a
+        else partial(get_max_Q_over_a, members=SELF, pareto_weights=SELF_PARETO_WEIGHTS)
     )
     function = builder(
-        Q_and_F=q,
+        Q_and_F=with_member_axis(q),
         batch_sizes=dict.fromkeys(("pref_type", "assets", "aime"), 0),
         action_names=("decision",),
         state_names=("pref_type", "assets", "aime"),
@@ -311,4 +317,4 @@ def test_middle_assets_axis_retains_named_coordinates(
         + 10 * np.arange(24)[None, :, None]
         + np.array([0, 1, 4])[None, None, :]
     )
-    np.testing.assert_array_equal(got, expected)
+    np.testing.assert_array_equal(got[0], expected[..., np.newaxis])

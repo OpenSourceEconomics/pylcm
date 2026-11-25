@@ -60,15 +60,13 @@ def collective_argmax_and_readout(
     The solve-side readout (`collective_readout`) only needs the
     per-member VALUES at the shared argmax; the simulate-side value
     router additionally needs the argmax INDEX itself, so the engine can look
-    up which action was actually taken (mirroring the singleton
-    `argmax_and_max_Q_over_a`, whose flat index feeds
+    up which action was actually taken (the flat index feeds
     `_lookup_values_from_indices`).
 
     Returns:
-        Tuple `(argmax_flat, V, D)` — the flat argmax index (in the same
-        flattened-action layout `argmax_and_max` produces, directly
-        compatible with the singleton simulate lookup), the per-member
-        value mapping, and the dissolution flag.
+        Tuple `(argmax_flat, V, D)` — the flat argmax index (C order over
+        the action axes, the layout the simulate lookup reads), the
+        per-member value mapping, and the dissolution flag.
     """
     if not member_Q:
         msg = "collective_argmax_and_readout requires at least one member."
@@ -386,8 +384,8 @@ def _actions_last(
 ) -> FloatND | BoolND:
     """Move `action_axes` to the back and flatten them into one trailing axis.
 
-    The flat index is C order over the action axes, the layout `argmax_and_max`
-    reports. With no action axis, each cell is its own single candidate on a
+    The flat index is C order over the action axes, the layout the simulate
+    lookup reads. With no action axis, each cell is its own single candidate on a
     trailing axis of length one.
     """
     if not action_axes:
@@ -415,16 +413,12 @@ def role_code(*, name: str | None, role_ids: Mapping[str, int]) -> int:
     return NO_ROLE if name in (None, "self") else role_ids[name]
 
 
-def landing_member_index(
-    *, members: tuple[str, ...] | None, role: str | None
-) -> int | None:
-    """Return the member a route lands on, `None` without a member axis.
+def landing_member_index(*, members: tuple[str, ...], role: str | None) -> int:
+    """Return the index of the member a route lands on.
 
     A route naming no role lands on the member `"self"`, the only member of a
     regime declared with a plain utility function.
     """
-    if members is None:
-        return None
     return members.index("self" if role is None else role)
 
 

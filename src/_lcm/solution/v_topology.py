@@ -45,7 +45,7 @@ def expected_V_rank(*, regime: Regime) -> int:
     Single source of truth for the rank: the topology below builds V to it.
 
     - One axis per solve state.
-    - One trailing member axis when the regime is collective.
+    - One trailing member axis.
 
     Args:
         regime: Canonical regime whose stored value function is being sized.
@@ -55,7 +55,7 @@ def expected_V_rank(*, regime: Regime) -> int:
 
     """
     n_state_axes = len(regime.solution.state_names)
-    return n_state_axes + (1 if regime.member_axis is not None else 0)
+    return n_state_axes + 1
 
 
 def placed_V_sharding(
@@ -125,12 +125,10 @@ def _get_regime_V_shapes_and_shardings(
         )
         state_order: tuple[StateName, ...] = tuple(state_action_space.states)
         shape = tuple(len(v) for v in state_action_space.states.values())
-        # A collective regime's V carries a trailing
-        # member axis, so the zero template and the roll must too. The
-        # sharding plan spans the state axes only; the trailing member
-        # axis is replicated.
-        if regime.member_axis is not None:
-            shape = (*shape, len(regime.member_axis))
+        # The V carries a trailing member axis, so the zero template and the
+        # roll must too. The sharding plan spans the state axes only; the
+        # trailing member axis is replicated.
+        shape = (*shape, len(regime.members))
         assert len(shape) == expected_V_rank(regime=regime), (  # noqa: S101
             f"regime {regime_name!r}: V topology built rank {len(shape)}, "
             f"while the rank rule states {expected_V_rank(regime=regime)}"

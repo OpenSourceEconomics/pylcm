@@ -53,15 +53,18 @@ def test_uniform_controls_preserve_both_historical_mutation_populations() -> Non
     # removal deleted the three streaming_ev1 semantic-key controls with
     # GridSearchEV1ActionReduction; the ValueDependentConstraint removal deleted
     # value_access:grid_same_period_shifted with the same-period value access;
-    # admitting household EV1 deleted streaming_classifier:collective_ev1_admitted.
-    assert len(historical) == 391
+    # admitting household EV1 deleted streaming_classifier:collective_ev1_admitted;
+    # the one engine path deleted the singleton, streamed-EV1, streamed-logsumexp
+    # and argmax_and_max controls with their reducers and moved the singleton
+    # rank and gap filters onto the household routes.
+    assert len(historical) == 348
     assert (
         _name_digest(historical)
-        == "094a68d47a1839fa75bd6ee61ea8d0f2349fc622f8feee6f2b61690146735007"
+        == "4c39ce90f741eaa2da0e179973edd3a41256a901a5f102f304999ccaad98c19b"
     )
-    assert len(registered) == 408
+    assert len(registered) == 365
     assert _name_digest(registered) == (
-        "f9f4ad84230d32132d5c446f8e3fccfdca25eceee0491ee018ae7b1b706c615a"
+        "9f8018df7ea36b0ba776cfe14094936cabc9b57c6aff693c4216cc363db23656"
     )
     assert len(supplemental) == 94
     assert _name_digest(supplemental) == (

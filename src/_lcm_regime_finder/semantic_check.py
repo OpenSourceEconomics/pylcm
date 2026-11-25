@@ -20,7 +20,6 @@ import json
 import math
 import operator
 import sys
-from itertools import product
 from typing import Any, Mapping, TypedDict
 
 
@@ -2337,7 +2336,9 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
         operators = {key: payload_digest(declaration[key]) if declaration.get(key) is not None else None
                      for key in ("koopmans_aggregator", "certainty_equivalent", "pareto_objective", "taste_shocks")}
         if cell.get("operators") != operators: fail("original decision operators changed", cell=cell["id"])
-        if cell.get("member_axis") != declaration.get("member_axis"): fail("original members changed", cell=cell["id"])
+        declared_members = list(declaration.get("members") or ["self"])
+        if cell.get("members") != (None if declared_members == ["self"] else declared_members):
+            fail("original members changed", cell=cell["id"])
         exit_declaration = declaration.get("exit")
         if cell.get("exit_identity") != (payload_digest(exit_declaration) if exit_declaration is not None else None):
             fail("original exit identity changed", cell=cell["id"])
@@ -2424,7 +2425,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
         for value in structural_roles.values(): expected_roots.append(("structural_margin", "solve", value))
         supported_slots = {"states", "actions", "functions", "constraints", "state_transitions", "joint_transitions", "derived_categoricals",
                            "output_only_functions", "koopmans_aggregator", "certainty_equivalent", "pareto_objective",
-                           "exit", "description", "solver", "taste_shocks", "shocks", "member_axis", "liquid", "outer_continuous", "semantic_role", "stage"}
+                           "exit", "description", "solver", "taste_shocks", "shocks", "members", "liquid", "outer_continuous", "semantic_role", "stage"}
         for slot, value in declaration.items():
             if slot not in supported_slots and value is not None and value != {} and value != []:
                 expected_roots.append(("unresolved_declaration_slot", "both", value))

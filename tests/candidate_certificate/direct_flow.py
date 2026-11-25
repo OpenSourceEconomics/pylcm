@@ -6,50 +6,41 @@ explicitly separated claims. First, every coordinate produced by an already-cons
 built-in action-grid object or supplied through the public runtime-points seam reaches
 the pointwise ``Q_and_F`` call as an action argument. Second, on each GridSearch
 route, the exact arrays bound by ``Q_arr, F_arr = Q_and_F(...)`` must reach the
-full reducer without an intervening candidate-changing expression. The streamed
-hard-max production route makes the equivalent pointwise claim: every canonical global
-action identity is decoded in C order, its exact Q/feasibility pair enters the
-mergeable hard-max reduction, and the resolved streamed program is the one lowered,
-compiled, and dispatched. The collective and EV1 streaming implementations remain
-sealed reference algorithms, but the native program graph deliberately selects their
-dense canonical reducers instead. A collective reference block is scalarized without
-changing action support; every member value is gathered at the one shared
-household winner and set to `-inf` on an empty feasible set. The EV1
-reference stream preserves the discrete-prefix branch order, hard-maxes each branch,
-then adds exactly one branch value to a log-sum-exp reduction bound to the runtime scale.
-The economic
+full reducer without an intervening candidate-changing expression. Every regime
+is a household, a single one of one member, so every route carries a trailing
+member axis. The streamed hard-max production route makes the equivalent
+pointwise claim: every canonical global action identity is decoded in C order,
+its exact member values and feasibility enter one household block that is
+scalarized without changing action support, the mergeable household hard max
+gathers every member value at the one shared winner (`-inf` on an empty feasible
+set), and the resolved streamed program is the one lowered, compiled, and
+dispatched. The taste-shock routes are always dense. The economic
 construction of Q/F values and feasibility—including user DAGs, constraints,
 transitions, continuation values, and interpolation—is an explicit
 semantic boundary and is not re-proved here. The proof is strict by design: a new
 statement in either certified transport corridor is not assumed harmless; it has
 to enter the explicit, independently checked representation allowlist.
 
-The ten corridors are:
+The six corridors are:
 
-* singleton solve -> ``Q_arr.max(where=F_arr, ...)``;
-* singleton streamed solve -> complete C-order blocks -> mergeable hard max ->
-  compiled VALUE core;
-* singleton action-partitioned solve -> admitted GridSearch request -> one
-  contiguous run of whole C-order blocks per device of the action axis, unowned
-  and padded slots infeasible -> exact hard-max accumulator -> gather over the
-  action axis -> ascending-order exact hard-max merge -> compiled VALUE core;
-* singleton simulate -> published dense argmax or streamed C-order hard max ->
-  subject tiles -> materialized, resolved and dispatched decision program;
 * collective solve -> ``collective_readout(..., feasibility=F_arr, ...)``;
-* collective streamed reference -> complete C-order member blocks -> shared
+* collective streamed solve -> complete C-order member blocks -> shared
   household hard max -> compiled VALUE core;
+* collective action-partitioned solve -> admitted GridSearch request -> one
+  contiguous run of whole C-order member blocks per device of the action axis,
+  unowned and padded slots infeasible -> exact household hard-max accumulator ->
+  gather over the action axis -> ascending-order exact household hard-max merge
+  -> compiled VALUE core;
 * collective simulate -> published dense ``collective_argmax_and_readout(...,
-  feasibility=F_arr, ...)`` -> subject tiles -> selected decision executable;
-* taste-shock dense solve fallback -> exact mask, continuous maximum, then full
-  discrete logsum; in a household, the same on the decider's own values, with
-  every member read at the decider's continuous argmax and weighted zero-safely
-  by its choice probabilities;
-* taste-shock streamed reference -> ordered discrete-prefix branch hard max -> one
-  dynamically bound log-sum-exp -> compiled VALUE core;
-* taste-shock simulate -> published dense exact mask, row-major continuous maximum,
-  one mean-zero Gumbel draw per discrete cell, and exact flat-index reconstruction
-  -> subject tiles -> selected decision executable; in a household, the same draw
-  on the decider's own values, every member read at the drawn index.
+  feasibility=F_arr, ...)`` or streamed C-order household hard max -> subject
+  tiles -> materialized, resolved and dispatched decision program;
+* taste-shock solve -> exact mask, the decider's continuous maximum carrying
+  every member's value, the decider's full discrete logsum, and every other
+  member weighted zero-safely by the decider's choice probabilities;
+* taste-shock simulate -> published dense exact mask, the decider's row-major
+  continuous maximum, one mean-zero Gumbel draw per discrete cell of the
+  decider's values, every member read at the drawn index, and exact flat-index
+  reconstruction -> subject tiles -> selected decision executable.
 
 The only allowed representation change is the collective split of the trailing
 member axis, exactly ``Q_arr[..., index]`` for every enumerated member.
@@ -226,7 +217,6 @@ INTERNAL_OUTPUTS_SOURCE = "src/_lcm/execution/internal_outputs.py"
 ACTION_STREAMING_SOURCE = "src/_lcm/solution/action_streaming.py"
 ACTION_REDUCTION_SOURCE = "src/_lcm/solution/action_reduction.py"
 COLLECTIVE_ACTION_REDUCTION_SOURCE = "src/_lcm/solution/collective_action_reduction.py"
-LOGSUMEXP_ACTION_REDUCTION_SOURCE = "src/_lcm/solution/logsumexp_action_reduction.py"
 PROCESSING_SOURCE = "src/_lcm/regime_building/processing.py"
 DISPATCHERS_SOURCE = "src/_lcm/utils/dispatchers.py"
 FUNCTOOLS_SOURCE = "src/_lcm/utils/functools.py"
@@ -510,7 +500,6 @@ _CERTIFIED_CORRIDOR_SOURCES = (
     ACTION_REDUCTION_SOURCE,
     COLLECTIVE_ACTION_REDUCTION_SOURCE,
     PROCESSING_SOURCE,
-    LOGSUMEXP_ACTION_REDUCTION_SOURCE,
     DISPATCHERS_SOURCE,
     FUNCTOOLS_SOURCE,
     CONTAINERS_SOURCE,
@@ -609,8 +598,8 @@ _SOURCE_SEALS = {
     "src/_lcm/egm/regime_introspection.py": "e1268a84eb34d1377c1fdf4672ccca73353190e0a77ebec405b7846fea11bbd0",
     "src/_lcm/egm/step.py": "28ac00b2f881f5ac808bc6341a0f485b8beebf69509a05a216151764586c02b1",
     "src/_lcm/egm/step_core.py": "7938a9c1f8d2cf600bd06f6091732306415f333d7498ad69c23fe5a6f7d91377",
-    "src/_lcm/solution/dcegm.py": "6550c4be3e3bf41f64ac546dac90b8e53632ec0f9e0751b5c2deb1f62e3a5938",
-    DECOUPLED_BOUND_SOURCE: "e3947f4e279d21e1a410a4a34955412aca9631728eb3f0eecf1faec71cceb959",
+    "src/_lcm/solution/dcegm.py": "1d5baff5309021933e1e3674bface14874e784e0c86b4fc3b70d597bcacb49a0",
+    DECOUPLED_BOUND_SOURCE: "a733d46fc565d5d5015d17ff67a79bc472693430e1914a3f16f6cb08245ec431",
     S03_EULER_SOURCE: "a5e95cde939adcefdf3d8310f6617df4f203ae3479bc318cd92ac51c020d0f55",
     S03_DECLARED_LAW_SOURCE: "635329b1a16ebe7b80ae57acfcc3fa3fd2c1b65a7b6778d1f72dc985f47e0e69",
     S03_INTERP_SOURCE: "5342395107f83af0473fcab69b8e73c5aae2f4024b67c0d0c00d33d543132159",
@@ -619,29 +608,29 @@ _SOURCE_SEALS = {
     S03_PREFERENCES_SOURCE: "c93e96e0cee0768270613cd2387e0e90a6874f03ada6c7f8055432007d84bbe6",
     S03_SCALAR_QUERY_SOURCE: "f3842ba481bfe61e004af9284c835d8679d1ff920ac92cf4483fce91dcd12eeb",
     S02__LCM_EGM_OUTER_ENVELOPE_SOURCE: "26b883d7706f6fe545d6153457ac99131a286ee8d605201e66edc79d9a74920b",
-    S02_LANDING_COUNTS_SOURCE: "1c1a005e267149e5db4ad37666e714e7bd5d56acea407d63c02e86abf68df979",
+    S02_LANDING_COUNTS_SOURCE: "ceaab9b3b8a3d4e138d54f584d7f64e1c1233795ddd047e16652c845b36f0181",
     S02__LCM_CONTINUATION_SOURCE: "b9793cbca0f776bebd5c0efbfd9a835fbae1a090e6ad0b12c9f27fa01c1f45a7",
     S02__LCM_EGM_BUDGET_SOURCE: "1c8fb0cbc8f9156950bea34c71c9ccce2c58ac17ec6b9f1221f8c8966f1031d2",
     S02__LCM_EGM_CARRY_SOURCE: "82ba68883e4bbffd86dee395299c2bc7846b780f31b99cb469274ec2be1943ef",
     S02__LCM_EGM_QUERY_DATA_SOURCE: "5ca53117248f9009d4d9b696fdb46a361fa47c5b082757ccc9beb6ccd967bde3",
-    S02__LCM_REGIME_BUILDING_Q_AND_F_SOURCE: "9b9658e54ad1464a4c75b7c05632b8c2d24e1a4696f3dedb259a550962e5b2ab",
+    S02__LCM_REGIME_BUILDING_Q_AND_F_SOURCE: "c07116ad69f26537b89cfebdadc03f5db5b6806cab97a9f926d10442a7921c88",
     S02__LCM_SIMULATION_SUBJECT_PARALLEL_SOURCE: "66d70a81a7ec535d92933bc8841c6bbe7472e227509f88fc6d3bdd00b6c95e76",
-    S02__LCM_SOLUTION_EGM_SOURCE: "8f7b4df1d647608118cf41d2f31ea2c5de24f237e2edc4f41411d722fbdd24bc",
+    S02__LCM_SOLUTION_EGM_SOURCE: "4447ffdc6661ce543a4aca7db019dbea60902a944f83f19a6f67728906ce2aaa",
     S02__LCM_SOLUTION_KERNEL_OUTPUT_SOURCE: "4b814b0aecacb22cc1f5b47d6bb9006f3f0f5eb08dc0eb18f1345fcd4becb770",
     AGE_BOUND_NORMALIZATION_SOURCE: "9185fe7e7b8ea6f5abbe4066872bc3d5ac55094b40efd148c73f1b443bfc478b",
     DYNAMIC_BOUND_SOURCE: "230eee40a6ded2be07a75c50180184457fbad5a244a161bf4a004b3d06a47623",
     POST_DECISION_BOUND_SOURCE: "4ff8b8c7b64be2395c821acb5f328765c7a9ac2c5198fd0b2be3960227837f6c",
     BOUND_PROOF_SOURCE: "b001df34cfbeff170c40f7d052de76408508e03b50395531d77122ae4279d72a",
     BOUND_NORMALIZATION_SOURCE: "7850582e96a52661443c1d5b08a5d3dde0845af2c8598094affaab2ee1fc0c88",
-    USER_REGIME_BOUND_SOURCE: "69909689716a028cc00ea6a8de2a329438cb629bf3bf4085873d3f76eaf08e99",
+    USER_REGIME_BOUND_SOURCE: "a73d97252f5cc9277fc1eaebf87245098d5787c1a26c672925a628beebeae14e",
     LIQUID_BOUND_DECLARATION_SOURCE: "751e18767bccd13540094eb5e518503c0d029faed30bf05a818c1f8c1cc01e21",
-    FEASIBILITY_SOURCE: "8cb8cb1ec3da487dac2b5eec451aa4ac61d5222f565c91986c6c2ca7baed1402",
+    FEASIBILITY_SOURCE: "cd74bdba16d68b0840074b14a3a48cd3e6785a196a3bd3f2d15fe0e5c14f0e4e",
     ACTION_GRID_SOURCE: "76a059f7cc7d7e7d2a99e0ffd626ddbd76b89724d5e24f3bb10ad86501268309",
     SUPPORT_TRANSITION_CHECKS_SOURCE: "8bebc9994370b3724767a727348bf664fe0494caec8c1569095c721b170524bf",
     SUPPORT_DIAGNOSTICS_SOURCE: "15aab27db77f3f9f9699697bc32f201a018f43b1a4653f9c3b2caee0e7ae16db",
     SUPPORT_PRECONDITIONS_SOURCE: "d621e34907d21364cdbdf99185525903e567dcf154e80a11f496875ad6e75d1b",
     SUPPORT_AUTHORITY_SOURCE: "d25dd5ef989c84bdccbd5a16c45cfa8106b1abdae2d10938e54ed029a7d7814a",
-    SUPPORT_FINGERPRINT_SOURCE: "92f6f97d8f5ea195ec3a658ee712c6e4e5cc1a20270a2cccc097a2f97c98e22f",
+    SUPPORT_FINGERPRINT_SOURCE: "c98fa2351d423f22f29ff9fe852a20b3bc5820c96c771afe00532d26c684bddf",
     UNIFORM_PROCESS_GRID_SOURCE: "3cd2faf78b21b2862946ee4c12ffb79f474a43430615e952e5f1c582cc02ac5a",
     EAGER_STAGE_SOURCE: "d0a52778e4966ecf9bbac4ecaee87f85f49df0aeb4bf7c390f8599bf7d97efa8",
     PROCESS_GRID_RESOLUTION_SOURCE: "2d00bbc058e022abc9150a60782b9689b8446d894029b30d99f916e5a7d128bf",
@@ -673,7 +662,7 @@ _SOURCE_SEALS = {
     SIMULATION_POLICY_PROGRAMS_SOURCE: "bf8f7602e45b6b6b5cec3b84aaf81878bd7e98b9a16aa5552893f9e0acb28be9",
     PUBLISHED_POLICY_SOURCE: "6e0e77a3e47cec4690b9e3d917159c5a2503efd1a6e7239fcc72f74ae0146316",
     SIMULATION_ENTRY_ALLOCATIONS_SOURCE: "df1c2fc1c8a88590e510b2d13ebcc5dbd83c0cef276c63aedc88febc2d02814b",
-    NBEGM_SOURCE: "8669cfa42a6829458b7aaa1d261ca04d6232adc93df1f4e246ca137b7e3638e8",
+    NBEGM_SOURCE: "5fd85c5ab1990c1132eeeb8362322edf2ed1a1c7ae6aa08cd7ddac76b6a56754",
     CONTINUATION_ARGUMENTS_SOURCE: "2bfffbd49e5a2e267fcfdefadd21cf4249dcc6979a6ff4889098c37a06dcc0e1",
     SIMULATION_TASTE_STREAM_SOURCE: "f6b629ed946bb3e211f890dc20f32741db6497c119ebb3b66adc578f7732352c",
     SIMULATION_MEMBERSHIP_SOURCE: "305eea9f0a0abeeedb845a5a8110458aa450340a2fc67decdb97417141c67d41",
@@ -690,38 +679,37 @@ _SOURCE_SEALS = {
     SIMULATION_ENTRY_INPUTS_SOURCE: "4cc1968398b169fe94d7ebde349b58192dabfca4bee93f1d5e98a0d3da0839e7",
     SIMULATION_RESIDENCY_SOURCE: "6e976a72274c36253b015be76a2a42c457886f9b2c21fae2a897f12ad2e052e1",
     SIMULATION_GATED_ROUTING_SOURCE: "5d5280a27076640cbe6fe65f93a0cba02c1bc95baa8e8d7a89ed9f721be78654",
-    VALUE_TOPOLOGY_SOURCE: "69e7e7341f4d1e695c1bc4da04e6e956755e505bef4f27e7ad64070a74c98801",
+    VALUE_TOPOLOGY_SOURCE: "1005ea85a28ba78c07ea0fbb1e616ad09ef8a089e589c65b3a3454fed91756df",
     RETAINED_BUFFERS_SOURCE: "bd8a0c05f900e3f2a2781ec0b8734f65e081d85e8f86d1dd4803ac09b8487aa9",
     SCHEDULER_SOURCE: "11583243dcb859433c0e4c7fb195400c50587f126aeffa80a8e45e8e72b53b4d",
     LIVENESS_SOURCE: "ee283c14ad41b8e9bc36b40ba7c6812269e14e92e0afc2b71e48d841271613af",
     CONTINUATION_READS_SOURCE: "35dfa6999f53742aa6b824578c5105a22c472884daeed0d33d4aaf195200e8e5",
     WORKSPACE_PLANNING_SOURCE: "496ffb297a535cbf6b13229eecdc1fbf52b87c63a64989cadb56f858b19c71bb",
-    SIMULATION_PROGRAMS_SOURCE: "ad958ef889464bd1ecc57a2c6c465f664b96a879300fffef9a81e1b629f0fc18",
+    SIMULATION_PROGRAMS_SOURCE: "e11bd60e6f6092e0806bee27fe3251cd904c1535e90d63f984736e3667e31173",
     SIMULATION_PROGRAM_TYPES_SOURCE: "cd4a05da46ed5f3a6a2484c7a78961e8488af155f0ea14c5efb3aebbeecf116a",
     SIMULATION_RUNTIME_SOURCE: "0623ad63ded8ee0ae880003228814e7e300a7a4394b3abecb3f5dd27acc58009",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
-    ARGMAX_SOURCE: "c7a915405c53cd07ec21d494c15a74b07a018ca60ff4ede729e5d1391a7459ee",
-    COLLECTIVE_SOURCE: "228ca11c312cdb2f9bed0dab908aac3a5025ce8bf029fb30022a51aaec8f0cb4",
-    MAX_Q_SOURCE: "f2aa873ef6fdd53801b4a509dcff58d52458b0d7a6007b3e43f58cedb1c43f83",
-    PROCESSING_SOURCE: "e6ecf18f883ee610cef79472ad28de24d133921309cb39b67aff4586cfe86d09",
-    GRID_SEARCH_SOURCE: "df35263eea0bd1b5a929818baebb39303d03719b7bcc5fb2c0aa2d7adeab2176",
+    ARGMAX_SOURCE: "6d04156b235903b1be395523d063c584c8cd789202604c13283259f9058c5416",
+    COLLECTIVE_SOURCE: "c3f4e672b69133ae3d44e948bb6408c8ce9b6215b0a7ea388d43b7e06e0998bd",
+    MAX_Q_SOURCE: "9de0539e947ea9d3750b98a84afd9298bcfe281c6fdce1b2358d4f9592071bfb",
+    PROCESSING_SOURCE: "0a8c49d63f2576283b6d1c36d091eeadb4b0b4cb8b0a5aaa9a9dfe39b0dee326",
+    GRID_SEARCH_SOURCE: "7cdb527ae06b478ede49436d5e50a5531150554f4aabd126b9125a45290f94af",
     CORE_PROGRAM_SOURCE: "7d8197a3d2607a3380be63408ae4cf2b8d8ebbe68b043cc3aff76bf1f5c6b78a",
     OUTPUT_LAYOUT_SOURCE: "8c1c2da98d43d3a5b8155d01418899ecc3b99730aef73c274b3f959b8dced07b",
     VALUE_TRANSFER_SOURCE: "1edd44ea83af5a2cee0fc8a71760a997b13ac534ce5a3cf8e847d5883bcc50c6",
     FOOTPRINT_SOURCE: "e87cd4319089bbdcc17c02d437da5b2db7173f2e871462a5c61f9214641940fa",
     INTERNAL_OUTPUTS_SOURCE: "e41e5581295b427e22ecb3f533281c030fec77c01cf224d1a844ae6f54fe28e1",
-    ACTION_STREAMING_SOURCE: "843d8ec21685ac2a21e790a98f8bc71f43b2b2c43159be69c9d19cdb7353b44c",
-    ACTION_REDUCTION_SOURCE: "26355ac3edf5da80a44b4f9754b71c29e8edffc68b1a7b7ac253b9bfbf749a0f",
+    ACTION_STREAMING_SOURCE: "20c9346d79f1c36500cb5a44e2471dd03b037547c0a96d7ef5730f6f609b1bcf",
+    ACTION_REDUCTION_SOURCE: "99665529a09b5de56086689eb7e2637eb845f2ad670e679db87df47576cfe403",
     COLLECTIVE_ACTION_REDUCTION_SOURCE: "22dbf511ac33e0d27f5ec17dc37535ed82bc761f1b441f203c918b2ab6259c96",
     DISPATCHERS_SOURCE: "a78d5271fcfc7437b68bd755ce7c2b8b0b78d5f26ed00a3fb4424133725da8b2",
     FUNCTOOLS_SOURCE: "f0bac3bd822f157e43b08b2f677aca8142fa0e60e101cfd6af5a2e69327132dd",
     CONTAINERS_SOURCE: "f6b3f4590d382b2a501daebc615da5937340edcc2b390ee13c705570c57ebf9a",
     ZERO_SAFE_SOURCE: "0bdb870796745cec75ada4cd53cfe3d58867f2eface5893ce5d5bcfa77dee202",
-    LOGSUMEXP_ACTION_REDUCTION_SOURCE: "4799ad9bfbc02ae1e5d5270a18ed81fe682f1004d63ae6cf796ff48ac5699445",
     PROBABILITY_SOURCE: "520eb5eaf1349a1eb40d927834168429c6830e61e17f5d2308cfe6a089f893d7",
-    ENGINE_SOURCE: "5f15a2d8e6056ae7d5356130fcbc9949977c149750ce74c0af2bd98e1e981748",
+    ENGINE_SOURCE: "25fe4d5afdc1758906561a363c66cde42880356118ddd08fce524554a9b6527b",
     STATE_ACTION_SPACE_SOURCE: "fbde26f323f91ace90251be29911bbccdd4560e0768fa3422d23cfa5bea4418d",
-    SIMULATION_SOURCE: "8f5247e547ce7d4cf1f247b6e80f1d7773c71df8bdd901408468ec068edf98d1",
+    SIMULATION_SOURCE: "3eaf58dd1f2c5b0e1b59607844afce160b44b3b981f9306b43f8fba05fa97b94",
     SIMULATION_TRANSITIONS_SOURCE: "14ee0d02e2e9fe52771be7f11e709054a0560a4866c49bbe268dec1642067e62",
     SIMULATION_COMPILE_SOURCE: "2c54bd385d0205897bebd42c6b63d55eb0896a04e208786f4e0028b20e81074d",
     MODEL_SOURCE: "0eed67518694b634d378e4943dab4ab67db13c7d62d775190317e6ef39b25354",
@@ -730,12 +718,12 @@ _SOURCE_SEALS = {
     PERIOD_REPLAY_SOURCE: "d82fc9e306d629595ef0b812e09c39eb60ca56831fbc5e95cd9bd1871e4f7e1e",
     INITIAL_CONDITIONS_SOURCE: "97ed8e28cc8e2d7c8cbba025dcdb037d16fb73d3f411281d5127799ce23b4ca0",
     RESULT_SOURCE: "06edabde95f6066b2d2e62ebaf1277c5444ab85c08a7f049e78ac6af6d2f2851",
-    RESULT_DATAFRAME_SOURCE: "fc3c01ebdf03841303af4777891c801ca12bc4b08f06d6b7bc752787c5ff6794",
-    RESULT_METADATA_SOURCE: "7ceb5a2c2f9139efff396a93f2dace10da89a6872c2de6417b35df8062d4fc72",
+    RESULT_DATAFRAME_SOURCE: "a501e65b40e647ed5524ebdeddc71e3f526194e1752ea164c586b0f2f6c8bc3e",
+    RESULT_METADATA_SOURCE: "2515a571335c6b490f09d38e313c483f793e181d7cd659453e426a3f84821050",
     ADDITIONAL_TARGETS_SOURCE: "3769b0eb0dad646767068fd4cf6e73a707115d2ede3ae5e3d9859b82b75d63fd",
     SIMULATION_RANDOM_SOURCE: "314164a170cf4eb3d4680dd575022c83943998f2c1ec78ba09d1085984d34a5e",
     FOLD_ZERO_SAFE_SOURCE: "f7f857268527f1c1472afa8800ebef9fdea68a2d3f6971d8b2fbc39b27670e29",
-    SOLUTION_CONTRACT_SOURCE: "a2e77e6011d4501f1a5551f8de64033a7223f574e1c984711fb2d5f08e798f34",
+    SOLUTION_CONTRACT_SOURCE: "047ad2a1dda77fe76fa9947b7d93fd68913bfe2b2a8caf6b511ea0a26f40f304",
     GRIDS_INIT_SOURCE: "a3b489f06a70dc3604b6d46f7e085a3b2fd7747b5788855c4c9859a0c6341f50",
     GRID_BASE_SOURCE: "2d9c7f1a0827f3ca172417a2ee2bf60b15c9ccb3dcedf3a94fb502e2d57538de",
     GRID_COORDINATES_SOURCE: "b4e39028df9514ac4f2195d6f2136fb299d7f96c2884938ef46b0c3d02cdd91c",
@@ -765,8 +753,8 @@ _SOURCE_SEALS = {
     "src/_lcm/egm/adaptive_nbegm_producer.py": "6e981492ef9f803816a1b6e579818e02c9754395b0dac2a19355c0361b115574",
     "src/_lcm/egm/nbegm_query_model.py": "584b35825151c5a84195f425841c44ba3737c1adf21290f49b240ce4876f60c4",
     "src/_lcm/egm/nbegm_query.py": "d1ce8febb03a05f0b02364967560eed371d4fd317a83b8464741c31fd948fbdd",
-    "src/_lcm/solution/negm.py": "c56b05123c0ffdda47743967434e468f03d47595fec6da308910ec2b0448fab2",
-    "src/_lcm/solution/nnbegm.py": "45255e97288ea4b14d1a4235754ef09e0dc2ba62f1598a51bb3833e4f44ad678",
+    "src/_lcm/solution/negm.py": "aefd9385f90143db0ff909147de7e6af255bac78d8369a383f2545ce03e5eb65",
+    "src/_lcm/solution/nnbegm.py": "a6b56d113308fb3c0608c012a9b6b3f7211438abe80879ea60dfdf9fcff4def4",
     "src/_lcm/egm/outer_candidates.py": "80e71a6fee493044cae0bb0af7da63c312788149f1488f4502dd7ffe9c2f2ed5",
     "src/_lcm/egm/outer_interpolation.py": "2b1ec6fe0de427f994df39abade21f38cd05317b0e50a80da95fad8dd24ce6df",
     "src/_lcm/egm/outer_refinement.py": "03f1fc3529d3ec003948d515940407118533799f966dc5ca7f4a1ec4329de109",
@@ -784,9 +772,9 @@ _SOURCE_SEALS = {
     "src/_lcm/simulation/current_iid_overrides.py": "c5b8d450cdad4980a694df285502b70cf1238762440f1302d664b2e84d964ced",
 }
 
-EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 408
+EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 365
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
-    "f9f4ad84230d32132d5c446f8e3fccfdca25eceee0491ee018ae7b1b706c615a"
+    "9f8018df7ea36b0ba776cfe14094936cabc9b57c6aff693c4216cc363db23656"
 )
 EXPECTED_SUPPLEMENTAL_MUTATION_COUNT = 94
 EXPECTED_SUPPLEMENTAL_MUTATION_NAMES_SHA256 = (
@@ -961,7 +949,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/contract.py": (
-        "d06cac4b77e2a492cfa561c90cba2ec5557017da8fde56a8554c6192d21ff460",
+        "28b8bfa1d7fb556a0f79aaff5ab1c68db1e6952e2c8d481f36b8210bd8b1ec4d",
         {
             "SolutionKernels.__post_init__": "1af79c468efac956445e2c9a1e816b260851b589681fe69754c72d395153f795",
         },
@@ -1020,7 +1008,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     USER_REGIME_BOUND_SOURCE: (
-        "c24ef05cfa237bd580426833b3f54007297d9b5adbb5de649269bf73e7f0eb92",
+        "d8fd99d17555a042a22bd56b9c617f1151bd594ba64ffb1b409128e5b4db1e5f",
         {
             "Regime.decomposed_functions": "f8ae75e4974cad5c272f597d36935e08c1adc0ebdfc4ccc3f4704094b7a0898c",
             "Regime.decomposed_constraints": "8f3528801f6043bb4c70eebc6f88e42a64b6e7c514721abc04350e0e45a79c97",
@@ -1037,12 +1025,12 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     FEASIBILITY_SOURCE: (
-        "0961c3655d3bbb34c04007b53bf446f8dd737e25f463f8527f8c5bcddd07a474",
+        "6d2677a0dea6cbaa022b8f1676cc60840986c3122451c7ce29f0201c032eb60e",
         {
             "add_feasibility_counts": "d375f3c50dca770ae108ec62426925dea6295fafb0d642390fe53ccac7224e34",
             "_fail_if_feasibility_count_exceeds_capacity": "8f0027405637adf5fa608570320d3be7668423cf29a9955aad2db64895816daf",
             "get_feasibility_count_dtype": "27d97ad4163fdd87e72667c5f5ae26f1ed0e48901c9721f5d6b50f3108b2196e",
-            "CountedGridSearch.__call__": "e007997163d449c58c0c846ea69dd3042b53c0b387384f56b11ed4b181e40cf0",
+            "CountedGridSearch.__call__": "1d8ebdfdbd954bd7a46e48ec71c62f14757158d0e2434336555e1934dedf7a07",
             "FeasibilityKernelOutput.__post_init__": "879478f11b786fc68f28ab81be10a37e611efc52ec83d15876e406a9ac40d12d",
             "_flatten_bound_status": "927d19863379fd04d664d9257c6c8d0694571e234e0e287202971bc264922f73",
             "_flatten_bound_status_with_keys": "0b34cc1ec4c4ec1600e53141fff93d963d97bf4f993b4f59a73bf3d2b510467c",
@@ -1387,9 +1375,9 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
     VALUE_TOPOLOGY_SOURCE: (
         "459380b89036a1887a51d2de505b82ba24e928214799557da5dbff55f035df03",
         {
-            "expected_V_rank": "7346c24d88343120c171b9ef82b0b557b9eeecb427844bbc90adc184c8ed81c9",
+            "expected_V_rank": "1cc2b7267e635dd3f7cec26c6743e8511abc2a4c3973ca99c3572d01ccb7ccb0",
             "placed_V_sharding": "c91e2e8fb7d24e5bae1619af652818e1e4892839e8e0bd77c74a7f0e46563a9f",
-            "_get_regime_V_shapes_and_shardings": "da85512383fa28aaae0685db682e39b97a0868a8add2d667b8a9f8067138958e",
+            "_get_regime_V_shapes_and_shardings": "e791b07c003706457dddbbb28f48ac7f161b9d91eec58157cf2ea959302d9485",
             "_build_V_arr_template": "84aa944560553fc96f52d39bfca74c8707d376dd5e9493235a907dba9c26f396",
         },
     ),
@@ -2113,7 +2101,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     ENGINE_SOURCE: (
-        "e5dc93e04de48c999d3111e44d0cef443216e277d294e20885795be674c6641a",
+        "b32a9130befa3d98cc6f2ae598b846cc35da8844c087e94413eaeaa07f775df9",
         {
             "SolutionPhase.resolve_process_grids": "433e871004a339428068e27d0e414e035eb8d1789fd73dc8b9cd85328362a045",
             "SolutionPhase.state_action_space": "c54e576769c9c3addaf2dc961cf604747d2fb3d6b29b5b3ec9a80c3b4f3a692e",
@@ -2150,9 +2138,9 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "fingerprint_solution_support": "7b96d4f0c60f892df96d252b6dd5c8e3454db6da5509990e9f8d7d7e25e21174",
             "fingerprint_model": "04c8f2960e52d4144353b1e3b962edbc17b00eb05fc68a3207cf4826acbbda51",
             "_grid_support": "9709180334fc4732e2193f6b736667d6a96648f1346401a886bd7da0f41b65bf",
-            "fingerprint_model_structure": "9d285e9903ec49ac8624d69e99bb4337913276ad6d2fa0822dc303300277724e",
+            "fingerprint_model_structure": "bc99e6d01d1628b9bab79981304f23d052ebaef073a0762d2cb13152a55ba5e9",
             "_query_semantic_descriptor": "602544e2ed8bb315d1bd8a9425e486338810ba663c55197bebcfbe1e9eccac0d",
-            "_project_user_regime_declaration": "8d99e75c4efb879d6920ced6eb4dc92eed63d054c8ae6c67ca9754f7ce712a90",
+            "_project_user_regime_declaration": "2bc899dbc44a9843028ddd987477eb7429569a63deb51c8b60b8fc1e3c1cd8d6",
             "_semantic_fingerprint": "75f98beb48082f6fda273258837d03a38221af56812f8d621163ebfdfdda893b",
             "_SemanticHasher.visit": "05f993976c00960a2e2298a4ab9b271798fd2be471bd48227d19268094393e42",
         },
@@ -2303,15 +2291,15 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     GRID_SEARCH_SOURCE: (
-        "87f4d04dfd5620a452d031b1db8ea18d64519ce712d6c4cabfcc6d20acf479bd",
+        "11b9cc4293af20d403c6df26f4057d09d2e09b92bb0c24c95c0857c27a86fee9",
         {
-            "GridSearch.build_period_kernels": "0649ab46b7b641fc2b41d009ec689fea27a2494d9a635723dbef44b92c5990d5",
+            "GridSearch.build_period_kernels": "04f37990ee997ac1edd7dd150cfd0acc437d40d37d4ba7252e54cc00d28a34fa",
             "grid_search_query_inputs": "7455991bf53425e5f43fa71cc0980a542e0b94aaf1f4715b307d6158766813a1",
             "_action_partition_mesh": "d27f64ff5fc6a3e08d9fb316bafb2ad3579bf8db5adb00b977e0eccdbc9e79b1",
             "_classify_action_streaming": "e68de71d9132be6e013aeb231096d19d2beff077ca914653c03efc89d4712982",
             "_select_action_width_keyword": "b45663df866d5a48c05b8955b6cdc68515697e8fa925566ae72afd06b3850104",
             "_select_cell_width_keyword": "f686d6cc7ae0d93dd1e3c301600872996943c7e3d6788c9d5098d39449793727",
-            "_select_width_keyword": "00cd19cec6e137d7d9e044bc1625793b1d6f78bbdfc93d6858bb6f8e9d3c022f",
+            "_select_width_keyword": "1c1f99887c0c9e49152cf862daa34d10f68b0d7432e1d1534d3d21b0c22bb9bc",
             "_edge_reference_regimes_for_targets": "9bd8c8de92411abd731020f62cb3c44ef814d4f3b64ab496b6299fcb925473e0",
             "_value_reads": "f5fb7b70d83dabce842b5c21d57f2a6605467460b718cc15b41da5ad473dde7b",
             "_value_read": "082a372c7e48bf7a32d390079e2dd60b9ed5aa56868cbf9fbccf0b8f924b3bb6",
@@ -2327,84 +2315,69 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     MAX_Q_SOURCE: (
-        "38cf0e15c463d4258f46ea060bf0f4f311bc31d25a1f78c299d0ae291c81ee99",
+        "e09c9fdbccb89e40714afd9b6ba9594c5290430fe3a48980415e4aa17b167e3b",
         {
-            "get_action_partitioned_max_Q_over_a": "7d5054e95912c54ab6f8c650bf505e5c80c97c2a7cdefb2b5fc201a56c44d49e",
-            "_ActionPartitionedMaxQOverA.__call__": "414b6d9a0ae105c9f164a280c822cd2040f72281a74d43d74efd9004b4954158",
-            "_ActionPartitionedMaxQOverA._published": "8fe2e5551cf24ef81ba81587195ec96005d2000d85b2aae5fef96a881dfeecd8",
+            "get_action_partitioned_max_Q_over_a": "d1b76183c4b9e68cd9ac4811f311ece5432b2f096b74402782d46d895d9d6c8d",
+            "_ActionPartitionedMaxQOverA.__call__": "31d5eb86bc4b3ff01351215d873309f5b61aed2106038f55fc9ae786ea7d156e",
+            "_ActionPartitionedMaxQOverA._published": "58633770b8a507d141308396a6819fa4bee84b934846b37ead0b8423961b44d1",
             "_arguments_named": "95c0088a6f36474a87a6dd5d4f0a72745787638106bcbb911a0f5aad35101365",
             "_OnActionPartitionAxis.__call__": "ebae3ad5db6e89feb499866aa7ff673a8e6cd934e55346a77f051bbbd20ec64b",
             "_call_with_operands": "c26f9db85ab67d1b4d6c730076cba1d0c6b64e2d7dd98159d9c4d37b21c24c0c",
             "_get_extra_param_names": "cd97225f061bc5ef0bba82b75864b9cc7622174d10fe741c510ebba7d5efde0d",
             "_fail_if_action_width_keyword_collides": "d72946426a1e4a1d300fa4812f07eea8139236693ef8f79d0e8384b9d59a9f0d",
-            "get_streaming_max_Q_over_a": "84ff0e92acb9982985972d3ad5e543867a90b3e33ada57954d7b7a8ef8cf3fd4",
-            "_fail_if_full_V_streaming_route_is_unsupported": "c248ad6d44dd0ac7b17ce4131b82120f3afb3e27eced767a21c14000f1dbe2df",
+            "get_streaming_max_Q_over_a": "88e0bf758f4902294b273214553d527824fb2c5da23e93dfa682bb45a8ab9aa4",
             "_fail_if_streaming_co_map_layout_is_invalid": "59c06aedafc8bcbe31d7f2f7f7b7d94e1d8044bf529c6f11a05882c5bf1d7979",
-            "_StreamedMaxQOverA.__call__": "3531c5e3fb0d3ad753fbeaa8279ea9f6477ed7a6430ae22d669863c7e1789d68",
-            "get_max_Q_over_a": "8330b29377975e0506db4d2522f134a2031c7e50e0ecc0c2b05db554458e6098",
-            "get_argmax_and_max_Q_over_a": "fbe4fa87c583aef693ba16d6425225dead4a4a0d26f9048da03ae04164a7cd16",
-            "_HardMaxQOverA.__call__": "b98cd47e64f3477624081b21392c9ac45c06587a7759d505f26efeee1776a9dd",
-            "_HardMaxArgmaxQOverA.__call__": "482e9be161b5b5103f13d6c60bfb47e2acfda5eb5a7d61f18fc77981e6fd40b1",
-            "_SmoothedMaxQOverA.__call__": "2f4dbbd9c4a656d6d0cab1f966039873cccc9747f0cf92063e460115f28b3bf3",
-            "_TasteShockArgmaxQOverA.__call__": "02e2b8a2087a2c3b08babd6a2c0396085d0408b3bad76eb9dd7481e27131740d",
+            "_StreamedMaxQOverA.__call__": "d6aacb41f47bdbb9ad5fa78a08c619060f6f1e3021f2fe3f05390f4316dca48f",
+            "get_max_Q_over_a": "5cba2deea512b41edb046b2075950b60928a56b7a77586dc78e9acfb95084b69",
+            "get_argmax_and_max_Q_over_a": "73620ec02e13c118269d1f467349079203f634f282d8d43d4e30d3ec898544f6",
+            "_HardMaxQOverA.__call__": "c5b044e7fdab3af1e33fdd05f97b0ef49d31aa0a81ad2e5d99537fdafb373cc1",
+            "_HardMaxArgmaxQOverA.__call__": "45ad84d70803e5d793a11b68ab2ccba695b853f4c6af6675d31c56f7207b0806",
+            "_SmoothedMaxQOverA.__call__": "867f4a1bec34487e6cd0434aa4b8c6e1abe4d00606ef1eeaddc415478bedab56",
+            "_TasteShockArgmaxQOverA.__call__": "06ca5113e9409926d02e43d6ec6b36481d8f2e83e6cae0bd8570e37be406ca39",
             "_with_bound_summary": "b013f2b5bf18ce8760c35c94ebd4058c4340d9ab306e7b4a834fe30d4a0063e7",
         },
     ),
     ACTION_STREAMING_SOURCE: (
-        "4f6c58a5cbca949796a44699265fcd38a3363a4520083bfe3a1a8638abdcc2ef",
+        "40996ac30bdc10f087168ea66ccf0b19c86b271dc335253fdb8a671269f0ea95",
         {
-            "build_partitioned_streaming_max_Q_over_a": "78fbb3ff24bcf150b031653baaaffc7c8ee298f60371faf15f3e70601a6eae2a",
-            "merge_partition_accumulators": "053966accc1ad23b6989081f27398678efbb9198d28d5f7e556ee2d51cf5fdac",
+            "build_partitioned_streaming_max_Q_over_a": "fb5a24861257e3886423c14f93305455a30414381b381a60e3fd5245a5eaa582",
+            "merge_partition_accumulators": "ce2b8efe14052ad1301b9a6771b1d3e8c978cf7ca87ef420127a1211de0e2484",
             "_merge_in_order": "47f85ef84e0b69dd205548f518cdc09309d399ed688b8a0d8d4ba05b957fbb8e",
             "_fail_if_not_positive_int": "23eecceb2c4c24b75e70863f2a5f531c5a52e569400c090c382d5ba667cf6f9f",
             "ActionPartitionLayout.__post_init__": "9957631cd979a1ec48136310cb5e3cfb246b1c7367331544c68447b0b092539b",
             "ActionPartitionLayout.n_blocks": "269793628a54b8cd15b276fa360f884a97483ffbeb27bff2b68d4ba94ae055fe",
             "ActionPartitionLayout.blocks_per_partition": "b1109e10050ec6f186486a275a0467089c2c5101528b675c928ba0fd85d8b9b6",
-            "_PartitionedStreamingHardMax.__call__": "2c32a6a8731982dbfb7feaf649716da73be6379ac4841f2bbbd2c340babfc405",
-            "_PartitionedStreamingHardMax.local": "0d5f27cc2bd11db6f99b6735b2b86e7541f081b70247a008adc10c9cc311c48c",
+            "_PartitionedStreamingHardMax.__call__": "cad6f4de2a847594aa16a0165383cae2af31db8ff57fa4374b9edf2ceaf32b8d",
+            "_PartitionedStreamingHardMax.local": "65e07dcdb8eccc3fdf1f463fa4230df9026c259c59ba33d999379f18927cfa0c",
             "_evaluate_owned_block": "e987725c2b89c2ddd3025b9a82b91ef74daaec316c4b87ba057b36a62e909fba",
             "_validate_streaming_configuration": "4f9f662fa73508293542ddd9e6ea428ac22f31f45376b80290f0e46b64a3f9b4",
             "_prepare_action_call": "27a8f85f8f16c7214846609213fdf9135bfb7118395aecdcf68ace17bea4e39c",
-            "_evaluate_block": "21dbbca87aa22a3d159153470ffe06bcfb7ba20dc6ed6da70332f0f3918468b4",
+            "_evaluate_block": "3752b87b986f089022d2138444a3bd40300f050ba07877aef6d3ee19e0d3e49d",
             "_evaluate_one_action": "c12a6ab8b6f9a29c2b985f2eda18f9ff2bd86ef0c3d2dbd17d6f739b0219bc07",
             "_decode_action": "cd4d0f5f01fe2a5648faab36deda62d09452116e3e7cf1e691fe6214b8a692c5",
-            "_validate_block_Q_and_F": "7f00abbccfe23768df403596eb22c715eb3542b4e43dd67593f7bd3e487fdeef",
             "_trace_block": "8bb71d3b3d57bff7821219066e4ca8c08b36972b6bae7051f79d4a5d9a023f5c",
-            "_empty_reduction": "4db3f3eddf997264f026501228275cd64447b58489a72b86d674ddf1ae047189",
             "_empty_collective_reduction": "c1cdc9217993f46e3117664e75bd18d7f0e30bb964203f565c1715eec80243e2",
             "_typed_like": "fc7809b3ba41f45007a2464926696f92b1cf2f937c2933223c49ce4984d56b22",
-            "_start_reduction": "034b3966dd04c0e0d66e085e8e2c4e16b127e1d8a9869ecfa039c3b5e7928b04",
             "_scan_one_block": "1901bdf24caccc5087081f15fc69e9138db76545ae7bb1794539d05adf5af7c9",
-            "_add_block": "15b2a8ed09f25a9d9bd77ed7220114890dab294a30a72a59858ba94d614778c2",
-            "build_streaming_max_Q_over_a": "a7ec46f647dedcfda11093c0ea2f51a1f80e7bae468fa0cabfbfffe667c1fcda",
+            "_add_block": "9238075e1131a1193ba2ded299737a4224f7dd494d97ca22022b059572d2de42",
             "build_streaming_collective_max_Q_over_a": "f5688d7c319043580a52c9dd7b8650fe16cfb0709fdf52afcf1aedf6495b9345",
-            "build_streaming_ev1_max_Q_over_a": "8498332dec9716b52427dabf6c22e0d624e33286b13327e22c5131f3e4c33fa8",
-            "_StreamingHardMax.__call__": "9dc6c2b8c677935d4a043e8cb9f8d4137df32b15db83a20e39f8d29c2e5c1c0a",
-            "_StreamingCollectiveHardMax.__call__": "d70935ec2d1ce7833ae89e54e72a4a55e8d112c5bd22865df5a644c58dd3f9a1",
-            "_StreamingEV1ExpectedMax.__call__": "c4a4d4240ebd92be8d0ea2b20d1825f1e8c787219a4895acc5bc3866704f729c",
-            "_evaluate_ev1_branch_block": "a683329a9f55c515c5df50283b7b7af3f2733bf3ce474bc9169f1cb3e42c6bb4",
+            "_StreamingCollectiveHardMax.__call__": "2589beef9dfe103e5ffdc420623b8a0c1171b7b32de1e1c014447c6d86a8f416",
             "_evaluate_collective_block": "9c5e40a688891aa4692769cf46b03e48ec0d755d4951eee225fe61712eb159db",
-            "_scan_blocks": "1b402fdef55baf8bf1d878418e16ba57a4518ae0d64c8d58d5ddf33f215bd45c",
-            "_reduce_whole_product": "7a9d6038ddebf14aaec04a50f0962a6de9c4a3f7486c181e8b0821214128f9eb",
+            "_scan_blocks": "3a3fab0baf28c86cfa23196859716c5814461bfe33416a013fe521fb575aa531",
             "_reduce_collective_whole_product": "e19def4ddcc670b0ba2b007b2c61ba250ceb7266c4cbf79b31a4aff29358ba82",
             "_household_objectives": "10527e98e914680acd890cbe4b506523bd7a8036278f4e9ce86ca69b20110b92",
-            "_reduce_no_action": "27a09e4e36247d95db9c565aaefa311f3c1ded3c88889f0ed305cb825bae243e",
             "_start_collective_reduction": "9d5896d5ed93176bcf074cc6228fcdcd924b8d77714738ceef40c7f2a4634880",
             "_reduce_collective_no_action": "27a4af569b03dc2a5132c848d9e0373526fcf0bb9fc6fd2b4822d90eaa78635e",
-            "_validate_scalar_Q_and_F": "a2b49855d9fe1572f7440248db7edfce283a2179394648ca55b6b8ce550f5364",
             "_validate_collective_scalar_Q_and_F": "81104da063d5f3e6c8d1668702d8a59d8f11b0d390819ddf701d6ae1121aadc6",
             "_validate_collective_block_Q_and_F": "0c1c3472f16a7de7bbb2b9954b46a8fdb3a2ef73f74a6373554a6c7a9d8668cc",
-            "_initialize_ev1_reduction": "41728c9433880bdb06c0ab5d3c0821a7f100f238fa1faec90dc5ca967c627650",
-            "_add_ev1_block": "5c63a9ca306c889a05581aaab90a9da4a43082772a67a7098603818fc5dbb283",
-            "_finalize_open_ev1_branch_group": "f1eea36aa27ec48e7e79557c8928ed62d5e6cf01d0cc100a8e558ebdb31196fd",
-            "_scan_ev1_blocks": "b8ce9696b6664219799e0e48348c0c410aa9141a462579ad31ed755e4782ee8b",
-            "_flush_ev1_branch_group": "cb87cd4217df5fb3e45806593d2013a2ba452f17cbb08097a9d0cacd1e6f9270",
-            "_bounded_hard_max": "4a814d5d3e2be727f13a8366cb6a639751cc4a242aaecf60af233bce780b79e7",
-            "_scan_one_ev1_block": "ba9b490e0b5b3f11aaff98f058b13947d42d5ff0c8f5a7fab842dbf6fc391857",
+            "_bounded_hard_max": "b9bcdb4f8ee108db97b38a9c873f62e8a93c4d2c89d8ec073e42b2cd83d51d06",
+            "_scan_bounded_blocks": "ca777c0f0d9caf0cbb144bca47d78cf1b6949b67b1bdd5af7576f81bdab44d7c",
+            "_empty_bound_status": "a7ee1622f8e647e2fed4c79afa0e4811b8ed41fb0d7fa4190786af965e2cb0f1",
+            "_empty_query_status": "8a11727aa6a9695badc3d1e505fe2998420f40a48487c5ef09b561c08ca2c07d",
         },
     ),
     ACTION_REDUCTION_SOURCE: (
-        "bfb8dc25b634d82451f43454df2465d9c523e69fa4cda2db3fa863802c6c7068",
+        None,
         {
             "HardMaxReduction.initialize": "b29e84926276a74848f11826cb36ca2442e00cbc3ab3819bd197bfad624bc671",
             "HardMaxReduction.add": "5264b88c3ba353f158b394889295be544309038425796dc8f68859ff977c3880",
@@ -2437,7 +2410,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     COLLECTIVE_ACTION_REDUCTION_SOURCE: (
-        None,
+        "d4ef652f29a394b9f6c9d92041ae9fd9d95ff31a57e7515864889b8856498593",
         {
             "CollectiveHardMaxReduction.semantic_key": "1a2875f2b718377e51a76e0d37f1614f40f3e08b4cc730032add7a2373c5734b",
             "CollectiveHardMaxReduction.initialize": "6c7a88755ff69e8f46ab03641ade4648b28bfba46766a4dabc184b619e9d38c9",
@@ -2448,25 +2421,14 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_winner": "03fe33a57987a34e9116154649efcb36c697da5151eaeb921b8a18f4bc087948",
         },
     ),
-    LOGSUMEXP_ACTION_REDUCTION_SOURCE: (
-        None,
-        {
-            "BoundLogSumExpReduction.initialize": "a85a8161da058019e24d2b33ce72d9881e4d8df843bcb57e2ea1143c7ad37d36",
-            "BoundLogSumExpReduction.add": "bc07d13e5fa3101df3216f75942966086537395d81bb2c6abc4276158ccf9a4d",
-            "BoundLogSumExpReduction.merge": "e1b12504e631c9659f1de5f55a48de26e3d4a1d5c089e6bc75738a52313fffc7",
-            "BoundLogSumExpReduction.finalize": "a5d920589ee7f6b7454e241c9ef5b0be41c11b75c806e578932d1244884ce5cb",
-            "LogSumExpReduction.semantic_key": "13bc88fd7862f49c2ef01b2de88e9c695276a163bc896d9c40dae5d4b104c671",
-            "LogSumExpReduction.bind": "1e3f07eb92d208799636c7958d2d2fdd8c955863630606ffa1a1fbba7c8de06a",
-        },
-    ),
     PROCESSING_SOURCE: (
-        "76db15102150e1e158ee054c544181f963495459fa01b1f8ed97c1ceab5e478f",
+        "b4a378a31dbdb5310349d7b0eebc82bb5a2f9c88a3374451312bf3b429b5b823",
         {
-            "_build_per_subject_decisions_per_period": "f09974e02049bcdff59698a8ba571b21facee5dc483bce876702e544cd34269e",
+            "_build_per_subject_decisions_per_period": "1c24243811c369c42909755a4ab10da67d824ef38057e551607fb150ef1a399d",
             "process_regimes": "288b4375dff6c1f924dc3e646f38e3c4471887ce440c6b99f9528bf26129c67f",
             "_TerminalCarryPeriodKernel.core_programs": "842c31af0bea766bfd410783881770152246a825505be327096c117f60ee65fa",
             "_TerminalCarryPeriodKernel.with_fixed_params": "4ee13dc7cbc4ebaa68102cc6eea4272791590fa1005080dbbbcf898e5f92a8f6",
-            "_TerminalCarryPeriodKernel.__call__": "1385a8be539da3c4e8641cb12750b9f5bb447ecbfd2bcde218df4fe38c0407dd",
+            "_TerminalCarryPeriodKernel.__call__": "39d2bc7fcfb776af1a3a5092444494d6bea620f63e0aaf4a9ec8b5b8bc02e40e",
             "_CanonicalRegimeBuilder.__call__": "4b6a169664dbd66843ff4ca73e1e4eb3dfc0686fde8bdfeb116b8b74052c2355",
             "_prepare_scalar_egm_query_models": "7d1a145f8bde2781767ffe580e86b6f3c1eaaeec0d2d53012dcb376e7b4cd6af",
             "_fail_if_a_declaration_moved_more_than_the_kernels": "77f7d0d6adebd110f143c0156321536d67434715df60d1c7375fbfc3d0ac269e",
@@ -2480,14 +2442,14 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_nbegm_query_function_pools": "3d5549c36db6f139068d67a76c0234a3055f84989391576fe5615658ba39ce1b",
             "_nbegm_query_row_state_names": "f398c3a4c47b01a2fe7811f0c76f4ed01618129e38e7e86d703743fa24dea2ca",
             "_solver_with_query_authority": "0eb2703b05650da0b98779c17f9401b9d948debeed46d27068215ba1fe1a6385",
-            "_build_simulation_phase": "d460c8e5735cddae8a8435527b36384b3f4d87f6acc201b6a1de56c12875556c",
+            "_build_simulation_phase": "f23dd9406e7099d477c520856f19918352f11ba06cef85b24baa004d242b8fe2",
         },
     ),
     SIMULATION_PROGRAMS_SOURCE: (
-        "736b43cfeb10e766fc4f3ea3b8c1c22e606b20cd04ddf602668ad2d5ded5d345",
+        "20d2a0bbb68e061d6b5833f53b5d47eda4636c8866a9c7e877427f1588ea382f",
         {
-            "build_simulation_programs": "7b2937daebc55e33ad4e02d728a10f29998d8845ef11220b3d5985a777e31964",
-            "_decision_programs": "6d368ed0ad3898076377ecb3fecb59b02933109d14fe642076017f7410736373",
+            "build_simulation_programs": "ecd5c86b7b6c388c0e36b07caa3605cb369ef318545e52093d0d16735a31739d",
+            "_decision_programs": "9297d2b4528351741476744c6cb547bf46c66a90a13257fbaa45c82ff7a72ce1",
             "attach_gated_simulation_programs": "e92be1be5b6628706b2a2c7cdfb749b3936ade622d352161fb72d9d949a59cfa",
             "gated_simulation_programs_ready": "fe5419d6b84ba1929acf26cde8dc2feedf9589a2345925a1ae6de25fde674def",
             "budgeted_simulation_programs_ready": "f20390a48d72f2454deb9cb050493d3170092196cd6f57bf96380a09cb68c89c",
@@ -2496,10 +2458,9 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_fail_if_the_streamed_reduction_is_wrong": "866bdf046f2b8dbe04e8bdb3d16e0f9c4c5099d5495df6789b6bfb63d38acd65",
             "_decision_subject_arg_names": "bcf384bb7218cb328b3494a3eda67a40b1f23bd438663562315a47c47272f803",
             "_decision_value_reads": "d65d0d1ce0e204300faa183c67ce1c993f5950f052d1dbb0dd514d52aad9e0b1",
-            "_decision_body": "eb6b9d8ce2aa3807ffabd43c58ddc79ebb2ab96856e5157283435f7ecb7da437",
-            "_StreamedArgmaxQOverA.__call__": "9fb0b2a8d123045d1796b2864b24d0aa4d2ab350079e726dbcf9a4ef54a02e32",
-            "_StreamedArgmaxQOverA._fold": "c4cdc93b6c3412703e9b5edbf4a213bc9beaed8f5bdc9132600fe7de398a143c",
-            "_StreamedArgmaxQOverA._household_fold": "b975433885404c9fcaf19f894f8c8a0cf269837a4d4ea66cddae8f911f529a8b",
+            "_decision_body": "6935231c9565b7b64c78e5a3c7053e55d9ecf38893b98aee03165ac29d056953",
+            "_StreamedArgmaxQOverA.__call__": "d34c2bc32539788380d355d36a91c4385fdfeacc0dcbe99dd00f456ae3ec61d2",
+            "_StreamedArgmaxQOverA._household_fold": "28b03f01dcbda6b22ed75979f262b9c129e8afe26c7e18febd55976ffcfc41cc",
             "_SubjectTiled.__call__": "1f11a7951bae020b368431c354dc7294cc4d7778c567ac646eb95bd59fbc5e75",
             "_evaluate_subject_tile": "da5ea37bc7faea1405b83b856ca8701e178e0daf0a26223eb70146589d6d26de",
             "_ArgumentsBoundAtDispatch.__call__": "46ee403fdfc0849f77b0727c94064168ad21c00f5072d34d15247e939594babd",
@@ -2507,11 +2468,11 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
             "_flatten_subject_integrity": "af4f88646aa7bded3320e2df7163fe956644db738c12eae3007bc8207ba1369c",
             "with_kept_action_parts": "8629cf154b78299c070d03e96d74c5d8381988ec00f17ee68f950358686d2847",
             "_SelectedOutputs.__call__": "d8758fb93bbaf546eef01985ec1c6a9f753f822530e1da3bf18ab10f015d5950",
-            "_decision_with_action_parts": "f49955d0c463e1d4dba508eb9a4f34240d3c0c876b919f5f3c1095332dd04d28",
-            "_DecisionWithActionParts.__call__": "d40ce13f37769a8a3fff1cb7b0317e5b05d2fa233f23e8abee0299853f109575",
+            "_decision_with_action_parts": "16c0f249850a731ea8059131eb5d6d776aa6d33ed17ad91198f79baf7eb1b894",
+            "_DecisionWithActionParts.__call__": "c82ef4de5a32c8ee5fc2be32bc55dcf5d36d01e06e0b6ab1618c02e480745d20",
             "_BoundActionPartsBody.__call__": "1f249a93896b076c62dad990526688fafa23f6cb9ac51516bada50094c8d21e0",
             "_evaluated_action_parts": "eaa6a1fa9d1a3da4fd0d8a8e8f52446b9cee5186dec957f40309f1717f1e7fc7",
-            "_lookup_body_and_roles": "d501539a745c1ec1d155730c357c482829bd74bdeecf12ea89f60b4884566046",
+            "_lookup_body_and_roles": "7374a15c073b79c0368139740ad0d6bc9bd6e9a10c1fdc62b1a9f9eb3b418e0d",
         },
     ),
     SIMULATION_PROGRAM_TYPES_SOURCE: (
@@ -2525,7 +2486,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     NBEGM_SOURCE: (
-        "45600f16ddf06a5ffae8a7198d3a11f4540c857674a300d2aa3472d51e84e2bd",
+        "bbdc57b2e35ce2fd1a6554224e4e1a35bf6158c27be35ee1376fdd9aa5b481b3",
         {
             "NBEGM.declare_continuation_reads": "b3aea84195a77cc3f4de92e284acd79cbb0e452f0f204dcd91b2aa930b4e632c",
             "_with_ride_marginal_reads": "8fe7ef4e91312fedb70de6d7bc72cb38fd80b50798b6d6e4a4ce712a7507cf56",
@@ -2638,7 +2599,7 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         {
             "_EGMCore.__call__": "83fee11d9e754f13eb70c29bc825a42de7f1b1dac2ddf1ead4fbc5b66818df70",
             "_EGMArgumentBuilder.__call__": "6f801c142b046fa383a0129dc48e7e85c63fea66e8db27b1ba2213de4363c9f3",
-            "EGM.build_period_kernels": "09bf27cd09b0ce47f5017f63c420ee7e751cad4d2e3e0b2b7f159bb58bc72f1b",
+            "EGM.build_period_kernels": "eb39e50ed13609142e9cb0bce63e49466289b581cbb94de89ce038f166277648",
             "_build_egm_period_kernel": "1e316f311fda317155246bcb25a9f8b102c93c6a7f4032270fef1363076b0302",
             "_EGMArgumentBuilder._law_readings": "f85bbf2978a4e71f1899cacca7cb2bbd9a5b54079daa786fee2735fb7d5652d3",
             "_EGMPeriodKernel.__call__": "68fc59f9fb1ec137a0a012bc1162bcb26d5d57df25f4d677d0f54c45a98c39f1",
@@ -2665,26 +2626,23 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/regime_building/Q_and_F.py": (
-        "3e0a954ccf513ca930ca4dc1f90efc734f48571ade3005b69740038d060519ec",
+        "2c2e11184264d88cfd838323f93c4fdb0784bc21708b92addc14de980b7bce48",
         {
-            "runtime_bound_specs": "84f9e94e2f2fa9cf0f27f8900a244cf80b64681bf23b2973e5c08875c76155a0",
-            "BoundedQAndF.__post_init__": "ba409022a0b51498849a82498a8c53e3cd74adbab150de8880eaebdb81b58d75",
+            "runtime_bound_specs": "87af237bd71b6361adcdfe68aff13c088e6f2f4e3255382f0e6dace4acccff48",
+            "BoundedQAndF.__post_init__": "7f2960ab38c83e65411c52f9d8b88e14adca221bbff176c5b0fcd6bac37b6b0c",
             "BoundedQAndF.__call__": "35a9314e536c40abb69fcb19db02eada75b716576b03a046e3c6ce32c881f3f4",
             "_BoundUtilitiesAndF.__post_init__": "c1910d1df00ea9332bdc2e2f62a8fa205da5e2acafaf9c1a6cd17bb4845cc3b2",
             "_BoundUtilitiesAndF.evaluated": "b0328b23db1920d3396323688e198570861af372edaeb49ae571c337fe0a653a",
             "_get_U_and_F": "e4998b4def8219a2b86bb19ea66ee17eed69c3610e04be087a5b7451c55c796d",
             "_BoundFeasibility.__call__": "990d971d7cfd42eb27f41be5a2393460bee167f5150727e91fa0a9ce58701e71",
             "_get_feasibility": "89f48ba88bfc5ac93f6a7539609d71da5186d3cb0af5fc8e630b3baa28d1876b",
-            "_QAndF.evaluated": "bc56c7283a7e3f0e31b41e0d9a4c9fae176bcb691c52ebf81ba2fcae7a6ce4fa",
-            "_TerminalQAndF.evaluated": "9773c0ae2b658ddab50c9bcaa10ba7838609e84a350ea9d3d7399a538f86e6fe",
-            "_TerminalCollectiveQAndF.evaluated": "0c4389fa459eb0bbf420815a866f2fa480875f255ff476498e6f634bc0a19acf",
+            "_TerminalCollectiveQAndF.evaluated": "abe847aea5d9bd38538c4ba163405f4925cc7a34ea072ede62838ee6c5b52576",
             "_CollectiveQAndF.evaluated": "e8c2e972b2586a4b1481577583fe225b135349f625b57e7ff65987fe7d7b5b11",
             "_publish_signature": "29eed5ee787b943c47cfea245bd33535d213c0b2c21d44e05247fce03cf80980",
-            "_QAndF._evaluate": "830431b717e7bbb7d3c4ec5f3d7c820054eba32a981f2a6546272e9fac6f2fbb",
-            "_QAndF._parts_from_utilities": "3efd6cd45bd63040bcc1dc26e0db0426eedcdbdf193bebad141262184c87a095",
-            "_QAndF.parts": "976499debccbd87af6f279bf64a78cd042c7121f689fdc9d3bfa4fb3b9b8b8be",
             "get_Q_and_F_parts": "eedce4a331efaf0f0b091fb6fbf6451222fd8ebe7b81499ce2f34143f727abb7",
             "has_objective_profile": "fcc251061f52d4faead1c847883388539ce8a5aa1aeda708aa286a015148c81a",
+            "_CollectiveQAndF.parts": "1305ed30299eb15bcdaae5f4ecc52a70b58d0ab5fc1cacff73c06c482f29ccf8",
+            "_CollectiveQAndF._parts_from_utilities": "062ca37c551069076f4755fbce7e5591eccc9c17c32e7e84f83d7a98c0896f70",
         },
     ),
     "src/_lcm/state_action_space.py": (
@@ -2716,10 +2674,10 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/landing_counts.py": (
-        "744cd306431e9da7a0f6df210e85796001cb0a943fb1f74dde2718c0c41f8cf7",
+        "fbb0cfb3fbc7068f3361d2bf245673f03eca7355bffbb6c8303971b86beaca22",
         {
             "landing_checks_of": "5246312411fdfca9375fdc34b38e57a15620ff2a1da81d0d5d6c67bb0a74b9d9",
-            "get_landing_counting_max_Q_over_a": "78831240728eb43aef741f545f0bb42c4d044e68a11bc57690b25b4a2583f43e",
+            "get_landing_counting_max_Q_over_a": "27739010b6a1b4b19320666dd7bebf35af6ebe2a34f11762c325dc7252bc6771",
             "_LandingCountingReduction.__call__": "faeeca7757e7ca66f394f6b72e1dde7ad58ca7ebd81f73d32830a3f056a30a3b",
             "LandingCountedGridSearch.__call__": "abfef7e21c6dbd6cf9a94a5ed495dd9c73853a052cd04904ae0270b1023dbf69",
             "_feasible_landing_counts": "1ad2cc2b01dfa37959918d4aabac29875d658ffc3b21924e1c981b2769226668",
@@ -2927,9 +2885,9 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/dcegm.py": (
-        "b6fddaf34441328e3ffc63f806083caa4c38a7bb3ecaef1115318cf3ce82344b",
+        "ed22a799379f3388253af7b948ccdd68499ede15b042595ee3e9ec49a34da2c5",
         {
-            "DCEGM.build_period_kernels": "4dbe33765fd7e2f188d9985fcf07ab805d2c2190129964f414f5f3bdcece121a",
+            "DCEGM.build_period_kernels": "bf45afd7a2ef2eb1664bd194851a26bdbe31898fb8a2940ffc84249b7028354f",
             "_DCEGMPeriodKernel.with_fixed_params": "576107fcdab8d47abbe0df04148ea500bc7595c77c33353f804d28576087536f",
             "DCEGM.__post_init__": "bb3311cb1d8bfb0bad1f9574e52e8f630429d91256da332e00971aa56ad60716",
             "_DCEGMArgumentBuilder.__call__": "83e73b3fa1733d949e557f7cb22dd0789c0e5c713d90c4f97f565228e559c1e2",
@@ -3067,16 +3025,16 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/regime_building/decoupled.py": (
-        "eeb133da089959cd81e3bb08ea7a63e004724244c6ab1f7e5a2d2f6469aafbce",
+        "228c6e097cbbf199742ced85349656a21f8e8e0fb35750d987257964592732d5",
         {
-            "DecoupledTasteShockLookup.__call__": "417a2943db14b9f33e4ef51dc60c668807d824e5087238e27cb13e9792567517",
-            "DecoupledWithActionParts.__call__": "e833b70e754b32bc877c37a1686dd3843e4a607e0a6ea48cda3456080e7e1687",
-            "_DecoupledQOverA.__call__": "cff8e1341d96c1ca799872445c4018cd3978dae9c1b5747c20b862028e7af055",
-            "argmax_and_readout": "bb970e9ef9a2356f598ae7400ee2a6e4e4c0338429d9f372c650e33da7caa34b",
+            "DecoupledTasteShockLookup.__call__": "9d04d30c7643accc3c6efd557a2403421a996ee19ad8a696b43e2459f42105e6",
+            "DecoupledWithActionParts.__call__": "0828a70e3b480e8998afdcb95c2ad5ad45e1fa441e965bccf313694cfe816a65",
+            "_DecoupledQOverA.__call__": "419583703841aceed0aa39f66c0dfe33a7e62ad9fe730ab237fd37a50c84469f",
             "decoupled_logsum": "76dee3957e4adf72e6524c280a97893dd6f19e000ba14be848c729f70d5a387c",
-            "get_conditional_profiles": "0de48ea6866b2cf6c0fbf612ed308a90d82fa31adeadda93b905746042454413",
-            "get_decoupled_Q_over_a": "14e376697367e5a3af09c2ee54d88b5cfda91179f44b29247015cde80fccfb67",
-            "get_decoupled_max_Q_over_a": "510201a67c86f0f112212b0164047b044628906049f23f48fe46de781f8392d5",
+            "get_decoupled_Q_over_a": "62a58f0696263f5b3d1bcf7b88bb785c1eb10bbf4306379f4f5b6e5392c5bef1",
+            "get_decoupled_max_Q_over_a": "7dc36d9f51015cd257bd12bee7577db450a1b23d6ae97db985e209ee1c2d3e35",
+            "household_argmax_and_readout": "c2d56cda9c850507b97384dcb7f5be9107b120ef9fd15eb5747050836e92c8b0",
+            "smoothed_profiles": "1c9cc01bdfd885048b7d5e98fed09057fcdf355697a7fa2559fec5b366b0b051",
         },
     ),
     "src/_lcm/utils/counts.py": (
@@ -3189,13 +3147,13 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/negm.py": (
-        "c2fdd2dbedc7b4527048ba8821ae7c2bcc90273b327b35af2f3556347f4dd7b7",
+        "13dfccbbd9a31aba0f7f1c40af1fc1a4efda550dcab792670c480e5e8c9dfd5c",
         {
             "_stack_owned_carry_template": "8ec66515c8b2a988e7541729eb37ac901b9204a8bc841c552c3265b04bebb4d6",
             "_broadcast_over_candidates": "15325b555d9e603b155f372a04471ceff959d7ab4035b6d9ab6f9bdbc940ac66",
-            "NEGM.build_period_kernels": "a1e6ca41f336b88377cdbedf9ec077318c517a79747e9ac2e90b6f67263a6f10",
+            "NEGM.build_period_kernels": "a58b86e9692086baef8f7d53298b6b1b20ee025cbc1b9cc0f1493d546ed423b8",
             "_NEGMPeriodKernel.__call__": "abda379507e50390a0a06e745ce6ebf96cc47f3d34dc92d11fd48cf10ffcbff6",
-            "_NEGMPeriodKernel.__post_init__": "a41267467f144534e6c8d8177aa3d5f751d7964b6873d36e6a43b51e66638a77",
+            "_NEGMPeriodKernel.__post_init__": "5c570fff30499390c3f78fbf6d167576958733c3fa6599ea05299a2b6422bbd7",
             "_NEGMSweepArgumentBuilder.__call__": "b42523d6ec3756e19037bc931a86eb8f3df530d048014f4534e7a916e22acaaf",
             "_NestedNodeSolver.__call__": "2a3d448dc29ed1dd80aec464c435629dea7931225229b8f00c4878837c147174",
             "_build_negm_floor_preparation": "e1c55bbb5a99c38821725f6835257b4906cd73da367ff7ca36ce5e4866475c24",
@@ -3214,14 +3172,14 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/solution/nnbegm.py": (
-        "3251df903cfef650de5b3786c658cb660026c7a0947b190dccc1c2d4739d101e",
+        "6ce46ccab67761bb36264d508e61861775785672f1eb2e56a52cd990e1938152",
         {
-            "NNBEGM.build_period_kernels": "05a4400bb3dccc00f987a05caa1989fc00af5a245ffb3a1e021d092894146eaf",
+            "NNBEGM.build_period_kernels": "92c5d785e0edddd0633bc4dd48295e46d5e5e558cd92f7082b02e1455111764c",
             "_AdaptiveNNBEGMPeriodKernel._solve_outer": "4716272321fefaea94c4d7bf568db42a3b799b74493517d5e909166b6f8fb58b",
             "_AdaptiveNodeSolver.__call__": "be0fd84de6d3bbf185d501c039fbf6720c85250e2b4b3f466ef749dd85e2cdc0",
             "_FiniteNNBEGMPeriodKernel._solve_outer": "3a4816621db3cfe77a3bb8deb727f3a8a48982ecbd96158bcede808b41728fed",
-            "_NNBEGMPeriodKernel.__call__": "b5e119d43d20fc03d84c64e21e260f985b0b23a53548fde72f684ee66f0b489b",
-            "_NNBEGMPeriodKernel.__post_init__": "1a85d3a612edd48d65508f5361b3d583f2bf6a4ca081ff5807235dbffeee0cde",
+            "_NNBEGMPeriodKernel.__call__": "7b01b6d50d7a5b33e2bf06cb26e0adc931f1051ab6fecf6c43c82c9616c78a1c",
+            "_NNBEGMPeriodKernel.__post_init__": "98395cadbdbf933bade99947f065dac47ec3d5f4d92bd3064183501f7aa5a4ba",
             "_NNBEGMPeriodKernel._solve_adjuster_node": "f3911f539938df029909efb87069ecefba85f0984d46cab504694fcc12afc122",
             "_NNBEGMPeriodKernel._solve_keeper": "3df0247d4b29981620a28d0ba97fa472c7b9565c9d6e112254f93c0563d13e0f",
             "_NestedArgumentBuilder.__call__": "2487c8638632a8affb421ae4fd0726d153566a7c47355a1f6045d86dfa82e5c9",
@@ -4004,12 +3962,12 @@ def _guarded_binding(
 _TASTE_KERNEL_FIELDS = (
     "Q_and_F",
     "n_discrete_action_axes",
-    "member_axis",
+    "members",
     "pareto_weights",
 )
 
 # Construction keywords of a hard-max max-Q kernel, in declaration order.
-_HARD_MAX_KERNEL_FIELDS = ("Q_and_F", "member_axis", "pareto_weights")
+_HARD_MAX_KERNEL_FIELDS = ("Q_and_F", "members", "pareto_weights")
 
 
 def _binding_kernel(
@@ -4243,13 +4201,9 @@ def _exact_reducer_signature_call(
         if simulate and taste_shocks
         else '["next_regime_to_V_arr", *action_names, *state_names, *extra_param_names]'
     )
-    if simulate:
-        annotation_source = '"tuple[IntND, FloatND]"'
-    else:
-        annotation_source = (
-            '"tuple[FloatND, BoolND]" '
-            'if member_axis is not None or return_feasibility else "FloatND"'
-        )
+    annotation_source = (
+        '"tuple[IntND, FloatND]"' if simulate else '"tuple[FloatND, BoolND]"'
+    )
     return (
         _expression_matches(node=_keyword(call=call, name="args"), source=args_source)
         and _expression_matches(
@@ -4764,7 +4718,7 @@ def _exact_member_split(statement: ast.stmt) -> bool:
         and isinstance(generator.iter, ast.Call)
         and _call_name(generator.iter) == "enumerate"
         and len(generator.iter.args) == 1
-        and _kernel_field(node=generator.iter.args[0], expected="member_axis")
+        and _kernel_field(node=generator.iter.args[0], expected="members")
         and not generator.iter.keywords
         and not generator.ifs
         and generator.is_async == 0
@@ -4835,7 +4789,7 @@ def _exact_values_stack(node: ast.expr | None) -> bool:
     generator = comp.generators[0]
     return (
         _name(node=generator.target, expected="name")
-        and _kernel_field(node=generator.iter, expected="member_axis")
+        and _kernel_field(node=generator.iter, expected="members")
         and not generator.ifs
         and generator.is_async == 0
         and _unparse(_keyword(call=node, name="axis")) == "-1"
@@ -4860,22 +4814,17 @@ def _exact_collective_return(*, statement: ast.stmt, simulate: bool) -> bool:
     )
 
 
-def _exact_collective_body(*, node: ast.If, simulate: bool) -> bool:  # noqa: PLR0911
-    if ast.unparse(node.test) != "self.member_axis is not None" or node.orelse:
-        return False
-    expected_length = 5 if simulate else 4
-    if len(node.body) != expected_length:
-        return False
-    if not _exact_action_axes(node.body[0]):
-        return False
-    if not _exact_member_split(node.body[1]):
-        return False
-    if not _exact_collective_reducer_assignment(
-        statement=node.body[2], simulate=simulate
+def _exact_collective_body(*, body: list[ast.stmt], simulate: bool) -> bool:
+    """Allow only the household split, readout, member stack and return."""
+    if not (
+        len(body) == (5 if simulate else 4)
+        and _exact_action_axes(body[0])
+        and _exact_member_split(body[1])
+        and _exact_collective_reducer_assignment(statement=body[2], simulate=simulate)
     ):
         return False
     if simulate:
-        stack = node.body[3]
+        stack = body[3]
         if not (
             isinstance(stack, ast.Assign)
             and len(stack.targets) == 1
@@ -4883,8 +4832,8 @@ def _exact_collective_body(*, node: ast.If, simulate: bool) -> bool:  # noqa: PL
             and _exact_values_stack(stack.value)
         ):
             return False
-        return _exact_collective_return(statement=node.body[4], simulate=True)
-    return _exact_collective_return(statement=node.body[3], simulate=False)
+        return _exact_collective_return(statement=body[4], simulate=True)
+    return _exact_collective_return(statement=body[3], simulate=False)
 
 
 def _candidate_value_projection(tree: ast.Module) -> ast.Module:
@@ -5154,10 +5103,9 @@ def _max_builder_wiring_errors(tree: ast.Module) -> list[str]:
 extra_param_names = _get_extra_param_names(
     Q_and_F=Q_and_F, action_names=action_names, state_names=state_names
 )
-if pareto_weights is not None:
-    extra_param_names = list(
-        dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
-    )
+extra_param_names = list(
+    dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
+)
 Q_and_F = productmap(
     func=Q_and_F,
     variables=action_names,
@@ -5202,10 +5150,9 @@ return cast("MaxQOverAFunction", allow_only_kwargs(func=mapped, enforce=False))
     simulate_prefix = r"""extra_param_names = _get_extra_param_names(
     Q_and_F=Q_and_F, action_names=action_names, state_names=state_names
 )
-if pareto_weights is not None:
-    extra_param_names = list(
-        dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
-    )
+extra_param_names = list(
+    dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
+)
 Q_and_F = productmap(
     func=Q_and_F,
     variables=action_names,
@@ -5232,12 +5179,11 @@ Q_and_F = productmap(
                 "has_taste_shocks",
                 "co_map_state_names",
                 "co_map_v_arr_in_axes",
-                "member_axis",
+                "members",
                 "pareto_weights",
                 "cell_width_keyword",
                 "untiled_state_names",
                 "broadcast_state_names",
-                "return_feasibility",
             ),
             (
                 None,
@@ -5248,12 +5194,11 @@ Q_and_F = productmap(
                 "False",
                 "()",
                 "()",
-                "None",
-                "None",
+                None,
+                None,
                 "None",
                 "()",
                 "()",
-                "False",
             ),
         ),
         "get_argmax_and_max_Q_over_a": (
@@ -5263,10 +5208,10 @@ Q_and_F = productmap(
                 "state_names",
                 "n_discrete_action_axes",
                 "has_taste_shocks",
-                "member_axis",
+                "members",
                 "pareto_weights",
             ),
-            (None, None, None, "0", "False", "None", "None"),
+            (None, None, None, "0", "False", None, None),
         ),
     }
     errors: list[str] = []
@@ -5315,11 +5260,8 @@ Q_and_F = productmap(
                 "ParetoWeights",
                 "allow_args",
                 "allow_only_kwargs",
-                "argmax_and_max",
                 "build_partitioned_streaming_max_Q_over_a",
                 "build_streaming_collective_max_Q_over_a",
-                "build_streaming_ev1_max_Q_over_a",
-                "build_streaming_max_Q_over_a",
                 "Any",
                 "cast",
                 "ClassVar",
@@ -5332,7 +5274,6 @@ Q_and_F = productmap(
                 "inspect",
                 "jax",
                 "jnp",
-                "logsum_and_softmax",
                 "math",
                 "productmap",
                 "tiled_productmap",
@@ -5349,13 +5290,12 @@ Q_and_F = productmap(
                 "import jax",
                 "import jax.numpy as jnp",
                 "from dags import with_signature",
-                "from _lcm.logsum import EULER_GAMMA, logsum_and_softmax",
-                "from _lcm.regime_building.argmax import argmax_and_max",
+                "from _lcm.logsum import EULER_GAMMA",
                 (
                     "from _lcm.regime_building.collective import ParetoWeights, collective_argmax_and_readout, collective_readout, decider_choice, decider_smoothed_readout"
                 ),
                 (
-                    "from _lcm.solution.action_streaming import build_partitioned_streaming_max_Q_over_a, build_streaming_collective_max_Q_over_a, build_streaming_ev1_max_Q_over_a, build_streaming_max_Q_over_a"
+                    "from _lcm.solution.action_streaming import build_partitioned_streaming_max_Q_over_a, build_streaming_collective_max_Q_over_a"
                 ),
                 "from _lcm.utils.dispatchers import productmap, tiled_productmap, vmap_1d",
                 "from _lcm.utils.functools import allow_args, allow_only_kwargs",
@@ -5366,11 +5306,8 @@ Q_and_F = productmap(
                 "ParetoWeights": 1,
                 "allow_args": 1,
                 "allow_only_kwargs": 1,
-                "argmax_and_max": 1,
                 "build_partitioned_streaming_max_Q_over_a": 1,
                 "build_streaming_collective_max_Q_over_a": 1,
-                "build_streaming_ev1_max_Q_over_a": 1,
-                "build_streaming_max_Q_over_a": 1,
                 "Any": 0,
                 "cast": 1,
                 "ClassVar": 1,
@@ -5398,7 +5335,6 @@ Q_and_F = productmap(
                 "jax": 1,
                 "jnp": 1,
                 "list": 0,
-                "logsum_and_softmax": 1,
                 "math": 1,
                 "productmap": 1,
                 "tiled_productmap": 1,
@@ -5420,7 +5356,6 @@ _STREAMED_MAX_BUILDER_PINS = _callable_pins(
     names=(
         "get_streaming_max_Q_over_a",
         "_fail_if_action_width_keyword_collides",
-        "_fail_if_full_V_streaming_route_is_unsupported",
         "_fail_if_streaming_co_map_layout_is_invalid",
         "_StreamedMaxQOverA.__call__",
     ),
@@ -5454,9 +5389,8 @@ def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
                 "__name__: ClassVar[str] = 'max_Q_over_a'",
                 "Q_and_F: ActionFunction",
                 "n_discrete_action_axes: int",
-                "member_axis: tuple[str, ...] | None",
-                "pareto_weights: ParetoWeights | None",
-                "return_feasibility: bool = False",
+                "members: tuple[str, ...]",
+                "pareto_weights: ParetoWeights",
             ),
         ),
         (
@@ -5465,9 +5399,8 @@ def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
             (
                 "__name__: ClassVar[str] = 'max_Q_over_a'",
                 "Q_and_F: ActionFunction",
-                "member_axis: tuple[str, ...] | None",
-                "pareto_weights: ParetoWeights | None",
-                "return_feasibility: bool = False",
+                "members: tuple[str, ...]",
+                "pareto_weights: ParetoWeights",
             ),
         ),
         (
@@ -5477,14 +5410,10 @@ def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
                 "__name__: ClassVar[str] = 'streamed_max_Q_over_a'",
                 "Q_and_F: RawActionFunction",
                 "action_names: tuple[ActionName, ...]",
-                "n_discrete_action_axes: int",
-                "has_taste_shocks: bool",
-                "member_axis: tuple[str, ...] | None",
-                "pareto_weights: ParetoWeights | None",
+                "members: tuple[str, ...]",
+                "pareto_weights: ParetoWeights",
                 "q_and_f_arg_names: frozenset[ReferenceName]",
                 "action_width_keyword: str",
-                "whole_product_Q_and_F: RawActionFunction",
-                "return_feasibility: bool = False",
             ),
         ),
         (
@@ -5494,8 +5423,8 @@ def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
                 "__name__: ClassVar[str] = 'argmax_and_max_Q_over_a'",
                 "Q_and_F: ActionFunction",
                 "n_discrete_action_axes: int",
-                "member_axis: tuple[str, ...] | None",
-                "pareto_weights: ParetoWeights | None",
+                "members: tuple[str, ...]",
+                "pareto_weights: ParetoWeights",
             ),
         ),
         (
@@ -5504,8 +5433,8 @@ def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
             (
                 "__name__: ClassVar[str] = 'argmax_and_max_Q_over_a'",
                 "Q_and_F: ActionFunction",
-                "member_axis: tuple[str, ...] | None",
-                "pareto_weights: ParetoWeights | None",
+                "members: tuple[str, ...]",
+                "pareto_weights: ParetoWeights",
             ),
         ),
     )
@@ -5848,39 +5777,29 @@ def _internal_outputs_transport_errors(tree: ast.Module) -> list[str]:
 _ACTION_STREAMING_PINS = _callable_pins(
     source=ACTION_STREAMING_SOURCE,
     names=(
-        "build_streaming_max_Q_over_a",
         "build_streaming_collective_max_Q_over_a",
-        "build_streaming_ev1_max_Q_over_a",
-        "_StreamingHardMax.__call__",
         "_StreamingCollectiveHardMax.__call__",
-        "_StreamingEV1ExpectedMax.__call__",
+        "_bounded_hard_max",
+        "_scan_bounded_blocks",
         "_prepare_action_call",
         "_evaluate_block",
-        "_evaluate_ev1_branch_block",
+        "_evaluate_one_action",
         "_evaluate_collective_block",
         "_trace_block",
-        "_empty_reduction",
+        "_empty_bound_status",
+        "_empty_query_status",
         "_typed_like",
-        "_start_reduction",
         "_scan_blocks",
+        "_scan_one_block",
         "_add_block",
-        "_reduce_whole_product",
-        "_reduce_no_action",
         "_start_collective_reduction",
         "_reduce_collective_whole_product",
         "_household_objectives",
         "_empty_collective_reduction",
         "_reduce_collective_no_action",
         "_decode_action",
-        "_validate_scalar_Q_and_F",
-        "_validate_block_Q_and_F",
         "_validate_collective_scalar_Q_and_F",
         "_validate_collective_block_Q_and_F",
-        "_initialize_ev1_reduction",
-        "_add_ev1_block",
-        "_finalize_open_ev1_branch_group",
-        "_scan_ev1_blocks",
-        "_flush_ev1_branch_group",
     ),
 )
 
@@ -5890,46 +5809,16 @@ def _action_streaming_errors(tree: ast.Module) -> list[str]:
     errors = _class_surface_errors(
         tree=tree,
         label="streamed action evaluator",
-        class_name="_StreamingHardMax",
+        class_name="_StreamingCollectiveHardMax",
         fields=(
             "Q_and_F: Callable[..., tuple[FloatND, BoolND]]",
             "action_names: tuple[ActionName, ...]",
             "block_width: int",
+            "members: tuple[str, ...]",
+            "weights: Mapping[str, FloatND | float]",
         ),
         methods=("__call__",),
         decorators=("dataclass(frozen=True)",),
-    )
-    errors.extend(
-        _class_surface_errors(
-            tree=tree,
-            label="streamed collective action evaluator",
-            class_name="_StreamingCollectiveHardMax",
-            fields=(
-                "Q_and_F: Callable[..., tuple[FloatND, BoolND]]",
-                "action_names: tuple[ActionName, ...]",
-                "block_width: int",
-                "members: tuple[str, ...]",
-                "weights: Mapping[str, FloatND | float]",
-            ),
-            methods=("__call__",),
-            decorators=("dataclass(frozen=True)",),
-        )
-    )
-    errors.extend(
-        _class_surface_errors(
-            tree=tree,
-            label="streamed EV1 action evaluator",
-            class_name="_StreamingEV1ExpectedMax",
-            fields=(
-                "Q_and_F: Callable[..., tuple[FloatND, BoolND]]",
-                "action_names: tuple[ActionName, ...]",
-                "n_discrete_action_axes: int",
-                "block_width: int",
-                "scale: FloatND | float",
-            ),
-            methods=("__call__",),
-            decorators=("dataclass(frozen=True)",),
-        )
     )
     errors.extend(
         _exact_callable_errors(
@@ -5958,7 +5847,7 @@ def _hard_max_streaming_reduction_errors(tree: ast.Module) -> list[str]:
     """Pin the complete hard-max accumulator and global-identity merge law."""
     return _exact_callable_errors(
         tree=tree,
-        label="streamed singleton hard-max reduction",
+        label="hard-max reduction",
         contracts=_HARD_MAX_STREAMING_REDUCTION_PINS,
     )
 
@@ -5986,39 +5875,6 @@ def _collective_hard_max_streaming_reduction_errors(
         label="streamed collective hard-max reduction",
         contracts=_COLLECTIVE_HARD_MAX_STREAMING_REDUCTION_PINS,
     )
-
-
-_LOGSUMEXP_STREAMING_REDUCTION_PINS = _callable_pins(
-    source=LOGSUMEXP_ACTION_REDUCTION_SOURCE,
-    names=(
-        "BoundLogSumExpReduction.initialize",
-        "BoundLogSumExpReduction.add",
-        "BoundLogSumExpReduction.merge",
-        "BoundLogSumExpReduction.finalize",
-        "LogSumExpReduction.semantic_key",
-        "LogSumExpReduction.bind",
-    ),
-)
-
-
-def _logsumexp_streaming_reduction_errors(tree: ast.Module) -> list[str]:
-    """Pin one dynamically bound log-sum-exp session across every branch."""
-    errors = _class_surface_errors(
-        tree=tree,
-        label="streamed bound log-sum-exp reduction",
-        class_name="BoundLogSumExpReduction",
-        fields=("scale: FloatND",),
-        methods=("initialize", "add", "merge", "finalize"),
-        decorators=("dataclass(frozen=True)",),
-    )
-    errors.extend(
-        _exact_callable_errors(
-            tree=tree,
-            label="streamed log-sum-exp reduction",
-            contracts=_LOGSUMEXP_STREAMING_REDUCTION_PINS,
-        )
-    )
-    return errors
 
 
 _GRID_SEARCH_STREAMED_PROVIDER_PINS = _callable_pins(
@@ -6191,7 +6047,6 @@ def _feasibility_summary_errors(tree: ast.Module) -> list[str]:
         class_name="CountedGridSearch",
         fields=(
             "function: Callable[..., tuple[FloatND, BoolND] | tuple[FloatND, BoolND, ScalarBool] | BoundedResult[tuple[FloatND, BoolND]]]",
-            "collective: bool",
             "current_iid: bool = False",
         ),
         methods=("__call__",),
@@ -6226,9 +6081,7 @@ if self.current_iid:
 value, empty = cast('tuple[FloatND, BoolND]', evaluated)
 _fail_if_feasibility_count_exceeds_capacity(n_states=math.prod(empty.shape))
 count_dtype = get_feasibility_count_dtype()
-infinite = jnp.isinf(value)
-if self.collective:
-    infinite = jnp.any(infinite, axis=-1)
+infinite = jnp.any(jnp.isinf(value), axis=-1)
 empty_count = jnp.sum(empty, dtype=count_dtype)
 other_inf_count = jnp.sum(infinite & ~empty, dtype=count_dtype)
 output: CountedGridSearchOutput = (value, empty_count, other_inf_count)
@@ -6755,7 +6608,7 @@ def _processing_caller_errors(tree: ast.Module) -> list[str]:
     state_action_space=state_action_space,
     Q_and_F_functions=Q_and_F_functions,
     has_taste_shocks=has_taste_shocks,
-    member_axis=member_axis,
+    members=members,
     pareto_weights=pareto_weights,
 )""",
         # The grouped route's dense reducer must reduce the type-local Q/F it is
@@ -6764,7 +6617,7 @@ def _processing_caller_errors(tree: ast.Module) -> list[str]:
     state_action_space=state_action_space,
     Q_and_F_functions=type_local_Q_and_F_functions,
     has_taste_shocks=has_taste_shocks,
-    member_axis=member_axis,
+    members=members,
     pareto_weights=pareto_weights,
 )""",
         "simulation_context": """simulation_context = dataclass_replace(
@@ -6941,7 +6794,6 @@ _SIMULATION_PROGRAM_CORRIDOR_CONTRACTS = _contracts(
             "_decision_value_reads",
             "_decision_body",
             "_StreamedArgmaxQOverA.__call__",
-            "_StreamedArgmaxQOverA._fold",
             "_StreamedArgmaxQOverA._household_fold",
             "_SubjectTiled.__call__",
             "_evaluate_subject_tile",
@@ -8660,8 +8512,6 @@ _S02_QUERY_STATUS_CONTRACTS = _contracts(
             "_get_U_and_F",
             "_BoundFeasibility.__call__",
             "_get_feasibility",
-            "_QAndF.evaluated",
-            "_TerminalQAndF.evaluated",
             "_TerminalCollectiveQAndF.evaluated",
             "_CollectiveQAndF.evaluated",
             "_publish_signature",
@@ -8689,17 +8539,13 @@ _S02_QUERY_STATUS_CONTRACTS = _contracts(
         ),
         "src/_lcm/solution/action_streaming.py": (
             "_bounded_hard_max",
-            "_StreamingHardMax.__call__",
+            "_scan_bounded_blocks",
             "_PartitionedStreamingHardMax.__call__",
             "_PartitionedStreamingHardMax.local",
-            "_StreamingEV1ExpectedMax.__call__",
             "_StreamingCollectiveHardMax.__call__",
+            "_evaluate_block",
             "_evaluate_owned_block",
-            "_evaluate_ev1_branch_block",
             "_evaluate_collective_block",
-            "_scan_ev1_blocks",
-            "_scan_one_ev1_block",
-            "_finalize_open_ev1_branch_group",
         ),
         "src/_lcm/solution/kernel_output.py": ("consume_kernel_output",),
         "src/_lcm/solution/backward_induction.py": (
@@ -9310,7 +9156,7 @@ def _terminal_output_wrapper_errors(tree: ast.Module) -> list[str]:
             "base: PeriodKernel",
             "carry_producer: EGMCarryProducer",
             "regime_name: RegimeName",
-            "member_index: int | None = None",
+            "member_index: int",
         ),
         methods=(
             "core_programs",
@@ -9365,7 +9211,7 @@ def _corridor_errors(
             outer_name=outer_name,
             nested_name=nested_name,
             class_name=class_name,
-            fields=fields if simulate else (*fields, "return_feasibility"),
+            fields=fields,
         )
     except ValueError as error:
         return [f"{label}: {error}"]
@@ -9374,37 +9220,16 @@ def _corridor_errors(
     ):
         errors.append(f"{label}: ordinary reducer signature wrapper changed")
     body = _body_without_docstring(nested)
-    if len(body) != 4:
-        errors.append(
-            f"{label}: ordinary reducer corridor must contain exactly origin, "
-            f"collective branch, singleton reduction and return; found {len(body)} statements"
-        )
-        return errors
-    origin, collective, *singleton = body
+    if not body:
+        return [*errors, f"{label}: ordinary reducer corridor is empty"]
+    origin, *household = body
     if not _q_and_f_origin(origin):
         errors.append(
             f"{label}: first corridor statement is not exact Q_arr/F_arr origin"
         )
-    if not isinstance(collective, ast.If) or not _exact_collective_body(
-        node=collective, simulate=simulate
-    ):
+    if not _exact_collective_body(body=household, simulate=simulate):
         errors.append(
-            f"{label}: collective corridor contains a non-allowlisted transformation"
-        )
-    singleton_ok = _statements_match(
-        observed=singleton,
-        expected_source=(
-            "index, value = argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)\n"
-            "return jnp.where(jnp.any(F_arr), index, -1), value"
-            if simulate
-            else "value = Q_arr.max(where=F_arr, initial=-jnp.inf)\n"
-            "return (value, ~jnp.any(F_arr)) if self.return_feasibility else value"
-        ),
-    )
-    if not singleton_ok:
-        errors.append(
-            f"{label}: singleton corridor does not pass raw Q_arr/F_arr directly "
-            "to the full reducer"
+            f"{label}: household corridor contains a non-allowlisted transformation"
         )
     for statement in ast.walk(nested):
         if isinstance(statement, ast.stmt) and statement is not origin:
@@ -9435,7 +9260,7 @@ def _taste_corridor_errors(
             outer_name=outer_name,
             nested_name=nested_name,
             class_name=class_name,
-            fields=fields if simulate else (*fields, "return_feasibility"),
+            fields=fields,
         )
     except ValueError as error:
         return [f"{label}: {error}"]
@@ -9451,30 +9276,18 @@ def _taste_corridor_errors(
     next_regime_to_V_arr=next_regime_to_V_arr,
     **states_actions_params,
 )
-if self.member_axis is not None:
-    values, dissolution = decider_smoothed_readout(
-        Q=Q_arr,
-        feasibility=F_arr,
-        weights=_stacked_pareto_weights(
-            pareto_weights=self.pareto_weights,
-            member_axis=self.member_axis,
-            states_actions_params=states_actions_params,
-        ),
-        n_discrete_action_axes=self.n_discrete_action_axes,
-        scale=cast("ScalarFloat", states_actions_params[TASTE_SHOCK_SCALE_PARAM]),
-    )
-    return values, dissolution
-Q_masked = jnp.where(F_arr, Q_arr, -jnp.inf)
-continuous_axes = tuple(range(self.n_discrete_action_axes, Q_arr.ndim))
-Qc = Q_masked.max(axis=continuous_axes) if continuous_axes else Q_masked
-smoothed, _ = logsum_and_softmax(
-    values=Qc,
-    scale=cast(
-        "ScalarFloat", states_actions_params[TASTE_SHOCK_SCALE_PARAM]
+values, dissolution = decider_smoothed_readout(
+    Q=Q_arr,
+    feasibility=F_arr,
+    weights=_stacked_pareto_weights(
+        pareto_weights=self.pareto_weights,
+        members=self.members,
+        states_actions_params=states_actions_params,
     ),
-    axes=tuple(range(Qc.ndim)),
+    n_discrete_action_axes=self.n_discrete_action_axes,
+    scale=cast("ScalarFloat", states_actions_params[TASTE_SHOCK_SCALE_PARAM]),
 )
-return (smoothed, ~jnp.any(F_arr)) if self.return_feasibility else smoothed
+return values, dissolution
 """
     expected_simulate = r"""taste_shock_key = cast(
     "Array", states_actions_params.pop("taste_shock_key")
@@ -9483,36 +9296,18 @@ Q_arr, F_arr = self.Q_and_F(
     next_regime_to_V_arr=next_regime_to_V_arr,
     **states_actions_params,
 )
-if self.member_axis is not None:
-    return _household_taste_shock_draw(
-        Q_arr=Q_arr,
-        F_arr=F_arr,
-        weights=_stacked_pareto_weights(
-            pareto_weights=self.pareto_weights,
-            member_axis=self.member_axis,
-            states_actions_params=cast("QAndFKwargs", states_actions_params),
-        ),
-        n_discrete_action_axes=self.n_discrete_action_axes,
-        taste_shock_key=taste_shock_key,
-        scale=cast("FloatND", states_actions_params[TASTE_SHOCK_SCALE_PARAM]),
-    )
-Q_masked = jnp.where(F_arr, Q_arr, -jnp.inf)
-n_discrete_cells = math.prod(Q_arr.shape[:self.n_discrete_action_axes])
-n_continuous_cells = math.prod(Q_arr.shape[self.n_discrete_action_axes:])
-Q_flat = Q_masked.reshape(n_discrete_cells, n_continuous_cells)
-continuous_argmax = jnp.argmax(Q_flat, axis=1)
-Qc = Q_flat.max(axis=1)
-scale = cast("FloatND", states_actions_params[TASTE_SHOCK_SCALE_PARAM])
-noise = draw_taste_shock_noise(
-    key=taste_shock_key, shape=Qc.shape, scale=scale
+return _household_taste_shock_draw(
+    Q_arr=Q_arr,
+    F_arr=F_arr,
+    weights=_stacked_pareto_weights(
+        pareto_weights=self.pareto_weights,
+        members=self.members,
+        states_actions_params=cast("QAndFKwargs", states_actions_params),
+    ),
+    n_discrete_action_axes=self.n_discrete_action_axes,
+    taste_shock_key=taste_shock_key,
+    scale=cast("FloatND", states_actions_params[TASTE_SHOCK_SCALE_PARAM]),
 )
-noisy_Qc = Qc + noise
-discrete_argmax = jnp.argmax(noisy_Qc)
-flat_index = (
-    discrete_argmax * n_continuous_cells
-    + continuous_argmax[discrete_argmax]
-)
-return jnp.where(jnp.any(F_arr), flat_index, -1).astype(jnp.int32), Qc[discrete_argmax]
 """
     expected = expected_simulate if simulate else expected_solve
     if not _body_matches(node=nested, expected_source=expected):
@@ -9557,7 +9352,6 @@ return scale * (gumbel - EULER_GAMMA)
             "range",
             "tuple",
             "EULER_GAMMA",
-            "logsum_and_softmax",
         },
     )
     expected_imports = sorted(
@@ -9567,7 +9361,7 @@ return scale * (gumbel - EULER_GAMMA)
             "import jax.numpy as jnp",
             "import math",
             "from typing import ClassVar, cast",
-            "from _lcm.logsum import EULER_GAMMA, logsum_and_softmax",
+            "from _lcm.logsum import EULER_GAMMA",
         ]
     )
     if imports != expected_imports:
@@ -9601,7 +9395,6 @@ return scale * (gumbel - EULER_GAMMA)
             "range",
             "tuple",
             "EULER_GAMMA",
-            "logsum_and_softmax",
         }
         & _assigned_names(statement)
         for statement in tree.body
@@ -9672,10 +9465,9 @@ return smoothed, probs
 
 
 def _argmax_reducer_errors(tree: ast.Module) -> list[str]:
-    """Certify the shared argmax and its representation helpers exactly."""
+    """Certify the shared paired maxima and their representation helpers exactly."""
     errors: list[str] = []
     try:
-        node = _definition(tree=tree, name="argmax_and_max")
         move = _definition(tree=tree, name="_move_axes_to_back")
         flatten = _definition(tree=tree, name="_flatten_last_n_axes")
         pair_max = _definition(tree=tree, name="max_and_smallest_id")
@@ -9698,41 +9490,13 @@ def _argmax_reducer_errors(tree: ast.Module) -> list[str]:
     except ValueError as error:
         return [f"argmax reducer: {error}"]
 
-    if node.decorator_list or move.decorator_list or flatten.decorator_list:
+    if move.decorator_list or flatten.decorator_list:
         errors.append("argmax reducer: decorators are not allowlisted")
-    if not _keyword_only_signature(
-        node=node,
-        names=("a", "axis", "initial", "where"),
-        defaults=(None, "None", "None", "None"),
-    ):
-        errors.append("argmax reducer: signature/defaults changed")
     if not _keyword_only_signature(node=move, names=("a", "axes")):
         errors.append("argmax reducer: axis-move helper signature changed")
     if not _keyword_only_signature(node=flatten, names=("a", "n")):
         errors.append("argmax reducer: flatten helper signature changed")
 
-    expected_argmax = r"""if axis is None:
-    axis = tuple(range(a.ndim))
-elif isinstance(axis, int):
-    axis = (axis,)
-if a.ndim == 0 or len(axis) == 0:
-    return _argmax_and_max_of_one_candidate(a=a, where=where, initial=initial)
-a = _move_axes_to_back(a=a, axes=axis)
-a = _flatten_last_n_axes(a=a, n=len(axis))
-if where is not None and where.ndim != 0:
-    where = _move_axes_to_back(a=where, axes=axis)
-    where = _flatten_last_n_axes(a=where, n=len(axis))
-where = jnp.ones(a.shape, dtype=bool) if where is None else jnp.broadcast_to(where, a.shape)
-is_nan = jnp.isnan(a)
-comparable = where & ~is_nan
-lowest = -jnp.inf
-positions = jnp.broadcast_to(jnp.arange(a.shape[-1], dtype=jnp.int32), a.shape)
-_max, _argmax = max_and_smallest_id(values=jnp.where(comparable, a, lowest), ids=jnp.where(comparable, positions, NO_ID), initial=lowest if initial is None else initial)
-any_nan = jnp.any(where & is_nan, axis=-1)
-_max = jnp.where(any_nan, jnp.full_like(_max, jnp.nan), _max)
-_argmax = jnp.where(any_nan | (_argmax == NO_ID), 0, _argmax)
-return (_argmax, _max)
-"""
     expected_pair_max = r"""initial_arr = jnp.asarray(initial, dtype=values.dtype)
 return _paired_max_no_derivative(values, ids, initial_arr)
 """
@@ -9810,11 +9574,6 @@ return a.transpose((*front_axes, *axes))
 """
     expected_flatten = r"""return a.reshape(*a.shape[:-n], -1)
 """
-    if not _body_matches(node=node, expected_source=expected_argmax):
-        errors.append(
-            "argmax reducer: executable body differs from the full paired "
-            "value/feasibility reduction"
-        )
     if pair_max.decorator_list or pair_reduce.decorator_list:
         errors.append("argmax reducer: decorators are not allowlisted")
     if not _positional_signature(
@@ -9958,7 +9717,6 @@ return a.transpose((*front_axes, *axes))
     if any(
         isinstance(statement, ast.Assign | ast.AnnAssign | ast.AugAssign)
         and {
-            "argmax_and_max",
             "max_and_smallest_id",
             "_paired_max",
             "_float_order_key",
@@ -10245,7 +10003,7 @@ def _household_taste_kernel_helper_errors(tree: ast.Module) -> list[str]:
     signatures = (
         (
             stacked,
-            ("pareto_weights", "member_axis", "states_actions_params"),
+            ("pareto_weights", "members", "states_actions_params"),
             "weight stack",
         ),
         (
@@ -10267,7 +10025,7 @@ def _household_taste_kernel_helper_errors(tree: ast.Module) -> list[str]:
     expected_stacked = r"""weights = _evaluate_pareto_weights(
     pareto_weights=pareto_weights, states_actions_params=states_actions_params
 )
-return jnp.stack([jnp.asarray(weights[name]) for name in member_axis])
+return jnp.stack([jnp.asarray(weights[name]) for name in members])
 """
     expected_draw = r"""decider, Qc, continuous_argmax, at_choice = decider_choice(
     Q=Q_arr,
@@ -10782,14 +10540,6 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> DirectFlowReport:
         errors.extend(new_errors)
         if new_errors:
             offending.add(COLLECTIVE_ACTION_REDUCTION_SOURCE)
-    logsumexp_action_reduction_tree = parsed.get(LOGSUMEXP_ACTION_REDUCTION_SOURCE)
-    if logsumexp_action_reduction_tree is not None:
-        new_errors = _logsumexp_streaming_reduction_errors(
-            logsumexp_action_reduction_tree
-        )
-        errors.extend(new_errors)
-        if new_errors:
-            offending.add(LOGSUMEXP_ACTION_REDUCTION_SOURCE)
     output_layout_tree = parsed.get(OUTPUT_LAYOUT_SOURCE)
     if output_layout_tree is not None:
         new_errors = _output_layout_errors(output_layout_tree)
@@ -11022,50 +10772,38 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> DirectFlowReport:
         "errors": errors,
         "offending_paths": sorted(offending),
         "routes": {
-            "singleton_solve": "Q_and_F -> Q_arr.max(where=F_arr)",
-            "singleton_streamed_solve": (
-                "Q_and_F -> canonical C-order action blocks -> exact mergeable "
-                "hard max -> VALUE-only compiled core"
-            ),
-            "singleton_action_partitioned_solve": (
-                "admitted GridSearch request -> device-mapped kernel over the "
-                "action axis -> per-device contiguous run of whole C-order blocks, "
-                "every block inside the scan, unowned and padded slots infeasible "
-                "-> exact hard-max accumulator -> gather over the action axis -> "
-                "ascending-order exact hard-max merge -> VALUE-only compiled core"
-            ),
-            "singleton_simulate": (
-                "published decision program: Q_and_F -> canonical dense argmax or "
-                "C-order action blocks -> exact hard max -> subject tiles -> "
-                "materialize -> resolve -> planned executable -> dispatched flat index/value"
-            ),
             "collective_solve": (
                 "Q_and_F -> trailing member split -> "
                 "collective_readout(feasibility=F_arr)"
             ),
             "collective_streamed_solve": (
-                "non-production reference: Q_and_F -> weighted C-order member "
-                "blocks -> one shared "
-                "household hard max -> exact member gather -> compiled "
-                "VALUE core"
+                "Q_and_F -> canonical C-order action blocks of member values -> "
+                "weighted household objective -> exact household hard max -> "
+                "exact member gather -> compiled VALUE core"
+            ),
+            "collective_action_partitioned_solve": (
+                "admitted GridSearch request -> device-mapped kernel over the "
+                "action axis -> per-device contiguous run of whole C-order blocks, "
+                "every block inside the scan, unowned and padded slots infeasible "
+                "-> exact household hard-max accumulator -> gather over the action "
+                "axis -> ascending-order exact household hard-max merge -> "
+                "compiled VALUE core"
             ),
             "collective_simulate": (
-                "published dense decision program: Q_and_F -> trailing member split -> "
-                "collective_argmax_and_readout(feasibility=F_arr) -> subject tiles -> "
+                "published decision program: Q_and_F -> trailing member split -> "
+                "collective_argmax_and_readout(feasibility=F_arr) or C-order "
+                "household blocks -> exact household hard max -> subject tiles -> "
                 "materialize -> resolve -> planned executable -> dispatched flat index/value"
             ),
             "taste_shock_solve": (
-                "Q_and_F -> exact feasibility mask -> continuous max -> "
-                "full discrete logsum"
-            ),
-            "taste_shock_streamed_solve": (
-                "non-production reference: Q_and_F -> ordered discrete-prefix hard "
-                "maxima -> dynamically "
-                "bound log-sum-exp -> VALUE-only compiled core"
+                "Q_and_F -> exact feasibility mask -> decider continuous max "
+                "carrying every member -> decider discrete logsum -> zero-safe "
+                "member means under the decider's choice"
             ),
             "taste_shock_simulate": (
                 "published dense decision program: Q_and_F -> exact feasibility mask -> "
-                "row-major continuous max -> per-cell Gumbel-max -> subject tiles -> "
+                "decider row-major continuous max -> per-cell Gumbel-max over the "
+                "decider's discrete values -> subject tiles -> "
                 "materialize -> resolve -> planned executable -> dispatched flat index/value"
             ),
             "finite_policy_simulate": (
@@ -11115,145 +10853,13 @@ def _replace_nth(*, text: str, marker: str, replacement: str, occurrence: int) -
 def direct_flow_mutations(source: SourceText) -> dict[str, str]:
     """Generate the required route/value/support/shape/index perturbation family."""
     mutations: dict[str, str] = {}
-    solve_singleton = "        value = Q_arr.max(where=F_arr, initial=-jnp.inf)"
-    simulate_singleton = (
-        "        index, value = argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)"
+    household_marker = "        action_axes = tuple(range(F_arr.ndim))"
+    taste_solve_marker = "        values, dissolution = decider_smoothed_readout("
+    taste_simulate_marker = (
+        "        return _with_bound_summary(\n"
+        "            evaluated=evaluated,\n"
+        "            output=_household_taste_shock_draw("
     )
-    collective_marker = "            action_axes = tuple(range(F_arr.ndim))"
-
-    mutations["singleton_solve:q_order"] = _insert_before_nth(
-        text=source,
-        marker=solve_singleton,
-        insertion="        Q_flat = Q_arr.reshape(-1)\n"
-        "        order_filter = Q_flat[0] > Q_flat[1]\n"
-        "        F_arr = jnp.where(\n"
-        "            order_filter,\n"
-        "            F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
-        "            F_arr,\n"
-        "        )\n",
-        occurrence=1,
-    )
-    mutations["singleton_simulate:mt9_rank_permutation"] = _insert_before_nth(
-        text=source,
-        marker=simulate_singleton,
-        insertion="        Q_flat = Q_arr.reshape(-1)\n"
-        "        mt9_order = (\n"
-        "            (Q_flat[0] > Q_flat[2])\n"
-        "            & (Q_flat[2] > Q_flat[1])\n"
-        "            & (Q_flat[1] > Q_flat[3])\n"
-        "            & (Q_flat[3] > Q_flat[4])\n"
-        "            & (Q_flat[4] > Q_flat[5])\n"
-        "            & jnp.all(F_arr)\n"
-        "        )\n"
-        "        F_arr = jnp.where(\n"
-        "            mt9_order,\n"
-        "            F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
-        "            F_arr,\n"
-        "        )\n",
-        occurrence=1,
-    )
-    mutations["singleton_simulate:q_gap"] = _insert_before_nth(
-        text=source,
-        marker=simulate_singleton,
-        insertion="        gap_filter = (\n"
-        "            Q_arr.reshape(-1)[0] - Q_arr.reshape(-1)[1] > 0.5\n"
-        "        )\n"
-        "        F_arr = jnp.where(\n"
-        "            gap_filter,\n"
-        "            F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
-        "            F_arr,\n"
-        "        )\n",
-        occurrence=1,
-    )
-    mutations["collective_solve:support_size"] = _insert_before_nth(
-        text=source,
-        marker=collective_marker,
-        insertion="            support_filter = jnp.sum(F_arr) > 1\n"
-        "            F_arr = jnp.where(\n"
-        "                support_filter,\n"
-        "                F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
-        "                F_arr,\n"
-        "            )\n",
-        occurrence=1,
-    )
-    mutations["collective_simulate:shape_axis"] = _insert_before_nth(
-        text=source,
-        marker=collective_marker,
-        insertion="            shape_filter = (F_arr.ndim == 2) & (F_arr.shape[-1] > 1)\n"
-        "            F_arr = jnp.where(\n"
-        "                shape_filter,\n"
-        "                F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
-        "                F_arr,\n"
-        "            )\n",
-        occurrence=2,
-    )
-
-    mutations["singleton_solve:inline_where_transform"] = source.replace(
-        "value = Q_arr.max(where=F_arr, initial=-jnp.inf)",
-        "value = Q_arr.max(\n"
-        "            where=F_arr.reshape(-1).at[0].set(False)\n"
-        "            .reshape(F_arr.shape),\n"
-        "            initial=-jnp.inf,\n"
-        "        )",
-        1,
-    )
-    mutations["singleton_simulate:inline_q_transform"] = source.replace(
-        "index, value = argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)",
-        "index, value = argmax_and_max(\n"
-        "            a=Q_arr.reshape(-1)[::-1], where=F_arr, initial=-jnp.inf\n"
-        "        )",
-        1,
-    )
-    mutations["collective_solve:inline_feasibility_transform"] = source.replace(
-        "feasibility=F_arr,",
-        "feasibility=F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),",
-        1,
-    )
-    mutations["collective_simulate:action_axis_slice"] = source.replace(
-        "name: Q_arr[..., index] for index, name in enumerate(self.member_axis)",
-        "name: Q_arr[1:, ..., index] for index, name in enumerate(self.member_axis)",
-        2,
-    )
-    mutations["solve:wrapped_productmap_input"] = source.replace(
-        "func=action_kernel,\n        variables=action_names,",
-        "func=lambda **kwargs: action_kernel(**kwargs),\n        variables=action_names,",
-        1,
-    )
-    # Replace the second productmap binding independently for simulate.
-    first = source.find("func=action_kernel,\n        variables=action_names,")
-    second = source.find(
-        "func=action_kernel,\n        variables=action_names,", first + 1
-    )
-    if second < 0:
-        raise ValueError("second Q_and_F productmap binding not found")
-    mutations["simulate:wrapped_productmap_input"] = source[:second] + source[
-        second:
-    ].replace(
-        "func=action_kernel,\n        variables=action_names,",
-        "func=lambda **kwargs: action_kernel(**kwargs),\n        variables=action_names,",
-        1,
-    )
-
-    route_specs = {
-        "singleton_solve": (solve_singleton, 1, "        "),
-        "singleton_simulate": (simulate_singleton, 1, "        "),
-        "collective_solve": (collective_marker, 1, "            "),
-        "collective_simulate": (collective_marker, 2, "            "),
-    }
-    for route, (marker, occurrence, indent) in route_specs.items():
-        for index in range(6):
-            insertion = (
-                f"{indent}F_arr = F_arr.reshape(-1).at[{index}]"
-                ".set(False).reshape(F_arr.shape)\n"
-            )
-            mutations[f"{route}:candidate_index_{index}"] = _insert_before_nth(
-                text=source, marker=marker, insertion=insertion, occurrence=occurrence
-            )
-    taste_mask = "        Q_masked = jnp.where(F_arr, Q_arr, -jnp.inf)"
-    taste_routes = {
-        "taste_shock_solve": 1,
-        "taste_shock_simulate": 2,
-    }
     semantic_insertions = {
         "q_order": (
             "        Q_flat_attack = Q_arr.reshape(-1)\n"
@@ -11306,101 +10912,153 @@ def direct_flow_mutations(source: SourceText) -> dict[str, str]:
             "            F_arr,\n"
             "        )\n"
         ),
+        "mt9_rank_permutation": (
+            "        Q_flat_attack = Q_arr.reshape(-1)\n"
+            "        mt9_order = (\n"
+            "            (Q_flat_attack[0] > Q_flat_attack[2])\n"
+            "            & (Q_flat_attack[2] > Q_flat_attack[1])\n"
+            "            & (Q_flat_attack[1] > Q_flat_attack[3])\n"
+            "            & (Q_flat_attack[3] > Q_flat_attack[4])\n"
+            "            & (Q_flat_attack[4] > Q_flat_attack[5])\n"
+            "            & jnp.all(F_arr)\n"
+            "        )\n"
+            "        F_arr = jnp.where(\n"
+            "            mt9_order,\n"
+            "            F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
+            "            F_arr,\n"
+            "        )\n"
+        ),
+        "mt10_rank_permutation": (
+            "        Q_flat_attack = Q_arr.reshape(-1)\n"
+            "        mt10_order = (\n"
+            "            jnp.all(F_arr)\n"
+            "            & (Q_flat_attack[0] > Q_flat_attack[2])\n"
+            "            & (Q_flat_attack[2] > Q_flat_attack[1])\n"
+            "        )\n"
+            "        F_arr = jnp.where(\n"
+            "            mt10_order,\n"
+            "            F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
+            "            F_arr,\n"
+            "        )\n"
+        ),
     }
-    for route, occurrence in taste_routes.items():
-        for family, insertion in semantic_insertions.items():
-            mutations[f"{route}:{family}"] = _insert_before_nth(
-                text=source,
-                marker=taste_mask,
-                insertion=insertion,
-                occurrence=occurrence,
+    # Every route's corridor is attacked by the same feasibility filters and by
+    # deleting each of the first six candidates, inserted between the exact
+    # Q/F origin and the route's full reducer.
+    route_families = {
+        "collective_solve": (
+            household_marker,
+            1,
+            ("q_order", "support_size", *(f"candidate_index_{i}" for i in range(6))),
+        ),
+        "collective_simulate": (
+            household_marker,
+            2,
+            (
+                "q_gap",
+                "shape_axis",
+                "mt9_rank_permutation",
+                *(f"candidate_index_{i}" for i in range(6)),
+            ),
+        ),
+        "taste_shock_solve": (
+            taste_solve_marker,
+            1,
+            (
+                "q_order",
+                "q_gap",
+                "support_size",
+                "all_feasible",
+                "intermediate_support",
+                "shape_axis",
+                *(f"candidate_index_{i}" for i in range(6)),
+            ),
+        ),
+        "taste_shock_simulate": (
+            taste_simulate_marker,
+            1,
+            (
+                "q_order",
+                "q_gap",
+                "support_size",
+                "all_feasible",
+                "intermediate_support",
+                "shape_axis",
+                "mt10_rank_permutation",
+                *(f"candidate_index_{i}" for i in range(6)),
+            ),
+        ),
+    }
+    for route, (marker, occurrence, families) in route_families.items():
+        for family in families:
+            insertion = (
+                f"        F_arr = F_arr.reshape(-1).at[{family[-1]}]"
+                ".set(False).reshape(F_arr.shape)\n"
+                if family.startswith("candidate_index_")
+                else semantic_insertions[family]
             )
-        for index in range(6):
-            mutations[f"{route}:candidate_index_{index}"] = _insert_before_nth(
-                text=source,
-                marker=taste_mask,
-                insertion=f"        F_arr = F_arr.reshape(-1).at[{index}]"
-                ".set(False).reshape(F_arr.shape)\n",
-                occurrence=occurrence,
+            mutations[f"{route}:{family}"] = _insert_before_nth(
+                text=source, marker=marker, insertion=insertion, occurrence=occurrence
             )
 
-    mutations["taste_shock_simulate:mt10_rank_permutation"] = _insert_before_nth(
+    mutations["collective_solve:inline_feasibility_transform"] = _replace_nth(
         text=source,
-        marker=taste_mask,
-        insertion="        Q_flat_attack = Q_arr.reshape(-1)\n"
-        "        mt10_order = (\n"
-        "            jnp.all(F_arr)\n"
-        "            & (Q_flat_attack[0] > Q_flat_attack[2])\n"
-        "            & (Q_flat_attack[2] > Q_flat_attack[1])\n"
-        "        )\n"
-        "        F_arr = jnp.where(\n"
-        "            mt10_order,\n"
-        "            F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
-        "            F_arr,\n"
-        "        )\n",
-        occurrence=2,
+        marker="            feasibility=F_arr,\n            weights=_evaluate_pareto_weights(",
+        replacement="            feasibility=F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
+        "            weights=_evaluate_pareto_weights(",
+        occurrence=1,
+    )
+    mutations["collective_simulate:action_axis_slice"] = source.replace(
+        "name: Q_arr[..., index] for index, name in enumerate(self.members)",
+        "name: Q_arr[1:, ..., index] for index, name in enumerate(self.members)",
+        2,
+    )
+    mutations["solve:wrapped_productmap_input"] = source.replace(
+        "func=action_kernel,\n        variables=action_names,",
+        "func=lambda **kwargs: action_kernel(**kwargs),\n        variables=action_names,",
+        1,
+    )
+    # Replace the second productmap binding independently for simulate.
+    first = source.find("func=action_kernel,\n        variables=action_names,")
+    second = source.find(
+        "func=action_kernel,\n        variables=action_names,", first + 1
+    )
+    if second < 0:
+        raise ValueError("second Q_and_F productmap binding not found")
+    mutations["simulate:wrapped_productmap_input"] = source[:second] + source[
+        second:
+    ].replace(
+        "func=action_kernel,\n        variables=action_names,",
+        "func=lambda **kwargs: action_kernel(**kwargs),\n        variables=action_names,",
+        1,
     )
 
     mutations["taste_shock_solve:inline_q_transform"] = _replace_nth(
         text=source,
-        marker=taste_mask,
-        replacement="        Q_masked = jnp.where(\n"
-        "            F_arr, Q_arr.reshape(-1)[::-1].reshape(Q_arr.shape), -jnp.inf\n"
-        "        )",
+        marker="            Q=Q_arr,\n            feasibility=F_arr,\n",
+        replacement="            Q=Q_arr.reshape(-1)[::-1].reshape(Q_arr.shape),\n"
+        "            feasibility=F_arr,\n",
         occurrence=1,
     )
     mutations["taste_shock_solve:inline_f_transform"] = _replace_nth(
         text=source,
-        marker=taste_mask,
-        replacement="        Q_masked = jnp.where(\n"
-        "            F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
-        "            Q_arr,\n"
-        "            -jnp.inf,\n"
-        "        )",
+        marker="            Q=Q_arr,\n            feasibility=F_arr,\n",
+        replacement="            Q=Q_arr,\n"
+        "            feasibility=F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n",
         occurrence=1,
     )
     mutations["taste_shock_simulate:inline_q_transform"] = _replace_nth(
         text=source,
-        marker=taste_mask,
-        replacement="        Q_masked = jnp.where(\n"
-        "            F_arr, Q_arr.reshape(-1)[::-1].reshape(Q_arr.shape), -jnp.inf\n"
-        "        )",
-        occurrence=2,
+        marker="                Q_arr=Q_arr,\n",
+        replacement="                Q_arr=Q_arr.reshape(-1)[::-1].reshape(Q_arr.shape),\n",
+        occurrence=1,
     )
     mutations["taste_shock_simulate:inline_f_transform"] = _replace_nth(
         text=source,
-        marker=taste_mask,
-        replacement="        Q_masked = jnp.where(\n"
-        "            F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
-        "            Q_arr,\n"
-        "            -jnp.inf,\n"
-        "        )",
-        occurrence=2,
-    )
-
-    mutations["taste_shock_solve:continuous_axis_prefix"] = source.replace(
-        "continuous_axes = tuple(range(self.n_discrete_action_axes, Q_arr.ndim))",
-        "continuous_axes = tuple(range(self.n_discrete_action_axes, Q_arr.ndim - 1))",
-        1,
-    )
-    mutations["taste_shock_solve:continuous_max_slice"] = source.replace(
-        "Qc = Q_masked.max(axis=continuous_axes) if continuous_axes else Q_masked",
-        "Qc = (\n"
-        "            Q_masked[..., 1:].max(axis=continuous_axes)\n"
-        "            if continuous_axes\n"
-        "            else Q_masked\n"
-        "        )",
-        1,
-    )
-    mutations["taste_shock_solve:logsum_axis_prefix"] = source.replace(
-        "axes=tuple(range(Qc.ndim)),",
-        "axes=tuple(range(Qc.ndim - 1)),",
-        1,
-    )
-    mutations["taste_shock_solve:logsum_value_slice"] = source.replace(
-        "            values=Qc,",
-        "            values=Qc.reshape(-1)[1:],",
-        1,
+        marker="                F_arr=F_arr,\n",
+        replacement="                F_arr=F_arr.reshape(-1).at[0].set(False)"
+        ".reshape(F_arr.shape),\n",
+        occurrence=1,
     )
     mutations["taste_shock_solve:scale_transform"] = source.replace(
         '"ScalarFloat", states_actions_params[TASTE_SHOCK_SCALE_PARAM]',
@@ -11408,33 +11066,8 @@ def direct_flow_mutations(source: SourceText) -> dict[str, str]:
         1,
     )
     mutations["taste_shock_solve:wrong_return"] = source.replace(
-        "output: MaxOutput = (\n            (smoothed, ~jnp.any(F_arr)) if self.return_feasibility else smoothed\n        )",
-        "output = (Qc.reshape(-1)[0], ~jnp.any(F_arr)) if self.return_feasibility else Qc.reshape(-1)[0]",
-        1,
-    )
-
-    mutations["taste_shock_simulate:reshape_drop"] = source.replace(
-        "Q_flat = Q_masked.reshape(n_discrete_cells, n_continuous_cells)",
-        "Q_flat = Q_masked.reshape(-1)[:-1].reshape(\n"
-        "            n_discrete_cells, n_continuous_cells\n"
-        "        )",
-        1,
-    )
-    mutations["taste_shock_simulate:wrong_discrete_count"] = source.replace(
-        "n_discrete_cells = math.prod(Q_arr.shape[: self.n_discrete_action_axes])",
-        "n_discrete_cells = math.prod(Q_arr.shape[: self.n_discrete_action_axes - 1])",
-        1,
-    )
-    mutations["taste_shock_simulate:wrong_continuous_count"] = source.replace(
-        "n_continuous_cells = math.prod(Q_arr.shape[self.n_discrete_action_axes :])",
-        (
-            "n_continuous_cells = math.prod(Q_arr.shape[self.n_discrete_action_axes + 1 :])"
-        ),
-        1,
-    )
-    mutations["taste_shock_simulate:continuous_axis_mismatch"] = source.replace(
-        "continuous_argmax = jnp.argmax(Q_flat, axis=1)",
-        "continuous_argmax = jnp.argmax(Q_flat, axis=0)",
+        'evaluated=evaluated, output=cast("MaxOutput", (values, dissolution))',
+        'evaluated=evaluated, output=cast("MaxOutput", (-values, dissolution))',
         1,
     )
     mutations["taste_shock_simulate:noise_shape"] = source.replace(
@@ -11443,13 +11076,13 @@ def direct_flow_mutations(source: SourceText) -> dict[str, str]:
         1,
     )
     mutations["taste_shock_simulate:discrete_slice"] = source.replace(
-        "discrete_argmax = jnp.argmax(noisy_Qc)",
-        "discrete_argmax = jnp.argmax(noisy_Qc[1:]) + 1",
+        "discrete_argmax = jnp.argmax(Qc + noise)",
+        "discrete_argmax = jnp.argmax((Qc + noise)[1:]) + 1",
         1,
     )
     mutations["taste_shock_simulate:wrong_stride"] = source.replace(
-        "discrete_argmax * n_continuous_cells",
-        "discrete_argmax * (n_continuous_cells - 1)",
+        "discrete_argmax * math.prod(F_arr.shape[n_discrete_action_axes:])",
+        "discrete_argmax * (math.prod(F_arr.shape[n_discrete_action_axes:]) - 1)",
         1,
     )
     mutations["taste_shock_simulate:wrong_continuous_index"] = source.replace(
@@ -11458,9 +11091,8 @@ def direct_flow_mutations(source: SourceText) -> dict[str, str]:
         1,
     )
     mutations["taste_shock_simulate:noisy_value_return"] = source.replace(
-        "output = (\n            jnp.where(jnp.any(F_arr), flat_index, -1).astype(jnp.int32),\n            Qc[discrete_argmax],\n        )",
-        "output = jnp.where(jnp.any(F_arr), flat_index, -1).astype(jnp.int32), "
-        "noisy_Qc[discrete_argmax]",
+        "        Qc[discrete_argmax],\n        at_choice[discrete_argmax],",
+        "        (Qc + noise)[discrete_argmax],\n        at_choice[discrete_argmax],",
         1,
     )
 
@@ -11582,13 +11214,6 @@ def direct_flow_mutations(source: SourceText) -> dict[str, str]:
         marker="        evaluated = self.Q_and_F(",
         replacement="        evaluated = candidate_filter.Q_and_F(",
         occurrence=3,
-    )
-    mutations["singleton_simulate:attribute_argmax_and_max"] = source.replace(
-        "index, value = argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)",
-        (
-            "index, value = candidate_filter.argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)"
-        ),
-        1,
     )
     mutations["collective_solve:attribute_collective_readout"] = _replace_nth(
         text=source,
@@ -13597,20 +13222,23 @@ _ACTION_PARTITION_CONTRACTS = _contracts(
             "_evaluate_block",
             "_evaluate_one_action",
             "_decode_action",
-            "_validate_block_Q_and_F",
+            "_validate_collective_block_Q_and_F",
             "_trace_block",
-            "_empty_reduction",
             "_empty_collective_reduction",
+            "_empty_bound_status",
+            "_empty_query_status",
             "_typed_like",
             "_scan_one_block",
+            "_scan_bounded_blocks",
             "_add_block",
         ),
-        ACTION_REDUCTION_SOURCE: (
-            "HardMaxReduction.initialize",
-            "HardMaxReduction.add",
-            "HardMaxReduction.merge",
-            "HardMaxReduction.finalize",
-            "_reduce_block",
+        COLLECTIVE_ACTION_REDUCTION_SOURCE: (
+            "CollectiveHardMaxReduction.initialize",
+            "CollectiveHardMaxReduction.add",
+            "CollectiveHardMaxReduction.merge",
+            "CollectiveHardMaxReduction.finalize",
+            "_validate_block_shapes",
+            "_winner",
         ),
     }
 )
@@ -13690,7 +13318,7 @@ _ACTION_PARTITION_MUTATIONS = {
             "merge_partition_accumulators(accumulators=gathered, "
             "order=tuple(range(self.n_partitions)))"
         ),
-        "HARD_MAX_REDUCTION.finalize(accumulator=local)",
+        "COLLECTIVE_HARD_MAX_REDUCTION.finalize(accumulator=local)",
         1,
     ),
     "action_partition:gather_replaced_by_local_copies": (
@@ -13713,16 +13341,16 @@ _ACTION_PARTITION_MUTATIONS = {
         ACTION_STREAMING_SOURCE,
         "_PartitionedStreamingHardMax.local",
         "expression",
-        "(empty_reduction(evaluate_block=evaluate_block), first_block_index)",
-        "(empty_reduction(evaluate_block=evaluate_block), jnp.int32(0))",
+        "(_empty_collective_reduction(evaluate_block=evaluate_block), first_block_index)",
+        "(_empty_collective_reduction(evaluate_block=evaluate_block), jnp.int32(0))",
         1,
     ),
     "action_partition:scan_skips_first_owned_block": (
         ACTION_STREAMING_SOURCE,
         "_PartitionedStreamingHardMax.local",
         "expression",
-        "(empty_reduction(evaluate_block=evaluate_block), first_block_index)",
-        "(empty_reduction(evaluate_block=evaluate_block), first_block_index + 1)",
+        "(_empty_collective_reduction(evaluate_block=evaluate_block), first_block_index)",
+        "(_empty_collective_reduction(evaluate_block=evaluate_block), first_block_index + 1)",
         1,
     ),
     "action_partition:start_bound_off_by_one": (
@@ -14682,9 +14310,6 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     collective_action_reduction_source = (
         root / COLLECTIVE_ACTION_REDUCTION_SOURCE
     ).read_text(encoding="utf-8")
-    logsumexp_action_reduction_source = (
-        root / LOGSUMEXP_ACTION_REDUCTION_SOURCE
-    ).read_text(encoding="utf-8")
     processing_source = (root / PROCESSING_SOURCE).read_text(encoding="utf-8")
     dispatchers_source = (root / DISPATCHERS_SOURCE).read_text(encoding="utf-8")
     functools_source = (root / FUNCTOOLS_SOURCE).read_text(encoding="utf-8")
@@ -14811,21 +14436,20 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         "caller_solve:wrong_discrete_axis_count": replace_once(
             source=grid_source,
             old=(
-                '                    "n_discrete_action_axes": len(\n'
-                "                        context.state_action_space.discrete_actions\n"
-                "                    ),"
+                "        n_discrete_action_axes = "
+                "len(context.state_action_space.discrete_actions)\n"
             ),
             new=(
-                '                    "n_discrete_action_axes": max(\n'
-                "                        0, len(context.state_action_space.discrete_actions) - 1\n"
-                "                    ),"
+                "        n_discrete_action_axes = max(\n"
+                "            0, len(context.state_action_space.discrete_actions) - 1\n"
+                "        )\n"
             ),
             label="solve caller axis count",
         ),
         "caller_solve:taste_flag_disabled": replace_once(
             source=grid_source,
-            old='                    "has_taste_shocks": context.has_taste_shocks,',
-            new='                    "has_taste_shocks": False,',
+            old="                            has_taste_shocks=context.has_taste_shocks,",
+            new="                            has_taste_shocks=False,",
             label="solve caller taste flag",
         ),
         "caller_solve:published_empty_mapping": replace_once(
@@ -15034,8 +14658,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "streaming_width_selector:pareto_params_omitted": replace_once(
             source=grid_source,
-            old="        occupied.update(context.pareto_weights.param_names)",
-            new="        occupied.update(())",
+            old="    occupied.update(context.pareto_weights.param_names)",
+            new="    occupied.update(())",
             label="streamed width-keyword Pareto namespace",
         ),
         "streaming_width_transport:streamed_function_keyword_desynchronized": _replace_nth(
@@ -15155,7 +14779,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "    elif context.co_map_state_names and context.edge_reference_regimes:"
             ),
             new=(
-                "    elif context.member_axis is not None:\n"
+                "    elif context.members:\n"
                 "        disposition = "
                 "_ActionStreamingDisposition.DENSE_TRIVIAL_ACTION_PRODUCT\n"
                 "    elif context.co_map_state_names and context.edge_reference_regimes:"
@@ -15236,24 +14860,28 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     }
     specs["streaming_width_transport:colliding_q_argument_filtered"] = {
         "path": MAX_Q_SOURCE,
-        "source": replace_once(
-            source=max_source,
-            old="            if name in self.q_and_f_arg_names",
-            new=(
-                "            if name in self.q_and_f_arg_names "
-                'and name != "_lcm_action_block_width"'
+        "source": _replace_nth(
+            text=max_source,
+            marker=(
+                "                arguments=states_actions_params, "
+                "names=self.q_and_f_arg_names\n"
             ),
-            label="streamed colliding Q argument preservation",
+            replacement=(
+                "                arguments=states_actions_params,\n"
+                '                names=self.q_and_f_arg_names - {"_lcm_action_block_width"},\n'
+            ),
+            occurrence=1,
         ),
     }
     specs["streaming_width_transport:colliding_q_argument_substituted"] = {
         "path": MAX_Q_SOURCE,
         "source": _insert_before_nth(
             text=max_source,
-            marker="        if self.has_taste_shocks:\n",
+            marker="        collective_result = collective_cell(\n",
             insertion=(
                 '        if "_lcm_action_block_width" in self.q_and_f_arg_names:\n'
-                '            q_and_f_params["_lcm_action_block_width"] = action_block_width\n'
+                '            states_actions_params["_lcm_action_block_width"] = '
+                "states_actions_params[self.action_width_keyword]\n"
             ),
             occurrence=1,
         ),
@@ -15348,43 +14976,6 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             ),
             new="    pass",
             label="streamed co-map layout validation",
-        ),
-    }
-    specs["streaming_ev1:runtime_scale_constant"] = {
-        "path": MAX_Q_SOURCE,
-        "source": replace_once(
-            source=max_source,
-            old=(
-                "                    states_actions_params[TASTE_SHOCK_SCALE_PARAM],\n"
-                "                ),\n"
-                "            )\n"
-                "            ev1_result = ev1_cell("
-            ),
-            new=(
-                "                    1.0,\n"
-                "                ),\n"
-                "            )\n"
-                "            ev1_result = ev1_cell("
-            ),
-            label="streamed EV1 runtime scale",
-        ),
-    }
-    specs["streaming_ev1:scale_signature_dropped"] = {
-        "path": MAX_Q_SOURCE,
-        "source": replace_once(
-            source=max_source,
-            old="        extra_param_names.append(TASTE_SHOCK_SCALE_PARAM)",
-            new="        pass",
-            label="streamed EV1 scale signature",
-        ),
-    }
-    specs["streaming_ev1:published_value_negated"] = {
-        "path": MAX_Q_SOURCE,
-        "source": replace_once(
-            source=max_source,
-            old="                ev1_output = ev1_result.smoothed_value",
-            new="                ev1_output = -ev1_result.smoothed_value",
-            label="streamed EV1 value publication",
         ),
     }
 
@@ -15492,12 +15083,6 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     )
 
     action_streaming_cases = {
-        "streaming_blocks:skip_last_block": _replace_nth(
-            text=action_streaming_source,
-            marker="            n_blocks=n_blocks,",
-            replacement="            n_blocks=n_blocks - 1,",
-            occurrence=1,
-        ),
         "streaming_blocks:admit_padded_tail": _replace_nth(
             text=action_streaming_source,
             marker="    output = (values, feasible & valid, global_ids)",
@@ -15521,17 +15106,11 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             ),
             label="streamed C-order coordinate decode",
         ),
-        "streaming_ev1:skip_last_block": _replace_nth(
-            text=action_streaming_source,
-            marker="            n_blocks=n_blocks,",
-            replacement="            n_blocks=n_blocks - 1,",
-            occurrence=2,
-        ),
         "streaming_collective_blocks:skip_last_block": _replace_nth(
             text=action_streaming_source,
             marker="            n_blocks=n_blocks,",
             replacement="            n_blocks=n_blocks - 1,",
-            occurrence=3,
+            occurrence=1,
         ),
         "streaming_collective_blocks:feasibility_mask_dropped": replace_once(
             source=action_streaming_source,
@@ -15544,104 +15123,6 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             old=_HOUSEHOLD_BLOCK_UNPACK,
             new=f"{_HOUSEHOLD_BLOCK_UNPACK}\n    global_ids = global_ids - global_ids[0]",
             label="streamed collective global action identity",
-        ),
-        "streaming_ev1:scale_rebound": replace_once(
-            source=action_streaming_source,
-            old=(
-                "        reduction = LOGSUMEXP_REDUCTION.bind(scale=jnp.asarray(self.scale))"
-            ),
-            new="        reduction = LOGSUMEXP_REDUCTION.bind(scale=jnp.asarray(1.0))",
-            label="streamed EV1 one-session scale binding",
-        ),
-        "streaming_ev1:continuous_extent_changed": replace_once(
-            source=action_streaming_source,
-            old=(
-                "        continuous_extent = math.prod(action_sizes[self.n_discrete_action_axes :])"
-            ),
-            new="        continuous_extent = 1",
-            label="streamed EV1 discrete-prefix branch extent",
-        ),
-        "streaming_ev1:admit_padded_tail": replace_once(
-            source=replace_once(
-                source=action_streaming_source,
-                old="    valid_continuous = continuous_offsets < remaining",
-                new=(
-                    "    valid_continuous = "
-                    "jnp.ones(continuous_block_width, dtype=bool)"
-                ),
-                label="streamed EV1 continuous-tail validity",
-            ),
-            old=(
-                "    safe_continuous_offsets = "
-                "jnp.minimum(continuous_offsets, remaining - 1)"
-            ),
-            new="    safe_continuous_offsets = continuous_offsets",
-            label="streamed EV1 continuous-tail identities",
-        ),
-        "streaming_ev1:admit_padded_branch_tail": replace_once(
-            source=replace_once(
-                source=action_streaming_source,
-                old="    valid_branches = branch_offsets < remaining_branches",
-                new=("    valid_branches = jnp.ones(branches_per_block, dtype=bool)"),
-                label="streamed EV1 branch-tail validity",
-            ),
-            old=(
-                "    safe_branch_offsets = "
-                "jnp.minimum(branch_offsets, remaining_branches - 1)"
-            ),
-            new="    safe_branch_offsets = branch_offsets",
-            label="streamed EV1 branch-tail identities",
-        ),
-        "streaming_ev1:branch_identity_shifted": _replace_nth(
-            text=action_streaming_source,
-            marker=("    branch_group_id = block_index // blocks_per_branch_group"),
-            replacement=(
-                "    branch_group_id = (block_index + "
-                "blocks_per_branch_group) // blocks_per_branch_group"
-            ),
-            occurrence=1,
-        ),
-        "streaming_ev1:branch_transition_ignored": replace_once(
-            source=action_streaming_source,
-            old=(
-                "    branch_group_changed = "
-                "(accumulator.active_branch_group_id >= 0) & ("
-            ),
-            new="    branch_group_changed = jnp.asarray(False) & (",
-            label="streamed EV1 branch-group transition",
-        ),
-        "streaming_ev1:branch_value_negated": replace_once(
-            source=action_streaming_source,
-            old="        values=branch_group.best_value,",
-            new="        values=-branch_group.best_value,",
-            label="streamed EV1 finalized branch-group values",
-        ),
-        "streaming_ev1:last_branch_not_flushed": replace_once(
-            source=action_streaming_source,
-            old=(
-                "        accumulator = _flush_ev1_branch_group(\n"
-                "            accumulator=accumulator,\n"
-                "            reduction=reduction,\n"
-                "        )"
-            ),
-            new="        accumulator = accumulator",
-            label="streamed EV1 final branch-group flush",
-        ),
-        "streaming_ev1:reverse_block_order": replace_once(
-            source=action_streaming_source,
-            old=(
-                "        accumulator=accumulator.branch_group,\n"
-                "        values=values,\n"
-                "        feasible=feasible,\n"
-                "        action_ids=global_ids,"
-            ),
-            new=(
-                "        accumulator=accumulator.branch_group,\n"
-                "        values=values[..., ::-1],\n"
-                "        feasible=feasible,\n"
-                "        action_ids=global_ids,"
-            ),
-            label="streamed EV1 value-to-candidate alignment",
         ),
         "streaming_collective_blocks:objective_uses_first_member": replace_once(
             source=action_streaming_source,
@@ -15670,15 +15151,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 occurrence=1,
             )
         )
-        action_streaming_cases[f"streaming_ev1:candidate_index_{index}"] = _replace_nth(
-            text=action_streaming_source,
-            marker="    output = (values, feasible & valid, global_ids)",
-            replacement=(
-                "    feasible = feasible & (global_ids != "
-                f"{index})\n    output = (values, feasible & valid, global_ids)"
-            ),
-            occurrence=2,
-        )
+
         action_streaming_cases[
             f"streaming_collective_blocks:candidate_index_{index}"
         ] = replace_once(
@@ -15798,51 +15271,6 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             label="streamed collective hard-max signed-zero tie",
         ),
     }
-
-    logsumexp_action_reduction_cases = {
-        "streaming_logsumexp:filter_first_branch": replace_once(
-            source=logsumexp_action_reduction_source,
-            old="        finite = jnp.isfinite(values)",
-            new="        finite = jnp.isfinite(values).at[..., 0].set(False)",
-            label="streamed log-sum-exp branch admission",
-        ),
-        "streaming_logsumexp:ignore_right_partial": replace_once(
-            source=logsumexp_action_reduction_source,
-            old=(
-                "                left.rescaled_sum * left_factor"
-                " + right.rescaled_sum * right_factor"
-            ),
-            new="                left.rescaled_sum * left_factor + 0.0 * right_factor",
-            label="streamed log-sum-exp merge",
-        ),
-        "streaming_logsumexp:scale_dropped_at_finalize": replace_once(
-            source=logsumexp_action_reduction_source,
-            old="        finite_result = accumulator.running_max + self.scale * jnp.log(",
-            new="        finite_result = accumulator.running_max + jnp.log(",
-            label="streamed log-sum-exp final scale",
-        ),
-        "streaming_logsumexp:semantic_key_changed": replace_once(
-            source=logsumexp_action_reduction_source,
-            old='        return ("logsumexp", 1)',
-            new='        return ("logsumexp", 2)',
-            label="streamed log-sum-exp semantic identity",
-        ),
-        "streaming_logsumexp:bind_negates_scale": replace_once(
-            source=logsumexp_action_reduction_source,
-            old="        return BoundLogSumExpReduction(scale=scale)",
-            new="        return BoundLogSumExpReduction(scale=-scale)",
-            label="streamed log-sum-exp dynamic binding",
-        ),
-    }
-    specs.update(
-        {
-            name: {
-                "path": LOGSUMEXP_ACTION_REDUCTION_SOURCE,
-                "source": mutated,
-            }
-            for name, mutated in logsumexp_action_reduction_cases.items()
-        }
-    )
 
     output_layout_cases = {
         "output_layout:assert_then_filter": replace_once(
@@ -16095,14 +15523,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "path": SIMULATION_PROGRAMS_SOURCE,
                 "source": replace_once(
                     source=simulation_programs_source,
-                    old=(
-                        "                            reduction=HARD_MAX_REDUCTION\n"
-                        "                            if context.member_axis is None"
-                    ),
-                    new=(
-                        "                            reduction=candidate_filter(HARD_MAX_REDUCTION)\n"
-                        "                            if context.member_axis is None"
-                    ),
+                    old="reduction=COLLECTIVE_HARD_MAX_REDUCTION,",
+                    new="reduction=candidate_filter(COLLECTIVE_HARD_MAX_REDUCTION),",
                     label="hard_max_reduction_replaced",
                 ),
             },
@@ -16110,8 +15532,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "path": SIMULATION_PROGRAMS_SOURCE,
                 "source": replace_once(
                     source=simulation_programs_source,
-                    old="                block_width=block_width,",
-                    new="                block_width=1,",
+                    old="            block_width=block_width,\n            members=self.members,",
+                    new="            block_width=1,\n            members=self.members,",
                     label="streamed_width_ignored",
                 ),
             },
@@ -16119,8 +15541,11 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "path": SIMULATION_PROGRAMS_SOURCE,
                 "source": replace_once(
                     source=simulation_programs_source,
-                    old="                Q_and_F=self.Q_and_F,",
-                    new="                Q_and_F=candidate_filter(self.Q_and_F),",
+                    old="            Q_and_F=self.Q_and_F,\n            action_names=self.action_names,",
+                    new=(
+                        "            Q_and_F=candidate_filter(self.Q_and_F),\n"
+                        "            action_names=self.action_names,"
+                    ),
                     label="streamed_q_and_f_filtered",
                 ),
             },
@@ -16137,11 +15562,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "path": SIMULATION_PROGRAMS_SOURCE,
                 "source": replace_once(
                     source=simulation_programs_source,
-                    old="            result.best_value\n            if isinstance(result, HardMaxResult)",
-                    new=(
-                        "            candidate_filter(result.best_value)\n"
-                        "            if isinstance(result, HardMaxResult)"
-                    ),
+                    old="            result.best_member_values,\n        )",
+                    new="            candidate_filter(result.best_member_values),\n        )",
                     label="streamed_value_filtered",
                 ),
             },
@@ -16377,31 +15799,6 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     )
 
     argmax_cases = {
-        "shared_argmax:q_order_early_return": replace_once(
-            source=argmax_source,
-            old="    is_nan = jnp.isnan(a)\n",
-            new="    if a.reshape(-1)[0] > a.reshape(-1)[1]:\n"
-            "        return jnp.array(1, dtype=jnp.int32), a.reshape(-1)[1]\n"
-            "    is_nan = jnp.isnan(a)\n",
-            label="argmax q-order",
-        ),
-        "shared_argmax:support_filter": replace_once(
-            source=argmax_source,
-            old="    is_nan = jnp.isnan(a)\n",
-            new="    where = jnp.where(\n"
-            "        jnp.sum(where) > 1,\n"
-            "        where.reshape(-1).at[0].set(False).reshape(where.shape),\n"
-            "        where,\n"
-            "    )\n"
-            "    is_nan = jnp.isnan(a)\n",
-            label="argmax support",
-        ),
-        "shared_argmax:axis_prefix": replace_once(
-            source=argmax_source,
-            old="        axis = tuple(range(a.ndim))",
-            new="        axis = tuple(range(a.ndim - 1))",
-            label="argmax axis prefix",
-        ),
         "shared_argmax:axis_reorder": replace_once(
             source=argmax_source,
             old="    return a.transpose((*front_axes, *axes))",
@@ -16500,6 +15897,63 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "max_lexicographic_and_smallest_id = candidate_filter\n"
             ),
             label="collective argmax shadow",
+        ),
+        "taste_shock_simulate:wrong_discrete_count": replace_once(
+            source=collective_source,
+            old="n_discrete_cells = math.prod(feasibility.shape[:n_discrete_action_axes])",
+            new=(
+                "n_discrete_cells = "
+                "math.prod(feasibility.shape[: n_discrete_action_axes - 1])"
+            ),
+            label="decider discrete count",
+        ),
+        "taste_shock_simulate:wrong_continuous_count": replace_once(
+            source=collective_source,
+            old="n_continuous_cells = math.prod(feasibility.shape[n_discrete_action_axes:])",
+            new=(
+                "n_continuous_cells = "
+                "math.prod(feasibility.shape[n_discrete_action_axes + 1 :])"
+            ),
+            label="decider continuous count",
+        ),
+        "taste_shock_simulate:reshape_drop": replace_once(
+            source=collective_source,
+            old="    feasible = feasibility.reshape(n_discrete_cells, n_continuous_cells)\n",
+            new="    feasible = feasibility.reshape(n_discrete_cells, n_continuous_cells)\n"
+            "    feasible = feasible.at[-1, -1].set(False)\n",
+            label="decider reshape drop",
+        ),
+        "taste_shock_simulate:continuous_axis_mismatch": replace_once(
+            source=collective_source,
+            old="            jnp.arange(n_continuous_cells, dtype=jnp.int32), feasible.shape\n",
+            new="            jnp.arange(n_continuous_cells, dtype=jnp.int32)[::-1],\n"
+            "            feasible.shape,\n",
+            label="decider continuous ids",
+        ),
+        "taste_shock_solve:continuous_max_slice": replace_once(
+            source=collective_source,
+            old="        where=feasible,\n    )\n    # A NaN decider value",
+            new="        where=feasible.at[:, 0].set(False),\n    )\n    # A NaN decider value",
+            label="decider continuous support",
+        ),
+        "taste_shock_solve:continuous_axis_prefix": replace_once(
+            source=collective_source,
+            old="    decider_Q = jnp.take(flat_Q, decider, axis=-1)\n",
+            new="    decider_Q = jnp.take(flat_Q, decider, axis=-1)\n"
+            "    decider_Q = jnp.roll(decider_Q, 1, axis=1)\n",
+            label="decider continuous axis",
+        ),
+        "taste_shock_solve:logsum_axis_prefix": replace_once(
+            source=collective_source,
+            old="logsum_and_softmax(values=Qc, scale=scale, axes=(0,))",
+            new="logsum_and_softmax(values=Qc, scale=scale, axes=())",
+            label="decider logsum axes",
+        ),
+        "taste_shock_solve:logsum_value_slice": replace_once(
+            source=collective_source,
+            old="logsum_and_softmax(values=Qc, scale=scale, axes=(0,))",
+            new="logsum_and_softmax(values=Qc.at[0].set(-jnp.inf), scale=scale, axes=(0,))",
+            label="decider logsum values",
         ),
     }
     specs.update(
@@ -17451,7 +16905,6 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ACTION_STREAMING_SOURCE: action_streaming_source,
         ACTION_REDUCTION_SOURCE: action_reduction_source,
         COLLECTIVE_ACTION_REDUCTION_SOURCE: collective_action_reduction_source,
-        LOGSUMEXP_ACTION_REDUCTION_SOURCE: logsumexp_action_reduction_source,
         PROCESSING_SOURCE: processing_source,
         DISPATCHERS_SOURCE: dispatchers_source,
         FUNCTOOLS_SOURCE: functools_source,
@@ -19585,10 +19038,10 @@ _RETAINED_PREFIX_DIAGNOSTICS = {
     "changed",
     "combined_source:hard_readout_profile": "combined upstream dependency: exact "
     "callable corridor "
-    "'argmax_and_readout' changed",
+    "'household_argmax_and_readout' changed",
     "combined_source:conditional_stored_profile": "combined upstream dependency: "
     "exact callable corridor "
-    "'get_conditional_profiles' "
+    "'smoothed_profiles' "
     "changed",
     "combined_source:ev1_economic_infinite_support": "combined upstream "
     "dependency: exact callable "
@@ -19610,15 +19063,15 @@ _RETAINED_PREFIX_DIAGNOSTICS = {
     "exact callable corridor "
     "'get_Q_and_F_parts' changed",
     "combined_source:parts_output_channel": "combined upstream dependency: exact "
-    "callable corridor '_QAndF.parts' "
+    "callable corridor '_CollectiveQAndF.parts' "
     "changed",
     "combined_source:ordinary_flow_pool": "combined upstream dependency: exact "
-    "callable corridor '_QAndF._evaluate' "
+    "callable corridor '_CollectiveQAndF.parts' "
     "changed",
     "combined_source:objective_separate_from_stored": "combined upstream "
     "dependency: exact callable "
     "corridor "
-    "'_QAndF._parts_from_utilities' "
+    "'_CollectiveQAndF._parts_from_utilities' "
     "changed",
     "combined_source:lookup_constructor_roles": "combined upstream dependency: "
     "exact callable corridor "
@@ -19727,8 +19180,8 @@ _UPSTREAM_COMPOSITION_CONTRACTS = _contracts(
             "get_decoupled_Q_over_a",
             "get_decoupled_max_Q_over_a",
             "_DecoupledQOverA.__call__",
-            "argmax_and_readout",
-            "get_conditional_profiles",
+            "household_argmax_and_readout",
+            "smoothed_profiles",
             "decoupled_logsum",
             "DecoupledWithActionParts.__call__",
             "DecoupledTasteShockLookup.__call__",
@@ -19736,9 +19189,8 @@ _UPSTREAM_COMPOSITION_CONTRACTS = _contracts(
         "src/_lcm/regime_building/Q_and_F.py": (
             "has_objective_profile",
             "get_Q_and_F_parts",
-            "_QAndF.parts",
-            "_QAndF._evaluate",
-            "_QAndF._parts_from_utilities",
+            "_CollectiveQAndF.parts",
+            "_CollectiveQAndF._parts_from_utilities",
         ),
         "src/_lcm/simulation/programs.py": (
             "_lookup_body_and_roles",
@@ -19852,19 +19304,19 @@ _UPSTREAM_COMPOSITION_MUTATIONS = {
     ),
     "combined_source:hard_readout_profile": (
         "src/_lcm/regime_building/decoupled.py",
-        "argmax_and_readout",
+        "household_argmax_and_readout",
         "expression",
-        "jnp.ravel(readout)[index]",
-        "jnp.ravel(selection)[index]",
+        "jnp.reshape(readout, (-1, n_members)).T",
+        "jnp.reshape(selection, (-1, n_members)).T",
         1,
         None,
     ),
     "combined_source:conditional_stored_profile": (
         "src/_lcm/regime_building/decoupled.py",
-        "get_conditional_profiles",
+        "smoothed_profiles",
         "expression",
-        "parts.Q.reshape(*shape, -1)",
-        'cast("FloatND", parts.Q_objective).reshape(*shape, -1)',
+        "parts.Q.reshape(objective.shape[0], -1, n_members)",
+        'cast("FloatND", parts.Q_objective).reshape(objective.shape[0], -1, n_members)',
         1,
         None,
     ),
@@ -19884,7 +19336,7 @@ _UPSTREAM_COMPOSITION_MUTATIONS = {
         "readout",
         "Q_objective",
         1,
-        "argmax_and_readout",
+        "household_argmax_and_readout",
     ),
     "combined_source:lookup_runtime_scale": (
         "src/_lcm/regime_building/decoupled.py",
@@ -19915,31 +19367,33 @@ _UPSTREAM_COMPOSITION_MUTATIONS = {
     ),
     "combined_source:parts_output_channel": (
         "src/_lcm/regime_building/Q_and_F.py",
-        "_QAndF.parts",
+        "_CollectiveQAndF.parts",
         "expression",
         (
-            "self._evaluate(next_regime_to_V_arr=next_regime_to_V_arr, "
-            "**states_actions_params)[0]"
+            "self._parts_from_utilities(next_regime_to_V_arr=next_regime_to_V_arr, "
+            "utilities_and_F=self.utilities_and_F(**states_actions_params), "
+            "states_actions_params=states_actions_params)[0]"
         ),
         (
-            "self._evaluate(next_regime_to_V_arr=next_regime_to_V_arr, "
-            "**states_actions_params)[1]"
+            "self._parts_from_utilities(next_regime_to_V_arr=next_regime_to_V_arr, "
+            "utilities_and_F=self.utilities_and_F(**states_actions_params), "
+            "states_actions_params=states_actions_params)[1]"
         ),
         1,
         None,
     ),
     "combined_source:ordinary_flow_pool": (
         "src/_lcm/regime_building/Q_and_F.py",
-        "_QAndF._evaluate",
+        "_CollectiveQAndF.parts",
         "expression",
-        "self.U_and_F(**states_actions_params)",
-        "self.U_and_F(**{})",
+        "self.utilities_and_F(**states_actions_params)",
+        "self.utilities_and_F(**{})",
         1,
         None,
     ),
     "combined_source:objective_separate_from_stored": (
         "src/_lcm/regime_building/Q_and_F.py",
-        "_QAndF._parts_from_utilities",
+        "_CollectiveQAndF._parts_from_utilities",
         "keyword",
         "Q_objective",
         "Q_arr",
@@ -19951,11 +19405,11 @@ _UPSTREAM_COMPOSITION_MUTATIONS = {
         "_lookup_body_and_roles",
         "statement",
         (
-            "return (partial(DecoupledWithActionParts, member_axis=member_axis, "
+            "return (partial(DecoupledWithActionParts, members=members, "
             "pareto_weights=pareto_weights), DECOUPLED_LOOKUP_OUTPUT_ROLES)"
         ),
         (
-            "return (partial(_DecisionWithActionParts, member_axis=member_axis, "
+            "return (partial(_DecisionWithActionParts, members=members, "
             "pareto_weights=pareto_weights), ACTION_VALUES_OUTPUT_ROLES)"
         ),
         1,

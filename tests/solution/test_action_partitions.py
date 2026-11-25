@@ -27,18 +27,18 @@ from jax.extend.core import ClosedJaxpr
 from numpy.testing import assert_array_equal
 
 from _lcm.solution.action_reduction import (
+    CollectiveHardMaxAccumulator,
     CollectiveHardMaxResult,
-    HardMaxAccumulator,
     HardMaxResult,
 )
 from _lcm.solution.action_streaming import (
     ActionPartitionLayout,
     build_partitioned_streaming_max_Q_over_a,
     build_streaming_collective_max_Q_over_a,
-    build_streaming_max_Q_over_a,
     merge_partition_accumulators,
 )
 from lcm.typing import Float2D
+from tests.single_member import SELF, with_member_axis
 from tests.solution.test_action_streaming import (
     count_primitive,
     scan_lengths,
@@ -46,6 +46,7 @@ from tests.solution.test_action_streaming import (
 )
 
 _AXIS = "participants"
+_SELF_WEIGHTS = {"self": 1.0}
 
 # Values chosen to collide: repeated finite values make ties, both zeros make
 # signed-zero ties, and the non-finite values cover every IEEE special case.
@@ -66,8 +67,18 @@ _VALUE_POOL = (
 def _table_Q_and_F(
     *, choice: jax.Array, cell: jax.Array, values: jax.Array, feasible: jax.Array
 ) -> tuple[jax.Array, jax.Array]:
-    """Read one action cell's value and feasibility from an explicit table."""
-    return values[cell, choice], feasible[cell, choice]
+    """Read one action cell's value, on the axis of the member `"self"`, and its
+    feasibility from an explicit table."""
+    return values[cell, choice][jnp.newaxis], feasible[cell, choice]
+
+
+def _as_single(result: CollectiveHardMaxResult) -> HardMaxResult:
+    """Read the one member's value off a single's household result."""
+    return HardMaxResult(
+        best_value=result.best_member_values[..., 0],
+        best_global_action_id=result.best_global_action_id,
+        any_feasible=result.any_feasible,
+    )
 
 
 def _scalar_oracle(
@@ -75,10 +86,10 @@ def _scalar_oracle(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Enumerate every action of every cell in canonical order, one at a time.
 
-    GridSearch's published convention: the maximum over feasible actions with
-    ties to the smallest identity; a feasible NaN publishes NaN with identity
-    zero; a `{-0, +0}` maximum publishes `+0`; an empty feasible set publishes
-    `-inf` with identity `-1`.
+    GridSearch's published convention: the value at the maximum over feasible
+    actions with ties to the smallest identity, so a `{-0, +0}` tie publishes
+    the zero of the smaller identity; a feasible NaN publishes NaN with
+    identity zero; an empty feasible set publishes `-inf` with identity `-1`.
     """
     n_cells, n_actions = values.shape
     best_values = np.empty(n_cells, dtype=values.dtype)
@@ -88,7 +99,6 @@ def _scalar_oracle(
         best_value = -np.inf
         best_id = -1
         saw_nan = False
-        saw_positive_zero = False
         for action in range(n_actions):
             if not feasible[cell, action]:
                 continue
@@ -96,8 +106,6 @@ def _scalar_oracle(
             if np.isnan(value):
                 saw_nan = True
                 continue
-            if value == 0 and not np.signbit(value):
-                saw_positive_zero = True
             if best_id == -1 or value > best_value:
                 best_value = value
                 best_id = action
@@ -105,8 +113,6 @@ def _scalar_oracle(
         any_feasible[cell] |= saw_nan
         if saw_nan:
             best_value, best_id = np.nan, 0
-        elif best_id != -1 and best_value == 0 and saw_positive_zero:
-            best_value = 0.0
         best_values[cell] = best_value
         best_ids[cell] = best_id
     return best_values, best_ids, any_feasible
@@ -141,19 +147,23 @@ def _partitioned_lanes(
         block_width=block_width,
         n_partitions=n_partitions,
         axis_name=_AXIS,
+        members=SELF,
+        weights=_SELF_WEIGHTS,
     )
 
     def participant(_lane: jax.Array) -> HardMaxResult:
-        return cast(
-            "HardMaxResult",
-            jax.vmap(
-                lambda cell: reduce_cell(
-                    choice=jnp.arange(n_actions, dtype=jnp.int32),
-                    cell=cell,
-                    values=jnp.asarray(values),
-                    feasible=jnp.asarray(feasible),
-                )
-            )(jnp.arange(n_cells)),
+        return _as_single(
+            cast(
+                "CollectiveHardMaxResult",
+                jax.vmap(
+                    lambda cell: reduce_cell(
+                        choice=jnp.arange(n_actions, dtype=jnp.int32),
+                        cell=cell,
+                        values=jnp.asarray(values),
+                        feasible=jnp.asarray(feasible),
+                    )
+                )(jnp.arange(n_cells)),
+            )
         )
 
     return jax.jit(jax.vmap(participant, axis_name=_AXIS))(jnp.arange(n_partitions))
@@ -164,21 +174,25 @@ def _unpartitioned(
 ) -> HardMaxResult:
     """Run the existing single-participant streamed reduction."""
     n_cells, n_actions = values.shape
-    reduce_cell = build_streaming_max_Q_over_a(
+    reduce_cell = build_streaming_collective_max_Q_over_a(
         Q_and_F=_table_Q_and_F,
         action_names=("choice",),
         block_width=block_width,
+        members=SELF,
+        weights=_SELF_WEIGHTS,
     )
-    return jax.jit(
-        jax.vmap(
-            lambda cell: reduce_cell(
-                choice=jnp.arange(n_actions, dtype=jnp.int32),
-                cell=cell,
-                values=jnp.asarray(values),
-                feasible=jnp.asarray(feasible),
+    return _as_single(
+        jax.jit(
+            jax.vmap(
+                lambda cell: reduce_cell(
+                    choice=jnp.arange(n_actions, dtype=jnp.int32),
+                    cell=cell,
+                    values=jnp.asarray(values),
+                    feasible=jnp.asarray(feasible),
+                )
             )
-        )
-    )(jnp.arange(n_cells))
+        )(jnp.arange(n_cells))
+    )
 
 
 def _bits(array: jax.Array | np.ndarray | np.floating) -> np.ndarray:
@@ -296,10 +310,10 @@ _EDGE_CASES = {
         [True] * 6,
         (5.0, 1, True),
     ),
-    "opposite_signed_zeros_publish_positive_zero": (
+    "opposite_signed_zeros_publish_the_lowest_identitys_zero": (
         [-0.0, -1.0, -2.0, 0.0, -3.0, -4.0],
         [True] * 6,
-        (0.0, 0, True),
+        (-0.0, 0, True),
     ),
     "positive_zero_first_still_publishes_positive_zero": (
         [0.0, -1.0, -2.0, -0.0, -3.0, -4.0],
@@ -440,7 +454,7 @@ def _local_accumulators(
     block_width: int,
     values: np.ndarray,
     feasible: np.ndarray,
-) -> list[HardMaxAccumulator]:
+) -> list[CollectiveHardMaxAccumulator]:
     n_cells, n_actions = values.shape
     reduce_cell = build_partitioned_streaming_max_Q_over_a(
         Q_and_F=_table_Q_and_F,
@@ -448,9 +462,11 @@ def _local_accumulators(
         block_width=block_width,
         n_partitions=n_partitions,
         axis_name=_AXIS,
+        members=SELF,
+        weights=_SELF_WEIGHTS,
     )
     return cast(
-        "list[HardMaxAccumulator]",
+        "list[CollectiveHardMaxAccumulator]",
         [
             jax.vmap(
                 lambda cell, partition=partition: reduce_cell.local(
@@ -476,7 +492,7 @@ def test_merging_partition_accumulators_in_any_order_publishes_the_same_bits() -
 
     for order in itertools.permutations(range(4)):
         got = merge_partition_accumulators(accumulators=stacked, order=order)
-        _assert_results_identical(got=cast("HardMaxResult", got), expected=expected)
+        _assert_results_identical(got=_as_single(got), expected=expected)
 
 
 def test_padded_action_slots_never_publish_an_identity_outside_the_product() -> None:
@@ -501,6 +517,8 @@ def test_partition_count_must_be_a_positive_exact_int(n_partitions: int) -> None
             block_width=2,
             n_partitions=n_partitions,
             axis_name=_AXIS,
+            members=SELF,
+            weights=_SELF_WEIGHTS,
         )
 
 
@@ -512,6 +530,8 @@ def test_partitioned_reduction_requires_an_action_product() -> None:
             block_width=2,
             n_partitions=2,
             axis_name=_AXIS,
+            members=SELF,
+            weights=_SELF_WEIGHTS,
         )
 
 
@@ -520,11 +540,13 @@ def _partitioned_sin_jaxpr(
 ) -> ClosedJaxpr:
     """Stage every participant's reduction of a Q that stages one `sin` per call."""
     reduce_cell = build_partitioned_streaming_max_Q_over_a(
-        Q_and_F=sin_Q_and_F,
+        Q_and_F=with_member_axis(sin_Q_and_F),
         action_names=("choice",),
         block_width=block_width,
         n_partitions=n_partitions,
         axis_name=_AXIS,
+        members=SELF,
+        weights=_SELF_WEIGHTS,
     )
     choice = jnp.arange(float(n_actions))
     return jax.make_jaxpr(

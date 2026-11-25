@@ -922,7 +922,7 @@ def fingerprint_model_structure(
                 "state_names": regime.solution.state_names,
                 "action_names": regime.solution.action_names,
                 # Hashed under its kept literal name, as in `_DURABLE_FIELD_NAMES`.
-                "stakeholders": regime.member_axis,
+                "stakeholders": regime.members,
                 "solver_identity": user_regimes[name].solver.identity,
                 "replay_identity": (
                     None
@@ -1155,7 +1155,7 @@ def _project_user_regime_declaration(
             "fields": MappingProxyType(
                 {
                     # Hashed under its kept literal name, as in `_DURABLE_FIELD_NAMES`.
-                    ("stakeholders" if name == "member_axis" else name): (
+                    ("stakeholders" if name == "members" else name): (
                         _project_transition_slot_to_solve(value)
                         if name in _TRANSITION_SLOTS
                         else value

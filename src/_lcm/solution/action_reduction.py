@@ -18,12 +18,6 @@ from _lcm.solution.collective_action_reduction import (
     CollectiveHardMaxReduction,
     CollectiveHardMaxResult,
 )
-from _lcm.solution.logsumexp_action_reduction import (
-    LOGSUMEXP_REDUCTION,
-    LogSumExpAccumulator,
-    LogSumExpReduction,
-    LogSumExpResult,
-)
 from lcm.typing import BoolND, FloatND, IntND
 
 # Identity a feasible NaN carries into the paired reduction, below every real one.
@@ -32,16 +26,12 @@ _NAN_ID = jnp.iinfo(jnp.int32).min
 __all__ = [
     "COLLECTIVE_HARD_MAX_REDUCTION",
     "HARD_MAX_REDUCTION",
-    "LOGSUMEXP_REDUCTION",
     "CollectiveHardMaxAccumulator",
     "CollectiveHardMaxReduction",
     "CollectiveHardMaxResult",
     "HardMaxAccumulator",
     "HardMaxReduction",
     "HardMaxResult",
-    "LogSumExpAccumulator",
-    "LogSumExpReduction",
-    "LogSumExpResult",
 ]
 
 

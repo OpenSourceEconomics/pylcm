@@ -533,7 +533,9 @@ def _route_metadata(model: Model) -> _RouteMetadata:
         action_extents = tuple(
             _grid_extent(regime.solution.grids[name]) for name in action_names
         )
-        collective = regime.member_axis is not None
+        # Every regime runs the household path; a historical checkout marks the
+        # regimes that do with a `member_axis`.
+        collective = getattr(regime, "member_axis", ()) is not None
         has_taste_shocks = bool(regime.has_taste_shocks)
         if has_taste_shocks:
             taste_shock_regimes.append(regime_name)

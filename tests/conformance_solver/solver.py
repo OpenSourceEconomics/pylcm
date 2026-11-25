@@ -238,16 +238,13 @@ def _build_scratch_core(
 
 
 def _publishing_member_axis[Result: tuple[FloatND | Counter | Policy, ...]](  # noqa: PAN006 - Counter is the concrete continuation dataclass, not collections.Counter.
-    *, core: Callable[..., Result], member_axis: tuple[str, ...] | None
+    *, core: Callable[..., Result]
 ) -> Callable[..., Result]:
     """Return `core` publishing its value with the regime's member axis.
 
-    A regime whose engine form carries a member axis owns value arrays with a
-    trailing axis over its members. The fixture solves one member, so its value
-    gains a trailing axis of length one.
+    Every regime owns value arrays with a trailing axis over its members. The
+    fixture solves one member, so its value gains a trailing axis of length one.
     """
-    if member_axis is None:
-        return core
     return functools.partial(_value_with_member_axis, core=core)
 
 
@@ -394,9 +391,7 @@ class TerminalCounterSolver(Solver):
         counter_authority = _counter_authority(template=counter_template)
         program = CoreProgram(
             name="values",
-            function=_publishing_member_axis(
-                core=_terminal_value_and_counter, member_axis=context.member_axis
-            ),
+            function=_publishing_member_axis(core=_terminal_value_and_counter),
             argument_builder=_TerminalArgumentBuilder(),
             requirements=CoreExecutionRequirements(),
             output_roles=(
@@ -770,9 +765,7 @@ class ReferenceSolver(Solver):
         )
         values_program = CoreProgram(
             name="values",
-            function=_publishing_member_axis(
-                core=_solve_values_core, member_axis=context.member_axis
-            ),
+            function=_publishing_member_axis(core=_solve_values_core),
             argument_builder=argument_builder,
             requirements=requirements,
             output_roles=(
@@ -790,9 +783,7 @@ class ReferenceSolver(Solver):
         )
         replay_program = CoreProgram(
             name="replay",
-            function=_publishing_member_axis(
-                core=_solve_replay_core, member_axis=context.member_axis
-            ),
+            function=_publishing_member_axis(core=_solve_replay_core),
             argument_builder=argument_builder,
             requirements=requirements,
             output_roles=(
@@ -828,9 +819,7 @@ class ReferenceSolver(Solver):
         )
         scratch_program = CoreProgram(
             name="scratch",
-            function=_publishing_member_axis(
-                core=_build_scratch_core, member_axis=context.member_axis
-            ),
+            function=_publishing_member_axis(core=_build_scratch_core),
             argument_builder=argument_builder,
             requirements=requirements,
             output_roles=(
@@ -981,9 +970,7 @@ class TargetValueSolver(Solver):
         )
         counter_authority = _counter_authority(template=counter_template)
         last_period = context.solution_reachability.n_periods - 1
-        target_value_core = _publishing_member_axis(
-            core=_target_value_core, member_axis=context.member_axis
-        )
+        target_value_core = _publishing_member_axis(core=_target_value_core)
         kernels: dict[int, _PeriodKernel] = {}
         for period in context.regimes_to_active_periods[context.regime_name]:
             target_regimes = (

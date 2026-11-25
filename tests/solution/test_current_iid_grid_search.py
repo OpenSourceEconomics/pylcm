@@ -1918,7 +1918,9 @@ def test_current_iid_preserves_native_state_and_subject_sharding() -> None:
     )
     params = {"innovation": {"eps__sigma": 1.0}}
     solution = model.solve(params=params, log_level="off", runtime_checks=False)
-    np.testing.assert_allclose(solution.values[0]["alive"], np.arange(6) + 1.0)
+    np.testing.assert_allclose(
+        solution.values[0]["alive"], (np.arange(6) + 1.0)[:, np.newaxis]
+    )
     assert len(solution.values[0]["alive"].sharding.device_set) == 2
     replay = model.simulate(
         params=params,

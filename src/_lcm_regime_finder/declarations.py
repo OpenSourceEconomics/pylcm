@@ -12,7 +12,6 @@ import copy
 from fractions import Fraction
 import hashlib
 import json
-import math
 import operator
 
 from .callable_identity import primitive_operation, resolve_binding, resolve_callable
@@ -846,10 +845,12 @@ def normalize_declarations(snapshot,production_contract=None):
               'structural_roles':{k:copy.deepcopy(declaration[k]) for k in ('liquid','outer_continuous') if declaration.get(k) is not None},
               'solver_identity':normal.value_digest(declaration['solver']) if declaration.get('solver') is not None else None,
               'operators':{k:(normal.value_digest(declaration[k]) if declaration.get(k) is not None else None) for k in ('koopmans_aggregator','certainty_equivalent','pareto_objective','taste_shocks')},
-              # A collective regime stores one value per member; the whole
-              # exit is part of the regime's problem, and a renegotiated state
-              # links its own codes within the period.
-              'member_axis':copy.deepcopy(declaration.get('member_axis')),
+              # A household stores one value per member, in member order, and
+              # an individual (the one member "self") reads as no household; the
+              # whole exit is part of the regime's problem, and a renegotiated
+              # state links its own codes within the period.
+              'members':(None if list(declaration.get('members') or ['self'])==['self']
+                             else copy.deepcopy(declaration['members'])),
               'exit_identity':normal.value_digest(declaration['exit']) if declaration.get('exit') is not None else None,
               'renegotiated_states':renegotiated_states(declaration.get('exit')),
               'role':contract.get('roles',{}).get(name,declaration.get('semantic_role')),
@@ -942,7 +943,7 @@ def normalize_declarations(snapshot,production_contract=None):
             cell['consumers'].append({'kind':'structural_margin','callback':cid,'phase':'solve'})
         known_slots={'states','actions','functions','constraints','state_transitions','joint_transitions','derived_categoricals',
                      'output_only_functions','koopmans_aggregator','certainty_equivalent','pareto_objective',
-                     'exit','description','solver','taste_shocks','shocks','member_axis','liquid','outer_continuous',
+                     'exit','description','solver','taste_shocks','shocks','members','liquid','outer_continuous',
                      'semantic_role','stage'}
         for slot,value in declaration.items():
             if slot not in known_slots and value is not None and value!={} and value!=[]:

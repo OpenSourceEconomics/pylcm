@@ -415,8 +415,9 @@ def _stage_channels(snapshot: dict, regimes: dict, nodes: dict) -> tuple[dict[st
         pattern = ("continuous" if step == 1 or len(residues) > 1 else f"stage_{step}_{next(iter(residues))}")
         patterns[name] = pattern
         if name not in terminal:
-            payload = {key: declaration.get(key) for key in ("states", "actions", "functions", "constraints", "koopmans_aggregator", "certainty_equivalent", "member_axis", "__routing_owner")}
-            payload["member_axis"] = _household_members(declaration)
+            payload = {key: declaration.get(key) for key in ("states", "actions", "functions", "constraints", "koopmans_aggregator", "certainty_equivalent", "__routing_owner")}
+            # The stage digest keys a household's members, `None` for an individual.
+            payload["members"] = _household_members(declaration)
             signatures[pattern].add(digest(_semantic_shape(payload)))
     keys = {pattern: digest(sorted(items))[:12] for pattern, items in signatures.items()}
     channels = {}
@@ -454,7 +455,7 @@ def _household_members(declaration: dict[str, Any]) -> Any:
     The one member "self" is the individual a plain utility function declares,
     so a regime recording it reads exactly as one recording no members.
     """
-    members = declaration.get("member_axis")
+    members = declaration.get("members")
     return None if not members or list(members) == ["self"] else members
 
 
@@ -578,7 +579,7 @@ def adapt_snapshot(snapshot: dict[str, Any], *, name: str = "Constructed pylcm m
         special = {key: declaration.get(key) for key in ("joint_transitions", "exit")
                    if declaration.get(key)}
         if _household_members(declaration):
-            special = {"member_axis": declaration["member_axis"], **special}
+            special = {"members": declaration["members"], **special}
         if special or regime in protected_value_routes:
             # Until each value/read/joint route is lowered, retaining all local
             # state axes is a safe advisory result, not semantic certification.
@@ -636,7 +637,7 @@ def adapt_snapshot(snapshot: dict[str, Any], *, name: str = "Constructed pylcm m
             replacements[parameter] = alias
             scalar_replacements[parameter] = alias
             external.add(alias)
-        role = {"actor": "individual" if not _household_members(declaration) else "collective:" + repr(declaration["member_axis"]),
+        role = {"actor": "individual" if not _household_members(declaration) else "collective:" + repr(declaration["members"]),
                 "observations": ["original graph information"], "commitments": ["original action timing"],
                 "discount_boundary": "one original graph period"}
         program = {"id": regime, "when": "age in " + repr(nodes[regime]),

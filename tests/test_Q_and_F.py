@@ -24,11 +24,12 @@ from _lcm.regime_building.Q_and_F import (
     _get_joint_weights_function,
     _get_U_and_F,
     _unit_regime_mass_or_nan,
-    get_Q_and_F,
-    get_Q_and_F_terminal,
+    get_Q_and_F_collective,
+    get_Q_and_F_terminal_collective,
 )
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.typing import (
+    EconFunction,
     FlatRegimeParams,
     QualifiedName,
     RegimeName,
@@ -62,6 +63,7 @@ from lcm.typing import (
 )
 from tests.conftest import bind_laws, build_prepared_structure
 from tests.params._process_params import process_params
+from tests.single_member import SELF
 from tests.test_models.deterministic.regression import (
     LaborSupply,
     dead,
@@ -114,10 +116,11 @@ def test_get_Q_and_F_function() -> None:
 
     # Test terminal period Q_and_F where Q = U (no continuation value)
     solve = regimes["working_life"].solution
-    Q_and_F = get_Q_and_F_terminal(
+    Q_and_F = get_Q_and_F_terminal_collective(
         flat_param_names=flat_param_names,
         functions=solve.functions,
         constraints=solve.constraints,
+        members=SELF,
     )
 
     consumption = jnp.array([10, 20, 30])
@@ -135,7 +138,7 @@ def test_get_Q_and_F_function() -> None:
     )
 
     assert_array_equal(
-        Q_arr,
+        Q_arr[..., 0],
         utility(
             consumption=consumption,
             is_working=labor_supply == LaborSupply.work,
@@ -549,9 +552,8 @@ _STATELESS_V_INFO = VInterpolationInfo(
 )
 
 
-def _build_two_target_closure[T](
+def _build_two_target_closure(
     *,
-    builder: Callable[..., T],
     certainty_equivalent: CertaintyEquivalent | None,
     probs_function: Callable[
         ..., MappingProxyType[RegimeName, FloatND]
@@ -561,13 +563,19 @@ def _build_two_target_closure[T](
     ),
     period_targets: tuple[RegimeName, ...] = ("low", "high"),
     scalar_targets: tuple[RegimeName, ...] = (),
-) -> T:
-    """Build `Q_and_F` over two stateless target regimes."""
-    return builder(
+) -> Callable[..., tuple[FloatND, BoolND]]:
+    """Build a single's `Q_and_F` over two stateless target regimes.
+
+    The single is the household of the one member `"self"`; the returned
+    function takes and returns its values without that member's axis.
+    """
+    kernel = get_Q_and_F_collective(
+        phase_name="solution",
+        members=SELF,
         co_map_state_names=(),
         flat_param_names=flat_param_names,
-        functions=MappingProxyType({"utility": _sum_utility}),
-        koopmans_aggregator=_epstein_zin_W,
+        functions=MappingProxyType({"utility": cast("EconFunction", _sum_utility)}),
+        koopmans_aggregator=cast("EconFunction", _epstein_zin_W),
         constraints=MappingProxyType({}),
         period_targets=period_targets,
         scalar_targets=scalar_targets,
@@ -584,6 +592,24 @@ def _build_two_target_closure[T](
         ),
         certainty_equivalent=certainty_equivalent,
     )
+
+    def single(
+        *,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        **kwargs: FloatND | IntND,
+    ) -> tuple[FloatND, BoolND]:
+        Q, F = kernel(
+            next_regime_to_V_arr=MappingProxyType(
+                {
+                    name: value[..., jnp.newaxis]
+                    for name, value in next_regime_to_V_arr.items()
+                }
+            ),
+            **kwargs,
+        )
+        return Q[..., 0], F
+
+    return single
 
 
 class _TwoTargetCallKwargs(TypedDict, closed=True):
@@ -626,7 +652,6 @@ def _linear_expectation_action_values(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return Q values for an accepted near-unit-mass lottery and a safe action."""
     Q_and_F = _build_two_target_closure(
-        builder=get_Q_and_F,
         certainty_equivalent=LinearExpectation(),
         probs_function=_raw_low_and_high_probs,
         flat_param_names=frozenset(),
@@ -700,7 +725,6 @@ def test_linear_expectation_normalizes_mass_carried_by_stateless_targets(
     that value.
     """
     Q_and_F = _build_two_target_closure(
-        builder=get_Q_and_F,
         certainty_equivalent=LinearExpectation(),
         probs_function=_raw_low_and_high_probs,
         flat_param_names=frozenset(),
@@ -730,9 +754,7 @@ def test_linear_expectation_normalizes_mass_carried_by_stateless_targets(
 
 def test_power_mean_regime_lottery_stays_finite_in_float64(x64_enabled: None) -> None:
     """A `(1e-50, 2e-50)` regime lottery at risk aversion 8 keeps its exact value."""
-    Q_and_F = _build_two_target_closure(
-        builder=get_Q_and_F, certainty_equivalent=PowerMean()
-    )
+    Q_and_F = _build_two_target_closure(certainty_equivalent=PowerMean())
     got = jax.jit(
         lambda: Q_and_F(
             **_two_target_call_kwargs(
@@ -749,9 +771,7 @@ def test_power_mean_regime_lottery_stays_finite_in_float64(x64_enabled: None) ->
 
 def test_power_mean_regime_lottery_stays_finite_in_float32(x64_disabled: None) -> None:
     """A `(1e-8, 2e-8)` regime lottery at risk aversion 8 keeps its exact value."""
-    Q_and_F = _build_two_target_closure(
-        builder=get_Q_and_F, certainty_equivalent=PowerMean()
-    )
+    Q_and_F = _build_two_target_closure(certainty_equivalent=PowerMean())
     got = jax.jit(
         lambda: Q_and_F(
             **_two_target_call_kwargs(
@@ -801,9 +821,7 @@ def _assert_the_even_lottery_wins(
     assert even > skewed > 0.0
     utility_advantage = 0.4 * (even - skewed)
 
-    Q_and_F = _build_two_target_closure(
-        builder=get_Q_and_F, certainty_equivalent=PowerMean()
-    )
+    Q_and_F = _build_two_target_closure(certainty_equivalent=PowerMean())
     Q_per_action = jax.jit(
         lambda: jnp.asarray(
             [
@@ -865,9 +883,7 @@ def _tiny_anchor_action_values(
     The risky action puts a near-zero probability on a continuation value far
     below the other branch; the safe action pays `safe_value` for certain.
     """
-    Q_and_F = _build_two_target_closure(
-        builder=get_Q_and_F, certainty_equivalent=PowerMean()
-    )
+    Q_and_F = _build_two_target_closure(certainty_equivalent=PowerMean())
     risky = Q_and_F(
         **_two_target_call_kwargs(
             values=risky_values,
@@ -949,10 +965,11 @@ def test_as_lottery_gives_a_degenerate_target_no_mass() -> None:
     certainty equivalent of branches that are perfectly well specified.
     """
     _, weights, _ = _as_lottery(
-        values=jnp.array([1.0, 2.0]),
+        values=jnp.array([[1.0], [2.0]]),
         weights=jnp.array([0.0, 0.0]),
         shifts=jnp.zeros(2, dtype=jnp.int32),
         has_stochastic_states=True,
+        n_members=1,
     )
     assert_array_equal(np.asarray(weights), np.zeros(2))
 

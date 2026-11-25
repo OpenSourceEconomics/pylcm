@@ -1514,13 +1514,13 @@ class Regime:
     are user-granular or absent.
     """
 
-    member_axis: tuple[str, ...] | None = None
-    """Ordered member names for a collective regime, or `None` (singleton).
+    members: tuple[str, ...]
+    """Names of the members whose values this regime carries, in axis order.
 
-    When set, the regime's value-function array carries a
-    trailing length-`len(members)` axis: the backward-induction V topology
-    appends it so the zero template and the roll match the collective kernel's
-    member-valued output.
+    The regime's value-function array carries a trailing length-`len(members)`
+    axis: the backward-induction V topology appends it so the zero template and
+    the roll match the kernel's member-valued output. A regime declared with a
+    plain utility function has the one member `"self"`.
     """
 
     member_names_to_ids: MappingProxyType[str, int] = MappingProxyType({})
@@ -1556,15 +1556,6 @@ class Regime:
     so a consumer reads them off the edge it is already holding rather than
     re-pairing parallel mappings by target name or by leg position.
     """
-
-    @property
-    def members(self) -> tuple[str, ...]:
-        """Names of the members whose values this regime carries.
-
-        A household's own members; the one member `"self"` for a regime declared
-        with a plain utility function.
-        """
-        return ("self",) if self.member_axis is None else self.member_axis
 
     @property
     def derived_categorical_code_arrays(self) -> tuple[IntND, ...]:

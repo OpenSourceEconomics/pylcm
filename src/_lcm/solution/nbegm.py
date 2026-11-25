@@ -825,6 +825,23 @@ class NBEGM(OneMarginSolver):
         materializer: DatedGenerationMaterializer | None = None,
     ) -> SolutionKernels:
         """Build one case-piece EGM period adapter per active period."""
+        return publish_member_axis(
+            kernels=self.build_inner_period_kernels(
+                context=context, materializer=materializer
+            ),
+            members=context.members,
+        )
+
+    def build_inner_period_kernels(
+        self,
+        *,
+        context: SolverBuildContext,
+        materializer: DatedGenerationMaterializer | None = None,
+    ) -> SolutionKernels:
+        """Build the period kernels whose values carry no member axis.
+
+        An outer solver nesting this one appends the axis to its own programs.
+        """
         from _lcm.egm.nbegm import collect_nbegm_metadata  # noqa: PLC0415
 
         bound = cast("_BoundNBEGM", self)
@@ -917,15 +934,12 @@ class NBEGM(OneMarginSolver):
                 self._fail_if_unsupported_ride_discrete(
                     context=context, schedule_spec=schedule_spec
                 )
-            return publish_member_axis(
-                kernels=self._build_ride_along_kernels(
-                    context=context,
-                    savings_grid=savings_grid,
-                    schedule_spec=schedule_spec,
-                    feasibility_constraints=feasibility_constraints,
-                    materializer=materializer,
-                ),
-                member_axis=context.member_axis,
+            return self._build_ride_along_kernels(
+                context=context,
+                savings_grid=savings_grid,
+                schedule_spec=schedule_spec,
+                feasibility_constraints=feasibility_constraints,
+                materializer=materializer,
             )
 
         if draws_post_decision_shocks:
@@ -941,18 +955,15 @@ class NBEGM(OneMarginSolver):
             raise UnsupportedOperationError(
                 "Owned nested NB requires its original ride-along schedule."
             )
-        return publish_member_axis(
-            kernels=self._build_single_liquid_kernels(
-                context=context,
-                representative_context=representative_context,
-                feasibility_constraints=feasibility_constraints,
-                savings_grid=savings_grid,
-                schedule_spec=schedule_spec,
-                schedule_discrete_spec=schedule_discrete_spec,
-                is_schedule=is_schedule,
-                is_discrete=is_discrete,
-            ),
-            member_axis=context.member_axis,
+        return self._build_single_liquid_kernels(
+            context=context,
+            representative_context=representative_context,
+            feasibility_constraints=feasibility_constraints,
+            savings_grid=savings_grid,
+            schedule_spec=schedule_spec,
+            schedule_discrete_spec=schedule_discrete_spec,
+            is_schedule=is_schedule,
+            is_discrete=is_discrete,
         )
 
     def _build_single_liquid_kernels(

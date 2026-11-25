@@ -30,7 +30,6 @@ from _lcm.typing import (
     RegimeName,
     StateName,
 )
-from lcm.exceptions import PyLCMError
 from lcm.processes import JointNormalIIDProcess
 from lcm.typing import BoolND, FloatND, FunctionName, IntND
 
@@ -68,7 +67,7 @@ def _create_flat_dataframe(
             regime_actions=metadata.regime_to_actions[name],
             publishes_nested_policy=metadata.regime_to_publishes_nested_policy[name],
             regime_params=regime_kernel_params(flat_params, regime_name=name),
-            member_axis=metadata.regime_to_member_axis.get(name),
+            members=metadata.regime_to_members[name],
             publishes_role=bool(metadata.member_names_to_ids),
             additional_targets=additional_targets,
             ages=ages,
@@ -84,7 +83,7 @@ def _create_flat_dataframe(
         action_names=metadata.action_names,
         member_value_names=_member_value_column_names(
             regime_names=metadata.regime_names,
-            regime_to_member_axis=metadata.regime_to_member_axis,
+            regime_to_members=metadata.regime_to_members,
         ),
     )
     if isinstance(ages, ModelTime) and ages.stages:
@@ -124,11 +123,11 @@ def _create_flat_dataframe(
 def _member_value_column_names(
     *,
     regime_names: tuple[RegimeName, ...],
-    regime_to_member_axis: Mapping[RegimeName, tuple[str, ...] | None],
+    regime_to_members: Mapping[RegimeName, tuple[str, ...]],
 ) -> list[str]:
     """Name the per-member value columns in the order the regimes declare them.
 
-    Each collective regime contributes `value_<member>` for every entry of
+    Each regime contributes `value_<member>` for every entry of
     its `members` tuple, in that tuple's order — the same order that fixes
     the trailing axis of its value function. Regimes are walked in
     `regime_names` order and a name already contributed by an earlier regime
@@ -138,8 +137,8 @@ def _member_value_column_names(
 
     Args:
         regime_names: Names of all regimes in the model.
-        regime_to_member_axis: Mapping of regime names to their ordered
-            member names, `None` for a singleton regime.
+        regime_to_members: Mapping of regime names to their ordered member
+            names.
 
     Returns:
         List of column names, in publication order.
@@ -147,7 +146,7 @@ def _member_value_column_names(
     """
     names: list[str] = []
     for regime_name in regime_names:
-        for member in regime_to_member_axis.get(regime_name) or ():
+        for member in regime_to_members[regime_name]:
             column = _member_value_column_name(member)
             if column not in names and column != "value":
                 names.append(column)
@@ -166,7 +165,7 @@ def _process_regime(
     regime_actions: tuple[str, ...],
     publishes_nested_policy: bool,
     regime_params: FlatRegimeParams,
-    member_axis: tuple[str, ...] | None,
+    members: tuple[str, ...],
     publishes_role: bool,
     additional_targets: tuple[FunctionName, ...] | None,
     ages: TimeAxis,
@@ -185,13 +184,8 @@ def _process_regime(
     may pass `regime=None` after dropping compiled `Regime` objects to
     free device workspaces. `members` is read unconditionally (from
     `ResultMetadata`, computed while `regime` was still guaranteed
-    present) so a COLLECTIVE regime's `value` column can be split even
-    when `regime` itself is `None`.
-
-    Raises:
-        PyLCMError: If the regime's recorded value carries a member axis
-            but no member names are available to name its columns.
-
+    present) so the regime's `value` column can be split even when `regime`
+    itself is `None`.
     """
     period_dicts = [
         _extract_period_data(
@@ -209,22 +203,8 @@ def _process_regime(
         _concatenate_and_filter(period_dicts)
     )
 
-    recorded_value = data["value"]
-    if member_axis is not None:
-        del data["value"]
-        data.update(
-            _split_member_value(value=np.asarray(recorded_value), members=member_axis)
-        )
-    elif np.ndim(recorded_value) > 1:
-        msg = (
-            f"Regime {regime_name!r} recorded a value with a trailing "
-            f"member axis of length {np.shape(recorded_value)[-1]}, but the "
-            "result carries no `regime_to_member_axis` entry for it, so its "
-            "per-member value columns cannot be named. The result was "
-            "written without that metadata; re-simulate to produce a result "
-            "that can be published as a dataframe."
-        )
-        raise PyLCMError(msg)
+    recorded_value = data.pop("value")
+    data.update(_split_member_value(value=np.asarray(recorded_value), members=members))
 
     if coordinate_kind(ages) == "age":
         data["age"] = np.asarray(ages.values)[np.asarray(data["period"])]
@@ -314,16 +294,14 @@ def _split_member_value(
     value: np.ndarray,
     members: tuple[str, ...],
 ) -> dict[str, np.ndarray]:
-    """Split a COLLECTIVE regime's 2D `value` column into per-member columns.
+    """Split a regime's 2D `value` column into per-member columns.
 
-    A collective regime's recorded value carries a trailing member axis
+    A recorded value carries a trailing member axis
     (`PeriodRegimeSimulationData.V_arr`, shape `(n_rows, n_members)`), so
-    `pd.DataFrame` cannot ingest it as a single "value" column the way it does
-    for a singleton regime's 1D array. Naming is deterministic:
-    `value_<member>` (`value` for the member `"self"`), one 1D column per
-    entry of `members`, in the
-    same order as the trailing axis (fixed by `Regime.member_axis` — see
-    `_lcm.regime_building.Q_and_F`).
+    `pd.DataFrame` cannot ingest it as a single "value" column. Naming is
+    deterministic: `value_<member>` (`value` for the member `"self"`), one 1D
+    column per entry of `members`, in the same order as the trailing axis
+    (fixed by `Regime.members`).
     """
     return {
         _member_value_column_name(member): value[:, i]

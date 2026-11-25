@@ -71,7 +71,7 @@ def recorded_dissolution_flags() -> Generator[dict[int, dict[RegimeName, BoolND]
 
     def recording(**kwargs: Unpack[_KernelKwargs]) -> KernelOutput:
         output = original(**kwargs)
-        if kwargs["regime"].member_axis is not None:
+        if kwargs["regime"].members != ("self",):
             flags.setdefault(kwargs["period"], {})[kwargs["regime_name"]] = jnp.all(
                 jnp.isneginf(output.value), axis=-1
             )

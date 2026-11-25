@@ -34,6 +34,7 @@ from _lcm.execution.value_transfer import (
     ValueInputChannel,
     ValueTransferKind,
 )
+from _lcm.regime_building.collective import ParetoWeights
 from _lcm.regime_building.max_Q_over_a import (
     get_max_Q_over_a,
     get_streaming_max_Q_over_a,
@@ -88,6 +89,7 @@ from tests.conftest import (
     assert_general_values_agree,
 )
 from tests.simulation import test_type_grouped_simulation as grouped_simulation
+from tests.single_member import SELF, SELF_PARETO_WEIGHTS, with_member_axis
 from tests.test_continuous_assets_aca_vocabulary import (
     TAUCHEN_AND_LOG_NORMAL,
 )
@@ -107,6 +109,8 @@ class _MaxQArguments(TypedDict, closed=True):
     state_names: tuple[StateName, ...]
     cell_width_keyword: str
     untiled_state_names: tuple[StateName, ...]
+    members: tuple[str, ...]
+    pareto_weights: ParetoWeights
 
 
 class _DispatchArguments(TypedDict, closed=True):
@@ -506,12 +510,14 @@ def test_trailing_untiled_axis_is_restored_inside_max_q(*, streamed: bool) -> No
         ) ** 2, jnp.asarray(pref_type >= 0)
 
     kwargs: _MaxQArguments = {
-        "Q_and_F": q,
+        "Q_and_F": with_member_axis(q),
         "batch_sizes": dict.fromkeys(("pref_type", "spousal_income", "assets"), 0),
         "action_names": ("decision",),
         "state_names": ("pref_type", "spousal_income", "assets"),
         "cell_width_keyword": "cell_width",
         "untiled_state_names": ("assets",),
+        "members": SELF,
+        "pareto_weights": SELF_PARETO_WEIGHTS,
     }
     builder = (
         partial(get_streaming_max_Q_over_a, action_width_keyword="action_width")
@@ -539,7 +545,7 @@ def test_trailing_untiled_axis_is_restored_inside_max_q(*, streamed: bool) -> No
         + 10 * np.arange(3)[None, :, None]
         + np.arange(-4, 20)[None, None, :]
     )
-    np.testing.assert_array_equal(result, expected)
+    np.testing.assert_array_equal(result[0], expected[..., np.newaxis])
 
 
 @pytest.mark.parametrize(

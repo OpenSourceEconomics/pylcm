@@ -74,7 +74,7 @@ class SettlementQueries:
     """Candidate settlements, increasing in favour of the first member."""
     default: Callable[..., PytreeValue]
     """Source-context default settlement, clipped to the candidates' range."""
-    targets: tuple[Mapping[ExitRole, tuple[str, int | None]], ...]
+    targets: tuple[Mapping[ExitRole, tuple[str, int]], ...]
     """Per candidate, each member's outside read and destination member index."""
     adjustments: tuple[Mapping[ExitRole, Callable[..., PytreeValue]], ...]
     """Per candidate, each member's source-context adjustment at that settlement."""

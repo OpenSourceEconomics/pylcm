@@ -5509,22 +5509,16 @@ def _egm_member_value(*, value: FloatND, regime: Regime) -> FloatND:
     of its one member: the published policy rows carry no member axis. Any other
     regime's value is returned whole.
     """
-    if regime.member_axis is None or regime.simulation.egm_policy_read is None:
+    if regime.simulation.egm_policy_read is None:
         return value
     return value[
-        ...,
-        cast(
-            "int",
-            landing_member_index(
-                members=regime.member_axis, role=regime.member_axis[0]
-            ),
-        ),
+        ..., landing_member_index(members=regime.members, role=regime.members[0])
     ]
 
 
 def _egm_value_with_member_axis(*, value: FloatND, regime: Regime) -> FloatND:
     """Give an endogenous-grid regime's read value its trailing member axis."""
-    if regime.member_axis is None or regime.simulation.egm_policy_read is None:
+    if regime.simulation.egm_policy_read is None:
         return value
     return value[..., None]
 

@@ -1,11 +1,10 @@
 """Publish a one-member regime's value with the regime's member axis.
 
-A regime whose engine form carries a member axis publishes its value array with
-a trailing axis over its members. An endogenous-grid solver solves a regime of
-one member, so its value gains a trailing axis of length one. Each program of
-its period kernels appends that axis inside the compiled body, and a program
-that reads another program's value as an internal input reads the member's
-slice of it. Without a member axis every program is returned unchanged.
+Every regime publishes its value array with a trailing axis over its members.
+An endogenous-grid solver solves a regime of one member, so its value gains a
+trailing axis of length one. Each program of its period kernels appends that
+axis inside the compiled body, and a program that reads another program's value
+as an internal input reads the member's slice of it.
 """
 
 import functools
@@ -29,15 +28,13 @@ type _Wrappers = dict[tuple[int, ReferenceName | None], Callable[..., PytreeValu
 
 
 def publish_member_axis(
-    *, kernels: SolutionKernels, member_axis: tuple[str, ...] | None
+    *, kernels: SolutionKernels, members: tuple[str, ...]
 ) -> SolutionKernels:
-    """Return `kernels` whose programs publish the value with `member_axis`.
+    """Return `kernels` whose programs publish the value with the member axis.
 
     Every period kernel keeps its type and its program graph's names; each
     program publishing a value appends the trailing member axis to it.
     """
-    if member_axis is None:
-        return kernels
     # Periods sharing a core share its one wrapper, so they keep one callable.
     wrappers: _Wrappers = {}
     return replace(
@@ -45,7 +42,7 @@ def publish_member_axis(
         period_kernels=MappingProxyType(
             {
                 period: _kernel_with_member_axis(
-                    kernel=kernel, member_axis=member_axis, wrappers=wrappers
+                    kernel=kernel, members=members, wrappers=wrappers
                 )
                 for period, kernel in kernels.period_kernels.items()
             }
@@ -56,20 +53,20 @@ def publish_member_axis(
 def with_member_axis(
     *,
     program: CoreProgram,
-    member_axis: tuple[str, ...] | None,
+    members: tuple[str, ...],
     value_input: ReferenceName | None = None,
     wrappers: _Wrappers | None = None,
 ) -> CoreProgram:
-    """Return `program` publishing its value with `member_axis`.
+    """Return `program` publishing its value with the member axis of `members`.
 
     `value_input` names an internal input holding another program's output whose
     first leaf is that program's value; the wrapped program reads the member's
     slice of it. `wrappers` holds the wrapper already built for a core, which is
     reused. A program publishing no value is returned unchanged.
     """
-    if member_axis is None or not publishes_value(program=program):
+    if not publishes_value(program=program):
         return program
-    member_index = _member_index(member_axis=member_axis)
+    member_index = _member_index(members=members)
     wrappers = {} if wrappers is None else wrappers
 
     def wrap(function: Callable[..., PytreeValue]) -> Callable[..., PytreeValue]:
@@ -90,22 +87,18 @@ def with_member_axis(
     )
 
 
-def drop_member_axis(
-    *, output: PytreeValue, member_axis: tuple[str, ...] | None
-) -> PytreeValue:
+def drop_member_axis(*, output: PytreeValue, members: tuple[str, ...]) -> PytreeValue:
     """Return a program output whose first leaf, its value, is the member's slice."""
-    if member_axis is None:
-        return output
     return _map_value_leaf(
         output=output,
         function=functools.partial(
-            _member_slice, member_index=_member_index(member_axis=member_axis)
+            _member_slice, member_index=_member_index(members=members)
         ),
     )
 
 
 def _kernel_with_member_axis(
-    *, kernel: PeriodKernel, member_axis: tuple[str, ...], wrappers: _Wrappers
+    *, kernel: PeriodKernel, members: tuple[str, ...], wrappers: _Wrappers
 ) -> PeriodKernel:
     """Return the dataclass `kernel` with each program publishing the member axis."""
     return cast(
@@ -115,7 +108,7 @@ def _kernel_with_member_axis(
             _core_programs=MappingProxyType(
                 {
                     name: with_member_axis(
-                        program=program, member_axis=member_axis, wrappers=wrappers
+                        program=program, members=members, wrappers=wrappers
                     )
                     for name, program in cast("CoreProgramGraphAware", kernel)
                     .core_programs()
@@ -126,9 +119,9 @@ def _kernel_with_member_axis(
     )
 
 
-def _member_index(*, member_axis: tuple[str, ...]) -> int:
+def _member_index(*, members: tuple[str, ...]) -> int:
     """Index of the regime's one member, the member a route into it lands on."""
-    return cast("int", landing_member_index(members=member_axis, role=member_axis[0]))
+    return landing_member_index(members=members, role=members[0])
 
 
 def publishes_value(*, program: CoreProgram) -> bool:

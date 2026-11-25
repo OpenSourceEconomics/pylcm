@@ -23,8 +23,7 @@ from jax import Array
 
 from _lcm.current_iid import CurrentIIDDrawOutput, CurrentIIDMaxOutput, CurrentIIDPlan
 from _lcm.execution.placement import ACTION_PARTITION_AXIS
-from _lcm.logsum import EULER_GAMMA, logsum_and_softmax
-from _lcm.regime_building.argmax import argmax_and_max
+from _lcm.logsum import EULER_GAMMA
 from _lcm.regime_building.collective import (
     ParetoWeights,
     collective_argmax_and_readout,
@@ -37,12 +36,10 @@ from _lcm.regime_building.Q_and_F import (
     BoundedQAndF,
     has_action_integrity,
 )
-from _lcm.solution.action_reduction import CollectiveHardMaxResult, HardMaxResult
+from _lcm.solution.action_reduction import CollectiveHardMaxResult
 from _lcm.solution.action_streaming import (
     build_partitioned_streaming_max_Q_over_a,
     build_streaming_collective_max_Q_over_a,
-    build_streaming_ev1_max_Q_over_a,
-    build_streaming_max_Q_over_a,
 )
 from _lcm.solution.feasibility import BoundedResult
 from _lcm.typing import (
@@ -97,7 +94,7 @@ def _with_bound_summary[Output: PytreeValue](
 
 def _evaluate_pareto_weights(
     *,
-    pareto_weights: ParetoWeights | None,
+    pareto_weights: ParetoWeights,
     states_actions_params: QAndFKwargs,
 ) -> dict[str, FloatND]:
     """Evaluate the household's Pareto weights at one cell.
@@ -106,9 +103,8 @@ def _evaluate_pareto_weights(
     the weights are read out of the cell rather than closed over — which is
     what makes a state-dependent or estimated weight ordinary.
     """
-    weights = cast("ParetoWeights", pareto_weights)
-    return weights.compute(
-        **{name: states_actions_params[name] for name in weights.arg_names}
+    return pareto_weights.compute(
+        **{name: states_actions_params[name] for name in pareto_weights.arg_names}
     )
 
 
@@ -123,12 +119,11 @@ def get_max_Q_over_a(
     has_taste_shocks: bool = False,
     co_map_state_names: tuple[StateName, ...] = (),
     co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = (),
-    member_axis: tuple[str, ...] | None = None,
-    pareto_weights: ParetoWeights | None = None,
+    members: tuple[str, ...],
+    pareto_weights: ParetoWeights,
     cell_width_keyword: str | None = None,
     untiled_state_names: tuple[StateName, ...] = (),
     broadcast_state_names: tuple[StateName, ...] = (),
-    return_feasibility: bool = False,
 ) -> MaxQOverAFunction[BoundedMaxOutput]:
     r"""Get the function returning the maximum of Q over all actions.
 
@@ -186,21 +181,18 @@ def get_max_Q_over_a(
             regime name to `0` (the leaf carries that state as its current leading
             axis — slice it) or `None` (the leaf does not carry it — pass it through,
             e.g. a target regime where the state is pruned).
-        member_axis: Ordered member names for a collective regime, or `None`
-            (the singleton default). When set, `Q_and_F` returns a stacked
-            per-member `Q` (trailing member axis) and the inner reduction
-            reads off each member's own value at the shared household argmax
-            (`collective_readout`) instead of the plain masked max; the returned
-            function then yields the pair `(V, D)` — the member-axis value
-            array plus the boolean dissolution flag `D = 1[mask empty]` on the state
-            axes — distinct from a numeric `-inf`, which occurs on-path.
-        pareto_weights: The household's Pareto weight evaluator; required (and
-            only used) when `member_axis` is set. Called at each cell with the
-            states and parameters its declaration reads.
+        members: Ordered member names. `Q_and_F` returns a stacked per-member
+            `Q` (trailing member axis) and the inner reduction reads off each
+            member's own value at the shared household argmax
+            (`collective_readout`).
+        pareto_weights: The household's Pareto weight evaluator, called at each
+            cell with the states and parameters its declaration reads.
 
     Returns:
-        V, i.e., the function that calculates the maximum of the Q-function over all
-        feasible actions — or, for a collective regime, the pair `(V, D)`.
+        The function returning the pair `(V, D)`: the member-axis value array of
+        the maximum of Q over the feasible actions, and the boolean dissolution
+        flag `D = 1[mask empty]` on the state axes — distinct from a numeric
+        `-inf`, which occurs on-path.
 
     """
     _fail_if_co_map_states_not_leading(
@@ -212,10 +204,9 @@ def get_max_Q_over_a(
     )
     # A Pareto weight is evaluated at the cell, so its free parameters ride in
     # this kernel's own signature alongside `Q_and_F`'s.
-    if pareto_weights is not None:
-        extra_param_names = list(
-            dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
-        )
+    extra_param_names = list(
+        dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
+    )
 
     bound_summary = bool(has_action_integrity(function=Q_and_F))
     action_kernel: ActionFunction = (
@@ -237,9 +228,8 @@ def get_max_Q_over_a(
             _SmoothedMaxQOverA(
                 Q_and_F=mapped_action_kernel,
                 n_discrete_action_axes=n_discrete_action_axes,
-                member_axis=member_axis,
+                members=members,
                 pareto_weights=pareto_weights,
-                return_feasibility=return_feasibility,
             ),
             args=[
                 "next_regime_to_V_arr",
@@ -247,20 +237,15 @@ def get_max_Q_over_a(
                 *state_names,
                 *extra_param_names,
             ],
-            return_annotation=(
-                "tuple[FloatND, BoolND]"
-                if member_axis is not None or return_feasibility
-                else "FloatND"
-            ),
+            return_annotation="tuple[FloatND, BoolND]",
             enforce=False,
         )
     else:
         max_Q_over_a = with_signature(
             _HardMaxQOverA(
                 Q_and_F=mapped_action_kernel,
-                member_axis=member_axis,
+                members=members,
                 pareto_weights=pareto_weights,
-                return_feasibility=return_feasibility,
             ),
             args=[
                 "next_regime_to_V_arr",
@@ -268,11 +253,7 @@ def get_max_Q_over_a(
                 *state_names,
                 *extra_param_names,
             ],
-            return_annotation=(
-                "tuple[FloatND, BoolND]"
-                if member_axis is not None or return_feasibility
-                else "FloatND"
-            ),
+            return_annotation="tuple[FloatND, BoolND]",
             enforce=False,
         )
 
@@ -348,21 +329,18 @@ class _SmoothedMaxQOverA:
     n_discrete_action_axes: int
     """Number of leading discrete-action axes the smoothed maximum reduces."""
 
-    member_axis: tuple[str, ...] | None
-    """Ordered member names of a household, or `None` for a singleton."""
+    members: tuple[str, ...]
+    """Ordered member names of the household."""
 
-    pareto_weights: ParetoWeights | None
-    """The household's Pareto weight evaluator, or `None` for a singleton."""
-
-    return_feasibility: bool = False
-    """Whether to return the empty-action-set mask beside a singleton value."""
+    pareto_weights: ParetoWeights
+    """The household's Pareto weight evaluator."""
 
     def __call__(
         self,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
     ) -> BoundedMaxOutput:
-        """Return the expected maximum, plus the dissolution flag for a household."""
+        """Return each member's expected maximum and the dissolution flag."""
         evaluated = self.Q_and_F(
             next_regime_to_V_arr=next_regime_to_V_arr,
             **states_actions_params,
@@ -371,53 +349,36 @@ class _SmoothedMaxQOverA:
             "tuple[FloatND, BoolND]",
             evaluated.output if type(evaluated) is BoundedResult else evaluated,
         )
-        if self.member_axis is not None:
-            # Q_arr carries a trailing member axis. The member with the
-            # positive Pareto weight decides; every member's value is read off
-            # its smoothed choice, beside the dissolution flag D.
-            values, dissolution = decider_smoothed_readout(
-                Q=Q_arr,
-                feasibility=F_arr,
-                weights=_stacked_pareto_weights(
-                    pareto_weights=self.pareto_weights,
-                    member_axis=self.member_axis,
-                    states_actions_params=states_actions_params,
-                ),
-                n_discrete_action_axes=self.n_discrete_action_axes,
-                scale=cast(
-                    "ScalarFloat", states_actions_params[TASTE_SHOCK_SCALE_PARAM]
-                ),
-            )
-            return _with_bound_summary(
-                evaluated=evaluated, output=cast("MaxOutput", (values, dissolution))
-            )
-        Q_masked = jnp.where(F_arr, Q_arr, -jnp.inf)
-        continuous_axes = tuple(range(self.n_discrete_action_axes, Q_arr.ndim))
-        Qc = Q_masked.max(axis=continuous_axes) if continuous_axes else Q_masked
-        smoothed, _ = logsum_and_softmax(
-            values=Qc,
+        # Q_arr carries a trailing member axis. The member with the positive
+        # Pareto weight decides; every member's value is read off its smoothed
+        # choice, beside the dissolution flag D.
+        values, dissolution = decider_smoothed_readout(
+            Q=Q_arr,
+            feasibility=F_arr,
+            weights=_stacked_pareto_weights(
+                pareto_weights=self.pareto_weights,
+                members=self.members,
+                states_actions_params=states_actions_params,
+            ),
+            n_discrete_action_axes=self.n_discrete_action_axes,
             scale=cast("ScalarFloat", states_actions_params[TASTE_SHOCK_SCALE_PARAM]),
-            axes=tuple(range(Qc.ndim)),
-        )
-        output: MaxOutput = (
-            (smoothed, ~jnp.any(F_arr)) if self.return_feasibility else smoothed
         )
         return _with_bound_summary(
-            evaluated=evaluated, output=cast("MaxOutput", output)
+            evaluated=evaluated, output=cast("MaxOutput", (values, dissolution))
         )
 
 
 def _stacked_pareto_weights(
     *,
-    pareto_weights: ParetoWeights | None,
-    member_axis: tuple[str, ...],
+    pareto_weights: ParetoWeights,
+    members: tuple[str, ...],
     states_actions_params: QAndFKwargs,
 ) -> FloatND:
     """Evaluate the household's Pareto weights at one cell, in member order."""
     weights = _evaluate_pareto_weights(
         pareto_weights=pareto_weights, states_actions_params=states_actions_params
     )
-    return jnp.stack([jnp.asarray(weights[name]) for name in member_axis])
+    return jnp.stack([jnp.asarray(weights[name]) for name in members])
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -437,21 +398,18 @@ class _HardMaxQOverA:
     Q_and_F: ActionFunction
     """The regime's action value and feasibility, mapped over the action product."""
 
-    member_axis: tuple[str, ...] | None
-    """Ordered member names of a collective regime, or `None` for a singleton."""
+    members: tuple[str, ...]
+    """Ordered member names of the household."""
 
-    pareto_weights: ParetoWeights | None
-    """The household's Pareto weight evaluator, or `None` for a singleton."""
-
-    return_feasibility: bool = False
-    """Whether to return the empty-action-set mask beside a singleton value."""
+    pareto_weights: ParetoWeights
+    """The household's Pareto weight evaluator."""
 
     def __call__(
         self,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
     ) -> BoundedMaxOutput:
-        """Return the cell's value, plus the dissolution flag for a household."""
+        """Return each member's value at the cell and the dissolution flag."""
         evaluated = self.Q_and_F(
             next_regime_to_V_arr=next_regime_to_V_arr,
             **states_actions_params,
@@ -460,40 +418,30 @@ class _HardMaxQOverA:
             "tuple[FloatND, BoolND]",
             evaluated.output if type(evaluated) is BoundedResult else evaluated,
         )
-        if self.member_axis is not None:
-            # Q_arr carries a trailing
-            # member axis (the action product-map keeps it last);
-            # F_arr does not. Split Q_arr per member, take the household argmax
-            # of the scalarization over the masked action axes, and read
-            # off each member's OWN value at that shared argmax. The
-            # returned pair is the member value vector (re-stacked on
-            # a trailing axis, which the outer state product-map turns
-            # into `(*states, n_members)`) plus the dissolution flag D —
-            # `True` where NO action is feasible (empty mask), published
-            # alongside V and never conflated with a numeric -inf value
-            # (which occurs on-path).
-            action_axes = tuple(range(F_arr.ndim))
-            member_Q = {
-                name: Q_arr[..., index] for index, name in enumerate(self.member_axis)
-            }
-            values, dissolution = collective_readout(
-                member_Q=member_Q,
-                feasibility=F_arr,
-                weights=_evaluate_pareto_weights(
-                    pareto_weights=self.pareto_weights,
-                    states_actions_params=states_actions_params,
-                ),
-                action_axes=action_axes,
-            )
-            output: MaxOutput = (
-                jnp.stack([values[name] for name in self.member_axis], axis=-1),
-                dissolution,
-            )
-            return _with_bound_summary(
-                evaluated=evaluated, output=cast("MaxOutput", output)
-            )
-        value = Q_arr.max(where=F_arr, initial=-jnp.inf)
-        output = (value, ~jnp.any(F_arr)) if self.return_feasibility else value
+        # Q_arr carries a trailing member axis (the action product-map keeps it
+        # last); F_arr does not. Split Q_arr per member, take the household
+        # argmax of the scalarization over the masked action axes, and read off
+        # each member's OWN value at that shared argmax. The returned pair is
+        # the member value vector (re-stacked on a trailing axis, which the
+        # outer state product-map turns into `(*states, n_members)`) plus the
+        # dissolution flag D — `True` where NO action is feasible (empty mask),
+        # published alongside V and never conflated with a numeric -inf value
+        # (which occurs on-path).
+        action_axes = tuple(range(F_arr.ndim))
+        member_Q = {name: Q_arr[..., index] for index, name in enumerate(self.members)}
+        values, dissolution = collective_readout(
+            member_Q=member_Q,
+            feasibility=F_arr,
+            weights=_evaluate_pareto_weights(
+                pareto_weights=self.pareto_weights,
+                states_actions_params=states_actions_params,
+            ),
+            action_axes=action_axes,
+        )
+        output: MaxOutput = (
+            jnp.stack([values[name] for name in self.members], axis=-1),
+            dissolution,
+        )
         return _with_bound_summary(
             evaluated=evaluated, output=cast("MaxOutput", output)
         )
@@ -506,28 +454,23 @@ def get_streaming_max_Q_over_a(
     batch_sizes: dict[StateName, int],
     action_names: tuple[ActionName, ...],
     state_names: tuple[StateName, ...],
-    n_discrete_action_axes: int = 0,
-    has_taste_shocks: bool = False,
     co_map_state_names: tuple[StateName, ...] = (),
     co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = (),
-    member_axis: tuple[str, ...] | None = None,
-    pareto_weights: ParetoWeights | None = None,
+    members: tuple[str, ...],
+    pareto_weights: ParetoWeights,
     action_width_keyword: str = "_lcm_action_block_width",
     cell_width_keyword: str | None = None,
     untiled_state_names: tuple[StateName, ...] = (),
     broadcast_state_names: tuple[StateName, ...] = (),
-    return_feasibility: bool = False,
 ) -> MaxQOverAFunction[BoundedMaxOutput]:
-    """Build a singleton or collective V kernel that streams the action product.
+    """Build a hard-max V kernel that streams the action product.
 
     The returned raw callable has the same dynamic argument layout as
     `get_max_Q_over_a` plus one required static keyword named by
     `action_width_keyword`. The execution planner selects a collision-free name and
     binds that width before tracing. For each state cell, the fixed-cell reducer
-    evaluates actions in canonical C order. A hard-max singleton publishes its best
-    value; an EV1 singleton first hard-maxes each discrete-prefix branch and then
-    log-sums the branch values; a collective regime publishes each member's
-    value at one shared household winner plus the empty-feasible-set flag. Ordinary
+    evaluates actions in canonical C order and publishes each member's value at
+    one shared household winner plus the empty-feasible-set flag. Ordinary
     states use the existing state productmap. Fixed distributed states retain the
     dense route co-map access law: each state axis is mapped in lockstep with axis
     zero of every continuation leaf that carries it.
@@ -537,31 +480,18 @@ def get_streaming_max_Q_over_a(
         co_map_state_names=co_map_state_names,
         co_map_v_arr_in_axes=co_map_v_arr_in_axes,
     )
-    _fail_if_full_V_streaming_route_is_unsupported(
-        member_axis=member_axis,
-        pareto_weights=pareto_weights,
-    )
-    if has_taste_shocks and return_feasibility:
-        raise ValueError("Feasibility output for EV1 uses the canonical dense reducer.")
-    if has_taste_shocks and not 1 <= n_discrete_action_axes <= len(action_names):
-        raise ValueError(
-            "EV1 action streaming requires a non-empty leading discrete-action prefix"
+    extra_param_names = list(
+        dict.fromkeys(
+            (
+                *_get_extra_param_names(
+                    Q_and_F=Q_and_F,
+                    action_names=action_names,
+                    state_names=state_names,
+                ),
+                *pareto_weights.param_names,
+            )
         )
-
-    extra_param_names = _get_extra_param_names(
-        Q_and_F=Q_and_F,
-        action_names=action_names,
-        state_names=state_names,
     )
-    if has_taste_shocks and TASTE_SHOCK_SCALE_PARAM not in extra_param_names:
-        extra_param_names.append(TASTE_SHOCK_SCALE_PARAM)
-    q_and_f_arg_names = frozenset(inspect.signature(Q_and_F).parameters)
-
-    if pareto_weights is not None:
-        extra_param_names = list(
-            dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
-        )
-
     _fail_if_action_width_keyword_collides(
         action_width_keyword=action_width_keyword,
         action_names=action_names,
@@ -574,18 +504,10 @@ def get_streaming_max_Q_over_a(
         _StreamedMaxQOverA(
             Q_and_F=Q_and_F,
             action_names=action_names,
-            n_discrete_action_axes=n_discrete_action_axes,
-            has_taste_shocks=has_taste_shocks,
-            member_axis=member_axis,
+            members=members,
             pareto_weights=pareto_weights,
-            q_and_f_arg_names=q_and_f_arg_names,
+            q_and_f_arg_names=frozenset(inspect.signature(Q_and_F).parameters),
             action_width_keyword=action_width_keyword,
-            return_feasibility=return_feasibility,
-            whole_product_Q_and_F=productmap(
-                func=Q_and_F,
-                variables=action_names,
-                batch_sizes=dict.fromkeys(action_names, 0),
-            ),
         ),
         args=[
             "next_regime_to_V_arr",
@@ -594,11 +516,7 @@ def get_streaming_max_Q_over_a(
             *extra_param_names,
             action_width_keyword,
         ],
-        return_annotation=(
-            "tuple[FloatND, BoolND]"
-            if member_axis is not None or return_feasibility
-            else "FloatND"
-        ),
+        return_annotation="tuple[FloatND, BoolND]",
         enforce=False,
     )
 
@@ -670,17 +588,11 @@ class _StreamedMaxQOverA:
     action_names: tuple[ActionName, ...]
     """Action variable names, discrete first, spanning the streamed product."""
 
-    n_discrete_action_axes: int
-    """Number of leading discrete-action axes an EV1 route log-sums over."""
+    members: tuple[str, ...]
+    """Ordered member names of the household."""
 
-    has_taste_shocks: bool
-    """Whether the regime declares EV1 taste shocks on its discrete actions."""
-
-    member_axis: tuple[str, ...] | None
-    """Ordered member names of a collective regime, or `None` for a singleton."""
-
-    pareto_weights: ParetoWeights | None
-    """The household's Pareto weight evaluator, or `None` for a singleton."""
+    pareto_weights: ParetoWeights
+    """The household's Pareto weight evaluator."""
 
     q_and_f_arg_names: frozenset[ReferenceName]
     """The argument names `Q_and_F` declares, which select what it is handed."""
@@ -688,134 +600,18 @@ class _StreamedMaxQOverA:
     action_width_keyword: str
     """Name of the planner-bound static action-block width in the call."""
 
-    whole_product_Q_and_F: RawActionFunction
-    """`Q_and_F` mapped over the named action grids, for a block covering them."""
-
-    return_feasibility: bool = False
-    """Whether to return the empty-action-set mask beside a singleton value."""
-
     def __call__(
         self,
         *,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
     ) -> BoundedMaxOutput:
-        """Return the cell's value, plus the dissolution flag for a household."""
-        action_block_width = cast(
-            "int", states_actions_params[self.action_width_keyword]
-        )
-        q_and_f_params = {
-            name: value
-            for name, value in states_actions_params.items()
-            if name in self.q_and_f_arg_names
-        }
-        if (
-            has_action_integrity(function=self.Q_and_F)
-            and not self.has_taste_shocks
-            and self.member_axis is None
-        ):
-            fixed_cell = build_streaming_max_Q_over_a(
-                Q_and_F=self.Q_and_F,
-                action_names=self.action_names,
-                block_width=action_block_width,
-            )
-            bounded = cast(
-                "BoundedResult[HardMaxResult]",
-                fixed_cell(
-                    next_regime_to_V_arr=next_regime_to_V_arr,
-                    **q_and_f_params,
-                ),
-            )
-            result = bounded.output
-            return BoundedResult(
-                output=(
-                    (result.best_value, ~result.any_feasible)
-                    if self.return_feasibility
-                    else result.best_value
-                ),
-                bound_status=bounded.bound_status,
-                query_status=bounded.query_status,
-            )
-        if self.has_taste_shocks:
-            ev1_cell = build_streaming_ev1_max_Q_over_a(
-                Q_and_F=self.Q_and_F,
-                action_names=self.action_names,
-                n_discrete_action_axes=self.n_discrete_action_axes,
-                block_width=action_block_width,
-                scale=cast(
-                    "ScalarFloat",
-                    states_actions_params[TASTE_SHOCK_SCALE_PARAM],
-                ),
-            )
-            ev1_result = ev1_cell(
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                **q_and_f_params,
-            )
-            if isinstance(ev1_result, BoundedResult):
-                ev1_output = BoundedResult(
-                    output=ev1_result.output.smoothed_value,
-                    bound_status=ev1_result.bound_status,
-                    query_status=ev1_result.query_status,
-                )
-            else:
-                ev1_output = ev1_result.smoothed_value
-            return cast("BoundedMaxOutput", ev1_output)
-
-        if self.member_axis is None:
-            n_actions = math.prod(
-                jnp.shape(cast("Array", states_actions_params[name]))[0]
-                for name in self.action_names
-            )
-            if action_block_width >= n_actions:
-                # One block covers the product: map the named grids, as the dense
-                # route does, instead of decoding a flat index into each of them.
-                # The streamed reduction's value contract is stated explicitly: a
-                # feasible NaN publishes NaN. XLA:CPU's vectorized maximum drops NaN
-                # once a mapped reduction spans a few thousand elements.
-                Q_arr, F_arr = self.whole_product_Q_and_F(
-                    next_regime_to_V_arr=next_regime_to_V_arr,
-                    **q_and_f_params,
-                )
-                # One variadic reduce yields the maximum and the NaN flag, so the
-                # backend fuses Q into a single pass instead of materialising it
-                # for two consumers.
-                best, any_feasible_nan = jax.lax.reduce(
-                    (
-                        jnp.where(F_arr, Q_arr, -jnp.inf),
-                        F_arr & jnp.isnan(Q_arr),
-                    ),
-                    (jnp.asarray(-jnp.inf, Q_arr.dtype), jnp.zeros((), dtype=bool)),
-                    lambda left, right: (
-                        jax.lax.max(left[0], right[0]),
-                        jax.lax.bitwise_or(left[1], right[1]),
-                    ),
-                    tuple(range(jnp.ndim(Q_arr))),
-                )
-                value = jnp.where(any_feasible_nan, jnp.nan, best)
-                return (value, ~jnp.any(F_arr)) if self.return_feasibility else value
-            fixed_cell = build_streaming_max_Q_over_a(
-                Q_and_F=self.Q_and_F,
-                action_names=self.action_names,
-                block_width=action_block_width,
-            )
-            result = cast(
-                "HardMaxResult",
-                fixed_cell(
-                    next_regime_to_V_arr=next_regime_to_V_arr,
-                    **q_and_f_params,
-                ),
-            )
-            return (
-                (result.best_value, ~result.any_feasible)
-                if self.return_feasibility
-                else result.best_value
-            )
-
+        """Return each member's value at the cell and the dissolution flag."""
         collective_cell = build_streaming_collective_max_Q_over_a(
             Q_and_F=self.Q_and_F,
             action_names=self.action_names,
-            block_width=action_block_width,
-            members=self.member_axis,
+            block_width=cast("int", states_actions_params[self.action_width_keyword]),
+            members=self.members,
             weights=_evaluate_pareto_weights(
                 pareto_weights=self.pareto_weights,
                 states_actions_params=states_actions_params,
@@ -823,7 +619,9 @@ class _StreamedMaxQOverA:
         )
         collective_result = collective_cell(
             next_regime_to_V_arr=next_regime_to_V_arr,
-            **q_and_f_params,
+            **_arguments_named(
+                arguments=states_actions_params, names=self.q_and_f_arg_names
+            ),
         )
         if isinstance(collective_result, BoundedResult):
             result = collective_result.output
@@ -850,22 +648,20 @@ def get_action_partitioned_max_Q_over_a(
     cell_width_keyword: str | None = None,
     untiled_state_names: tuple[StateName, ...] = (),
     broadcast_state_names: tuple[StateName, ...] = (),
-    return_feasibility: bool = False,
-    member_axis: tuple[str, ...] | None = None,
-    pareto_weights: ParetoWeights | None = None,
+    members: tuple[str, ...],
+    pareto_weights: ParetoWeights,
 ) -> MaxQOverAFunction[BoundedMaxOutput]:
     """Build a hard-max V kernel whose action product devices share.
 
     The returned callable has the argument layout of
-    `get_streaming_max_Q_over_a` for an ordinary hard-max regime. It runs its
-    body once per device of `mesh`'s `ACTION_PARTITION_AXIS`, with every input
-    replicated along that axis and the regime's state axes left to the
-    compiler. Each device streams the contiguous run of whole action blocks
-    `ActionPartitionLayout` assigns it at the planner-bound width, gathers one
-    hard-max accumulator per state cell from every device of the axis and
-    merges them in partition order, so all devices publish the same value. A
-    household, named by `member_axis` and its `pareto_weights`, publishes every
-    member's value at its one shared winner and the dissolution flag.
+    `get_streaming_max_Q_over_a`. It runs its body once per device of `mesh`'s
+    `ACTION_PARTITION_AXIS`, with every input replicated along that axis and
+    the regime's state axes left to the compiler. Each device streams the
+    contiguous run of whole action blocks `ActionPartitionLayout` assigns it at
+    the planner-bound width, gathers one hard-max accumulator per state cell
+    from every device of the axis and merges them in partition order, so all
+    devices publish the same value: every member's value at the household's
+    one shared winner and the dissolution flag.
 
     Taste shocks and co-mapped states are not served; model construction
     refuses them before this is called.
@@ -886,10 +682,9 @@ def get_action_partitioned_max_Q_over_a(
         action_names=action_names,
         state_names=state_names,
     )
-    if pareto_weights is not None:
-        extra_param_names = list(
-            dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
-        )
+    extra_param_names = list(
+        dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
+    )
     # The keyword order differs from the streamed builder's call on purpose:
     # that call is a certified mutation anchor and must stay unique.
     _fail_if_action_width_keyword_collides(
@@ -898,7 +693,6 @@ def get_action_partitioned_max_Q_over_a(
         state_names=state_names,
         action_width_keyword=action_width_keyword,
     )
-    returns_pair = member_axis is not None or return_feasibility
     partitioned_max_Q_over_a = with_signature(
         _ActionPartitionedMaxQOverA(
             Q_and_F=Q_and_F,
@@ -906,8 +700,7 @@ def get_action_partitioned_max_Q_over_a(
             q_and_f_arg_names=frozenset(inspect.signature(Q_and_F).parameters),
             action_width_keyword=action_width_keyword,
             n_partitions=n_partitions,
-            return_feasibility=return_feasibility,
-            member_axis=member_axis,
+            members=members,
             pareto_weights=pareto_weights,
         ),
         args=[
@@ -917,7 +710,7 @@ def get_action_partitioned_max_Q_over_a(
             *extra_param_names,
             action_width_keyword,
         ],
-        return_annotation="tuple[FloatND, BoolND]" if returns_pair else "FloatND",
+        return_annotation="tuple[FloatND, BoolND]",
         enforce=False,
     )
     mapped = (
@@ -948,7 +741,7 @@ def get_action_partitioned_max_Q_over_a(
                 function=mapped, mesh=mesh, static_names=static_names
             ),
             args=list(inspect.signature(mapped).parameters),
-            return_annotation="tuple[FloatND, BoolND]" if returns_pair else "FloatND",
+            return_annotation="tuple[FloatND, BoolND]",
             enforce=False,
         ),
     )
@@ -980,14 +773,11 @@ class _ActionPartitionedMaxQOverA:
     n_partitions: int
     """Devices along the action axis, each owning one run of blocks."""
 
-    return_feasibility: bool = False
-    """Whether to return the merged empty-action-set mask beside a single's value."""
+    members: tuple[str, ...]
+    """Ordered member names of the household."""
 
-    member_axis: tuple[str, ...] | None = None
-    """Ordered member names of a household, or `None` for a single."""
-
-    pareto_weights: ParetoWeights | None = None
-    """The household's Pareto weight evaluator, or `None` for a single."""
+    pareto_weights: ParetoWeights
+    """The household's Pareto weight evaluator."""
 
     def __call__(
         self,
@@ -995,20 +785,15 @@ class _ActionPartitionedMaxQOverA:
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
     ) -> BoundedMaxOutput:
-        """Return the cell's value after merging every device's accumulator.
-
-        A household returns every member's value and the dissolution flag.
-        """
+        """Return every member's value and the dissolution flag after the merge."""
         reduce_cell = build_partitioned_streaming_max_Q_over_a(
             Q_and_F=self.Q_and_F,
             action_names=self.action_names,
             block_width=cast("int", states_actions_params[self.action_width_keyword]),
             n_partitions=self.n_partitions,
             axis_name=ACTION_PARTITION_AXIS,
-            members=self.member_axis,
-            weights=None
-            if self.member_axis is None
-            else _evaluate_pareto_weights(
+            members=self.members,
+            weights=_evaluate_pareto_weights(
                 pareto_weights=self.pareto_weights,
                 states_actions_params=states_actions_params,
             ),
@@ -1027,17 +812,9 @@ class _ActionPartitionedMaxQOverA:
             )
         return self._published(reduced=result)
 
-    def _published(
-        self, *, reduced: HardMaxResult | CollectiveHardMaxResult
-    ) -> MaxOutput:
+    def _published(self, *, reduced: CollectiveHardMaxResult) -> MaxOutput:
         """Return what the kernel publishes from the merged reduction."""
-        if isinstance(reduced, CollectiveHardMaxResult):
-            return reduced.best_member_values, ~reduced.any_feasible
-        return (
-            (reduced.best_value, ~reduced.any_feasible)
-            if self.return_feasibility
-            else reduced.best_value
-        )
+        return reduced.best_member_values, ~reduced.any_feasible
 
 
 def _arguments_named[V](
@@ -1117,18 +894,6 @@ def _fail_if_action_width_keyword_collides(
         )
 
 
-def _fail_if_full_V_streaming_route_is_unsupported(
-    *,
-    member_axis: tuple[str, ...] | None,
-    pareto_weights: ParetoWeights | None,
-) -> None:
-    """Reject routes unsupported by full-value action streaming."""
-    if (member_axis is None) != (pareto_weights is None):
-        raise ValueError(
-            "Collective action streaming requires members and Pareto weights."
-        )
-
-
 def _fail_if_streaming_co_map_layout_is_invalid(
     *,
     state_names: tuple[StateName, ...],
@@ -1197,8 +962,8 @@ def get_argmax_and_max_Q_over_a(
     state_names: tuple[StateName, ...],
     n_discrete_action_axes: int = 0,
     has_taste_shocks: bool = False,
-    member_axis: tuple[str, ...] | None = None,
-    pareto_weights: ParetoWeights | None = None,
+    members: tuple[str, ...],
+    pareto_weights: ParetoWeights,
 ) -> ArgmaxQOverAFunction[BoundedArgmaxOutput]:
     r"""Get the function returning the arguments maximizing Q over all actions.
 
@@ -1234,20 +999,16 @@ def get_argmax_and_max_Q_over_a(
             combination mean-zero `scale * (Gumbel(0, 1) - EULER_GAMMA)` noise
             is added to the masked maxima over the continuous axes before the
             discrete argmax — exactly logit-consistent with the smoothed solve.
-        member_axis: Ordered member names for a collective regime, or
-            `None` (the singleton default). When
-            set, `Q_and_F` returns a stacked per-member `Q` (trailing
-            member axis); the household argmax of the weighted
+        members: Ordered member names. `Q_and_F` returns a stacked per-member
+            `Q` (trailing member axis); the household argmax of the weighted
             scalarization is computed once (`collective_argmax_and_readout`)
-            and each member's own value is gathered at that shared
-            index — mirrors the solve-side `get_max_Q_over_a` collective
-            branch so simulate recomputes the identical argmax. With
-            `has_taste_shocks`, the member with the positive Pareto weight
-            draws the action as a single does, and each member's own value is
-            gathered at the drawn index.
-        pareto_weights: The household's Pareto weight evaluator; required (and
-            only used) when `member_axis` is set. Called at each cell with the
-            states and parameters its declaration reads.
+            and each member's own value is gathered at that shared index —
+            mirrors the solve-side `get_max_Q_over_a` so simulate recomputes the
+            identical argmax. With `has_taste_shocks`, the member with the
+            positive Pareto weight draws the action, and each member's own value
+            is gathered at the drawn index.
+        pareto_weights: The household's Pareto weight evaluator, called at each
+            cell with the states and parameters its declaration reads.
 
     Returns:
         Function that calculates the argument maximizing Q over the feasible continuous
@@ -1262,10 +1023,9 @@ def get_argmax_and_max_Q_over_a(
     )
     # A Pareto weight is evaluated at the cell, so its free parameters ride in
     # this kernel's own signature alongside `Q_and_F`'s.
-    if pareto_weights is not None:
-        extra_param_names = list(
-            dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
-        )
+    extra_param_names = list(
+        dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
+    )
 
     bound_summary = bool(has_action_integrity(function=Q_and_F))
     action_kernel: ActionFunction = (
@@ -1284,7 +1044,7 @@ def get_argmax_and_max_Q_over_a(
             _TasteShockArgmaxQOverA(
                 Q_and_F=mapped_action_kernel,
                 n_discrete_action_axes=n_discrete_action_axes,
-                member_axis=member_axis,
+                members=members,
                 pareto_weights=pareto_weights,
             ),
             args=[
@@ -1301,7 +1061,7 @@ def get_argmax_and_max_Q_over_a(
         argmax_and_max_Q_over_a = with_signature(
             _HardMaxArgmaxQOverA(
                 Q_and_F=mapped_action_kernel,
-                member_axis=member_axis,
+                members=members,
                 pareto_weights=pareto_weights,
             ),
             args=[
@@ -1337,11 +1097,11 @@ class _TasteShockArgmaxQOverA:
     n_discrete_action_axes: int
     """Number of leading discrete-action axes the noisy draw chooses among."""
 
-    member_axis: tuple[str, ...] | None
-    """Ordered member names of a household, or `None` for a singleton."""
+    members: tuple[str, ...]
+    """Ordered member names of the household."""
 
-    pareto_weights: ParetoWeights | None
-    """The household's Pareto weight evaluator, or `None` for a singleton."""
+    pareto_weights: ParetoWeights
+    """The household's Pareto weight evaluator."""
 
     def __call__(
         self,
@@ -1358,46 +1118,21 @@ class _TasteShockArgmaxQOverA:
             "tuple[FloatND, BoolND]",
             evaluated.output if type(evaluated) is BoundedResult else evaluated,
         )
-        if self.member_axis is not None:
-            return _with_bound_summary(
-                evaluated=evaluated,
-                output=_household_taste_shock_draw(
-                    Q_arr=Q_arr,
-                    F_arr=F_arr,
-                    weights=_stacked_pareto_weights(
-                        pareto_weights=self.pareto_weights,
-                        member_axis=self.member_axis,
-                        states_actions_params=cast(
-                            "QAndFKwargs", states_actions_params
-                        ),
-                    ),
-                    n_discrete_action_axes=self.n_discrete_action_axes,
-                    taste_shock_key=taste_shock_key,
-                    scale=cast(
-                        "FloatND", states_actions_params[TASTE_SHOCK_SCALE_PARAM]
-                    ),
+        return _with_bound_summary(
+            evaluated=evaluated,
+            output=_household_taste_shock_draw(
+                Q_arr=Q_arr,
+                F_arr=F_arr,
+                weights=_stacked_pareto_weights(
+                    pareto_weights=self.pareto_weights,
+                    members=self.members,
+                    states_actions_params=cast("QAndFKwargs", states_actions_params),
                 ),
-            )
-        Q_masked = jnp.where(F_arr, Q_arr, -jnp.inf)
-        n_discrete_cells = math.prod(Q_arr.shape[: self.n_discrete_action_axes])
-        n_continuous_cells = math.prod(Q_arr.shape[self.n_discrete_action_axes :])
-        Q_flat = Q_masked.reshape(n_discrete_cells, n_continuous_cells)
-        continuous_argmax = jnp.argmax(Q_flat, axis=1)
-        Qc = Q_flat.max(axis=1)
-        scale = cast("FloatND", states_actions_params[TASTE_SHOCK_SCALE_PARAM])
-        noise = draw_taste_shock_noise(key=taste_shock_key, shape=Qc.shape, scale=scale)
-        # An infeasible discrete cell stays infeasible: the noise is
-        # finite, so `-inf + noise` is still `-inf`.
-        noisy_Qc = Qc + noise
-        discrete_argmax = jnp.argmax(noisy_Qc)
-        flat_index = (
-            discrete_argmax * n_continuous_cells + continuous_argmax[discrete_argmax]
+                n_discrete_action_axes=self.n_discrete_action_axes,
+                taste_shock_key=taste_shock_key,
+                scale=cast("FloatND", states_actions_params[TASTE_SHOCK_SCALE_PARAM]),
+            ),
         )
-        output = (
-            jnp.where(jnp.any(F_arr), flat_index, -1).astype(jnp.int32),
-            Qc[discrete_argmax],
-        )
-        return _with_bound_summary(evaluated=evaluated, output=output)
 
 
 def _household_taste_shock_draw(
@@ -1411,11 +1146,11 @@ def _household_taste_shock_draw(
 ) -> ArgmaxOutput:
     """Draw a household's action as its decider's, and read every member there.
 
-    The decider is the member with the positive Pareto weight. Its draw is a
-    single's: one mean-zero Gumbel term per discrete action, added to its own
-    conditional maxima over the continuous actions. The decider publishes its
-    conditional maximum at the drawn action, as a single does, and every other
-    member its own noise-free action value there.
+    The decider is the member with the positive Pareto weight. Its draw adds
+    one mean-zero Gumbel term per discrete action to its own conditional maxima
+    over the continuous actions. The decider publishes its conditional maximum
+    at the drawn action, and every other member its own noise-free action
+    value there.
     """
     decider, Qc, continuous_argmax, at_choice = decider_choice(
         Q=Q_arr,
@@ -1460,11 +1195,11 @@ class _HardMaxArgmaxQOverA:
     Q_and_F: ActionFunction
     """The regime's action value and feasibility, mapped over the action product."""
 
-    member_axis: tuple[str, ...] | None
-    """Ordered member names of a collective regime, or `None` for a singleton."""
+    members: tuple[str, ...]
+    """Ordered member names of the household."""
 
-    pareto_weights: ParetoWeights | None
-    """The household's Pareto weight evaluator, or `None` for a singleton."""
+    pareto_weights: ParetoWeights
+    """The household's Pareto weight evaluator."""
 
     def __call__(
         self,
@@ -1480,38 +1215,28 @@ class _HardMaxArgmaxQOverA:
             "tuple[FloatND, BoolND]",
             evaluated.output if type(evaluated) is BoundedResult else evaluated,
         )
-        if self.member_axis is not None:
-            # Mirrors the solve-side collective
-            # branch in `get_max_Q_over_a` — split the stacked Q by
-            # member, argmax the household scalarization once over
-            # the value-masked feasible action set, and gather
-            # each member's OWN value at that shared index. The
-            # simulate-only addition vs. the solve readout
-            # (`collective_readout`) is the argmax index itself, needed
-            # to look up which JOINT action both members actually
-            # took (`_lookup_values_from_indices` in `simulate.py`).
-            action_axes = tuple(range(F_arr.ndim))
-            member_Q = {
-                name: Q_arr[..., index] for index, name in enumerate(self.member_axis)
-            }
-            argmax_flat, values, _dissolution = collective_argmax_and_readout(
-                member_Q=member_Q,
-                feasibility=F_arr,
-                weights=_evaluate_pareto_weights(
-                    pareto_weights=self.pareto_weights,
-                    states_actions_params=states_actions_params,
-                ),
-                action_axes=action_axes,
-            )
-            V_stacked = jnp.stack([values[name] for name in self.member_axis], axis=-1)
-            return _with_bound_summary(
-                evaluated=evaluated,
-                output=(jnp.where(_dissolution, -1, argmax_flat), V_stacked),
-            )
-        index, value = argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)
+        # Mirrors the solve-side `get_max_Q_over_a` — split the stacked Q by
+        # member, argmax the household scalarization once over the value-masked
+        # feasible action set, and gather each member's OWN value at that shared
+        # index. The simulate-only addition vs. the solve readout
+        # (`collective_readout`) is the argmax index itself, needed to look up
+        # which JOINT action the members actually took
+        # (`_lookup_values_from_indices` in `simulate.py`).
+        action_axes = tuple(range(F_arr.ndim))
+        member_Q = {name: Q_arr[..., index] for index, name in enumerate(self.members)}
+        argmax_flat, values, _dissolution = collective_argmax_and_readout(
+            member_Q=member_Q,
+            feasibility=F_arr,
+            weights=_evaluate_pareto_weights(
+                pareto_weights=self.pareto_weights,
+                states_actions_params=states_actions_params,
+            ),
+            action_axes=action_axes,
+        )
+        V_stacked = jnp.stack([values[name] for name in self.members], axis=-1)
         return _with_bound_summary(
             evaluated=evaluated,
-            output=(jnp.where(jnp.any(F_arr), index, -1), value),
+            output=(jnp.where(_dissolution, -1, argmax_flat), V_stacked),
         )
 
 

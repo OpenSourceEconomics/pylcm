@@ -2,7 +2,6 @@
 
 import inspect
 from dataclasses import replace
-from functools import partial
 from types import MappingProxyType
 from typing import cast
 
@@ -15,6 +14,7 @@ from _lcm import continuation
 from _lcm.egm.carry import build_template_egm_carry, build_template_egm_query_data
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.regime_building import Q_and_F as q_and_f_module
+from _lcm.regime_building.collective import member_name
 from _lcm.regime_building.processing import _missing_capabilities
 from _lcm.solution import feasibility
 from _lcm.typing import (
@@ -395,29 +395,21 @@ def test_actual_utility_feasibility_and_validity_share_one_floor_evaluation(
     assert calls == ["floor"]
 
 
-@pytest.mark.parametrize("collective", [False, True])
+@pytest.mark.parametrize("regime_members", [("self",), ("a",)])
 @pytest.mark.parametrize("invalid", [False, True])
 def test_terminal_action_evaluation_keeps_bound_status_separate_from_F(
-    *, collective: bool, invalid: bool
+    *, regime_members: tuple[str, ...], invalid: bool
 ) -> None:
-    """Singleton and household terminal evaluators carry actual RHS validity."""
-    raw_builder = (
+    """A single's and a household's terminal evaluator carry actual RHS validity."""
+    builder_code = inspect.unwrap(
         q_and_f_module.get_Q_and_F_terminal_collective
-        if collective
-        else q_and_f_module.get_Q_and_F_terminal
-    )
-    builder_code = inspect.unwrap(raw_builder).__code__
+    ).__code__
     assert (
         "bound_specs"
         in builder_code.co_varnames[
             : builder_code.co_argcount + builder_code.co_kwonlyargcount
         ]
     ), "Terminal action evaluation must expose mandatory bound validity."
-    builder = (
-        partial(q_and_f_module.get_Q_and_F_terminal_collective, members=("a",))
-        if collective
-        else q_and_f_module.get_Q_and_F_terminal
-    )
 
     def floor(*, income: FloatND) -> FloatND:
         return income
@@ -430,16 +422,19 @@ def test_terminal_action_evaluation_keeps_bound_status_separate_from_F(
 
     functions: dict[FunctionName, EconFunction] = {
         "floor": cast("EconFunction", floor),
-        "utility_a" if collective else "utility": cast("EconFunction", utility),
+        member_name(base="utility", member=regime_members[0]): cast(
+            "EconFunction", utility
+        ),
     }
     kernel = cast(
-        "q_and_f_module._TerminalQAndF | q_and_f_module._TerminalCollectiveQAndF",
-        builder(
+        "q_and_f_module._TerminalCollectiveQAndF",
+        q_and_f_module.get_Q_and_F_terminal_collective(
             flat_param_names=frozenset(),
             functions=MappingProxyType(functions),
             constraints=MappingProxyType(
                 {"borrowing": cast("ConstraintFunction", borrowing)}
             ),
+            members=regime_members,
             bound_specs=(_bound(),),
         ),
     )
@@ -448,9 +443,9 @@ def test_terminal_action_evaluation_keeps_bound_status_separate_from_F(
         income=jnp.asarray(jnp.nan if invalid else 0.0),
         consumption=jnp.asarray(1.0),
     )
-    np.testing.assert_array_equal(evaluated.parts.Q, [1.0] if collective else 1.0)
+    np.testing.assert_array_equal(evaluated.parts.Q, [1.0])
     np.testing.assert_array_equal(evaluated.parts.F, desired=False)
-    np.testing.assert_array_equal(evaluated.parts.CE, [0.0] if collective else 0.0)
+    np.testing.assert_array_equal(evaluated.parts.CE, [0.0])
     np.testing.assert_array_equal(
         jnp.stack(
             (
@@ -462,10 +457,10 @@ def test_terminal_action_evaluation_keeps_bound_status_separate_from_F(
     )
 
 
-@pytest.mark.parametrize("collective", [False, True])
+@pytest.mark.parametrize("regime_members", [("self",), ("a",)])
 @pytest.mark.parametrize("invalid", [False, True])
 def test_nonterminal_action_evaluation_shares_flow_before_continuation(
-    *, collective: bool, invalid: bool
+    *, regime_members: tuple[str, ...], invalid: bool
 ) -> None:
     """Continuation aggregation keeps actual bound integrity beside economic F."""
 
@@ -489,40 +484,28 @@ def test_nonterminal_action_evaluation_shares_flow_before_continuation(
     def build_W_kwargs(_kwargs: QAndFKwargs) -> dict[ReferenceName, EconFunctionArg]:
         return {}
 
-    functions = MappingProxyType(
-        {
-            "floor": cast("EconFunction", floor),
-            "utility_a" if collective else "utility": cast("EconFunction", utility),
-        }
-    )
+    utility_name = member_name(base="utility", member=regime_members[0])
     flow = q_and_f_module._get_U_and_F(
-        functions=functions,
+        functions=MappingProxyType(
+            {
+                "floor": cast("EconFunction", floor),
+                utility_name: cast("EconFunction", utility),
+            }
+        ),
         constraints=MappingProxyType(
             {"borrowing": cast("ConstraintFunction", borrowing)}
         ),
-        utility_names=("utility_a",) if collective else ("utility",),
+        utility_names=(utility_name,),
         bound_specs=(_bound(),),
     )
-    if collective:
-        kernel = q_and_f_module._CollectiveQAndF(
-            utilities_and_F=flow,
-            compute_CE=continuation,
-            koopmans_aggregator=cast("EconFunction", W),
-            build_W_kwargs=build_W_kwargs,
-            arg_names=("income", "consumption"),
-            continuation_reads=frozenset(),
-        )
-    else:
-        kernel = q_and_f_module._QAndF(
-            U_and_F=flow,
-            continuation_reads=frozenset(),
-            objective_aggregator=None,
-            build_objective_kwargs=None,
-            compute_CE=continuation,
-            koopmans_aggregator=cast("EconFunction", W),
-            build_W_kwargs=build_W_kwargs,
-            arg_names=("income", "consumption"),
-        )
+    kernel = q_and_f_module._CollectiveQAndF(
+        utilities_and_F=flow,
+        compute_CE=continuation,
+        koopmans_aggregator=cast("EconFunction", W),
+        build_W_kwargs=build_W_kwargs,
+        arg_names=("income", "consumption"),
+        continuation_reads=frozenset(),
+    )
     assert hasattr(kernel, "evaluated"), (
         "Actual action evaluation needs bound transport."
     )
@@ -531,7 +514,7 @@ def test_nonterminal_action_evaluation_shares_flow_before_continuation(
         income=jnp.asarray(jnp.nan if invalid else 0.0),
         consumption=jnp.asarray(1.0),
     )
-    np.testing.assert_array_equal(evaluated.parts.Q, [2.0] if collective else 2.0)
+    np.testing.assert_array_equal(evaluated.parts.Q, [2.0])
     np.testing.assert_array_equal(evaluated.parts.F, desired=False)
     np.testing.assert_array_equal(evaluated.parts.CE, 1.0)
     np.testing.assert_array_equal(
@@ -581,10 +564,8 @@ def test_private_flow_transport_does_not_shadow_user_inputs(*, evaluated: bool) 
         ),
         bound_specs=(_bound(),),
     )
-    kernel = q_and_f_module._QAndF(
-        U_and_F=flow,
-        objective_aggregator=None,
-        build_objective_kwargs=None,
+    kernel = q_and_f_module._CollectiveQAndF(
+        utilities_and_F=flow,
         compute_CE=continuation,
         koopmans_aggregator=cast("EconFunction", W),
         build_W_kwargs=build_W_kwargs,
@@ -597,7 +578,7 @@ def test_private_flow_transport_does_not_shadow_user_inputs(*, evaluated: bool) 
         utilities_and_F=jnp.asarray(3.0),
     )
     value, feasible = (result.parts.Q, result.parts.F) if evaluated else result
-    np.testing.assert_array_equal(value, 4.0)
+    np.testing.assert_array_equal(value, [4.0])
     np.testing.assert_array_equal(feasible, desired=True)
 
 

@@ -1,4 +1,5 @@
 import dataclasses
+import functools
 from collections.abc import Callable, Hashable, Mapping
 from types import MappingProxyType, SimpleNamespace
 from typing import cast
@@ -48,12 +49,18 @@ from _lcm.solution.grid_search import (
     _GridSearchArgumentBuilder,
     _GridSearchPeriodKernel,
 )
-from _lcm.typing import FlatRegimeParams, MaxQOverAFunction, StateOrActionName
+from _lcm.typing import (
+    FlatRegimeParams,
+    MaxQOverAFunction,
+    QAndFArg,
+    StateOrActionName,
+)
 from _lcm.utils.logging import get_logger
 from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactAuthority, ArtifactKey
-from lcm.typing import Float1D, FloatND, RegimeName
+from lcm.typing import BoolND, Float1D, FloatND, IntND, RegimeName
+from tests.single_member import SELF, SELF_PARETO_WEIGHTS, with_member_axis
 
 
 @dataclasses.dataclass(frozen=True)
@@ -152,7 +159,7 @@ def _grid_search_period_kernels(
                 {
                     "main": CoreProgram(
                         name="main",
-                        function=core,
+                        function=_value_only(core),
                         argument_builder=_GridSearchArgumentBuilder(
                             regime_name=regime_name,
                             target_regimes=()
@@ -171,6 +178,21 @@ def _grid_search_period_kernels(
     }
 
 
+def _value_only(core: MaxQOverAFunction) -> Callable[..., FloatND]:
+    """Publish the value alone of a reducer that also reports any feasibility."""
+
+    @functools.wraps(core)
+    def value(
+        *,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        **kwargs: QAndFArg,
+    ) -> FloatND:
+        output = core(next_regime_to_V_arr=next_regime_to_V_arr, **kwargs)
+        return cast("tuple[FloatND, BoolND]", output)[0]
+
+    return value
+
+
 class MockRegime(Regime):
     """Mock Regime with only the attributes required by solve().
 
@@ -182,6 +204,7 @@ class MockRegime(Regime):
     - `active_periods`: list of periods the regime is active
     - `simulation`: a namespace declaring no replay route, so the solve
       dispatches the values-only programs
+    - `members`: the one member `"self"` of a single
     """
 
     def __init__(
@@ -192,6 +215,7 @@ class MockRegime(Regime):
     ) -> None:
         object.__setattr__(self, "solution", solution)
         object.__setattr__(self, "active_periods", active_periods)
+        object.__setattr__(self, "members", ("self",))
         object.__setattr__(
             self,
             "simulation",
@@ -221,13 +245,15 @@ def test_memory_budget_requires_jit_before_backward_induction() -> None:
         )
 
 
-def test_drain_V_arr_shards_flattens_immutable_return_mappings(monkeypatch):
+def test_drain_V_arr_shards_flattens_immutable_return_mappings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The solve barrier presents every immutable mapping leaf to JAX."""
     V_0 = jnp.asarray([1.0, 2.0])
     V_1 = jnp.asarray([3.0])
-    drained = []
+    drained: list[FloatND] = []
 
-    def _record_drained_arrays(arrays):
+    def _record_drained_arrays(arrays: list[FloatND]) -> None:
         drained.extend(arrays)
 
     monkeypatch.setattr(
@@ -248,7 +274,7 @@ def test_drain_V_arr_shards_flattens_immutable_return_mappings(monkeypatch):
     ]
 
 
-def test_backward_induction():
+def test_backward_induction() -> None:
     """`solve` runs backward induction over hand-written engine inputs.
 
     The inputs a model specification would normally produce -- flat params, a
@@ -283,20 +309,21 @@ def test_backward_induction():
 
     def _Q_and_F(
         *,
-        consumption,
-        lazy,
-        wealth,
-        labor_supply,
-        next_regime_to_V_arr,
-        period,  # noqa: ARG001
-        age,  # noqa: ARG001
-        discount_factor=0.9,
-    ):
+        consumption: FloatND,
+        lazy: FloatND,
+        wealth: FloatND,
+        labor_supply: FloatND,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        period: IntND,  # noqa: ARG001
+        age: FloatND,  # noqa: ARG001
+        discount_factor: float = 0.9,
+    ) -> tuple[FloatND, BoolND]:
         next_wealth = wealth + labor_supply - consumption
         next_lazy = lazy
-        # Interpolate the period target's next-period V array at the next state.
+        # Interpolate the period target's next-period V array at the next state,
+        # in the single's member `"self"`.
         expected_V = map_coordinates(
-            input=next_regime_to_V_arr["default"],
+            input=next_regime_to_V_arr["default"][..., 0],
             coordinates=jnp.array([next_wealth, next_lazy]),
         )
 
@@ -309,14 +336,14 @@ def test_backward_induction():
 
     def _terminal_Q_and_F(
         *,
-        consumption,
-        lazy,
-        wealth,
-        labor_supply,
-        next_regime_to_V_arr,  # noqa: ARG001
-        period,  # noqa: ARG001
-        age,  # noqa: ARG001
-    ):
+        consumption: FloatND,
+        lazy: FloatND,
+        wealth: FloatND,
+        labor_supply: FloatND,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],  # noqa: ARG001
+        period: IntND,  # noqa: ARG001
+        age: FloatND,  # noqa: ARG001
+    ) -> tuple[FloatND, BoolND]:
         # The last period has no period target, so nothing is read from the
         # empty `next_regime_to_V_arr`.
         return (
@@ -325,16 +352,20 @@ def test_backward_induction():
         )
 
     max_Q_over_a = get_max_Q_over_a(
-        Q_and_F=_Q_and_F,
+        Q_and_F=with_member_axis(_Q_and_F),
         action_names=("consumption", "labor_supply"),
         state_names=("lazy", "wealth"),
         batch_sizes={"lazy": 0, "wealth": 0},
+        members=SELF,
+        pareto_weights=SELF_PARETO_WEIGHTS,
     )
     terminal_max_Q_over_a = get_max_Q_over_a(
-        Q_and_F=_terminal_Q_and_F,
+        Q_and_F=with_member_axis(_terminal_Q_and_F),
         action_names=("consumption", "labor_supply"),
         state_names=("lazy", "wealth"),
         batch_sizes={"lazy": 0, "wealth": 0},
+        members=SELF,
+        pareto_weights=SELF_PARETO_WEIGHTS,
     )
 
     regime = MockRegime(
@@ -370,7 +401,7 @@ def test_backward_induction():
     assert "default" in solution.value_functions[1]
 
 
-def test_backward_induction_single_period_Qc_arr():
+def test_backward_induction_single_period_Qc_arr() -> None:
     state_action_space = StateActionSpace(
         discrete_actions=MappingProxyType({}),
         continuous_actions=MappingProxyType(
@@ -388,17 +419,28 @@ def test_backward_induction_single_period_Qc_arr():
         state_and_discrete_action_names=("a", "b", "c"),
     )
 
-    def _Q_and_F(*, a, c, b, d, next_regime_to_V_arr, period, age):  # noqa: ARG001
+    def _Q_and_F(
+        *,
+        a: FloatND,
+        c: FloatND,
+        b: FloatND,
+        d: FloatND,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],  # noqa: ARG001
+        period: IntND,  # noqa: ARG001
+        age: FloatND,  # noqa: ARG001
+    ) -> tuple[FloatND, BoolND]:
         # `next_regime_to_V_arr` is part of the kernel signature; this Q ignores it.
         util = d
         feasib = d <= a + b + c
         return util, feasib
 
     max_Q_over_a = get_max_Q_over_a(
-        Q_and_F=_Q_and_F,
+        Q_and_F=with_member_axis(_Q_and_F),
         action_names=("d",),
         state_names=("a", "b", "c"),
         batch_sizes={"a": 0, "b": 0, "c": 0},
+        members=SELF,
+        pareto_weights=SELF_PARETO_WEIGHTS,
     )
 
     expected = np.array([[[6.0, 7, 8], [7, 8, 9]], [[7, 8, 9], [8, 9, 10]]])
@@ -432,7 +474,7 @@ def test_backward_induction_single_period_Qc_arr():
     )
 
     # `value_functions` is keyed by period, then by regime name.
-    aaae(got.value_functions[0]["default"], expected)
+    aaae(got.value_functions[0]["default"], expected[..., np.newaxis])
 
 
 def _aligned_transfer() -> ResolvedValueTransfer:

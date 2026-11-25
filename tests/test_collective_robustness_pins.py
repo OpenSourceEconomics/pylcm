@@ -7,9 +7,6 @@ by its members rather than by its action grid, a coordinate that never blends tw
 categories, and the two names an edge cannot be declared without.
 """
 
-from pathlib import Path
-
-import cloudpickle
 import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_equal
@@ -24,13 +21,10 @@ from lcm import (
 )
 from lcm.collective import MemberRoute
 from lcm.exceptions import PyLCMError
-from lcm.result import SimulationResult
 from lcm.typing import DiscreteAction, FloatND
 from tests.collective_fixtures import (
     Work,
-    make_couple_initial_conditions,
     make_tied_shares_model,
-    make_two_member_model,
 )
 from tests.mock_regime import MockRegime
 
@@ -58,29 +52,6 @@ def test_regime_weights_keep_the_values_they_were_declared_with() -> None:
 def test_mock_regime_carries_no_gated_edges() -> None:
     """A regime-shaped object carries no gated edges: they live on the source's law."""
     assert not hasattr(MockRegime(), "gated_edges")
-
-
-def test_saved_collective_result_lacking_member_metadata_names_the_field(
-    tmp_path: Path,
-) -> None:
-    """Reading a saved collective result fails by naming the metadata it lacks.
-
-    A result written without the per-regime member mapping cannot say
-    which columns a collective regime's value splits into, so reading it back
-    reports `regime_to_member_axis` as the missing field.
-    """
-    model, params = make_two_member_model()
-    result = model.simulate(
-        params=params,
-        initial_conditions=make_couple_initial_conditions(n_subjects=2),
-        log_level="off",
-    )
-    directory = tmp_path / "result"
-    result.save(directory=directory)
-    _drop_member_metadata(directory=directory)
-
-    with pytest.raises(PyLCMError, match="regime_to_member_axis"):
-        SimulationResult.load(directory=directory).to_dataframe()
 
 
 @pytest.mark.parametrize("action_order", [("a", "b"), ("b", "a")])
@@ -131,21 +102,6 @@ def test_the_route_type_is_exported_and_the_edge_type_is_not() -> None:
     """
     assert getattr(lcm, "MemberRoute", None) is MemberRoute
     assert not hasattr(lcm, "GatedEdge")
-
-
-def _drop_member_metadata(*, directory: Path) -> None:
-    """Rewrite a saved result's metadata payload without its member mapping.
-
-    Args:
-        directory: Directory `SimulationResult.save` wrote to.
-
-    """
-    path = directory / "metadata.pkl"
-    with path.open("rb") as fh:
-        metadata = cloudpickle.load(fh)
-    del metadata.result_metadata.__dict__["regime_to_member_axis"]
-    with path.open("wb") as fh:
-        cloudpickle.dump(metadata, fh)
 
 
 def _wife_payoff(work: DiscreteAction) -> FloatND:

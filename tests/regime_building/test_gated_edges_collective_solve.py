@@ -353,7 +353,7 @@ def test_raw_ungated_mixed_transition_still_rejected() -> None:
     # Drop the gate but keep the singleton -> collective transition.
     laws = _consent_laws(None)
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    with pytest.raises(NotImplementedError, match="member_axis"):
+    with pytest.raises(NotImplementedError, match="members"):
         process_regimes(
             prepared_structure=build_prepared_structure(
                 user_regimes=finalize_regimes(

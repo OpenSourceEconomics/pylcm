@@ -21,19 +21,15 @@ from _lcm.regime_building.max_Q_over_a import (
 )
 from _lcm.regime_building.Q_and_F import (
     BoundedQAndF,
-    get_Q_and_F_terminal,
     get_Q_and_F_terminal_collective,
 )
 from _lcm.simulation.program_types import SUBJECT_WIDTH_KEYWORD
 from _lcm.simulation.programs import _SubjectTiled
 from _lcm.simulation.simulate import _canonical_Q_at_actions, _read_external_replay
 from _lcm.simulation.transitions import create_regime_state_action_space
-from _lcm.solution.action_reduction import HardMaxResult
 from _lcm.solution.action_streaming import (
     build_partitioned_streaming_max_Q_over_a,
     build_streaming_collective_max_Q_over_a,
-    build_streaming_ev1_max_Q_over_a,
-    build_streaming_max_Q_over_a,
 )
 from _lcm.solution.collective_action_reduction import CollectiveHardMaxResult
 from _lcm.solution.feasibility import (
@@ -41,7 +37,6 @@ from _lcm.solution.feasibility import (
     BoundInputStatus,
     CountedGridSearch,
 )
-from _lcm.solution.logsumexp_action_reduction import LogSumExpResult
 from _lcm.typing import (
     ConstraintFunction,
     ConstraintFunctionsMapping,
@@ -97,6 +92,7 @@ from tests.constraints.test_dynamic_lower_bound import (
     floor_helper,
     lower,
 )
+from tests.single_member import SELF, SELF_PARETO_WEIGHTS
 from tests.solution.test_dynamic_bound_authority import _bound
 
 
@@ -467,62 +463,6 @@ def test_actual_invariant_dispatch_keeps_floor_integrity_across_code_outputs(
 
 
 @pytest.mark.parametrize("invalid", [False, True])
-@pytest.mark.parametrize("width", [1, 3])
-def test_streamed_ev1_owner_keeps_integrity_outside_logsum_mass(
-    *,
-    invalid: bool,
-    width: int,
-) -> None:
-    """
-    EV1 branch streaming retains actual floor validity beside the same logsum
-    value.
-    """
-
-    def floor(*, income: FloatND) -> FloatND:
-        return income
-
-    def utility(*, consumption: FloatND) -> FloatND:
-        return consumption
-
-    def borrowing(*, consumption: FloatND, floor: FloatND) -> BoolND:
-        return -consumption >= floor
-
-    kernel = get_Q_and_F_terminal(
-        flat_param_names=frozenset(),
-        functions=MappingProxyType(
-            {
-                "utility": cast("EconFunction", utility),
-                "floor": cast("EconFunction", floor),
-            }
-        ),
-        constraints=MappingProxyType(
-            {"borrowing": cast("ConstraintFunction", borrowing)}
-        ),
-        bound_specs=(_bound(),),
-    )
-    streamed = build_streaming_ev1_max_Q_over_a(
-        Q_and_F=kernel,
-        action_names=("consumption",),
-        n_discrete_action_axes=1,
-        block_width=width,
-        scale=0.5,
-    )
-    result = jax.jit(
-        lambda: streamed(
-            next_regime_to_V_arr=MappingProxyType({}),
-            period=jnp.int32(0),
-            age=jnp.asarray(0.0),
-            income=jnp.asarray(jnp.nan if invalid else -3.0),
-            consumption=jnp.asarray([1.0, 2.0]),
-        )
-    )()
-    assert type(result) is BoundedResult
-    expected = -np.inf if invalid else 2.0 + 0.5 * np.log1p(np.exp(-2.0))
-    np.testing.assert_allclose(result.output.smoothed_value, expected, rtol=1e-6)
-    np.testing.assert_array_equal(jnp.stack(result.bound_status[0]), [invalid, False])
-
-
-@pytest.mark.parametrize("invalid", [False, True])
 def test_action_partitions_keep_empty_owners_neutral_to_floor_integrity(
     *,
     invalid: bool,
@@ -541,7 +481,8 @@ def test_action_partitions_keep_empty_owners_neutral_to_floor_integrity(
     def borrowing(*, consumption: FloatND, floor: FloatND) -> BoolND:
         return -consumption >= floor
 
-    kernel = get_Q_and_F_terminal(
+    kernel = get_Q_and_F_terminal_collective(
+        members=SELF,
         flat_param_names=frozenset(),
         functions=MappingProxyType(
             {
@@ -560,6 +501,8 @@ def test_action_partitions_keep_empty_owners_neutral_to_floor_integrity(
         block_width=1,
         n_partitions=4,
         axis_name="owners",
+        members=SELF,
+        weights={"self": 1.0},
     )
     arguments = {
         "next_regime_to_V_arr": MappingProxyType({}),
@@ -580,7 +523,7 @@ def test_action_partitions_keep_empty_owners_neutral_to_floor_integrity(
     )
     assert type(merged) is BoundedResult
     np.testing.assert_array_equal(
-        merged.output.best_value, [-np.inf if invalid else 2.0] * 4
+        merged.output.best_member_values, [[-np.inf if invalid else 2.0]] * 4
     )
     np.testing.assert_array_equal(merged.bound_status[0].nonfinite_floor, [invalid] * 4)
     np.testing.assert_array_equal(
@@ -674,9 +617,8 @@ def test_household_action_owner_keeps_integrity_outside_pareto_weights(
         batch_sizes={"income": 1},
         action_names=("consumption",),
         state_names=("income",),
-        member_axis=("a", "b"),
+        members=("a", "b"),
         pareto_weights=weights,
-        return_feasibility=True,
     )
     result = jax.jit(
         lambda: mapped(
@@ -706,7 +648,8 @@ def test_ev1_dense_owner_retains_invalid_infeasible_floor() -> None:
     def borrowing(*, consumption: FloatND, floor: FloatND) -> BoolND:
         return -consumption >= floor
 
-    kernel = get_Q_and_F_terminal(
+    kernel = get_Q_and_F_terminal_collective(
+        members=SELF,
         flat_param_names=frozenset({"taste_shocks__scale"}),
         functions=MappingProxyType(
             {
@@ -726,7 +669,8 @@ def test_ev1_dense_owner_retains_invalid_infeasible_floor() -> None:
         state_names=("income",),
         has_taste_shocks=True,
         n_discrete_action_axes=1,
-        return_feasibility=True,
+        members=SELF,
+        pareto_weights=SELF_PARETO_WEIGHTS,
     )
     result = jax.jit(
         lambda: mapped(
@@ -739,7 +683,7 @@ def test_ev1_dense_owner_retains_invalid_infeasible_floor() -> None:
         )
     )()
     assert type(result) is BoundedResult
-    np.testing.assert_array_equal(result.output[0], [1.0, -np.inf])
+    np.testing.assert_array_equal(result.output[0], [[1.0], [-np.inf]])
     np.testing.assert_array_equal(result.output[1], [False, True])
     np.testing.assert_array_equal(jnp.stack(result.bound_status[0]), [True, False])
 
@@ -760,7 +704,8 @@ def test_action_free_owner_preserves_mandatory_integrity(*, streamed: bool) -> N
     def borrowing(*, consumption: FloatND, floor: FloatND) -> BoolND:
         return -consumption >= floor
 
-    kernel = get_Q_and_F_terminal(
+    kernel = get_Q_and_F_terminal_collective(
+        members=SELF,
         flat_param_names=frozenset(),
         functions=MappingProxyType(
             {
@@ -778,7 +723,8 @@ def test_action_free_owner_preserves_mandatory_integrity(*, streamed: bool) -> N
         batch_sizes={"income": 1},
         action_names=(),
         state_names=("income",),
-        return_feasibility=True,
+        members=SELF,
+        pareto_weights=SELF_PARETO_WEIGHTS,
     )
     result = jax.jit(
         lambda: mapped(
@@ -791,7 +737,7 @@ def test_action_free_owner_preserves_mandatory_integrity(*, streamed: bool) -> N
         )
     )()
     assert type(result) is BoundedResult
-    np.testing.assert_array_equal(result.output[0], [1.0, -np.inf])
+    np.testing.assert_array_equal(result.output[0], [[1.0], [-np.inf]])
     np.testing.assert_array_equal(result.output[1], [False, True])
     np.testing.assert_array_equal(jnp.stack(result.bound_status[0]), [True, False])
 
@@ -919,7 +865,8 @@ def test_subject_tiles_fold_flags_before_concatenating_ordinary_rows(
     def borrowing(*, consumption: FloatND, floor: FloatND) -> BoolND:
         return -consumption >= floor
 
-    kernel = get_Q_and_F_terminal(
+    kernel = get_Q_and_F_terminal_collective(
+        members=SELF,
         flat_param_names=frozenset(),
         functions=MappingProxyType(
             {
@@ -947,7 +894,7 @@ def test_subject_tiles_fold_flags_before_concatenating_ordinary_rows(
             **{SUBJECT_WIDTH_KEYWORD: width},
         )
     )()
-    np.testing.assert_array_equal(result[0], [1.0, 1.0, 1.0])
+    np.testing.assert_array_equal(result[0], [[1.0], [1.0], [1.0]])
     np.testing.assert_array_equal(result[1], [True, False, False])
     assert result[2].shape == result[3].shape == ()
     np.testing.assert_array_equal(jnp.stack(result[2:]), [True, False])
@@ -959,7 +906,7 @@ def test_counted_value_owner_preserves_integrity_beside_two_counts() -> None:
     def values() -> BoundedResult[tuple[FloatND, BoolND]]:
         return BoundedResult(
             output=(
-                jnp.asarray([-jnp.inf, -jnp.inf, 2.0]),
+                jnp.asarray([[-jnp.inf], [-jnp.inf], [2.0]]),
                 jnp.asarray([False, True, False]),
             ),
             bound_status=(
@@ -970,10 +917,10 @@ def test_counted_value_owner_preserves_integrity_beside_two_counts() -> None:
             ),
         )
 
-    counted = CountedGridSearch(function=values, collective=False)
+    counted = CountedGridSearch(function=values)
     result = jax.jit(counted)()
     assert type(result) is BoundedResult
-    np.testing.assert_array_equal(result.output[0], [-np.inf, -np.inf, 2.0])
+    np.testing.assert_array_equal(result.output[0], [[-np.inf], [-np.inf], [2.0]])
     np.testing.assert_array_equal(jnp.stack(result.output[1:]), [1, 1])
     np.testing.assert_array_equal(jnp.stack(result.bound_status[0]), [True, False])
 
@@ -993,7 +940,8 @@ def test_state_axis_owners_keep_integrity_independent_of_quadrature(
     def borrowing(*, consumption: FloatND, floor: FloatND) -> BoolND:
         return -consumption >= floor
 
-    kernel = get_Q_and_F_terminal(
+    kernel = get_Q_and_F_terminal_collective(
+        members=SELF,
         flat_param_names=frozenset(),
         functions=MappingProxyType(
             {
@@ -1016,7 +964,8 @@ def test_state_axis_owners_keep_integrity_independent_of_quadrature(
         batch_sizes={"income": 1},
         action_names=("consumption",),
         state_names=("income",),
-        return_feasibility=True,
+        members=SELF,
+        pareto_weights=SELF_PARETO_WEIGHTS,
         **owner_kwargs,
     )
     result = jax.jit(
@@ -1033,7 +982,7 @@ def test_state_axis_owners_keep_integrity_independent_of_quadrature(
     assert all(flag.shape == () for flag in result.bound_status[0]), (
         "State owners must reduce validity without retaining a coordinate bank."
     )
-    np.testing.assert_array_equal(result.output[0], [0.0, -np.inf])
+    np.testing.assert_array_equal(result.output[0], [[0.0], [-np.inf]])
     np.testing.assert_array_equal(result.output[1], [False, True])
     np.testing.assert_array_equal(jnp.stack(result.bound_status[0]), [True, False])
 
@@ -1054,7 +1003,8 @@ def test_actual_action_owners_preserve_invalid_infeasible_floor(
     def borrowing(*, consumption: FloatND, floor: FloatND) -> BoolND:
         return -consumption >= floor
 
-    kernel = get_Q_and_F_terminal(
+    kernel = get_Q_and_F_terminal_collective(
+        members=SELF,
         flat_param_names=frozenset(),
         functions=MappingProxyType(
             {
@@ -1073,7 +1023,8 @@ def test_actual_action_owners_preserve_invalid_infeasible_floor(
         batch_sizes={"consumption": 1},
         action_names=("income",),
         state_names=("consumption",),
-        return_feasibility=True,
+        members=SELF,
+        pareto_weights=SELF_PARETO_WEIGHTS,
     )
     result = jax.jit(
         lambda: mapped(
@@ -1088,7 +1039,7 @@ def test_actual_action_owners_preserve_invalid_infeasible_floor(
     assert type(result) is BoundedResult, (
         "Action owners must retain mandatory validity."
     )
-    np.testing.assert_array_equal(result.output[0], [1.0, -np.inf])
+    np.testing.assert_array_equal(result.output[0], [[1.0], [-np.inf]])
     np.testing.assert_array_equal(result.output[1], [False, True])
     np.testing.assert_array_equal(
         jnp.stack(result.bound_status[0]),
@@ -1130,7 +1081,7 @@ def test_canonical_action_builders_receive_only_runtime_bound_authority(
 
 _MARKER = "stablehlo.round_nearest_even"
 _MARKED_CONSUMPTION = (0.3, 0.9, 1.4, 2.2, 2.6, 3.1, 3.7)
-_STREAM_ROUTES = ("hard_max", "collective", "partitioned", "ev1")
+_STREAM_ROUTES = ("single", "collective", "partitioned")
 
 
 @pytest.mark.parametrize("route", _STREAM_ROUTES)
@@ -1169,12 +1120,7 @@ def test_bounded_action_streams_match_the_unbounded_stream(
 
 
 type _MarkedStreamResult = (
-    HardMaxResult
-    | LogSumExpResult
-    | CollectiveHardMaxResult
-    | BoundedResult[HardMaxResult]
-    | BoundedResult[LogSumExpResult]
-    | BoundedResult[CollectiveHardMaxResult]
+    CollectiveHardMaxResult | BoundedResult[CollectiveHardMaxResult]
 )
 
 
@@ -1186,52 +1132,44 @@ def _marked_stream(
     work = jnp.asarray([0.0, 1.0])
     consumption = jnp.asarray(_MARKED_CONSUMPTION)
     action_names = ("work", "consumption")
-    if route == "hard_max":
-        stream = build_streaming_max_Q_over_a(
-            Q_and_F=kernel, action_names=action_names, block_width=block_width
-        )
-    elif route == "collective":
-        stream = build_streaming_collective_max_Q_over_a(
-            Q_and_F=kernel,
-            action_names=action_names,
-            block_width=block_width,
-            members=("a", "b"),
-            weights={"a": 1.0, "b": 0.5},
-        )
-    elif route == "ev1":
-        stream = build_streaming_ev1_max_Q_over_a(
-            Q_and_F=kernel,
-            action_names=action_names,
-            n_discrete_action_axes=1,
-            block_width=block_width,
-            scale=0.5,
-        )
-    else:
+    members, weights = (
+        (("a", "b"), {"a": 1.0, "b": 0.5})
+        if route == "collective"
+        else (SELF, {"self": 1.0})
+    )
+    if route == "partitioned":
         partitioned = build_partitioned_streaming_max_Q_over_a(
             Q_and_F=kernel,
             action_names=action_names,
             block_width=block_width,
             n_partitions=2,
             axis_name="owners",
+            members=members,
+            weights=weights,
         )
 
         def run_partitioned(income: FloatND) -> _MarkedStreamResult:
             return jax.vmap(
-                lambda _: cast(
-                    "_MarkedStreamResult",
-                    partitioned(
-                        next_regime_to_V_arr=MappingProxyType({}),
-                        period=jnp.int32(0),
-                        age=jnp.asarray(0.0),
-                        income=income,
-                        work=work,
-                        consumption=consumption,
-                    ),
+                lambda _: partitioned(
+                    next_regime_to_V_arr=MappingProxyType({}),
+                    period=jnp.int32(0),
+                    age=jnp.asarray(0.0),
+                    income=income,
+                    work=work,
+                    consumption=consumption,
                 ),
                 axis_name="owners",
             )(jnp.arange(2, dtype=jnp.int32))
 
         return run_partitioned
+
+    stream = build_streaming_collective_max_Q_over_a(
+        Q_and_F=kernel,
+        action_names=action_names,
+        block_width=block_width,
+        members=members,
+        weights=weights,
+    )
 
     def run(income: FloatND) -> _MarkedStreamResult:
         return stream(
@@ -1280,7 +1218,7 @@ def _marked_kernel(*, route: str, bounded: bool) -> QAndFFunction:
             members=("a", "b"),
             bound_specs=bound_specs,
         )
-    return get_Q_and_F_terminal(
+    return get_Q_and_F_terminal_collective(
         flat_param_names=frozenset(),
         functions=MappingProxyType(
             {
@@ -1289,6 +1227,7 @@ def _marked_kernel(*, route: str, bounded: bool) -> QAndFFunction:
             }
         ),
         constraints=constraints,
+        members=SELF,
         bound_specs=bound_specs,
     )
 

@@ -66,7 +66,7 @@ def _finalized_keeper_regimes() -> MappingProxyType[RegimeName, FinalizedUserReg
     )
 
 
-def test_dcegm_accepts_utility_reading_passive_housing():
+def test_dcegm_accepts_utility_reading_passive_housing() -> None:
     """DC-EGM admits utility reading a passive continuous state directly.
 
     The keeper's utility reads the passive housing state through
@@ -86,7 +86,7 @@ def test_dcegm_accepts_utility_reading_passive_housing():
 
 @pytest.mark.requires(device="gpu")
 @pytest.mark.coverage(backends=("gpu-small", "gpu-large"), precisions="representative")
-def test_housing_keeper_solves_to_finite_values():
+def test_housing_keeper_solves_to_finite_values() -> None:
     """The keeper model solves to finite, housing-monotone value functions.
 
     A larger housing stock yields a larger within-period service flow
@@ -100,10 +100,10 @@ def test_housing_keeper_solves_to_finite_values():
     n_income = 2
 
     for period in sorted(solution)[:-1]:
-        keeper_V = np.asarray(solution[period]["keeper"])
-        # V axes are (income, liquid_assets, housing); housing is the passive
-        # trailing axis.
-        assert keeper_V.shape == (n_income, n_liquid, n_housing)
+        # V axes are (income, liquid_assets, housing, member); housing is the
+        # passive state axis, and the single's one member "self" is index 0.
+        assert solution[period]["keeper"].shape == (n_income, n_liquid, n_housing, 1)
+        keeper_V = np.asarray(solution[period]["keeper"])[..., 0]
         assert np.all(np.isfinite(keeper_V)), f"period={period}"
         housing_increments = np.diff(keeper_V, axis=-1)
         assert np.all(housing_increments > 0.0), f"period={period}"
@@ -111,7 +111,7 @@ def test_housing_keeper_solves_to_finite_values():
 
 @pytest.mark.requires(device="gpu")
 @pytest.mark.coverage(backends=("gpu-small", "gpu-large"), precisions="representative")
-def test_housing_keeper_dcegm_matches_brute():
+def test_housing_keeper_dcegm_matches_brute() -> None:
     """The keeper DC-EGM value function matches its brute-force twin.
 
     Both variants solve the same keeper economics — utility
@@ -158,9 +158,14 @@ def test_housing_keeper_dcegm_matches_brute():
     converged_liquid = liquid >= 15.0
     converged_housing = housing > housing[0]
     for period in sorted(brute_solution)[:-1]:
-        dcegm_V = np.asarray(dcegm_solution[period]["keeper"])
-        brute_V = np.asarray(brute_solution[period]["keeper"])
-        assert dcegm_V.shape == brute_V.shape == expected_shape, f"period={period}"
+        assert (
+            dcegm_solution[period]["keeper"].shape
+            == brute_solution[period]["keeper"].shape
+            == (*expected_shape, 1)
+        ), f"period={period}"
+        # The single's one member "self" is index 0 of the trailing member axis.
+        dcegm_V = np.asarray(dcegm_solution[period]["keeper"])[..., 0]
+        brute_V = np.asarray(brute_solution[period]["keeper"])[..., 0]
         assert np.all(dcegm_V >= brute_V - 1e-2), f"period={period}"
         conv_dcegm = dcegm_V[:, converged_liquid, :][:, :, converged_housing]
         conv_brute = brute_V[:, converged_liquid, :][:, :, converged_housing]

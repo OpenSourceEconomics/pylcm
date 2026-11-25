@@ -67,7 +67,7 @@ from tests.regime_building.test_collective_regime_simulate import (
 
 
 class _Snapshot(TypedDict):
-    member_axis: tuple[str, ...] | None
+    members: tuple[str, ...]
     pareto_objective: ParetoObjective | None
     exit: tuple[str, dict[str, ExitTarget]] | None
 
@@ -118,7 +118,7 @@ def test_collective_utility_declares_the_regimes_members() -> None:
     """The `utilities` keys are the members, in the order they are written."""
     regime = _new_vocabulary_regimes()["married_ir"]
 
-    assert regime.member_axis == ("f", "m")
+    assert regime.members == ("f", "m")
 
 
 def test_collective_utility_becomes_one_utility_function_per_member() -> None:
@@ -415,7 +415,7 @@ def _derived_snapshot(*, regime: Regime) -> _Snapshot:
     value, with the declared callables compared by identity.
     """
     return {
-        "member_axis": regime.member_axis,
+        "members": regime.members,
         "pareto_objective": regime.pareto_objective,
         "exit": None
         if regime.exit is None
@@ -426,15 +426,15 @@ def _derived_snapshot(*, regime: Regime) -> _Snapshot:
 def _expected_snapshots() -> dict[RegimeName, _Snapshot]:
     """A plain collective source, the household's own exit and a singleton."""
     plain: _Snapshot = {
-        "member_axis": None,
+        "members": ("self",),
         "pareto_objective": None,
         "exit": None,
     }
     return {
-        "married": {**plain, "member_axis": ("f", "m")},
+        "married": {**plain, "members": ("f", "m")},
         "married_ir": {
             **plain,
-            "member_axis": ("f", "m"),
+            "members": ("f", "m"),
             "exit": (
                 "Unilateral",
                 {
@@ -451,7 +451,7 @@ def _expected_snapshots() -> dict[RegimeName, _Snapshot]:
                 },
             ),
         },
-        "married_terminal": {**plain, "member_axis": ("f", "m")},
+        "married_terminal": {**plain, "members": ("f", "m")},
         "single_f": plain,
     }
 
@@ -478,7 +478,7 @@ def test_the_declarations_determine_every_engine_facing_fact(
 @pytest.mark.parametrize(
     "slot",
     [
-        "member_axis",
+        "members",
         "pareto_objective",
         "gated_edges",
     ],
@@ -503,7 +503,7 @@ def test_a_derived_slot_cannot_be_declared(slot: str) -> None:
 @pytest.mark.parametrize(
     "slot",
     [
-        "member_axis",
+        "members",
         "pareto_objective",
         "gated_edges",
     ],

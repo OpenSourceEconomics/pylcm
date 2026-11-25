@@ -626,10 +626,10 @@ def _pass_through(regime: Regime) -> Regime:
         states=regime.states,
         state_transitions={name: fixed_transition(name) for name in regime.states},
         functions={
-            "utility": pass_through_utility
-            if regime.member_axis is None
-            else CollectiveUtility(
+            "utility": CollectiveUtility(
                 utilities=dict.fromkeys(regime.members, pass_through_utility)
             )
+            if isinstance(regime.functions.get("utility"), CollectiveUtility)
+            else pass_through_utility
         },
     )

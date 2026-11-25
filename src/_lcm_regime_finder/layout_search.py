@@ -38,7 +38,7 @@ def regime_kinds(declarations: Record) -> dict[str, Record]:
                  for name in cell.get("renegotiated_states", [])}
         key = canonical([cell.get("stage"), cell.get("solver_identity"),
                          {k: v for k, v in operators.items() if k != "taste_shocks"},
-                         cell.get("member_axis"), cell.get("exit_identity"), lists])
+                         cell.get("members"), cell.get("exit_identity"), lists])
         record = kinds.setdefault(cell["regime"], {
             "terminal": True, "key": key, "taste_shocks": operators.get("taste_shocks"),
             "discrete_choice": False})
@@ -92,7 +92,7 @@ def dense_regimes(kinds: Mapping[str, Record]) -> list[tuple[str, ...]]:
 
 def member_count(cell: Record) -> int:
     """A collective regime stores one value and one action value per member."""
-    return len(cell.get("member_axis") or ()) or 1
+    return len(cell.get("members") or ()) or 1
 
 
 type Point = tuple[tuple[str, int], ...]

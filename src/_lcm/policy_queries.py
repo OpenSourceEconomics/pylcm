@@ -43,9 +43,7 @@ from _lcm.grids import Grid
 from _lcm.off_grid import ProjectedGridRule, count_projected_off_grid
 from _lcm.output_roles import OutputRole, target_role
 from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
-from _lcm.regime_building.argmax import argmax_and_max
 from _lcm.regime_building.collective import (
-    ParetoWeights,
     collective_argmax_and_readout,
     decider_choice,
     decider_expected_values,
@@ -288,7 +286,7 @@ class QueryNode:
         MappingProxyType({})
     )
     """Current coordinates selected together with the root's retained policy."""
-    gated_channels: Mapping[RegimeName, tuple[int | None, ...]] = MappingProxyType({})
+    gated_channels: Mapping[RegimeName, tuple[int, ...]] = MappingProxyType({})
     """Open-branch value components, stacked inside the admitted query core."""
     available: Callable[..., BoolND] | None = None
     """Caller-context guard evaluated before a demanded benchmark."""
@@ -411,8 +409,7 @@ class QueryNode:
     @property
     def value_shape(self) -> tuple[int, ...]:
         """Return the answer owner's tuple shape, independent of physical laws."""
-        member_axis = self.context.member_axis
-        return () if member_axis is None else (len(member_axis),)
+        return (len(self.context.members),)
 
 
 def gated_query_targets(
@@ -945,10 +942,10 @@ def build_policy_query_kernel(
     chunk_size = min(chunk_size, size)
     row_batch = _row_batch(chunk_size=chunk_size, halvings=halvings)
     bank_size = _get_padded_query_bank_size(size=size, chunk_size=chunk_size)
-    member_axis = root_context.member_axis
-    member_shape = () if member_axis is None else (len(member_axis),)
+    member_shape = (len(root_context.members),)
     value_shape = (
-        tuple(value.size for value in root_space.states.values()) + member_shape
+        *(value.size for value in root_space.states.values()),
+        *member_shape,
     )
     bank_shape = (bank_size, *member_shape)
     dtype = jnp.asarray(0.0).dtype
@@ -2176,10 +2173,7 @@ def query_arguments(
         for target, indices in node.gated_channels.items():
             value = values[target]
             values[target] = jnp.stack(
-                tuple(
-                    value if index is None else value[..., index] for index in indices
-                ),
-                axis=-1,
+                tuple(value[..., index] for index in indices), axis=-1
             )
         arguments["next_regime_to_V_arr"] = MappingProxyType(values)
     arguments.setdefault(_PHYSICAL_CONTEXTS, {})
@@ -2316,11 +2310,11 @@ def _active_query_cell(
             arguments=arguments,
         )
         valid &= taste_valid
-    elif context.member_axis is not None:
-        pareto_weights = cast("ParetoWeights", context.pareto_weights)
+    else:
+        pareto_weights = context.pareto_weights
         action, values, _ = collective_argmax_and_readout(
             member_Q={
-                name: q[..., index] for index, name in enumerate(context.member_axis)
+                name: q[..., index] for index, name in enumerate(context.members)
             },
             feasibility=feasible,
             weights=_evaluate_pareto_weights(
@@ -2332,9 +2326,7 @@ def _active_query_cell(
             ),
             action_axes=axes,
         )
-        value = jnp.stack(tuple(values[name] for name in context.member_axis))
-    else:
-        action, value = argmax_and_max(a=q, where=feasible, initial=-jnp.inf)
+        value = jnp.stack(tuple(values[name] for name in context.members))
     valid = (
         jnp.all(valid)
         & ~jnp.any(jnp.isnan(value))
@@ -2375,7 +2367,7 @@ def _active_query_cell(
                     if "taste_shock_key" in arguments
                     else {}
                 ),
-                **({} if weights is None else {"weights": weights}),
+                "weights": weights,
             }
         answer = node.decision(
             **{
@@ -2465,16 +2457,12 @@ def _taste_query_choice(
     return action, value, jnp.all(jnp.isfinite(scale) & (scale > 0))
 
 
-def _taste_weights(
-    *, node: QueryNode, arguments: Mapping[str, PytreeValue]
-) -> FloatND | None:
-    """A household's Pareto weights in member order; `None` for a single."""
+def _taste_weights(*, node: QueryNode, arguments: Mapping[str, PytreeValue]) -> FloatND:
+    """The household's Pareto weights in member order."""
     context = node.context
-    if context.member_axis is None:
-        return None
     return _stacked_pareto_weights(
         pareto_weights=context.pareto_weights,
-        member_axis=context.member_axis,
+        members=context.members,
         states_actions_params=cast("QAndFKwargs", arguments),
     )
 
@@ -2483,30 +2471,29 @@ def taste_choice(
     *,
     values: FloatND,
     at_choice: FloatND,
-    decider: IntND | None,
+    decider: IntND,
     scale: FloatND,
     key: jax.Array | None,
 ) -> tuple[jax.Array, FloatND]:
-    """Choose among the chooser's taste alternatives and publish their value.
+    """Choose among the decider's taste alternatives and publish their value.
 
-    With `key`, the chooser draws: it takes the alternative maximizing `values`
+    With `key`, the decider draws: it takes the alternative maximizing `values`
     plus one mean-zero EV1 term each, and publishes `at_choice` there. Without
-    it, the choice is the noise-free argmax, and the value is the chooser's
-    log-sum, with every other member of a household at its mean of `at_choice`
-    under the decider's choice probabilities (`decider_expected_values`).
+    it, the choice is the noise-free argmax, and the value is the decider's
+    log-sum, with every other member at its mean of `at_choice` under the
+    decider's choice probabilities (`decider_expected_values`).
 
     Args:
-        values: The chooser's value of each alternative.
-        at_choice: Each alternative's published value: `values` for a single,
-            every member's value in a trailing member axis for a household.
-        decider: A household decider's member index; `None` for a single.
+        values: The decider's value of each alternative.
+        at_choice: Each alternative's published value, every member's value in
+            a trailing member axis.
+        decider: The household decider's member index.
         scale: The taste-shock scale.
         key: The acting draw's key, or `None` to price the alternatives.
 
     Returns:
         The index of the chosen alternative and the published value.
     """
-    from _lcm.logsum import logsum_and_softmax  # noqa: PLC0415
     from _lcm.regime_building.max_Q_over_a import (  # noqa: PLC0415
         draw_taste_shock_noise,
     )
@@ -2517,45 +2504,31 @@ def taste_choice(
         )
         return chosen, at_choice[chosen]
     chosen = jnp.argmax(values)
-    if decider is None:
-        value, _ = logsum_and_softmax(values=values, scale=scale, axes=(0,))
-        return chosen, value
     return chosen, decider_expected_values(
         decider=decider, Qc=values, at_choice=at_choice, scale=scale
     )
 
 
 def _taste_stay_roster(
-    *, q: FloatND, feasible: BoolND, n_discrete: int, weights: FloatND | None
-) -> tuple[FloatND, IntND, FloatND, IntND | None]:
+    *, q: FloatND, feasible: BoolND, n_discrete: int, weights: FloatND
+) -> tuple[FloatND, IntND, FloatND, IntND]:
     """Optimize continuous actions before assigning one taste per discrete cell.
 
-    Returns the chooser's value of each discrete cell, the stable action ID
-    attaining it, the published value there (`taste_choice`) and a household's
-    decider. In a household the decider chooses, the member with the positive
-    weight (`decider_choice`).
+    Returns the decider's value of each discrete cell, the stable action ID
+    attaining it, the published value there (`taste_choice`) and the decider,
+    the member with the positive weight (`decider_choice`).
     """
-    if weights is not None:
-        decider, values, continuous, at_choice = decider_choice(
-            Q=q,
-            feasibility=feasible,
-            weights=weights,
-            n_discrete_action_axes=n_discrete,
-        )
-        continuous_cells = math.prod(feasible.shape[n_discrete:])
-        identifiers = (
-            jnp.arange(values.size, dtype=jnp.int32) * continuous_cells + continuous
-        ).astype(jnp.int32)
-        return values, identifiers, at_choice, decider
-    discrete_cells = math.prod(q.shape[:n_discrete])
-    continuous_cells = math.prod(q.shape[n_discrete:])
-    masked = jnp.where(feasible, q, -jnp.inf).reshape(discrete_cells, continuous_cells)
-    continuous = jnp.argmax(masked, axis=1)
+    decider, values, continuous, at_choice = decider_choice(
+        Q=q,
+        feasibility=feasible,
+        weights=weights,
+        n_discrete_action_axes=n_discrete,
+    )
+    continuous_cells = math.prod(feasible.shape[n_discrete:])
     identifiers = (
-        jnp.arange(discrete_cells, dtype=jnp.int32) * continuous_cells + continuous
+        jnp.arange(values.size, dtype=jnp.int32) * continuous_cells + continuous
     ).astype(jnp.int32)
-    values = jnp.max(masked, axis=1)
-    return values, identifiers, values, None
+    return values, identifiers, at_choice, decider
 
 
 def _mapped_query_states(
@@ -2631,11 +2604,8 @@ def _query_action(
     landings = jnp.where(
         ordinary, _evaluated_query_landings(node=node, evaluated=evaluated), 0
     )
-    expected_q_shape = (
-        () if node.context.member_axis is None else (len(node.context.member_axis),)
-    )
-    if q.shape != expected_q_shape:
-        raise ValueError("Query Q must be scalar or the canonical member tuple.")
+    if q.shape != (len(node.context.members),):
+        raise ValueError("Query Q must carry the canonical member tuple.")
     if ordinary.dtype != jnp.bool_:
         raise TypeError("Canonical query feasibility must be boolean.")
     if ordinary.ndim != 0:

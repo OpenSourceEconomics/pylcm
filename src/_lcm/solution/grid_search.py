@@ -73,7 +73,6 @@ from _lcm.execution.value_transfer import (
 from _lcm.params.edges import regime_kernel_params
 from _lcm.solution.action_reduction import (
     COLLECTIVE_HARD_MAX_REDUCTION,
-    HARD_MAX_REDUCTION,
 )
 from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.solution.contract import (
@@ -172,8 +171,7 @@ def _select_width_keyword(*, context: SolverBuildContext, prefix: str) -> str:
     occupied.update(context.state_action_space.state_names)
     for Q_and_F in context.Q_and_F_functions.values():
         occupied.update(inspect.signature(Q_and_F).parameters)
-    if context.pareto_weights is not None:
-        occupied.update(context.pareto_weights.param_names)
+    occupied.update(context.pareto_weights.param_names)
 
     candidate = prefix
     suffix = 0
@@ -360,6 +358,7 @@ class GridSearch(Solver):
         cell_width_keyword = (
             _select_cell_width_keyword(context=context) if cell_extent > 1 else None
         )
+        n_discrete_action_axes = len(context.state_action_space.discrete_actions)
         flattened_bound_programs: set[int] = set()
         for period, Q_and_F in context.Q_and_F_functions.items():
             current_iid_plan = context.current_iid_plans.get(period)
@@ -393,19 +392,14 @@ class GridSearch(Solver):
                     "cell_width_keyword": cell_width_keyword,
                     "untiled_state_names": untiled_state_names,
                     "broadcast_state_names": broadcast_state_names,
-                    "n_discrete_action_axes": len(
-                        context.state_action_space.discrete_actions
-                    ),
-                    "has_taste_shocks": context.has_taste_shocks,
                     "co_map_state_names": context.co_map_state_names,
                     # Periods sharing one `Q_and_F` share its target tuple.
                     "co_map_v_arr_in_axes": tuple(
                         MappingProxyType({name: axes[name] for name in target_regimes})
                         for axes in context.co_map_v_arr_in_axes
                     ),
-                    "member_axis": context.member_axis,
+                    "members": context.members,
                     "pareto_weights": context.pareto_weights,
-                    "return_feasibility": True,
                 }
                 if has_objective_profile(Q_and_F=Q_and_F):
                     _fail_if_decoupled_route_is_unsupported(
@@ -423,12 +417,14 @@ class GridSearch(Solver):
                             context.state_action_space.discrete_actions
                         ),
                         has_taste_shocks=context.has_taste_shocks,
-                        member_axis=context.member_axis,
+                        members=context.members,
                         pareto_weights=context.pareto_weights,
                     )
                 elif landing_checks_of(Q_and_F):
                     program_functions[q_id] = get_landing_counting_max_Q_over_a(
-                        **common_kwargs
+                        **common_kwargs,
+                        n_discrete_action_axes=n_discrete_action_axes,
+                        has_taste_shocks=context.has_taste_shocks,
                     )
                 elif action_partition_mesh is not None:
                     program_functions[q_id] = get_action_partitioned_max_Q_over_a(
@@ -442,8 +438,7 @@ class GridSearch(Solver):
                         cell_width_keyword=cell_width_keyword,
                         untiled_state_names=untiled_state_names,
                         broadcast_state_names=broadcast_state_names,
-                        return_feasibility=True,
-                        member_axis=context.member_axis,
+                        members=context.members,
                         pareto_weights=context.pareto_weights,
                     )
                 else:
@@ -455,13 +450,17 @@ class GridSearch(Solver):
                         )
                         if stream_actions
                         else get_max_Q_over_a(
-                            **common_kwargs, current_iid_plan=current_iid_plan
+                            **common_kwargs,
+                            # A route smoothing over discrete actions is never
+                            # streamed, so only the dense reducers take these.
+                            n_discrete_action_axes=n_discrete_action_axes,
+                            has_taste_shocks=context.has_taste_shocks,
+                            current_iid_plan=current_iid_plan,
                         )
                     )
                 reducer = program_functions[q_id]
                 counted = CountedGridSearch(
                     function=cast("Callable[..., tuple[FloatND, BoolND]]", reducer),
-                    collective=context.member_axis is not None,
                     current_iid=current_iid_plan is not None,
                 )
                 program_functions[q_id] = with_signature(
@@ -493,9 +492,7 @@ class GridSearch(Solver):
                             coordinate_names=action_names,
                             coordinate_extents=action_extents,
                             canonical_order="c",
-                            reduction=HARD_MAX_REDUCTION
-                            if context.member_axis is None
-                            else COLLECTIVE_HARD_MAX_REDUCTION,
+                            reduction=COLLECTIVE_HARD_MAX_REDUCTION,
                             width_keyword=action_width_keyword,
                         ),
                     )

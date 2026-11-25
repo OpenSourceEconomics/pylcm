@@ -488,7 +488,6 @@ class NEGM(TwoMarginSolver):
             ),
             flat_param_names=context.flat_param_names
             | {bound_self.outer_post_decision},
-            member_axis=None,
         )
         if query_model is not None:
             adjuster_context = replace(
@@ -502,7 +501,7 @@ class NEGM(TwoMarginSolver):
         inner_with_child_transport = replace(
             bound_self.inner, _retain_child_feasibility=True
         )
-        adjuster_kernels = inner_with_child_transport.build_period_kernels(
+        adjuster_kernels = inner_with_child_transport.build_inner_period_kernels(
             context=adjuster_context
         )
         # The keeper is a normal passive DC-EGM: the outer post-decision is held
@@ -587,7 +586,6 @@ class NEGM(TwoMarginSolver):
                     outer_post_decision=bound_self.outer_post_decision,
                     no_adjustment_func=no_adjustment_func,
                 ),
-                member_axis=None,
             )
             if query_model is not None:
                 keeper_context = replace(
@@ -598,8 +596,10 @@ class NEGM(TwoMarginSolver):
                         periods=group_periods or (template_period,),
                     ),
                 )
-            group_keeper_kernels = inner_with_child_transport.build_period_kernels(
-                context=keeper_context
+            group_keeper_kernels = (
+                inner_with_child_transport.build_inner_period_kernels(
+                    context=keeper_context
+                )
             )
             keeper_param_checks += group_keeper_kernels.param_checks
             keeper_continuation_template = (
@@ -653,7 +653,7 @@ class NEGM(TwoMarginSolver):
                             fixed_state_names=carry_row_state_names,
                         )
                     ),
-                    member_axis=context.member_axis,
+                    members=context.members,
                 )
                 for period, adjuster_kernel in adjuster_kernels.period_kernels.items()
             }
@@ -996,10 +996,8 @@ class _NEGMPeriodKernel:
     floor_preparation: _NestedFloorPreparation | None = None
     """Canonical current-floor preparation preceding both nested cost paths."""
 
-    member_axis: tuple[str, ...] | None = field(
-        default=None, metadata={"fingerprint_omit_if_default": True}
-    )
-    """The regime's member axis, which both programs' values carry, or `None`.
+    members: tuple[str, ...]
+    """The regime's members, the axis both programs' values carry.
 
     The inner kernels publish values without it; `keeper` appends it and
     `outer_sweep` reads the member's slice of the keeper's value."""
@@ -1025,7 +1023,7 @@ class _NEGMPeriodKernel:
                     programs=_nested_feasibility_programs(
                         kernel=self, keeper=keeper, adjuster=adjuster
                     ),
-                    member_axis=self.member_axis,
+                    members=self.members,
                     keeper_output=_KEEPER_RESULT,
                 ),
             )
@@ -1115,7 +1113,7 @@ class _NEGMPeriodKernel:
             "_core_programs",
             _with_member_axis_programs(
                 programs=programs,
-                member_axis=self.member_axis,
+                members=self.members,
                 keeper_output=_KEEPER_VALUE,
             ),
         )
@@ -1251,7 +1249,7 @@ class _NEGMPeriodKernel:
 def _with_member_axis_programs(
     *,
     programs: Mapping[str, CoreProgram],
-    member_axis: tuple[str, ...] | None,
+    members: tuple[str, ...],
     keeper_output: str,
 ) -> MappingProxyType[str, CoreProgram]:
     """Publish both programs' values with the member axis.
@@ -1261,12 +1259,10 @@ def _with_member_axis_programs(
     """
     return MappingProxyType(
         {
-            "keeper": with_member_axis(
-                program=programs["keeper"], member_axis=member_axis
-            ),
+            "keeper": with_member_axis(program=programs["keeper"], members=members),
             "outer_sweep": with_member_axis(
                 program=programs["outer_sweep"],
-                member_axis=member_axis,
+                members=members,
                 value_input=keeper_output,
             ),
         }

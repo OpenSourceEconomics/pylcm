@@ -342,7 +342,7 @@ def test_a_one_member_collective_source_rejects_a_role_it_does_not_have() -> Non
     against that; checking the seed against this regime's own members is.
     """
     regimes, regime_names_to_ids = _dissolution_setup()
-    wife_only = dataclasses.replace(regimes["married"], member_axis=("f",))
+    wife_only = dataclasses.replace(regimes["married"], members=("f",))
     regimes = MappingProxyType({**regimes, "married": wife_only})
 
     with pytest.raises(InvalidInitialConditionsError, match="married"):

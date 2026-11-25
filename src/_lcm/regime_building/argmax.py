@@ -1,7 +1,7 @@
-"""Argmax and max over the trailing action axes of a Q array.
+"""Maxima paired with the identity of the element attaining them.
 
-`argmax_and_max` flattens the requested number of trailing axes, reduces over
-the flat axis, and returns the winning flat index alongside its value.
+`max_and_smallest_id` and `max_lexicographic_and_smallest_id` reduce values
+over their trailing axis and return the smallest identity attaining the maximum.
 """
 
 from functools import partial
@@ -19,94 +19,6 @@ type _FloatBitsND = Int[jax.Array, "..."]
 
 # Identity of no element; it loses every tie against a real identity.
 NO_ID = jnp.iinfo(jnp.int32).max
-
-
-def argmax_and_max(
-    *,
-    a: FloatND,
-    axis: int | tuple[int, ...] | None = None,
-    initial: float | None = None,
-    where: BoolND | None = None,
-) -> tuple[IntND, FloatND]:
-    """Compute the argmax of an n-dim array along axis.
-
-    If multiple maxima exist, the first index will be selected.
-
-    Args:
-        a: Multidimensional array.
-        axis: Axis along which to compute the argmax. If None, the argmax is computed
-            over all axes.
-        initial: The minimum value of an output element. Must be present to
-            allow computation on empty slice. See ~numpy.ufunc.reduce for details.
-        where: Elements to compare for the maximum. See ~numpy.ufunc.reduce
-            for details.
-
-    Returns:
-        - The argmax indices. Array with the same shape as a, except for the dimensions
-          specified in axis, which are dropped. The value corresponds to an index that
-          can be translated into a tuple of indices using jnp.unravel_index.
-        - The corresponding maximum values.
-
-    """
-    if axis is None:
-        axis = tuple(range(a.ndim))
-    elif isinstance(axis, int):
-        axis = (axis,)
-
-    if a.ndim == 0 or len(axis) == 0:
-        return _argmax_and_max_of_one_candidate(a=a, where=where, initial=initial)
-
-    a = _move_axes_to_back(a=a, axes=axis)
-    a = _flatten_last_n_axes(a=a, n=len(axis))
-
-    if where is not None and where.ndim != 0:
-        where = _move_axes_to_back(a=where, axes=axis)
-        where = _flatten_last_n_axes(a=where, n=len(axis))
-
-    where = (
-        jnp.ones(a.shape, dtype=bool)
-        if where is None
-        else jnp.broadcast_to(where, a.shape)
-    )
-    is_nan = jnp.isnan(a)
-    comparable = where & ~is_nan
-    lowest = -jnp.inf
-    positions = jnp.broadcast_to(jnp.arange(a.shape[-1], dtype=jnp.int32), a.shape)
-    _max, _argmax = max_and_smallest_id(
-        values=jnp.where(comparable, a, lowest),
-        ids=jnp.where(comparable, positions, NO_ID),
-        initial=lowest if initial is None else initial,
-    )
-    # A NaN among the compared elements makes the max NaN and the index zero; an
-    # `initial` above every element is the max and also reports index zero.
-    any_nan = jnp.any(where & is_nan, axis=-1)
-    _max = jnp.where(any_nan, jnp.full_like(_max, jnp.nan), _max)
-    _argmax = jnp.where(any_nan | (_argmax == NO_ID), 0, _argmax)
-
-    return _argmax, _max
-
-
-def _argmax_and_max_of_one_candidate(
-    *, a: FloatND, where: BoolND | None, initial: float | None
-) -> tuple[IntND, FloatND]:
-    """Return the index and value of each cell of `a` when nothing is reduced.
-
-    Every cell has one candidate, its own value, at index zero. The value is the
-    larger of the candidate and `initial` where `where` admits the candidate, and
-    `initial` elsewhere; without `initial`, `-inf` stands in. A
-    feasible NaN stays NaN. No reduction is involved, so a candidate above
-    `initial` keeps its exact bits.
-    """
-    floor = jnp.asarray(-jnp.inf if initial is None else initial, dtype=a.dtype)
-    admitted = (
-        jnp.ones(a.shape, dtype=bool)
-        if where is None
-        else jnp.broadcast_to(where, a.shape)
-    )
-    return (
-        jnp.zeros(a.shape, dtype=jnp.int32),
-        jnp.where(admitted, jnp.maximum(a, floor), floor),
-    )
 
 
 def max_and_smallest_id(

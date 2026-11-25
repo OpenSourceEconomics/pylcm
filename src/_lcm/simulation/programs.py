@@ -98,17 +98,13 @@ from _lcm.simulation.program_types import (
 from _lcm.simulation.taste_shock_lookup import (
     TASTE_SHOCK_LOOKUP_OUTPUT_ROLES,
     HouseholdTasteShockLookup,
-    TasteShockLookup,
 )
 from _lcm.solution.action_reduction import (
     COLLECTIVE_HARD_MAX_REDUCTION,
-    HARD_MAX_REDUCTION,
     CollectiveHardMaxResult,
-    HardMaxResult,
 )
 from _lcm.solution.action_streaming import (
     build_streaming_collective_max_Q_over_a,
-    build_streaming_max_Q_over_a,
 )
 from _lcm.solution.backward_induction import FoldAge
 from _lcm.solution.continuation_reads import rekeyed_value_reads
@@ -267,7 +263,7 @@ def build_simulation_programs(
                 Q_and_F=kernel,
                 has_taste_shocks=context.has_taste_shocks,
                 n_discrete_action_axes=len(space.discrete_actions),
-                member_axis=context.member_axis,
+                members=context.members,
                 pareto_weights=context.pareto_weights,
             )
             lookup = _decision_with_action_parts(
@@ -406,9 +402,7 @@ def _decision_programs(
                             coordinate_names=action_names,
                             coordinate_extents=action_extents,
                             canonical_order="c",
-                            reduction=HARD_MAX_REDUCTION
-                            if context.member_axis is None
-                            else COLLECTIVE_HARD_MAX_REDUCTION,
+                            reduction=COLLECTIVE_HARD_MAX_REDUCTION,
                             width_keyword=action_width_keyword,
                         ),
                     )
@@ -928,17 +922,16 @@ def _decision_body(
     extra_param_names = _get_extra_param_names(
         Q_and_F=Q_and_F, action_names=action_names, state_names=state_names
     )
-    if context.pareto_weights is not None:
-        extra_param_names = list(
-            dict.fromkeys((*extra_param_names, *context.pareto_weights.param_names))
-        )
+    extra_param_names = list(
+        dict.fromkeys((*extra_param_names, *context.pareto_weights.param_names))
+    )
     cell = with_signature(
         _StreamedArgmaxQOverA(
             Q_and_F=Q_and_F,
             action_names=action_names,
             q_and_f_arg_names=q_and_f_arg_names,
             action_width_keyword=action_width_keyword,
-            member_axis=context.member_axis,
+            members=context.members,
             pareto_weights=context.pareto_weights,
         ),
         args=[
@@ -970,8 +963,8 @@ def _lookup_body_and_roles(
     Q_and_F: QAndFFunction,
     has_taste_shocks: bool,
     n_discrete_action_axes: int,
-    member_axis: tuple[str, ...] | None,
-    pareto_weights: ParetoWeights | None,
+    members: tuple[str, ...],
+    pareto_weights: ParetoWeights,
 ) -> tuple[Callable[..., Callable[..., PytreeValue]], tuple[str, ...]]:
     """Return the lookup body for one kernel and the roles it publishes, in order."""
     match has_objective_profile(Q_and_F=Q_and_F), has_taste_shocks:
@@ -980,7 +973,7 @@ def _lookup_body_and_roles(
                 partial(
                     DecoupledTasteShockLookup,
                     n_discrete_action_axes=n_discrete_action_axes,
-                    member_axis=member_axis,
+                    members=members,
                     pareto_weights=pareto_weights,
                 ),
                 DECOUPLED_TASTE_SHOCK_LOOKUP_OUTPUT_ROLES,
@@ -989,20 +982,18 @@ def _lookup_body_and_roles(
             return (
                 partial(
                     DecoupledWithActionParts,
-                    member_axis=member_axis,
+                    members=members,
                     pareto_weights=pareto_weights,
                 ),
                 DECOUPLED_LOOKUP_OUTPUT_ROLES,
             )
         case False, True:
             return (
-                partial(TasteShockLookup, n_discrete_action_axes=n_discrete_action_axes)
-                if member_axis is None
-                else partial(
+                partial(
                     HouseholdTasteShockLookup,
                     n_discrete_action_axes=n_discrete_action_axes,
-                    member_axis=member_axis,
-                    pareto_weights=cast("ParetoWeights", pareto_weights),
+                    members=members,
+                    pareto_weights=pareto_weights,
                 ),
                 TASTE_SHOCK_LOOKUP_OUTPUT_ROLES,
             )
@@ -1010,7 +1001,7 @@ def _lookup_body_and_roles(
             return (
                 partial(
                     _DecisionWithActionParts,
-                    member_axis=member_axis,
+                    members=members,
                     pareto_weights=pareto_weights,
                 ),
                 ACTION_VALUES_OUTPUT_ROLES,
@@ -1146,7 +1137,7 @@ def _decision_with_action_parts(
     Q_and_F: QAndFFunction,
     action_names: tuple[ActionName, ...],
     body: Callable[..., Callable[..., PytreeValue]],
-    pareto_weights: ParetoWeights | None,
+    pareto_weights: ParetoWeights,
 ) -> Callable[..., PytreeValue]:
     """Return the dense decision extended by the parts it reduces.
 
@@ -1177,7 +1168,7 @@ def _decision_with_action_parts(
             dict.fromkeys(
                 (
                     *inspect.signature(parts).parameters,
-                    *(() if pareto_weights is None else pareto_weights.arg_names),
+                    *pareto_weights.arg_names,
                 )
             )
         ),
@@ -1232,8 +1223,7 @@ class _DecisionWithActionParts:
     regime's kernel, reduced as the dense decision reduces them. A cell without a
     feasible action publishes index -1. `Q`, `U` and `CE` are unmasked: an
     infeasible entry holds what the action would have; the objective masks `Q`
-    with `F`. A household's value, `Q`, `U` and `CE` carry its trailing member
-    axis.
+    with `F`. The value, `Q`, `U` and `CE` carry the trailing member axis.
     """
 
     __name__: ClassVar[str] = "argmax_and_max_Q_over_a_with_action_parts"
@@ -1242,11 +1232,11 @@ class _DecisionWithActionParts:
     parts: Callable[..., QAndFParts]
     """The kernel's parts, mapped over the action product."""
 
-    member_axis: tuple[str, ...] | None
-    """Ordered member names of a household, or `None` without a member axis."""
+    members: tuple[str, ...]
+    """Ordered member names of the household."""
 
-    pareto_weights: ParetoWeights | None
-    """The household's Pareto weight evaluator, or `None` without a member axis."""
+    pareto_weights: ParetoWeights
+    """The household's Pareto weight evaluator."""
 
     def __call__(self, **kwargs: PytreeValue) -> ActionPartsDecisionOutput:
         """Return the chosen flat index, its value, and `Q`, `F`, `U` and `CE`."""
@@ -1255,7 +1245,7 @@ class _DecisionWithActionParts:
             "Callable[..., tuple[IntND, FloatND]]",
             _HardMaxArgmaxQOverA(
                 Q_and_F=partial(_given_action_values, Q=parts.Q, F=parts.F),
-                member_axis=self.member_axis,
+                members=self.members,
                 pareto_weights=self.pareto_weights,
             ),
         )
@@ -1268,11 +1258,10 @@ class _StreamedArgmaxQOverA:
     """The argmax of Q over a streamed action product, at one state cell.
 
     Publishes the flat identity of the winning action in the canonical C order
-    of the action product, and the value it attains — the same pair the dense
-    canonical reducer publishes, obtained by the exact hard-max stream of
-    `build_streaming_max_Q_over_a`, or for a household by the exact household
-    stream of `build_streaming_collective_max_Q_over_a`, whose winner and tie rule
-    are the dense household argmax's. A block covering the whole product maps the
+    of the action product, and every member's value there — the same pair the
+    dense canonical reducer publishes, obtained by the exact household stream of
+    `build_streaming_collective_max_Q_over_a`, whose winner and tie rule are the
+    dense household argmax's. A block covering the whole product maps the
     named grids and is reduced as one block, so its value can differ from a
     narrower fold's by rounding. The identity is therefore not width-invariant
     either: on a near-tie, that rounding can make the two widths name different
@@ -1298,16 +1287,11 @@ class _StreamedArgmaxQOverA:
     action_width_keyword: str
     """Name of the planner-bound static action-block width in the call."""
 
-    member_axis: tuple[str, ...] | None = None
-    """Ordered member names of a household, or `None` for a single."""
+    members: tuple[str, ...]
+    """Ordered member names of the household."""
 
-    pareto_weights: ParetoWeights | None = None
-    """The household's Pareto weight evaluator, or `None` for a single."""
-
-    folds: dict[int, Callable[..., HardMaxResult | BoundedResult[HardMaxResult]]] = (
-        dataclasses.field(default_factory=dict, repr=False)
-    )
-    """Streamed folds already built, by the block width each streams at."""
+    pareto_weights: ParetoWeights
+    """The household's Pareto weight evaluator."""
 
     def __call__(
         self,
@@ -1315,33 +1299,24 @@ class _StreamedArgmaxQOverA:
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: PytreeValue,
     ) -> tuple[IntND, FloatND] | BoundedResult[tuple[IntND, FloatND]]:
-        """Return the chosen action's flat identity and the value it attains.
-
-        A household publishes every member's value at its one shared winner.
-        """
+        """Return the chosen action's flat identity and every member's value."""
         block_width = cast("int", states_actions_params[self.action_width_keyword])
         q_and_f_params = {
             name: value
             for name, value in states_actions_params.items()
             if name in self.q_and_f_arg_names
         }
-        fold = (
-            self._fold(block_width=block_width)
-            if self.member_axis is None
-            else self._household_fold(
-                states_actions_params=states_actions_params, block_width=block_width
-            )
+        fold = self._household_fold(
+            states_actions_params=states_actions_params, block_width=block_width
         )
         evaluated = fold(next_regime_to_V_arr=next_regime_to_V_arr, **q_and_f_params)
         result = cast(
-            "HardMaxResult | CollectiveHardMaxResult",
+            "CollectiveHardMaxResult",
             evaluated.output if type(evaluated) is BoundedResult else evaluated,
         )
         output = (
             result.best_global_action_id.astype(jnp.int32),
-            result.best_value
-            if isinstance(result, HardMaxResult)
-            else result.best_member_values,
+            result.best_member_values,
         )
         return (
             BoundedResult[tuple[IntND, FloatND]](
@@ -1353,32 +1328,18 @@ class _StreamedArgmaxQOverA:
             else output
         )
 
-    def _fold(
-        self, *, block_width: int
-    ) -> Callable[..., HardMaxResult | BoundedResult[HardMaxResult]]:
-        """Return the streamed fold for one block width, building it once."""
-        fold = self.folds.get(block_width)
-        if fold is None:
-            fold = build_streaming_max_Q_over_a(
-                Q_and_F=self.Q_and_F,
-                action_names=self.action_names,
-                block_width=block_width,
-            )
-            self.folds[block_width] = fold
-        return fold
-
     def _household_fold(
         self, *, block_width: int, states_actions_params: Mapping[str, PytreeValue]
     ) -> Callable[
         ..., CollectiveHardMaxResult | BoundedResult[CollectiveHardMaxResult]
     ]:
         """Return the household stream at the cell's Pareto weights."""
-        weights = cast("ParetoWeights", self.pareto_weights)
+        weights = self.pareto_weights
         return build_streaming_collective_max_Q_over_a(
             Q_and_F=self.Q_and_F,
             action_names=self.action_names,
             block_width=block_width,
-            members=cast("tuple[str, ...]", self.member_axis),
+            members=self.members,
             weights=weights.compute(
                 **{name: states_actions_params[name] for name in weights.arg_names}
             ),

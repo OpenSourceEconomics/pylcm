@@ -840,7 +840,7 @@ class EGM(OneMarginSolver):
                 ),
             ),
         )
-        return publish_member_axis(kernels=kernels, member_axis=context.member_axis)
+        return publish_member_axis(kernels=kernels, members=context.members)
 
 
 @dataclass(frozen=True, kw_only=True)

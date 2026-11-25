@@ -725,14 +725,13 @@ class CountedGridSearch:
         | tuple[FloatND, BoolND, ScalarBool]
         | BoundedResult[tuple[FloatND, BoolND]],
     ]
-    collective: bool
     current_iid: bool = False
     """Consume and reduce the current-law integrity leaf independently of F."""
 
     def __call__(
         self, **kwargs: QAndFArg
     ) -> CountedGridSearchOutput | BoundedResult[CountedGridSearchOutput]:
-        """Count state cells, treating a household as a single decision."""
+        """Count state cells, treating a household as one decision."""
         evaluated = self.function(**kwargs)
         bounded = evaluated if type(evaluated) is BoundedResult else None
         if bounded is not None:
@@ -747,9 +746,7 @@ class CountedGridSearch:
         value, empty = cast("tuple[FloatND, BoolND]", evaluated)
         _fail_if_feasibility_count_exceeds_capacity(n_states=math.prod(empty.shape))
         count_dtype = get_feasibility_count_dtype()
-        infinite = jnp.isinf(value)
-        if self.collective:
-            infinite = jnp.any(infinite, axis=-1)
+        infinite = jnp.any(jnp.isinf(value), axis=-1)
         empty_count = jnp.sum(empty, dtype=count_dtype)
         other_inf_count = jnp.sum(infinite & ~empty, dtype=count_dtype)
         output: CountedGridSearchOutput = (value, empty_count, other_inf_count)

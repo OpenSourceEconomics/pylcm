@@ -495,7 +495,7 @@ def test_certificate_rejects_a_layout_that_pools_unequal_renegotiation_lists() -
 def test_normalized_cells_carry_their_members() -> None:
     """Each cell names its regime's members, `None` for a single agent."""
     cells = _report("roles", "dense")["analysis"]["declarations"]["cells"]
-    assert {c["regime"]: c.get("member_axis", "absent") for c in cells} == {
+    assert {c["regime"]: c.get("members", "absent") for c in cells} == {
         "single": None,
         "couple": ["f", "m"],
         "single_end": None,
@@ -506,7 +506,7 @@ def test_normalized_cells_carry_their_members() -> None:
 @pytest.mark.parametrize(
     ("label", "key", "regimes"),
     [
-        ("roles", "member_axis", ("couple", "single")),
+        ("roles", "members", ("couple", "single")),
         ("twin", "exit_identity", ("couple_m", "couple_u")),
     ],
 )
@@ -527,7 +527,7 @@ def test_certificate_rejects_a_layout_that_pools_unequal_regimes(
 @pytest.mark.parametrize(
     ("label", "regime", "key", "value"),
     [
-        ("roles", "couple", "member_axis", None),
+        ("roles", "couple", "members", None),
         ("twin", "couple_m", "exit_identity", None),
         ("renegotiate_2p", "couple", "renegotiated_states", []),
     ],

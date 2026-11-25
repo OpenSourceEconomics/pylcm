@@ -241,9 +241,7 @@ from _lcm.regime_building.Q_and_F import (
     GatedContinuationSpec,
     ResolvedProjectedRegimeValue,
     get_member_aggregator,
-    get_Q_and_F,
     get_Q_and_F_collective,
-    get_Q_and_F_terminal,
     get_Q_and_F_terminal_collective,
     has_objective_profile,
     partition_continuation_targets,
@@ -1422,9 +1420,8 @@ class _CanonicalRegimeBuilder:
 
         # Resolve the household Pareto weights once (equal weights when
         # undeclared) and thread the member names / weights into both
-        # phase builds. Both are `None` for a singleton (non-collective)
-        # regime, which is what the downstream builds branch on.
-        member_axis = user_regime.members
+        # phase builds.
+        members = user_regime.members
         pareto_weights = _resolve_pareto_weights(user_regime=user_regime, spec=spec)
         # A gated edge's leg fallbacks are read where
         # the SOURCE lands, inside the source's own kernel — but the value
@@ -1512,7 +1509,7 @@ class _CanonicalRegimeBuilder:
             solver=user_regime.solver,
             continuation_demanded=regime_name in self.egm_continuation_targets,
             has_taste_shocks=user_regime.taste_shocks is not None,
-            member_axis=member_axis,
+            members=members,
             pareto_weights=pareto_weights,
             edge_reference_regimes=edge_reference_regimes,
             edge_target_regimes=tuple(self.laws[regime_name].gated_edges),
@@ -1546,7 +1543,7 @@ class _CanonicalRegimeBuilder:
         granular_param_expansions = self.regime_to_granular_param_expansions[
             regime_name
         ]
-        member_axis = user_regime.members
+        members = user_regime.members
         pareto_weights = prepared.solution.pareto_weights
         edge_reference_regimes = prepared.solution.context.edge_reference_regimes
         invariant_bindings = prepared.invariant_bindings
@@ -1627,7 +1624,7 @@ class _CanonicalRegimeBuilder:
             has_taste_shocks=user_regime.taste_shocks is not None,
             solver=solution_build.solver,
             certainty_equivalent=user_regime.certainty_equivalent,
-            member_axis=member_axis,
+            members=members,
             pareto_weights=pareto_weights,
             post_decision_shocks=self.post_decision_shocks.get(
                 regime_name, MappingProxyType({})
@@ -1654,7 +1651,7 @@ class _CanonicalRegimeBuilder:
             granular_param_expansions=granular_param_expansions,
             has_taste_shocks=user_regime.taste_shocks is not None,
             certainty_equivalent=user_regime.certainty_equivalent,
-            member_axis=member_axis,
+            members=members,
             member_names_to_ids=member_names_to_ids,
             edge_reference_regimes=edge_reference_regimes,
         )
@@ -2827,7 +2824,7 @@ def _attach_gated_edge_folds(
                     target_functions=target_solution.functions,
                     target_deterministic_transitions=target_deterministic_transitions,
                     reference_v_info=v_info,
-                    target_member_axis=user_regimes[target_name].members,
+                    target_members=user_regimes[target_name].members,
                 )
                 # Only the grid-level half is jitted here. The combiner runs
                 # inside the source's own decision kernel, which is jitted as a
@@ -2852,7 +2849,7 @@ def _attach_gated_edge_folds(
                     target_v_info=v_info[target_name],
                     target_functions=target_solution.functions,
                     target_deterministic_transitions=target_deterministic_transitions,
-                    target_member_axis=user_regimes[target_name].members,
+                    target_members=user_regimes[target_name].members,
                 )
             folds_by_period = expand_groups_to_periods(
                 grouped_periods=grouped_fold_periods, built_by_group=folds_by_group
@@ -3010,13 +3007,11 @@ def _resolve_gated_edge(
     """Resolve one user `GatedEdge` to its engine form.
 
     Validated already by `_fail_if_gated_edges_invalid`, so every named regime
-    and member exists. Legs are ordered by the source's engine member tuple
-    (a singleton source has one leg with `source_member=None`); each leg's
+    and member exists. Legs are ordered by the source's members; each leg's
     OPEN-branch target component and its fallback member become trailing-
     axis indices on the engine regime's member axis.
     """
-    target_member_axis = user_regimes[target_name].members
-    source_member_axis = user_regimes[source_name].members
+    target_members = user_regimes[target_name].members
 
     def _resolve_ref(ref: ProjectedRegimeValue) -> ResolvedProjectedRegimeValue:
         return ResolvedProjectedRegimeValue(
@@ -3029,18 +3024,13 @@ def _resolve_gated_edge(
             member=ref.member,
         )
 
-    # A collective source's legs are iterated in its member order so
-    # `Wbar`'s trailing axis matches the source's member axis; a singleton
-    # source has exactly one leg (keyed arbitrarily), stored with source
-    # member `None`. The member `"self"` follows that one leg under whatever
-    # key it was declared.
-    if source_member_axis is None:
-        leg_order: list[tuple[str, str | None]] = [(next(iter(edge.legs)), None)]
-    else:
-        leg_order = [
-            (next(iter(edge.legs)) if s == "self" and s not in edge.legs else s, s)
-            for s in source_member_axis
-        ]
+    # The source's legs are iterated in its member order so `Wbar`'s trailing
+    # axis matches the source's member axis. The member `"self"` follows the
+    # one leg under whatever key it was declared.
+    leg_order = [
+        (next(iter(edge.legs)) if s == "self" and s not in edge.legs else s, s)
+        for s in user_regimes[source_name].members
+    ]
 
     legs: list[ResolvedMemberRoute] = []
     for leg_key, source_member in leg_order:
@@ -3050,7 +3040,7 @@ def _resolve_gated_edge(
                 route=leg_key,
                 source_member=source_member,
                 target_component_index=landing_member_index(
-                    members=target_member_axis, role=leg.target_member
+                    members=target_members, role=leg.target_member
                 ),
                 target_member=leg.target_member,
                 fallback=_resolve_ref(leg.solve_fallback),
@@ -3109,25 +3099,21 @@ def _edge_reference_regimes(
 
 def _resolve_pareto_weights(
     *, user_regime: UserRegime, spec: PhasedRegimeSpec
-) -> ParetoWeights | None:
-    """Resolve a collective regime's household Pareto weight evaluator.
+) -> ParetoWeights:
+    """Resolve a regime's household Pareto weight evaluator.
 
-    Returns `None` for a singleton regime (the default, and the marker the
-    downstream builds read as non-collective). A collective regime gets the
-    evaluator its kernels call at every cell — built from the declared
-    `pareto_objective`, or from equal weights when it declares none.
+    Every regime gets the evaluator its kernels call at every cell — built
+    from the declared `pareto_objective`, or from equal weights when it
+    declares none.
 
     Raises:
         ModelInitializationError: If a weight reads one of the regime's
             actions.
     """
-    member_axis = user_regime.members
-    if member_axis is None:
-        return None
     _fail_if_a_pareto_weight_reads_an_action(user_regime)
     return build_pareto_weights(
         objective=user_regime.pareto_objective,
-        members=member_axis,
+        members=user_regime.members,
         state_names=frozenset(user_regime.states),
         carried_imputations=MappingProxyType(
             {
@@ -3197,7 +3183,7 @@ def _fail_if_collective_regime_targets_unsupported(
 
     Raises:
         NotImplementedError: If a non-terminal regime's reachable target
-            declares a different `member_axis` tuple.
+            declares a different `members` tuple.
 
     """
     for regime_name, user_regime in user_regimes.items():
@@ -3215,10 +3201,10 @@ def _fail_if_collective_regime_targets_unsupported(
                 continue
             if user_regime.members != target_regime.members:
                 msg = (
-                    f"Regime '{regime_name}' (member_axis="
-                    f"{user_regime.member_axis}) can reach regime "
-                    f"'{target_regime_name}' (member_axis="
-                    f"{target_regime.member_axis}), but every transition "
+                    f"Regime '{regime_name}' (members="
+                    f"{user_regime.members}) can reach regime "
+                    f"'{target_regime_name}' (members="
+                    f"{target_regime.members}), but every transition "
                     "target of a collective regime must be a collective regime "
                     "with the identical `members` tuple (and a singleton "
                     "regime cannot target a collective one). A singleton source "
@@ -4281,7 +4267,7 @@ class _PreparedSolutionPhase:
     enable_jit: bool
     grid_schedule: AgeGridSchedule | None
     laws: RegimeLaws
-    pareto_weights: ParetoWeights | None
+    pareto_weights: ParetoWeights
     period_to_state_nodes: (
         MappingProxyType[int, MappingProxyType[StateName, Float1D]] | None
     )
@@ -4407,8 +4393,8 @@ def _prepare_solution_phase(
     solver: Solver,
     continuation_demanded: bool,
     has_taste_shocks: bool,
-    member_axis: tuple[str, ...] | None = None,
-    pareto_weights: ParetoWeights | None = None,
+    members: tuple[str, ...],
+    pareto_weights: ParetoWeights,
     edge_reference_regimes: tuple[RegimeName, ...] = (),
     edge_target_regimes: tuple[RegimeName, ...] = (),
     invariant_bindings: tuple[StateName, ...] = (),
@@ -4493,7 +4479,7 @@ def _prepare_solution_phase(
         solver=solver,
         continuation_demanded=continuation_demanded,
         has_taste_shocks=has_taste_shocks,
-        member_axis=member_axis,
+        members=members,
         pareto_weights=pareto_weights,
         edge_reference_regimes=edge_reference_regimes,
         edge_target_regimes=edge_target_regimes,
@@ -4508,7 +4494,7 @@ def _prepare_solution_phase(
     )
 
 
-def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
+def _prepare_numerical_solution_phase(
     *,
     query_periods: tuple[int, ...] = (),
     current_iid_bindings: Mapping[ShockGroupName, ShockBinding] = MappingProxyType({}),
@@ -4547,8 +4533,8 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
     solver: Solver,
     continuation_demanded: bool,
     has_taste_shocks: bool,
-    member_axis: tuple[str, ...] | None = None,
-    pareto_weights: ParetoWeights | None = None,
+    members: tuple[str, ...],
+    pareto_weights: ParetoWeights,
     edge_reference_regimes: tuple[RegimeName, ...] = (),
     edge_target_regimes: tuple[RegimeName, ...] = (),
     invariant_bindings: tuple[StateName, ...] = (),
@@ -4687,38 +4673,22 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
     elif laws[regime_name].terminal:
         compute_regime_transition_probs = None
         validation_regime_transition_probs = None
-        if member_axis is not None:
-            # The collective terminal kernel builds one
-            # `U^s`-and-`F` per member and stacks the utilities on a trailing
-            # member axis. Separate builder so the singleton path is untouched.
-            Q_and_F_functions = MappingProxyType(
-                dict.fromkeys(
-                    range(ages.n_periods),
-                    get_Q_and_F_terminal_collective(
-                        bound_specs=tuple(
-                            bound
-                            for bound in post_decision_bounds
-                            if bound.kind == "dag"
-                        ),
-                        flat_param_names=flat_param_names,
-                        functions=core.functions,
-                        constraints=core.constraints,
-                        members=member_axis,
+        # The terminal kernel builds one `U^s`-and-`F` per member and stacks
+        # the utilities on a trailing member axis.
+        Q_and_F_functions = MappingProxyType(
+            dict.fromkeys(
+                range(ages.n_periods),
+                get_Q_and_F_terminal_collective(
+                    bound_specs=tuple(
+                        bound for bound in post_decision_bounds if bound.kind == "dag"
                     ),
-                )
-            )
-        else:
-            terminal_func = get_Q_and_F_terminal(
-                bound_specs=tuple(
-                    bound for bound in post_decision_bounds if bound.kind == "dag"
+                    flat_param_names=flat_param_names,
+                    functions=core.functions,
+                    constraints=core.constraints,
+                    members=members,
                 ),
-                flat_param_names=flat_param_names,
-                functions=core.functions,
-                constraints=core.constraints,
             )
-            Q_and_F_functions = MappingProxyType(
-                dict.fromkeys(range(ages.n_periods), terminal_func)
-            )
+        )
         compute_intermediates = MappingProxyType({})
     else:
         compute_regime_transition_probs = build_regime_transition_probs_functions(
@@ -4794,7 +4764,7 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
             koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
             objective_aggregator=core.objective_aggregator,
             certainty_equivalent=certainty_equivalent,
-            member_axis=member_axis,
+            members=members,
             grid_schedule=grid_schedule,
             gated_continuations=gated_continuations,
             count_raise_landings=counts_raise_landings,
@@ -4936,8 +4906,7 @@ def _prepare_numerical_solution_phase(  # noqa: PLR0915 - native route admission
         co_map_state_names=co_map_state_names,
         co_map_v_arr_in_axes=co_map_v_arr_in_axes,
         invariant_bindings=invariant_bindings,
-        members=user_regimes[regime_name].members,
-        member_axis=member_axis,
+        members=members,
         pareto_weights=pareto_weights,
         edge_reference_regimes=edge_reference_regimes,
         edge_target_regimes=edge_target_regimes,
@@ -5386,7 +5355,7 @@ class _TerminalCarryPeriodKernel:
     regime_name: RegimeName
     """Name of the terminal regime whose flat params the producer reads."""
 
-    member_index: int | None = None
+    member_index: int
     """Index of the regime's one member on its value's trailing member axis."""
 
     def core_programs(self) -> Mapping[str, CoreProgram]:
@@ -5465,7 +5434,7 @@ class _TerminalCarryPeriodKernel:
             raise RuntimeError(msg)
         value = jnp.asarray(output.value)
         carry = self.carry_producer(
-            V_arr=value if self.member_index is None else value[..., self.member_index],
+            V_arr=value[..., self.member_index],
             **state_action_space.states,
             **regime_kernel_params(flat_params, regime_name=self.regime_name),
             period=jnp.int32(period),
@@ -5814,8 +5783,8 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     certainty_equivalent: CertaintyEquivalent
     | Mapping[str, CertaintyEquivalent]
     | None,
-    member_axis: tuple[str, ...] | None = None,
-    pareto_weights: ParetoWeights | None = None,
+    members: tuple[str, ...],
+    pareto_weights: ParetoWeights,
     post_decision_shocks: Mapping[StateName, _IIDProcess] = MappingProxyType({}),
     gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
         MappingProxyType({})
@@ -5883,11 +5852,9 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             gets the synthesized intrinsic budget constraint.
         certainty_equivalent: Certainty equivalent declared by the regime, a
             household's possibly keyed by member, or `None`.
-        member_axis: Ordered member names for a collective regime, or
-            `None` (the singleton default).
-        pareto_weights: The household's Pareto weight evaluator; required (and
-            only used) when `member_axis` is set — feeds the simulate-side
-            argmax's household scalarization.
+        members: Ordered member names of the regime.
+        pareto_weights: The household's Pareto weight evaluator — feeds the
+            simulate-side argmax's household scalarization.
         gated_continuations: Mapping of target regime names to the gated-edge
             continuation schedule that target's leaf is read under, keyed by the
             period the edge folds at. Empty for a
@@ -6039,15 +6006,12 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     }
     simulate_grids = MappingProxyType({**all_grids[regime_name], **carried_grids})
 
-    # Forward simulation of a collective regime
-    # reuses the SAME Q_and_F builders the solve phase uses
+    # Forward simulation reuses the SAME Q_and_F builders the solve phase uses
     # (`get_Q_and_F_terminal_collective` / `get_Q_and_F_collective`,
     # value-masked exactly like solve), so the simulated argmax never picks
-    # an action the solved value function excluded. Only the ARGMAX step
-    # differs from the singleton path — `get_argmax_and_max_Q_over_a`'s
-    # collective branch (below) recomputes the household argmax and gathers
-    # each member's own value at it.
-    collective = member_axis is not None
+    # an action the solved value function excluded;
+    # `get_argmax_and_max_Q_over_a` (below) recomputes the household argmax and
+    # gathers each member's own value at it.
     type_local_Q_and_F_functions: MappingProxyType[int, QAndFFunction] = (
         MappingProxyType({})
     )
@@ -6063,35 +6027,20 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         compute_regime_transition_probs = None
         per_subject_route = None
         realized_validation_probs = None
-        if collective:
-            Q_and_F_functions = MappingProxyType(
-                dict.fromkeys(
-                    range(ages.n_periods),
-                    get_Q_and_F_terminal_collective(
-                        bound_specs=tuple(
-                            bound
-                            for bound in post_decision_bounds
-                            if bound.kind == "dag"
-                        ),
-                        flat_param_names=flat_param_names,
-                        functions=functions,
-                        constraints=constraints,
-                        members=member_axis,
+        Q_and_F_functions = MappingProxyType(
+            dict.fromkeys(
+                range(ages.n_periods),
+                get_Q_and_F_terminal_collective(
+                    bound_specs=tuple(
+                        bound for bound in post_decision_bounds if bound.kind == "dag"
                     ),
-                )
-            )
-        else:
-            terminal_func = get_Q_and_F_terminal(
-                bound_specs=tuple(
-                    bound for bound in post_decision_bounds if bound.kind == "dag"
+                    flat_param_names=flat_param_names,
+                    functions=functions,
+                    constraints=constraints,
+                    members=members,
                 ),
-                flat_param_names=flat_param_names,
-                functions=functions,
-                constraints=constraints,
             )
-            Q_and_F_functions = MappingProxyType(
-                dict.fromkeys(range(ages.n_periods), terminal_func)
-            )
+        )
     else:
         compute_regime_transition_probs = build_regime_transition_probs_functions(
             functions=simulate_functions,
@@ -6195,7 +6144,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
             objective_aggregator=core.objective_aggregator,
             certainty_equivalent=certainty_equivalent,
-            member_axis=member_axis,
+            members=members,
             continuation_functions=solve_functions,
             grid_schedule=grid_schedule,
             gated_continuations=gated_continuations,
@@ -6265,14 +6214,14 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         state_action_space=state_action_space,
         Q_and_F_functions=Q_and_F_functions,
         has_taste_shocks=has_taste_shocks,
-        member_axis=member_axis,
+        members=members,
         pareto_weights=pareto_weights,
     )
     type_local_per_subject_decisions = _build_per_subject_decisions_per_period(
         state_action_space=state_action_space,
         Q_and_F_functions=type_local_Q_and_F_functions,
         has_taste_shocks=has_taste_shocks,
-        member_axis=member_axis,
+        members=members,
         pareto_weights=pareto_weights,
     )
 
@@ -9943,7 +9892,7 @@ def _build_Q_and_F_per_period(
         MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
     ) = None,
     co_map_state_names: tuple[StateName, ...] = (),
-    member_axis: tuple[str, ...] | None = None,
+    members: tuple[str, ...],
     continuation_functions: EconFunctionsMapping | None = None,
     grid_schedule: AgeGridSchedule | None = None,
     gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
@@ -9986,10 +9935,9 @@ def _build_Q_and_F_per_period(
             renamed, or `None` when the Bellman aggregator also chooses.
         certainty_equivalent: Certainty equivalent declared by the regime, a
             household's possibly keyed by member, or `None`.
-        member_axis: Ordered member names for a collective regime, or
-            `None` (the singleton default). When set, the per-period closures
+        members: Ordered member names of the regime. The per-period closures
             come from `get_Q_and_F_collective` (per-member continuation,
-            trailing member axis on Q); only the solve site passes this.
+            trailing member axis on Q).
         continuation_functions: Solve-phase pool the continuation sub-DAG resolves
             against; `None` in the solve phase, where it coincides with `functions`.
         grid_schedule: Concrete age-specialized grid schedule, or `None`.
@@ -10053,9 +10001,7 @@ def _build_Q_and_F_per_period(
         representative_period = periods[0]
         # Every period in a group shares one compiled Q_and_F, so the group's
         # continuation grids must agree across its periods — a property of the
-        # group alone, independent of member cardinality. Hence the split
-        # and the assertion run BEFORE the collective/singleton branch, so both
-        # branches are built against the same checked target partition.
+        # group alone, independent of member cardinality.
         stateful_targets, scalar_targets = partition_continuation_targets(
             targets=targets,
             regime_to_v_interpolation_info=continuation_info(representative_period),
@@ -10079,70 +10025,13 @@ def _build_Q_and_F_per_period(
                 if landing_period in schedule.by_period
             }
         )
-        if member_axis is not None:
-            # A collective regime gets its own builder: the household objective
-            # and the per-member value readout differ from the singleton
-            # kernel. Functions and constraints are resolved at the group's
-            # representative age exactly as in the singleton branch; with no
-            # age-specialized node the resolution is a passthrough.
-            built[key] = get_Q_and_F_collective(
-                phase_name=phase_name,
-                bound_specs=bound_specs,
-                flat_param_names=flat_param_names,
-                koopmans_aggregator=koopmans_aggregator,
-                objective_aggregator=objective_aggregator,
-                certainty_equivalent=certainty_equivalent,
-                functions=cast(
-                    "EconFunctionsMapping",
-                    resolve_periodized_nodes(
-                        mapping=functions, period=representative_period
-                    ),
-                ),
-                constraints=cast(
-                    "ConstraintFunctionsMapping",
-                    resolve_periodized_nodes(
-                        mapping=constraints, period=representative_period
-                    ),
-                ),
-                # `period_targets` means the stateful targets: the ones whose
-                # continuation is actually interpolated this period.
-                # `partition_continuation_targets` splits the graph targets into
-                # exactly that set and the stateless one, whose rank-zero value
-                # enters `E[V^s]` weighted by the regime transition alone.
-                period_targets=stateful_targets,
-                scalar_targets=scalar_targets,
-                transitions=transitions,
-                transition_plans=transition_plans,
-                compute_regime_transition_probs=compute_regime_transition_probs,
-                regime_to_v_interpolation_info=continuation_info(representative_period),
-                members=member_axis,
-                co_map_state_names=co_map_state_names,
-                # Thread the flow/continuation phase split, exactly as the singleton
-                # branch below, so the collective simulator builds current flow and
-                # continuation from the SAME pool. Mixing them — current flow from
-                # the SOLVE transitions, continuation from the SIMULATE/decision
-                # pool — is a hybrid sub-DAG that can reverse the household argmax.
-                # A solve build passes `None` here, where the continuation pool
-                # coincides with `functions`.
-                continuation_functions=(
-                    cast(
-                        "EconFunctionsMapping",
-                        resolve_periodized_nodes(
-                            mapping=continuation_functions, period=representative_period
-                        ),
-                    )
-                    if continuation_functions is not None
-                    else None
-                ),
-                gated_continuations=period_gated_continuations,
-                count_raise_landings=count_raise_landings,
-                lottery_contraction_source=lottery_contraction_source,
-            )
-            continue
-        built[key] = get_Q_and_F(
+        built[key] = get_Q_and_F_collective(
             phase_name=phase_name,
             bound_specs=bound_specs,
             flat_param_names=flat_param_names,
+            koopmans_aggregator=koopmans_aggregator,
+            objective_aggregator=objective_aggregator,
+            certainty_equivalent=certainty_equivalent,
             functions=cast(
                 "EconFunctionsMapping",
                 resolve_periodized_nodes(
@@ -10155,22 +10044,26 @@ def _build_Q_and_F_per_period(
                     mapping=constraints, period=representative_period
                 ),
             ),
+            # `period_targets` means the stateful targets: the ones whose
+            # continuation is actually interpolated this period.
+            # `partition_continuation_targets` splits the graph targets into
+            # exactly that set and the stateless one, whose rank-zero value
+            # enters `E[V^s]` weighted by the regime transition alone.
             period_targets=stateful_targets,
             scalar_targets=scalar_targets,
             transitions=transitions,
             transition_plans=transition_plans,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=continuation_info(representative_period),
+            members=members,
             co_map_state_names=co_map_state_names,
-            koopmans_aggregator=koopmans_aggregator,
-            objective_aggregator=objective_aggregator,
-            # A certainty equivalent keyed by member is a household's.
-            certainty_equivalent=cast(
-                "CertaintyEquivalent | None", certainty_equivalent
-            ),
-            # Resolve the perceived continuation pool at this group's own period.
-            # Safe because that pool's per-period signature is part of the group key
-            # above, so every period in the group resolves it identically.
+            # Thread the flow/continuation phase split, so the simulator builds
+            # current flow and
+            # continuation from the SAME pool. Mixing them — current flow from
+            # the SOLVE transitions, continuation from the SIMULATE/decision
+            # pool — is a hybrid sub-DAG that can reverse the household argmax.
+            # A solve build passes `None` here, where the continuation pool
+            # coincides with `functions`.
             continuation_functions=(
                 cast(
                     "EconFunctionsMapping",
@@ -10200,8 +10093,8 @@ def _build_per_subject_decisions_per_period(
     state_action_space: StateActionSpace,
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
     has_taste_shocks: bool = False,
-    member_axis: tuple[str, ...] | None = None,
-    pareto_weights: ParetoWeights | None = None,
+    members: tuple[str, ...],
+    pareto_weights: ParetoWeights,
 ) -> MappingProxyType[int, ArgmaxQOverAFunction[BoundedArgmaxOutput]]:
     """Build the canonical argmax reducer at one subject's state cell, per period.
 
@@ -10224,7 +10117,7 @@ def _build_per_subject_decisions_per_period(
                     if has_taste_shocks
                     else 0,
                     has_taste_shocks=has_taste_shocks,
-                    member_axis=member_axis,
+                    members=members,
                     pareto_weights=pareto_weights,
                 ),
             )
@@ -10235,7 +10128,7 @@ def _build_per_subject_decisions_per_period(
                 state_names=state_action_space.state_names,
                 n_discrete_action_axes=len(state_action_space.discrete_actions),
                 has_taste_shocks=has_taste_shocks,
-                member_axis=member_axis,
+                members=members,
                 pareto_weights=pareto_weights,
             )
             if current_iid_draw_plan is not None:

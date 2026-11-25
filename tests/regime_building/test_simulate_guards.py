@@ -259,23 +259,23 @@ _REGIME_IDS = MappingProxyType(
     {
         "single_f": jnp.int32(0),
         "single_m": jnp.int32(1),
-        "single_None": jnp.int32(2),
+        "single_self": jnp.int32(2),
         "married": jnp.int32(3),
     }
 )
 
 
-def _leg(source_member: str | None) -> ResolvedMemberRoute:
+def _leg(source_member: str) -> ResolvedMemberRoute:
     """One leg sending its member home to that member's own regime."""
     return ResolvedMemberRoute(
-        route=str(source_member),
+        route=source_member,
         source_member=source_member,
-        target_component_index=None,
+        target_component_index=0,
         target_member=source_member,
         fallback=ResolvedProjectedRegimeValue(
             regime=f"single_{source_member}",
             projection={},
-            member_index=None,
+            member_index=0,
         ),
     )
 
@@ -336,11 +336,11 @@ def test_a_singleton_sources_sole_leg_answers_for_every_row() -> None:
     the one it declares rather than being refused for matching none.
     """
     fallback_id, open_role, closed_role = _outcomes(
-        legs=(_leg(None),), roles=[NO_ROLE, _ROLE_IDS["f"]]
+        legs=(_leg("self"),), roles=[NO_ROLE, _ROLE_IDS["f"]]
     )
 
     np.testing.assert_array_equal(
-        np.asarray(fallback_id), [int(_REGIME_IDS["single_None"])] * 2
+        np.asarray(fallback_id), [int(_REGIME_IDS["single_self"])] * 2
     )
     np.testing.assert_array_equal(np.asarray(open_role), [NO_ROLE, NO_ROLE])
     np.testing.assert_array_equal(np.asarray(closed_role), [NO_ROLE, NO_ROLE])

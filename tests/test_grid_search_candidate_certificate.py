@@ -21,11 +21,10 @@ publishes $-\\infty$ in the first sweep and a runner-up value in the second, so
 the sweep is sensitive to a dropped grid point wherever it is dropped — in the
 solver, in the product map, or upstream in the state-action space.
 
-The singleton, collective, and taste-shock reductions are separate code paths and
-all are swept. The native program graph selects streaming for the hard-max
-production routes, a single's and a household's: EV1 production remains deliberately
-dense, while its sealed streaming implementation is a non-production reference. The
-taste-shock sweep uses candidate-distinct deterministic noise
+Every regime is a household, a single one of one member. The hard-max and
+taste-shock reductions are separate code paths and both are swept. The native
+program graph selects streaming for the hard-max route; the taste-shock route is
+always dense. The taste-shock sweep uses candidate-distinct deterministic noise
 at the production draw seam, so it checks the continuous winner, the noisy
 discrete winner, the row-major flat index, and the returned unshocked value.
 `test_dropping_one_candidate_is_visible_to_the_sweep` masks one cell inside the
@@ -41,18 +40,18 @@ The standard-library AST
 proof rejects any extra assignment, branch, slice, index, mask, `where`, rank,
 gap, support-size, shape, or axis transformation. The collective path permits
 only the independently checked split of the trailing member axis and pins
-the shared scalarization, argmax, and gather implementations exactly. The three
-taste-shock routes additionally pin masking, continuous reduction, the reference
-streamed branch-hard-max then dynamically bound log-sum-exp composition,
-per-discrete-cell mean-zero Gumbel noise, and flat-index reconstruction, including the
-deep shared helper bodies. The construction and correctness of Q/F values
+the shared scalarization, argmax, and gather implementations exactly. The two
+taste-shock routes additionally pin masking, the decider's continuous reduction
+that carries every member's value, the discrete log-sum-exp and zero-safe member
+means, per-discrete-cell mean-zero Gumbel noise, and flat-index reconstruction,
+including the deep shared helper bodies. The construction and correctness of Q/F values
 and feasibility—including user DAGs, constraints, transitions, interpolation,
 and continuation arithmetic—is outside this certificate
 and remains owned by its dedicated semantic tests.
 
 The executable sweep remains deliberately finite: two action grids, six
 candidates, six strict winner orderings, and all 63 nonempty feasibility masks on
-the ordinary and collective routes; the taste-shock routes use singleton,
+the hard-max routes; the taste-shock routes use one-candidate,
 intermediate, spread, and full supports for every winning candidate. It is an
 executable sanity check, not the universal proof. The modeller's grid
 specification and off-grid discretization error remain outside the claim.
@@ -179,6 +178,15 @@ class _EvaluateBlockArguments(TypedDict, closed=True):
     n_actions: int
     block_width: int
     block_offsets: jax.Array
+    n_members: int
+
+
+class _HouseholdFoldArguments(TypedDict, closed=True):
+    """The household arguments the streamed fold builder forwards unchanged."""
+
+    block_width: int
+    members: tuple[str, ...]
+    weights: Mapping[str, FloatND | float]
 
 
 class _EvaluateBlock(Protocol):
@@ -508,35 +516,6 @@ def test_the_action_product_map_is_unbatched() -> None:
 
 
 @pytest.mark.parametrize(
-    ("kernel", "reducer"),
-    [
-        ("_HardMaxQOverA.__call__", "max"),
-        ("_HardMaxArgmaxQOverA.__call__", "argmax_and_max"),
-    ],
-)
-def test_the_singleton_reduction_covers_every_action_axis(
-    *, kernel: str, reducer: str
-) -> None:
-    """The singleton value is a full reduction: masked, and over no named axis.
-
-    A reduction with no `axis=` covers the whole action product. An `axis=` here
-    would leave some action axis unsearched and change the published rank, and
-    `where=F_arr` is what makes the mask remove infeasible candidates only —
-    never representable ones. Solve and simulate reduce with different callables
-    and each owes the obligation separately.
-    """
-    tree = _parse("src/_lcm/regime_building/max_Q_over_a.py")
-    node = _definition(tree=tree, qualname=kernel)
-    reductions = [
-        call
-        for call in _calls_named(node=node, name=reducer)
-        if _chain(_keyword(call=call, name="where")) == "F_arr"
-    ]
-
-    assert [_keyword(call=call, name="axis") for call in reductions] == [None]
-
-
-@pytest.mark.parametrize(
     "kernel", ["_HardMaxQOverA.__call__", "_HardMaxArgmaxQOverA.__call__"]
 )
 def test_the_collective_reduction_treats_every_feasibility_axis_as_an_action(
@@ -562,31 +541,39 @@ def test_the_collective_reduction_treats_every_feasibility_axis_as_an_action(
 
 
 def test_the_taste_shock_reduction_covers_every_action_axis() -> None:
-    """Continuous axes are maximized out and every remaining axis is smoothed.
+    """Continuous axes are maximized out and every discrete cell is smoothed.
 
-    With taste shocks the discrete axes are aggregated by `logsum` rather than
-    by `max`, but the candidate set is unchanged: the continuous axes run from
-    the first non-discrete axis to the last, and the smoothing runs over all of
-    what is left.
+    With taste shocks the decider's discrete cells are aggregated by `logsum`
+    rather than by `max`, but the candidate set is unchanged: the continuous
+    cells span every axis from the first non-discrete one to the last, the
+    discrete cells every axis before it, and the smoothing runs over all
+    discrete cells.
     """
-    tree = _parse("src/_lcm/regime_building/max_Q_over_a.py")
-    kernel = _definition(tree=tree, qualname="_SmoothedMaxQOverA.__call__")
+    tree = _parse("src/_lcm/regime_building/collective.py")
+    choice = _definition(tree=tree, qualname="decider_choice")
     assigned = {
         target.id: ast.unparse(child.value)
-        for child in ast.walk(kernel)
+        for child in ast.walk(choice)
         if isinstance(child, ast.Assign)
         for target in child.targets
-        if isinstance(target, ast.Name) and target.id == "continuous_axes"
+        if isinstance(target, ast.Name)
+        and target.id in {"n_discrete_cells", "n_continuous_cells"}
     }
-    smoothing = _calls_named(node=kernel, name="logsum_and_softmax")[0]
+    expected = _definition(tree=tree, qualname="decider_expected_values")
+    smoothing = _calls_named(node=expected, name="logsum_and_softmax")[0]
     axes = _keyword(call=smoothing, name="axes")
 
     assert (
-        assigned["continuous_axes"],
+        assigned,
         ast.unparse(axes) if axes is not None else None,
     ) == (
-        "tuple(range(self.n_discrete_action_axes, Q_arr.ndim))",
-        "tuple(range(Qc.ndim))",
+        {
+            "n_discrete_cells": "math.prod(feasibility.shape[:n_discrete_action_axes])",
+            "n_continuous_cells": (
+                "math.prod(feasibility.shape[n_discrete_action_axes:])"
+            ),
+        },
+        "(0,)",
     )
 
 
@@ -600,7 +587,7 @@ def test_no_obligation_rests_on_an_undeclared_source() -> None:
 def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation() -> None:
     """The universal bound is a route-local data-flow proof, not a value sample.
 
-    Literal parses add the shared singleton and collective reducer definitions to
+    Literal parses add the shared hard-max and taste-shock reducer definitions to
     the same generated source inventory as the route builders. The verifier then
     requires exact source arrays at each reducer and rejects any non-allowlisted
     statement in the certified corridor.
@@ -878,9 +865,6 @@ def test_streamed_reducer_sources_are_literal_certificate_obligations() -> None:
     assert isinstance(
         _parse("src/_lcm/solution/collective_action_reduction.py"), ast.Module
     )
-    assert isinstance(
-        _parse("src/_lcm/solution/logsumexp_action_reduction.py"), ast.Module
-    )
     assert isinstance(_parse("src/_lcm/solution/period_replay.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/programs.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/program_types.py"), ast.Module)
@@ -916,15 +900,11 @@ def test_direct_flow_certificate_names_every_supported_route() -> None:
     result = verify_direct_candidate_flow(repo_root=_SRC_ROOT.parent)
 
     assert set(result["routes"]) == {
-        "singleton_solve",
-        "singleton_streamed_solve",
-        "singleton_action_partitioned_solve",
-        "singleton_simulate",
         "collective_solve",
         "collective_streamed_solve",
+        "collective_action_partitioned_solve",
         "collective_simulate",
         "taste_shock_solve",
-        "taste_shock_streamed_solve",
         "taste_shock_simulate",
         "finite_policy_simulate",
     }
@@ -985,7 +965,6 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
         "taste_shock_simulate:attribute_with_signature",
         "taste_shock_solve:attribute_q_and_f",
         "taste_shock_simulate:attribute_q_and_f",
-        "singleton_simulate:attribute_argmax_and_max",
         "collective_solve:attribute_collective_readout",
         "collective_simulate:attribute_collective_argmax",
         "solve:attribute_productmap",
@@ -1084,24 +1063,6 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
         "streaming_dispatch:bypass_compiled_core",
         "streaming_collective:builder_dissolution_inverted",
         "streaming_collective:builder_member_axis_sliced",
-        "streaming_ev1:runtime_scale_constant",
-        "streaming_ev1:scale_signature_dropped",
-        "streaming_ev1:published_value_negated",
-        "streaming_ev1:scale_rebound",
-        "streaming_ev1:continuous_extent_changed",
-        "streaming_ev1:skip_last_block",
-        "streaming_ev1:admit_padded_tail",
-        "streaming_ev1:admit_padded_branch_tail",
-        "streaming_ev1:branch_identity_shifted",
-        "streaming_ev1:branch_transition_ignored",
-        "streaming_ev1:branch_value_negated",
-        "streaming_ev1:last_branch_not_flushed",
-        "streaming_ev1:reverse_block_order",
-        "streaming_logsumexp:filter_first_branch",
-        "streaming_logsumexp:ignore_right_partial",
-        "streaming_logsumexp:scale_dropped_at_finalize",
-        "streaming_logsumexp:semantic_key_changed",
-        "streaming_logsumexp:bind_negates_scale",
         "terminal_wrapper:native_graph_dropped",
         "terminal_wrapper:native_graph_filtered",
         "terminal_wrapper:duplicate_legacy_authority",
@@ -1111,7 +1072,6 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
         "streaming_resolver:arguments_filtered",
         "streaming_resolver:specialization_drops_axes",
         "streaming_resolver:output_roles_dropped",
-        "streaming_blocks:skip_last_block",
         "streaming_blocks:admit_padded_tail",
         "streaming_blocks:block_local_action_ids",
         "streaming_blocks:reverse_coordinate_decode",
@@ -1187,9 +1147,6 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
         f"streaming_collective_blocks:candidate_index_{index}"
         for index in range(len(_CANDIDATES))
     )
-    required.update(
-        f"streaming_ev1:candidate_index_{index}" for index in range(len(_CANDIDATES))
-    )
 
     assert required <= names
     # Independent literals make both cardinality and family identity part of this
@@ -1199,10 +1156,10 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
         for name in names
         if not name.startswith(("simulation_adapter:", "public_shell:"))
     }
-    assert len(original_names) == 373
+    assert len(original_names) == 330
     assert (
         hashlib.sha256(("\n".join(sorted(original_names)) + "\n").encode()).hexdigest()
-        == "4a70ab1ac474f1e2d6e73c819f9fba93cae61eccc1b753aac974b0de743ad412"
+        == "d0c18b1c91498640e72710b439ccd541dc2b1daf32cf16c70fe3f48169047838"
     )
     historical_names = {
         name
@@ -1213,17 +1170,17 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
             ("simulation_adapter:initial_physical_", "public_shell:")
         )
     }
-    assert len(historical_names) == 391
+    assert len(historical_names) == 348
     assert (
         hashlib.sha256(
             ("\n".join(sorted(historical_names)) + "\n").encode()
         ).hexdigest()
-        == "094a68d47a1839fa75bd6ee61ea8d0f2349fc622f8feee6f2b61690146735007"
+        == "4c39ce90f741eaa2da0e179973edd3a41256a901a5f102f304999ccaad98c19b"
     )
-    assert len(names) == 408
+    assert len(names) == 365
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "f9f4ad84230d32132d5c446f8e3fccfdca25eceee0491ee018ae7b1b706c615a"
+        == "9f8018df7ea36b0ba776cfe14094936cabc9b57c6aff693c4216cc363db23656"
     )
 
 
@@ -2624,9 +2581,7 @@ def _simulation_fold_masking_the_last_action_cell(
     *,
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
     action_names: tuple[ActionName, ...],
-    block_width: int,
-    members: tuple[str, ...],
-    weights: Mapping[str, FloatND | float],
+    **fold_arguments: Unpack[_HouseholdFoldArguments],
 ) -> Callable[..., CollectiveHardMaxResult]:
     """Build the simulation fold with one candidate hidden; leave solve unchanged.
 
@@ -2644,9 +2599,7 @@ def _simulation_fold_masking_the_last_action_cell(
                 else Q_and_F
             ),
             action_names=action_names,
-            block_width=block_width,
-            members=members,
-            weights=weights,
+            **fold_arguments,
         ),
     )
 

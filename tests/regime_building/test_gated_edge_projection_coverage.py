@@ -216,7 +216,7 @@ def _short_ref() -> ResolvedProjectedRegimeValue:
     return ResolvedProjectedRegimeValue(
         regime="annuity",
         projection=MappingProxyType({}),
-        member_index=None,
+        member_index=0,
     )
 
 

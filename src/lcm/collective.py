@@ -141,7 +141,7 @@ class CollectiveUtility:
     at that common choice.
 
     The declaration stays in the regime's raw `functions["utility"]` slot.
-    Construction derives `members`, `member_axis` and `pareto_objective`,
+    Construction derives `members` and `pareto_objective`,
     while the engine reads `Regime.decomposed_functions`. That view emits every
     nondelegated body and any delegated body already supplied; model
     finalization requires one `utility_<s>` entry per member after

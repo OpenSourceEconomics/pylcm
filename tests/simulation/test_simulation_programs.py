@@ -54,6 +54,7 @@ from lcm.typing import (
 )
 from tests.conftest import assert_agrees_to_ulp
 from tests.simulation._profile_comparison import assert_values_agree
+from tests.single_member import SELF, SELF_PARETO_WEIGHTS, with_member_axis
 from tests.test_models import taste_shocks_toy
 
 # A single whose decision streams its action product, and a household whose
@@ -442,27 +443,33 @@ _TOY_ACTIONS = {
 
 
 def _streamed_reducer(*, Q_and_F: Callable[..., PytreeValue]) -> _StreamedArgmaxQOverA:
-    """Return the streamed decision over the toy action product for `Q_and_F`."""
+    """Return a single's streamed decision over the toy action product."""
     return _StreamedArgmaxQOverA(
-        Q_and_F=cast("QAndFFunction", Q_and_F),
+        Q_and_F=cast(
+            "QAndFFunction",
+            with_member_axis(cast("Callable[..., tuple[FloatND, BoolND]]", Q_and_F)),
+        ),
         action_names=("work", "consumption"),
         q_and_f_arg_names=frozenset(
             {"next_regime_to_V_arr", "consumption", "work", "wealth"}
         ),
         action_width_keyword="_lcm_action_block_width",
+        members=SELF,
+        pareto_weights=SELF_PARETO_WEIGHTS,
     )
 
 
 def _reducers() -> tuple[ArgmaxQOverAFunction, _StreamedArgmaxQOverA]:
     """Return the dense canonical reducer and its streamed counterpart."""
-    toy = cast("QAndFFunction", _toy_Q_and_F)
     dense = get_argmax_and_max_Q_over_a(
-        Q_and_F=toy,
+        Q_and_F=cast("QAndFFunction", with_member_axis(_toy_Q_and_F)),
         action_names=("work", "consumption"),
         state_names=("wealth",),
         n_discrete_action_axes=1,
+        members=SELF,
+        pareto_weights=SELF_PARETO_WEIGHTS,
     )
-    return cast("ArgmaxQOverAFunction", dense), _streamed_reducer(Q_and_F=toy)
+    return cast("ArgmaxQOverAFunction", dense), _streamed_reducer(Q_and_F=_toy_Q_and_F)
 
 
 def _work_bonus_Q_and_F(
@@ -677,9 +684,18 @@ def _vector_valued_Q_and_F(
 def test_streamed_decision_refuses_a_vector_action_value_at_every_width(
     *, width: int
 ) -> None:
-    """A kernel publishing more than one value per action is refused at any width."""
-    streamed = _streamed_reducer(Q_and_F=_vector_valued_Q_and_F)
-    with pytest.raises(ValueError, match="scalar Q"):
+    """A single's kernel publishing three values per action is refused at any width."""
+    streamed = _StreamedArgmaxQOverA(
+        Q_and_F=cast("QAndFFunction", _vector_valued_Q_and_F),
+        action_names=("work", "consumption"),
+        q_and_f_arg_names=frozenset(
+            {"next_regime_to_V_arr", "consumption", "work", "wealth"}
+        ),
+        action_width_keyword="_lcm_action_block_width",
+        members=SELF,
+        pareto_weights=SELF_PARETO_WEIGHTS,
+    )
+    with pytest.raises(ValueError, match="one trailing member axis"):
         _decide(streamed=streamed, wealth=2.5, width=width)
 
 
@@ -759,10 +775,15 @@ def test_large_action_product_keeps_the_nan_and_tie_rules_at_every_width(
     feasible identity, both in one compiled program.
     """
     streamed = _StreamedArgmaxQOverA(
-        Q_and_F=cast("QAndFFunction", Q_and_F),
+        Q_and_F=cast(
+            "QAndFFunction",
+            with_member_axis(cast("Callable[..., tuple[FloatND, BoolND]]", Q_and_F)),
+        ),
         action_names=("first", "second"),
         q_and_f_arg_names=frozenset({"next_regime_to_V_arr", "first", "second"}),
         action_width_keyword="_lcm_action_block_width",
+        members=SELF,
+        pareto_weights=SELF_PARETO_WEIGHTS,
     )
     continuation = MappingProxyType({"target": jnp.asarray(0.25)})
     index, value = cast(
@@ -777,7 +798,7 @@ def test_large_action_product_keeps_the_nan_and_tie_rules_at_every_width(
         )(**_LARGE_ACTIONS),
     )
     assert int(index) == expected_index
-    assert_array_equal(value, jnp.asarray(expected_value, dtype=value.dtype))
+    assert_array_equal(value, jnp.asarray([expected_value], dtype=value.dtype))
 
 
 @pytest.mark.parametrize("width", [1, 2, 3, 5, 14])

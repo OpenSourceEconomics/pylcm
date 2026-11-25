@@ -116,13 +116,13 @@ class _ExitReducer:
     """Canonical source tuple order, or self for a singleton."""
     declaration: Exit | None
     """The regime's one exit in the current phase, or None if the query reads none."""
-    targets: Mapping[ExitRole, tuple[str, int | None]]
+    targets: Mapping[ExitRole, tuple[str, int]]
     """Member to producer operand and destination member index."""
     adjustments: Mapping[ExitRole, Callable[..., PytreeValue]]
     """Source-context utility adjustments, evaluated once in each payoff."""
     available: Callable[..., PytreeValue] | None
     """Source-context predicate; None means available."""
-    consent_read: tuple[str, str, str, int | None, int | None, int | None] | None
+    consent_read: tuple[str, str, str, int, int, int] | None
     """Own Raw, counterparty Raw, couple producer and counterparty tuple index.
 
     Then the member index of the own and of the counterparty Raw value.
@@ -150,7 +150,7 @@ class _ExitReducer:
     ) -> dict[
         int,
         tuple[
-            Mapping[ExitRole, tuple[str, int | None]],
+            Mapping[ExitRole, tuple[str, int]],
             Mapping[ExitRole, Callable[..., PytreeValue]],
         ],
     ]:
@@ -179,7 +179,7 @@ class _ExitReducer:
         self,
         *,
         operands: Mapping[ReferenceName, PytreeValue],
-        targets: Mapping[ExitRole, tuple[str, int | None]] | None = None,
+        targets: Mapping[ExitRole, tuple[str, int]] | None = None,
         adjustments: Mapping[ExitRole, Callable[..., PytreeValue]] | None = None,
     ) -> tuple[dict[str, FloatND], BoolND, dict[str, BoolND]]:
         """Each member's outside payoff, by default at the exit's own reads.
@@ -205,7 +205,7 @@ class _ExitReducer:
                 continue
             key, index = targets[member]
             answer = cast("PolicyAnswer", operands[key])
-            value = answer[0] if index is None else answer[0][index]
+            value = answer[0][index]
             if member in adjustments:
                 adjustment = jnp.where(
                     active,
@@ -234,10 +234,7 @@ class _ExitReducer:
         q = cast("FloatND", operands["q"])
         payoffs, active, _ = self._payoffs(operands=operands)
         threshold = jnp.stack(tuple(payoffs[member] for member in self.members))
-        member_q = q[None] if self.members == ("self",) else q
-        comparisons = (
-            member_q >= threshold if rule.tie == "stay" else member_q > threshold
-        )
+        comparisons = q >= threshold if rule.tie == "stay" else q > threshold
         return ~active | jnp.all(comparisons)
 
     def __call__(self, **operands: PytreeValue) -> PolicyAnswer:
@@ -264,8 +261,6 @@ class _ExitReducer:
         if not isinstance(cast("Exit", self.declaration).rule, Consent):
             move &= ~stay[2]
         value = jnp.stack(tuple(payoffs[member] for member in self.members))
-        if self.members == ("self",):
-            value = value[0]
         return (
             jnp.where(move, value, stay[0]),
             jnp.where(move, self.n_actions, stay[1]).astype(jnp.int32),
@@ -327,8 +322,7 @@ class _ExitReducer:
         """
         stay = cast("PolicyAnswer", operands["answer"])
         rule = cast("Unilateral | MutualConsent", cast("Exit", self.declaration).rule)
-        collective = self.members != ("self",)
-        inside = stay[0] if collective else stay[0][None]
+        inside = stay[0]
         outside = jnp.stack(tuple(payoffs[member] for member in self.members))
         willing = (inside >= outside if rule.tie == "stay" else inside > outside) & (
             stay[2]
@@ -396,7 +390,7 @@ class _ExitReducer:
         move = (settles | (eligible & ~kept)) & (self.kind is QueryKind.FULL)
         value = jnp.where(move, outside, jnp.where(kept, inside, -jnp.inf))
         return (
-            value if collective else value[0],
+            value,
             jnp.where(move, identifier, jnp.where(kept, stay[1], -1)).astype(jnp.int32),
             kept | move,
             valid & integrity,
@@ -431,9 +425,9 @@ class _ExitReducer:
             own = cast("PolicyAnswer", operands[own_key])
             other = cast("PolicyAnswer", operands[other_key])
             couple = cast("PolicyAnswer", operands[couple_key])
-            other_value = couple[0] if other_index is None else couple[0][other_index]
-            own_value = own[0] if own_raw is None else own[0][own_raw]
-            other_single = other[0] if other_raw is None else other[0][other_raw]
+            other_value = couple[0][other_index]
+            own_value = own[0][own_raw]
+            other_single = other[0][other_raw]
             return (
                 active
                 & couple[2]
@@ -470,7 +464,7 @@ class _ExitReducer:
             q=cast("FloatND", operands["q"]),
             feasible=cast("BoolND", operands["feasible"]),
             n_discrete=self.n_discrete_action_axes,
-            weights=taste.get("weights"),
+            weights=taste["weights"],
         )
         kept = jnp.any(cast("BoolND", operands["feasible"]))
         eligible, integrity = self._eligible(
@@ -479,19 +473,13 @@ class _ExitReducer:
         if not isinstance(cast("Exit", self.declaration).rule, Consent):
             eligible &= ~kept
         valid &= integrity
-        if decider is None:
-            values = jnp.concatenate(
-                (stay_values, jnp.where(eligible, payoffs["self"], -jnp.inf)[None])
-            )
-            at_choice = values
-        else:
-            outside = jnp.where(
-                eligible,
-                jnp.stack(tuple(payoffs[member] for member in self.members)),
-                -jnp.inf,
-            )
-            values = jnp.concatenate((stay_values, outside[decider][None]))
-            at_choice = jnp.concatenate((stay_at_choice, outside[None]))
+        outside = jnp.where(
+            eligible,
+            jnp.stack(tuple(payoffs[member] for member in self.members)),
+            -jnp.inf,
+        )
+        values = jnp.concatenate((stay_values, outside[decider][None]))
+        at_choice = jnp.concatenate((stay_at_choice, outside[None]))
         identifiers = jnp.concatenate(
             (stay_ids, jnp.asarray([self.n_actions], dtype=jnp.int32))
         )
@@ -504,7 +492,7 @@ class _ExitReducer:
             key=taste.get("key"),
         )
         supported = kept | eligible
-        undefined = jnp.isnan(value) if decider is None else jnp.any(jnp.isnan(value))
+        undefined = jnp.any(jnp.isnan(value))
         return (
             value,
             jnp.where(supported, identifiers[chosen], -1).astype(jnp.int32),
@@ -866,24 +854,18 @@ class _QueryGraphBuilder:
                 )
             },
             gated_channels={
-                target: (
-                    (None,)
-                    if self.contexts[target].member_axis is None
-                    else tuple(
-                        index
-                        for index, _ in enumerate(
-                            self.contexts[target].member_axis or ()
+                target: tuple(
+                    index
+                    for index, _ in enumerate(self.contexts[target].members)
+                    if any(
+                        landing_member_index(
+                            members=self.contexts[target].members,
+                            role=route.target_member,
                         )
-                        if any(
-                            landing_member_index(
-                                members=self.contexts[target].member_axis,
-                                role=route.target_member,
-                            )
-                            == index
-                            for route in context.laws[owner]
-                            .gated_edges[target]
-                            .legs.values()
-                        )
+                        == index
+                        for route in context.laws[owner]
+                        .gated_edges[target]
+                        .legs.values()
                     )
                 )
                 for target in gated_query_targets(context=context, period=self.period)
@@ -1078,9 +1060,9 @@ class _QueryGraphBuilder:
         physical_names: frozenset[str],
     ) -> tuple[
         dict[str, str],
-        dict[ExitRole, tuple[str, int | None]],
+        dict[ExitRole, tuple[str, int]],
         dict[ExitRole, Callable[..., PytreeValue]],
-        tuple[str, str, str, int | None, int | None, int | None] | None,
+        tuple[str, str, str, int, int, int] | None,
     ]:
         """Expand an available exit's benchmarks and, for consent, its Raw reads."""
         context = self.contexts[owner]
@@ -1128,7 +1110,7 @@ class _QueryGraphBuilder:
             targets[member] = (
                 operand,
                 landing_member_index(
-                    members=self.contexts[target.regime].member_axis, role=target.role
+                    members=self.contexts[target.regime].members, role=target.role
                 ),
             )
             adjustment = functions.get(
@@ -1203,12 +1185,12 @@ class _QueryGraphBuilder:
                 "counterparty_raw",
                 couple_operand,
                 landing_member_index(
-                    members=self.contexts[target.regime].member_axis,
+                    members=self.contexts[target.regime].members,
                     role=counterparty.role,
                 ),
-                landing_member_index(members=context.member_axis, role=None),
+                landing_member_index(members=context.members, role=None),
                 landing_member_index(
-                    members=self.contexts[counterparty.regime].member_axis, role=None
+                    members=self.contexts[counterparty.regime].members, role=None
                 ),
             )
         return inputs, targets, adjustments, consent_read
@@ -1245,7 +1227,7 @@ class _QueryGraphBuilder:
         *,
         settle: Settlement,
         default: Callable[..., PytreeValue],
-        targets: Mapping[ExitRole, tuple[str, int | None]],
+        targets: Mapping[ExitRole, tuple[str, int]],
         adjustments: Mapping[ExitRole, Callable[..., PytreeValue]],
         owner: RegimeName,
         declaration: Exit,
@@ -2177,7 +2159,7 @@ def _validate_consent_context(
             "and counterparty Raw channels."
         )
     target = declaration.targets["self"]
-    if set(contexts[target.regime].member_axis or ()) != {
+    if set(contexts[target.regime].members) != {
         target.role,
         counterparty.role,
     }:

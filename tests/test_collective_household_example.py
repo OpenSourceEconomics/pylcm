@@ -7,7 +7,6 @@ off the published frame.
 """
 
 from collections import Counter
-from collections.abc import Callable
 from types import MappingProxyType
 
 import jax.numpy as jnp
@@ -88,7 +87,7 @@ def test_the_household_publishes_one_value_per_partner(solved: _Solved) -> None:
     model, _, period_to_regime_to_V_arr = solved
 
     assert period_to_regime_to_V_arr.values[1]["couple"].shape[-1] == 2
-    assert model.user_regimes["couple"].member_axis == ("f", "m")
+    assert model.user_regimes["couple"].members == ("f", "m")
 
 
 def test_households_too_poor_to_outweigh_her_income_alone_dissolve() -> None:
@@ -221,20 +220,17 @@ def test_each_query_action_problem_is_traced_once_per_solve(
     multiplies the traces by the fan-out of every read.
     """
     traces: Counter[int] = Counter()
-    for kernel_class in (Q_and_F._QAndF, Q_and_F._CollectiveQAndF):
-        original = kernel_class.evaluated
+    original = Q_and_F._CollectiveQAndF.evaluated
 
-        # keyword-only-exempt: primary-argument=self
-        def counted(
-            self: Q_and_F._QAndF | Q_and_F._CollectiveQAndF,
-            *args: MappingProxyType[RegimeName, FloatND],
-            _original: Callable[..., Q_and_F.EvaluatedQAndF] = original,
-            **kwargs: Q_and_F.QAndFArg,
-        ) -> Q_and_F.EvaluatedQAndF:
-            traces[id(self)] += 1
-            return _original(self, *args, **kwargs)
+    def counted(
+        self: Q_and_F._CollectiveQAndF,
+        *args: MappingProxyType[RegimeName, FloatND],
+        **kwargs: Q_and_F.QAndFArg,
+    ) -> Q_and_F.EvaluatedQAndF:
+        traces[id(self)] += 1
+        return original(self, *args, **kwargs)
 
-        monkeypatch.setattr(kernel_class, "evaluated", counted)
+    monkeypatch.setattr(Q_and_F._CollectiveQAndF, "evaluated", counted)
     model = household.get_model(n_periods=3, wealth_n_points=2, consumption_n_points=2)
     model.solve(params=household.get_params(), log_level="off")
     assert traces

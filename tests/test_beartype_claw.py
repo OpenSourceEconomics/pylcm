@@ -41,6 +41,7 @@ from lcm.exceptions import (
 )
 from lcm.regime import Regime as UserRegime
 from lcm.typing import RegimeName
+from tests.single_member import SELF, SELF_PARETO_WEIGHTS, with_member_axis
 
 _LIST_UNDECORATED_FUNCTIONS = """
 import importlib
@@ -102,9 +103,11 @@ def test_claw_allows_with_signature_wrapper_over_named_param_function() -> None:
         return action, action >= state
 
     argmax_and_max_Q_over_a = get_argmax_and_max_Q_over_a(
-        Q_and_F=Q_and_F,
+        Q_and_F=with_member_axis(Q_and_F),
         action_names=("action",),
         state_names=("state",),
+        members=SELF,
+        pareto_weights=SELF_PARETO_WEIGHTS,
     )
 
     argmax, maximum = cast(
@@ -117,7 +120,7 @@ def test_claw_allows_with_signature_wrapper_over_named_param_function() -> None:
     )
 
     assert int(argmax) == 2
-    assert float(maximum) == 2.0
+    assert float(maximum[0]) == 2.0
 
 
 def _fori_loop_body_index_annotations() -> list[tuple[str, str, str]]:

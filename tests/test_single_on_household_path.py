@@ -481,10 +481,10 @@ def test_a_model_of_singles_simulates_with_value_and_no_own_member(
 
 
 def test_the_engine_regime_of_a_single_carries_the_member_self() -> None:
-    """The engine regime of a single carries the member axis `("self",)`."""
+    """The engine regime of a single carries the members `("self",)`."""
     model = taste_shocks_toy.get_model()
 
-    assert model._regimes["alive"].member_axis == ("self",)
+    assert model._regimes["alive"].members == ("self",)
 
 
 def test_role_vocabulary_gives_the_member_self_no_role() -> None:
@@ -517,15 +517,21 @@ def test_regime_finder_reads_a_recorded_member_self_as_an_individual(
 ) -> None:
     """A regime recorded with the one member `"self"` adapts as an individual."""
     snapshot = read_model(_CASES[name]()[0])
-    with_self = copy.deepcopy(snapshot)
-    for regime in cast(
-        "dict[str, dict[str, dict[str, JSONValue]]]", with_self["user_regimes"]
-    ).values():
-        if regime["fields"].get("member_axis") is None:
-            regime["fields"]["member_axis"] = ["self"]
+    without_self = copy.deepcopy(snapshot)
+    singles = [
+        regime["fields"]
+        for regime in cast(
+            "dict[str, dict[str, dict[str, JSONValue]]]",
+            without_self["user_regimes"],
+        ).values()
+        if regime["fields"]["members"] == ["self"]
+    ]
+    for fields in singles:
+        del fields["members"]
 
-    adapted = _adapted_without_input_digest(with_self)
+    adapted = _adapted_without_input_digest(without_self)
 
+    assert singles
     assert adapted == _adapted_without_input_digest(snapshot)
 
 

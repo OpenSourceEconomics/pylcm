@@ -15,12 +15,12 @@ from typing_extensions import TypedDict
 from _lcm.execution.output_layout import StateAxesLeading
 from _lcm.execution.placement import ACTION_PARTITION_AXIS
 from _lcm.regime_building.max_Q_over_a import get_action_partitioned_max_Q_over_a
-from _lcm.regime_building.Q_and_F import get_Q_and_F_terminal
+from _lcm.regime_building.Q_and_F import get_Q_and_F_terminal_collective
 from _lcm.simulation.program_types import SUBJECT_WIDTH_KEYWORD
 from _lcm.simulation.programs import _SubjectTiled
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.subject_parallel import shard_subject_function
-from _lcm.solution.action_reduction import HardMaxAccumulator
+from _lcm.solution.action_reduction import CollectiveHardMaxAccumulator
 from _lcm.solution.action_streaming import build_partitioned_streaming_max_Q_over_a
 from _lcm.solution.feasibility import BoundedResult, summarize_bound_inputs
 from _lcm.typing import ArgumentTree, ConstraintFunction, EconFunction, PytreeValue
@@ -28,6 +28,7 @@ from lcm import ExecutionConfig
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.typing import BoolND, FloatND, RegimeName, ScalarInt
 from tests.constraints.test_dynamic_lower_bound import TemporalRegimeId, _temporal_model
+from tests.single_member import SELF, SELF_PARETO_WEIGHTS
 from tests.solution.test_dynamic_bound_authority import _bound
 
 
@@ -61,7 +62,8 @@ def test_native_action_partition_replicates_active_owner_integrity(
     def borrowing(*, consumption: FloatND, floor: FloatND) -> BoolND:
         return -consumption >= floor
 
-    kernel = get_Q_and_F_terminal(
+    kernel = get_Q_and_F_terminal_collective(
+        members=SELF,
         flat_param_names=frozenset(),
         functions=MappingProxyType(
             {
@@ -87,6 +89,8 @@ def test_native_action_partition_replicates_active_owner_integrity(
         block_width=1,
         n_partitions=2,
         axis_name=ACTION_PARTITION_AXIS,
+        members=SELF,
+        weights={"self": 1.0},
     )
 
     def local_flags() -> tuple[jax.Array, jax.Array]:
@@ -96,7 +100,7 @@ def test_native_action_partition_replicates_active_owner_integrity(
         )
         assert type(local) is BoundedResult
         return jnp.stack(local.bound_status[0])[None, :], cast(
-            "HardMaxAccumulator", local.output
+            "CollectiveHardMaxAccumulator", local.output
         ).any_feasible[None]
 
     flags, feasible = jax.jit(
@@ -118,11 +122,12 @@ def test_native_action_partition_replicates_active_owner_integrity(
         state_names=(),
         mesh=mesh,
         n_partitions=2,
-        return_feasibility=True,
+        members=SELF,
+        pareto_weights=SELF_PARETO_WEIGHTS,
     )
     result = jax.jit(lambda: mapped(**arguments, _lcm_action_block_width=1))()
     assert type(result) is BoundedResult
-    np.testing.assert_array_equal(result.output[0], -np.inf if invalid else 2.0)
+    np.testing.assert_array_equal(result.output[0], [-np.inf if invalid else 2.0])
     np.testing.assert_array_equal(result.output[1], invalid)
     np.testing.assert_array_equal(jnp.stack(result.bound_status[0]), [invalid, False])
     assert all(leaf.sharding.spec == jax.P() for leaf in jax.tree.leaves(result))

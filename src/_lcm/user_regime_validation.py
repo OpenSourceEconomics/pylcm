@@ -297,7 +297,7 @@ def _validate_renegotiation(
         or declaration.rule.renegotiate is None
     ):
         return
-    if len(regime.member_axis or ()) != 2:  # noqa: PLR2004 - directional two-member rule
+    if len(regime.members) != 2:  # noqa: PLR2004 - directional two-member rule
         raise RegimeInitializationError("Renegotiate requires two collective members.")
     spec = normalize_regime_phases(regime, law=law)
     grid = getattr(
@@ -349,7 +349,7 @@ def _validate_settlement(*, declaration: Exit, regime: Regime) -> None:
     if not isinstance(rule, MutualConsent):
         return
     name = rule.settle.name
-    if len(regime.member_axis or ()) != 2:  # noqa: PLR2004 - directional two-member rule
+    if len(regime.members) != 2:  # noqa: PLR2004 - directional two-member rule
         raise RegimeInitializationError("Settlement requires two collective members.")
     # The author's names and the engine's: a household's `utility` is bound as
     # `utility_<s>` per member, and a settlement may shadow neither.
@@ -463,15 +463,7 @@ def validate_regime(regime: Regime) -> None:
         RegimeInitializationError: On the first group of violated declarations.
     """
     _fail_if_solver_cannot_solve_the_members(regime)
-    if regime.member_axis is not None:
-        _validate_collective_regime(regime)
-    elif regime.pareto_objective is not None:
-        raise RegimeInitializationError(
-            "`pareto_objective` declares how a collective regime's "
-            "household weighs its members; it is only meaningful "
-            "for a household declared with a `CollectiveUtility`. Omit it "
-            "for a singleton regime."
-        )
+    _validate_members(regime)
     member_mapping_errors = _member_mapping_errors(regime)
     if member_mapping_errors:
         raise RegimeInitializationError(format_messages(member_mapping_errors))
@@ -493,7 +485,7 @@ def _member_mapping_errors(regime: Regime) -> tuple[str, ...]:
         declared = getattr(regime, slot)
         if not isinstance(declared, Mapping):
             continue
-        if regime.member_axis is None:
+        if not _declares_a_household(regime):
             error_messages.append(
                 f"`{slot}` is keyed by member, which only a household declared "
                 f"with a `CollectiveUtility` has. Declare one `{slot}` for this "
@@ -597,10 +589,16 @@ def fail_if_a_joint_target_is_unreachable(
         raise RegimeInitializationError(format_messages(error_messages))
 
 
-def _validate_collective_regime(regime: Regime) -> None:
-    """Validate a collective (member-valued) regime.
+def _declares_a_household(regime: Regime) -> bool:
+    """Whether `regime` names its members with a `CollectiveUtility`."""
+    from lcm.collective import CollectiveUtility  # noqa: PLC0415 - import cycle
 
-    Both the terminal and the non-terminal continuation cases are implemented.
+    return isinstance(regime.functions.get("utility"), CollectiveUtility)
+
+
+def _validate_members(regime: Regime) -> None:
+    """Validate a regime's members and how its household trades them off.
+
     Checked here are the properties a bare `Regime` already
     determines on its own: a non-empty, duplicate-free `members` tuple, and — if
     `pareto_objective` is given — weight keys matching the member names,
@@ -621,10 +619,9 @@ def _validate_collective_regime(regime: Regime) -> None:
     the solver handles the member count is checked for every regime, by
     `_fail_if_solver_cannot_solve_the_members`.
 
-    Called from `Regime.__post_init__` only when `member_axis is not None`, so
-    the default singleton path never reaches it.
+    Called from `Regime.__post_init__` for every regime.
     """
-    members = cast("tuple[str, ...]", regime.member_axis)
+    members = regime.members
 
     _fail_if_taste_shocks_lack_one_decider(regime=regime, members=members)
     error_messages: list[str] = []

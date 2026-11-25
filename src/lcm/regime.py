@@ -112,7 +112,7 @@ class RegimeReplacement(_SlotsBesideFunctions, total=False):
     """The slots `Regime.replace` may replace, each with its declared type.
 
     These are the slots a regime is constructed from. The derived slots
-    (`members`, `member_axis` and `pareto_objective`) are read off a regime and
+    (`members` and `pareto_objective`) are read off a regime and
     are not among them.
     """
 
@@ -354,37 +354,28 @@ class Regime:
     description: str = ""
     """Description of the regime."""
 
-    member_axis: tuple[str, ...] | None = field(init=False, default=None)
-    """The members along the trailing value axis, or `None` for no such axis.
+    members: tuple[str, ...] = field(init=False, default=("self",))
+    """Names of the members whose individual values this regime carries.
 
-    The engine's marker for a household: equal to `members` for a regime
-    declared with a `CollectiveUtility`, and `None` for a regime declared with
-    a plain utility function, whose value carries no member axis. Derived from
-    `CollectiveUtility.utilities`, whose keys are the members in the order they
-    are written.
+    Every regime has at least one member, and its value array carries a
+    trailing axis over them. A regime declared with a plain utility function
+    has the one member `"self"`. A household, such as a couple, is declared
+    with a `CollectiveUtility`, whose `utilities` keys are its members in the
+    order they are written. The household solves one argmax of the
+    Pareto-weighted sum of its members' values and reads off each member's own
+    value there; its exits compare each member's value (consent, dissolution).
 
-    `None` (the default) is the singleton case: the regime has the single
-    member `"self"` and one value function. A non-`None` tuple declares a
-    *collective regime*: a household, such as a couple, that solves
-    one household argmax but reads off a per-member value at that common
-    argmax, and whose exits compare each member's value (consent, dissolution).
-
-    A collective regime's `decomposed_functions` view carries a
-    per-member `utility_<s>` for each member `<s>`, together with a
-    `pareto_objective`. Its solve reads off each member's own value at the
-    shared household argmax, and a non-terminal one aggregates each member's
-    continuation `Q^s = W^s(u^s, CE^s)`. A non-terminal
-    collective regime's transition targets must all be collective regimes with
-    the identical `members` tuple — per-member current outside options
+    A household's `decomposed_functions` view carries a per-member
+    `utility_<s>` for each member `<s>`, together with a `pareto_objective`,
+    and a non-terminal one aggregates each member's continuation
+    `Q^s = W^s(u^s, CE^s)`. A non-terminal household's transition targets must
+    all have the identical `members` tuple — per-member current outside options
     are declared by an `Exit`. EV1 taste shocks with more than one member
     carrying a positive weight raise `NotImplementedError`, as does a solver
     that does not declare `supports_several_members` on a regime with more
     than one member.
 
-    An `Exit` compares each member's value with its outside value in the current
-    period.
-
-    Two things to know before simulating one:
+    Two things to know before simulating a household:
 
     - The population is one fixed-size cohort of independent rows. A
       dissolution does not split a row into two independently tracked
@@ -395,17 +386,14 @@ class Regime:
     """
 
     pareto_objective: ParetoObjective | None = field(init=False, default=None)
-    """How this collective regime's household trades its members off.
+    """How this regime's household trades its members off.
 
-    Derived from `CollectiveUtility.objective`.
-
-    Used only when `member_axis is not None`: the collective solve maximizes
-    the household scalarization `O = Σ_s λ_s Q^s` over the feasible action set.
+    Derived from `CollectiveUtility.objective`. The solve maximizes the
+    household scalarization `O = Σ_s λ_s Q^s` over the feasible action set.
     When omitted (the default), equal weights `1/len(members)` are used —
     the symmetric-couple case, `λ = 0.5` on each partner. Declare a
     `ParetoObjective` to weigh one member more, to let the weights depend
-    on a state, or to estimate them. Ignored — and must be `None` — for a
-    singleton regime.
+    on a state, or to estimate them.
     """
 
     def _make_field_immutable(self, *, name: str) -> None:
@@ -482,17 +470,6 @@ class Regime:
             | frozenset(self.state_transitions),
         )
         return self.replace(states=states, functions=functions)
-
-    @property
-    def members(self) -> tuple[str, ...]:
-        """Names of the members whose individual values this regime carries.
-
-        Every regime has at least one member. A regime declared with a plain
-        utility function has the single member `"self"`; a household declared
-        with a `CollectiveUtility` has its `utilities` keys, in the order they
-        are written (its `member_axis`).
-        """
-        return ("self",) if self.member_axis is None else self.member_axis
 
     @cached_property
     def decomposed_functions(
@@ -621,7 +598,7 @@ class Regime:
                     f"supply {member}'s utility. Declare it once, in the "
                     "`CollectiveUtility`."
                 )
-        object.__setattr__(self, "member_axis", tuple(declaration.utilities))
+        object.__setattr__(self, "members", tuple(declaration.utilities))
         if declaration.objective is not None:
             object.__setattr__(self, "pareto_objective", declaration.objective)
 
@@ -918,7 +895,7 @@ class Regime:
 
         Replacing a slot that carries a `CollectiveUtility` replaces the
         declaration itself, and the members are derived again from what the
-        new slot says. `members`, `member_axis` and `pareto_objective` are those
+        new slot says. `members` and `pareto_objective` are those
         derived values, so naming one here is an error: they are read off a
         regime, never written to it.
 

@@ -416,10 +416,8 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                 ),
                 "member_ids": tuple(
                     role_code(name=member, role_ids=regime.member_names_to_ids)
-                    for member in regime.member_axis
-                )
-                if regime.member_axis is not None
-                else (),
+                    for member in regime.members
+                ),
             },
             arguments={
                 "moved": moved,

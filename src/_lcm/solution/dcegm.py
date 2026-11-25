@@ -509,6 +509,18 @@ class DCEGM(OneMarginSolver):
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Preserve ordinary numerical preparation followed by program assembly."""
+        return publish_member_axis(
+            kernels=self.build_inner_period_kernels(context=context),
+            members=context.members,
+        )
+
+    def build_inner_period_kernels(
+        self, *, context: SolverBuildContext
+    ) -> SolutionKernels:
+        """Build the period kernels whose values carry no member axis.
+
+        An outer solver nesting this one appends the axis to its own programs.
+        """
         return self.finish_period_kernels(
             context=context, build=self.prepare_period_steps(context=context)
         )
@@ -755,7 +767,7 @@ class DCEGM(OneMarginSolver):
                 ).pieces._retain_nested_feasibility,
                 retain_child_feasibility=retain_child_mask,
             )
-        kernels = SolutionKernels(
+        return SolutionKernels(
             continuation_reader_capabilities=reader_capabilities or None,
             query_input_authorities=query_slots_by_period or None,
             period_kernels=MappingProxyType(period_kernels),
@@ -772,7 +784,6 @@ class DCEGM(OneMarginSolver):
                 ),
             ),
         )
-        return publish_member_axis(kernels=kernels, member_axis=context.member_axis)
 
 
 @dataclass(frozen=True, kw_only=True)

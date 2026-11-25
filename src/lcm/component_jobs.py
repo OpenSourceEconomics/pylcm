@@ -1569,11 +1569,7 @@ def _validate_raw_fields(
             raise SolutionIntegrityError(msg)
         for (name, period, field_name, _), leaf in panel.leaves.items():
             regime = regimes[name]
-            trailing = (
-                (len(regime.member_axis),)
-                if field_name == "V_arr" and regime.member_axis is not None
-                else ()
-            )
+            trailing = (len(regime.members),) if field_name == "V_arr" else ()
             dtype = (
                 np.dtype(value_dtypes[(period, name)])
                 if field_name == "V_arr"
