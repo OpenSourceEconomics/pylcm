@@ -50,7 +50,8 @@ walk over a state of the source.
      value there too; otherwise, or without such a candidate, stay.
 - Two members only. `settle` exists only on `MutualConsent` and `renegotiate` only on
   `Unilateral`.
-- The default reads what `available` reads and is clipped to the candidates' range.
+- The default is one number at the source node, read before the action, and is clipped
+  to the candidates' range.
 - A separating household lands where the projections evaluated at the selected
   settlement put it and receives the adjustments evaluated there. The simulated output
   shows the settlement through those landing states and values; it has no column of its

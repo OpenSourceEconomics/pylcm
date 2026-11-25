@@ -1912,10 +1912,8 @@ class PeriodRegimeSimulationData:
     V_arr: FloatND
     """Value function array for all subjects at this period.
 
-    Shape `(n_subjects,)` for a singleton regime; `(n_subjects,
-    n_members)` for a collective regime — each member's own
-    value at the household's shared argmax, mirroring the solve-side V's
-    trailing member axis.
+    Shape `(n_subjects, n_members)`: each member's own value at the regime's
+    shared argmax, mirroring the solve-side V's trailing member axis.
 
     The grid-argmax value: where the off-grid policy read replaces the
     continuous action, this value belongs to the pre-replacement gridded

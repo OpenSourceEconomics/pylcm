@@ -70,12 +70,10 @@ The following are rejected:
 - a delegated (`None`) member for which no `utility_<s>` body arrives after model-level
   declarations are merged, when the model finalizes the regime.
 
-`members`, `member_axis` and `pareto_objective` are derived, read-only fields. They are
-not parallel declaration routes and cannot be passed to `Regime(...)` or
-`Regime.replace`. Every regime has `members`: the `utilities` keys for a household, and
-`("self",)` for a regime declared with a plain utility function. `member_axis` equals
-`members` for a household and is `None` otherwise. A household may not name a member
-`"self"`.
+`members` and `pareto_objective` are derived, read-only fields. They are not parallel
+declaration routes and cannot be passed to `Regime(...)` or `Regime.replace`. Every
+regime has `members`: the `utilities` keys for a household, and `("self",)` for a regime
+declared with a plain utility function. A household may not name a member `"self"`.
 
 (api-pareto-objective)=
 
@@ -336,14 +334,17 @@ single's.
 per member. Without taste shocks the household chooses the action that maximizes the
 Pareto-weighted sum of its members' objectives, and stores each member's `value` there.
 Ties in that sum go to the members' objectives and then to their values, each in member
-order, so the stored values do not depend on the order of the actions. With taste shocks
-the one deciding member chooses on its own objective, as a single would; its stored
-value is its expectation at the noisy choice, and every other member's is the mean of
-its own `value` under the decider's choice probabilities.
+order, so the stored values do not depend on the order of the actions. Actions that are
+still tied give every member the same value. The first of them in grid order is
+simulated, so the simulated action can depend on the order of the actions. With taste
+shocks the one deciding member chooses on its own objective, as a single would; its
+stored value is the expectation of its `value` at the noisy choice including the chosen
+action's shock, and every other member's is the mean of its own `value` under the
+decider's choice probabilities, without a shock term.
 
 `Model.lookup_policy(..., keep_intermediates=...)` and the NaN diagnostics of a failed
-solve work for a household as for a single. `Q`, `U` and `CE` carry a trailing member
-axis in member order; the diagnostics count a cell as NaN where any member's value is.
+solve work for a household as for a single. `Q`, `U` and `CE` end in the member axis, in
+member order; the diagnostics count a cell as NaN where any member's value is.
 
 (collective-parameters)=
 
@@ -511,7 +512,7 @@ can be passed to `Regime(...)` or to `Regime.replace`.
 
 | Declaration         | Construction-derived fields                    | On-access engine view                                                                                          |
 | ------------------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `CollectiveUtility` | `members`, `member_axis`, `pareto_objective`   | `decomposed_functions`: nondelegated and already-supplied bodies; complete after successful model finalization |
+| `CollectiveUtility` | `members`, `pareto_objective`                  | `decomposed_functions`: nondelegated and already-supplied bodies; complete after successful model finalization |
 | `Gate`              | `model.graph.laws[source].gated_edges[target]` | `model.graph.laws[source].decomposed_transition[target]`: the law's cell for the target                        |
 
 The declaration objects themselves stay where the author wrote them, in `functions`,

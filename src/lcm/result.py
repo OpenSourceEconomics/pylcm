@@ -63,7 +63,7 @@ class PolicyLookup:
     """
 
     value: FloatND
-    """Decision value using the solved continuation, one value per queried row.
+    """Decision value using the solved continuation, per queried row and member.
 
     Without `Decoupled`, the hard maximum of `Q`, or with taste shocks the
     smoothed maximum `scale * logsumexp(Qc / scale)`.
@@ -73,21 +73,27 @@ class PolicyLookup:
     including the selected centered shock. This is generally not a logsum of
     `Qc`: the choice probabilities come from the objective profile.
 
-    A household has a trailing member axis, in member order. With taste shocks,
-    the deciding member's entry is its smoothed maximum and every other
+    The trailing axis is the regime's members, in member order: one entry,
+    `"self"`, for a regime declared with a plain utility function. In a
+    household with taste shocks, the deciding member's entry is its smoothed
+    maximum and every other
     member's is its mean action value under the decider's choice probabilities.
     """
 
     Q: FloatND | None = None
     """Action values over the queried action grid, or `None` unless requested.
 
-    One leading row axis, then one axis per action in the order of `actions`.
-    Raw and unmasked: an infeasible entry holds the value the action would have,
+    One leading row axis, then one axis per action in the order of `actions`,
+    then the member axis. Raw and unmasked: an infeasible entry holds the value
+    the action would have,
     which may exceed `value`; only `F` excludes it from the maximization.
     """
 
     F: BoolND | None = None
-    """Feasibility of each entry of `Q`, same shape, or `None` unless requested."""
+    """Feasibility of each entry of `Q`, or `None` unless requested.
+
+    The shape of `Q` without its member axis: feasibility is the regime's.
+    """
 
     U: FloatND | None = None
     """Flow utility of each entry of `Q`, same shape, or `None` unless requested.

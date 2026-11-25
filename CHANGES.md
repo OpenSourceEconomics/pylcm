@@ -5,6 +5,29 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Every value array ends in a member axis
+
+- Every regime is solved and simulated as the household of its members; a regime
+  declared with a plain utility function is the household of its one member `"self"`.
+  Every value array ends in a `member` axis in member order, of length one for such a
+  regime: `solution.values[period][regime]`, `SolutionResult.value`, `value_array` and
+  `value_frame` (dimension and column `member`, coordinate `"self"`), and the `value`,
+  `Q`, `U` and `CE` of `Model.lookup_policy`. Index the last axis, or select
+  `member="self"`, where code read a value without it. The simulated frame keeps the
+  column `value` for the member `"self"` and `value_<member>` for a household's members.
+- `Regime.members` is `("self",)` for a regime declared with a plain utility function.
+  No attribute of `Regime` marks a household; compare `Regime.members` instead.
+- Custom solvers: the value a kernel publishes always carries the trailing member axis,
+  and `SolverBuildContext.members` names it. `SOLVER_API_VERSION` is 5.
+- Formats move together: the saved-solution schema version is 4 and its format version
+  4, the component-fragment format version is 3, the model-structure fingerprint tag is
+  9 and the chunk-profile tag is 6. Solutions and fragments written before are refused;
+  solve again. Model fingerprints and cached chunk profiles change.
+- `SimulationResult.save` records a format version, and `SimulationResult.load` raises
+  `IncompatibleSolutionError` for a directory saved without it or under another one;
+  simulate again. The result's metadata records each regime's members as
+  `regime_to_members`.
+
 ### Exits declare only what the members' rules define
 
 - A formation by `Consent` pays nothing: an `Exit` with a `Consent` rule whose target
@@ -35,6 +58,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - A household with a `Decoupled` aggregator and no taste shocks breaks ties in its
   weighted objective on the members' objectives and then on their stored values, each
   in member order, so its stored values do not depend on the order of the actions.
+  Actions that are still tied give every member the same value; the first of them in
+  grid order is simulated, so the simulated action can depend on that order.
 
 ### Several decisions in one period
 
@@ -51,7 +76,9 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   an earlier stage or one that observes a shock its destination draws later.
 - `period` and `age` are the period's in user functions, time-indexed parameters are
   indexed by period, and the simulated frame gains a `stage` column. `model.n_periods`,
-  the solution and the raw simulation results count steps, one per period and stage.
+  the solution and the raw simulation results count steps, one per period and stage. A
+  simulation that reaches a state without a feasible action names the period in its
+  `NoFeasibleActionError`, not the step.
 - A model without `stages` has one stage per period; its programs, parameter templates,
   fingerprints and saved formats are those of a model without the argument.
 - See
@@ -78,9 +105,9 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - The parties of a regime whose values are tracked are its **members**; the word
   "stakeholder" is gone from the API. `Regime.members` is always a tuple: the
   `utilities` keys of a `CollectiveUtility`, in the order written, and `("self",)` for a
-  regime declared with a plain utility function. `Regime.member_axis` is the household
-  marker: equal to `members` for a household and `None` otherwise.
-- Renamed: `Regime.stakeholders` to `Regime.member_axis`, `StakeholderRoute` to
+  regime declared with a plain utility function. `Regime.stakeholders` is removed; read
+  `Regime.members`.
+- Renamed: `StakeholderRoute` to
   `MemberRoute`, its `target_stakeholder` to `target_member`, the `stakeholder` field of
   `ProjectedRegimeValue` to `member`,
   `Model.stakeholder_names_to_ids` to `Model.member_names_to_ids`, the initial condition
@@ -89,8 +116,6 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   Error messages and documentation say "member" throughout.
 - `CollectiveUtility` refuses a member named `"self"`, which is reserved for the single
   member of a regime declared with a plain utility function.
-- Values, model fingerprints and saved simulation results of models without a
-  `CollectiveUtility` are unchanged.
 
 ### Taste shocks in a household with one decider
 
@@ -442,8 +467,8 @@ unchanged. The solvers keep the derivative rules they use themselves.
   (pinned host memory, at most three periods' values on the device) or a directory (one
   archive per solve on disk, in the `SolutionResult.save` format). EGM-family simulation
   policies take the same path. Values, policies, reads and simulated panels are bitwise
-  those of `"device"`. The budget planner counts only the
-  periods on the device, and a refusal caused by stored values names `value_storage`.
+  those of `"device"`; storage does not reorder the action grid. The budget planner
+  counts only the periods on the device, and a refusal caused by stored values names `value_storage`.
 - A NaN in the value function is diagnosed at the end of its period, while the values are
   still on the device; the solve no longer reads values back after the loop to report it.
 - Off the device, a simulation of several subject chunks runs period by period: each
@@ -726,11 +751,12 @@ unchanged. The solvers keep the derivative rules they use themselves.
   with `u + β̃δ·CE` in the solve, `u + βδ·CE` in simulation and `value = u + δ·CE` this
   covers the naive, sophisticated and partially naive beta-delta agents. With
   `ExtremeValueTasteShocks` the objective sets the choice probabilities and the stored
-  value is the expected `value` at the noisy choice. Both functions read parameters from
+  value is the expected `value` at the noisy choice, including the chosen action's shock.
+  Both functions read parameters from
   the `koopmans_aggregator` namespace, where a shared name is one parameter.
   `PolicyLookup.Q_objective` publishes the objective's action values. Only `GridSearch`
-  supports it; collective regimes, gated-edge sources and sharded continuous states
-  refuse it. A `Phased` Koopmans aggregator is unchanged.
+  supports it; gated-edge sources and sharded continuous states refuse it. A `Phased`
+  Koopmans aggregator is unchanged.
 - A state or regime-function input read only by a Koopmans aggregator reaches it.
 
 ### Choice probabilities in policy lookup with taste shocks
@@ -924,13 +950,16 @@ unchanged. The solvers keep the derivative rules they use themselves.
 - `ExecutionConfig(invariant_block_widths={"<state>": 1})` solves every non-terminal
   `GridSearch` regime carrying an invariant discrete state one code at a time. Each code
   runs one shared executable with the code as a runtime operand, and reads every
-  continuation carrying the state through that code's block. The tested workloads
-  publish values, policies and simulated panels bitwise equal to the unblocked solve's;
-  the default `{}` leaves the solve unchanged. Unsupported or unsafe requests are refused at model construction. See
+  continuation carrying the state through that code's block. Blocked and
+  unblocked values agree within eight ULP of the working float format, and the sets of
+  best actions agree; simulated choices agree wherever the best action is unique.
+  Blocking keeps the order of the action grid. The default `{}` leaves the solve
+  unchanged. Unsupported or unsafe requests are refused at model construction. See
   [Solve one invariant code at a time](docs/user_guide/tuning.md).
 - When the simulate phase also keeps the state fixed, `simulate` groups subjects by their
   starting code and reads each typed value through one code's block. Every subject keeps
-  its original random draws and output row, so the panel is unchanged; otherwise
+  its original random draws and output row, and reads the same values, so the panel is
+  unchanged; otherwise
   simulation stays ungrouped.
 - `ExecutionConfig(invariant_block_schedule=InvariantBlockSchedule.BLOCK_MAJOR)` solves
   each code through all of its periods before the next code, simulates its subjects
@@ -1269,15 +1298,16 @@ unchanged. The solvers keep the derivative rules they use themselves.
 - Cached simulation key generation now follows changes to JAX's Threefry partition
   setting between calls, including when an executable has already been compiled.
 
-### Solver API version 3
+### Solvers declare their capabilities
 
-- `SOLVER_API_VERSION` is 3. Every solver implements `capabilities`, returning the
+- Every solver implements `capabilities`, returning the
   frozen `SolverExecutionCapabilities` exported by `lcm.solver_api` and `lcm.solvers`.
   Its structural requirements, execution axes and supported preference features drive
   the solver reference tables. Concrete model programs remain the authority for
   accepted execution widths. Custom plugins must implement this property and target
-  API 3. Solver identities and model fingerprints change with this compatibility
-  version; API 2 solution archives are not automatically migrated.
+  the current `SOLVER_API_VERSION`. Solver identities and model fingerprints change with
+  this compatibility version; solution archives of another API version are not
+  migrated.
 - A core program declares what it publishes to another
   program of the same kernel graph with `InternalOutputSpec`, and a consumer names what
   it reads with `InternalInputRef`; both are published through `lcm.solvers`. The engine
@@ -1549,8 +1579,7 @@ unchanged. The solvers keep the derivative rules they use themselves.
   itself; a consuming model admits the descriptor only when it names exactly the
   published fields with the dtypes they carry, and a restored archive reads its
   diagnostics without a model. A diagnostic omission without a descriptor is refused
-  on both save and load. The solution-format version is 3; an archive of version 2 does
-  not load.
+  on both save and load. An archive of another solution-format version does not load.
 - A result restored by `load_solution` can be saved again without a model. Its payloads
   are re-read from the archive they came from and verified against their checksums and
   descriptors before they are written to the new archive.
@@ -1726,11 +1755,9 @@ unchanged. The solvers keep the derivative rules they use themselves.
   unmigrated endogenous-grid kernels cross one fail-closed legacy adapter. A kernel
   publishing both a native graph and a legacy declaration is rejected at build.
 - Streamed action reduction is planned per program with an explicit disposition and
-  reason. Singleton expected-value (EV1) reductions and collective hard-max reductions
-  stay dense by disposition: blockwise grouping changes the canonical floating-point
-  reduction order, and the collective streamed row regressed every measured resource
-  surface. The transition ledger in `docs/development/architecture_transition_ledger.md`
-  records each remaining bridge with its retirement condition.
+  reason. Expected-value (EV1) reductions stay dense by disposition: blockwise grouping
+  changes the canonical floating-point reduction order. The transition ledger in
+  `docs/development/architecture_transition_ledger.md` records each remaining bridge with its retirement condition.
 - The fp32/fp64 candidate certificate binds the native graph: seals, AST hashes, and 354
   synchronized mutations cover duplicate authority, wrapped or rebound functions and
   builders, erased requirements, roles, and reasons, forced dispositions, and

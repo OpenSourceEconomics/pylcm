@@ -169,18 +169,20 @@ The settlement rule, with outside values evaluated at a settlement:
    settlement. In every comparison of the rule an indifferent member does what `tie`
    says: it prefers staying under `"stay"` and leaving under `"leave"`.
 1. If nobody wants to leave, the household stays. If both want to leave, it separates at
-   the default.
+   the default, without a search of the candidates.
 1. If exactly one wants to leave, the other member is compensated: among the candidates
    beyond the default on that member's side (increasing values favour the first member),
    take the nearest at which that member prefers its outside value to staying. The
    household separates there if the member who wants to leave prefers its outside value
-   there to staying, and stays otherwise. Without such a candidate it stays.
+   there to staying, and stays otherwise; no farther candidate is tried. Without such a
+   candidate it stays.
 
 A shifted settlement is searched on the candidates only, never between them. A
-settlement needs a regime with two members. The default reads what `available` reads, at
-the decision; it is clipped to the candidates' range. A household that separates lands
-where the projections put it at the selected settlement and receives the adjustments
-evaluated there.
+settlement needs a regime with two members. The default is one number at the household's
+node before the action: it may read states, parameters, the period, functions of the
+regime and shocks the regime itself draws. It is clipped to the candidates' range and
+need not be a candidate. A household that separates lands where the projections put it
+at the selected settlement and receives the adjustments evaluated there.
 
 ## Renegotiating a bargaining state before dissolving
 

@@ -5410,8 +5410,8 @@ class Model:
                 actions and value unchanged. `Q`, `U` and `CE` are unmasked; `F`
                 says which of their entries the decision admits. Any non-empty
                 choice materializes the whole action product, even where the
-                decision alone streams over it. In a household, `Q`, `U` and
-                `CE` carry a trailing member axis in member order.
+                decision alone streams over it. `Q`, `U` and `CE` end in
+                the member axis, in member order.
             use_categorical_codes: Whether value-grid states, value-grid action
                 grids and the returned discrete actions are codes instead of
                 values, and the discrete levels of a `pd.Series` in `params`

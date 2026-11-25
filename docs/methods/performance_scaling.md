@@ -53,17 +53,17 @@ compile reuse, and device occupancy can reverse a simple operation-count ranking
 excellent on a GPU. Conversely, an EGM method with sequential scans or many small shapes
 can lose despite lower arithmetic complexity.
 
-Eligible JIT GridSearch solve kernels evaluate the canonical action product in bounded
+Eligible GridSearch solve kernels evaluate the canonical action product in bounded
 blocks. Each period kernel names every continuation and reference value it reads as an
 exact logical target artifact paired with the source core's argument channel and tree
 path. Gated-target continuations and edge-reference values and parameters therefore
 remain ordinary dynamic inputs to those blocks, so a gated edge does not by itself force
 dense action materialization. Ordinary co-mapped state routes preserve device-local
 continuation reads while streaming actions. The classifier deliberately keeps co-map
-intersections with a separate edge-reference channel, trivial action products,
-JIT-disabled and raw execution, and all simulation-policy construction dense. Simulation
-lies outside the solve classifier. Collective EV1 and EV1 without a discrete action are
-unsupported by the streamed program. See the canonical
+intersections with a separate edge-reference channel, trivial action products, EV1 and
+`Decoupled` reductions, and all simulation-policy construction dense. Simulation lies
+outside the solve classifier. EV1 without a discrete action is unsupported by the
+streamed program. See the canonical
 [GridSearch route matrix](../reference/solvers.md#gridsearch-jit-route-matrix). The
 planner selects a private width keyword outside the complete model argument namespace,
 so model names never force a dense fallback. Blockwise action evaluation preserves the

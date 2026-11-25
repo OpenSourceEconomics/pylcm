@@ -92,12 +92,15 @@ class Settlement:
     Exit-target projections and utility adjustments read the settlement under
     `name`. Each member compares its stay value at the household optimum with its
     outside value; the rule's `tie` says which of two equal values it prefers. If
-    both members want to leave at the default, the pair separates there. If exactly
-    one does, the other member accepts the candidate nearest the default, strictly
-    beyond it in that member's favour, at which it prefers its outside value and
-    every destination has a feasible action. The pair separates there if the member
-    who wants to leave prefers its outside value there, and stays otherwise or
-    without such a candidate.
+    both members want to leave at the default, the pair separates there, without a
+    search of the candidates; where a destination has no feasible action there, the
+    node has no value. If exactly one does, the other member accepts the candidate
+    nearest the default, strictly beyond it in that member's favour, at which it
+    prefers its outside value to its stay value at the optimum and every destination
+    has a feasible action. The pair separates there if the member who wants to leave
+    prefers its outside value there to its stay value at the optimum, and stays
+    otherwise or without such a candidate. Only that one candidate is tested for the
+    member who wants to leave.
     """
 
     name: str
@@ -105,9 +108,11 @@ class Settlement:
     candidates: Grid
     """Ordered candidate values; increasing order favours the first member."""
     default: UserFunction
-    """The division by law: reads what the exit's `available` may read.
+    """The division by law: one number at the source node, before the action.
 
-    Its value is clipped to the range of the candidates.
+    It may read states, parameters, the period, functions of the regime and shocks
+    the regime itself draws. Its value is clipped to the range of the candidates and
+    need not be a candidate.
     """
 
     def __post_init__(self) -> None:

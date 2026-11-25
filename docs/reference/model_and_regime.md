@@ -359,24 +359,29 @@ order favors the first member in the utility mapping, decreasing order the secon
 both accept the incumbent, it stays. If one refuses, walk one node toward that member
 and stop at the first node both accept. Simultaneous refusal, reaching the grid edge or
 encountering the other member's refusal separates the pair; a later feasible island does
-not reopen the path. Equality follows the rule's `tie`. Outside payoffs use the original
-source's settlement, without moving that benchmark along the candidate grid.
+not reopen the path. Equality follows the rule's `tie`. Outside payoffs are those at the
+original source state, its incumbent node included; they are not evaluated again along
+the path.
 
 `MutualConsent(settle=Settlement(name="share", candidates=grid, default=f))` lets a pair
 of members shift the division on separation before deciding. Every exit target's
 projection functions and utility adjustment may read the settlement as the argument
 `name`; a settlement no target reads, and a name that is a state, action, function or
 shock of the source, are refused when the model is built. `candidates` is a continuous
-grid with fixed points; increasing values favour the first member. `default` reads what
-`available` reads and is clipped to the candidates' range. With `O_i(s)` member `i`'s
-outside value at settlement `s` (its destination's problem value at the projections
-evaluated with `s`, plus its adjustment evaluated with `s`), `W_i` its value at the
-household optimum and `d` the default:
+grid with fixed points; increasing values favour the first member. `default` is
+evaluated at the source node before the action and returns one number there: it may read
+states, parameters, the period, functions of the regime and shocks the regime itself
+draws, and it reads neither an action nor the settlement. Its value is clipped to the
+candidates' range and need not be a candidate. With `O_i(s)` member `i`'s outside value
+at settlement `s` (its destination's problem value at the projections evaluated with
+`s`, plus its adjustment evaluated with `s`), `W_i` its value at the household optimum
+and `d` the default:
 
 1. A member prefers leaving at `s` when `O_i(s)` is above `W_i`, or equal to it under
    `tie="leave"`. `tie` decides every comparison of the rule.
 1. A member refuses to stay when it prefers leaving at `d`. Nobody refuses: stay at the
-   optimum. Both refuse: separate at `d`.
+   optimum. Both refuse: separate at `d`; the candidates are not searched, and where a
+   destination has no feasible action at its landing state at `d` the cell has no value.
 1. Exactly one refuses: among the candidates strictly on the other member's side of `d`
    at which every destination is supported, take the one nearest `d` at which that
    member prefers leaving. It never does at `d` itself. Separate there if the member who
@@ -384,14 +389,17 @@ household optimum and `d` the default:
    stay at the optimum.
 
 The engine does not check that the accepting member's outside value rises in that
-member's direction; the rule takes the nearest accepting candidate. A member whose
-projection does not read the settlement is read once, and only its adjustment varies; a
-candidate read whose projections land on the destination's grid takes the stored table.
-A household that separates lands at the projections evaluated with the selected
-settlement and receives the adjustments evaluated with it. The settlement is not a
-column of the simulated output; the landing states and values carry it. Two members
-only; a shifted settlement is searched on the candidates, never between them; a default
-that is random and unobserved at the decision cannot be declared.
+member's direction; the rule takes the nearest accepting candidate and tests the member
+who refuses to stay at that candidate only, never at a farther one. Each member's
+outside value at a candidate is compared with its value at the household optimum, not
+with its outside value at the default. A member whose projection does not read the
+settlement is read once, and only its adjustment varies; a candidate read whose
+projections land on the destination's grid takes the stored table. A household that
+separates lands at the projections evaluated with the selected settlement and receives
+the adjustments evaluated with it. The settlement is not a column of the simulated
+output; the landing states and values carry it. Two members only; a shifted settlement
+is searched on the candidates, never between them; a default that is random and
+unobserved at the decision cannot be declared.
 
 An outside policy can have a gated transition into the next period. Its nominal target
 components and each projected personal fallback enter as explicit future value reads;
@@ -493,9 +501,10 @@ regime = Regime(
 )
 ```
 
-The scale is a strictly positive, finite runtime parameter at
-`params[regime_name]["taste_shocks"]["scale"]`. Use no declaration for a hard maximum;
-zero is not a valid scale.
+The scale is a runtime parameter at `params[regime_name]["taste_shocks"]["scale"]`: one
+strictly positive, finite number per regime. It cannot vary with a state, a period or an
+age, and regimes may differ in it. Use no declaration for a hard maximum; zero is not a
+valid scale.
 
 For each discrete-action combination, the solve first maximizes the feasible `Q` values
 over all continuous-action axes. It then applies the EV1 expected-maximum formula to
@@ -503,13 +512,19 @@ those choice-specific values. Simulation forms the feasible choice-specific valu
 its policy's action candidates, adds one independent mean-zero Gumbel shock per
 discrete-action combination, and takes the argmax. For any fixed candidate values, the
 expected latent perturbed maximum equals their smoothed log-sum. The shock affects the
-choice, while simulation publishes the selected unshocked value. This describes a regime
-whose Koopmans aggregator also chooses. With a `Decoupled` aggregator the continuous
-actions and the choice probabilities come from the objective, and the solve stores the
-expected value profile at the noisy choice; see
-[preferences](../methods/preferences.md). DCEGM simulation uses grid-restricted
-candidates and therefore need not reproduce its off-grid solve value or choice
-probabilities; see [Solvers and capabilities](solvers.md#api-dcegm).
+choice, while simulation publishes the selected unshocked value. The solved value
+therefore includes the expected taste shock: it is the log-sum
+$\sigma \log \sum_j e^{Q_c(j)/\sigma}$. The simulated `value` column records $Q_c(j)$ of
+the action taken, without its shock, so its mean over subjects at one state estimates
+$\sum_j P(j)\, Q_c(j)$ and lies below the solved value wherever more than one action has
+positive probability. This describes a regime whose Koopmans aggregator also chooses.
+With a `Decoupled` aggregator the continuous actions and the choice probabilities come
+from the objective, and the solve stores the expectation of `value` at the noisy choice
+including the chosen action's shock, $\sum_j P(j)\,[v(j) - \sigma \log P(j)]$ with
+$v(j)$ the `value` at combination $j$; simulation again records $v(j)$ of the action
+taken. See [preferences](../methods/preferences.md). DCEGM simulation uses
+grid-restricted candidates and therefore need not reproduce its off-grid solve value or
+choice probabilities; see [Solvers and capabilities](solvers.md#api-dcegm).
 
 This feature requires at least one discrete action and is implemented by `GridSearch`
 and `DCEGM`. A collective regime admits it when exactly one member has a positive Pareto

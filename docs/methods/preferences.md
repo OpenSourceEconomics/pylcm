@@ -65,7 +65,8 @@ value of another, both with the Koopmans aggregator's signature:
 - `objective` ranks the actions: the action taken maximizes it, or, with taste shocks,
   it sets the choice probabilities. It may be `Phased`.
 - `value` is stored at the chosen action and passed back as the continuation. With taste
-  shocks the stored value is its expectation at the noisy choice.
+  shocks the stored value is its expectation at the noisy choice, including the chosen
+  action's shock.
 
 With `value = u + δ·CE`, an objective `u + β̃δ·CE` in the solve and `u + βδ·CE` in
 simulation, this covers the naive (`β̃ = 1`), sophisticated (`β̃ = β`) and partially

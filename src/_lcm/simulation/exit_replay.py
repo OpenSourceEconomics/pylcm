@@ -37,7 +37,7 @@ from _lcm.simulation.taste_stream import prepare_decision_taste_keys
 from _lcm.simulation.unit_executor import SimulationUnitExecutor
 from _lcm.simulation.value_reads import PeriodSimulationReads
 from _lcm.solution.landing_counts import fail_on_query_landings
-from _lcm.time import TimeAxis
+from _lcm.time import TimeAxis, period_of_step
 from _lcm.typing import (
     ArrayTree,
     FlatParams,
@@ -206,7 +206,7 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
             holders=holders,
             memory=memory,
             regime_name=name,
-            period=period,
+            period=period_of_step(ages=ages, step=period),
             states=states[name],
         )
         root = plan.full.definitions[plan.full.root]
@@ -380,7 +380,7 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
             holders=holders,
             memory=memory,
             regime_name=name,
-            period=period,
+            period=period_of_step(ages=ages, step=period),
             states=final_states[name],
         )
         if selected_states:

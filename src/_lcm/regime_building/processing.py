@@ -3165,9 +3165,9 @@ def _fail_if_collective_regime_targets_unsupported(
     """Reject regime transitions mixing collective and mismatched members.
 
     The continuation reads each target's
-    `next_V_arr` with the SOURCE regime's member layout: a collective
-    source expects every target leaf to carry the identical trailing
-    member axis, and a singleton source expects none. Per-member
+    `next_V_arr` with the SOURCE regime's member layout: the source expects
+    every target leaf to carry its own members on the trailing member axis.
+    Per-member
     routing across member layouts (dissolution into `single_f`/`single_m`,
     marriage formation) requires a declared gated edge.
     Each returns a continuation in the original source's member layout.

@@ -92,18 +92,18 @@ def _keep_wage(wage: ContinuousState) -> ContinuousState:
 
 
 def _pair_f_bowl(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
-    return _bowl(wage) + 0.0 * work
+    return _bowl(wage) - 0.25 * work
 
 
 def _pair_f_ramp(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
-    return _ramp(wage) + 0.0 * work
+    return _ramp(wage) - 0.25 * work
 
 
 _PAIR_F = {"bowl": _pair_f_bowl, "ramp": _pair_f_ramp}
 
 
 def _pair_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
-    return 0.0 * wage + 0.0 * work
+    return 0.0 * wage - 0.25 * work
 
 
 def _outside_f(wage: ContinuousState) -> FloatND:

@@ -143,8 +143,8 @@ def _prob_one(age: FloatND) -> FloatND:
     return jnp.ones_like(age, dtype=float)
 
 
-def _u_zero_collective(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
-    return 0.0 * wage * work
+def _u_effort_collective(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    return -0.25 * work + 0.0 * wage
 
 
 def _always_open(wage: ContinuousState) -> BoolND:
@@ -167,7 +167,7 @@ def _make_shared_fallback_regimes() -> dict[str, Regime]:
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
-                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+                utilities={"f": _u_effort_collective, "m": _u_effort_collective}
             )
         },
     )
@@ -176,7 +176,7 @@ def _make_shared_fallback_regimes() -> dict[str, Regime]:
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
-                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+                utilities={"f": _u_effort_collective, "m": _u_effort_collective}
             )
         },
     )

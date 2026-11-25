@@ -548,17 +548,18 @@ codes = solution.value_frame(period=0, regime="working", use_categorical_codes=T
 and cannot be `V`, which is reserved for the value. Discrete states carry their labels
 as a categorical coordinate in declaration order, with the ordering matching simulation;
 a state declared with `values` carries those numbers as a plain coordinate.
-`use_categorical_codes=True` keeps integer codes. Collective regimes also have a
-`member` dimension, and a regime without states yields a zero-dimensional array.
-Coordinates are the resolved grid nodes used by the solve, including parameter-dependent
-process grids and period-specialized grids, and remain available after saving and
-loading. The array wraps the stored value without copying it to the host, so select the
-slice you need before converting it to a table.
+`use_categorical_codes=True` keeps integer codes. The last dimension is `member`, with
+the regime's members as coordinates: `"self"` for a regime declared with a plain utility
+function. A regime without states has that dimension only. Coordinates are the resolved
+grid nodes used by the solve, including parameter-dependent process grids and
+period-specialized grids, and remain available after saving and loading. The array wraps
+the stored value without copying it to the host, so select the slice you need before
+converting it to a table.
 
 `value_frame` is the same array in long form: a pandas DataFrame with one column per
 dimension followed by `V`. It materializes every grid point, so the frame can be large.
 For values between nodes, use `Model.lookup_policy`, which uses the same interpolation
-as simulation. The coordinate-bearing value schema uses solution schema version 3;
+as simulation. The coordinate-bearing value schema uses solution schema version 4;
 archives from a different schema version are refused by the existing compatibility gate.
 
 The result and its supporting types live in the lightweight `lcm.solver_api` submodule;
@@ -815,11 +816,13 @@ preallocates; with `XLA_PYTHON_CLIENT_PREALLOCATE=false` pass an explicit
 `Model.lookup_policy(params=..., solution=..., period=..., regime_name=..., states=..., action_grids=None, keep_intermediates=())`
 evaluates the decision that simulate takes at caller-supplied states of one demanded
 period and regime. It returns a `PolicyLookup` with `actions`, a mapping from action
-name to the chosen grid values, and `value`, the maximised value at each state.
-Continuous states off the grid extrapolate as in simulate; discrete states and
-restricted `action_grids` values must lie on their grids. `Model.state_names` gives the
-axis order of `solution.values[period][regime]`, and `Model.state_grid` gives a state's
-grid nodes after runtime parameters.
+name to the chosen grid values, and `value`, the maximised value at each state, with a
+trailing member axis in member order: one entry for a regime declared with a plain
+utility function. Continuous states off the grid extrapolate as in simulate; discrete
+states and restricted `action_grids` values must lie on their grids. `Model.state_names`
+gives the order of the state axes of `solution.values[period][regime]`, which precede
+its member axis, and `Model.state_grid` gives a state's grid nodes after runtime
+parameters.
 
 A regime that reads a `shocks=` group on the integrated current-IID route, that is a
 group no endogenous-grid regime reads, raises `UnsupportedOperationError`: its decision
@@ -837,7 +840,7 @@ certainty-equivalent continuation `"CE"`. Each kept one fills the field of that 
 over the (possibly restricted) action grid, with one leading row per state and one axis
 per action in the order of `actions`; the others stay `None`, as all four do by default.
 All come from the one kernel evaluation the decision maximizes over, and keeping them
-leaves `actions` and `value` unchanged. Collective regimes refuse the option.
+leaves `actions` and `value` unchanged. `Q`, `U` and `CE` end in the member axis.
 
 `Q`, `U` and `CE` are raw: an infeasible entry holds what the action would have, so a
 `Q` entry can exceed `value`, and `value` is the max of `Q` over the entries `F` admits.

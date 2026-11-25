@@ -77,10 +77,8 @@ def non_finite_by_regime(
 def _owned_values(*, value: FloatND, in_regime: BoolND) -> FloatND:
     """Replace the rows a regime does not own with zero.
 
-    A collective regime's value carries a trailing member axis, so the
-    per-subject ownership flags gain trailing singleton axes to broadcast
-    against it; a singleton regime's value is already per-subject and the
-    reshape is a no-op.
+    A regime's value carries a trailing member axis, so the per-subject
+    ownership flags gain trailing singleton axes to broadcast against it.
     """
     owned = in_regime.reshape(in_regime.shape + (1,) * (value.ndim - in_regime.ndim))
     return jnp.where(owned, value, 0.0)

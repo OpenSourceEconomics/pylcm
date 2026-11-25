@@ -107,9 +107,12 @@ probability or a future state, and it is kept for that reason. An exit's availab
 such a calculation: the source check binds each exit to the dependency graph as the
 model declares it, so a report in which an exit no longer reads the states its
 availability reads fails the check. Every layout of the family solves the same decision
-problem on the coordinates it keeps. Regimes pool only when every action they share has
-the same grid in each of them, so a pooled regime offers each of its members exactly its
-own choices.
+problem on the coordinates it keeps. Values are the same in every layout, and so is the
+set of best actions at every node. Simulated histories are the same only if one action
+is best at every node a history reaches. Where several actions are tied for every
+member, the engine takes the first in grid order, and layouts may order the grid
+differently. Regimes pool only when every action they share has the same grid in each of
+them, so a pooled regime offers each of its members exactly its own choices.
 
 These checks are relative to the captured declarations and to the model's pure-function
 contracts. The checker does not prove that arbitrary Python functions carry their

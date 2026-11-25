@@ -135,8 +135,10 @@ def collective_readout(
     All members share the same argmax `a*` (the joint household choice). Ties in
     the objective go to the members in declared order: among its maximizers, the
     actions the first member values most, then the second, and so on, then the
-    first action in grid order. The rule reads no position of an action, so the
-    order in which the actions are declared cannot change a value. A NaN member
+    first action in grid order. The steps before the last read no position of an
+    action, and the actions left for the last step give every member the same
+    value. So the order in which the actions are declared cannot change a value.
+    It can change which of those actions is simulated. A NaN member
     value ranks below every number, and `-0` equals `+0`. A NaN objective at a
     feasible action makes every `V^s` NaN. A cell with no feasible action yields
     `D = True` (the dissolution / empty-`F` marker) and the `-inf` sentinel in

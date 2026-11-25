@@ -683,10 +683,6 @@ def get_Q_and_F_terminal_collective(
 ) -> QAndFFunction:
     """Terminal (Q, F) for a collective regime — stacked per-member U + shared F.
 
-    Separate from `get_Q_and_F_terminal` so the singleton terminal path (shared
-    with the simulate / compute-intermediates machinery) carries none of the
-    member handling; this builder is used only at the collective solve site.
-
     Builds ONE closure over every member's `utility_<s>` target plus the
     single `feasibility` target. Feasibility is regime-level: `_get_feasibility`
     takes no member input, so a household has one action set however many
@@ -931,8 +927,7 @@ class ResolvedProjectedRegimeValue:
 
     The user declaration names a member; the
     engine resolves it to the index on the reference regime's trailing
-    member axis (`None` for a singleton reference, whose V has no such
-    axis).
+    member axis (zero for a reference with the one member `"self"`).
     """
 
     regime: RegimeName
@@ -2278,9 +2273,9 @@ def _get_compute_CE(
 ]:
     """Build the closure that aggregates next period's value into `CE`.
 
-    The single continuation-aggregation site of the engine: the Bellman `Q` of a
-    singleton regime, the per-member `Q^s` of a collective one, and the NaN
-    diagnostics all call the closure this returns, so they cannot disagree. The
+    The single continuation-aggregation site of the engine: the per-member
+    Bellman `Q^s` of every regime and the NaN diagnostics all call the closure
+    this returns, so they cannot disagree. The
     continuation is a lottery over the stochastic nodes of every reachable target
     regime, weighted by that target's regime-transition probability:
 
@@ -2317,10 +2312,8 @@ def _get_compute_CE(
             `None` and states its members' in `member_certainty_equivalents`.
         co_map_state_names: Tuple of state names co-mapped with the continuation V.
         n_members: Length of the trailing member axis the continuation
-            carries, or `None` for a singleton regime. It is the only structural
-            difference a collective regime makes to the aggregation: every
-            target's V leaf, and hence `CE`, gains one trailing axis, while the
-            regime-transition probabilities — which are member-independent —
+            carries. Every target's V leaf, and hence `CE`, ends in that axis,
+            while the regime-transition probabilities — which are member-independent —
             keep the plain cell shape and broadcast across it.
         member_certainty_equivalents: A household's certainty equivalent per
             member, in member order, each with the flat params names of its

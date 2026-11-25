@@ -31,7 +31,7 @@ the following questions.
   `SolverExecutionCapabilities.supports_several_members` declares whether the solver
   solves a regime with more than one member; model construction refuses a regime with
   several members whose solver does not. The regime's value arrays carry a trailing axis
-  over its members, the build context's `member_axis`, and every program publishing the
+  over its members, the build context's `members`, and every program publishing the
   value includes it: a solver of one member appends an axis of length one to its value
   and reads its member's slice of each value array it reads. That member's utility
   function is named `utility_<member>`, or `utility` for the member `"self"`.

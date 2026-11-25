@@ -33,6 +33,9 @@ is bitwise equal to the `"legacy"` run's. Two mechanisms make that hold:
   afterwards. Every subject therefore runs in the same compiled program, instead of the
   remainder running in a second program that can round differently.
 
+Sharding subjects does not reorder the action grid, so a tie between actions goes to the
+same action in both runs.
+
 The guarantee covers the simulation only. The solve is unchanged by this mode; a solve
 that shards states has its own fp32 caveats (see
 [Performance and memory tuning](tuning.md#which-states-can-be-sharded)).

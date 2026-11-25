@@ -204,7 +204,13 @@ from _lcm.solution.host_values import (
 )
 from _lcm.solution.solve_phase_records import CallId, solve_phase
 from _lcm.solution.validate_V import validate_V, value_function_nan_error
-from _lcm.time import TimeAxis, coordinate_at, coordinate_kind, display_age_at
+from _lcm.time import (
+    TimeAxis,
+    coordinate_at,
+    coordinate_kind,
+    display_age_at,
+    period_of_step,
+)
 from _lcm.typing import (
     ActionName,
     AgeValue,
@@ -1381,6 +1387,7 @@ def _subject_chunk_periods(  # noqa: PLR0915
                 memory=memory,
                 base_state_action_space=base_state_action_spaces[regime_name],
                 period=period,
+                reported_period=period_of_step(ages=ages, step=period),
                 age=age,
                 states=states,
                 subject_regime_ids=subject_regime_ids,
@@ -2007,6 +2014,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     base_state_action_space: StateActionSpace,
     base_state_action_spaces: Mapping[RegimeName, StateActionSpace],
     period: int,
+    reported_period: int,
     age: ScalarInt | ScalarFloat,
     states: StatesPerRegime,
     subject_regime_ids: Int1D,
@@ -2070,7 +2078,8 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         base_state_action_spaces: Every regime's params-completed state-action
             space — a gated edge's value-and-gate fold needs its TARGET
             regime's own state grids, not just this regime's.
-        period: Current period (0-indexed).
+        period: Current step (0-indexed).
+        reported_period: The period of that step, which messages name.
         age: Age corresponding to current period.
         states: Carrier of current-period state arrays for every regime and
             state.
@@ -2327,7 +2336,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 subject_arg_names=("in_regime", "genuine"),
                 subject_outputs=True,
             ),
-            period=period,
+            period=reported_period,
             memory=memory,
         )
         # The payload names the complete finite candidate set, so the unrelated
@@ -2588,6 +2597,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                     regime_names_to_ids=regime_names_to_ids,
                     flat_params=flat_params,
                     period=period,
+                    reported_period=reported_period,
                     age=age,
                     subject_slice=subject_slice,
                     n_real=n_subjects
@@ -2632,8 +2642,8 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                     memory=memory,
                 )
                 raise NoFeasibleActionError(
-                    f"Regime '{regime_name}', period {period}, state {state} "
-                    "has no feasible action."
+                    f"Regime '{regime_name}', period {reported_period}, state "
+                    f"{state} has no feasible action."
                 )
             optimal_actions = run_simulation_operation(
                 memory=memory,
@@ -2965,6 +2975,7 @@ def _take_dissolution_routes(
     regime_names_to_ids: RegimeNamesToIds,
     flat_params: FlatParams,
     period: int,
+    reported_period: int,
     age: ScalarInt | ScalarFloat,
     subject_slice: slice | SubjectRows,
     n_real: int,
@@ -3013,7 +3024,7 @@ def _take_dissolution_routes(
         canonical_states=canonical_states,
         flat_params=flat_params,
         regime_names_to_ids=regime_names_to_ids,
-        period=period,
+        period=reported_period,
         memory=memory,
     )
     states = clip_next_states(

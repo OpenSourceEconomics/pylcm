@@ -157,6 +157,11 @@ def stages_per_period(ages: TimeAxis) -> int:
     return ages.n_stages if isinstance(ages, ModelTime) else 1
 
 
+def period_of_step(*, ages: TimeAxis, step: int) -> int:
+    """Period that step `step` belongs to; messages to the user name it."""
+    return step // stages_per_period(ages)
+
+
 def stage_position(*, ages: TimeAxis, regime: RegimeName) -> int:
     """Position of `regime`'s stage within every period of `ages`."""
     return ages.stage_of.get(regime, 0) if isinstance(ages, ModelTime) else 0

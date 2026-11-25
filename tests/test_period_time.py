@@ -2896,3 +2896,34 @@ def test_every_reader_of_period_reads_the_period_of_its_stage(kind: str) -> None
 def test_regime_finder_refuses_a_staged_model() -> None:
     with pytest.raises(ValueError, match="`stages`"):
         read_model(_staged_model(clock="staged"))
+
+
+def _wealth_lost_in_the_second_period(
+    *, wealth: ContinuousState, period: Period
+) -> ContinuousState:
+    return jnp.where(period == 1, 0.25, wealth)
+
+
+def test_a_staged_simulation_reports_the_period_of_an_infeasible_state() -> None:
+    """A state without a feasible action is reported in its period, not its step."""
+    regimes = _staged_regimes(clock="staged")
+    regimes["working"] = lcm.Regime(
+        states={"wealth": lcm.LinSpacedGrid(start=1.0, stop=6.0, n_points=6)},
+        actions={"labor": lcm.DiscreteGrid(Labor)},
+        state_transitions={"wealth": _wealth_lost_in_the_second_period},
+        functions={"utility": _work_utility},
+    )
+    model = _staged_model(clock="staged", regimes=regimes)
+    with pytest.raises(
+        lcm.exceptions.NoFeasibleActionError, match="Regime 'spending', period 1, "
+    ):
+        model.simulate(
+            params={},
+            initial_conditions={
+                "period": jnp.zeros(2, dtype=jnp.int32),
+                "regime_id": jnp.full(2, StagedId.working, dtype=jnp.int32),
+                "wealth": jnp.array([2.0, 4.0]),
+            },
+            seed=7,
+            log_level="off",
+        )

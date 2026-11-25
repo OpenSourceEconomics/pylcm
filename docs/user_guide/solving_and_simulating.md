@@ -26,14 +26,16 @@ addressed artifact stores.
 
 To inspect values with their state coordinates, use
 `solution.value_array(period=0, regime="working")`. It returns an xarray `DataArray`
-with one named dimension per state, so `.sel(education="college")` picks a curve
-regardless of axis order. Discrete states carry categorical labels by default, and a
-state declared with [values](grids.md#discrete-grids-with-numeric-values) carries those
-numbers; pass `use_categorical_codes=True` for integer codes. Collective values also
-have a `member` dimension. `solution.value_frame(...)` returns the same values as a long
-DataFrame with state columns and `V`; it explicitly materializes the whole grid. Use
-`model.lookup_policy` for values between grid nodes, with the same interpolation as
-simulation.
+with one named dimension per state and a last dimension `member`, so
+`.sel(education="college", member="self")` picks a curve regardless of axis order; a
+regime declared with a plain utility function has the one member `"self"`. Discrete
+states carry categorical labels by default, and a state declared with
+[values](grids.md#discrete-grids-with-numeric-values) carries those numbers; pass
+`use_categorical_codes=True` for integer codes. A household's members are the
+coordinates of `member`. `solution.value_frame(...)` returns the same values as a long
+DataFrame with state columns, `member` and `V`; it explicitly materializes the whole
+grid. Use `model.lookup_policy` for values between grid nodes, with the same
+interpolation as simulation.
 
 ### Retention and replay
 

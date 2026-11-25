@@ -185,9 +185,10 @@ class ExecutionConfig:
     A state every regime prunes leaves no axis to spread and is refused.
 
     A discrete state always qualifies. A continuous state qualifies only on a narrow
-    route: it must be the sole sharded state, a model-level `LinSpacedGrid` retained in
-    every regime, solved everywhere with `GridSearch` under a singleton hard-max, and
-    the regimes must carry no members, gated edges or taste shocks. Model construction
+    route: it must be the sole sharded state, a model-level continuous grid with fixed
+    nodes retained in every regime, solved everywhere with `GridSearch` under a
+    hard maximum, and the regimes must carry no gated edges, taste shocks or
+    `Decoupled` aggregator. Model construction
     checks every requirement and the error lists what a rejected model violates.
     """
 
@@ -302,7 +303,8 @@ class ExecutionConfig:
       then holds at most the values of three periods: the one being solved, the
       one it reads and one whose copy is still finishing. Reading a value or
       policy returns a device copy, so results, reads and simulated panels are
-      those of device storage, bit for bit. The copy runs on every backend, CPU
+      those of device storage, bit for bit. Storage does not reorder the action
+      grid. The copy runs on every backend, CPU
       included.
     - A directory buffers the values on disk, for when host memory is short too.
       Values and policies travel as under `"host"` and are then written, from a
@@ -344,9 +346,10 @@ class ExecutionConfig:
     own run with the exact hard maximum, and the devices exchange one compact
     accumulator per state cell — best value, winning action identity and
     feasibility, and a household's member values at its winner — which every
-    device merges in partition order. Values and the winning actions equal the
-    unpartitioned solve: ties go to a household's members in declared order,
-    then to the lowest action identity, feasible `-inf` stays distinct from
+    device merges in partition order. Values equal the unpartitioned solve. The
+    winning action is also the same, because both routes give a tie to the
+    members in declared order and then to the lowest action identity, and the
+    partition does not change identities. Feasible `-inf` stays distinct from
     an all-infeasible cell, and signed zeros and NaNs keep their usual
     conventions.
 

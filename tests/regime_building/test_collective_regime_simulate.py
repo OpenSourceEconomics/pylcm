@@ -362,11 +362,11 @@ def _u_single_m_terminal(wage: ContinuousState) -> FloatND:
 
 
 def _u_married_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
-    return 2.0 * wage + 0.0 * work  # {2, 4}
+    return 2.0 * wage - 0.25 * work  # {2, 4} without work
 
 
 def _u_married_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
-    return wage + 0.0 * work  # {1, 2}
+    return wage - 0.25 * work  # {1, 2} without work
 
 
 def _consent_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition]:
@@ -954,13 +954,13 @@ def _u_single_f_terminal_educ(*, wage: ContinuousState, educ: DiscreteState) -> 
 def _u_married_f_educ(
     *, wage: ContinuousState, work: DiscreteAction, educ: DiscreteState
 ) -> FloatND:
-    return 2.0 * wage + 0.0 * work + 0.0 * educ  # {2, 4}
+    return 2.0 * wage - 0.25 * work + 0.0 * educ  # {2, 4} without work
 
 
 def _u_married_m_educ(
     *, wage: ContinuousState, work: DiscreteAction, educ: DiscreteState
 ) -> FloatND:
-    return wage + 0.0 * work + 0.0 * educ  # {1, 2}
+    return wage - 0.25 * work + 0.0 * educ  # {1, 2} without work
 
 
 def _low_wage(wage: ContinuousState) -> BoolND:

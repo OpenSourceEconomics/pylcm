@@ -271,8 +271,7 @@ booleans as array indices inside JIT. Use `jnp.int32(...)` to cast.
 Every regime has **members**: `Regime.members` is `("self",)` for a regime declared
 with a plain utility function, and the `utilities` keys of a `CollectiveUtility`, in
 insertion order, for a household; those fix the trailing axis of `V` and of every
-published array. A household may not name a member `"self"`. `Regime.member_axis` is
-the engine's household marker (`None` for a plain utility). Everything is declared in a
+published array. A household may not name a member `"self"`. Everything is declared in a
 slot that already exists: the regime's utility, its `exit`, and the `Transition` on its
 `Model(edges=...)` entry:
 
@@ -347,7 +346,7 @@ Model(
   transition or exit it runs into later demands the seed, while one in a regime the
   cohort can never reach demands nothing. It is published as an
   `own_member` column, missing for singleton rows.
-- `GatedEdge`, `member_axis` and `gated_edges` are the **lowered** form these
+- `GatedEdge` and `gated_edges` are the **lowered** form these
   declarations decompose into. Write the declarations.
 
 See `docs/user_guide/collective_regimes.md` and `docs/reference/collective_regimes.md`.

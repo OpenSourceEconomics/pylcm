@@ -60,7 +60,12 @@ from _lcm.solution.feasibility import (
     reduce_bound_input_status,
     validate_runtime_bound_status,
 )
-from _lcm.time import TimeAxis, coordinate_kind, stages_per_period
+from _lcm.time import (
+    TimeAxis,
+    coordinate_kind,
+    period_of_step,
+    stages_per_period,
+)
 from _lcm.transition_checks import (
     _evaluate_admitted_transition_producer,
     _SerialValidationRequired,
@@ -2044,7 +2049,7 @@ def _check_regime_feasibility(
         initial_states=initial_states,
         state_names=verdict.state_names,
         per_constraint_admits_any=per_constraint_admits_any,
-        period=int(periods[0]),
+        period=period_of_step(ages=ages, step=int(periods[0])),
         regime_params=regime_params,
         memory=memory,
     )

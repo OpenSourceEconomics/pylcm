@@ -213,6 +213,7 @@ class _RegimeSimulationInputs(TypedDict):
         simulate.RegimeName, simulate.StateActionSpace
     ]
     period: int
+    reported_period: int
     age: simulate.ScalarInt | simulate.ScalarFloat
     states: simulate.StatesPerRegime
     subject_regime_ids: simulate.Int1D
