@@ -12,7 +12,7 @@ import sys
 from .records import CheckLayer
 
 LAYERS = ("finite_model", "finite_operator", "source_alignment", "allocation", "runtime")
-KINDS = {"relabel", "age_split", "support", "forced_coordinate", "quotient", "merge", "dominance"}
+KINDS = {"relabel", "age_split", "support", "forced_coordinate", "quotient", "merge"}
 
 
 class Invalid(ValueError):
@@ -344,19 +344,14 @@ def check_tastes(report, old, new, mapping, embed, case, node):
                           reason="Necessary group/law metadata checked; finite-rational evaluator does not integrate EV1.")
 
 
-def action_pair(report, old, new, original_action, reduced_action, projection, fixed, context, inequality=False, objective="value"):
+def action_pair(report, old, new, original_action, reduced_action, projection, fixed, context):
     a, b = old["actions"][original_action], new["actions"][reduced_action]
     here = {**context, "original_action": original_action, "reduced_action": reduced_action}
-    if not inequality:
-        report.test(not set(fixed) & set(b["decoded"]), "fixed_coordinate_not_overwritten", **here)
-        report.test(a["decoded"] == {**b["decoded"], **fixed}, "decoded_action_embedding", **here,
-                    original=a["decoded"], embedded={**b["decoded"], **fixed})
-        report.test(a["reward"] == b["reward"], "reward_transport", **here,
-                    original=a["reward"], reduced=b["reward"])
-    else:
-        report.test(set(a["reward"]) == set(b["reward"]) and a["reward"][objective] <= b["reward"][objective]
-                    and all(a["reward"][k] == b["reward"][k] for k in a["reward"] if k != objective),
-                    "dominance_reward_cover", **here, omitted=a["reward"], retained=b["reward"])
+    report.test(not set(fixed) & set(b["decoded"]), "fixed_coordinate_not_overwritten", **here)
+    report.test(a["decoded"] == {**b["decoded"], **fixed}, "decoded_action_embedding", **here,
+                original=a["decoded"], embedded={**b["decoded"], **fixed})
+    report.test(a["reward"] == b["reward"], "reward_transport", **here,
+                original=a["reward"], reduced=b["reward"])
     report.test(a["discount"] == b["discount"], "discount_transport", **here,
                 original=a["discount"], reduced=b["discount"])
     for phase in ("solve", "simulation"):
@@ -416,7 +411,7 @@ def check_case(report, raw):
     old, new = parse_model(raw["original"], "original", report), parse_model(raw["reduced"], "reduced", report)
     cert = raw["certificate"]
     keys(cert, ("kind", "support", "state_map", "action_embedding", "fixed_action_attributes", "taste_group_map"),
-         ("dominance_cover", "action_specific_fixed"), where="certificate")
+         ("action_specific_fixed",), where="certificate")
     need(cert["kind"] in KINDS, "unknown transformation kind")
     keys(cert["support"], ("original", "reduced"), where="support")
     for field in ("state_map", "action_embedding", "fixed_action_attributes", "taste_group_map"):
@@ -481,9 +476,8 @@ def check_case(report, raw):
         embed_ok = report.test(set(embed) == set(y["actions"]) and set(embed.values()) <= set(x["actions"])
                                and len(embed.values()) == len(set(embed.values())), "feasible_action_injection", **context,
                                embedding=embed, original_actions=list(x["actions"]), reduced_actions=list(y["actions"]))
-        if cert["kind"] != "dominance":
-            report.test(set(embed.values()) == set(x["actions"]), "feasible_action_surjection", **context,
-                        embedding=embed, original_actions=list(x["actions"]))
+        report.test(set(embed.values()) == set(x["actions"]), "feasible_action_surjection", **context,
+                    embedding=embed, original_actions=list(x["actions"]))
         if not embed_ok:
             continue
         check_tastes(report, x, y, groupmap, embed, case, node)
@@ -494,17 +488,7 @@ def check_case(report, raw):
             need(all(isinstance(v, dict) for v in action_fixed.values()), "fixed action attributes must be objects")
         for b, a in embed.items():
             embedded_fixed = fixed if action_fixed is None else action_fixed[b]
-            action_pair(report, x, y, a, b, projection, embedded_fixed, context, objective=old["objective"])
-        if cert["kind"] == "dominance":
-            cover = cert.get("dominance_cover", {}).get(node, {})
-            cover_ok = report.test(set(cover) == set(x["actions"]) and set(cover.values()) <= set(y["actions"]),
-                                   "total_dominance_cover", **context, cover=cover)
-            if cover_ok:
-                for a, b in cover.items():
-                    action_pair(report, x, y, a, b, projection, {}, context, inequality=True, objective=old["objective"])
-                    if x["taste"]["kind"] != "deterministic":
-                        report.test(groupmap.get(x["actions"][a]["taste_group"]) == y["actions"][b]["taste_group"],
-                                    "dominance_requires_shared_taste", **context, original_action=a, reduced_action=b)
+            action_pair(report, x, y, a, b, projection, embedded_fixed, context)
     keys(raw["subjects"], ("original", "reduced"), where="subjects")
     subjects_old, subjects_new = raw["subjects"]["original"], raw["subjects"]["reduced"]
     need(isinstance(subjects_old, dict) and isinstance(subjects_new, dict), "subjects must be objects keyed by immutable subject id")
@@ -529,9 +513,7 @@ def check_case(report, raw):
                             original_value=ov[node], reduced_value=nv[projection[node]])
                 if node in oa and projection[node] in na:
                     lifted = sorted(cert["action_embedding"][node][b] for b in na[projection[node]])
-                    report.test(lifted == oa[node] if cert["kind"] != "dominance" else set(lifted) <= set(oa[node]),
-                                "argmax_transport" if cert["kind"] != "dominance" else "retained_optimum", case=case,
-                                cell=node, original_argmax=oa[node], lifted_reduced_argmax=lifted)
+                    report.test(lifted == oa[node], "argmax_transport", case=case, cell=node, original_argmax=oa[node], lifted_reduced_argmax=lifted)
             evaluation = {"status": "passed" if len(report.layers["finite_model"]["witnesses"]) == witness_count else "failed",
                           "original_values": encoded(ov), "reduced_values": encoded(nv)}
         except Invalid as exc:
@@ -639,7 +621,7 @@ def check(data, *, probability_tolerance=Fraction(1, 10**12)):
         need(data["parameter_scope"] in ("listed_cases", "continuum"), "invalid parameter_scope")
         if data["parameter_scope"] == "continuum":
             report.unresolved("unverified_parameter_continuum", reason="Finite case enumeration proves only the listed parameter vectors.")
-        need(data["policy_claim"] in ("values_argmax_lifted_law", "value_retained_optimum", "fixed_selector", "same_seed", "arbitrary_original_policy"), "unknown policy claim")
+        need(data["policy_claim"] in ("values_argmax_lifted_law", "fixed_selector", "same_seed", "arbitrary_original_policy"), "unknown policy claim")
         if data["policy_claim"] in ("fixed_selector", "same_seed", "arbitrary_original_policy"):
             report.unresolved("policy_claim_needs_additional_certificate", policy_claim=data["policy_claim"])
         if data["simulation_choice"] != "same_declared_primitives":
@@ -648,8 +630,6 @@ def check(data, *, probability_tolerance=Fraction(1, 10**12)):
         need(isinstance(data["cases"], list) and data["cases"], "cases must be a nonempty list")
         need(len([x["id"] for x in data["cases"]]) == len({x["id"] for x in data["cases"]}), "duplicate case id")
         for case in data["cases"]:
-            if case["certificate"]["kind"] == "dominance":
-                report.test(data["policy_claim"] == "value_retained_optimum", "dominance_claim_scope", case=case["id"])
             check_case(report, case)
         need(isinstance(data["obligations"], list), "obligations must be a list")
         for obligation in data["obligations"]:

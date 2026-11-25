@@ -107,7 +107,9 @@ probability or a future state, and it is kept for that reason. An exit's availab
 such a calculation: the source check binds each exit to the dependency graph as the
 model declares it, so a report in which an exit no longer reads the states its
 availability reads fails the check. Every layout of the family solves the same decision
-problem on the coordinates it keeps.
+problem on the coordinates it keeps. Regimes pool only when every action they share has
+the same grid in each of them, so a pooled regime offers each of its members exactly its
+own choices.
 
 These checks are relative to the captured declarations and to the model's pure-function
 contracts. The checker does not prove that arbitrary Python functions carry their

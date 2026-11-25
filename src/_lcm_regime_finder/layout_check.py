@@ -41,13 +41,22 @@ class _Model:
             # with the nodes of their grids are part of a regime's kind.
             own_lists = sorted((n, self.domains[cell["states"][n]].get("values", cell["states"][n]))
                                for n in cell.get("renegotiated_states", []))
-            r = regimes.setdefault(cell["regime"], {"terminal": True, "choice": False, "law": ops.get("taste_shocks"),
+            r = regimes.setdefault(cell["regime"], {"terminal": True, "choice": False, "law": ops.get("taste_shocks"), "grids": {},
                                                     "kind": repr([cell.get("stage"), cell.get("solver_identity"),
                                                                   sorted((k, v) for k, v in ops.items() if k != "taste_shocks"),
                                                                   cell.get("member_axis"), cell.get("exit_identity"),
                                                                   own_lists])})
             r["terminal"] = r["terminal"] and cell["terminal"]
             r["choice"] = r["choice"] or any(self.domains[d].get("kind") == "categorical" for d in cell["actions"].values())
+            for a, d in cell["actions"].items():
+                r["grids"].setdefault(a, set()).add(repr((self.domains[d].get("kind"), self.domains[d].get("values", d))))
+        # An action that two nonterminal regimes of one kind declare on unequal
+        # grids is part of the kind of every regime that has it.
+        living = [r for r in regimes.values() if not r["terminal"]]
+        unequal = [tuple((a, tuple(sorted(g))) for a, g in sorted(r["grids"].items())
+                         if any(o["kind"] == r["kind"] and o["grids"].get(a, g) != g for o in living)) for r in living]
+        for r, own in zip(living, unequal, strict=True):
+            r["kind"] = repr((r["kind"], own))
         out: list[tuple[str, ...]] = [(n,) for n, r in regimes.items() if r["terminal"]]
         for kind in {r["kind"] for r in regimes.values() if not r["terminal"]}:
             names = [n for n, r in regimes.items() if not r["terminal"] and r["kind"] == kind]

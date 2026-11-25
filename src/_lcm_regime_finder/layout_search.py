@@ -24,10 +24,14 @@ def regime_kinds(declarations: Record) -> dict[str, Record]:
     renegotiated state and the nodes of its grid), so a collective regime never
     pools with a single-agent one and regimes with different exits or unequal
     lists never pool; its law is its taste-shock declaration. It has a discrete
-    choice if it has a categorical action coordinate.
+    choice if it has a categorical action coordinate. Nonterminal regimes of one
+    kind that declare an action on unequal grids (kind and category values, or
+    the declared grid of a continuous action) are split by that grid, so regimes
+    pool only if the grids of every action they share are equal.
     """
     domains = declarations["domains"]
     kinds: dict[str, Record] = {}
+    grids: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
     for cell in declarations["cells"]:
         operators = cell.get("operators", {})
         lists = {name: domains[cell["states"][name]].get("values", cell["states"][name])
@@ -43,6 +47,17 @@ def regime_kinds(declarations: Record) -> dict[str, Record]:
         record["terminal"] = record["terminal"] and cell["terminal"]
         record["discrete_choice"] = record["discrete_choice"] or any(
             domains[did].get("kind") == "categorical" for did in cell["actions"].values())
+        for name, did in cell["actions"].items():
+            grids[cell["regime"]][name].add(canonical([domains[did].get("kind"), domains[did].get("values", did)]))
+    seen: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for regime, record in kinds.items():
+        if not record["terminal"]:
+            for name, grid in grids[regime].items():
+                seen[record["key"], name].add(canonical(sorted(grid)))
+    split = {regime: {name: sorted(grid) for name, grid in grids[regime].items() if len(seen[record["key"], name]) > 1}
+             for regime, record in kinds.items()}
+    for regime, record in kinds.items():
+        record["key"] = canonical([record["key"], split[regime]])
     return kinds
 
 

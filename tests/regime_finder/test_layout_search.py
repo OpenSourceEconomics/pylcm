@@ -712,3 +712,79 @@ def test_a_state_read_by_a_solve_variant_is_kept_and_checked(
         verify_certificate(captured, altered)["layout_check"]["status"],
         verify_certificate(captured, forged)["source_semantics"]["status"],
     ) == ({True}, "PASS", "PASS", "FAIL", "FAIL")
+
+
+@categorical(ordered=False)
+class WideWork:
+    rest: ScalarInt
+    part: ScalarInt
+    full: ScalarInt
+
+
+def _effort_utility(health: DiscreteState, work: float) -> FloatND:
+    return jnp.where(health == Health.good, 1.0, 0.0) - (work - 1.5) ** 2
+
+
+_UNEQUAL_ACTION_GRIDS = {
+    "categories": (DiscreteGrid(WideWork), DiscreteGrid(Work), _work_utility),
+    "points": (
+        LinSpacedGrid(start=1.0, stop=2.0, n_points=3),
+        LinSpacedGrid(start=1.0, stop=2.0, n_points=2),
+        _effort_utility,
+    ),
+    "nodes": (
+        LinSpacedGrid(start=1.0, stop=3.0, n_points=2),
+        LinSpacedGrid(start=1.0, stop=2.0, n_points=2),
+        _effort_utility,
+    ),
+}
+
+
+@pytest.mark.parametrize("case", list(_UNEQUAL_ACTION_GRIDS))
+def test_regimes_with_unequal_grids_of_one_action_do_not_pool(case: str) -> None:
+    """Young and old differ only in the grid of `work`, in size or in its nodes.
+
+    The altered layouts are searched as if old had young's grid: they pool the
+    two, and the layout check of the genuine declarations rejects them.
+    """
+    young, old, utility = _UNEQUAL_ACTION_GRIDS[case]
+    states = {"health": DiscreteGrid(Health)}
+    model = Model(
+        n_periods=3,
+        regime_id_class=Stages,
+        regimes={
+            name: Regime(
+                states=states,
+                actions={"work": grid},
+                functions={"utility": utility},
+                state_transitions={"health": _stay},
+            )
+            for name, grid in (("young", young), ("old", old))
+        }
+        | {"dead": Regime(states=states, functions={"utility": _utility})},
+        initial_nodes=InitialNodes(by_period={0: "young"}),
+        edges={
+            "young": {"old": Periods(values=(0,))},
+            "old": {"dead": Periods(values=(1,))},
+        },
+        fixed_params={"discount_factor": 1.0},
+        enable_jit=False,
+    )
+    captured = read_model(model)
+    report = find_regimes(captured, facts_backend="dense")
+    declarations = deepcopy(report["analysis"]["declarations"])
+    grid_of = {c["regime"]: c["actions"].get("work") for c in declarations["cells"]}
+    for cell in declarations["cells"]:
+        if cell["regime"] == "old":
+            cell["actions"]["work"] = grid_of["young"]
+    limits = {"seconds": 120, "metadata_categories": 100_000}
+    facts = make_facts("dense", declarations, limits, lambda: None)
+    altered = deepcopy(report)
+    altered["layouts"] = search_layouts(declarations, facts, limits, lambda: None)
+    assert (
+        report["layouts"]["dense_regimes"],
+        verify_certificate(captured, report)["layout_check"]["status"],
+        altered["layouts"]["dense_regimes"],
+        "dense regimes differ from Def. 'Dense model'"
+        in verify_certificate(captured, altered)["layout_check"]["errors"],
+    ) == ([["dead"], ["old"], ["young"]], "PASS", [["dead"], ["old", "young"]], True)
