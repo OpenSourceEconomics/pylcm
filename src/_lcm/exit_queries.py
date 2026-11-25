@@ -1815,10 +1815,8 @@ def _same_observation_context(
 def _validate_query_projection_bindings(
     *, nodes: Mapping[str, QueryNode], period: int
 ) -> None:
-    """Apply S5's exact proof only to physical reads in their own caller context."""
-    from _lcm.shock_projection import (  # noqa: PLC0415
-        validate_shared_discrete_projection,
-    )
+    """Prove one law for every shock a caller sees and its query reads."""
+    from _lcm.shock_projection import validate_observed_laws  # noqa: PLC0415
 
     for node in nodes.values():
         if not node.ancestors:
@@ -1826,10 +1824,10 @@ def _validate_query_projection_bindings(
         parent = nodes[node.ancestors[-1]]
         source = parent.context.current_iid_plans.get(period)
         target = node.context.current_iid_plans.get(period)
-        validate_shared_discrete_projection(
-            query_kind=node.read.kind.value,
+        validate_observed_laws(
+            source=parent.read.target,
             target=node.read.target,
-            physical_inputs=node.read.physical_inputs,
+            physical_inputs=node.read.policy_information,
             source_physical_inputs=parent.read.policy_information,
             projection=node.source_projection,
             source_bindings={}
@@ -1871,8 +1869,8 @@ def _validate_query_projection_bindings(
                     f"{node.read.kind.value}[{node.read.target}] has unproved "
                     "producing law-input identity."
                 )
-            validate_shared_discrete_projection(
-                query_kind=node.read.kind.value,
+            validate_observed_laws(
+                source=origin.read.target,
                 target=node.read.target,
                 physical_inputs=shared,
                 source_physical_inputs=shared,

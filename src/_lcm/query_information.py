@@ -53,16 +53,11 @@ from _lcm.zero_safe import factored_weighted_term
 from lcm.exceptions import RegimeInitializationError
 from lcm.shocks import (
     Discrete,
-    Law,
-    LogNormal,
     MonteCarlo,
     NodeSet,
-    Normal,
-    NormalMixture,
     QuasiMonteCarlo,
     ShockGroupName,
     ShockName,
-    Uniform,
 )
 from lcm.typing import BoolND, FloatND, IntND
 
@@ -422,24 +417,6 @@ def _refuse_pinning(*, name: str, group: ShockGroupName, reason: str) -> NoRetur
     )
 
 
-def _static_informative(*, law: Law) -> bool | None:
-    """Whether a law's spread fields are literals giving it a nondegenerate spread."""
-    spread = (
-        ("sigma",)
-        if isinstance(law, Normal | LogNormal)
-        else ("start", "stop")
-        if isinstance(law, Uniform)
-        else ()
-    )
-    values = [getattr(law, field) for field in spread]
-    if not values or not all(
-        isinstance(value, int | float) and not isinstance(value, bool)
-        for value in values
-    ):
-        return None
-    return values[0] > 0 if len(values) == 1 else values[1] > values[0]
-
-
 def _pinned_columns(
     *, name: str, definitions: Mapping[str, QueryNode]
 ) -> tuple[int, ...]:
@@ -450,14 +427,11 @@ def _pinned_columns(
     - an available informative observation pins each row's base to the held base;
     - an unavailable observation leaves the rows free, but this node is then one
       of the observation's producing aliases and is itself unavailable;
-    - an uninformative caller law leaves the rows free. An observed group's law
-      here is the one its aliases proved equal to the producer's. A caller's own
-      group is pinned when the caller's spread is a positive literal, the law here
-      a zero literal, or both the identical law without state inputs; otherwise
-      the rows can differ and the model is refused.
+    - an uninformative caller law leaves the rows free, and is uninformative
+      here too. An observed group's law here is the one its aliases proved equal
+      to the producer's; a caller's own group's law is the caller's, which the
+      build proved to be the same at the caller's state and at the landing state.
     """
-    from _lcm.shock_projection import _law_record  # noqa: PLC0415
-
     node = definitions[name]
     plan = node.context.current_iid_plans.get(node.read.period)
     if plan is None or not node.ancestors:
@@ -470,45 +444,16 @@ def _pinned_columns(
         shocks = binding.group.shocks
         if not shocks.keys() <= observed:
             continue
-        for shock, law in shocks.items():
-            source_group, source, observation = sources[shock]
-            if observation:
-                if name not in parent.observation_aliases[source_group]:
-                    _refuse_pinning(
-                        name=name,
-                        group=group,
-                        reason="the query is not a producing alias of the "
-                        "observation, so it can run when the observation is "
-                        "unavailable. Supporting it needs a representative "
-                        "chosen per cell at run time.",
-                    )
-                continue
-            if (
-                isinstance(law, Discrete | NormalMixture)
-                or _static_informative(law=source.group.shocks[shock]) is True
-                or _static_informative(law=law) is False
-            ):
-                continue
-            record = _law_record(
-                shock=shock, group=group, binding=binding, parameter_paths={}
-            )
-            if not isinstance(law, Normal | LogNormal | Uniform) or (
-                record[1]
-                or record
-                != _law_record(
-                    shock=shock,
-                    group=source_group,
-                    binding=source,
-                    parameter_paths={},
-                )
-            ):
+        for shock in shocks:
+            source_group, _, observation = sources[shock]
+            if observation and name not in parent.observation_aliases[source_group]:
                 _refuse_pinning(
                     name=name,
                     group=group,
-                    reason=f"the law of {shock!r} is not the caller's state-free "
-                    "law, so an uninformative caller law need not make it "
-                    "degenerate here. Supporting it needs a proof that both laws "
-                    "share their informativeness.",
+                    reason="the query is not a producing alias of the "
+                    "observation, so it can run when the observation is "
+                    "unavailable. Supporting it needs a representative "
+                    "chosen per cell at run time.",
                 )
         columns.append(column)
     return tuple(columns)

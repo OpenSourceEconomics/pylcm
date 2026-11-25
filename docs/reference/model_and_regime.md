@@ -421,11 +421,17 @@ nodes at the value of staying; the values equal the full enumeration's to roundi
 When an exit observes every shock of a target group, all of that group's quadrature rows
 are the same physical point, so the target's policy is evaluated once and that answer is
 weighted by every row's original weight. Values equal the row-by-row reduction. A group
-the exit observes only partly keeps its row-by-row evaluation. Model build refuses a
-fully observed group of the caller's own shocks whose continuous law (`Normal`,
-`LogNormal`, `Uniform`) can be degenerate at the caller but not at the target, for
-example a spread read from a state that the exit changes, naming what would have to be
-implemented to support it.
+the exit observes only partly keeps its row-by-row evaluation.
+
+The law of a shock that an exit observes, whether the source draws its group too or only
+the destination does, is the same at the source's state and at the landing state: it may
+read parameters, and states that the projection returns unchanged. A state the source's
+own law reads lands under its own name; a state only the destination's law reads may
+land from any source state with the same grid. Model build raises
+`ShockDeclarationError` for a law that reads a state the projection changes or is not
+proven to keep, for every law family and every rule, naming the regimes, the group, the
+shock and the state. To let such a shock depend on a changing state, draw it in the
+source and carry it to the destination as a state.
 
 When solving, an outside value is read from a table rather than evaluated again, where
 the model build can prove that the read lands on the table's nodes:

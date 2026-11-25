@@ -33,7 +33,6 @@ from lcm import (
     Unilateral,
     categorical,
 )
-from lcm.exceptions import RegimeInitializationError
 from lcm.shocks import Discrete, GaussHermite, Law, Normal, Product, ShockGroup
 from lcm.solver_api import KernelOutput
 from lcm.typing import BoolND, FloatND, IntND, ScalarInt
@@ -97,9 +96,14 @@ def _divergent_couple_f(
 ) -> FloatND:
     """Counts up to experience; at the unavailable sentinel -1 it never stops."""
     target = experience_f.astype(consumption.dtype)
-    steps = jax.lax.while_loop(
-        lambda count: count != target, lambda count: count + 1, jnp.zeros_like(target)
-    )
+
+    def short(count: FloatND) -> BoolND:
+        return count != target
+
+    def step(count: FloatND) -> FloatND:
+        return count + 1
+
+    steps = jax.lax.while_loop(short, step, jnp.zeros_like(target))
     return _couple_f(consumption=consumption, work_f=work_f) + 0 * steps
 
 
@@ -136,23 +140,6 @@ def _match_sigma(experience_f: IntND) -> FloatND:
     return 0.3 + 0.01 * experience_f
 
 
-def _level(level: IntND) -> IntND:
-    return level
-
-
-def _flipped_level(level: IntND) -> IntND:
-    return 1 - level
-
-
-def _no_level(experience: IntND) -> IntND:
-    return 0 * experience
-
-
-def _level_sigma(level: IntND) -> FloatND:
-    """Zero spread at level zero: the wage there reveals no base."""
-    return 0.5 * level
-
-
 def _group(*, name: str, n: int, law: Law) -> ShockGroup:
     if isinstance(law, Discrete):
         return ShockGroup(shocks={name: law})
@@ -166,31 +153,24 @@ def _model(
     marry_available: Callable[..., BoolND] | None = None,
     couple_projection: Callable[..., IntND] = _experience,
     couple_f: Callable[..., FloatND] = _couple_f,
-    wage_level: bool = False,
     width: int = _WIDTH,
     dissolution: bool = False,
 ) -> Model:
     """Singles may marry by consent, observing every shock of the couple.
 
-    With `wage_level`, single_f and the couple carry a binary `level` whose value
-    sets the wage spread, and marriage flips it. With `dissolution`, the couple
-    may dissolve into lone singles: its dissolution queries then sit below the
-    formation's pinned couple rows, each with its own wage rows.
+    With `dissolution`, the couple may dissolve into lone singles: its dissolution
+    queries then sit below the formation's pinned couple rows, each with its own
+    wage rows.
     """
     experience = DiscreteGrid(values=jnp.arange(6))
     work = DiscreteGrid(values=jnp.arange(2))
-    level = {"level": DiscreteGrid(values=jnp.arange(2))} if wage_level else {}
-    keep_level = {"level": _level} if wage_level else {}
     singles = {
         f"single_{member}": Regime(
-            states={"experience": experience, **(level if member == "f" else {})},
+            states={"experience": experience},
             actions={"work": work},
             functions={"utility": _single_f if member == "f" else _single_m},
             shocks=("wage_f",) if member == "f" else ("wage_m",),
-            state_transitions={
-                "experience": _next_experience,
-                **(keep_level if member == "f" else {}),
-            },
+            state_transitions={"experience": _next_experience},
             exit=Exit(
                 targets={
                     "self": ExitTarget(
@@ -201,15 +181,6 @@ def _model(
                             if member == "f"
                             else _experience,
                             "experience_m": _experience,
-                            **(
-                                {
-                                    "level": _flipped_level
-                                    if member == "f"
-                                    else _no_level
-                                }
-                                if wage_level
-                                else {}
-                            ),
                         },
                     )
                 },
@@ -217,14 +188,7 @@ def _model(
                     counterparty=Counterparty(
                         regime="single_m" if member == "f" else "single_f",
                         role="m" if member == "f" else "f",
-                        projection={
-                            "experience": _experience,
-                            **(
-                                {"level": _no_level}
-                                if wage_level and member == "m"
-                                else {}
-                            ),
-                        },
+                        projection={"experience": _experience},
                     )
                 ),
                 available=marry_available if member == "f" else None,
@@ -236,7 +200,7 @@ def _model(
     regimes = {
         **singles,
         "couple": Regime(
-            states={"experience_f": experience, "experience_m": experience, **level},
+            states={"experience_f": experience, "experience_m": experience},
             actions={"work_f": work, "work_m": work},
             functions={
                 "utility": CollectiveUtility(utilities={"f": couple_f, "m": _couple_m}),
@@ -245,7 +209,6 @@ def _model(
             state_transitions={
                 "experience_f": _next_f,
                 "experience_m": _next_m,
-                **keep_level,
             },
             shocks=("wage_f", "wage_m", "match"),
             exit=_dissolve() if dissolution else None,
@@ -277,11 +240,7 @@ def _model(
     return Model(
         regimes=regimes,
         shocks={
-            "wage_f": _group(
-                name="wage_f",
-                n=2,
-                law=Normal(mu=0.0, sigma=_level_sigma if wage_level else 0.5),
-            ),
+            "wage_f": _group(name="wage_f", n=2, law=Normal(mu=0.0, sigma=0.5)),
             "wage_m": _group(name="wage_m", n=2, law=Normal(mu=0.0, sigma=0.4)),
             "match": _group(name="match", n=n_match, law=law),
         },
@@ -644,18 +603,3 @@ def test_state_dependent_observed_law_pins_exactly(
         got=_values(model()),
         expected=_unpinned_scalar_values(model=model, monkeypatch=monkeypatch),
     )
-
-
-def test_caller_law_that_can_differ_is_refused_at_build(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """At level zero the single's wage has no spread, so it fixes no base, while
-    the couple at the flipped level one draws a wage: the rows differ."""
-    with pytest.raises(RegimeInitializationError, match="informativeness"):
-        _model(wage_level=True)
-    monkeypatch.setattr(query_information, "_refuse_pinning", lambda **_: None)
-    pinned = _values(_model(wage_level=True))
-    expected = _unpinned_scalar_values(
-        model=lambda: _model(wage_level=True), monkeypatch=monkeypatch
-    )
-    assert any(not np.allclose(pinned[name], value) for name, value in expected.items())

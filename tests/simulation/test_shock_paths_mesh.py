@@ -202,7 +202,7 @@ def _exit_mesh_target_next(*, location: FloatND, choice: ScalarInt) -> FloatND:
 
 
 def _exit_mesh_model(*, execution: ExecutionConfig) -> Model:
-    """Reuse dated entry and mapped shared laws, with observable final transitions."""
+    """Dated entry and a state-free shared law, with observable final transitions."""
     source_grid = LinSpacedGrid(start=0, stop=1, n_points=2)
     return Model(
         regimes={
@@ -245,7 +245,7 @@ def _exit_mesh_model(*, execution: ExecutionConfig) -> Model:
         },
         shocks={
             "shared": ShockGroup(
-                shocks={"shared_signal": Normal(mu=_location_mean, sigma=1)},
+                shocks={"shared_signal": Normal(mu=10.0, sigma=1)},
                 nodes=Product(shared_signal=GaussHermite(3)),
             )
         },
@@ -307,8 +307,8 @@ def test_tagged_exit_paths_keep_producing_law_on_subject_mesh(
     starts = np.asarray([1, 0, 1, 0, 1, 0, 0, 1, 0], dtype=np.int32)
     location = np.arange(starts.size, dtype=jnp.asarray(0.0).dtype) % 2
     bases = np.arange(starts.size * 2, dtype=location.dtype).reshape(-1, 2) - 20.25
-    paths = bases + location[:, None] if physical else bases
-    expected_signal = location + 10 + bases[:, 1]
+    paths = bases + 10 if physical else bases
+    expected_signal = 10 + bases[:, 1]
     expected_choice = expected_signal > 0
     assert np.any(expected_choice)
     assert np.any(~expected_choice)

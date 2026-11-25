@@ -484,7 +484,6 @@ def _offer_model(
     observed: bool,
     shared: bool = False,
     flipped: bool = False,
-    state_conditioned: bool = False,
 ) -> Model:
     wealth = LinSpacedGrid(start=0, stop=1, n_points=2)
     return Model(
@@ -518,9 +517,7 @@ def _offer_model(
                 shocks={
                     "offer": Discrete(
                         categories=_Offer,
-                        probs=_offer_probs
-                        if shared or state_conditioned
-                        else np.asarray([0.5, 0.5]),
+                        probs=_offer_probs if shared else np.asarray([0.5, 0.5]),
                     )
                 },
             )
@@ -556,7 +553,7 @@ def test_shared_offer_uses_the_same_category_at_identical_law_inputs() -> None:
 
 
 def test_shared_offer_refuses_a_projection_that_changes_its_cdf() -> None:
-    with pytest.raises(ShockDeclarationError, match="effective identity is unproved"):
+    with pytest.raises(ShockDeclarationError, match="reads state 'wealth'"):
         _offer_model(observed=False, shared=True, flipped=True)
 
 

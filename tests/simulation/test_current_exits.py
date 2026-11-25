@@ -184,10 +184,6 @@ def _source_shock_flow(*, eps: FloatND) -> FloatND:
     return 2.0 * eps
 
 
-def _target_shock_flow(*, eps: FloatND) -> FloatND:
-    return 5.0 + 0.0 * eps
-
-
 def _five() -> float:
     return 5.0
 
@@ -196,20 +192,15 @@ def _shock_location(*, wealth: FloatND) -> FloatND:
     return wealth
 
 
-def _project_shock_wealth(*, wealth: FloatND) -> FloatND:
-    return wealth + 10.0
-
-
 @pytest.mark.coverage(
     backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
 )
-@pytest.mark.parametrize("target_reads_shock", [False, True])
 @pytest.mark.parametrize("enable_jit", [False, True])
 @pytest.mark.parametrize("n_periods", [1, 3])
 def test_mover_rows_publish_original_current_shocks(
-    *, target_reads_shock: bool, enable_jit: bool, n_periods: int
+    *, enable_jit: bool, n_periods: int
 ) -> None:
-    """Mover rows retain the exit's draw and the final actor's distinct draw."""
+    """Mover rows retain the exit's draw."""
     wealth = LinSpacedGrid(start=0, stop=5, n_points=3)
     model = Model(
         regimes={
@@ -219,30 +210,12 @@ def test_mover_rows_publish_original_current_shocks(
                 shocks=("innovation",),
                 state_transitions={"wealth": _shock_location} if n_periods > 1 else {},
                 exit=Exit(
-                    targets={
-                        "self": ExitTarget(
-                            regime="target",
-                            projection={"wealth": _project_shock_wealth}
-                            if target_reads_shock
-                            else {},
-                        )
-                    },
+                    targets={"self": ExitTarget(regime="target", projection={})},
                     rule=Unilateral(),
                     available=_first_period,
                 ),
             ),
-            "target": Regime(
-                states={"wealth": LinSpacedGrid(start=0, stop=20, n_points=3)}
-                if target_reads_shock
-                else {},
-                functions={
-                    "utility": _target_shock_flow if target_reads_shock else _five
-                },
-                shocks=("innovation",) if target_reads_shock else (),
-                state_transitions={"wealth": _shock_location}
-                if target_reads_shock and n_periods > 1
-                else {},
-            ),
+            "target": Regime(functions={"utility": _five}),
             **(
                 {
                     "source_done": Regime(functions={"utility": _five}),
@@ -301,21 +274,11 @@ def test_mover_rows_publish_original_current_shocks(
     entry = frame.loc[frame["period"] == 0]
     np.testing.assert_array_equal(entry["regime_name"], ["target", "source"])
     assert_array_almost_equal(entry["value"], [5.0, 10.0], decimal=DECIMAL_PRECISION)
-    assert_array_almost_equal(
-        entry["eps"],
-        [10.0 if target_reads_shock else 0.0, 5.0],
-        decimal=DECIMAL_PRECISION,
-    )
-    if target_reads_shock:
-        assert_array_almost_equal(
-            entry.loc[entry["regime_name"] == "target", "source__eps"],
-            [0.0],
-            decimal=DECIMAL_PRECISION,
-        )
+    assert_array_almost_equal(entry["eps"], [0.0, 5.0], decimal=DECIMAL_PRECISION)
     if n_periods > 1:
         later = frame.loc[(frame["period"] > 0) & (frame["subject_id"] == 0)]
         assert len(later) == n_periods - 1
-        assert later["source__eps" if target_reads_shock else "eps"].isna().all()
+        assert later["eps"].isna().all()
 
 
 @pytest.mark.coverage(
@@ -737,70 +700,12 @@ def _shared_source_flow(shared_signal: FloatND) -> FloatND:
     return 0.5 + 0.0 * shared_signal
 
 
-def _shared_target_flow(shared_signal: FloatND) -> FloatND:
-    return shared_signal
-
-
 def _mapped_location(location: FloatND) -> FloatND:
     return location + 10
 
 
 def _location_mean(location: FloatND) -> FloatND:
     return location
-
-
-@pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_shared_physical_override_transports_recovered_base_to_changed_law() -> None:
-    """Source physical two at mean one becomes target physical twelve at mean eleven."""
-    model = Model(
-        regimes={
-            "source": Regime(
-                states={"location": LinSpacedGrid(start=0, stop=1, n_points=2)},
-                functions={"utility": _shared_source_flow},
-                shocks=("shared",),
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
-                            regime="target",
-                            projection={"location": _mapped_location},
-                        )
-                    },
-                    rule=Unilateral(),
-                ),
-            ),
-            "target": Regime(
-                states={"location": LinSpacedGrid(start=10, stop=11, n_points=2)},
-                functions={"utility": _shared_target_flow},
-                shocks=("shared",),
-            ),
-        },
-        shocks={
-            "shared": ShockGroup(
-                shocks={"shared_signal": Normal(mu=_location_mean, sigma=1)},
-                nodes=Product(shared_signal=GaussHermite(3)),
-            )
-        },
-        n_periods=1,
-        regime_id_class=_RegimeId,
-        initial_nodes=InitialNodes(by_period={0: "source"}),
-        edges={},
-    )
-    frame = model.simulate(
-        params={},
-        initial_conditions={
-            "period": jnp.asarray([0]),
-            "regime_id": jnp.asarray([0]),
-            "location": jnp.asarray([1.0]),
-            "shared_signal": PhysicalValues(values=jnp.asarray([2.0])),
-        },
-        seed=17,
-        log_level="off",
-        runtime_checks=False,
-    ).to_dataframe(use_categorical_codes=True)
-    np.testing.assert_array_equal(frame["regime_name"], "target")
-    np.testing.assert_array_equal(frame["location"], 11.0)
-    assert_array_almost_equal(frame["shared_signal"], 12.0, decimal=DECIMAL_PRECISION)
-    assert_array_almost_equal(frame["value"], 12.0, decimal=DECIMAL_PRECISION)
 
 
 @pytest.mark.coverage(

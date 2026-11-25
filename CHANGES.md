@@ -12,6 +12,12 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - An exit observes a shock group whole or not at all: `Exit(observes=...)` that names
   some but not all shocks of one group raises `ShockDeclarationError` when the model is
   built, naming the group, the observed and the missing shocks.
+- The law of a shock that an exit observes is the same at the source's state and at the
+  landing state, whether the source draws its group too or only the destination does:
+  it reads parameters and states that the projection returns unchanged. A law that
+  reads a state the projection changes or is not proven to keep raises
+  `ShockDeclarationError` when the model is built, naming the regimes, the group, the
+  shock and the state; draw such a shock in the source and carry it as a state.
 - `MutualConsent` requires `settle`; mutual consent without a settlement is removed.
 - A household with a `Decoupled` aggregator and no taste shocks breaks ties in its
   weighted objective on the members' objectives and then on their stored values, each

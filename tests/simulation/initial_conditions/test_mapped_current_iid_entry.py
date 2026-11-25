@@ -47,11 +47,12 @@ def _stay(*, x: FloatND) -> FloatND:
 
 
 def _mapped_y(*, x: FloatND) -> FloatND:
-    return jnp.where(x > 0, x + 10, jnp.nan)
+    """The target state `y` is the source state `x`, on the same grid."""
+    return x
 
 
 def _available(*, x: FloatND) -> BoolND:
-    return x > 0
+    return x > 10
 
 
 def _lower(*, y: FloatND, age: FloatND, period: IntND) -> FloatND:
@@ -76,7 +77,7 @@ def _model(
         regimes={
             "source": Regime(
                 functions={"utility": _stay},
-                states={"x": LinSpacedGrid(start=0, stop=1, n_points=3)},
+                states={"x": LinSpacedGrid(start=10, stop=11, n_points=3)},
                 exit=Exit(
                     targets={
                         "self": ExitTarget(regime="target", projection={"y": _mapped_y})
@@ -119,7 +120,7 @@ def test_observed_mapped_entry_uses_current_params_rows_and_canonical_clock() ->
     initial = {
         "age": jnp.asarray([20.5 - 1e-4, 20.5 - 1e-4]),
         "regime_id": jnp.zeros(2, dtype=jnp.int32),
-        "x": jnp.asarray([1.0, 0.5]),
+        "x": jnp.asarray([11.0, 10.5]),
         "signal": PhysicalValues(values=jnp.asarray([31.75, 31.25])),
     }
     params = {"risk": {"width": 0.5}}
@@ -160,12 +161,12 @@ def test_observed_mapped_entry_uses_current_params_rows_and_canonical_clock() ->
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_inactive_mapped_entry_does_not_evaluate_its_numerical_law() -> None:
-    """An unavailable exit leaves its invalid projection and physical cell unread."""
+    """An unavailable exit leaves its invalid physical cell unread."""
     model = _model()
     initial = {
         "age": jnp.asarray([20.5]),
         "regime_id": jnp.zeros(1, dtype=jnp.int32),
-        "x": jnp.zeros(1),
+        "x": jnp.full(1, 10.0),
         "signal": PhysicalValues(values=jnp.asarray([jnp.nan])),
     }
     params = {"risk": {"width": 0.5}}
@@ -240,7 +241,7 @@ def test_checked_mapped_entry_uses_model_admission_and_preserves_budget_refusal(
     initial = {
         "age": jnp.asarray([20.5]),
         "regime_id": jnp.zeros(1, dtype=jnp.int32),
-        "x": jnp.ones(1),
+        "x": jnp.full(1, 11.0),
         "signal": PhysicalValues(values=jnp.asarray([31.75])),
     }
     model = _model(budget_bytes=2**26)
@@ -342,7 +343,7 @@ def test_mapped_entry_mixed_dates_keep_original_rows() -> None:
     initial = {
         "age": jnp.asarray([23.75 - 1e-4, 20.5 - 1e-4, 23.75 - 1e-4, 20.5 - 1e-4]),
         "regime_id": jnp.zeros(4, dtype=jnp.int32),
-        "x": jnp.asarray([0.25, 1.0, 0.75, 0.5]),
+        "x": jnp.asarray([10.25, 11.0, 10.75, 10.5]),
         "signal": PhysicalValues(values=jnp.asarray([35.25, 31.75, 35.75, 31.25])),
     }
     params = {"risk": {"width": 0.5}}
@@ -374,7 +375,7 @@ def test_dated_mapped_path_overrides_entry_in_original_row_order(
     initial = {
         "age": np.asarray([23.75, 20.5, 23.75, 20.5]),
         "regime_id": np.zeros(4, dtype=np.int32),
-        "x": jnp.asarray([0.25, 1.0, 0.75, 0.5]),
+        "x": jnp.asarray([10.25, 11.0, 10.75, 10.5]),
         "signal": PhysicalValues(values=jnp.full(4, -999.0)),
     }
     frame = model.simulate(
