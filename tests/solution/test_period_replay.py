@@ -1098,3 +1098,25 @@ def _make_public_capture_model(
         ),
         initial_nodes=initial_nodes_of(model=base),
     )
+
+
+@pytest.mark.parametrize("version", [None, "1", "3"], ids=["missing", "older", "newer"])
+def test_replay_refuses_a_capture_written_in_another_format(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, version: str | None
+) -> None:
+    """A capture of another format is refused before its payload is unpickled.
+
+    Its value arrays may lack the trailing member axis. The payload is removed,
+    so only the format check can produce the refusal.
+    """
+    _solve_capturing(
+        monkeypatch=monkeypatch, tmp_path=tmp_path, target="working_life@1"
+    )
+    directory = tmp_path / "working_life@1"
+    (directory / "format_version").unlink(missing_ok=True)
+    if version is not None:
+        (directory / "format_version").write_text(version, encoding="utf-8")
+    (directory / period_replay._PAYLOAD_NAME).unlink()
+
+    with pytest.raises(ValueError, match="written in another format"):
+        replay_period(directory=directory)

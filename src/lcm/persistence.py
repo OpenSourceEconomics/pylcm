@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, cast
 import cloudpickle
 
 from _lcm.persistence.io import (
+    SNAPSHOT_FORMAT_VERSION,
     _get_platform,
     _load_h5,
 )
@@ -147,11 +148,22 @@ def load_snapshot(
     Returns:
         A `SolveSnapshot` or `SimulateSnapshot`.
 
+    Raises:
+        ValueError: If the snapshot was written in another format.
+
     """
     path = Path(path)
 
     with (path / "metadata.json").open(encoding="utf-8") as fh:
         metadata = json.load(fh)
+    version = metadata.get("format_version")
+    if version != SNAPSHOT_FORMAT_VERSION:
+        msg = (
+            f"The snapshot in {path} was written in another format ({version!r}; "
+            f"this version reads {SNAPSHOT_FORMAT_VERSION}). Load it in the "
+            "environment recorded beside it, as its REPRODUCE.md describes."
+        )
+        raise ValueError(msg)
 
     snapshot_type = metadata["snapshot_type"]
     current_platform = _get_platform()

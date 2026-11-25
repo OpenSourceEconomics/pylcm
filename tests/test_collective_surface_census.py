@@ -46,6 +46,7 @@ _ENGINE_LEVEL_MODULES = frozenset(
         "tests/regime_building/test_with_engine_functions.py",
         "tests/simulation/test_leg_projector_vmap.py",
         "tests/test_collective_robustness_pins.py",
+        "tests/test_consumption_savings_regime.py",
     }
 )
 

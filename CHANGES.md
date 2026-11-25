@@ -21,12 +21,17 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   and `SolverBuildContext.members` names it. `SOLVER_API_VERSION` is 5.
 - Formats move together: the saved-solution schema version is 4 and its format version
   4, the component-fragment format version is 3, the model-structure fingerprint tag is
-  9 and the chunk-profile tag is 6. Solutions and fragments written before are refused;
-  solve again. Model fingerprints and cached chunk profiles change.
+  9 and the chunk-profile tag is 6. Debug snapshots, period captures and period archives
+  record format version 2. Solutions, fragments, snapshots and captures written before
+  are refused; solve or capture again. Model fingerprints and cached chunk profiles change.
 - `SimulationResult.save` records a format version, and `SimulationResult.load` and
   `SimulationResult.load_solution` raise `IncompatibleSolutionError` for a directory
   saved without it or under another one; simulate again. The result's metadata records each regime's members as
   `regime_to_members`.
+- Endogenous-grid solvers (`EGM`, `DCEGM`, `NBEGM`, `NEGM`, `NNBEGM`) take
+  `koopmans_aggregator` and `certainty_equivalent` as one bare value: a slot keyed by
+  member raises `RegimeInitializationError` when the regime is declared, also for a
+  household of one member.
 
 ### Exits declare only what the members' rules define
 

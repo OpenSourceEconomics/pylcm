@@ -61,6 +61,8 @@ from _lcm.solution.backward_induction import (
 )
 from _lcm.solution.period_capture import (
     _PAYLOAD_NAME,
+    CAPTURE_FORMAT_VERSION,
+    CAPTURE_FORMAT_VERSION_NAME,
     LAYOUTS_KEY,
     CoreLayoutDescriptor,
     LeafLayoutDescriptor,
@@ -191,7 +193,22 @@ def replay_period(*, directory: Path) -> PeriodReplay:
 
 
 def _load_capture_payload(*, directory: Path) -> PeriodCapturePayload:
-    """Load one period's captured regime, inputs, widths and layout block."""
+    """Load one period's captured regime, inputs, widths and layout block.
+
+    Raises:
+        ValueError: If the capture was written in another format.
+    """
+    version_path = directory / CAPTURE_FORMAT_VERSION_NAME
+    version = (
+        version_path.read_text(encoding="utf-8") if version_path.is_file() else None
+    )
+    if version != str(CAPTURE_FORMAT_VERSION):
+        msg = (
+            f"The period capture in {directory} was written in another format "
+            f"({version!r}; this version reads {CAPTURE_FORMAT_VERSION}). Capture "
+            "the period again."
+        )
+        raise ValueError(msg)
     with (directory / _PAYLOAD_NAME).open("rb") as stream:
         payload = cloudpickle.load(stream)
     if not _is_period_capture_payload(payload):

@@ -659,3 +659,32 @@ def test_solve_snapshot_round_trip(
                 period_to_regime_to_V_arr_2[period][regime_name],
                 period_to_regime_to_V_arr.values[period][regime_name],
             )
+
+
+@pytest.mark.parametrize("version", [None, 1, 3], ids=["missing", "older", "newer"])
+def test_load_snapshot_refuses_a_snapshot_written_in_another_format(
+    *,
+    tmp_path: Path,
+    model_and_params: tuple[Model, UserParams],
+    version: int | None,
+) -> None:
+    """A snapshot of another format is refused before a pickle or array is read.
+
+    Its value arrays may lack the trailing member axis, so it is loaded in the
+    environment recorded beside it. Its payloads are removed, so only the
+    format check can produce the refusal.
+    """
+    model, params = model_and_params
+    model.solve(params=params, log_level="debug", log_path=tmp_path)
+    snap_dir = min(tmp_path.glob("solve_snapshot_*/"))
+    metadata_path = snap_dir / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata.pop("format_version", None)
+    if version is not None:
+        metadata["format_version"] = version
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    for payload in (*snap_dir.glob("*.pkl"), snap_dir / "arrays.h5"):
+        payload.unlink()
+
+    with pytest.raises(ValueError, match="written in another format"):
+        load_snapshot(path=snap_dir)

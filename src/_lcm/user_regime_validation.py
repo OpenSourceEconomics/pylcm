@@ -509,21 +509,37 @@ def _member_mapping_errors(regime: Regime) -> tuple[str, ...]:
 
 
 def _fail_if_solver_cannot_solve_the_members(regime: Regime) -> None:
-    """Refuse a regime of several members under a solver solving one only.
+    """Refuse members, or a slot keyed by member, under a solver of one member.
+
+    Such a solver takes the Koopmans aggregator and the certainty equivalent as
+    one bare value, so a slot keyed by member is refused even for one member.
 
     Raises:
         NotImplementedError: If the regime has more than one member and its
             solver does not declare `supports_several_members`.
+        RegimeInitializationError: If its solver does not declare
+            `supports_several_members` and a slot is keyed by member.
     """
-    if (
-        len(regime.members) > 1
-        and not regime.solver.capabilities.supports_several_members
-    ):
+    if regime.solver.capabilities.supports_several_members:
+        return
+    solver_name = type(regime.solver).__name__.removeprefix("_Bound")
+    if len(regime.members) > 1:
         raise NotImplementedError(
-            f"The {type(regime.solver).__name__} solver solves a regime with one "
-            f"member only; this regime has the members {regime.members!r}. Use a "
-            "solver that supports several members, such as `solver=GridSearch()`."
+            f"The {solver_name} solver solves a regime with one member only; this "
+            f"regime has the members {regime.members!r}. Use a solver that "
+            "supports several members, such as `solver=GridSearch()`."
         )
+    for slot, bare in (
+        ("koopmans_aggregator", "LinearAggregator()"),
+        ("certainty_equivalent", "LinearExpectation()"),
+    ):
+        if isinstance(getattr(regime, slot), Mapping):
+            raise RegimeInitializationError(
+                f"The {solver_name} solver takes `{slot}` as one bare value, not "
+                f"keyed by member: declare `{slot}={bare}` directly, or use a "
+                "solver that supports several members, such as "
+                "`solver=GridSearch()`."
+            )
 
 
 def _validate_exits(regime: Regime) -> None:

@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.persistence import period as period_archive
 from _lcm.persistence.period import read_period_archive, write_period_archive
 from _lcm.solution import public_period_replay
 from _lcm.typing import JSONValue
@@ -331,3 +332,17 @@ def test_unchecked_public_replay_still_requires_archive_checksum(
             source_identity=_SOURCE,
         )
     run_period.assert_not_called()
+
+
+def test_a_period_archive_of_the_schema_before_the_member_axis_is_refused(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Schema 1 archives hold values without the trailing member axis."""
+    monkeypatch.setattr(period_archive, "PERIOD_ARCHIVE_SCHEMA", 1, raising=False)
+    write_period_archive(
+        path=tmp_path / "entry.h5", metadata={}, arrays={"value": np.zeros(2)}
+    )
+    monkeypatch.undo()
+
+    with pytest.raises(ValueError, match="Unsupported period archive schema"):
+        read_period_archive(path=tmp_path / "entry.h5")

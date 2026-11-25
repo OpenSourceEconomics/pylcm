@@ -20,6 +20,10 @@ from _lcm.typing import PeriodToRegimeToVArr
 from lcm._solver_api.entries import _LazyEntry
 from lcm.typing import FloatND
 
+# Version 2 stores value arrays with the trailing member axis; a snapshot
+# without a version predates it.
+SNAPSHOT_FORMAT_VERSION = 2
+
 # What a snapshot or a period capture pickles: a model, its parameters and initial
 # conditions, a simulation result, or a capture payload.
 type _Picklable = object  # noqa: PAN001 - cloudpickle serializes any picklable object
@@ -85,6 +89,7 @@ def _write_metadata(*, snap_dir: Path, snapshot_type: str, fields: list[str]) ->
     """Write metadata.json into a snapshot directory."""
     metadata = {
         "snapshot_type": snapshot_type,
+        "format_version": SNAPSHOT_FORMAT_VERSION,
         "platform": _get_platform(),
         "fields": fields,
     }

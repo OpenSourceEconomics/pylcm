@@ -328,7 +328,8 @@ Member `m`'s continuation is aggregated under its own certainty equivalent,
 $CE^m = g_m^{-1}(\sum_r p_r \, E_w[g_m(V'^m_r)])$, and combined with its utility by its
 own aggregator, $Q^m = W^m(u^m, CE^m)$. Linear and nonlinear members may be mixed. An
 additive shock transition is averaged into every member's continuation as into a
-single's.
+single's. A slot keyed by member needs a solver that supports several members, such as
+`GridSearch()`; an endogenous-grid solver takes either slot as one bare value only.
 
 `Decoupled(objective=..., value=...)` is declared for the household as a whole, never
 per member. Without taste shocks the household chooses the action that maximizes the
