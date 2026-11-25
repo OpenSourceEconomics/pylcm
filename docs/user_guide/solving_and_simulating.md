@@ -532,7 +532,7 @@ result.n_subjects  # 1000
 
 ### Persistence
 
-`SimulationResult.save(directory=...)` writes four sibling artifacts:
+`SimulationResult.save(directory=...)` writes five sibling artifacts:
 
 - `arrays/` — orbax checkpoint of the per-subject `raw_results` tree and `flat_params`.
 - `V_arr/` — orbax checkpoint of the solution value-function arrays; orbax streams
@@ -542,15 +542,18 @@ result.n_subjects  # 1000
 - `simulated_data.arrow` — a `feather` dump of `to_dataframe`, ready for downstream
   consumers that want the flat per-subject view without re-instantiating a
   `SimulationResult`.
+- `format_version` --- the version of this layout, written last. `SimulationResult.load`
+  and `SimulationResult.load_solution` refuse a directory without it or with another
+  version before reading anything else.
 
-Two keywords select what that Feather table holds; neither affects the other three
-artifacts. `save(directory=..., df_additional_targets=...)` is passed through to
-`to_dataframe`: `None` (the default) writes only the base columns (states, actions,
-regime, period, `V_arr`, and age for age models), a sequence of target names bakes those
-DAG outputs in, and `"all"` includes every available target --- which can grow the file
-by an order of magnitude on a model with many DAG leaves.
-`df_use_categorical_codes=False` (the default) stores discrete variables as pandas
-`Categorical` columns; `True` stores integer codes.
+Two keywords select what that Feather table holds; neither affects the other artifacts.
+`save(directory=..., df_additional_targets=...)` is passed through to `to_dataframe`:
+`None` (the default) writes only the base columns (states, actions, regime, period,
+`V_arr`, and age for age models), a sequence of target names bakes those DAG outputs in,
+and `"all"` includes every available target --- which can grow the file by an order of
+magnitude on a model with many DAG leaves. `df_use_categorical_codes=False` (the
+default) stores discrete variables as pandas `Categorical` columns; `True` stores
+integer codes.
 
 `save()` consumes the in-memory result by clearing its value-function arrays and
 compiled regimes. Reload the saved directory before further access that needs either.

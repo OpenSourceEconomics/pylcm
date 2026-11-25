@@ -24,6 +24,7 @@ implementation that could share its assumptions.
 
 from functools import partial
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -34,10 +35,11 @@ from lcm import (
     LinSpacedGrid,
     Model,
     categorical,
+    post_decision_lower_bound,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime
-from lcm.solvers import EGM, GridSearch
+from lcm.solvers import DCEGM, EGM, NBEGM, GridSearch
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -99,8 +101,7 @@ def _model(
     n_consumption: int = 200,
     resources_func: UserFunction | None = None,
     liquid: LiquidMargin | None = None,
-    utility_function: UserFunction | CollectiveUtility = utility,
-    terminal_utility_function: UserFunction | CollectiveUtility = terminal_utility,
+    utility_function: UserFunction = utility,
 ) -> Model:
     """A pure consumption--saving lifecycle with no income and no kinks.
 
@@ -145,7 +146,7 @@ def _model(
     )
     done = Regime(
         states={"wealth": wealth_grid},
-        functions={"utility": terminal_utility_function},
+        functions={"utility": terminal_utility},
         solver=GridSearch(),
     )
     return Model(
@@ -162,17 +163,17 @@ def _model(
     )
 
 
-def _params(*, utility_name: str = "utility") -> dict[str, UserParamsNode]:
-    """Parameters with each regime's utility function named `utility_name`."""
+def _params() -> dict[str, UserParamsNode]:
+    """The parameters of the closed-form model."""
     law = {"return_liquid": _RETURN, "retirement_income": 0.0}
     return {
         "saving": {
-            utility_name: {"crra": _CRRA},
+            "utility": {"crra": _CRRA},
             "koopmans_aggregator": {"discount_factor": _DISCOUNT_FACTOR},
             "saving": {"next_wealth": law},
             "done": {"next_wealth": law},
         },
-        "done": {utility_name: {"crra": _CRRA}},
+        "done": {"utility": {"crra": _CRRA}},
     }
 
 
@@ -230,30 +231,107 @@ def test_egm_agrees_with_dense_grid_search() -> None:
         assert np.max(rel) < 1e-2
 
 
-def test_egm_solves_a_household_of_one_member_as_its_plain_utility_model() -> None:
+_LIQUID = LiquidMargin(
+    state="liquid",
+    action="consumption",
+    resources="liquid",
+    post_decision_state="savings",
+)
+
+
+def _log_utility(*, consumption: ContinuousAction) -> FloatND:
+    return jnp.log(consumption)
+
+
+def _log_terminal(*, liquid: ContinuousState) -> FloatND:
+    return jnp.log(liquid)
+
+
+def _liquid_savings(
+    *, liquid: ContinuousState, consumption: ContinuousAction
+) -> FloatND:
+    return liquid - consumption
+
+
+def _next_liquid(*, savings: FloatND) -> ContinuousState:
+    return savings + 1.0
+
+
+def _floor(*, age: float) -> FloatND:
+    """A floor computed from the age: the solver prepares its query evaluators."""
+    return jnp.asarray(0.25 + 0.0 * age)
+
+
+def _one_member_model(
+    *, solver: EGM | DCEGM | NBEGM, member: str | None, callable_floor: bool
+) -> Model:
+    """A two-age log consumption--saving model, its one member plain or named."""
+
+    def declare(function: UserFunction) -> UserFunction | CollectiveUtility:
+        return (
+            function
+            if member is None
+            else CollectiveUtility(utilities={member: function})
+        )
+
+    return Model(
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regimes={
+            "saving": ConsumptionSavingsRegime(
+                liquid=_LIQUID,
+                states={"liquid": LinSpacedGrid(start=2.0, stop=8.0, n_points=17)},
+                actions={
+                    "consumption": LinSpacedGrid(start=0.05, stop=8.0, n_points=65)
+                },
+                state_transitions={"liquid": {"done": _next_liquid}},
+                functions={
+                    "utility": declare(_log_utility),
+                    "savings": _liquid_savings,
+                },
+                constraints={
+                    "borrowing": post_decision_lower_bound(
+                        margin=_LIQUID, lower=_floor if callable_floor else 0.25
+                    )
+                },
+                solver=solver,
+            ),
+            "done": Regime(
+                states={"liquid": LinSpacedGrid(start=1.0, stop=12.0, n_points=65)},
+                functions={"utility": declare(_log_terminal)},
+            ),
+        },
+        edges={"saving": {"done": 0}},
+        regime_id_class=RegimeId,
+        initial_nodes={0: "saving"},
+    )
+
+
+@pytest.mark.parametrize("callable_floor", [False, True], ids=["literal", "callable"])
+@pytest.mark.parametrize("member", ["alice", "bob"])
+@pytest.mark.parametrize("solver_type", [EGM, DCEGM, NBEGM])
+def test_an_endogenous_grid_solver_solves_a_named_member_as_its_plain_model(
+    *,
+    solver_type: type[EGM | DCEGM | NBEGM],
+    member: str,
+    callable_floor: bool,
+) -> None:
     """A one-member `CollectiveUtility` regime solves to its plain-utility values.
 
-    Both values carry the trailing member axis of length one; the endogenous-grid
-    solver reads the member's utility under its member name.
+    Naming the member renames its utility to `utility_<member>`; the solver and
+    its query evaluators read it under that name. Both values carry the trailing
+    member axis of length one.
     """
-    plain = (
-        _model(solver=EGM(savings_grid=_SAVINGS_GRID))
-        .solve(params=_params(), log_level="off")
-        .values
+    solver = solver_type(
+        savings_grid=LinSpacedGrid(start=0.25, stop=10.25, n_points=65)
     )
-    household = (
-        _model(
-            solver=EGM(savings_grid=_SAVINGS_GRID),
-            utility_function=CollectiveUtility(utilities={"alice": utility}),
-            terminal_utility_function=CollectiveUtility(
-                utilities={"alice": terminal_utility}
-            ),
-        )
-        .solve(params=_params(utility_name="utility_alice"), log_level="off")
+    plain, named = (
+        _one_member_model(solver=solver, member=name, callable_floor=callable_floor)
+        .solve(params={"discount_factor": 0.95}, log_level="off")
         .values
+        for name in (None, member)
     )
-    for period in (0, 1, 2):
-        np.testing.assert_array_equal(
-            np.asarray(household[period]["saving"]),
-            np.asarray(plain[period]["saving"]),
-        )
+    for period, regimes in plain.items():
+        for regime, expected in regimes.items():
+            np.testing.assert_array_equal(
+                np.asarray(named[period][regime]), np.asarray(expected)
+            )

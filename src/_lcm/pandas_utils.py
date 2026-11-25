@@ -32,7 +32,11 @@ from _lcm.params.temporal import (
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.processes.joint_normal_lowering import JointStateEntry
 from _lcm.reachability import ModelReachability
-from _lcm.regime_building.collective import NO_ROLE, build_role_vocabulary
+from _lcm.regime_building.collective import (
+    NO_ROLE,
+    build_role_vocabulary,
+    member_slots,
+)
 from _lcm.regime_law import RegimeLaws
 from _lcm.simulation.initial_conditions import MISSING_CAT_CODE, PSEUDO_STATE_NAMES
 from _lcm.time import (
@@ -506,17 +510,6 @@ def convert_series_in_params(
                 all_funcs[name] = Phased(
                     solve=solve_funcs[name], simulate=simulate_funcs[name]
                 )
-        # The Koopmans aggregator is not a regime function; its params live
-        # under a pseudo-function key of the same name. Every aggregator the slot
-        # runs (both `Phased` variants, a `Decoupled`'s decision and value)
-        # declares its own parameters and the template carries their union, so
-        # the variant that declares each parameter is the one whose source
-        # describes how it is indexed.
-        aggregator_variants = koopmans_aggregator_variants(
-            declaration=user_regime.koopmans_aggregator
-        )
-        if aggregator_variants:
-            all_funcs["koopmans_aggregator"] = aggregator_variants[0]
         converted_regime: dict[str, _ConvertedParamsNode] = {}
         for func_param, value in regime_params.items():
             # Function lookup exists only to infer a Series leaf's indexing axes.
@@ -534,7 +527,6 @@ def convert_series_in_params(
                 param_name=param_name,
                 user_regime=user_regime,
                 all_funcs=all_funcs,
-                aggregator_variants=aggregator_variants,
             )
 
             # Runtime grid/process params are scalar — no AST inspection.
@@ -748,9 +740,6 @@ def _regime_param_periods(
             param_name=parts[-1],
             user_regime=user_regime,
             all_funcs=functions,
-            aggregator_variants=koopmans_aggregator_variants(
-                declaration=user_regime.koopmans_aggregator, phase=phase
-            ),
             phase=phase,
         )
         if consumer is None or parts[-1] not in inspect.signature(consumer).parameters:
@@ -897,7 +886,6 @@ def _resolve_param_consumer(
     param_name: ParameterName,
     user_regime: UserRegime,
     all_funcs: Mapping[str, _ParamConsumer],
-    aggregator_variants: tuple[UserFunction, ...],
     phase: Phase | None = None,
 ) -> tuple[UserFunction | None, FunctionName]:
     """Resolve a flattened param path to the callable declaring its Series leaf.
@@ -959,22 +947,37 @@ def _resolve_param_consumer(
         ), resolved
 
     resolved = parts[0]
-    if resolved == "koopmans_aggregator":
+    # The Koopmans aggregator is not a regime function: its params live under
+    # the shared entry `koopmans_aggregator` or, keyed by member, under each
+    # member's own entry. Every aggregator that entry runs (both `Phased`
+    # variants, a `Decoupled`'s decision and value) declares its own params, so
+    # the variant declaring a param describes how it is indexed.
+    member_aggregators = dict(
+        member_slots(
+            base="koopmans_aggregator",
+            declaration=user_regime.koopmans_aggregator,
+            members=user_regime.members,
+        )
+    )
+    if resolved in member_aggregators:
+        variants = koopmans_aggregator_variants(
+            declaration=member_aggregators[resolved], phase=phase
+        )
         return (
-            _variant_declaring(variants=aggregator_variants, param_name=param_name)
-            if aggregator_variants
+            _variant_declaring(variants=variants, param_name=param_name)
+            if variants
             else None,
-            cast("FunctionName", resolved),
+            resolved,
         )
     if resolved in _PSEUDO_KEYS_WITHOUT_A_SIGNATURE or _is_runtime_grid_param(
-        func_name=cast("FunctionName", resolved), user_regime=user_regime
+        func_name=resolved, user_regime=user_regime
     ):
-        return None, cast("FunctionName", resolved)
+        return None, resolved
     return (
         _scheduled_consumer(
             func=all_funcs.get(resolved), param_name=param_name, phase=phase
         ),
-        cast("FunctionName", resolved),
+        resolved,
     )
 
 

@@ -1822,7 +1822,7 @@ def _prepare_scalar_egm_query_models(
             interval_side_ids=(0,),
             evaluator_targets=(
                 ("resources", bound.resources_target),
-                ("utility", "utility"),
+                ("utility", one_member_utility_name(members=user_regime.members)),
                 ("koopmans_aggregator", "koopmans_aggregator"),
             ),
             functions=representative,
@@ -1957,7 +1957,7 @@ def _prepare_dcegm_query_models(
             interval_side_ids=(0,),
             evaluator_targets=(
                 ("resources", bound.resources_target),
-                ("utility", "utility"),
+                ("utility", one_member_utility_name(members=user_regime.members)),
                 ("koopmans_aggregator", "koopmans_aggregator"),
                 *((f"predicate:{target}", target) for target in phase.constraints),
                 *(
@@ -2173,7 +2173,7 @@ def _prepare_nbegm_query_models(
             interval_side_ids=(0,) * len(interval_ids),
             evaluator_targets=(
                 ("resources", bound.resources_target),
-                ("utility", "utility"),
+                ("utility", one_member_utility_name(members=user_regime.members)),
                 ("koopmans_aggregator", "koopmans_aggregator"),
                 *((f"predicate:{target}", target) for target in phase.constraints),
                 *(

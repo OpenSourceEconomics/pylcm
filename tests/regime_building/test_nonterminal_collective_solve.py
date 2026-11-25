@@ -35,6 +35,7 @@ from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
 from _lcm.certainty_equivalent import LinearExpectation
@@ -51,12 +52,14 @@ from lcm import (
     ByAge,
     CESAggregator,
     CollectiveUtility,
+    Decoupled,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
     ParetoObjective,
     Transition,
     categorical,
+    fixed_transition,
 )
 from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import PowerMean
@@ -64,10 +67,12 @@ from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime
 from lcm.transition import StochasticTransition
 from lcm.typing import (
+    ContinuousAction,
     ContinuousState,
     DiscreteAction,
     DiscreteState,
     FloatND,
+    Period,
     ScalarInt,
     UserFunction,
     UserParamsNode,
@@ -601,4 +606,247 @@ def test_each_member_aggregates_with_its_own_w_and_certainty_equivalent(
                 n_ulp=16,
                 operand_magnitude=float(np.max(np.abs(expected))),
                 err_msg=f"period {period}, regime {regime!r}",
+            )
+
+
+def _flow_two(work: DiscreteAction) -> FloatND:
+    return 2.0 - work
+
+
+def _flow_four(work: DiscreteAction) -> FloatND:
+    return 4.0 - work
+
+
+def _still_two() -> FloatND:
+    return jnp.asarray(2.0)
+
+
+def _still_four() -> FloatND:
+    return jnp.asarray(4.0)
+
+
+def _terminal_three() -> FloatND:
+    return jnp.asarray(3.0)
+
+
+def _terminal_six() -> FloatND:
+    return jnp.asarray(6.0)
+
+
+def _summed_W(*, utility: FloatND, CE: FloatND, beta: float) -> FloatND:
+    """The additive aggregator, written as a sum over its two terms."""
+    return jnp.sum(jnp.stack((utility, beta * CE)))
+
+
+def _euclidean_W(*, utility: FloatND, CE: FloatND, beta: float) -> FloatND:
+    """A nonlinear aggregator, written as a norm over its two terms."""
+    return jnp.sqrt(jnp.sum(jnp.stack((utility**2, (beta * CE) ** 2))))
+
+
+# Per member: flow with and without the action, and terminal value.
+_SCALAR_W_FUNCTIONS: dict[str, tuple[UserFunction, UserFunction, UserFunction]] = {
+    "a": (_flow_two, _still_two, _terminal_three),
+    "b": (_flow_four, _still_four, _terminal_six),
+}
+# Per member: the period-0 value under `_summed_W` and `_euclidean_W` at beta = 0.5,
+# where leisure is chosen.
+_SCALAR_W_VALUES = {"a": (3.5, 2.5), "b": (7.0, 5.0)}
+
+
+def _scalar_W_model(
+    *,
+    member_names: tuple[str, ...],
+    koopmans_aggregator: UserFunction | Decoupled,
+    with_action: bool,
+    with_ce: bool,
+) -> Model:
+    flow_index = 0 if with_action else 1
+
+    def declare(index: int) -> UserFunction | CollectiveUtility:
+        if member_names == ("self",):
+            return _SCALAR_W_FUNCTIONS["a"][index]
+        return CollectiveUtility(
+            utilities={
+                member: _SCALAR_W_FUNCTIONS[member][index] for member in member_names
+            }
+        )
+
+    return Model(
+        regimes={
+            "couple": Regime(
+                actions={"work": DiscreteGrid(Work)} if with_action else {},
+                functions={"utility": declare(flow_index)},
+                koopmans_aggregator=koopmans_aggregator,
+                certainty_equivalent=LinearExpectation() if with_ce else None,
+            ),
+            "couple_terminal": Regime(functions={"utility": declare(2)}),
+        },
+        edges={"couple": {"couple_terminal": 0}},
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=RegimeId,
+        initial_nodes={0: "couple"},
+    )
+
+
+@pytest.mark.parametrize("with_ce", [False, True], ids=["default_ce", "declared_ce"])
+@pytest.mark.parametrize("with_action", [False, True], ids=["no_action", "action"])
+@pytest.mark.parametrize("decoupled", [False, True], ids=["plain", "decoupled"])
+@pytest.mark.parametrize(
+    "aggregator", [_summed_W, _euclidean_W], ids=["linear", "nonlinear"]
+)
+@pytest.mark.parametrize(
+    "member_names",
+    [("self",), ("a",), ("a", "b"), ("b", "a")],
+    ids=["single", "one_named", "pair", "reversed_pair"],
+)
+def test_a_scalar_aggregator_is_applied_to_each_members_own_values(
+    *,
+    member_names: tuple[str, ...],
+    aggregator: UserFunction,
+    decoupled: bool,
+    with_action: bool,
+    with_ce: bool,
+) -> None:
+    """A bare `W` sees one member's utility and continuation at a time.
+
+    `W` is written as a reduction over its two terms, so applying it to the
+    stacked member values instead would mix the members or drop their axis. A
+    `Decoupled` declaration chooses with `aggregator` and stores the additive value.
+    """
+    solution = _scalar_W_model(
+        member_names=member_names,
+        koopmans_aggregator=(
+            Decoupled(objective=aggregator, value=_summed_W)
+            if decoupled
+            else aggregator
+        ),
+        with_action=with_action,
+        with_ce=with_ce,
+    ).solve(params={"couple": {"koopmans_aggregator": {"beta": 0.5}}}, log_level="off")
+    column = 0 if decoupled or aggregator is _summed_W else 1
+    expected = [
+        _SCALAR_W_VALUES["a" if name == "self" else name][column]
+        for name in member_names
+    ]
+    np.testing.assert_array_equal(
+        np.asarray(solution.values[0]["couple"]), np.array(expected)
+    )
+
+
+def _invest(*, investment: ContinuousAction, wealth: ContinuousState) -> FloatND:
+    return -investment + 0.0 * wealth
+
+
+def _keep_wealth(*, wealth: ContinuousState) -> FloatND:
+    return wealth
+
+
+def _grow(*, investment: ContinuousAction) -> ContinuousState:
+    return 2.0 * investment
+
+
+def _mood_W(
+    *, utility: FloatND, CE: FloatND, mood: DiscreteState, beta: FloatND
+) -> FloatND:
+    return utility + beta[mood] * CE
+
+
+def _age_W(*, utility: FloatND, CE: FloatND, period: Period, beta: FloatND) -> FloatND:
+    return utility + beta[period] * CE
+
+
+_INVESTMENT_GRID = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
+_INVESTED_WEALTH_GRID = LinSpacedGrid(start=0.0, stop=2.0, n_points=2)
+# Rows in the reverse of the label codes: label alignment, not row position,
+# decides which beta each mood and age reads.
+_BETA_BY_LABEL: dict[UserFunction, pd.Series] = {
+    _mood_W: pd.Series(
+        [0.75, 0.25], index=pd.Index(["cheerful", "grumpy"], name="mood")
+    ),
+    _age_W: pd.Series([0.75, 0.25], index=pd.Index([1, 0], name="age")),
+}
+_BETA_BY_CODE: dict[UserFunction, tuple[float, float]] = {
+    _mood_W: (0.25, 0.75),
+    _age_W: (0.25, 0.75),
+}
+
+
+@pytest.mark.parametrize(
+    ("aggregators", "weights"),
+    [
+        ({"a": _mood_W}, None),
+        ({"a": _mood_W, "b": _mood_W}, None),
+        ({"b": _mood_W, "a": _mood_W}, None),
+        ({"a": _mood_W, "b": _age_W}, {"a": 0.75, "b": 0.25}),
+    ],
+    ids=["one_named", "pair", "reversed_pair", "distinct_consumers"],
+)
+def test_a_labelled_parameter_of_a_member_aggregator_is_read_by_label(
+    *,
+    aggregators: dict[str, UserFunction],
+    weights: dict[str, float] | None,
+) -> None:
+    """Each member's `W` binds a `pd.Series` parameter's rows by mood or age label.
+
+    With `Q(a) = -a + beta * 2a` the household invests iff its weighted gain
+    `sum_s w_s (2 beta_s - 1)` is positive; each member then values `2 beta_s - 1`.
+    """
+    members = tuple(aggregators)
+    household = CollectiveUtility(
+        utilities=dict.fromkeys(members, _invest),
+        objective=None if weights is None else ParetoObjective(weights=weights),
+    )
+    model = Model(
+        regimes={
+            "couple": Regime(
+                states={"wealth": _INVESTED_WEALTH_GRID, "mood": DiscreteGrid(Mood)},
+                state_transitions={
+                    "wealth": _grow,
+                    "mood": fixed_transition("mood"),
+                },
+                actions={"investment": _INVESTMENT_GRID},
+                functions={"utility": household},
+                koopmans_aggregator=aggregators,
+            ),
+            "couple_terminal": Regime(
+                states={"wealth": _INVESTED_WEALTH_GRID},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities=dict.fromkeys(members, _keep_wealth)
+                    )
+                },
+            ),
+        },
+        edges={"couple": {"couple_terminal": (0, 1)}},
+        ages=AgeGrid(exact_values=(0, 1, 2)),
+        regime_id_class=RegimeId,
+        initial_nodes={0: "couple", 1: "couple"},
+    )
+    solution = model.solve(
+        params={
+            "couple": {
+                f"koopmans_aggregator_{member}": {"beta": _BETA_BY_LABEL[W]}
+                for member, W in aggregators.items()
+            }
+        },
+        log_level="off",
+    )
+    share = {
+        member: (weights or dict.fromkeys(members, 1.0))[member] for member in members
+    }
+    for period in (0, 1):
+        for mood in (Mood.grumpy, Mood.cheerful):
+            gains = {
+                member: 2.0 * _BETA_BY_CODE[W][mood if W is _mood_W else period] - 1.0
+                for member, W in aggregators.items()
+            }
+            invests = sum(share[member] * gains[member] for member in members) > 0
+            np.testing.assert_array_equal(
+                np.take(
+                    np.asarray(solution.values[period]["couple"]),
+                    mood,
+                    axis=model.state_names(regime_name="couple").index("mood"),
+                ),
+                np.array([[gains[member] * invests for member in members]] * 2),
+                err_msg=f"period {period}, mood {mood}",
             )

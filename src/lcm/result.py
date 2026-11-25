@@ -48,8 +48,10 @@ else:
     # whose lazy contents the runtime annotation check must not inspect.
     type _SolutionResultBoundary = object
 
-# Version of the directory layout `SimulationResult.save` writes and `load` reads.
+# Version of the directory layout `SimulationResult.save` writes and its readers
+# read, stored in the file `_FORMAT_VERSION_FILE` at the directory root.
 _SAVED_RESULT_FORMAT_VERSION = 1
+_FORMAT_VERSION_FILE = "format_version"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -378,7 +380,7 @@ class SimulationResult:
     ) -> Path:
         """Persist the result to a directory.
 
-        Four sibling artifacts land at the directory root:
+        Five sibling artifacts land at the directory root:
 
         - `arrays/` — orbax checkpoint of the small array trees
           (`raw_results` and `flat_params`), whose individual leaves
@@ -396,6 +398,8 @@ class SimulationResult:
           use_categorical_codes=df_use_categorical_codes)`, ready for
           downstream consumers that want the flat per-subject view without
           re-instantiating a `SimulationResult`.
+        - `format_version` — the version of this layout, written last, which
+          `load` and `load_solution` check before reading anything else.
 
         Args:
             directory: Target directory. Created if it does not exist;
@@ -443,6 +447,8 @@ class SimulationResult:
         )
         target = directory.resolve()
         target.mkdir(parents=True, exist_ok=True)
+        # The version is written last, so a save that stops midway is refused.
+        (target / _FORMAT_VERSION_FILE).unlink(missing_ok=True)
 
         # Save the solution and then drop the in-memory grid immediately. The
         # post-V-array D2H transfers (`to_dataframe`, orbax staging) need the
@@ -460,7 +466,6 @@ class SimulationResult:
         # in-memory copy can be released afterwards.
         metadata = _SavedMetadata(
             regimes=self._regimes,
-            format_version=_SAVED_RESULT_FORMAT_VERSION,
             flat_params=self._flat_params,
             ages=self._ages,
             result_metadata=self._metadata,
@@ -512,6 +517,9 @@ class SimulationResult:
         # observe a consistent directory.
         checkpointer.wait_until_finished()
         df.to_feather(target / "simulated_data.arrow")
+        (target / _FORMAT_VERSION_FILE).write_text(
+            str(_SAVED_RESULT_FORMAT_VERSION), encoding="utf-8"
+        )
 
         return target
 
@@ -535,8 +543,13 @@ class SimulationResult:
         Returns:
             Immutable mapping of periods to regime value-function arrays.
 
+        Raises:
+            IncompatibleSolutionError: If the directory holds another format version.
+
         """
-        return _load_period_to_regime_to_V_arr(input_dir=directory.resolve() / "V_arr")
+        source = directory.resolve()
+        _fail_if_saved_in_another_format(directory=source)
+        return _load_period_to_regime_to_V_arr(input_dir=source / "V_arr")
 
     @classmethod
     def load(cls, *, directory: Path) -> SimulationResult:
@@ -550,10 +563,10 @@ class SimulationResult:
         happens during load.
         """
         source = directory.resolve()
+        _fail_if_saved_in_another_format(directory=source)
 
         with (source / "metadata.pkl").open("rb") as fh:
             metadata: _SavedMetadata = cloudpickle.load(fh)
-        _fail_if_saved_in_another_format(metadata=metadata, directory=source)
 
         array_tree = _restore_array_tree(input_dir=source / "arrays")
 
@@ -621,9 +634,6 @@ class _SavedMetadata:
     available_targets: tuple[FunctionName, ...]
     """Names of all additional targets exposed via `to_dataframe`."""
 
-    format_version: int
-    """Version of the layout the result was saved in."""
-
     subject_batch_size: int | None = None
     """Subject chunk size from `simulate`, reused to bound `to_dataframe` targets."""
 
@@ -632,18 +642,17 @@ class _SavedMetadata:
     population."""
 
 
-def _fail_if_saved_in_another_format(
-    *, metadata: _SavedMetadata, directory: Path
-) -> None:
+def _fail_if_saved_in_another_format(*, directory: Path) -> None:
     """Refuse a saved result whose layout is not the one this pylcm writes.
 
     Raises:
-        IncompatibleSolutionError: If the metadata names another format version
+        IncompatibleSolutionError: If the directory names another format version
             or none.
     """
-    # A result saved before results carried a version unpickles without the field.
-    version = vars(metadata).get("format_version")
-    if version != _SAVED_RESULT_FORMAT_VERSION:
+    # A result saved before results carried a version has no version file.
+    path = directory / _FORMAT_VERSION_FILE
+    version = path.read_text(encoding="utf-8") if path.is_file() else None
+    if version != str(_SAVED_RESULT_FORMAT_VERSION):
         from lcm.exceptions import IncompatibleSolutionError  # noqa: PLC0415
 
         raise IncompatibleSolutionError(

@@ -1,10 +1,10 @@
 import json
 import logging
+import shutil
 from pathlib import Path
 from types import MappingProxyType, ModuleType
 from unittest.mock import patch
 
-import cloudpickle
 import h5py
 import jax
 import jax.numpy as jnp
@@ -224,19 +224,35 @@ def test_load_restores_the_subject_rows_of_the_saved_result(
     assert repr(loaded._subject_rows) == repr(subject_rows)
 
 
-def test_load_refuses_a_result_saved_without_the_current_format_version(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    "marker", [None, "0", "2", "one"], ids=["missing", "older", "newer", "corrupt"]
+)
+@pytest.mark.parametrize("solution_only", [False, True], ids=["load", "load_solution"])
+def test_both_readers_refuse_a_result_saved_in_another_format(
+    *, tmp_path: Path, marker: str | None, solution_only: bool
 ) -> None:
-    """A saved result whose metadata names no format version does not load."""
-    directory, _values = _save_cpu_checkpoint(tmp_path=tmp_path)
-    with (directory / "metadata.pkl").open("rb") as fh:
-        metadata = cloudpickle.load(fh)
-    vars(metadata).pop("format_version", None)
-    with (directory / "metadata.pkl").open("wb") as fh:
-        cloudpickle.dump(metadata, fh)
+    """A result without the current format version is refused before any payload.
 
+    A result saved before results carried a version has no marker at all. The
+    payloads are removed, so a refusal cannot come from a failed read of them.
+    """
+    directory, _values = _save_cpu_checkpoint(tmp_path=tmp_path)
+    version_file = directory / "format_version"
+    if marker is None:
+        version_file.unlink(missing_ok=True)
+    else:
+        version_file.write_text(marker, encoding="utf-8")
+    for payload in ("V_arr", "arrays"):
+        shutil.rmtree(directory / payload)
+    (directory / "metadata.pkl").unlink()
+
+    loader = (
+        _PublicSimulationResult.load_solution
+        if solution_only
+        else _PublicSimulationResult.load
+    )
     with pytest.raises(IncompatibleSolutionError, match="format version"):
-        _PublicSimulationResult.load(directory=directory)
+        loader(directory=directory)
 
 
 @pytest.mark.parametrize("solution_only", [False, True])

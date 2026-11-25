@@ -23,9 +23,9 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   4, the component-fragment format version is 3, the model-structure fingerprint tag is
   9 and the chunk-profile tag is 6. Solutions and fragments written before are refused;
   solve again. Model fingerprints and cached chunk profiles change.
-- `SimulationResult.save` records a format version, and `SimulationResult.load` raises
-  `IncompatibleSolutionError` for a directory saved without it or under another one;
-  simulate again. The result's metadata records each regime's members as
+- `SimulationResult.save` records a format version, and `SimulationResult.load` and
+  `SimulationResult.load_solution` raise `IncompatibleSolutionError` for a directory
+  saved without it or under another one; simulate again. The result's metadata records each regime's members as
   `regime_to_members`.
 
 ### Exits declare only what the members' rules define

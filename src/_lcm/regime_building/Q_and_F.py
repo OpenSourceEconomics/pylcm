@@ -1391,6 +1391,17 @@ def get_Q_and_F_collective(
         bound_specs=bound_specs,
     )
     n_members = len(members)
+    # An aggregator is a function of one member's utility and continuation. A
+    # bare one serves every member with the shared params, so it is applied to
+    # each member's slice like an aggregator keyed by member.
+    if not isinstance(koopmans_aggregator, _MemberAggregator):
+        koopmans_aggregator = get_member_aggregator(
+            aggregators=(koopmans_aggregator,) * n_members
+        )
+    if objective_aggregator is not None:
+        objective_aggregator = get_member_aggregator(
+            aggregators=(objective_aggregator,) * n_members
+        )
 
     # The engine's one continuation-aggregation site, told that every target's V
     # leaf carries a trailing member axis and handed each member's certainty
@@ -1595,11 +1606,8 @@ class _CollectiveQAndF:
         CE, _, *landing_counts = continuation
         CE = cast("FloatND", CE)
 
-        # A shared W applied on the stacked arrays is W per member: `utility`
-        # and `CE` share the trailing member axis and the aggregator's
-        # parameters are shared across members, so the elementwise aggregation
-        # is exactly Q^s = W(u^s, CE^s) for every s. Aggregators keyed by
-        # member are combined into one that applies each to its own slice.
+        # Q^s = W_s(u^s, CE^s): each member's aggregator reads its own slice
+        # of the trailing member axis.
         Q_arr = self.koopmans_aggregator(
             utility=U_stack,
             CE=CE,
