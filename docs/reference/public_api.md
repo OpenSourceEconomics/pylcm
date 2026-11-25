@@ -28,7 +28,7 @@ documentation and tests.
 | [`lcm.Counterparty`](model_and_regime.md#api-current-exits)                                          | Counterparty Raw policy context                   |
 | [`lcm.Unilateral`](model_and_regime.md#api-current-exits)                                            | Dissolution unless every member is willing        |
 | [`lcm.Renegotiate`](model_and_regime.md#api-current-exits)                                           | Directional discrete adjustment before separation |
-| [`lcm.MutualConsent`](model_and_regime.md#api-current-exits)                                         | Dissolution only if every member is unwilling     |
+| [`lcm.MutualConsent`](model_and_regime.md#api-current-exits)                                         | Dissolution only if both members agree            |
 | [`lcm.Settlement`](model_and_regime.md#api-current-exits)                                            | Division shifted before a mutual-consent exit     |
 | [`lcm.ExecutionConfig`](runtime_and_results.md#execution-configuration)                              | Devices, budget, sharded states, widths, donation |
 | [`lcm.InvariantBlockSchedule`](runtime_and_results.md#execution-configuration)                       | Period- or block-major invariant schedule         |

@@ -27,6 +27,11 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   `MutualConsent`: one that does raises `RegimeInitializationError` when the model is
   built, naming the regime, the target and the settlement.
 - `MutualConsent` requires `settle`; mutual consent without a settlement is removed.
+- Under `MutualConsent` the rule's `tie` decides every comparison, also whether the
+  member who does not want to leave accepts a settlement: under `tie="stay"` that
+  member accepts a candidate only where its outside value is above its stay value.
+  Results change at exact ties only: such a member, indifferent at a candidate, passes
+  it over for the next one, and indifferent at the default no longer separates there.
 - A household with a `Decoupled` aggregator and no taste shocks breaks ties in its
   weighted objective on the members' objectives and then on their stored values, each
   in member order, so its stored values do not depend on the order of the actions.
@@ -224,10 +229,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - `MutualConsent(settle=Settlement(name=..., candidates=..., default=...))` shifts a
   division read by the exit's projections and utility adjustments before the pair
   decides: when exactly one member wants to leave at the default, the pair separates at
-  the default if the other member is exactly indifferent there (under `tie="stay"`),
-  and otherwise at the candidate nearest the default on the other member's side that
-  this member accepts, if the leaver still gains there, and stays otherwise. Two
-  members only. See
+  the candidate nearest the default on the other member's side that this member
+  accepts, if the leaver still gains there, and stays otherwise. Two members only. See
   [Current-period exits](docs/reference/model_and_regime.md#current-period-exits) and
   [ADR 3](docs/adr/0003-exit-rules-compare-at-the-optimum-and-settle-before-separation.md).
 

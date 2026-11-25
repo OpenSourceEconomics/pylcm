@@ -90,14 +90,14 @@ class Settlement:
     """A division on separation that the members can shift before a mutual-consent exit.
 
     Exit-target projections and utility adjustments read the settlement under
-    `name`. When exactly one member wants to leave at the default, the other member
-    accepts separation where its outside value is at least its stay value:
-
-    - if it does so at the default, which every destination supports, the pair
-      separates at the default;
-    - otherwise the settlement moves to the nearest candidate in favour of that
-      member at which it accepts, and the pair separates there if the member who
-      wants to leave still gains, and stays otherwise.
+    `name`. Each member compares its stay value at the household optimum with its
+    outside value; the rule's `tie` says which of two equal values it prefers. If
+    both members want to leave at the default, the pair separates there. If exactly
+    one does, the other member accepts the candidate nearest the default, strictly
+    beyond it in that member's favour, at which it prefers its outside value and
+    every destination has a feasible action. The pair separates there if the member
+    who wants to leave prefers its outside value there, and stays otherwise or
+    without such a candidate.
     """
 
     name: str
@@ -156,10 +156,14 @@ class Unilateral:
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
 class MutualConsent:
-    """The match ends only if every member is unwilling to stay."""
+    """The match ends only if both members agree, at the default or a settlement."""
 
     tie: Literal["stay", "leave"] = "stay"
-    """What a member exactly indifferent between staying and the exit does."""
+    """Which of an equal stay and outside value a member prefers, at every comparison.
+
+    It decides who wants to leave at the default, whether the other member accepts a
+    candidate settlement, and whether the member who wants to leave does so there.
+    """
     compares: Literal["each_action", "optimum"] | None = field(
         default=None, metadata={"fingerprint_omit_if_default": True}
     )
@@ -169,11 +173,7 @@ class MutualConsent:
     it, and `"each_action"` is refused.
     """
     settle: Settlement
-    """Division on separation that the members can shift before the exit.
-
-    It needs no shift when the member who does not want to leave is exactly
-    indifferent at the default, which happens only under `tie="stay"`.
-    """
+    """Division on separation that the members can shift before the exit."""
 
     def __post_init__(self) -> None:
         _fail_if_adjusted_each_action(compares=self.compares, adjusted=True)

@@ -426,7 +426,7 @@ _SETTLE_CELLS = (
     ((2.5, 1.5), (0.0, 4.0), 0.375),  # 3: at 0.75 m no longer gains
     ((4.5, 0.5), (0.0, 4.0), 0.375),  # 4: no candidate makes f accept
     ((-0.5, 3.5), (0.0, 4.0), 0.375),  # 5: f refuses; m accepts first at 0
-    ((-0.5, 3.0), (0.0, 4.0), 0.375),  # 6: m accepts at equality at 0.25
+    ((-0.5, 3.0), (0.0, 4.0), 0.375),  # 6: at 0.25 the stayer m is indifferent
     ((1.0, 2.8), (0.0, 4.0), 0.375),  # 7: at 0.25 f is indifferent
     ((0.0, 0.0), (1.0, 3.0), 0.375),  # 8: as 1, but the exit is not available
     ((-10.0, -10.0), (1.0, 3.0), 1.5),  # 9: both refuse; the default is clipped
@@ -434,8 +434,12 @@ _SETTLE_CELLS = (
 _SETTLE_UNAVAILABLE = 8
 
 # Hand-derived settlement at which each cell separates, None where the pair stays.
+# In cell 6 the stayer m has `O_m(0.25) = 3 = W_m`: under `tie="stay"` it passes
+# that candidate over and accepts the next one, 0, where `O_m = 4 > 3` and the
+# leaver f gains, `O_f = 0 > -0.5`; under `tie="leave"` it accepts 0.25, where f
+# gains, `O_f = 1 >= -0.5`.
 _SETTLED_AT = {
-    "stay": (None, 0.375, 0.75, None, None, 0.0, 0.25, None, None, 1.0),
+    "stay": (None, 0.375, 0.75, None, None, 0.0, 0.0, None, None, 1.0),
     "leave": (None, 0.375, 0.75, None, None, 0.0, 0.25, 0.25, None, 1.0),
 }
 
@@ -886,7 +890,7 @@ def test_mutual_consent_requires_a_settlement() -> None:
 # `(W_f - O_f(d), W_m - O_m(d))`, the stay values `W`, the default `d` and whether the
 # exit is available. Outside values are `O_f(s) = 4 s` and `O_m(s) = 4 - 4 s`, so
 # every number below is dyadic and equality at the default is exact at both
-# precisions. A `0` names the stayer, exactly indifferent at the default.
+# precisions. A `0` names a member exactly indifferent at the default.
 _ROOT_INTERCEPTS = (Fraction(0), Fraction(4))
 _ROOT_SLOPES = (Fraction(4), Fraction(-4))
 _ROOT_CELLS = (
@@ -923,9 +927,9 @@ def _exact_settlement(
 ) -> Fraction | None:
     """The settlement at which the pair separates, None where it stays.
 
-    The stayer's share solves its indifference equation `O_p(r) = W_p` exactly. When
-    the root is the default, the pair separates there; otherwise at the first
-    candidate at or beyond the root, if the leaver still gains there.
+    The stayer's share solves its indifference equation `O_p(r) = W_p` exactly. The
+    stayer accepts the first candidate beyond the root, or at the root under
+    `tie="leave"`; the pair separates there if the leaver prefers that to staying.
     """
     _, stay_values, default_value, available = cell
     if not available:
@@ -941,17 +945,16 @@ def _exact_settlement(
     stayer = willing.index(True)
     leaver = 1 - stayer
     root = (inside[stayer] - _ROOT_INTERCEPTS[stayer]) / _ROOT_SLOPES[stayer]
-    if root == default:
-        settlement = default
-    else:
-        beyond = [
-            point
-            for point in _ROOT_FRACTION_POINTS
-            if (point >= root if stayer == 0 else point <= root)
-        ]
-        if not beyond:
-            return None
-        settlement = min(beyond, key=lambda point: abs(point - root))
+    # A willing stayer's root is at or beyond the default, so are these candidates.
+    beyond = [
+        point
+        for point in _ROOT_FRACTION_POINTS
+        if (point > root if stayer == 0 else point < root)
+        or (point == root and tie == "leave")
+    ]
+    if not beyond:
+        return None
+    settlement = min(beyond) if stayer == 0 else max(beyond)
     gain = _exact_outside(settlement)[leaver] - inside[leaver]
     return settlement if (gain > 0 if tie == "stay" else gain >= 0) else None
 
@@ -1098,11 +1101,11 @@ def _check_simulated_settlements(
 def test_settlement_publishes_the_exact_root_of_the_stayers_indifference(
     *, division: Literal["transfer", "assets"], tie: Literal["stay", "leave"]
 ) -> None:
-    """A stayer indifferent at the default settles there; others take the candidates.
+    """No stayer accepts the default; one indifferent there takes the next candidate.
 
-    Under `tie="stay"` a pair in which one member refuses at the default and the other
-    is exactly indifferent there separates at the default, wherever it lies relative
-    to the candidates. Under `tie="leave"` an indifferent member refuses.
+    Under `tie="stay"` a member exactly indifferent at the default is the stayer when
+    the other refuses, and accepts the first candidate beyond the default on its
+    side. Under `tie="leave"` an indifferent member refuses, so both do.
     """
     model = _root_model(cells=_ROOT_CELLS, division=division, tie=tie)
     settlements = tuple(_exact_settlement(cell=cell, tie=tie) for cell in _ROOT_CELLS)
@@ -1116,7 +1119,7 @@ def test_settlement_publishes_the_exact_root_of_the_stayers_indifference(
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("tie", ["stay", "leave"])
 @pytest.mark.parametrize("division", ["transfer", "assets"])
-def test_settlement_lands_members_of_an_indifferent_stayer_at_the_default(
+def test_settlement_lands_members_of_an_indifferent_stayer(
     *, division: Literal["transfer", "assets"], tie: Literal["stay", "leave"]
 ) -> None:
     """Simulated members separate, land and are paid at the solve's settlement."""
@@ -1131,7 +1134,22 @@ def test_settlement_lands_members_of_an_indifferent_stayer_at_the_default(
 
 
 def test_exact_settlements_of_the_indifferent_stayer_cells() -> None:
-    """The rational oracle gives the hand-derived settlement of every cell."""
+    """The rational oracle gives the hand-derived settlement of every cell.
+
+    With `O(s) = (4 s, 4 - 4 s)`, a default of 0.375 gives `O(d) = (1.5, 2.5)`. Under
+    `tie="leave"` an indifferent member refuses, so every `0-` and `-0` cell has both
+    refuse and separates at the default. Under `tie="stay"` the indifferent member is
+    the stayer and never accepts the default, where `O = W` is no gain:
+
+    - `0-:shift`, `W = (1.5, 0.5)`: f accepts 0.5, `2 > 1.5`; m gains, `2 > 0.5`.
+    - `0-:route`, `W = (1.5, 2.2)`: f accepts 0.5; m does not gain, `2 < 2.2`: stay.
+    - `0-:default_on_a_node`, `W = (2, 1)`, `d = 0.5`: f accepts 0.75, `3 > 2`; m is
+      indifferent there, `1 = 1`: stay.
+    - `0-:default_at_the_upper_end`, `W = (4, -1)`, `d = 1`: no candidate above: stay.
+    - `-0:shift`, `W = (0.5, 2.5)`: m accepts 0.25, `3 > 2.5`; f gains, `1 > 0.5`.
+    - `-0:route`, `W = (1, 2.5)`: m accepts 0.25; f is indifferent, `1 = 1`: stay.
+    - `-0:default_at_the_lower_end`, `W = (-1, 4)`, `d = 0`: no candidate below: stay.
+    """
     stay = {cell[0]: _exact_settlement(cell=cell, tie="stay") for cell in _ROOT_CELLS}
     leave = {cell[0]: _exact_settlement(cell=cell, tie="leave") for cell in _ROOT_CELLS}
     at_default = {cell[0]: Fraction(cell[2]) for cell in _ROOT_CELLS}
@@ -1141,21 +1159,16 @@ def test_exact_settlements_of_the_indifferent_stayer_cells() -> None:
         "+-": Fraction(3, 4),
         "0+": None,
         "00": None,
-        **{
-            name: at_default[name]
-            for name in (
-                "0-:shift",
-                "0-:route",
-                "0-:default_on_a_node",
-                "0-:default_at_the_upper_end",
-                "-0:shift",
-                "-0:route",
-                "-0:default_at_the_lower_end",
-                "--",
-            )
-        },
+        "0-:shift": Fraction(1, 2),
+        "0-:route": None,
+        "0-:default_on_a_node": None,
+        "0-:default_at_the_upper_end": None,
         "0-:unavailable": None,
         "-+": Fraction(0),
+        "-0:shift": Fraction(1, 4),
+        "-0:route": None,
+        "-0:default_at_the_lower_end": None,
+        "--": at_default["--"],
     }
     assert leave == {
         "++": None,
@@ -1182,22 +1195,15 @@ def test_exact_settlements_of_the_indifferent_stayer_cells() -> None:
 
 
 # With `_FLOOR_F` f's destination is unsupported at a default of 0.25 (f lands with
-# 1) and supported at 0.5. In the first cell f would be indifferent at the default if
-# it were supported; m refuses there.
-_FLOOR_CELLS = (
-    ("0-:default_unsupported", (1.0, 0.5), 0.25, True),
-    ("0-:default_on_a_node", (2.0, 1.0), 0.5, True),
-)
-_FLOOR_SETTLED_AT = (Fraction(1, 2), Fraction(1, 2))
+# 1) and supported at 0.5, where f accepts, `2 > 1`, and m, who refuses at the
+# default, gains, `2 > 0.5`.
+_FLOOR_CELLS = (("0-:default_unsupported", (1.0, 0.5), 0.25, True),)
+_FLOOR_SETTLED_AT = (Fraction(1, 2),)
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_settlement_searches_the_candidates_past_an_unsupported_default() -> None:
-    """A default without a feasible destination is no settlement; the search goes on.
-
-    Where the default is supported and the stayer is indifferent there, the pair
-    separates at the default.
-    """
+    """The stayer's search of the candidates does not need a supported default."""
     model = _root_model(cells=_FLOOR_CELLS, division="assets", tie="stay", floor_f=True)
     np.testing.assert_array_almost_equal(
         model.solve(params={}, log_level="off").values[0]["couple"],

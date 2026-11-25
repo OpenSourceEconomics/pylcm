@@ -315,10 +315,9 @@ class _ExitReducer:
         member is willing to stay when that value is above its exit payoff, or
         equal to it when the rule's `tie` is `"stay"`; no feasible action leaves
         every member unwilling. Under a settlement the outside values are those at
-        the default, and a pair in which exactly one member refuses separates where
-        the settlement selects: at the default under the default's exit ID, or at a
-        candidate under that candidate's. A candidate's outside value must be
-        resolved only where the selection reads it.
+        the default, and a pair in which exactly one member refuses separates at
+        the candidate the settlement selects, under that candidate's exit ID. A
+        candidate's outside value must be resolved only where the selection reads it.
         """
         stay = cast("PolicyAnswer", operands["answer"])
         rule = cast("Unilateral | MutualConsent", cast("Exit", self.declaration).rule)

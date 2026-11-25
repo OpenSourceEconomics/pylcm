@@ -373,18 +373,15 @@ outside value at settlement `s` (its destination's problem value at the projecti
 evaluated with `s`, plus its adjustment evaluated with `s`), `W_i` its value at the
 household optimum and `d` the default:
 
-1. A member refuses to stay when `O_i(d)` is above `W_i`, or equal to it under
-   `tie="leave"`.
-1. Nobody refuses: stay at the optimum. Both refuse: separate at `d`.
-1. Exactly one refuses and the other member is exactly indifferent at `d`,
-   `O_i(d) = W_i`, which happens only under `tie="stay"`. If every destination is
-   supported at `d`, separate at `d` under the exit ID, landings and adjustments of `d`:
-   no shift is needed to compensate that member.
-1. Otherwise, with exactly one refusing: among the candidates strictly on the other
-   member's side of `d`, take the one nearest `d` at which that member accepts
-   separation, `O_i(s) >= W_i` whatever `tie` says. Separate there if the member who
-   wants to leave still gains under `tie`; otherwise, or without such a candidate, stay
-   at the optimum.
+1. A member prefers leaving at `s` when `O_i(s)` is above `W_i`, or equal to it under
+   `tie="leave"`. `tie` decides every comparison of the rule.
+1. A member refuses to stay when it prefers leaving at `d`. Nobody refuses: stay at the
+   optimum. Both refuse: separate at `d`.
+1. Exactly one refuses: among the candidates strictly on the other member's side of `d`
+   at which every destination is supported, take the one nearest `d` at which that
+   member prefers leaving. It never does at `d` itself. Separate there if the member who
+   refuses to stay prefers leaving there too; otherwise, or without such a candidate,
+   stay at the optimum.
 
 The engine does not check that the accepting member's outside value rises in that
 member's direction; the rule takes the nearest accepting candidate. A member whose

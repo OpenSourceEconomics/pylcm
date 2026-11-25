@@ -79,7 +79,7 @@ class SettlementQueries:
     adjustments: tuple[Mapping[ExitRole, Callable[..., PytreeValue]], ...]
     """Per candidate, each member's source-context adjustment at that settlement."""
     tie: Literal["stay", "leave"]
-    """Whether the member who wants to leave still leaves when indifferent."""
+    """What a member indifferent between its stay and outside values prefers."""
 
     def select(
         self,
@@ -95,17 +95,13 @@ class SettlementQueries:
 
         Row 0 of `outside` and `supported` is the default and row `1 + k` candidate
         `k`; the returned index counts the same rows. Only a pair in which exactly
-        one member refuses at the default settles. The other member, the stayer,
-        accepts separation where its outside value is at least its stay value,
-        whatever the rule's `tie`, and every destination is supported. The
-        settlement is the first of these that the stayer accepts:
-
-        - the default, at distance zero: the stayer, willing to stay there, is
-          exactly indifferent, which happens only under `tie="stay"`;
-        - the candidate nearest the default strictly on the stayer's side.
-
-        The pair separates there if the member who wants to leave still gains under
-        `tie`, as it always does at the default.
+        one member refuses at the default settles. A member prefers its outside
+        value to its stay value when it is larger, or equal under `tie="leave"`.
+        The other member, the stayer, accepts separation where it prefers its
+        outside value and every destination is supported. Willing to stay at the
+        default, it never accepts there, so the settlement is the accepted
+        candidate nearest the default strictly on the stayer's side. The pair
+        separates there if the member who wants to leave prefers its outside value.
 
         Also returns whether every outside value the decision reads is resolved.
         `resolved` holds this per candidate and member; the caller checks the
@@ -124,12 +120,9 @@ class SettlementQueries:
                 jnp.where(stayer == 0, candidates > default, candidates < default),
             )
         )
-        accepts = side & supported & (outside[:, stayer] >= inside[stayer])
-        gains = (
-            outside[:, leaver] > inside[leaver]
-            if self.tie == "stay"
-            else outside[:, leaver] >= inside[leaver]
-        )
+        prefers = outside > inside if self.tie == "stay" else outside >= inside
+        accepts = side & supported & prefers[:, stayer]
+        gains = prefers[:, leaver]
         distance = jnp.abs(points - default)
         ranked = jnp.where(accepts, distance, jnp.inf)
         nearest = jnp.argmin(ranked)
