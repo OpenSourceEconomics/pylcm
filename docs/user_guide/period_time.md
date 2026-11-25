@@ -162,18 +162,43 @@ model = Model(
 )
 ```
 
-Every period has the same stages, and every regime is in exactly one of them:
+Every period has the same stages, and every regime is in exactly one of them. A regime
+that decides in two stages of one period is two declared regimes.
 
-- Subjects start in the first stage, so `initial_nodes` and initial conditions name
-  regimes of the first stage.
-- An edge out of a stage lands in the next stage of the same period, and an edge out of
-  the last stage lands in the first stage of the next period. Its selector names the
-  source's period, as in a model without stages, and its target must be a regime of the
-  stage it lands in. An exit reads and enters regimes of its own stage.
+- An edge lands at its target's next occurrence: the first step after the current one
+  that belongs to the target's stage. A later stage of the same period is reached
+  without discounting; crossing into the next period discounts once, however many stages
+  are skipped. An edge into a regime of the source's own stage lands in the next period.
+  Its selector names the source's period, as in a model without stages.
+- An exit enters a regime of its own stage or of a later stage of its period. In a later
+  stage its outside value is the destination's value at its occurrence later in the
+  period, at the landing state, without discounting. The exit cannot observe a shock the
+  destination draws in its own stage, which is not drawn yet: draw it in the earlier
+  stage and carry it as a state.
+- Subjects start in their regime's own stage, so `initial_nodes` and initial conditions
+  may name a regime of any stage.
 - The stages of a period are linked without discounting: a regime of a stage before the
   last adds the next stage's certainty equivalent to its utility. It declares no
   Koopmans aggregator and uses no endogenous-grid solver; the last stage discounts into
   the next period as usual.
+
+A regime with one decision per period, such as a single among couples who first decide
+whether to stay together and then how much to consume, is declared once, in the stage
+where it decides. This is shorthand. In every stage the regime sits out on the way to
+its next occurrence, the subject is in the regime's **pass-through**: the same states
+and members, one action, no shocks, zero utility, the identity transition, and an edge
+to the next step, so its value passes the next step's value through unchanged,
+$W(u, c) = c$, also under a nonlinear certainty equivalent, since the law it averages is
+degenerate. A pass-through in the last stage discounts into the next period, as every
+regime of that stage does. The model generates the pass-throughs; they decide nothing
+and have no parameters, and the simulated frame has no rows for them. The solution's
+values, the raw simulation results, `model.regime_names_to_ids` and the parameter
+template list each under its own name, `<regime>_in_<stage>`, never under the regime's;
+so do the parameters of a per-target cell or state law on an edge that skips a stage. A
+model with a pass-through declares its functions, constraints, states, state transitions
+and actions on its regimes and its Koopmans aggregator and certainty equivalent on the
+model, and a gated edge does not skip a stage.
+
 - `period` and `age` are the period's wherever the model reads them: in functions,
   constraints and conditions, laws, gates, exits and settlements, Pareto weights and
   shock laws. A condition that reads `period` then offers a solver no structure, as one

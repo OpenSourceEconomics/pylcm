@@ -41,6 +41,9 @@ class ModelTime:
     stages: Stages = ()
     """Each stage of a period, in order, with its regimes; empty for one stage."""
 
+    pass_throughs: frozenset[RegimeName] = frozenset()
+    """The generated regimes a subject is in where its regime sits out a stage."""
+
     @classmethod
     def from_inputs(
         cls,

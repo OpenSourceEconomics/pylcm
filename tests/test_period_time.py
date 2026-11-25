@@ -839,7 +839,7 @@ def test_period_initial_nodes_is_read_only() -> None:
 @pytest.mark.parametrize("wrapper", ["case", "default", "until", "mapped-until"])
 def test_by_period_owns_nested_law_mappings(wrapper: str) -> None:
     """The period schedule inherits the same owned law boundary as ByAge."""
-    probability = lcm.StochasticTransition(func=lambda: jnp.asarray(1.0))
+    probability = lcm.StochasticTransition(func=_certain)
     probabilities = {"work": probability}
     schedules = {
         "case": lcm.ByPeriod(cases={0: probabilities}),
@@ -1242,7 +1242,6 @@ def _staged_model(
     edges: Mapping[RegimeName, Mapping[RegimeName, PeriodSelector] | lcm.Transition]
     | None = None,
     regimes: Mapping[RegimeName, lcm.Regime] | None = None,
-    initial: RegimeName = "working",
     regime_id_class: type[DataclassInstance] = StagedId,
     shocks: Mapping[str, ShockGroup] | None = None,
     composite_states: Mapping[str, lcm.CompositeState] | None = None,
@@ -1283,9 +1282,9 @@ def _staged_model(
         regime_id_class=regime_id_class,
         shocks={} if shocks is None else shocks,
         composite_states={} if composite_states is None else composite_states,
-        initial_nodes=lcm.InitialNodes(by_age={60: initial})
+        initial_nodes=lcm.InitialNodes(by_age={60: "working"})
         if by_age
-        else lcm.InitialNodes(by_period={0: initial}),
+        else lcm.InitialNodes(by_period={0: "working"}),
         edges={
             "working": {
                 "spending": selector(exclusive_stop=origin + last),
@@ -1411,7 +1410,7 @@ class _StagedChange(TypedDict, total=False):
     stages: Mapping[str, tuple[RegimeName, ...]]
     edges: Mapping[RegimeName, Mapping[RegimeName, PeriodSelector]]
     regimes: Mapping[RegimeName, lcm.Regime]
-    initial: RegimeName
+    shocks: Mapping[str, ShockGroup]
 
 
 def _wealth_resources(*, wealth: ContinuousState) -> FloatND:
@@ -1436,16 +1435,24 @@ def _out_of_stage_order(case: str) -> _StagedChange:
         regimes["working"] = regimes["working"].replace(
             koopmans_aggregator=lcm.LinearAggregator()
         )
-    if case == "exit":
-        regimes["working"] = regimes["working"].replace(
+    source, destination = (
+        ("spending", "working") if case == "exit" else ("working", "spending")
+    )
+    if case in {"exit", "observes"}:
+        regimes[source] = regimes[source].replace(
             exit=lcm.Exit(
                 targets={
                     "self": lcm.ExitTarget(
-                        regime="final", projection={"wealth": _wealth_kept}
+                        regime=destination, projection={"wealth": _wealth_kept}
                     )
                 },
                 rule=lcm.Unilateral(),
+                observes=("eps",) if case == "observes" else (),
             )
+        )
+    if case == "observes":
+        regimes["spending"] = regimes["spending"].replace(
+            functions={"utility": _spend_utility_with_shock}, shocks=("income",)
         )
     if case == "egm":
         regimes["working"] = ConsumptionSavingsRegime(
@@ -1472,14 +1479,16 @@ def _out_of_stage_order(case: str) -> _StagedChange:
         "repeated": {
             "stages": {"work": ("working", "final"), "spend": ("spending", "final")}
         },
-        "start": {"initial": "spending"},
-        "edge": {
-            "edges": {
-                "working": {"final": lcm.PeriodRange()},
-                "spending": {"final": lcm.PeriodRange()},
-            }
-        },
         "exit": {"regimes": regimes},
+        "observes": {
+            "regimes": regimes,
+            "shocks": {
+                "income": ShockGroup(
+                    shocks={"eps": Normal(mu=0.0, sigma=1.0)},
+                    nodes=Product(eps=GaussHermite(3)),
+                )
+            },
+        },
         "aggregator": {"regimes": regimes},
         "egm": {"regimes": regimes},
         "final": {
@@ -1500,9 +1509,8 @@ def _out_of_stage_order(case: str) -> _StagedChange:
     [
         ("missing", r"in none: \['final'\]"),
         ("repeated", r"in several stages: \['final'\]"),
-        ("start", r"'spending' starts subjects in stage 'spend'"),
-        ("edge", r"edge 'spending' -> 'final' lands in stage 'spend'"),
-        ("exit", r"exit of 'working' reads 'final' of stage 'spend'"),
+        ("exit", r"exit of 'spending' in stage 'spend' reads 'working' of the earlier"),
+        ("observes", r"observes \['eps'\] of 'spending', drawn in its later stage"),
         ("aggregator", r"'working' declares a Koopmans aggregator in stage 'work'"),
         ("egm", r"'working' uses an endogenous-grid solver in stage 'work'"),
         ("final", r"'spending' → 'working' selects only the final age"),
@@ -1619,16 +1627,29 @@ def _best_take(payoffs: Mapping[int, float]) -> int:
     return ranked[-1]
 
 
-def _backward_induction() -> dict[tuple[int, RegimeName], np.ndarray]:
+def _backward_induction(
+    *, b_rests: tuple[int, ...]
+) -> dict[tuple[int, RegimeName], np.ndarray]:
     """Each player's value per pot before each move, by subgame-perfect induction.
 
     Rows are pots, columns the players a and b. Every mover's best take is clearly
     better than its second best, so the equilibrium does not depend on a tie rule.
+    In a period of `b_rests` only a moves, and the pot does not regrow.
     """
     pots = range(len(Pot.__dataclass_fields__))
     values: dict[tuple[int, RegimeName], np.ndarray] = {}
     for period in reversed(range(_GAME_PERIODS)):
         final = period == _GAME_PERIODS - 1
+        if period in b_rests:
+            ahead = _GAME_DISCOUNT * values[(period + 1, "a_moves")]
+            before_a = np.zeros((len(pots), 2))
+            for pot in pots:
+                takes = range(min(pot, Take.two) + 1)
+                payoffs = {t: np.sqrt(t) + ahead[pot - t, 0] for t in takes}
+                take = _best_take(payoffs)
+                before_a[pot] = (payoffs[take], ahead[pot - take, 1])
+            values[(period, "a_moves")] = before_a
+            continue
         before_b = np.zeros((len(pots), 2))
         for pot in pots:
             takes = range(min(pot, Take.two) + 1)
@@ -1654,9 +1675,15 @@ def _backward_induction() -> dict[tuple[int, RegimeName], np.ndarray]:
     return values
 
 
-def _game(*, mover_weight: Callable[..., FloatND] | float) -> lcm.Model:
-    """Player a moves, then player b, in every period; each mover weighs itself."""
+def _game(
+    *, mover_weight: Callable[..., FloatND] | float, b_rests: tuple[int, ...] = ()
+) -> lcm.Model:
+    """Player a moves, then player b, in every period; each mover weighs itself.
+
+    In the periods `b_rests`, a moves alone and its move lands at its next one.
+    """
     last = _GAME_PERIODS - 1
+    both_move = lcm.Periods(values=tuple(p for p in range(last) if p not in b_rests))
     return lcm.Model(
         n_periods=_GAME_PERIODS,
         stages={"a": ("a_moves",), "b": ("b_moves", "b_last")},
@@ -1675,26 +1702,263 @@ def _game(*, mover_weight: Callable[..., FloatND] | float) -> lcm.Model:
         initial_nodes=lcm.InitialNodes(by_period={0: "a_moves"}),
         edges={
             "a_moves": {
-                "b_moves": lcm.PeriodRange(exclusive_stop=last),
+                "b_moves": both_move,
                 "b_last": lcm.Periods(values=(last,)),
+                **({"a_moves": lcm.Periods(values=b_rests)} if b_rests else {}),
             },
-            "b_moves": {"a_moves": lcm.PeriodRange(exclusive_stop=last)},
+            "b_moves": {"a_moves": both_move},
         },
         fixed_params={"discount_factor": _GAME_DISCOUNT},
     )
 
 
-def test_two_players_moving_in_turn_reach_the_subgame_perfect_values() -> None:
+@pytest.mark.parametrize("b_rests", [(), (1,)])
+def test_two_players_moving_in_turn_reach_the_subgame_perfect_values(
+    b_rests: tuple[int, ...],
+) -> None:
     """A sequential-move game: within each period player a moves, then player b.
 
     Each mover maximizes its own value; the other player's value follows the
-    mover's choice. The values equal an independent backward induction.
+    mover's choice. The values equal an independent backward induction, also
+    when b sits out a period and a moves twice in a row.
     """
-    solved = _game(mover_weight=1.0).solve(params={}, log_level="off").values
-    for (period, regime), expected in _backward_induction().items():
+    solved = (
+        _game(mover_weight=1.0, b_rests=b_rests)
+        .solve(params={}, log_level="off")
+        .values
+    )
+    for (period, regime), expected in _backward_induction(b_rests=b_rests).items():
         step = 2 * period + (regime != "a_moves")
         np.testing.assert_array_almost_equal(
             solved[step][regime], expected, decimal=DECIMAL_PRECISION
+        )
+
+
+@lcm.categorical(ordered=False)
+class MarriageId:
+    couple_sep: ScalarInt
+    couple: ScalarInt
+    couple_final: ScalarInt
+    single: ScalarInt
+    single_final: ScalarInt
+
+
+@lcm.categorical(ordered=False)
+class HandMarriageId:
+    couple_sep: ScalarInt
+    couple: ScalarInt
+    couple_final: ScalarInt
+    single: ScalarInt
+    single_final: ScalarInt
+    single_wait: ScalarInt
+
+
+def _match_quality(*, wealth: ContinuousState, love: FloatND) -> FloatND:
+    return love - 0.05 * wealth
+
+
+def _shared_consumption(*, wealth: ContinuousState, share: ContinuousAction) -> FloatND:
+    return share * wealth
+
+
+def _half_of_consumption_utility(*, consumption: FloatND) -> FloatND:
+    return jnp.log(0.5 * consumption)
+
+
+def _single_consumption_utility(*, consumption: FloatND) -> FloatND:
+    return jnp.log(consumption)
+
+
+def _next_couple_wealth(
+    *, wealth: ContinuousState, consumption: FloatND
+) -> ContinuousState:
+    return jnp.minimum(1.05 * (wealth - consumption) + 1.0, 12.0)
+
+
+def _next_single_wealth(
+    *, wealth: ContinuousState, consumption: FloatND
+) -> ContinuousState:
+    return jnp.minimum(1.05 * (wealth - consumption) + 0.5, 6.0)
+
+
+def _half_of_wealth(*, wealth: ContinuousState) -> ContinuousState:
+    return 0.5 * wealth
+
+
+def _final_couple_utility(*, wealth: ContinuousState) -> FloatND:
+    return jnp.log(0.5 * wealth)
+
+
+def _waiting() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def _marriage(*, hand: bool) -> lcm.Model:
+    """Couples decide to part, then spend; singles only spend.
+
+    `hand` writes the single's wait in the parting stage as a regime of its own,
+    with edges into and out of it.
+    """
+    last = _N_ECONOMIC_PERIODS - 1
+    couple_wealth = lcm.LinSpacedGrid(start=2.0, stop=12.0, n_points=6)
+    single_wealth = lcm.LinSpacedGrid(start=1.0, stop=6.0, n_points=6)
+    share = lcm.LinSpacedGrid(start=0.1, stop=1.0, n_points=10)
+    single = "single_wait" if hand else "single"
+    regimes = {
+        "couple_sep": lcm.Regime(
+            states={"wealth": couple_wealth},
+            state_transitions={"wealth": _wealth_kept},
+            functions={
+                "utility": lcm.CollectiveUtility(
+                    utilities={"f": _match_quality, "m": _match_quality}
+                )
+            },
+            exit=lcm.Exit(
+                targets={
+                    member: lcm.ExitTarget(
+                        regime=single, projection={"wealth": _half_of_wealth}
+                    )
+                    for member in ("f", "m")
+                },
+                rule=lcm.Unilateral(),
+            ),
+        ),
+        "couple": lcm.Regime(
+            states={"wealth": couple_wealth},
+            actions={"share": share},
+            state_transitions={"wealth": _next_couple_wealth},
+            functions={
+                "consumption": _shared_consumption,
+                "utility": lcm.CollectiveUtility(
+                    utilities={
+                        "f": _half_of_consumption_utility,
+                        "m": _half_of_consumption_utility,
+                    }
+                ),
+            },
+        ),
+        "couple_final": lcm.Regime(
+            states={"wealth": couple_wealth},
+            functions={
+                "utility": lcm.CollectiveUtility(
+                    utilities={"f": _final_couple_utility, "m": _final_couple_utility}
+                )
+            },
+        ),
+        "single": lcm.Regime(
+            states={"wealth": single_wealth},
+            actions={"share": share},
+            state_transitions={"wealth": _next_single_wealth},
+            functions={
+                "consumption": _shared_consumption,
+                "utility": _single_consumption_utility,
+            },
+        ),
+    }
+    regimes["single_final"] = lcm.Regime(
+        states={"wealth": single_wealth}, functions={"utility": _final_utility}
+    )
+    if hand:
+        regimes["single_wait"] = lcm.Regime(
+            states={"wealth": single_wealth},
+            state_transitions={"wealth": lcm.fixed_transition("wealth")},
+            functions={"utility": _waiting},
+        )
+    edges: dict[RegimeName, Mapping[RegimeName, PeriodSelector]] = {
+        "couple_sep": {"couple": lcm.PeriodRange()},
+        "couple": {
+            "couple_sep": lcm.PeriodRange(exclusive_stop=last - 1),
+            "couple_final": lcm.Periods(values=(last - 1,)),
+        },
+        "single": {
+            single: lcm.PeriodRange(exclusive_stop=last - 1),
+            "single_final": lcm.Periods(values=(last - 1,)),
+        },
+    }
+    if hand:
+        edges["single_wait"] = {"single": lcm.PeriodRange()}
+    return lcm.Model(
+        n_periods=_N_ECONOMIC_PERIODS,
+        stages={
+            "part": ("couple_sep", "couple_final", "single_final")
+            + (("single_wait",) if hand else ()),
+            "spend": ("couple", "single"),
+        },
+        regimes=regimes,
+        regime_id_class=HandMarriageId if hand else MarriageId,
+        initial_nodes=lcm.InitialNodes(by_period={0: ("couple_sep", single)}),
+        edges=edges,
+        fixed_params={"discount_factor": 0.9},
+    )
+
+
+def _marriage_frame(*, model: lcm.Model, hand: bool) -> pd.DataFrame:
+    codes = model.regime_names_to_ids
+    single = codes["single_wait" if hand else "single"]
+    return model.simulate(
+        params={"couple_sep": {"love": 0.2}},
+        initial_conditions={
+            "period": jnp.zeros(4, dtype=jnp.int32),
+            "regime_id": jnp.array(
+                [codes["couple_sep"], codes["couple_sep"], single, single],
+                dtype=jnp.int32,
+            ),
+            "own_member": jnp.array(
+                [model.member_names_to_ids[member] for member in ("f", "m", "f", "m")],
+                dtype=jnp.int32,
+            ),
+            "wealth": jnp.array([4.0, 10.0, 2.0, 5.0]),
+        },
+        seed=5,
+        log_level="off",
+    ).to_dataframe()
+
+
+def test_an_edge_lands_at_the_next_occurrence_of_its_target() -> None:
+    """A single who spends once per period equals one who waits out the parting.
+
+    The single's edge to itself skips the parting stage, the couple's exit enters
+    the single in a later stage, and singles start in their own stage; written
+    with a hand-made waiting regime, the values and the simulated rows agree.
+    """
+    params = {"couple_sep": {"love": 0.2}}
+    staged = _marriage(hand=False)
+    hand = _marriage(hand=True)
+    staged_values = staged.solve(params=params, log_level="off").values
+    hand_values = hand.solve(params=params, log_level="off").values
+    for step, regimes in hand_values.items():
+        for name, value in regimes.items():
+            if name != "single_wait":
+                np.testing.assert_array_equal(staged_values[step][name], value)
+    staged_frame = _marriage_frame(model=staged, hand=False)
+    hand_frame = _marriage_frame(model=hand, hand=True)
+    hand_frame = hand_frame[hand_frame["regime_name"] != "single_wait"]
+    assert "single" in set(staged_frame["regime_name"])
+    assert set(staged_frame["regime_name"]) == set(hand_frame["regime_name"])
+    pd.testing.assert_frame_equal(
+        staged_frame.reset_index(drop=True),
+        hand_frame.reset_index(drop=True),
+        check_categorical=False,
+    )
+
+
+def test_an_exit_reads_the_destination_at_its_occurrence_later_in_the_period() -> None:
+    """Without love every couple parts: its value is the single's value that period.
+
+    A partner leaves for half the couple's wealth, a node of the single's grid, and
+    gets the single's spending-stage value there, undiscounted.
+    """
+    values = (
+        _marriage(hand=False)
+        .solve(params={"couple_sep": {"love": -100.0}}, log_level="off")
+        .values
+    )
+    for period in range(_N_ECONOMIC_PERIODS - 1):
+        single = np.asarray(values[2 * period + 1]["single"])
+        np.testing.assert_array_almost_equal(
+            values[2 * period]["couple_sep"],
+            np.stack([single, single], axis=-1),
+            decimal=DECIMAL_PRECISION,
         )
 
 

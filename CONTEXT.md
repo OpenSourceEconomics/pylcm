@@ -151,6 +151,17 @@ A pair of a period and a stage: what the recursion and the solver run over.
 in user functions and in the simulated frame is the period.
 _Avoid_: date, time step
 
+**Next occurrence**:
+The first step after the current one that belongs to a regime's stage; where an edge
+into the regime lands.
+
+**Pass-through**:
+The generated regime a subject is in at a step of a stage its regime sits out on the way
+to its next occurrence: the regime's states and members, one action, no shocks, zero
+utility and the identity transition, so its value is the next step's passed through
+unchanged. The user never declares one, and the simulated frame has no rows for it.
+_Avoid_: waiting regime, dummy regime
+
 ### Parameters
 
 **Fixed parameter**:

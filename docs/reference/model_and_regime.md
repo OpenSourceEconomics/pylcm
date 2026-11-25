@@ -36,11 +36,15 @@ The model does not assign an age or elapsed duration to a period. See
 [Periods and temporal parameters](../user_guide/period_time.md).
 
 `stages={stage_name: (regime_name, ...), ...}` declares several decisions within every
-period, in order; every regime is in exactly one stage. Subjects start in the first
-stage, an edge lands in the next stage (out of the last stage, in the first stage of the
-next period), and an exit stays in its stage. Stages of one period are linked without
-discounting, so a regime of a stage before the last declares no Koopmans aggregator and
-uses no endogenous-grid solver. `period` and `age` mean the period in user functions,
+period, in order; every regime is in exactly one stage. Subjects start in their regime's
+stage, an edge lands at its target's next occurrence, the first later step of the
+target's stage, and an exit enters a regime of its own or a later stage of its period.
+In every stage a regime sits out on the way, the subject is in the regime's generated
+pass-through: the same states and members, one action, no shocks, zero utility, the
+identity transition, its value the next step's passed through unchanged. Stages of one
+period are linked without discounting, so crossing into the next period discounts once,
+and a regime of a stage before the last declares no Koopmans aggregator and uses no
+endogenous-grid solver. `period` and `age` mean the period in user functions,
 time-indexed parameters and the simulated frame, which gains a `stage` column.
 `model.n_periods`, the solution and the raw simulation results count steps, one per
 period and stage. `stages=None` gives every period one stage. See

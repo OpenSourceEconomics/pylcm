@@ -27,7 +27,7 @@ from lcm.transition import (
     PeriodSpecializedFunction,
     PeriodSpecializedGrid,
 )
-from lcm.typing import RegimeName, UserAge
+from lcm.typing import RegimeName
 
 # A declaration the walk visits: a regime slot value or a regime law, or a
 # mapping of them.
@@ -111,35 +111,29 @@ def validate_stages(
     regimes: Mapping[RegimeName, Regime],
     laws: RegimeLaws,
     edges: GraphEdges,
-    initial_nodes: frozenset[tuple[UserAge, RegimeName]],
     time: ModelTime,
 ) -> None:
     """Refuse declarations that break the order of the stages within a period.
 
-    Subjects start in the first stage, an edge lands in the next stage (the first
-    one of the next period after the last stage), and an exit stays in its stage.
-    A stage before the last links to the next one without discounting, so its
-    regimes declare no Koopmans aggregator and use no endogenous-grid solver.
+    With its pass-throughs, every edge lands in the next stage; a gate's fallback
+    lands there too. An exit enters a regime of its own stage or of a later stage
+    of its period. A stage before the last links to the next one without
+    discounting, so its regimes declare no Koopmans aggregator and use no
+    endogenous-grid solver.
     """
     if not time.stages:
         return
     stage_of = time.stage_of
     names = [name for name, _ in time.stages]
     problems = [
-        f"'{name}' starts subjects in stage '{names[stage_of[name]]}', not in the "
-        f"first stage '{names[0]}'"
-        for _, name in sorted(initial_nodes, key=repr)
-        if stage_of[name] != 0
+        f"the edge '{source}' -> '{target}' lands in stage "
+        f"'{names[stage_of[target]]}', not in the next stage "
+        f"'{names[(stage_of[source] + 1) % time.n_stages]}'"
+        for phase_edges in (edges.solve, edges.simulate)
+        for source, targets in phase_edges.items()
+        for target in targets
+        if stage_of[target] != (stage_of[source] + 1) % time.n_stages
     ]
-    for phase_edges in (edges.solve, edges.simulate):
-        problems.extend(
-            f"the edge '{source}' -> '{target}' lands in stage "
-            f"'{names[stage_of[target]]}', not in the next stage "
-            f"'{names[(stage_of[source] + 1) % time.n_stages]}'"
-            for source, targets in phase_edges.items()
-            for target in targets
-            if stage_of[target] != (stage_of[source] + 1) % time.n_stages
-        )
     for name, regime in regimes.items():
         exit_ = regime.exit
         destinations = (
@@ -155,10 +149,10 @@ def validate_stages(
             )
         )
         problems.extend(
-            f"the exit of '{name}' reads '{destination}' of stage "
-            f"'{names[stage_of[destination]]}', not of its own stage"
+            f"the exit of '{name}' in stage '{names[stage_of[name]]}' reads "
+            f"'{destination}' of the earlier stage '{names[stage_of[destination]]}'"
             for destination in destinations
-            if stage_of[destination] != stage_of[name]
+            if stage_of[destination] < stage_of[name]
         )
         if stage_of[name] == time.n_stages - 1 or laws[name].terminal:
             continue

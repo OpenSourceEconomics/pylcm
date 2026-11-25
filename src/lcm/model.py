@@ -84,6 +84,7 @@ from _lcm.params.processing import (
 )
 from _lcm.params.regime_template import EdgeVocabulary, create_edge_vocabulary
 from _lcm.params.sequence_leaf import UserSequenceLeaf
+from _lcm.pass_through import enter_first_stage, first_stage_regime, with_pass_throughs
 from _lcm.persistence.snapshots import (
     _save_simulate_snapshot,
     _save_solve_snapshot,
@@ -1201,9 +1202,10 @@ class Model:
             stages: The decisions taken one after another within every period,
                 as an ordered mapping from stage names to the regimes of that
                 stage. Every regime is in exactly one stage; subjects start in
-                the first, an edge lands in the next stage, and an edge out of
-                the last stage lands in the first stage of the next period.
-                Stages of one period are linked without discounting. `period`
+                their regime's stage, and an edge lands at its target's next
+                occurrence, through a generated pass-through in every stage the
+                target sits out. Stages of one period are linked without
+                discounting. `period`
                 and `age` are economic time in user functions and results, and
                 the simulated frame gains a `stage` column. `None` means one
                 stage per period. `self.n_periods` and the solution count steps,
@@ -1395,6 +1397,18 @@ class Model:
         self._time = ModelTime.from_inputs(
             ages=ages, n_periods=n_periods, stages=stages, regime_names=tuple(regimes)
         )
+        # An edge or exit that skips a stage passes through generated regimes.
+        self._time, regimes, edges, regime_id_class = with_pass_throughs(
+            time=self._time,
+            regimes=regimes,
+            edges=edges,
+            initial_nodes=initial_nodes,
+            regime_id_class=regime_id_class,
+            shocks=shocks,
+            declares_model_slots=any(
+                (functions, constraints, states, state_transitions, actions)
+            ),
+        )
         self.n_periods = self._time.n_periods
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
         # The graph declares every regime transition: bind each source's law
@@ -1482,8 +1496,13 @@ class Model:
         # One canonical coverage schedule carries the resulting solve demand
         # through pruning, validation and model-structure preparation; only
         # demanded laws are lowered to the engine's period-independent form.
-        resolved_initial_nodes = resolve_initial_nodes(
-            initial_nodes=initial_nodes, regime_names=tuple(regimes), ages=self._time
+        resolved_initial_nodes = frozenset(
+            (age, first_stage_regime(name=name, time=self._time))
+            for age, name in resolve_initial_nodes(
+                initial_nodes=initial_nodes,
+                regime_names=tuple(regimes),
+                ages=self._time,
+            )
         )
         regime_id_errors = validate_category_class(regime_id_class)
         if regime_id_errors:
@@ -1537,11 +1556,7 @@ class Model:
         validate_regimes(regimes=merged_regimes, laws=laws)
         validate_exit_targets(regimes=merged_regimes, laws=laws)
         validate_stages(
-            regimes=merged_regimes,
-            laws=laws,
-            edges=graph_edges,
-            initial_nodes=resolved_initial_nodes,
-            time=self._time,
+            regimes=merged_regimes, laws=laws, edges=graph_edges, time=self._time
         )
         # What each regime declares before demand prunes any: a declared law
         # reads these as variables at every horizon, never as parameters, and a
@@ -4697,6 +4712,11 @@ class Model:
             ),
             ages=self._time,
         )
+        initial_conditions = enter_first_stage(
+            initial_conditions=initial_conditions,
+            time=self._time,
+            regime_names_to_ids=self.regime_names_to_ids,
+        )
         log = get_logger(log_level=log_level, runtime_checks=runtime_checks)
         call_id = new_call_id()
         with solve_phase(name="public_simulate", logger=log, call_id=call_id):
@@ -6186,6 +6206,11 @@ class Model:
                 use_categorical_codes=use_categorical_codes,
             ),
             ages=self._time,
+        )
+        initial_conditions = enter_first_stage(
+            initial_conditions=initial_conditions,
+            time=self._time,
+            regime_names_to_ids=self.regime_names_to_ids,
         )
         self._fail_if_declared_entry_is_not_permitted(
             initial_conditions=initial_conditions

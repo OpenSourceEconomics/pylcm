@@ -75,7 +75,9 @@ def _create_flat_dataframe(
             subject_batch_size=subject_batch_size,
         )
         for name in metadata.regime_names
+        # A pass-through holds a subject between its regime's stages, unseen.
         if raw_results[name]
+        and not (isinstance(ages, ModelTime) and name in ages.pass_throughs)
     ]
 
     frame = _assemble_dataframe(
