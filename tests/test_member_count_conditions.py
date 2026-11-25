@@ -45,7 +45,9 @@ def test_member_count_conditions_are_only_the_allowed_ones() -> None:
         (path.relative_to(_SRC).as_posix(), function)
         for package in ("lcm", "_lcm")
         for path in sorted((_SRC / package).rglob("*.py"))
-        for function, _line in member_count_conditions(source=path.read_text())
+        for function, _line in member_count_conditions(
+            source=path.read_text(encoding="utf-8")
+        )
     }
 
     assert found == set(_ALLOWED)
