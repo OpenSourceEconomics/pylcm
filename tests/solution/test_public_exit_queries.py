@@ -705,99 +705,6 @@ def test_hidden_target_taste_is_priced_at_logsum_then_drawn_when_acting() -> Non
     assert bool(valid)
 
 
-def _source_taste(*, action: IntND, consumption: FloatND, wealth: FloatND) -> FloatND:
-    return 2 * action - 0.25 * (1 - consumption) ** 2 + 0 * wealth
-
-
-def _outside15(wealth: FloatND) -> FloatND:
-    return 1.5 + 0 * wealth
-
-
-def _outside3(wealth: FloatND) -> FloatND:
-    return 3.0 + 0 * wealth
-
-
-@pytest.mark.coverage(
-    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
-)
-@pytest.mark.parametrize("fallback", [False, True])
-def test_source_full_taste_preserves_dissolution_fallback(*, fallback: bool) -> None:
-    """Dissolution cannot acquire a taste-based escape from surviving kept stays."""
-    wealth = LinSpacedGrid(start=0, stop=1, n_points=2)
-    model = Model(
-        regimes={
-            "single_f": Regime(
-                states={"wealth": wealth},
-                actions={
-                    "action": DiscreteGrid(values=jnp.asarray([0, 1])),
-                    "consumption": LinSpacedGrid(start=0, stop=1, n_points=2),
-                },
-                functions={"utility": _source_taste},
-                taste_shocks=ExtremeValueTasteShocks(),
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
-                            regime="single_m", projection={"wealth": _wealth}
-                        )
-                    },
-                    rule=Unilateral(),
-                ),
-            ),
-            "single_m": Regime(
-                states={"wealth": wealth},
-                functions={"utility": _outside3 if fallback else _outside15},
-            ),
-        },
-        regime_id_class=_Singles,
-        n_periods=1,
-        edges={},
-        initial_nodes=InitialNodes(by_period={0: ("single_f",)}),
-        fixed_params={"single_f": {"taste_shocks": {"scale": 1.0}}},
-        execution_config=ExecutionConfig(device_memory_bytes=None),
-    )
-    result = model.solve(params={}, log_level="off", runtime_checks=False)
-    np.testing.assert_allclose(result.values[0]["single_f"], 3.0 if fallback else 2.0)
-    kernel = model._regimes["single_f"].solution.period_kernels[0]
-    assert isinstance(kernel, _PolicyQueryKernel)
-    scalar = ScalarPolicyQueries(
-        definitions=kernel.definitions, root=kernel.root, period=0
-    )
-    arguments = dict(
-        scalar.arguments(
-            context=CoreBuildContext(
-                state_action_space=kernel.root_context.state_action_space,
-                next_regime_to_V_arr={},
-                next_regime_to_continuation={},
-                flat_params={},
-                period=0,
-                ages=kernel.root_context.ages,
-            ),
-            fixed_flat_params=kernel.fixed_flat_params,
-        )
-    )
-    for seed in (0, 1, 2, 3):
-        key = jax.random.key(seed)
-        call_arguments = {
-            **arguments,
-            kernel.root: {**arguments[kernel.root], "taste_shock_key": key},
-        }
-        value, action, support, valid, landings = jax.jit(scalar)(
-            states={"wealth": jnp.asarray(0.0)}, arguments=call_arguments
-        )
-        assert landings.dtype == jnp.int32
-        np.testing.assert_array_equal(landings, np.zeros(landings.shape, np.int32))
-        # Reserve exit tasteID2 even when its escape is economically inadmissible.
-        # The surviving discrete stay optimizes consumption to global stayID3.
-        roster = jnp.asarray(
-            [-jnp.inf, -jnp.inf, 3.0] if fallback else [-jnp.inf, 2.0, -jnp.inf]
-        )
-        selected = int(jnp.argmax(roster + jax.random.gumbel(key, (3,))))
-        assert int(action) == (3 if selected == 1 else 4)
-        np.testing.assert_allclose(value, 2.0 if selected == 1 else 3.0)
-        assert bool(support)
-        assert bool(valid)
-
-
 def _joint_value(*, action: IntND, x: FloatND, y: FloatND, wealth: FloatND) -> FloatND:
     return action * (x + y) + 0 * wealth
 
@@ -1015,7 +922,6 @@ def _strict_stay(*, action: IntND, wealth: FloatND) -> FloatND:
 def _rule_model(
     *,
     rule: ExitRule,
-    source_taste: bool = False,
     target_taste: bool = False,
     available: UserFunction | None = None,
 ) -> Model:
@@ -1028,7 +934,6 @@ def _rule_model(
                 actions={"action": DiscreteGrid(values=jnp.asarray([0, 1]))},
                 functions={"utility": _strict_stay},
                 exit=Exit(targets={"self": target}, rule=rule, available=available),
-                taste_shocks=ExtremeValueTasteShocks() if source_taste else None,
             ),
             "single_m": Regime(
                 states={"wealth": wealth},
@@ -1043,10 +948,9 @@ def _rule_model(
         n_periods=1,
         edges={},
         initial_nodes=InitialNodes(by_period={0: ("single_f",)}),
-        fixed_params={
-            **({"single_f": {"taste_shocks": {"scale": 1.0}}} if source_taste else {}),
-            **({"single_m": {"taste_shocks": {"scale": 1.0}}} if target_taste else {}),
-        },
+        fixed_params=(
+            {"single_m": {"taste_shocks": {"scale": 1.0}}} if target_taste else {}
+        ),
         execution_config=ExecutionConfig(device_memory_bytes=None),
     )
 
@@ -1268,111 +1172,6 @@ def test_false_ancestor_protects_a_poisoned_mapped_child_availability() -> None:
     )
     result = model.solve(params={}, log_level="off", runtime_checks=False)
     np.testing.assert_allclose(result.values[0]["single_f"][..., 0], [5.0, 6.0])
-
-
-def _formation_f(wealth: FloatND) -> FloatND:
-    return 3.0 + 0 * wealth
-
-
-def _formation_m(wealth: FloatND) -> FloatND:
-    return 1.0 + 0 * wealth
-
-
-def _zero(wealth: FloatND) -> FloatND:
-    return 0.0 * wealth
-
-
-@pytest.mark.coverage(
-    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
-)
-def test_source_taste_competes_with_an_eligible_consent_formation() -> None:
-    """A strict eligible formation joins the source's discrete-combination roster."""
-    wealth = LinSpacedGrid(start=0, stop=1, n_points=2)
-    model = Model(
-        regimes={
-            "single_f": Regime(
-                states={"wealth": wealth},
-                actions={
-                    "action": DiscreteGrid(values=jnp.asarray([0, 1])),
-                    "consumption": LinSpacedGrid(start=0, stop=1, n_points=2),
-                },
-                functions={"utility": _source_taste},
-                taste_shocks=ExtremeValueTasteShocks(),
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
-                            regime="couple",
-                            role="f",
-                            projection={"wealth": _wealth},
-                        )
-                    },
-                    rule=Consent(
-                        counterparty=Counterparty(
-                            regime="single_m",
-                            role="m",
-                            projection={"wealth": _wealth},
-                        )
-                    ),
-                ),
-            ),
-            "single_m": Regime(states={"wealth": wealth}, functions={"utility": _zero}),
-            "couple": Regime(
-                states={"wealth": wealth},
-                functions={
-                    "utility": CollectiveUtility(
-                        utilities={"f": _formation_f, "m": _formation_m}
-                    )
-                },
-            ),
-        },
-        regime_id_class=_Household,
-        n_periods=1,
-        edges={},
-        initial_nodes=InitialNodes(by_period={0: ("single_f",)}),
-        fixed_params={"single_f": {"taste_shocks": {"scale": 1.0}}},
-        execution_config=ExecutionConfig(device_memory_bytes=None),
-    )
-    # Consent uses existing Raw logsum(0,2)<3 and counterparty Raw0<1.
-    expected_price = np.log(np.exp(0.0) + np.exp(2.0) + np.exp(3.0))
-    result = model.solve(params={}, log_level="off", runtime_checks=False)
-    np.testing.assert_allclose(result.values[0]["single_f"], expected_price)
-    kernel = model._regimes["single_f"].solution.period_kernels[0]
-    assert isinstance(kernel, _PolicyQueryKernel)
-    scalar = ScalarPolicyQueries(
-        definitions=kernel.definitions, root=kernel.root, period=0
-    )
-    arguments = scalar.arguments(
-        context=CoreBuildContext(
-            state_action_space=kernel.root_context.state_action_space,
-            next_regime_to_V_arr={},
-            next_regime_to_continuation={},
-            flat_params={},
-            period=0,
-            ages=kernel.root_context.ages,
-        ),
-        fixed_flat_params=kernel.fixed_flat_params,
-    )
-    literal_routes = set()
-    for seed in range(16):
-        key = jax.random.key(seed)
-        selected = int(
-            jnp.argmax(jnp.asarray([0.0, 2.0, 3.0]) + jax.random.gumbel(key, (3,)))
-        )
-        literal_routes.add(selected == 2)
-        value, action, support, valid, landings = jax.jit(scalar)(
-            states={"wealth": jnp.asarray(0.0)},
-            arguments={
-                **arguments,
-                kernel.root: {**arguments[kernel.root], "taste_shock_key": key},
-            },
-        )
-        assert landings.dtype == jnp.int32
-        np.testing.assert_array_equal(landings, np.zeros(landings.shape, np.int32))
-        assert int(action) == (1, 3, 4)[selected]
-        np.testing.assert_allclose(value, (0.0, 2.0, 3.0)[selected])
-        assert bool(support)
-        assert bool(valid)
-    assert literal_routes == {False, True}
 
 
 @pytest.mark.coverage(

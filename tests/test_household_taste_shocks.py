@@ -17,8 +17,6 @@ from lcm import (
     AgeGrid,
     CollectiveUtility,
     DiscreteGrid,
-    Exit,
-    ExitTarget,
     InitialNodes,
     Model,
     ParetoObjective,
@@ -27,7 +25,6 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import InvalidParamsError
-from lcm.exits import Unilateral
 from lcm.shocks import Normal, ShockGroup, UserNodes
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import (
@@ -192,7 +189,6 @@ def _couple(
     utility_m: UserFunction,
     constraints: dict[str, UserFunction] | None = None,
     with_power: bool = False,
-    exit_declaration: Exit | None = None,
 ) -> Regime:
     return Regime(
         states={"power": DiscreteGrid(category_class=Power)} if with_power else {},
@@ -205,7 +201,6 @@ def _couple(
             )
         },
         taste_shocks=ExtremeValueTasteShocks(),
-        exit=exit_declaration,
     )
 
 
@@ -424,125 +419,37 @@ def test_a_single_consents_on_the_values_of_a_taste_shock_household() -> None:
     )
 
 
-@categorical(ordered=False)
-class Offer:
-    low: ScalarInt
-    mid: ScalarInt
-    high: ScalarInt
+def _u_single_m_works(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    return 0.9 * (2.0 - wage) * work
 
 
-@categorical(ordered=False)
-class ExitRegimeId:
-    couple: ScalarInt
-    single_f: ScalarInt
-    single_m: ScalarInt
+def test_a_consent_reads_a_taste_shock_counterparty_at_its_log_sum() -> None:
+    """He consents where his married value exceeds his log-sum as a single.
 
-
-def _outside_f(offer: DiscreteState) -> FloatND:
-    return jnp.asarray([0.5, 2.0, 10.0])[offer]
-
-
-def _outside_m(offer: DiscreteState) -> FloatND:
-    return jnp.asarray([0.5, 0.5, 8.0])[offer]
-
-
-def _keep_offer(offer: DiscreteState) -> DiscreteState:
-    return offer
-
-
-def test_a_taste_shock_household_with_an_exit_smooths_over_the_kept_stays() -> None:
-    """She decides by her logit over the stays both accept, the exit as fallback.
-
-    At `a` she has 1 and he 5, at `b` she 3 and he 1. Each leaves for an outside
-    value that rises with the offer:
-
-    - low (both 0.5): both stays are kept; she has her log-sum over 1 and 3, he
-      his mean value under her choice probabilities;
-    - mid (she 2, he 0.5): only `b` is kept, worth 3 to her and 1 to him;
-    - high (she 10, he 8): no stay is kept and each takes the outside value.
-
-    A simulated row publishes both members' values at her drawn stay, and a row
-    at the high offer leaves for its own member's regime.
+    At wage 1 his married value 1 exceeds both of his single action values, 0
+    and 0.9, but not their log-sum `log(1 + e^0.9)`: he refuses, and she keeps
+    her single value 1. At wage 2 his log-sum `log 2` is below his married value
+    2, and she marries at her 4.
     """
-    scale = 2.0
-    offer_grid = DiscreteGrid(category_class=Offer)
-    couple = _couple(
-        objective=ParetoObjective(weights={"f": 1.0, "m": 0.0}),
-        utility_f=_utility_f_one,
-        utility_m=_utility_m_prefers_a,
-        exit_declaration=Exit(
-            targets={
-                "f": ExitTarget(regime="single_f", projection={"offer": _keep_offer}),
-                "m": ExitTarget(regime="single_m", projection={"offer": _keep_offer}),
-            },
-            rule=Unilateral(),
-        ),
-    ).replace(states={"offer": offer_grid})
+    regimes = _make_consent_regimes()
+    regimes["single_m"] = regimes["single_m"].replace(
+        actions=regimes["single_f"].actions,
+        functions={"utility": _u_single_m_works},
+        taste_shocks=ExtremeValueTasteShocks(),
+    )
     model = Model(
-        regimes={
-            "couple": couple,
-            "single_f": Regime(
-                states={"offer": offer_grid}, functions={"utility": _outside_f}
-            ),
-            "single_m": Regime(
-                states={"offer": offer_grid}, functions={"utility": _outside_m}
-            ),
-        },
+        regimes=regimes,
         n_periods=1,
-        regime_id_class=ExitRegimeId,
-        initial_nodes=InitialNodes(by_period={0: "couple"}),
+        regime_id_class=ConsentRegimeId,
+        initial_nodes=InitialNodes(by_period={0: "single_f"}),
         edges={},
     )
-    params: dict[str, UserParamsNode] = {"couple": {"taste_shocks": {"scale": scale}}}
-    p_a = 1.0 / (1.0 + np.exp(2.0 / scale))
 
-    solution = model.solve(params=params, log_level="off")
-    roles = model.member_names_to_ids
-    frame = model.simulate(
-        params=params,
-        solution=solution,
-        initial_conditions={
-            "period": jnp.zeros(60, dtype=jnp.int32),
-            "regime_id": jnp.zeros(60, dtype=jnp.int32),
-            "offer": jnp.asarray([0, 1, 2] * 20, dtype=jnp.int32),
-            "own_member": jnp.asarray(
-                [roles["f"]] * 30 + [roles["m"]] * 30, dtype=jnp.int32
-            ),
-        },
-        seed=3,
-        log_level="off",
-    ).to_dataframe(use_categorical_codes=True)
-    regime = frame["regime_name"].astype(str).to_numpy()
-    offer = frame["offer"].to_numpy()
-    takes_a = (frame["choice"] == Choice.a).to_numpy()
-    stays = regime == "couple"
+    solution = model.solve(
+        params={"single_m": {"taste_shocks": {"scale": 1.0}}}, log_level="off"
+    )
 
-    aaae(
-        solution.values[0]["couple"],
-        [
-            [3.0 + scale * np.log1p(np.exp(-2.0 / scale)), p_a * 5.0 + (1 - p_a)],
-            [3.0, 1.0],
-            [10.0, 8.0],
-        ],
-        decimal=DECIMAL_PRECISION,
-    )
-    np.testing.assert_array_equal(stays, offer != Offer.high)
-    np.testing.assert_array_equal(
-        regime[~stays],
-        np.where(frame["subject_id"].to_numpy()[~stays] < 30, "single_f", "single_m"),
-    )
-    assert 0 < takes_a[offer == Offer.low].sum() < (offer == Offer.low).sum()
-    assert not takes_a[offer == Offer.mid].any()
-    aaae(
-        frame.loc[stays, "value_f"],
-        np.where(takes_a[stays], 1.0, 3.0),
-        decimal=DECIMAL_PRECISION,
-    )
-    aaae(
-        frame.loc[stays, "value_m"],
-        np.where(takes_a[stays], 5.0, 1.0),
-        decimal=DECIMAL_PRECISION,
-    )
+    aaae(solution.values[0]["single_f"][..., 0], [1.0, 4.0], decimal=DECIMAL_PRECISION)
 
 
 _EPS_NODES = np.asarray([-1.5, 0.5, 2.5])

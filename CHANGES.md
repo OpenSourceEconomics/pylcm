@@ -91,12 +91,17 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   the conditional continuous actions all members share, and every member's value.
 - Constant weights with more than one positive entry are refused when the regime is
   constructed; a weight declared as a function is checked at every solve, at every cell.
-  A household with an `exit` runs its decider's logit over the stays every member
-  accepts and the exit, and every member's value at the exit is its own exit payoff.
   Another regime's exit reads the household's member values as its solve publishes
-  them. A household that observes current-period
-  `shocks` takes the decider's smoothed choice at each shock node and integrates every
-  member's value over the nodes.
+  them, as its target or as the counterparty of a `Consent`. A household that observes
+  current-period `shocks` takes the decider's smoothed choice at each shock node and
+  integrates every member's value over the nodes.
+- **Change of behaviour.** A regime with taste shocks cannot have its own exit or
+  formation, under any rule (`Unilateral`, `Consent`, `MutualConsent`), single or
+  household. A single with taste shocks and an `exit` was accepted before; building such
+  a model raises `RegimeInitializationError`. Drop `taste_shocks` on that regime, or
+  move the exit decision to a regime without taste shocks.
+- A taste-shock `scale` that is NaN or infinite is refused with `InvalidParamsError`
+  before the solve, like a scale that is not strictly positive.
 - Values of models without taste shocks in a household are unchanged.
 
 ### `ValueDependentConstraint` is removed

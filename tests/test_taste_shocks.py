@@ -210,16 +210,17 @@ def test_expected_max_with_taste_shock_noise_matches_logsum() -> None:
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("scale", [0.0, -0.1])
-def test_nonpositive_taste_shock_scale_raises(scale: float) -> None:
-    """A taste-shock scale that is not strictly positive is rejected.
+@pytest.mark.parametrize("scale", [0.0, -0.1, float("nan"), float("inf")])
+def test_taste_shock_scale_outside_the_positive_reals_raises(scale: float) -> None:
+    """A taste-shock scale that is not strictly positive and finite is rejected.
 
     Declaring taste shocks means opting into smoothing, so the scale must be
     positive. The hard maximum is the no-taste-shocks model, not `scale = 0`.
+    At float32 an infinite scale is refused where the parameter is cast.
     """
     model = taste_shocks_toy.get_model()
     params = taste_shocks_toy.get_params(scale=scale)
-    with pytest.raises(InvalidParamsError, match="scale"):
+    with pytest.raises((InvalidParamsError, OverflowError), match="scale"):
         model.solve(params=params, log_level="debug")
 
 

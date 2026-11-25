@@ -37,9 +37,6 @@ from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.typing import PytreeValue
 from lcm import (
-    CollectiveUtility,
-    Consent,
-    Counterparty,
     DiscreteGrid,
     ExecutionConfig,
     Exit,
@@ -66,8 +63,7 @@ from lcm.shocks import (
     Product,
     ShockGroup,
 )
-from lcm.taste_shocks import ExtremeValueTasteShocks
-from lcm.typing import BoolND, FloatND, IntND, RegimeName, ScalarInt
+from lcm.typing import BoolND, FloatND, RegimeName, ScalarInt
 from tests.conftest import DECIMAL_PRECISION, assert_agrees_to_ulp
 from tests.simulation._callback_types import HostDispatch, RuntimeDispatch
 from tests.simulation.test_aot_collective_and_gated import _capture_compiled_dispatches
@@ -89,13 +85,6 @@ class _Binary:
 @categorical(ordered=False)
 class _OnlySource:
     source: ScalarInt
-
-
-@categorical(ordered=False)
-class _FormationRegimes:
-    source: ScalarInt
-    counterparty: ScalarInt
-    target: ScalarInt
 
 
 @categorical(ordered=False)
@@ -1018,152 +1007,12 @@ def test_hidden_destination_taste_acts_after_strict_exit_without_repricing() -> 
     )
 
 
-def _choice_value(*, choice: IntND) -> FloatND:
-    return 1.0 * choice
-
-
-def _double_choice(*, choice: IntND) -> FloatND:
-    return 2.0 * choice
-
-
 def _three() -> float:
     return 3.0
 
 
 def _zero() -> float:
     return 0.0
-
-
-@pytest.mark.coverage(
-    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
-)
-@pytest.mark.parametrize("fallback", [False, True])
-def test_source_taste_keeps_dissolution_as_fallback_in_public_replay(
-    *, fallback: bool
-) -> None:
-    """A surviving kept stay cannot acquire an optional noisy exit."""
-    model = Model(
-        regimes={
-            "source": Regime(
-                actions={"choice": DiscreteGrid(values=jnp.asarray([0, 1]))},
-                functions={"utility": _choice_value},
-                taste_shocks=ExtremeValueTasteShocks(),
-                exit=Exit(
-                    targets={"self": ExitTarget(regime="target", projection={})},
-                    rule=Unilateral(),
-                ),
-            ),
-            "target": Regime(functions={"utility": _two if fallback else _solve_flow}),
-        },
-        n_periods=1,
-        regime_id_class=_RegimeId,
-        initial_nodes=InitialNodes(by_period={0: "source"}),
-        edges={},
-        fixed_params={"source": {"taste_shocks": {"scale": 1.0}}},
-        execution_config=ExecutionConfig(device_memory_bytes=None),
-    )
-    solution = model.solve(params={}, log_level="off", runtime_checks=False)
-    expected = 2.0 if fallback else 1.0
-    assert_array_almost_equal(
-        solution.values[0]["source"], expected, decimal=DECIMAL_PRECISION
-    )
-    frame = model.simulate(
-        params={},
-        solution=solution,
-        initial_conditions={
-            "period": jnp.zeros(12, dtype=jnp.int32),
-            "regime_id": jnp.zeros(12, dtype=jnp.int32),
-        },
-        seed=17,
-        log_level="off",
-        runtime_checks=False,
-    ).to_dataframe(use_categorical_codes=True)
-    np.testing.assert_array_equal(
-        frame["regime_name"], "target" if fallback else "source"
-    )
-    assert_array_almost_equal(frame["value"], expected, decimal=DECIMAL_PRECISION)
-    if not fallback:
-        np.testing.assert_array_equal(frame["choice"], 1)
-
-
-@pytest.mark.coverage(
-    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
-)
-def test_source_taste_freezes_one_consent_choice_before_target_action() -> None:
-    """Eligible formation joins one source draw; movers report target values."""
-    model = Model(
-        regimes={
-            "source": Regime(
-                actions={"choice": DiscreteGrid(values=jnp.asarray([0, 1]))},
-                functions={"utility": _double_choice},
-                taste_shocks=ExtremeValueTasteShocks(),
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(regime="target", role="f", projection={})
-                    },
-                    rule=Consent(
-                        counterparty=Counterparty(
-                            regime="counterparty", role="m", projection={}
-                        )
-                    ),
-                ),
-            ),
-            "counterparty": Regime(functions={"utility": _zero}),
-            "target": Regime(
-                functions={
-                    "utility": CollectiveUtility(
-                        utilities={"f": _three, "m": _solve_flow}
-                    )
-                }
-            ),
-        },
-        n_periods=1,
-        regime_id_class=_FormationRegimes,
-        initial_nodes=InitialNodes(by_period={0: "source"}),
-        edges={},
-        fixed_params={"source": {"taste_shocks": {"scale": 1.0}}},
-        execution_config=ExecutionConfig(device_memory_bytes=None),
-    )
-    solution = model.solve(params={}, log_level="off", runtime_checks=False)
-    assert_array_almost_equal(
-        solution.values[0]["source"],
-        np.log(1.0 + np.exp(2.0) + np.exp(3.0)),
-        decimal=DECIMAL_PRECISION,
-    )
-    frame = model.simulate(
-        params={},
-        solution=solution,
-        initial_conditions={
-            "period": jnp.zeros(12, dtype=jnp.int32),
-            "regime_id": jnp.zeros(12, dtype=jnp.int32),
-        },
-        seed=17,
-        log_level="off",
-        runtime_checks=False,
-    ).to_dataframe(use_categorical_codes=True)
-    selected = _addressed_taste_actions(
-        regime="source", values=jnp.asarray([0.0, 2.0, 3.0])
-    )
-    moved = selected == 2
-    np.testing.assert_array_equal(
-        frame["regime_name"], np.where(moved, "target", "source")
-    )
-    np.testing.assert_array_equal(frame.loc[~moved, "choice"], selected[~moved])
-    assert_array_almost_equal(
-        frame.loc[~moved, "value"],
-        np.asarray([0.0, 2.0])[selected[~moved]],
-        decimal=DECIMAL_PRECISION,
-    )
-    assert_array_almost_equal(
-        frame.loc[moved, "value_f"], 3.0, decimal=DECIMAL_PRECISION
-    )
-    assert_array_almost_equal(
-        frame.loc[moved, "value_m"], 1.0, decimal=DECIMAL_PRECISION
-    )
-    np.testing.assert_array_equal(
-        frame.loc[moved, "own_member"],
-        model._regimes["target"].member_names_to_ids["f"],
-    )
 
 
 def _x_flow(x: FloatND) -> FloatND:

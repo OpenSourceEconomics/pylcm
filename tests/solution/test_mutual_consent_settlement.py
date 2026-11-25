@@ -21,6 +21,8 @@ from _lcm import exit_queries, policy_queries
 from _lcm.solution.fingerprint import _semantic_fingerprint
 from lcm import (
     CollectiveUtility,
+    Consent,
+    Counterparty,
     DiscreteGrid,
     ExecutionConfig,
     Exit,
@@ -31,6 +33,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     MutualConsent,
+    ParetoObjective,
     Regime,
     Renegotiate,
     Settlement,
@@ -292,27 +295,114 @@ def _choice(*, choice: IntND) -> FloatND:
     return jnp.asarray(choice, dtype=float)
 
 
-def test_optimum_comparison_refuses_taste_shocks() -> None:
-    """A household optimum under taste shocks is a draw, not a value to compare."""
-    with pytest.raises(RegimeInitializationError, match="taste shocks"):
-        Model(
-            regimes={
-                "source": Regime(
-                    actions={"choice": DiscreteGrid(values=jnp.asarray([0, 1]))},
-                    functions={"utility": _choice},
-                    taste_shocks=ExtremeValueTasteShocks(),
-                    exit=Exit(
-                        targets={"self": ExitTarget(regime="target", projection={})},
-                        rule=Unilateral(compares="optimum"),
+def _taste_single(*, exit_declaration: Exit | None) -> Regime:
+    return Regime(
+        actions={"choice": DiscreteGrid(values=jnp.asarray([0, 1]))},
+        functions={"utility": _choice},
+        taste_shocks=ExtremeValueTasteShocks(),
+        exit=exit_declaration,
+    )
+
+
+def _taste_couple(*, exit_declaration: Exit | None) -> Regime:
+    return Regime(
+        actions={"choice": DiscreteGrid(values=jnp.asarray([0, 1]))},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _choice, "m": _choice},
+                objective=ParetoObjective(weights={"f": 1.0, "m": 0.0}),
+            )
+        },
+        taste_shocks=ExtremeValueTasteShocks(),
+        exit=exit_declaration,
+    )
+
+
+_PLAIN_SINGLE = Regime(functions={"utility": _Constant(value=0.0)})
+_PLAIN_COUPLE = Regime(
+    functions={
+        "utility": CollectiveUtility(
+            utilities={"f": _Constant(value=0.0), "m": _Constant(value=0.0)}
+        )
+    }
+)
+
+# Each case: the regime that has taste shocks and an exit, and the three regimes.
+_TASTE_SHOCKS_WITH_OWN_EXIT = {
+    "single_dissolution": (
+        "single_f",
+        {
+            "single_f": _taste_single(
+                exit_declaration=Exit(
+                    targets={"self": ExitTarget(regime="single_m", projection={})},
+                    rule=Unilateral(),
+                )
+            ),
+            "single_m": _PLAIN_SINGLE,
+            "couple": _PLAIN_COUPLE,
+        },
+    ),
+    "single_formation": (
+        "single_f",
+        {
+            "single_f": _taste_single(
+                exit_declaration=Exit(
+                    targets={
+                        "self": ExitTarget(regime="couple", role="f", projection={})
+                    },
+                    rule=Consent(
+                        counterparty=Counterparty(
+                            regime="single_m", role="m", projection={}
+                        )
                     ),
-                ),
-                "target": Regime(functions={"utility": _Constant(value=0.0)}),
-            },
+                )
+            ),
+            "single_m": _PLAIN_SINGLE,
+            "couple": _PLAIN_COUPLE,
+        },
+    ),
+    "household_dissolution": (
+        "couple",
+        {
+            "couple": _taste_couple(
+                exit_declaration=Exit(
+                    targets={
+                        "f": ExitTarget(regime="single_f", projection={}),
+                        "m": ExitTarget(regime="single_m", projection={}),
+                    },
+                    rule=Unilateral(),
+                )
+            ),
+            "single_f": _PLAIN_SINGLE,
+            "single_m": _PLAIN_SINGLE,
+        },
+    ),
+}
+
+
+@pytest.mark.parametrize("case", list(_TASTE_SHOCKS_WITH_OWN_EXIT))
+def test_a_regime_with_taste_shocks_refuses_its_own_exit(case: str) -> None:
+    """A regime with taste shocks declares neither an exit nor a formation.
+
+    The message names the regime and both ways out: drop its taste shocks, or
+    move the exit decision to a regime without them.
+    """
+    source, regimes = _TASTE_SHOCKS_WITH_OWN_EXIT[case]
+    with pytest.raises(
+        RegimeInitializationError,
+        match=(
+            f"Regime '{source}' has taste shocks and an exit.*cannot have its own "
+            "exit or formation.*drop `taste_shocks` on this regime, or move the "
+            "exit decision to a regime without taste shocks"
+        ),
+    ):
+        Model(
+            regimes=regimes,
             n_periods=1,
-            regime_id_class=_Singleton,
-            initial_nodes=InitialNodes(by_period={0: "source"}),
+            regime_id_class=_Household,
+            initial_nodes=InitialNodes(by_period={0: source}),
             edges={},
-            fixed_params={"source": {"taste_shocks": {"scale": 1.0}}},
+            fixed_params={source: {"taste_shocks": {"scale": 1.0}}},
             execution_config=ExecutionConfig(device_memory_bytes=None),
         )
 

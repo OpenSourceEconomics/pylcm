@@ -163,7 +163,7 @@ def validate_exit_targets(
             _validate_renegotiation(
                 declaration=declaration, regime=regime, law=laws[source], phase=phase
             )
-            _validate_optimum_comparison(declaration=declaration, regime=regime)
+            _validate_no_taste_shocks(source=source, regime=regime)
             _validate_settlement(declaration=declaration, regime=regime)
             for target in declaration.targets.values():
                 context = f"Exit of {source}"
@@ -236,14 +236,14 @@ def _validate_renegotiation(
         )
 
 
-def _validate_optimum_comparison(*, declaration: Exit, regime: Regime) -> None:
-    """Require a deterministic household optimum for a rule that compares there."""
-    from _lcm.exits import compares_at_optimum  # noqa: PLC0415 - phase validator cycle
-
-    if compares_at_optimum(declaration.rule) and regime.taste_shocks is not None:
+def _validate_no_taste_shocks(*, source: RegimeName, regime: Regime) -> None:
+    """Refuse an exit or a formation declared on a regime with taste shocks."""
+    if regime.taste_shocks is not None:
         raise RegimeInitializationError(
-            "An exit rule that compares at the household optimum needs a regime "
-            "without taste shocks."
+            f"Regime {source!r} has taste shocks and an exit. A regime with taste "
+            "shocks cannot have its own exit or formation: drop `taste_shocks` on "
+            "this regime, or move the exit decision to a regime without taste "
+            "shocks."
         )
 
 

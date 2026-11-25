@@ -1547,7 +1547,7 @@ def _validate_param_types(flat_params: FlatParams) -> None:
 
 
 def fail_if_nonpositive_taste_shock_scale(flat_params: FlatParams) -> None:
-    """Raise if any regime's taste-shock scale is not strictly positive.
+    """Raise if any regime's taste-shock scale is not strictly positive and finite.
 
     Declaring taste shocks means opting into smoothing, so the scale must be
     positive. The hard maximum is the no-taste-shocks model, reached by not
@@ -1557,10 +1557,10 @@ def fail_if_nonpositive_taste_shock_scale(flat_params: FlatParams) -> None:
         if regime_name == EDGES:
             continue
         scale = cast("FlatRegimeParams", regime_params).get(TASTE_SHOCK_SCALE_PARAM)
-        if isinstance(scale, Array) and float(scale) <= 0:
+        if isinstance(scale, Array) and not 0 < float(scale) < jnp.inf:
             msg = (
                 f"The taste-shock scale of regime {regime_name!r} is "
-                f"{float(scale)}, but it must be strictly positive."
+                f"{float(scale)}, but it must be strictly positive and finite."
             )
             raise InvalidParamsError(msg)
 

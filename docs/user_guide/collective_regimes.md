@@ -101,8 +101,12 @@ conditional value `Qc`, its choice probability and the continuous actions every 
 shares, and one value per member, in member order. Constant weights must give exactly
 one member a positive weight; a weight declared as a function is checked at every solve,
 at every cell of the regime's grid, so a bargaining state may hand the decision from one
-member to the other. A household with taste shocks may not declare an `exit` or
-`shocks`, and another regime's exit may not read its decision.
+member to the other. A regime with taste shocks, single or household, cannot have its
+own exit or formation: drop `taste_shocks` on it, or move the exit decision to a regime
+without taste shocks. Another regime's exit or formation may read it, as its target or
+as the counterparty of a `Consent`: the decider's value there is its smoothed expected
+maximum, every other member's its mean under the decider's choice probabilities. A
+household with taste shocks may observe current-period `shocks`.
 
 ## Dissolving in the current period: where the members compare
 

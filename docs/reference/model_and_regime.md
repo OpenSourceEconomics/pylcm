@@ -472,8 +472,8 @@ and runtime-bound query status adapters.
 Collective current-IID decisions select one common action and route exits at each node,
 then integrate each member's selected value. Stored values retain the member axis and
 carry no current-shock axis. A collective regime without an exit runs the ordinary grid
-search, integrating each member's value at the household's choice over the nodes. EV1
-taste shocks on a collective regime with an exit are refused; see
+search, integrating each member's value at the household's choice over the nodes. A
+regime with EV1 taste shocks that declares an exit is refused; see
 [`ExtremeValueTasteShocks`](#api-extreme-value-taste-shocks).
 
 (api-extreme-value-taste-shocks)=
@@ -490,7 +490,7 @@ regime = Regime(
 )
 ```
 
-The scale is a strictly positive runtime parameter at
+The scale is a strictly positive, finite runtime parameter at
 `params[regime_name]["taste_shocks"]["scale"]`. Use no declaration for a hard maximum;
 zero is not a valid scale.
 
@@ -514,10 +514,13 @@ weight; that member decides, and every other member's value is the mean of its a
 values under the decider's choice probabilities (see
 [Collective regimes](collective_regimes.md)). It is rejected for `NEGM`, `NBEGM`, and
 `NNBEGM`; on a collective regime with more than one positive weight; on the source
-regime of a gated transition; and together with a nonlinear certainty equivalent. These
-are semantic boundaries, not ignored options: the declaration is rejected during
-`Regime` declaration or `Model` construction, before solve, except that a weight
-declared as a function is checked at every solve.
+regime of a gated transition; on a regime that declares an `exit`, whether a dissolution
+or a formation; and together with a nonlinear certainty equivalent. Another regime's
+exit may read a regime with taste shocks as its target or its `Consent` counterparty, at
+the decider's smoothed expected maximum and every other member's mean value. These are
+semantic boundaries, not ignored options: the declaration is rejected during `Regime`
+declaration or `Model` construction, before solve, except that a weight declared as a
+function is checked at every solve.
 
 (api-euler-gamma)=
 

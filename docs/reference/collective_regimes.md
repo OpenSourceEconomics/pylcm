@@ -285,6 +285,7 @@ checked at evaluation only fires once the model runs.
 | a gate sits on a target its `Transition` reaches; a target reached in both phases carries one equal `Gate` in both or none                                     | model build                                                       | `ModelInitializationError`  |
 | taste shocks (unless exactly one constant or callable weight can be positive), or a non-`GridSearch` solver, on a collective regime                            | `Regime` construction                                             | `NotImplementedError`       |
 | taste shocks, a nonlinear certainty equivalent, or a non-`GridSearch` solver on the SOURCE regime of a gated transition                                        | model build, binding the edge law to its source                   | `NotImplementedError`       |
+| taste shocks on a regime that declares an `exit`, whether a dissolution or a formation                                                                         | model build                                                       | `RegimeInitializationError` |
 | a reference or fallback regime exists, and `member` matches its structure                                                                                      | model build                                                       | `ModelInitializationError`  |
 | a projection covers exactly the states its position owes                                                                                                       | model build                                                       | `ModelInitializationError`  |
 | a predicate or projection argument names a node of the target's own DAG                                                                                        | model build                                                       | `ModelInitializationError`  |
@@ -473,9 +474,10 @@ Each of these raises at `Regime` construction, naming the regime slot to change:
   single's draw; `Model.lookup_policy` returns $Q^d_c(j)$ as `Qc`, $P(j)$, $c^*(j)$ and
   the member values, without a draw. Constant weights with more than one positive entry
   are refused here; a weight declared as a function is checked at every solve, at every
-  cell. With an `exit`, the decider's logit runs over the stays every member accepts and
-  the exit, and each member's value at the exit is its own outside value. Another
-  regime's exit reads the household's member values as the solve publishes them.
+  cell. A regime with taste shocks, single or household, cannot have its own exit or
+  formation and is refused when the model is built. Another regime's exit or formation
+  reads its member values as the solve publishes them, as target or as `Consent`
+  counterparty.
 - **Any solver other than `GridSearch`.** The household argmax and per-member value
   readout run over the full action product.
 

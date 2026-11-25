@@ -15,7 +15,7 @@ class ExtremeValueTasteShocks:
     Declared on a `Regime` via `taste_shocks=ExtremeValueTasteShocks()`. One
     shock is drawn per combination of the regime's discrete actions; its scale
     is the runtime parameter `{"taste_shocks": {"scale": ...}}` in the regime's
-    params and must be strictly positive — the hard maximum is the
+    params and must be strictly positive and finite — the hard maximum is the
     no-taste-shocks model, not a zero scale.
 
     The solve first maximizes over every continuous-action axis within
@@ -31,26 +31,19 @@ class ExtremeValueTasteShocks:
     grid-restricted and need not reproduce its off-grid solve value or choice
     probabilities.
 
-    With built-in current-period exits, Full appends one source taste component
-    per exit in declaration order after the discrete-action combinations.
-    Continuous optimization still precedes taste: continuous action points do
-    not receive separate components. Full solve takes the logsum over admitted
-    stay-combination maxima and admitted exit payoffs. Dissolution remains a
-    fallback when its kept stay set is empty; strict Consent governs formation.
-    Full simulation uses one
-    draw at the source regime's existing taste address for that entire roster,
-    mapping the selected component back to its stable stay action or exit ID.
-    Publication remains the selected unshocked value. Destination taste is
-    separately hidden-priced at its logsum and drawn at its own address only
-    when acting there. Arbitrary custom Full selectors with source EV1 taste
-    shocks are unsupported and explicitly refused. In a household the roster is
-    the decider's, and every member's value at the exit is its own exit payoff.
+    A regime with taste shocks cannot have its own exit or formation: it
+    declares no `exit`, under any rule. Another regime's exit or formation may
+    read it, as its target or as the counterparty of a `Consent`. That read
+    prices the regime at the value its solve publishes: the decider's smoothed
+    expected maximum, and every other member's mean value under the decider's
+    choice probabilities. A subject that moves there draws its discrete action
+    at the regime's own taste address when it acts.
 
     At least one discrete action is required. The implemented solver routes are
     `GridSearch` and `DCEGM`. The declaration is rejected for `NEGM`, `NBEGM`,
     and `NNBEGM`; for a household unless exactly one member has a positive
-    Pareto weight; on a source regime with a `Gate`; and together with a
-    nonlinear certainty equivalent. These
+    Pareto weight; on a source regime with a `Gate`; on a regime that declares
+    an `exit`; and together with a nonlinear certainty equivalent. These
     combinations are rejected during `Regime` declaration or `Model`
     construction, before solve, rather than silently dropping the shocks; only
     a Pareto weight declared as a function is checked when the model is solved,
