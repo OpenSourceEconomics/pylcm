@@ -196,8 +196,13 @@ def test_public_subject_sharding_keeps_callable_floor_integrity(
         log_level="off",
         runtime_checks=runtime_checks,
     )
+    # Linear utility and unit discounting make every feasible consumption at
+    # age 0 worth the same 2.0, so only the value and the lifetime total are
+    # determined: the last decision consumes whatever the first one left.
+    frame = positive.to_dataframe()
+    np.testing.assert_allclose(frame.loc[frame["period"] == 0, "value"], [2.0] * 3)
     np.testing.assert_array_equal(
-        positive.to_dataframe()["consumption"].dropna(), [0.25, 1.75] * 3
+        frame.groupby("subject_id")["consumption"].sum(), [2.0] * 3
     )
     assert observed
     np.testing.assert_array_equal(

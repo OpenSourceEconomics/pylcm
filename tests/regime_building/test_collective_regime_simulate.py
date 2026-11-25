@@ -590,8 +590,8 @@ def _u_zero(wage: ContinuousState) -> FloatND:
     return 0.0 * wage
 
 
-def _u_zero_collective(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
-    return 0.0 * wage * work
+def _u_effort_collective(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    return -0.25 * work + 0.0 * wage
 
 
 _COST_F = "exit__targets__f__utility_adjustment__delta_f"
@@ -664,7 +664,7 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
-                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+                utilities={"f": _u_effort_collective, "m": _u_effort_collective}
             )
         },
     )
@@ -698,7 +698,7 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
-                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+                utilities={"f": _u_effort_collective, "m": _u_effort_collective}
             )
         },
     )
@@ -723,6 +723,26 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
         "single_m": single_m,
         "single_m_terminal": single_m_terminal,
     }
+
+
+def test_dissolution_miniature_has_one_best_labor_choice_at_every_wage_node() -> None:
+    """Every member ranks work and leisure strictly at every wage node.
+
+    The wage never moves and no transition reads `work`, so the flow utilities
+    alone order the two choices and the simulated choice is the unique best one.
+    """
+    for name, regime in _make_dissolution_regimes().items():
+        if "work" not in regime.actions:
+            continue
+        utility = regime.functions["utility"]
+        members = getattr(utility, "utilities", {"self": utility})
+        for member, function in members.items():
+            for wage in (1.0, 2.0, 3.0):
+                assert function(wage=wage, work=0) != function(wage=wage, work=1), (
+                    name,
+                    member,
+                    wage,
+                )
 
 
 def _solve_dissolution() -> _Solved:

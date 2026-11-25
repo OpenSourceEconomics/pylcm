@@ -69,6 +69,7 @@ _SHARED_WAGE_GRID = LinSpacedGrid(start=8.0, stop=40.0, n_points=2)
 _DISSOLUTION_WAGE_GRID = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)
 _MIDDLE_WAGE_LOWER = 1.5
 _MIDDLE_WAGE_UPPER = 2.5
+_EFFORT_COST = 0.25
 
 
 def get_params() -> dict[str, float]:
@@ -134,12 +135,12 @@ def _identity_wage(wage: ContinuousState) -> ContinuousState:
     return wage
 
 
-def _zero_collective_utility(
+def _effort_cost_utility(
     *,
     wage: ContinuousState,
     work: DiscreteAction,
 ) -> FloatND:
-    return 0.0 * wage * work
+    return -_EFFORT_COST * work + 0.0 * wage
 
 
 def _participation_utility_f(
@@ -229,7 +230,7 @@ def get_dissolution_model(
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
-                utilities={"f": _zero_collective_utility, "m": _zero_collective_utility}
+                utilities={"f": _effort_cost_utility, "m": _effort_cost_utility}
             )
         },
     )
@@ -238,7 +239,7 @@ def get_dissolution_model(
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
-                utilities={"f": _zero_collective_utility, "m": _zero_collective_utility}
+                utilities={"f": _effort_cost_utility, "m": _effort_cost_utility}
             )
         },
     )

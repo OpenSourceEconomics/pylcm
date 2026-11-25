@@ -57,7 +57,7 @@ from tests.regime_building.test_collective_regime_simulate import (
     Work,
     _identity_wage,
     _make_dissolution_regimes,
-    _u_zero_collective,
+    _u_effort_collective,
 )
 
 # The three wage nodes the dissolution miniature is solved on. The exit of
@@ -358,7 +358,7 @@ def _make_unreachable_role_routing_regimes() -> dict[RegimeName, Regime]:
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
-                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+                utilities={"f": _u_effort_collective, "m": _u_effort_collective}
             )
         },
     )
@@ -367,7 +367,7 @@ def _make_unreachable_role_routing_regimes() -> dict[RegimeName, Regime]:
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
-                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+                utilities={"f": _u_effort_collective, "m": _u_effort_collective}
             )
         },
     )
@@ -448,7 +448,7 @@ def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role()
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
-                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+                utilities={"f": _u_effort_collective, "m": _u_effort_collective}
             )
         },
     )

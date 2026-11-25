@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
+from lcm import CollectiveUtility
 from lcm.exits import Unilateral
 from lcm.solver_api import ResultRetention
 from lcm_examples.collective_regimes import (
@@ -120,3 +121,25 @@ def test_dissolution_follows_the_eckstein_keane_lifshitz_rule() -> None:
     model = get_dissolution_model()
     declaration = model.user_regimes["married_with_participation"].exit
     assert getattr(declaration, "rule", None) == Unilateral(tie="leave")
+
+
+def test_dissolution_households_rank_work_and_leisure_strictly() -> None:
+    """Every member ranks work and leisure strictly at every wage node.
+
+    The wage never moves and no transition reads `work`, so the flow utilities
+    alone order the two choices and the simulated choice is the unique best one.
+    """
+    model = get_dissolution_model()
+    for name, regime in model.user_regimes.items():
+        if "work" not in regime.actions:
+            continue
+        utility = regime.functions["utility"]
+        assert isinstance(utility, CollectiveUtility)
+        for member, function in utility.utilities.items():
+            assert callable(function)
+            for wage in (1.0, 2.0, 3.0):
+                assert function(wage=wage, work=0) != function(wage=wage, work=1), (
+                    name,
+                    member,
+                    wage,
+                )

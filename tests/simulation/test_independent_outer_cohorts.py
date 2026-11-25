@@ -36,7 +36,15 @@ from lcm import (
     fixed_transition,
 )
 from lcm.result import SimulationResult
-from lcm.typing import RegimeName, ScalarInt
+from lcm.typing import (
+    ContinuousAction,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    IntND,
+    RegimeName,
+    ScalarInt,
+)
 from tests.simulation._callback_types import (
     OperandPlacement,
     RuntimeDispatch,
@@ -77,24 +85,78 @@ class _RegimeId:
     retired: ScalarInt
 
 
+def _utility_working(
+    *, wealth: ContinuousState, consumption: ContinuousAction, kind: DiscreteState
+) -> FloatND:
+    return -((consumption - (kind + 1.5)) ** 2) + wealth * 0.125
+
+
+def _next_wealth(
+    *, wealth: ContinuousState, consumption: ContinuousAction
+) -> ContinuousState:
+    return wealth - consumption
+
+
+def _utility_retired(*, wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+    return wealth * (kind + 1)
+
+
+def _next_regime(age: FloatND) -> ScalarInt:
+    return jnp.where(age < 1, _RegimeId.working, _RegimeId.retired)
+
+
+def _consumption_values(*, wealth: FloatND, kind: IntND, age: int) -> FloatND:
+    """Value of each consumption node at a discount factor of one half.
+
+    Both utilities are linear in wealth, so the interpolated continuation is
+    exact inside the wealth grid, and every number is a small dyadic fraction,
+    so float arithmetic does not round.
+    """
+    consumption = jnp.asarray([1.0, 2.0, 3.0])
+    landing = wealth - consumption
+    continuation = (
+        _utility_retired(wealth=landing, kind=kind)
+        if age == 1
+        else jnp.stack(
+            [
+                jnp.max(_consumption_values(wealth=node, kind=kind, age=1))
+                for node in landing
+            ]
+        )
+    )
+    return (
+        _utility_working(wealth=wealth, consumption=consumption, kind=kind)
+        + 0.5 * continuation
+    )
+
+
+@pytest.mark.parametrize("age", [0, 1])
+@pytest.mark.parametrize("kind", [0, 1, 2])
+def test_every_kind_has_one_best_consumption_at_every_reached_wealth(
+    *, kind: int, age: int
+) -> None:
+    """No working subject is indifferent between two consumption nodes."""
+    for wealth in range(17, 39):
+        second, best = np.sort(
+            _consumption_values(
+                wealth=jnp.asarray(float(wealth)), kind=jnp.asarray(kind), age=age
+            )
+        )[-2:]
+        assert best > second, wealth
+
+
 def _model(*, devices: tuple[int, ...], width: int | None) -> Model:
     return Model(
         regimes={
             "working": Regime(
                 states={"wealth": LinSpacedGrid(start=1, stop=40, n_points=4)},
                 actions={"consumption": LinSpacedGrid(start=1, stop=3, n_points=3)},
-                functions={
-                    "utility": lambda wealth, consumption, kind: (
-                        -((consumption - (kind + 1)) ** 2) + wealth * 0.125
-                    )
-                },
-                state_transitions={
-                    "wealth": lambda wealth, consumption: wealth - consumption
-                },
+                functions={"utility": _utility_working},
+                state_transitions={"wealth": _next_wealth},
             ),
             "retired": Regime(
                 states={"wealth": LinSpacedGrid(start=1, stop=40, n_points=4)},
-                functions={"utility": lambda wealth, kind: wealth * (kind + 1)},
+                functions={"utility": _utility_retired},
             ),
         },
         states={"kind": DiscreteGrid(_Kind)},
@@ -111,11 +173,7 @@ def _model(*, devices: tuple[int, ...], width: int | None) -> Model:
         edges={
             "working": Transition(
                 targets={"working": 0, "retired": (0, 1)},
-                law=DeterministicTransition(
-                    func=lambda age: jnp.where(
-                        age < 1, _RegimeId.working, _RegimeId.retired
-                    )
-                ),
+                law=DeterministicTransition(func=_next_regime),
             )
         },
     )

@@ -57,12 +57,12 @@ from tests.regime_building.test_collective_regime_simulate import (
     _make_dissolution_regimes,
     _married_dissolution_transition,
     _prob_one,
+    _u_effort_collective,
     _u_married_ir_f,
     _u_married_ir_m,
     _u_single_f_ir,
     _u_single_m_ir,
     _u_zero,
-    _u_zero_collective,
 )
 
 
@@ -232,7 +232,7 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
-                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+                utilities={"f": _u_effort_collective, "m": _u_effort_collective}
             )
         },
     )
@@ -266,7 +266,7 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
-                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+                utilities={"f": _u_effort_collective, "m": _u_effort_collective}
             )
         },
     )
@@ -537,13 +537,17 @@ def test_regime_replacement_names_exactly_the_declared_slots() -> None:
     assert RegimeReplacement.__optional_keys__ == declared
 
 
+def _stay_alive() -> int:
+    return 0
+
+
 def test_decomposed_transition_of_an_age_schedule_is_its_engine_view() -> None:
     """A deterministic dated regime decomposes to one engine routing function."""
     law = bind_regime_law(
         ByAge.until(
             stop_age_exclusive=2,
             law=_SupportedDeterministicTransition(
-                func=lambda: 0, targets=("alive", "dead")
+                func=_stay_alive, targets=("alive", "dead")
             ),
             then="dead",
         )

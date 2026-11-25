@@ -118,9 +118,10 @@ edges = {
 }
 ```
 
-`married` produces no flow utility of its own, so its value is the continuation
-discounted at 0.95: `(1.9, 0.95)` at wage 1, `(5.7, 2.85)` at wage 3, and at the middle
-node the dissolved values net of the divorce cost,
+In `married` and `married_terminal` work pays nothing and costs each partner 0.25, so
+the household takes leisure and its flow utility is zero. The value of `married` is
+therefore the continuation discounted at 0.95: `(1.9, 0.95)` at wage 1, `(5.7, 2.85)` at
+wage 3, and at the middle node the dissolved values net of the divorce cost,
 `(0.95 × 5.0, 0.95 × 0.8) = (4.75, 0.76)`.
 
 ## Simulating one role at a time

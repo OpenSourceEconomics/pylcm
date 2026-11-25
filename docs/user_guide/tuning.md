@@ -218,9 +218,11 @@ continuation replicated onto other devices, for example under a sharded continuo
 state, moves one code's share at a time. The blocked solve evaluates the same Bellman
 problem as the unblocked one and publishes values in the same layout. Independently
 compiled blocked and unblocked values agree within eight ULP of the working float
-format; policies, states, actions, regimes, and public result structure remain exact.
-Routes dispatching the same compiled program retain their bitwise contract. Terminal
-regimes are solved whole.
+format, and the sets of best actions agree. Simulated choices, and the states and
+regimes that follow from them, agree wherever the best action is unique. Blocking keeps
+the order of the action grid, and the public result structure is the same. Routes
+dispatching the same compiled program retain their bitwise contract. Terminal regimes
+are solved whole.
 
 The request is checked at model construction. It is refused, naming every reason, when:
 
