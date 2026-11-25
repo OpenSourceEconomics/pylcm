@@ -5,6 +5,23 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Several decisions in one period
+
+- `Model(stages={stage_name: (regime_name, ...), ...})` declares the decisions taken one
+  after another within every period. Every regime is in exactly one stage; subjects
+  start in the first, an edge lands in the next stage, and an edge out of the last stage
+  lands in the first stage of the next period. The stages of a period are linked without
+  discounting; a regime of a stage before the last that declares a Koopmans aggregator
+  or uses an endogenous-grid solver is refused, as are a start, an edge or an exit out
+  of stage order.
+- `period` and `age` are the period's in user functions, time-indexed parameters are
+  indexed by period, and the simulated frame gains a `stage` column. `model.n_periods`,
+  the solution and the raw simulation results count steps, one per period and stage.
+- A model without `stages` has one stage per period; its programs, parameter templates,
+  fingerprints and saved formats are those of a model without the argument.
+- See
+  [Several decisions in one period](docs/user_guide/period_time.md#several-decisions-in-one-period).
+
 ### `StateConditioned` conditions any law parameter of a CDF-binned process
 
 - `StateConditioned` is accepted for `mu` and `sigma` of `NormalIIDProcess`, for `mu`,

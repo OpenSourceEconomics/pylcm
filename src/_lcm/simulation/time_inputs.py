@@ -3,7 +3,7 @@
 import numpy as np
 import pandas as pd
 
-from _lcm.time import TimeAxis, coordinate_kind
+from _lcm.time import TimeAxis, coordinate_kind, stages_per_period
 from lcm.exceptions import InvalidInitialConditionsError
 from lcm.typing import UserInitialConditions
 
@@ -28,14 +28,15 @@ def lower_initial_time(
     if "period" not in initial_conditions:
         raise InvalidInitialConditionsError("Period models require a 'period' column.")
     values = np.asarray(initial_conditions["period"])
+    n_periods = ages.n_periods // stages_per_period(ages)
     if (
         values.ndim != 1
         or values.dtype.kind not in "iu"
         or np.any(values < 0)
-        or np.any(values >= ages.n_periods)
+        or np.any(values >= n_periods)
     ):
         raise InvalidInitialConditionsError(
-            f"Initial period must contain integers in [0, {ages.n_periods}); "
+            f"Initial period must contain integers in [0, {n_periods}); "
             "booleans and fractional values are invalid."
         )
     if isinstance(initial_conditions, pd.DataFrame):

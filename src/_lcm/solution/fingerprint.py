@@ -57,7 +57,7 @@ from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.value_adapter import AdaptedBuild, ValueAdapter
 from _lcm.regime_law import RegimeLaw
-from _lcm.time import TimeAxis, coordinate_kind
+from _lcm.time import ModelTime, Stages, TimeAxis, coordinate_kind
 from _lcm.typing import (
     DataclassInstance,
     FlatEdgeParams,
@@ -93,6 +93,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     DiscreteState,
+    UserAge,
     UserParams,
 )
 
@@ -831,6 +832,20 @@ _MISSING: Final = _Missing.MISSING
 type BindingRecorder = Callable[[SealedBinding], None]
 
 
+def _clock_record(
+    ages: TimeAxis,
+) -> tuple[UserAge | str | tuple[UserAge | str, ...] | Stages, ...]:
+    """Return the clock's identity: its coordinates and, in a staged model, stages."""
+    record = (
+        tuple(ages.exact_values)
+        if coordinate_kind(ages) == "age"
+        else ("period", ages.n_periods)
+    )
+    if isinstance(ages, ModelTime) and ages.stages:
+        return (record, ages.stages)
+    return record
+
+
 def fingerprint_model_declarations(
     *,
     ages: TimeAxis,
@@ -847,9 +862,7 @@ def fingerprint_model_declarations(
     return _semantic_fingerprint(
         (
             ("pylcm-model-declarations", 1),
-            tuple(ages.exact_values)
-            if coordinate_kind(ages) == "age"
-            else ("period", ages.n_periods),
+            _clock_record(ages),
             {name: int(code) for name, code in regime_names_to_ids.items()},
             {
                 name: _project_user_regime_declaration(regime, law=laws[name])
@@ -894,9 +907,7 @@ def fingerprint_model_structure(
     )
     record = (
         ("pylcm-model-structure", 8),
-        tuple(ages.exact_values)
-        if coordinate_kind(ages) == "age"
-        else ("period", ages.n_periods),
+        _clock_record(ages),
         {name: int(regime_id) for name, regime_id in regime_names_to_ids.items()},
         {
             name: {

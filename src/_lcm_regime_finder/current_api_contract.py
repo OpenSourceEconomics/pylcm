@@ -28,12 +28,12 @@ NATIVE_SCHEDULE_TYPES = frozenset(name for name in NATIVE_INPUT_TYPES
     if name.startswith(('_lcm.regime_building.schedules.', '_lcm.regime_building.transition_support.'))
     or name == 'lcm.transition.StochasticTransition')
 
-_TRANSITION_FILE = 'bb5e00b64d0334ff661ca35cd04c8b291d22017640f5e355fb05ed6cb4e238ca'
+_TRANSITION_FILE = '8dfed1b3b1418281d1c50ca3e56f578861baf7fd595a894821bd8d566410e2cc'
 # Schedule files whose `_PeriodDispatch` and `_ProbabilityConstant` are identical.
 # The second counts every period a gated source reads in `gated_source_periods`.
 _SCHEDULES_FILES = (
     'b9b26eacf800b5be94f84ba493e4f4686b9ac5b81610303a2ac38b8a1bee8d27',
-    '942e052249b47aaf489e1539e68d6d688fd5cc72210704a0506e4d003a66df77',
+    '4e7ccbe7dbacb185351281459b8175715e8e2c1408cf53442fae77ae35a55501',
 )
 _AUTHORITIES = {
     '_lcm.regime_building.schedules._PeriodDispatch': (
@@ -63,8 +63,8 @@ _AUTHORITIES = {
         ('4d4c9125844b0e0612a28eeb20288dbcc0d2591a0a91c89f12f4528605e415a0',),
     ),
     '_lcm.regime_building.value_adapter.ValueAdapter': (
-        ('bc46eb4aa3919573fa3252f4521a3c01f14ca6b5ff62e31e7c93b34f3ea21718',
-         ('bcfc407bc416489188d2e259c9b9f8927e5d3d73562dc7a3e5ba7536ec95d35b',)),
+        ('a48b54b7ba830047d6aa6f669e82775d80d687dc6576ea9e4d2d3e9104e5860d',
+         ('6fdfe50b26fb43458074b802526d3810818a31fdfe8142892e2e278ae0f6a45f',)),
         ('46d796380a1afe65bf0c94fe9264db510394599c4a34f2adcfd949e94849c5b5',
          ('030fdfaf3842033b43ba4544c9f245c14e44ad24633f352b746100751f0f8e32',)),
     ),
@@ -90,8 +90,8 @@ _AUTHORITIES = {
 
 _NATIVE_CALL_SOURCES = MappingProxyType({
     '_lcm.regime_building.value_adapter.ValueAdapter': frozenset({
-        ('bcfc407bc416489188d2e259c9b9f8927e5d3d73562dc7a3e5ba7536ec95d35b',
-         '9f680db35e88630edd31b3d42d0abaebd3e82e72fa11aa07d9292a4c6dacca55'),
+        ('6fdfe50b26fb43458074b802526d3810818a31fdfe8142892e2e278ae0f6a45f',
+         'e2e8d9e1f6f034ed3564ec474f2ac1520eff6284683a44382824bc2738b42b1d'),
         ('030fdfaf3842033b43ba4544c9f245c14e44ad24633f352b746100751f0f8e32',
          '991053e32d97e7ea21bf0cb93648389d63d2cb6133e858de90074786457ed618'),
     }),
@@ -533,7 +533,7 @@ def inspect_native_first_array_return(
         return None
     try:
         source = Path(filename).read_bytes().replace(b'\r\n', b'\n')
-        if hashlib.sha256(source).hexdigest() != 'a1c756ad5c8e2049cdfe0026ac2716b427781b2cd80ac6d8f821b7ed6bb69289':
+        if hashlib.sha256(source).hexdigest() != 'ce6c96e1640806276d8f6d9ef9f5a3c7887b1a7b1b551df25f0ea01e6501669e':
             return None
         evaluator = _native_array_alias_evaluator(alias, native_typing, source, filename, name='ValueND', dtype_name='Shaped')
         if evaluator is None:
@@ -832,7 +832,7 @@ def inspect_native_floatnd_alias(value: object) -> dict[str, JSONValue] | None:
     try:
         source, file_hash = _source_file(filename)
         _, array_hash = _source_file(array_filename)
-        if (file_hash not in {'a1c756ad5c8e2049cdfe0026ac2716b427781b2cd80ac6d8f821b7ed6bb69289',
+        if (file_hash not in {'ce6c96e1640806276d8f6d9ef9f5a3c7887b1a7b1b551df25f0ea01e6501669e',
                              '5335c3c4cdfdcc48c231bd7ba3e44285d93be331242d77404d7778f977fe6c99'}
                 or array_hash != 'e63908f56c995f24cbed97d9ba820c8b5fd98bc0301dfb4095cde3ab7d5dd1e4'):
             return None

@@ -35,7 +35,12 @@ from _lcm.reachability import ModelReachability
 from _lcm.regime_building.collective import NO_ROLE, build_role_vocabulary
 from _lcm.regime_law import RegimeLaws
 from _lcm.simulation.initial_conditions import MISSING_CAT_CODE, PSEUDO_STATE_NAMES
-from _lcm.time import TimeAxis, coordinate_kind, specialization_coordinate_at
+from _lcm.time import (
+    ModelTime,
+    TimeAxis,
+    coordinate_kind,
+    specialization_coordinate_at,
+)
 from _lcm.typing import (
     FlatParams,
     FunctionName,
@@ -1040,6 +1045,14 @@ def _convert_param_value(
         value unchanged.
 
     """
+    if isinstance(ages, ModelTime) and ages.n_stages > 1:
+        # A user function reads the period of the step, so a time-indexed
+        # parameter is laid out over periods.
+        if required_periods is not None:
+            required_periods = tuple(
+                sorted({period // ages.n_stages for period in required_periods})
+            )
+        ages = ages.economic
 
     recurse = functools.partial(
         _convert_param_value,

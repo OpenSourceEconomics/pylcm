@@ -25,8 +25,8 @@ code to model equations; a shorter language is not an aim of its own.
 - A **stage** is a decision inside a period.
 - A **step** is a pair (period, stage). The recursion and the solver run over steps.
 
-The documentation uses these words; the model language has no stage object. Its `period`
-counts steps, which are periods wherever each period has one stage.
+The model language declares stages with `Model(stages=...)`; `period` in model code is
+economic time, and the engine counts steps.
 
 ### One noun: regime
 

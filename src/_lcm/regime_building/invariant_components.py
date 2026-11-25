@@ -46,7 +46,7 @@ from _lcm.time import TimeAxis
 from _lcm.typing import RegimeName, StateName
 from lcm.exceptions import ExecutionPlanningError
 from lcm.grids import DiscreteGrid
-from lcm.transition import AgeSpecializedGrid, StochasticTransition
+from lcm.transition import AgeSpecializedGrid, StochasticTransition, _period_by_age
 from lcm.typing import UserAge, UserFunction
 
 type Phase = Literal["solve", "simulate"]
@@ -155,9 +155,7 @@ def analyze_invariant_components(
         name: normalize_regime_phases(regime, law=laws[name])
         for name, regime in user_regimes.items()
     }
-    period_of_age: dict[UserAge, int] = {
-        age: period for period, age in enumerate(ages.exact_values)
-    }
+    period_of_age = _period_by_age(ages)
     generated = {
         f"{name}_fixed": (name, split) for name, split in fixed_component_splits.items()
     }

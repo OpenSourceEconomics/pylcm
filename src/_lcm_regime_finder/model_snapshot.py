@@ -245,6 +245,7 @@ def read_model(model: Any, *, checkpoint=None, capture_limits=None, structural_s
     import importlib.metadata
     from .callable_identity import capture_session, CaptureIncomplete
 
+    _refuse_stages(getattr(getattr(model, "_time", None), "stages", None))
     graph = getattr(model, "graph", None)
     reachability = getattr(model, "reachability", None)
     ages = getattr(model, "ages", None)
@@ -351,6 +352,15 @@ def read_model(model: Any, *, checkpoint=None, capture_limits=None, structural_s
     return result
 
 
+def _refuse_stages(stages: Any) -> None:
+    """Refuse a model whose periods hold several decisions, which no layout reads."""
+    if stages:
+        raise ValueError(
+            "The regime finder reads one decision per period; a model declared "
+            "with `stages` cannot be analysed."
+        )
+
+
 def read_declarations(spec: Any, *, production_metadata: dict | None = None,
                       semantic_contract: dict | None = None,
                       specialization_metadata: dict | None = None) -> dict[str, Any]:
@@ -363,6 +373,7 @@ def read_declarations(spec: Any, *, production_metadata: dict | None = None,
     """
     if not isinstance(spec, Mapping):
         raise TypeError("A pre-program declaration mapping is required")
+    _refuse_stages(spec.get("stages"))
     from .callable_identity import capture_session
     with capture_session() as session:
         result = normalize(spec)

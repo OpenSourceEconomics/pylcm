@@ -77,7 +77,7 @@ class AgeRange:
 
 @dataclass(frozen=True, kw_only=True)
 class PeriodRange:
-    """The computational periods in `[start, exclusive_stop)`."""
+    """The periods in `[start, exclusive_stop)`."""
 
     start: int | None = None
     """Inclusive first period, or `None` for the horizon's start."""
@@ -101,7 +101,7 @@ class PeriodRange:
 
 @dataclass(frozen=True, kw_only=True)
 class Periods:
-    """Explicit computational period positions in a graph declaration."""
+    """Explicit periods in a graph declaration."""
 
     values: tuple[int, ...]
     """Zero-based period positions; no age-to-period interpretation is inferred."""
@@ -765,7 +765,7 @@ class AgeSpecializedGrid[Coordinate: (int, float) = float](_AgeSpecialized[Coord
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True)
 class PeriodSpecializedFunction(AgeSpecializedFunction[int]):
-    """Bind a function at an integer computational period.
+    """Bind a function at an integer period.
 
     ``build(period)`` and ``signature(period)`` follow the same determinism,
     signature and deduplication contracts as ``AgeSpecializedFunction``.
@@ -783,7 +783,7 @@ class PeriodSpecializedFunction(AgeSpecializedFunction[int]):
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True)
 class PeriodSpecializedGrid(AgeSpecializedGrid[int]):
-    """Bind a continuous-state grid at an integer computational period.
+    """Bind a continuous-state grid at an integer period.
 
     Shape invariance, signature verification and interpolation support follow
     ``AgeSpecializedGrid``. This declaration is valid only in a period model.
@@ -954,6 +954,19 @@ class ByAge:
             raise RegimeInitializationError(
                 "ByPeriod requires a period model; ByAge requires an age model."
             )
+        if isinstance(ages, ModelTime) and ages.n_stages > 1:
+            # Selectors name periods; every stage of a period takes its law.
+            by_period = ByAge.resolve(self, ages.economic).law_by_period
+            return ResolvedSchedule(
+                ages=ages,
+                law_by_period=MappingProxyType(
+                    {
+                        period * ages.n_stages + stage: law
+                        for period, law in by_period.items()
+                        for stage in range(ages.n_stages)
+                    }
+                ),
+            )
         period_by_age = _period_by_age(ages)
         if self._until is not None:
             law_by_period = _resolve_until(
@@ -986,10 +999,10 @@ class ByAge:
 
 
 class ByPeriod(ByAge):
-    """Select transition laws by zero-based computational period.
+    """Select transition laws by zero-based period.
 
     Integer keys, integer tuples, ranges, PeriodRange and Periods declare periods.
-    A stage advances one computational slot, without implying elapsed calendar time.
+    Every stage of a period takes the period's law.
     """
 
     @classmethod
@@ -1173,10 +1186,11 @@ def _fail_if_invalid_age_selector(selector: _DeclaredSelector) -> None:
 
 
 def _period_by_age(ages: TimeAxis) -> Mapping[AgeLabel, int]:
-    """Map each exact coordinate of `ages` to its computational period."""
-    return MappingProxyType(
-        {age: period for period, age in enumerate(ages.exact_values)}
-    )
+    """Map each exact coordinate of `ages` to its first step."""
+    period_by_age: dict[AgeLabel, int] = {}
+    for period, age in enumerate(ages.exact_values):
+        period_by_age.setdefault(age, period)
+    return MappingProxyType(period_by_age)
 
 
 def _select_periods(

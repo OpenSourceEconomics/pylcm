@@ -21,7 +21,7 @@ from _lcm.simulation.additional_targets import (
     _filter_targets_for_regime,
 )
 from _lcm.simulation.result_metadata import CategoryValue, ResultMetadata
-from _lcm.time import TimeAxis, coordinate_kind
+from _lcm.time import ModelTime, TimeAxis, coordinate_kind
 from _lcm.typing import (
     ActionName,
     FlatParams,
@@ -87,6 +87,22 @@ def _create_flat_dataframe(
             regime_to_member_axis=metadata.regime_to_member_axis,
         ),
     )
+    if isinstance(ages, ModelTime) and ages.stages:
+        # Rows are ordered by step; a step is a period and one of its stages.
+        stage_names = [name for name, _ in ages.stages]
+        frame["period"] = frame["period"] // ages.n_stages
+        frame.insert(
+            list(frame.columns).index("period") + 1,
+            "stage",
+            pd.Series(
+                pd.Categorical(
+                    [stage_names[ages.stage_of[name]] for name in frame["regime_name"]],
+                    categories=stage_names,
+                    ordered=True,
+                ),
+                index=frame.index,
+            ),
+        )
     shock_names = {
         name
         for periods in raw_results.values()

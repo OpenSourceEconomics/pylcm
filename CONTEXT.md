@@ -140,14 +140,15 @@ with age.
 _Avoid_: date, t (in user-facing text)
 
 **Stage**:
-A decision inside a period. A period has one stage unless the model takes several
-decisions in it.
+A decision inside a period, declared with `Model(stages=...)`; every period has the
+same stages, in order, and every regime belongs to one of them. A period has one stage
+unless the model declares several. Stages of one period are linked without discounting.
 _Avoid_: date, sub-period
 
 **Step**:
-A pair of a period and a stage: what the recursion and the solver run over. The API's
-`period` and `n_periods` count steps, which coincide with periods when each period has
-one stage.
+A pair of a period and a stage: what the recursion and the solver run over.
+`model.n_periods`, the solution and the raw simulation results count steps; `period`
+in user functions and in the simulated frame is the period.
 _Avoid_: date, time step
 
 ### Parameters

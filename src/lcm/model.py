@@ -8,7 +8,7 @@ import os
 import threading
 import uuid
 import weakref
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from difflib import SequenceMatcher
 from pathlib import Path
 from types import MappingProxyType
@@ -151,6 +151,7 @@ from _lcm.regime_building.schedules import (
 )
 from _lcm.regime_building.value_adapter import (
     AdapterMemo,
+    StageClock,
     adapt_regime_laws,
     bind_reading_regimes,
     collect_adapter_grids,
@@ -312,7 +313,7 @@ from _lcm.solution.result_snapshot import (
 from _lcm.solution.solve_phase_records import CallId, new_call_id, solve_phase
 from _lcm.solution.structural_blueprints import StructuralBlueprintCache
 from _lcm.time import ModelTime
-from _lcm.time_validation import validate_time_declarations
+from _lcm.time_validation import validate_stages, validate_time_declarations
 from _lcm.transition_checks import validate_regime_selection, validate_transitions
 from _lcm.typing import (
     ActionName,
@@ -452,6 +453,7 @@ from lcm.typing import (
     Phase,
     PRNGKey,
     ReferenceName,
+    StageName,
     UserFacingParamsTemplate,
     UserFacingRegimeParamsTemplate,
     UserFunction,
@@ -810,6 +812,7 @@ class _ModelConstructorInputs:
     description: str = ""
     ages: AgeGrid | None = None
     n_periods: int | None = None
+    stages: Mapping[StageName, Sequence[RegimeName]] | None = None
     regimes: Mapping[RegimeName, UserRegime]
     regime_id_class: type[DataclassInstance]
     shocks: Mapping[ShockGroupName, ShockGroup] = MappingProxyType({})
@@ -908,6 +911,7 @@ class _ModelConstructorInputs:
             description=self.description,
             ages=self.ages,
             n_periods=self.n_periods,
+            stages=self.stages,
             regimes=self.regimes,
             regime_id_class=self.regime_id_class,
             shocks=self.shocks,
@@ -986,7 +990,7 @@ class Model:
     """Age grid, or None when the horizon is declared with n_periods."""
 
     n_periods: int
-    """Number of periods in the model."""
+    """Number of steps in the model: its periods times the stages of a period."""
 
     regime_names_to_ids: RegimeNamesToIds
     """Immutable mapping from regime names to integer indices."""
@@ -1158,6 +1162,7 @@ class Model:
         description: str = "",
         ages: AgeGrid | None = None,
         n_periods: int | None = None,
+        stages: Mapping[StageName, Sequence[RegimeName]] | None = None,
         regimes: Mapping[RegimeName, UserRegime],
         regime_id_class: type[DataclassInstance],
         shocks: Mapping[ShockGroupName, ShockGroup] = MappingProxyType({}),
@@ -1191,8 +1196,18 @@ class Model:
                 form is exposed as `self._regimes`.
             ages: Age grid for the model. Supply exactly one of `ages` and
                 `n_periods`.
-            n_periods: Positive number of computational periods, indexed from
-                zero. This mode has no age grid.
+            n_periods: Positive number of periods, indexed from zero. This mode
+                has no age grid.
+            stages: The decisions taken one after another within every period,
+                as an ordered mapping from stage names to the regimes of that
+                stage. Every regime is in exactly one stage; subjects start in
+                the first, an edge lands in the next stage, and an edge out of
+                the last stage lands in the first stage of the next period.
+                Stages of one period are linked without discounting. `period`
+                and `age` are economic time in user functions and results, and
+                the simulated frame gains a `stage` column. `None` means one
+                stage per period. `self.n_periods` and the solution count steps,
+                the pairs of a period and a stage.
             description: Description of the model.
             regime_id_class: Dataclass mapping regime names to integer indices.
             shocks: Named IID shock groups, referenced by `Regime.shocks`. A
@@ -1269,6 +1284,7 @@ class Model:
             description=description,
             ages=ages,
             n_periods=n_periods,
+            stages=stages,
             regimes=regimes,
             regime_id_class=regime_id_class,
             shocks=shocks,
@@ -1312,6 +1328,7 @@ class Model:
         description: str = "",
         ages: AgeGrid | None = None,
         n_periods: int | None = None,
+        stages: Mapping[StageName, Sequence[RegimeName]] | None = None,
         regimes: Mapping[RegimeName, UserRegime],
         regime_id_class: type[DataclassInstance],
         shocks: Mapping[ShockGroupName, ShockGroup] = MappingProxyType({}),
@@ -1349,6 +1366,7 @@ class Model:
                     description=description,
                     ages=ages,
                     n_periods=n_periods,
+                    stages=stages,
                     regimes=regimes,
                     regime_id_class=regime_id_class,
                     shocks=shocks,
@@ -1374,7 +1392,9 @@ class Model:
         self.durable_identity = durable_identity
         self._identity_process_id = os.getpid()
         self.ages = ages
-        self._time = ModelTime.from_inputs(ages=ages, n_periods=n_periods)
+        self._time = ModelTime.from_inputs(
+            ages=ages, n_periods=n_periods, stages=stages, regime_names=tuple(regimes)
+        )
         self.n_periods = self._time.n_periods
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
         # The graph declares every regime transition: bind each source's law
@@ -1493,12 +1513,19 @@ class Model:
         merged_regimes, post_decision_shocks = lower_post_decision_shocks(
             regimes=merged_regimes, laws=laws, groups=shocks
         )
+        # A user function reads the period of the step the engine runs.
+        clock_grids = (
+            {"period": StageClock(n_stages=self._time.n_stages)}
+            if self._time.n_stages > 1
+            else {}
+        )
         self._shock_registry = create_shock_registry(
             shocks=shocks,
             regimes=merged_regimes,
             legacy_regimes=declared_shock_regimes,
             model_states=states,
             laws=laws,
+            clock_grids=clock_grids,
         )
         fixed_params, shock_consumed_params = bind_fixed_shock_params(
             registry=self._shock_registry, fixed_params=self.fixed_params
@@ -1509,6 +1536,13 @@ class Model:
         validate_time_declarations(regimes=merged_regimes, laws=laws, ages=self._time)
         validate_regimes(regimes=merged_regimes, laws=laws)
         validate_exit_targets(regimes=merged_regimes, laws=laws)
+        validate_stages(
+            regimes=merged_regimes,
+            laws=laws,
+            edges=graph_edges,
+            initial_nodes=resolved_initial_nodes,
+            time=self._time,
+        )
         # What each regime declares before demand prunes any: a declared law
         # reads these as variables at every horizon, never as parameters, and a
         # Series indexed by one keeps its labels.
@@ -1538,6 +1572,7 @@ class Model:
             schedules=schedules,
             declared_transitions=prepared_graph.declarations,
             code_by_name=regime_names_to_ids,
+            n_stages=self._time.n_stages,
         )
         laws = MappingProxyType(
             {
@@ -1635,6 +1670,7 @@ class Model:
                     derived_categoricals=derived_categoricals,
                 ),
                 **self._shock_registry.discrete_grids,
+                **clock_grids,
             },
             regimes=pruned_regimes,
         )
@@ -1650,6 +1686,11 @@ class Model:
             certainty_equivalent=certainty_equivalent,
             value_grids_by_regime=value_grids_by_regime,
             adapters=adapters,
+            linked=frozenset(
+                name
+                for name, stage in self._time.stage_of.items()
+                if stage < self._time.n_stages - 1
+            ),
         )
         # The process states whose node position each regime's readers take,
         # so a supplied value off those nodes is refused before it is read.

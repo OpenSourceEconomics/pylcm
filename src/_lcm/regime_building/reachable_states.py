@@ -40,6 +40,7 @@ from _lcm.typing import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.grids import DiscreteGrid
+from lcm.transition import _period_by_age
 from lcm.typing import ScalarFloat, ScalarInt, UserAge
 
 type Phase = SolutionPhase | SimulationPhase
@@ -103,7 +104,7 @@ def enumerate_reachable_states(
     _fail_if_start_codes_are_invalid(
         regimes=regimes, carriers=carriers, members=members, start_codes=start_codes
     )
-    period_of_age = {age: period for period, age in enumerate(ages.exact_values)}
+    period_of_age = _period_by_age(ages)
     evaluator = _SuccessorEvaluator(regimes=regimes, members=members, ages=ages)
     by_node: dict[tuple[int, RegimeName], set[Codes]] = {}
     starts = set(itertools.product(*(tuple(start_codes[m]) for m in members)))

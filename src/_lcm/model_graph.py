@@ -36,7 +36,12 @@ from _lcm.regime_law import (
     RegimeLaws,
     bind_regime_law,
 )
-from _lcm.time import TimeAxis, coordinate_kind
+from _lcm.time import (
+    TimeAxis,
+    coordinate_kind,
+    stage_position,
+    stages_per_period,
+)
 from _lcm.user_regime_validation import (
     fail_if_a_joint_target_is_unreachable,
     validate_regimes,
@@ -449,7 +454,7 @@ def _exit_is_statically_unavailable(
     if names - {"period", "age"}:
         return False
     inputs = {
-        "period": jnp.asarray(period, dtype=jnp.int32),
+        "period": jnp.asarray(period // stages_per_period(ages), dtype=jnp.int32),
         "age": ages.values[period],
     }
     value = jnp.asarray(predicate(**{name: inputs[name] for name in names}))
@@ -698,8 +703,9 @@ def _transition_targets(
     phases reaches both. Supplied `targets` must then say the same at every
     non-final age; a law over all targets uses the supplied ones.
     """
+    stage = stage_position(ages=ages, regime=source)
     derived = _derived_target_ages(
-        transition=transition, ages=ages, fallback_phases=fallback_phases
+        transition=transition, ages=ages, fallback_phases=fallback_phases, stage=stage
     )
     if derived is None:
         # `Transition` requires `targets` for a law that names no target.
@@ -708,17 +714,20 @@ def _transition_targets(
         )
     if transition.targets is not None:
         period_by_age = _period_by_age(ages)
-        # No transition leaves the final age, so a selector that also selects
+        # No transition leaves the last step, so a selector that also selects
         # it names the same destinations as one that stops before it.
-        final_age = ages.exact_values[-1]
+        last = (
+            {ages.exact_values[-1]} if stage == stages_per_period(ages) - 1 else set()
+        )
         supplied = {
             target: _selected_source_ages(
                 selector=selector,
                 edge=f"'{source}' → '{target}'",
                 ages=ages,
                 period_by_age=period_by_age,
+                stage=stage,
             )
-            - {final_age}
+            - last
             for target, selector in transition.targets.items()
         }
         if supplied != derived:
@@ -739,11 +748,15 @@ def _derived_target_ages(
     transition: Transition,
     ages: TimeAxis,
     fallback_phases: tuple[Side, ...],
+    stage: int,
 ) -> MappingProxyType[RegimeName, frozenset[UserAge]] | None:
-    """The source ages at which a law names each target; `None` if it names none."""
+    """The source ages at which a law names each target; `None` if it names none.
+
+    The source decides at the steps of its `stage`, all but the last.
+    """
     law = cast("CaseLaw | ByAge", transition.law)
     sides = (law.solve, law.simulate) if isinstance(law, Phased) else (law,)
-    non_final = range(ages.n_periods - 1)
+    non_final = range(stage, ages.n_periods - 1, stages_per_period(ages))
     selected: dict[RegimeName, set[UserAge]] = {}
     for side in sides:
         by_period = (
@@ -1334,6 +1347,7 @@ def _resolve_edges(
                 edge=f"'{source}' → '{target}'",
                 ages=ages,
                 period_by_age=period_by_age,
+                stage=stage_position(ages=ages, regime=source),
             )
         resolved[source] = MappingProxyType(selected)
     return MappingProxyType(resolved)
@@ -1345,8 +1359,13 @@ def _selected_source_ages(
     edge: str,
     ages: TimeAxis,
     period_by_age: Mapping[AgeLabel, int],
+    stage: int,
 ) -> frozenset[UserAge]:
-    """Resolve one edge's selector to the source ages at which it can fire."""
+    """Resolve one edge's selector to the source ages at which it can fire.
+
+    The source decides in its `stage` of each selected period; no transition leaves
+    the last step.
+    """
     try:
         _fail_if_invalid_age_selector(selector)
         periods = _select_periods(
@@ -1358,7 +1377,10 @@ def _selected_source_ages(
         raise ModelInitializationError(
             f"Graph selector {selector!r} for {edge} selects no model age."
         )
-    if set(periods) == {ages.n_periods - 1}:
+    n_stages = stages_per_period(ages)
+    if {period // n_stages * n_stages + stage for period in periods} == {
+        ages.n_periods - 1
+    }:
         raise ModelInitializationError(
             f"Graph selector {selector!r} for {edge} selects only the final age "
             f"{ages.exact_values[-1]}, where no transition happens."

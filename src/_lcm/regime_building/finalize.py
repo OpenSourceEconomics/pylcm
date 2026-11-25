@@ -34,6 +34,7 @@ from _lcm.regime_building.value_adapter import (
     AdaptableEntry,
     AdapterGrid,
     AdapterMemo,
+    StageClock,
     ValueAdapter,
     adapt_collective_utility,
     adapt_entry,
@@ -56,7 +57,7 @@ from lcm.consumption_savings_regime import (
 )
 from lcm.decoupled import KoopmansDeclaration
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.exits import Consent, Exit
+from lcm.exits import Consent, Exit, MutualConsent
 from lcm.grids import DiscreteGrid
 from lcm.phased import Phased
 from lcm.regime import ConstraintEntry, StateEntry, StateTransitionEntry
@@ -71,6 +72,11 @@ from lcm.typing import FloatND, ReferenceName, StateName, UserFunction, ValueND
 type FinalizedUserRegime = UserRegime
 
 
+def link_stages(*, utility: FloatND, CE: FloatND) -> FloatND:
+    """Add the next stage's certainty equivalent: no time passes within a period."""
+    return utility + CE
+
+
 def finalize_regimes(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
@@ -80,6 +86,7 @@ def finalize_regimes(
     certainty_equivalent: CertaintyEquivalent,
     value_grids_by_regime: Mapping[RegimeName, Mapping[str, AdapterGrid]] | None = None,
     adapters: AdapterMemo | None = None,
+    linked: frozenset[RegimeName] = frozenset(),
 ) -> MappingProxyType[RegimeName, FinalizedUserRegime]:
     """Finalize every user regime for the model build.
 
@@ -102,6 +109,9 @@ def finalize_regimes(
             functions is read through, with processes bound to that regime.
             Collected from `user_regimes` when `None`.
         adapters: The adapters already built for this model.
+        linked: The regimes in a stage before the last of their period. Each
+            links to the next stage of its period without discounting, so it
+            gets `link_stages` as its Koopmans aggregator.
 
     Returns:
         Immutable mapping of regime names to finalized regimes.
@@ -116,7 +126,11 @@ def finalize_regimes(
     """
     _fail_if_a_joint_coordinate_is_a_discrete_state(user_regimes=user_regimes)
     _fail_if_continuation_slot_is_mixed(
-        user_regimes=user_regimes, laws=laws, slot="koopmans_aggregator"
+        user_regimes={
+            name: regime for name, regime in user_regimes.items() if name not in linked
+        },
+        laws=laws,
+        slot="koopmans_aggregator",
     )
     _fail_if_continuation_slot_is_mixed(
         user_regimes=user_regimes, laws=laws, slot="certainty_equivalent"
@@ -169,6 +183,8 @@ def finalize_regimes(
             regime_koopmans_aggregator = (
                 user_regime.koopmans_aggregator
                 if user_regime.koopmans_aggregator is not None
+                else link_stages
+                if regime_name in linked
                 else koopmans_aggregator
             )
             regime_certainty_equivalent = (
@@ -320,6 +336,25 @@ def _adapt_exit(
                 counterparty,
                 projection=projection(
                     value=counterparty.projection, destination=counterparty.regime
+                ),
+            ),
+        )
+    clock = source_grids.get("period")
+    if (
+        isinstance(rule, MutualConsent)
+        and rule.settle is not None
+        and isinstance(clock, StageClock)
+    ):
+        # The settlement default reads codes, and the period through the clock.
+        rule = replace(
+            rule,
+            settle=replace(
+                rule.settle,
+                default=adapt_user_function(
+                    func=rule.settle.default,
+                    value_grids={"period": clock},
+                    encode=None,
+                    adapters=adapters,
                 ),
             ),
         )

@@ -5,7 +5,8 @@ title: Defining Models
 # Defining Models
 
 A `Model` ties together regimes, a finite horizon, and a regime ID class. Define its
-horizon with exactly one of `ages=AgeGrid(...)` or `n_periods=...`; see
+horizon with exactly one of `ages=AgeGrid(...)` or `n_periods=...`, and several
+decisions within a period with `stages=...`; see
 [Periods and temporal parameters](period_time.md).
 
 > **Choose the solver-facing regime first.** The general `Regime` used below is the
@@ -233,7 +234,7 @@ model.graph.nodes  # valued age–regime pairs
 model.graph.visited_nodes  # realized reachable age–regime pairs
 model.user_regimes  # immutable mapping of finalized `Regime` objects
 model.pruned_variables  # per regime, the broadcast names pruned by DAG reachability
-model.n_periods  # number of periods
+model.n_periods  # number of steps: periods times stages
 model.regime_names_to_ids  # name -> integer mapping
 model.get_params_template()  # mutable copy of the parameter template
 ```

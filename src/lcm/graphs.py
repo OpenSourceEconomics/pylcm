@@ -122,9 +122,7 @@ def digraph(model: Model, *, phase: Phase | None = None) -> DiGraph:
 
     selected_phase = "solve" if phase is None else phase
     temporal = graph.solution if selected_phase == "solve" else graph.simulation
-    clock = (
-        tuple(range(model.n_periods)) if model.ages is None else model.ages.exact_values
-    )
+    clock = model._time.exact_values  # noqa: SLF001
     result = DiGraph(
         phase=phase,
         coordinate_kind=graph.coordinate_kind,

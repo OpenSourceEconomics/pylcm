@@ -4,8 +4,9 @@ title: Periods and temporal parameters
 
 # Periods and temporal parameters
 
-Use `Model(n_periods=...)` when computational stages are the natural model clock. Keep
-`Model(ages=AgeGrid(...))` when actual ages define that clock. Supply exactly one.
+Use `Model(n_periods=...)` when periods are the natural model clock. Keep
+`Model(ages=AgeGrid(...))` when actual ages define that clock. Supply exactly one. A
+model that takes several decisions in one period declares them as `stages`.
 
 ## Model time
 
@@ -33,8 +34,8 @@ invalid.
 
 `model.ages` is `None` in period mode. Functions may request `period`. An unresolved
 `age` argument is an error. Declare a separately named `biological_age` or
-`economic_quarter` function when the economics needs it. A computational stage does not
-determine discounting, survival, interest accrual or how flows are aggregated.
+`economic_quarter` function when the economics needs it. A period does not determine
+discounting, survival, interest accrual or how flows are aggregated.
 
 Admissible starts use `InitialNodes(by_period={0: "working"})`; age models use
 `InitialNodes(by_age={25: "working"})`. Exactly one nonempty mapping is required, and a
@@ -138,13 +139,61 @@ Source inspection cannot prove the meaning of arbitrary helpers, closures or ind
 arithmetic. Managed selection removes the time axis before the consumer sees the value;
 it is the route that prevents a consumer from confusing an age with a period position.
 
-## Stages within economic time
+## Several decisions in one period
 
-A quarterly model may have several computational stages per quarter. Declare one
-paper-owned mapping from period to economic quarter and use it to gather profiles by
-their source labels. Two stages may deliberately read the same quarter. Neither adding a
-stage nor repeating a biological age implies that time has elapsed. Keep discounting and
-transition timing in the model's equations.
+A household may first decide whether to stay together and then how much to consume, or
+two players may move in turn. Declare the decisions of one period as an ordered mapping
+from stage names to the regimes of each stage:
+
+```python
+model = Model(
+    n_periods=3,
+    stages={"work": ("working",), "spend": ("spending", "final")},
+    regimes=regimes,
+    regime_id_class=RegimeId,
+    initial_nodes=InitialNodes(by_period={0: "working"}),
+    edges={
+        "working": {
+            "spending": PeriodRange(exclusive_stop=2),
+            "final": Periods(values=(2,)),
+        },
+        "spending": {"working": PeriodRange(exclusive_stop=2)},
+    },
+)
+```
+
+Every period has the same stages, and every regime is in exactly one of them:
+
+- Subjects start in the first stage, so `initial_nodes` and initial conditions name
+  regimes of the first stage.
+- An edge out of a stage lands in the next stage of the same period, and an edge out of
+  the last stage lands in the first stage of the next period. Its selector names the
+  source's period, as in a model without stages, and its target must be a regime of the
+  stage it lands in. An exit reads and enters regimes of its own stage.
+- The stages of a period are linked without discounting: a regime of a stage before the
+  last adds the next stage's certainty equivalent to its utility. It declares no
+  Koopmans aggregator and uses no endogenous-grid solver; the last stage discounts into
+  the next period as usual.
+- `period` and `age` are the period's wherever the model reads them: in functions,
+  constraints and conditions, laws, gates, exits and settlements, Pareto weights and
+  shock laws. A condition that reads `period` then offers a solver no structure, as one
+  built with `Condition.from_callable` does. `TimeVarying` and other time-indexed
+  parameters are indexed by period, and the simulated frame has a `stage` column next to
+  `period`.
+- A regime decides in its own stage of every period, so a selector that names only the
+  final period is refused for a regime of the last stage, where no transition happens.
+  The regime finder does not analyse a model with stages.
+
+Two players who move in turn are one household regime per stage, each with both players
+as members and a `ParetoObjective` that puts all weight on the player who moves: the
+mover maximizes its own value, and the other player's value follows the mover's choice.
+
+The engine solves one step per pair of a period and a stage: `model.n_periods` counts
+steps, and the solution's values and the raw simulation results are keyed by step,
+`2 * period` for `work` and `2 * period + 1` for `spend` above. Without `stages` every
+period has one stage, and a step is a period.
+
+## Economic profiles
 
 For a labelled economic profile, use an explicit mapping:
 
@@ -156,7 +205,7 @@ profile = TimeVarying.from_profile(
 )
 ```
 
-This returns period-labelled values `[10, 10, 20, 20]`. The two stages in each quarter
+This returns period-labelled values `[10, 10, 20, 20]`: the two periods of each quarter
 deliberately share a source value. A missing mapped source label or a duplicate selected
 source label is an error; unused source rows are ignored. The numeric gather preserves
 derivatives with respect to the profile's values. The helper assigns neither elapsed

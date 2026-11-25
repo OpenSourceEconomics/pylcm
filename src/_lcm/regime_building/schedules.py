@@ -435,6 +435,7 @@ def lower_demanded_transitions(
     schedules: RegimeSchedules,
     declared_transitions: Mapping[RegimeName, RegimeTransitionLaw],
     code_by_name: Mapping[str, int],
+    n_stages: int = 1,
 ) -> MappingProxyType[RegimeName, EngineLaw | None]:
     """Lower each regime's law over the periods demand requires, only.
 
@@ -449,6 +450,10 @@ def lower_demanded_transitions(
     parameters of every declared case keep their slots regardless, since the
     `edges` parameter template is read off the declarations, not off the
     lowered laws.
+
+    With several stages per period, a lowered law dispatches on the period of the
+    step, which is what the law reads: a regime acts in one stage, so each of its
+    steps is one period.
     """
     lowered: dict[RegimeName, EngineLaw | None] = {}
     visited_periods = schedules.acting_periods_by_regime
@@ -459,19 +464,26 @@ def lower_demanded_transitions(
         law_by_period, solve_periods = _lowering_inputs(
             schedules=schedules, name=name, declared=declared
         )
+        simulate_periods = visited_periods[name]
         if schedules.context_periods_by_regime[name]:
             _fail_if_conflicting_annotations(
                 regime_name=name,
                 laws=_demanded_sides(
                     law_by_period=law_by_period,
                     solve_periods=solve_periods,
-                    simulate_periods=visited_periods[name],
+                    simulate_periods=simulate_periods,
                 ),
             )
+        if n_stages > 1:
+            law_by_period = {
+                period // n_stages: law for period, law in law_by_period.items()
+            }
+            solve_periods = tuple(period // n_stages for period in solve_periods)
+            simulate_periods = tuple(period // n_stages for period in simulate_periods)
         lowered[name] = _lower(
             law_by_period=law_by_period,
             solve_periods=solve_periods,
-            simulate_periods=visited_periods[name],
+            simulate_periods=simulate_periods,
             code_by_name=code_by_name,
         )
     return MappingProxyType(lowered)

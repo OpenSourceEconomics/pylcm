@@ -35,6 +35,17 @@ slot, including an explicitly represented terminal slot. In this mode `model.age
 The model does not assign an age or elapsed duration to a period. See
 [Periods and temporal parameters](../user_guide/period_time.md).
 
+`stages={stage_name: (regime_name, ...), ...}` declares several decisions within every
+period, in order; every regime is in exactly one stage. Subjects start in the first
+stage, an edge lands in the next stage (out of the last stage, in the first stage of the
+next period), and an exit stays in its stage. Stages of one period are linked without
+discounting, so a regime of a stage before the last declares no Koopmans aggregator and
+uses no endogenous-grid solver. `period` and `age` mean the period in user functions,
+time-indexed parameters and the simulated frame, which gains a `stage` column.
+`model.n_periods`, the solution and the raw simulation results count steps, one per
+period and stage. `stages=None` gives every period one stage. See
+[Several decisions in one period](../user_guide/period_time.md#several-decisions-in-one-period).
+
 `edges` declares every regime transition, structure and law. Each source maps to a plain
 `{target: source_ages}` mapping when every source age has one destination (the graph is
 the law), or to `Transition(targets={target: source_ages, ...}, law=..., gates=...)`

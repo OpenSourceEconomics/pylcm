@@ -60,7 +60,7 @@ from _lcm.solution.feasibility import (
     reduce_bound_input_status,
     validate_runtime_bound_status,
 )
-from _lcm.time import TimeAxis, coordinate_kind
+from _lcm.time import TimeAxis, coordinate_kind, stages_per_period
 from _lcm.transition_checks import (
     _evaluate_admitted_transition_producer,
     _SerialValidationRequired,
@@ -585,11 +585,13 @@ def resolve_initial_periods(
 
     """
     if coordinate_kind(ages) == "period":
+        # A subject starts in the first stage of its period.
+        n_stages = stages_per_period(ages)
         values = np.asarray(initial_ages)
-        valid = (values >= 0) & (values < ages.n_periods)
+        valid = (values >= 0) & (values < ages.n_periods // n_stages)
         if values.dtype.kind not in "iu":
             valid = np.zeros(values.shape, dtype=bool)
-        return values.astype(np.int32), valid
+        return (values * n_stages).astype(np.int32), valid
     dtype = canonical_float_dtype()
     periods, on_grid, _ = population_operations.match_starting_periods(
         initial_ages=np.asarray(initial_ages, dtype=dtype),

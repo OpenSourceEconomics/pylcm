@@ -16,13 +16,22 @@ import lcm
 import lcm.exceptions
 from _lcm.solution import period_replay
 from _lcm.time import ModelTime, coordinate_at
+from _lcm.typing import DataclassInstance
+from _lcm_regime_finder.model_snapshot import read_model
 from lcm import component_jobs
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import ModelInitializationError
 from lcm.persistence import PeriodCapture, load_period_capture
+from lcm.regime import RegimeReplacement
+from lcm.shocks import GaussHermite, Normal, Product, ShockGroup
+from lcm.solvers import EGM
 from lcm.transition import PeriodSelector
 from lcm.typing import (
     Age,
+    BoolND,
+    ContinuousAction,
     ContinuousState,
+    DiscreteAction,
     DiscreteState,
     FloatND,
     Period,
@@ -204,7 +213,7 @@ def test_period_model_rejects_reserved_age_dependency() -> None:
         )
 
 
-def test_by_period_schedule_preserves_stage_boundaries() -> None:
+def test_by_period_until_selects_the_periods_before_its_stop() -> None:
     schedule = lcm.ByPeriod.until(
         start_period_inclusive=1,
         stop_period_exclusive=4,
@@ -1101,3 +1110,913 @@ def test_period_header_prints_a_sub_annual_age_with_two_decimals(
             )
     messages = [record.getMessage() for record in caplog.records]
     assert any(message.startswith("Age 0.33 (") for message in messages)
+
+
+@lcm.categorical(ordered=False)
+class StagedId:
+    working: ScalarInt
+    spending: ScalarInt
+    final: ScalarInt
+
+
+@lcm.categorical(ordered=True)
+class Labor:
+    no: ScalarInt
+    yes: ScalarInt
+
+
+_N_ECONOMIC_PERIODS = 3
+
+
+@lcm.time_varying_params("wage")
+def _earnings(*, labor: DiscreteAction, wage: FloatND) -> FloatND:
+    return labor * wage
+
+
+def _work_utility(*, labor: DiscreteAction, period: Period) -> FloatND:
+    return -0.3 * labor * (1.0 + period)
+
+
+def _work_utility_by_age(*, labor: DiscreteAction, age: Age) -> FloatND:
+    return -0.3 * labor * (1.0 + (age - 60))
+
+
+def _next_wealth_after_work(
+    *, wealth: ContinuousState, earnings: FloatND
+) -> ContinuousState:
+    return wealth + earnings
+
+
+def _spend_utility(*, consumption: ContinuousAction) -> FloatND:
+    return jnp.log(consumption)
+
+
+def _next_wealth_after_spending(
+    *, wealth: ContinuousState, consumption: ContinuousAction, period: Period
+) -> ContinuousState:
+    return 1.05 * (wealth - consumption) + 0.1 * period
+
+
+def _next_wealth_after_spending_by_age(
+    *, wealth: ContinuousState, consumption: ContinuousAction, age: Age
+) -> ContinuousState:
+    return 1.05 * (wealth - consumption) + 0.1 * (age - 60)
+
+
+def _affordable(*, consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
+    return consumption <= wealth
+
+
+def _final_utility(*, wealth: ContinuousState) -> FloatND:
+    return jnp.log(wealth)
+
+
+def _hand_work_utility(*, labor: DiscreteAction, period: Period) -> FloatND:
+    return _work_utility(labor=labor, period=period // 2)
+
+
+def _hand_next_wealth_after_spending(
+    *, wealth: ContinuousState, consumption: ContinuousAction, period: Period
+) -> ContinuousState:
+    return _next_wealth_after_spending(
+        wealth=wealth, consumption=consumption, period=period // 2
+    )
+
+
+def _without_discounting(*, utility: FloatND, CE: FloatND) -> FloatND:
+    return utility + CE
+
+
+def _staged_regimes(
+    *, clock: Literal["staged", "hand", "age"]
+) -> dict[RegimeName, lcm.Regime]:
+    """A work decision and a consumption decision in every period.
+
+    `"hand"` encodes the two decisions as two periods each: its functions map
+    the period to the economic period, and the work decision adds the
+    consumption decision's value without discounting.
+    """
+    wealth = lcm.LinSpacedGrid(start=1.0, stop=6.0, n_points=6)
+    by_age = clock == "age"
+    return {
+        "working": lcm.Regime(
+            states={"wealth": wealth},
+            actions={"labor": lcm.DiscreteGrid(Labor)},
+            state_transitions={"wealth": _next_wealth_after_work},
+            functions={
+                "utility": _hand_work_utility
+                if clock == "hand"
+                else _work_utility_by_age
+                if by_age
+                else _work_utility,
+                "earnings": _earnings,
+            },
+            koopmans_aggregator=_without_discounting if clock == "hand" else None,
+        ),
+        "spending": lcm.Regime(
+            states={"wealth": wealth},
+            actions={
+                "consumption": lcm.LinSpacedGrid(start=0.5, stop=5.0, n_points=10)
+            },
+            state_transitions={
+                "wealth": _hand_next_wealth_after_spending
+                if clock == "hand"
+                else _next_wealth_after_spending_by_age
+                if by_age
+                else _next_wealth_after_spending
+            },
+            functions={"utility": _spend_utility},
+            constraints={"affordable": _affordable},
+            koopmans_aggregator=lcm.LinearAggregator() if clock == "hand" else None,
+        ),
+        "final": lcm.Regime(
+            states={"wealth": wealth}, functions={"utility": _final_utility}
+        ),
+    }
+
+
+def _staged_model(
+    *,
+    clock: Literal["staged", "hand", "age"],
+    stages: Mapping[str, tuple[RegimeName, ...]] | None = None,
+    edges: Mapping[RegimeName, Mapping[RegimeName, PeriodSelector] | lcm.Transition]
+    | None = None,
+    regimes: Mapping[RegimeName, lcm.Regime] | None = None,
+    initial: RegimeName = "working",
+    regime_id_class: type[DataclassInstance] = StagedId,
+    shocks: Mapping[str, ShockGroup] | None = None,
+    composite_states: Mapping[str, lcm.CompositeState] | None = None,
+) -> lcm.Model:
+    last = _N_ECONOMIC_PERIODS - 1
+    if clock == "hand":
+        steps = 2 * _N_ECONOMIC_PERIODS
+        return lcm.Model(
+            n_periods=steps,
+            regimes=_staged_regimes(clock=clock),
+            regime_id_class=StagedId,
+            initial_nodes=lcm.InitialNodes(by_period={0: "working"}),
+            edges={
+                "working": {
+                    "spending": lcm.Periods(values=tuple(range(0, steps - 2, 2))),
+                    "final": lcm.Periods(values=(steps - 2,)),
+                },
+                "spending": {
+                    "working": lcm.Periods(values=tuple(range(1, steps - 2, 2)))
+                },
+            },
+            fixed_params={"discount_factor": 0.9},
+        )
+    by_age = clock == "age"
+    selector = lcm.AgeRange if by_age else lcm.PeriodRange
+    origin = 60 if by_age else 0
+    horizon: ClockKwargs = (
+        {"ages": lcm.AgeGrid(start=60, inclusive_stop=60 + last, step="Y")}
+        if by_age
+        else {"n_periods": _N_ECONOMIC_PERIODS}
+    )
+    return lcm.Model(
+        **horizon,
+        stages={"work": ("working",), "spend": ("spending", "final")}
+        if stages is None
+        else stages,
+        regimes=_staged_regimes(clock=clock) if regimes is None else regimes,
+        regime_id_class=regime_id_class,
+        shocks={} if shocks is None else shocks,
+        composite_states={} if composite_states is None else composite_states,
+        initial_nodes=lcm.InitialNodes(by_age={60: initial})
+        if by_age
+        else lcm.InitialNodes(by_period={0: initial}),
+        edges={
+            "working": {
+                "spending": selector(exclusive_stop=origin + last),
+                "final": selector(start=origin + last),
+            },
+            "spending": {"working": selector(exclusive_stop=origin + last)},
+        }
+        if edges is None
+        else edges,
+        fixed_params={"discount_factor": 0.9},
+    )
+
+
+def _wage(*, steps: bool) -> lcm.TimeVarying:
+    wages = jnp.array([1.0, 1.5, 2.0])
+    if steps:
+        return lcm.TimeVarying(
+            values=jnp.repeat(wages, 2), periods=tuple(range(2 * len(wages)))
+        )
+    return lcm.TimeVarying(values=wages, periods=(0, 1, 2))
+
+
+def _staged_frame(*, model: lcm.Model, clock: str) -> pd.DataFrame:
+    n_subjects = 4
+    initial_time = (
+        {"age": jnp.full(n_subjects, 60)}
+        if clock == "age"
+        else {"period": jnp.zeros(n_subjects, dtype=jnp.int32)}
+    )
+    params = (
+        {"wage": _wage(steps=clock == "hand")}
+        if clock != "age"
+        else {
+            "wage": lcm.TimeVarying(
+                values=jnp.array([1.0, 1.5, 2.0]), ages=(60, 61, 62)
+            )
+        }
+    )
+    return model.simulate(
+        params=params,
+        initial_conditions={
+            **initial_time,
+            "regime_id": jnp.full(n_subjects, StagedId.working, dtype=jnp.int32),
+            "wealth": jnp.array([1.0, 2.5, 4.0, 6.0]),
+        },
+        seed=7,
+        log_level="off",
+    ).to_dataframe()
+
+
+def _transition_edges() -> dict[RegimeName, lcm.Transition]:
+    """The staged edges as laws with targets; the work stage moves on at the end."""
+    last = _N_ECONOMIC_PERIODS - 1
+    before_last = lcm.PeriodRange(exclusive_stop=last)
+    return {
+        "working": lcm.Transition(
+            targets={"spending": before_last, "final": lcm.PeriodRange(start=last)},
+            law=lcm.ByPeriod(cases={before_last: "spending", last: "final"}),
+        ),
+        "spending": lcm.Transition(targets={"working": before_last}, law="working"),
+    }
+
+
+@pytest.mark.parametrize("declared", ["selectors", "transitions"])
+def test_stages_solve_and_simulate_as_their_hand_encoding(declared: str) -> None:
+    """Two decisions per period equal one period per decision, linked undiscounted.
+
+    `period` reads the economic period in user functions and in the frame, a
+    time-varying parameter is indexed by economic period, and subjects start in
+    the first stage. A law of the first stage moves on in the last period.
+    """
+    staged = _staged_model(
+        clock="staged", edges=_transition_edges() if declared == "transitions" else None
+    )
+    hand = _staged_model(clock="hand")
+    staged_values = staged.solve(
+        params={"wage": _wage(steps=False)}, log_level="off"
+    ).values
+    hand_values = hand.solve(params={"wage": _wage(steps=True)}, log_level="off").values
+    assert staged.n_periods == hand.n_periods == 2 * _N_ECONOMIC_PERIODS
+    assert {step: set(regimes) for step, regimes in staged_values.items()} == {
+        step: set(regimes) for step, regimes in hand_values.items()
+    }
+    for step, regimes in hand_values.items():
+        for name, value in regimes.items():
+            np.testing.assert_array_equal(staged_values[step][name], value)
+
+    staged_frame = _staged_frame(model=staged, clock="staged")
+    hand_frame = _staged_frame(model=hand, clock="hand")
+    np.testing.assert_array_equal(staged_frame["period"], hand_frame["period"] // 2)
+    assert staged_frame["stage"].tolist() == [
+        "work" if step % 2 == 0 else "spend" for step in hand_frame["period"]
+    ]
+    assert "stage" not in hand_frame.columns
+    for column in ("subject_id", "regime_name", "value", "wealth", "labor"):
+        pd.testing.assert_series_equal(staged_frame[column], hand_frame[column])
+
+
+def test_stages_of_an_age_model_read_the_age_of_the_period() -> None:
+    """An age model's stages read the period's age where a period model reads it."""
+    by_age = _staged_model(clock="age")
+    by_period = _staged_model(clock="staged")
+    age_values = by_age.solve(
+        params={
+            "wage": lcm.TimeVarying(
+                values=jnp.array([1.0, 1.5, 2.0]), ages=(60, 61, 62)
+            )
+        },
+        log_level="off",
+    ).values
+    period_values = by_period.solve(
+        params={"wage": _wage(steps=False)}, log_level="off"
+    ).values
+    for step, regimes in period_values.items():
+        for name, value in regimes.items():
+            np.testing.assert_array_equal(age_values[step][name], value)
+    frame = _staged_frame(model=by_age, clock="age")
+    np.testing.assert_array_equal(frame["age"], 60 + frame["period"])
+    assert frame["stage"].cat.categories.tolist() == ["work", "spend"]
+
+
+class _StagedChange(TypedDict, total=False):
+    stages: Mapping[str, tuple[RegimeName, ...]]
+    edges: Mapping[RegimeName, Mapping[RegimeName, PeriodSelector]]
+    regimes: Mapping[RegimeName, lcm.Regime]
+    initial: RegimeName
+
+
+def _wealth_resources(*, wealth: ContinuousState) -> FloatND:
+    return wealth
+
+
+def _wealth_savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
+    return resources - consumption
+
+
+def _wealth_kept(*, wealth: ContinuousState) -> ContinuousState:
+    return wealth
+
+
+def _wealth_after_saving(*, savings: FloatND) -> ContinuousState:
+    return savings
+
+
+def _out_of_stage_order(case: str) -> _StagedChange:
+    regimes = _staged_regimes(clock="staged")
+    if case == "aggregator":
+        regimes["working"] = regimes["working"].replace(
+            koopmans_aggregator=lcm.LinearAggregator()
+        )
+    if case == "exit":
+        regimes["working"] = regimes["working"].replace(
+            exit=lcm.Exit(
+                targets={
+                    "self": lcm.ExitTarget(
+                        regime="final", projection={"wealth": _wealth_kept}
+                    )
+                },
+                rule=lcm.Unilateral(),
+            )
+        )
+    if case == "egm":
+        regimes["working"] = ConsumptionSavingsRegime(
+            states={"wealth": lcm.LinSpacedGrid(start=1.0, stop=6.0, n_points=6)},
+            actions={
+                "consumption": lcm.LinSpacedGrid(start=0.5, stop=5.0, n_points=10)
+            },
+            functions={
+                "utility": _spend_utility,
+                "resources": _wealth_resources,
+                "savings": _wealth_savings,
+            },
+            state_transitions={"wealth": _wealth_after_saving},
+            solver=EGM(savings_grid=lcm.LinSpacedGrid(start=0.0, stop=6.0, n_points=7)),
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="resources",
+                post_decision_state="savings",
+            ),
+        )
+    changes: dict[str, _StagedChange] = {
+        "missing": {"stages": {"work": ("working",), "spend": ("spending",)}},
+        "repeated": {
+            "stages": {"work": ("working", "final"), "spend": ("spending", "final")}
+        },
+        "start": {"initial": "spending"},
+        "edge": {
+            "edges": {
+                "working": {"final": lcm.PeriodRange()},
+                "spending": {"final": lcm.PeriodRange()},
+            }
+        },
+        "exit": {"regimes": regimes},
+        "aggregator": {"regimes": regimes},
+        "egm": {"regimes": regimes},
+        "final": {
+            "edges": {
+                "working": {
+                    "spending": lcm.PeriodRange(exclusive_stop=_N_ECONOMIC_PERIODS - 1),
+                    "final": lcm.PeriodRange(start=_N_ECONOMIC_PERIODS - 1),
+                },
+                "spending": {"working": lcm.Periods(values=(_N_ECONOMIC_PERIODS - 1,))},
+            }
+        },
+    }
+    return changes[case]
+
+
+@pytest.mark.parametrize(
+    ("case", "match"),
+    [
+        ("missing", r"in none: \['final'\]"),
+        ("repeated", r"in several stages: \['final'\]"),
+        ("start", r"'spending' starts subjects in stage 'spend'"),
+        ("edge", r"edge 'spending' -> 'final' lands in stage 'spend'"),
+        ("exit", r"exit of 'working' reads 'final' of stage 'spend'"),
+        ("aggregator", r"'working' declares a Koopmans aggregator in stage 'work'"),
+        ("egm", r"'working' uses an endogenous-grid solver in stage 'work'"),
+        ("final", r"'spending' → 'working' selects only the final age"),
+    ],
+)
+def test_stages_refuse_declarations_out_of_stage_order(
+    *, case: str, match: str
+) -> None:
+    with pytest.raises(ModelInitializationError, match=match):
+        _staged_model(clock="staged", **_out_of_stage_order(case))
+
+
+def test_saved_staged_result_keeps_its_stages(tmp_path: Path) -> None:
+    model = _staged_model(clock="staged")
+    result = model.simulate(
+        params={"wage": _wage(steps=False)},
+        initial_conditions={
+            "period": jnp.array([0]),
+            "regime_id": jnp.array([StagedId.working]),
+            "wealth": jnp.array([2.0]),
+        },
+        seed=3,
+        log_level="off",
+    )
+    result.save(directory=tmp_path / "result")
+    restored = lcm.SimulationResult.load(directory=tmp_path / "result")
+    frame = restored.to_dataframe()
+    pd.testing.assert_frame_equal(frame, result.to_dataframe())
+    assert frame["stage"].tolist() == ["work", "spend"] * _N_ECONOMIC_PERIODS
+
+
+@lcm.categorical(ordered=False)
+class GameId:
+    a_moves: ScalarInt
+    b_moves: ScalarInt
+    b_last: ScalarInt
+
+
+@lcm.categorical(ordered=True)
+class Pot:
+    empty: ScalarInt
+    one: ScalarInt
+    two: ScalarInt
+    three: ScalarInt
+    four: ScalarInt
+
+
+@lcm.categorical(ordered=True)
+class Take:
+    none: ScalarInt
+    one: ScalarInt
+    two: ScalarInt
+
+
+_GAME_PERIODS = 3
+_GAME_DISCOUNT = 0.9
+
+
+def _mover_utility(*, take: DiscreteAction) -> FloatND:
+    return jnp.sqrt(take.astype(float))
+
+
+def _bystander_utility() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def _available(*, take: DiscreteAction, pot: DiscreteState) -> BoolND:
+    return take <= pot
+
+
+def _pot_after_take(*, pot: DiscreteState, take: DiscreteAction) -> DiscreteState:
+    return pot - take
+
+
+def _pot_regrown(*, pot: DiscreteState, take: DiscreteAction) -> DiscreteState:
+    return jnp.minimum(pot - take + 2, Pot.four)
+
+
+def _player_regime(
+    *,
+    mover: Literal["a", "b"],
+    next_pot: Callable[..., DiscreteState] | None,
+    mover_weight: Callable[..., FloatND] | float,
+) -> lcm.Regime:
+    """The regime in which `mover` takes from the pot and the other player waits."""
+    players = ("a", "b")
+    return lcm.Regime(
+        states={"pot": lcm.DiscreteGrid(Pot)},
+        actions={"take": lcm.DiscreteGrid(Take)},
+        state_transitions={} if next_pot is None else {"pot": next_pot},
+        constraints={"available": _available},
+        functions={
+            "utility": lcm.CollectiveUtility(
+                utilities={
+                    player: _mover_utility if player == mover else _bystander_utility
+                    for player in players
+                },
+                objective=lcm.ParetoObjective(
+                    weights={
+                        player: mover_weight if player == mover else 0.0
+                        for player in players
+                    }
+                ),
+            )
+        },
+    )
+
+
+def _best_take(payoffs: Mapping[int, float]) -> int:
+    """The take of the highest payoff, which beats the second highest clearly."""
+    ranked = sorted(payoffs, key=payoffs.__getitem__)
+    if len(ranked) > 1:
+        assert payoffs[ranked[-1]] - payoffs[ranked[-2]] > 1e-3
+    return ranked[-1]
+
+
+def _backward_induction() -> dict[tuple[int, RegimeName], np.ndarray]:
+    """Each player's value per pot before each move, by subgame-perfect induction.
+
+    Rows are pots, columns the players a and b. Every mover's best take is clearly
+    better than its second best, so the equilibrium does not depend on a tie rule.
+    """
+    pots = range(len(Pot.__dataclass_fields__))
+    values: dict[tuple[int, RegimeName], np.ndarray] = {}
+    for period in reversed(range(_GAME_PERIODS)):
+        final = period == _GAME_PERIODS - 1
+        before_b = np.zeros((len(pots), 2))
+        for pot in pots:
+            takes = range(min(pot, Take.two) + 1)
+            if final:
+                take = _best_take({t: np.sqrt(t) for t in takes})
+                before_b[pot] = (0.0, np.sqrt(take))
+                continue
+            ahead = values[(period + 1, "a_moves")]
+            regrown = {t: min(pot - t + 2, Pot.four) for t in takes}
+            payoffs = {
+                t: np.sqrt(t) + _GAME_DISCOUNT * ahead[regrown[t], 1] for t in takes
+            }
+            take = _best_take(payoffs)
+            before_b[pot] = (_GAME_DISCOUNT * ahead[regrown[take], 0], payoffs[take])
+        values[(period, "b_last" if final else "b_moves")] = before_b
+        before_a = np.zeros((len(pots), 2))
+        for pot in pots:
+            takes = range(min(pot, Take.two) + 1)
+            payoffs = {t: np.sqrt(t) + before_b[pot - t, 0] for t in takes}
+            take = _best_take(payoffs)
+            before_a[pot] = (payoffs[take], before_b[pot - take, 1])
+        values[(period, "a_moves")] = before_a
+    return values
+
+
+def _game(*, mover_weight: Callable[..., FloatND] | float) -> lcm.Model:
+    """Player a moves, then player b, in every period; each mover weighs itself."""
+    last = _GAME_PERIODS - 1
+    return lcm.Model(
+        n_periods=_GAME_PERIODS,
+        stages={"a": ("a_moves",), "b": ("b_moves", "b_last")},
+        regimes={
+            "a_moves": _player_regime(
+                mover="a", next_pot=_pot_after_take, mover_weight=mover_weight
+            ),
+            "b_moves": _player_regime(
+                mover="b", next_pot=_pot_regrown, mover_weight=mover_weight
+            ),
+            "b_last": _player_regime(
+                mover="b", next_pot=None, mover_weight=mover_weight
+            ),
+        },
+        regime_id_class=GameId,
+        initial_nodes=lcm.InitialNodes(by_period={0: "a_moves"}),
+        edges={
+            "a_moves": {
+                "b_moves": lcm.PeriodRange(exclusive_stop=last),
+                "b_last": lcm.Periods(values=(last,)),
+            },
+            "b_moves": {"a_moves": lcm.PeriodRange(exclusive_stop=last)},
+        },
+        fixed_params={"discount_factor": _GAME_DISCOUNT},
+    )
+
+
+def test_two_players_moving_in_turn_reach_the_subgame_perfect_values() -> None:
+    """A sequential-move game: within each period player a moves, then player b.
+
+    Each mover maximizes its own value; the other player's value follows the
+    mover's choice. The values equal an independent backward induction.
+    """
+    solved = _game(mover_weight=1.0).solve(params={}, log_level="off").values
+    for (period, regime), expected in _backward_induction().items():
+        step = 2 * period + (regime != "a_moves")
+        np.testing.assert_array_almost_equal(
+            solved[step][regime], expected, decimal=DECIMAL_PRECISION
+        )
+
+
+# The periods the readers below were called with, filled from inside the program.
+_PERIODS_READ: set[int] = set()
+
+
+def _read(period: Period) -> None:
+    jax.debug.callback(
+        lambda read: _PERIODS_READ.update(np.asarray(read).ravel().tolist()), period
+    )
+
+
+def _affordable_reading_period(
+    *, consumption: ContinuousAction, wealth: ContinuousState, period: Period
+) -> BoolND:
+    _read(period)
+    return consumption <= wealth
+
+
+def _aggregator_reading_period(
+    *, utility: FloatND, CE: FloatND, discount_factor: FloatND, period: Period
+) -> FloatND:
+    _read(period)
+    return utility + discount_factor * CE
+
+
+def _certain_reading_period(*, period: Period) -> FloatND:
+    _read(period)
+    return jnp.asarray(1.0)
+
+
+def _certain() -> FloatND:
+    return jnp.asarray(1.0)
+
+
+def _open_reading_period(*, period: Period) -> BoolND:
+    _read(period)
+    return period >= 0
+
+
+def _available_reading_period(*, wealth: ContinuousState, period: Period) -> BoolND:
+    _read(period)
+    return wealth > 0.0
+
+
+def _wealth_kept_reading_period(
+    *, wealth: ContinuousState, period: Period
+) -> ContinuousState:
+    _read(period)
+    return wealth
+
+
+def _no_adjustment_reading_period(
+    *, wealth: ContinuousState, period: Period
+) -> FloatND:
+    _read(period)
+    return 0.0 * wealth
+
+
+def _spend_utility_with_shock(
+    *, consumption: ContinuousAction, eps: FloatND
+) -> FloatND:
+    return jnp.log(consumption) + 0.0 * eps
+
+
+def _half_reading_period(*, period: Period) -> FloatND:
+    _read(period)
+    return jnp.asarray(0.5)
+
+
+def _bits_utility(
+    *, a: DiscreteState, b: DiscreteState, labor: DiscreteAction
+) -> FloatND:
+    return 0.0 + a + b + labor
+
+
+def _bits_final_utility(*, a: DiscreteState, b: DiscreteState) -> FloatND:
+    return 0.0 + a + b
+
+
+def _labor_kept(*, labor: DiscreteAction) -> DiscreteState:
+    return labor
+
+
+def _bits_regimes() -> dict[RegimeName, lcm.Regime]:
+    """Two binary members; `b` keeps the last labor choice, `a` never changes."""
+    bits = {"a": lcm.DiscreteGrid(Labor), "b": lcm.DiscreteGrid(Labor)}
+    deciding = lcm.Regime(
+        states=bits,
+        actions={"labor": lcm.DiscreteGrid(Labor)},
+        state_transitions={"a": lcm.fixed_transition("a"), "b": _labor_kept},
+        functions={"utility": _bits_utility},
+    )
+    return {
+        "working": deciding,
+        "spending": deciding,
+        "final": lcm.Regime(states=bits, functions={"utility": _bits_final_utility}),
+    }
+
+
+@lcm.categorical(ordered=False)
+class IdleId:
+    working: ScalarInt
+    idle: ScalarInt
+    spending: ScalarInt
+    final: ScalarInt
+
+
+@lcm.categorical(ordered=False)
+class SettleId:
+    couple: ScalarInt
+    single_a: ScalarInt
+    single_b: ScalarInt
+    later: ScalarInt
+    end: ScalarInt
+
+
+def _couple_utility() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def _paid(*, share: FloatND) -> FloatND:
+    return 4.0 * share
+
+
+def _settling_couple() -> lcm.Model:
+    """A couple that may separate at a settlement in the first stage of a period."""
+    household = lcm.CollectiveUtility(
+        utilities={"a": _couple_utility, "b": _couple_utility}
+    )
+    return lcm.Model(
+        n_periods=2,
+        stages={
+            "together": ("couple", "single_a", "single_b"),
+            "after": ("later", "end"),
+        },
+        regimes={
+            "couple": lcm.Regime(
+                functions={"utility": household},
+                exit=lcm.Exit(
+                    rule=lcm.MutualConsent(
+                        settle=lcm.Settlement(
+                            name="share",
+                            candidates=lcm.LinSpacedGrid(
+                                start=0.0, stop=1.0, n_points=5
+                            ),
+                            default=_half_reading_period,
+                        )
+                    ),
+                    targets={
+                        member: lcm.ExitTarget(
+                            regime=f"single_{member}",
+                            projection={},
+                            utility_adjustment=_paid,
+                        )
+                        for member in ("a", "b")
+                    },
+                ),
+            ),
+            "single_a": lcm.Regime(functions={"utility": _couple_utility}),
+            "single_b": lcm.Regime(functions={"utility": _couple_utility}),
+            "later": lcm.Regime(functions={"utility": household}),
+            "end": lcm.Regime(functions={"utility": household}),
+        },
+        regime_id_class=SettleId,
+        initial_nodes=lcm.InitialNodes(
+            by_period={0: ("couple", "single_a", "single_b")}
+        ),
+        edges={
+            "couple": {
+                "later": lcm.PeriodRange(exclusive_stop=1),
+                "end": lcm.PeriodRange(start=1),
+            },
+            "later": {"couple": lcm.PeriodRange(exclusive_stop=1)},
+        },
+        fixed_params={"discount_factor": 0.9},
+    )
+
+
+def _period_reader(kind: str) -> tuple[lcm.Model, UserParams, RegimeName, set[int]]:
+    """A staged model in which `kind` reads `period`, and the periods it must read.
+
+    A declaration that cannot report what it reads expects no period; a wrong
+    period then makes the model infeasible or every value `-inf`.
+    """
+    regimes = _staged_regimes(clock="staged")
+    spending = regimes["spending"]
+    params: UserParams = {"wage": _wage(steps=False)}
+    last = _N_ECONOMIC_PERIODS - 1
+    changes: dict[str, RegimeReplacement] = {
+        "constraint": {"constraints": {"affordable": _affordable_reading_period}},
+        "condition": {
+            "constraints": {
+                "affordable": lcm.Condition.from_callable(_affordable_reading_period)
+            }
+        },
+        "condition_reference": {
+            "constraints": {
+                "affordable": _affordable,
+                "before_the_last": lcm.ref("period") <= float(last - 1),
+            }
+        },
+        "aggregator": {"koopmans_aggregator": _aggregator_reading_period},
+        "exit": {
+            "exit": lcm.Exit(
+                targets={
+                    "self": lcm.ExitTarget(
+                        regime="final",
+                        projection={"wealth": _wealth_kept_reading_period},
+                        utility_adjustment=_no_adjustment_reading_period,
+                    )
+                },
+                rule=lcm.Unilateral(),
+                available=_available_reading_period,
+            )
+        },
+        "shock_law": {
+            "functions": {"utility": _spend_utility_with_shock},
+            "shocks": ("income",),
+        },
+    }
+    if kind in changes:
+        regimes["spending"] = spending.replace(**changes[kind])
+        model = _staged_model(
+            clock="staged",
+            regimes=regimes,
+            shocks={
+                "income": ShockGroup(
+                    shocks={"eps": Normal(mu=_half_reading_period, sigma=1.0)},
+                    nodes=Product(eps=GaussHermite(3)),
+                )
+            }
+            if kind == "shock_law"
+            else None,
+        )
+        expected = set() if kind == "condition_reference" else {0, 1}
+        return model, params, "working", expected
+    moving_on = {
+        "spending": lcm.PeriodRange(exclusive_stop=last),
+        "final": lcm.PeriodRange(start=last),
+    }
+    if kind == "regime_law":
+        edges = {
+            "working": moving_on,
+            "spending": lcm.Transition(
+                law={"working": lcm.StochasticTransition(func=_certain_reading_period)}
+            ),
+        }
+        return _staged_model(clock="staged", edges=edges), params, "working", {0, 1}
+    if kind == "gate":
+        # A gate reads the period its row lands in.
+        regimes["idle"] = regimes["working"]
+        model = _staged_model(
+            clock="staged",
+            stages={"work": ("working", "idle"), "spend": ("spending", "final")},
+            regimes=regimes,
+            regime_id_class=IdleId,
+            edges={
+                "working": moving_on,
+                "idle": moving_on,
+                "spending": lcm.Transition(
+                    law={"working": lcm.StochasticTransition(func=_certain)},
+                    gates={
+                        "working": lcm.Gate(
+                            predicate=_open_reading_period,
+                            routes={
+                                "only": lcm.MemberRoute(
+                                    fallback=lcm.ProjectedRegimeValue(
+                                        regime="idle",
+                                        projection={"wealth": _wealth_kept},
+                                    )
+                                )
+                            },
+                        )
+                    },
+                ),
+            },
+        )
+        return model, params, "working", {1, 2}
+    if kind == "pareto_weight":
+        return _game(mover_weight=_certain_reading_period), {}, "a_moves", {0, 1, 2}
+    if kind == "settlement":
+        return _settling_couple(), {}, "couple", {0, 1}
+    # A composite state's generated constraint reads the period.
+    model = _staged_model(
+        clock="staged",
+        regimes=_bits_regimes(),
+        composite_states={
+            "bits": lcm.CompositeState(
+                members=("a", "b"), start_codes={"a": (0,), "b": (0,)}
+            )
+        },
+    )
+    return model, {}, "working", set()
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "constraint",
+        "condition",
+        "condition_reference",
+        "aggregator",
+        "regime_law",
+        "gate",
+        "exit",
+        "shock_law",
+        "pareto_weight",
+        "settlement",
+        "composite_state",
+    ],
+)
+def test_every_reader_of_period_reads_the_period_of_its_stage(kind: str) -> None:
+    """Whatever a user declares that reads `period` reads the period, not the step."""
+    model, params, start, expected = _period_reader(kind)
+    _PERIODS_READ.clear()
+    values = model.solve(params=params, log_level="off").values
+    assert expected == _PERIODS_READ
+    assert np.isfinite(values[0][start]).any()
+
+
+def test_regime_finder_refuses_a_staged_model() -> None:
+    with pytest.raises(ValueError, match="`stages`"):
+        read_model(_staged_model(clock="staged"))

@@ -2,12 +2,15 @@
 
 from collections.abc import Iterator, Mapping
 
+from _lcm.model_graph import GraphEdges
 from _lcm.params.temporal import temporal_parameter_names
 from _lcm.regime_building.schedules import RegimeTransitionLaw
 from _lcm.regime_law import RegimeLaws
-from _lcm.time import TimeAxis, coordinate_kind
+from _lcm.time import ModelTime, TimeAxis, coordinate_kind
 from _lcm.utils.functools import is_user_function
+from lcm.consumption_savings_regime import _EGMFamilyRegime
 from lcm.exceptions import ModelInitializationError
+from lcm.exits import Consent
 from lcm.phased import Phased
 from lcm.regime import (
     ActionEntry,
@@ -24,6 +27,7 @@ from lcm.transition import (
     PeriodSpecializedFunction,
     PeriodSpecializedGrid,
 )
+from lcm.typing import RegimeName, UserAge
 
 # A declaration the walk visits: a regime slot value or a regime law, or a
 # mapping of them.
@@ -100,3 +104,78 @@ def validate_time_declarations(
                         f"{sorted(conflicts)} name a state or DAG node; "
                         "only parameter arguments may be declared."
                     )
+
+
+def validate_stages(
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    laws: RegimeLaws,
+    edges: GraphEdges,
+    initial_nodes: frozenset[tuple[UserAge, RegimeName]],
+    time: ModelTime,
+) -> None:
+    """Refuse declarations that break the order of the stages within a period.
+
+    Subjects start in the first stage, an edge lands in the next stage (the first
+    one of the next period after the last stage), and an exit stays in its stage.
+    A stage before the last links to the next one without discounting, so its
+    regimes declare no Koopmans aggregator and use no endogenous-grid solver.
+    """
+    if not time.stages:
+        return
+    stage_of = time.stage_of
+    names = [name for name, _ in time.stages]
+    problems = [
+        f"'{name}' starts subjects in stage '{names[stage_of[name]]}', not in the "
+        f"first stage '{names[0]}'"
+        for _, name in sorted(initial_nodes, key=repr)
+        if stage_of[name] != 0
+    ]
+    for phase_edges in (edges.solve, edges.simulate):
+        problems.extend(
+            f"the edge '{source}' -> '{target}' lands in stage "
+            f"'{names[stage_of[target]]}', not in the next stage "
+            f"'{names[(stage_of[source] + 1) % time.n_stages]}'"
+            for source, targets in phase_edges.items()
+            for target in targets
+            if stage_of[target] != (stage_of[source] + 1) % time.n_stages
+        )
+    for name, regime in regimes.items():
+        exit_ = regime.exit
+        destinations = (
+            ()
+            if exit_ is None
+            else (
+                *(target.regime for target in exit_.targets.values()),
+                *(
+                    (exit_.rule.counterparty.regime,)
+                    if isinstance(exit_.rule, Consent)
+                    else ()
+                ),
+            )
+        )
+        problems.extend(
+            f"the exit of '{name}' reads '{destination}' of stage "
+            f"'{names[stage_of[destination]]}', not of its own stage"
+            for destination in destinations
+            if stage_of[destination] != stage_of[name]
+        )
+        if stage_of[name] == time.n_stages - 1 or laws[name].terminal:
+            continue
+        if regime.koopmans_aggregator is not None:
+            problems.append(
+                f"'{name}' declares a Koopmans aggregator in stage "
+                f"'{names[stage_of[name]]}'; a stage before the last links to the "
+                "next stage of its period without discounting"
+            )
+        if isinstance(regime, _EGMFamilyRegime):
+            problems.append(
+                f"'{name}' uses an endogenous-grid solver in stage "
+                f"'{names[stage_of[name]]}'; only the last stage of a period may"
+            )
+    if problems:
+        raise ModelInitializationError(
+            "The model's stages are inconsistent: "
+            + "; ".join(dict.fromkeys(problems))
+            + "."
+        )

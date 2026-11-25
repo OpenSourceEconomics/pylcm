@@ -605,9 +605,9 @@ def test_series_time_and_categorical_axes_are_validated_together(
 
 def test_economic_profile_mapping_is_explicit_and_differentiable() -> None:
     def total(values: FloatND) -> FloatND:
-        stage_to_quarter = {0: 3, 1: 3, 2: 4, 3: 4}
+        period_to_quarter = {0: 3, 1: 3, 2: 4, 3: 4}
         profile = lcm.TimeVarying.from_profile(
-            values=values, labels=(4, 9, 3), period_to_label=stage_to_quarter
+            values=values, labels=(4, 9, 3), period_to_label=period_to_quarter
         )
         assert profile.periods == (0, 1, 2, 3)
         return jnp.sum(profile.values)

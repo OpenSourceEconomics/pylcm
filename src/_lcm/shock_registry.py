@@ -19,7 +19,11 @@ from _lcm.params.numeric_roles import (
     merge_roles,
 )
 from _lcm.processes.iid import _IIDProcess
-from _lcm.regime_building.value_adapter import adapt_user_function, encoding_grid
+from _lcm.regime_building.value_adapter import (
+    StageClock,
+    adapt_user_function,
+    encoding_grid,
+)
 from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.utils.error_messages import path_segment_name_errors
 from lcm.exceptions import (
@@ -244,8 +248,12 @@ def create_shock_registry(  # noqa: C901 - bind declarations and phase-specific 
     legacy_regimes: Mapping[RegimeName, Regime],
     model_states: Mapping[StateName, StateEntry],
     laws: RegimeLaws = MappingProxyType({}),
+    clock_grids: Mapping[str, StageClock] = MappingProxyType({}),
 ) -> ShockRegistry:
-    """Validate explicit identity and bind merged, unpruned consumer dependencies."""
+    """Validate explicit identity and bind merged, unpruned consumer dependencies.
+
+    A law or helper that reads `period` reads it through `clock_grids`.
+    """
     groups = MappingProxyType(dict(shocks))
     names = (
         frozenset(
@@ -352,7 +360,7 @@ def create_shock_registry(  # noqa: C901 - bind declarations and phase-specific 
                 bindings[regime_name, phase, group_name] = ShockBinding(
                     group=_adapt_law_values(
                         group=group.bind_conditioning(state_grids=state_grids),
-                        grids=state_grids,
+                        grids={**state_grids, **clock_grids},
                     ),
                     state_inputs=state_inputs,
                     state_domains=MappingProxyType(
@@ -371,7 +379,7 @@ def create_shock_registry(  # noqa: C901 - bind declarations and phase-specific 
                                 "LawCallable",
                                 adapt_user_function(
                                     func=function,
-                                    value_grids=state_grids,
+                                    value_grids={**state_grids, **clock_grids},
                                     encode=encoding_grid(
                                         value_grids=state_grids, name=name
                                     )
@@ -404,7 +412,7 @@ def create_shock_registry(  # noqa: C901 - bind declarations and phase-specific 
 
 
 def _adapt_law_values(
-    *, group: ShockGroup, grids: Mapping[StateName, DiscreteGrid]
+    *, group: ShockGroup, grids: Mapping[str, DiscreteGrid | StageClock]
 ) -> ShockGroup:
     """Decode only user callable reads; conditioned lookups deliberately read codes."""
     laws = {}

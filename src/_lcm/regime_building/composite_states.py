@@ -216,6 +216,7 @@ def lower_composite_states(
     period_masks = _period_masks(
         lowering=lowering,
         n_periods=len(dense._time.exact_values),  # noqa: SLF001
+        n_stages=dense._time.n_stages,  # noqa: SLF001
     )
     rewritten = {
         regime_name: _rewrite_regime(
@@ -710,11 +711,15 @@ def _composite_law(
 
 
 def _period_masks(
-    *, lowering: CompositeLowering, n_periods: int
+    *, lowering: CompositeLowering, n_periods: int, n_stages: int
 ) -> dict[RegimeName, np.ndarray]:
-    """Per carrying regime, which codes are reachable at which period."""
+    """Per carrying regime, which codes are reachable at which period.
+
+    The generated constraint reads the period, not the step; a regime decides in
+    one stage of each period, so its steps and periods correspond one to one.
+    """
     masks = {
-        regime_name: np.zeros((n_periods, len(lowering.table)), dtype=bool)
+        regime_name: np.zeros((n_periods // n_stages, len(lowering.table)), dtype=bool)
         for regime_name in lowering.carriers
     }
     for (period, regime_name), tuples in lowering.reachable.by_node.items():
@@ -722,7 +727,7 @@ def _period_masks(
         rows = np.asarray(sorted(tuples), dtype=np.int64).reshape(
             len(tuples), len(lowering.members)
         )
-        masks[regime_name][period, lowering.encode_rows(rows)] = True
+        masks[regime_name][period // n_stages, lowering.encode_rows(rows)] = True
     return masks
 
 
