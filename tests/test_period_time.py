@@ -3165,3 +3165,79 @@ def test_a_staged_off_grid_check_reports_the_period_and_stage() -> None:
         lcm.exceptions.OffGridStateError, match=r"period=1, stage='work', "
     ):
         model.solve(params={}, log_level="off")
+
+
+def _a_odds_broken_in_period_one(*, period: Period) -> FloatND:
+    return jnp.where(period == 1, jnp.array([0.4, 0.4]), jnp.array([0.4, 0.6]))
+
+
+def _a_off_its_grid_in_period_one(*, a: DiscreteState, period: Period) -> DiscreteState:
+    return jnp.where(period == 1, 2, a)
+
+
+def _a_from_draw(draw: dict[str, ScalarInt]) -> ScalarInt:
+    return draw["a"]
+
+
+def _back_to_work_broken_in_period_one(*, period: Period) -> FloatND:
+    return jnp.where(period == 1, 0.5, 1.0)
+
+
+@pytest.mark.parametrize(
+    ("kind", "error"),
+    [
+        ("state_law", lcm.exceptions.InvalidStateTransitionProbabilitiesError),
+        ("discrete_law", lcm.exceptions.InvalidStateTransitionError),
+        ("regime_law", lcm.exceptions.InvalidRegimeTransitionProbabilitiesError),
+        ("joint", lcm.exceptions.InvalidStateTransitionProbabilitiesError),
+    ],
+)
+def test_a_staged_transition_check_reads_the_period_of_its_step(
+    *, kind: str, error: type[Exception]
+) -> None:
+    """`validate_transitions` evaluates each law at the period of its step.
+
+    The law is broken only in period 1, whose steps are 2 and 3. A step read as
+    the period would break it at step 1, in period 0, or never.
+    """
+    regimes = _bits_regimes()
+    edges = None
+    if kind == "state_law":
+        regimes["working"] = regimes["working"].replace(
+            state_transitions={
+                "a": lcm.StochasticTransition(func=_a_odds_broken_in_period_one),
+                "b": _labor_kept,
+            }
+        )
+    elif kind == "discrete_law":
+        regimes["spending"] = regimes["spending"].replace(
+            state_transitions={"a": _a_off_its_grid_in_period_one, "b": _labor_kept}
+        )
+    elif kind == "regime_law":
+        edges = {
+            "working": {
+                "spending": lcm.PeriodRange(exclusive_stop=_N_ECONOMIC_PERIODS - 1),
+                "final": lcm.PeriodRange(start=_N_ECONOMIC_PERIODS - 1),
+            },
+            "spending": lcm.Transition(
+                law={
+                    "working": lcm.StochasticTransition(
+                        func=_back_to_work_broken_in_period_one
+                    )
+                }
+            ),
+        }
+    else:
+        draw = lcm.JointTransition(
+            support_size=2,
+            support={"a": jnp.asarray([0, 1], dtype=jnp.int32)},
+            probabilities=_a_odds_broken_in_period_one,
+            outputs={"a": _a_from_draw},
+        )
+        regimes["working"] = regimes["working"].replace(
+            state_transitions={"b": _labor_kept},
+            joint_transitions={"spending": {"draw": draw}, "final": {"draw": draw}},
+        )
+    model = _staged_model(clock="staged", regimes=regimes, edges=edges)
+    with pytest.raises(error, match=r"\bages? 1\b"):
+        model.validate_transitions(params={})
