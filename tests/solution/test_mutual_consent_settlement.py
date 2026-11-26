@@ -1216,3 +1216,121 @@ def test_settlement_searches_the_candidates_past_an_unsupported_default() -> Non
         settlements=_FLOOR_SETTLED_AT,
         division="assets",
     )
+
+
+# Stay values `(f, m)` per cell at the one feasible action. m's destination has
+# no feasible action at his landing state, and his stay value is `-inf`.
+_UNDEFINED_STAY = ((3.0, -np.inf), (0.0, -np.inf))
+
+
+def _undefined_stay_f(*, case: IntND, choice: IntND) -> FloatND:
+    return jnp.asarray(_UNDEFINED_STAY)[case, 0] + 0.0 * choice
+
+
+def _undefined_stay_m(*, case: IntND, choice: IntND) -> FloatND:
+    return jnp.asarray(_UNDEFINED_STAY)[case, 1] + 0.0 * choice
+
+
+def _only_the_first_action(*, choice: IntND) -> BoolND:
+    return choice == 0
+
+
+def _below_the_grid(*, case: IntND) -> FloatND:
+    return -1.0 + 0.0 * case
+
+
+def _solvent(*, assets: FloatND) -> BoolND:
+    return assets >= 0.0
+
+
+def _own_assets(*, assets: FloatND, c: IntND) -> FloatND:
+    return assets + 0.0 * c
+
+
+def _paid(*, t: FloatND) -> FloatND:
+    return t
+
+
+def _no_default(*, case: IntND) -> FloatND:
+    return 0.0 * case
+
+
+_UNDEFINED_DESTINATION_RULES = {
+    "each action": (Unilateral(tie="leave"), [[3.0, -np.inf], [-np.inf, -np.inf]]),
+    "optimum": (
+        Unilateral(compares="optimum", tie="leave"),
+        [[3.0, -np.inf], [-np.inf, -np.inf]],
+    ),
+    "settlement": (
+        MutualConsent(
+            tie="leave",
+            settle=Settlement(
+                name="t",
+                candidates=LinSpacedGrid(start=0.0, stop=4.0, n_points=5),
+                default=_no_default,
+            ),
+        ),
+        [[3.0, -np.inf], [0.0, -np.inf]],
+    ),
+}
+
+
+@pytest.mark.parametrize("rule", list(_UNDEFINED_DESTINATION_RULES))
+def test_a_member_with_an_undefined_destination_accepts_staying_under_leave(
+    *, rule: str
+) -> None:
+    """m's destination has no feasible action, so he accepts staying under "leave".
+
+    Specification, section 5 [A 6]: such a member's outside value is `-inf` and
+    he accepts every feasible stay action, also under `tie="leave"` and also
+    where his stay value is `-inf`. In cell 0 f gains from staying, 3 against
+    her 1, so the pair stays. In cell 1 f is at 0 against her 1: she refuses,
+    and the pair cannot separate, which leaves no value under the unilateral
+    rules; under the settlement m is the stayer, accepts no candidate and the
+    pair stays.
+    """
+    declaration, expected = _UNDEFINED_DESTINATION_RULES[rule]
+    settles = isinstance(declaration, MutualConsent)
+    model = Model(
+        regimes={
+            "couple": Regime(
+                states={"case": DiscreteGrid(values=jnp.arange(2))},
+                actions={"choice": DiscreteGrid(values=jnp.asarray([0, 1]))},
+                constraints={"only_the_first_action": _only_the_first_action},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"f": _undefined_stay_f, "m": _undefined_stay_m}
+                    )
+                },
+                exit=Exit(
+                    rule=declaration,
+                    targets={
+                        "f": ExitTarget(
+                            regime="single_f",
+                            projection={},
+                            utility_adjustment=_paid if settles else None,
+                        ),
+                        "m": ExitTarget(
+                            regime="single_m", projection={"assets": _below_the_grid}
+                        ),
+                    },
+                ),
+            ),
+            "single_f": Regime(functions={"utility": _Constant(value=1.0)}),
+            "single_m": Regime(
+                states={"assets": LinSpacedGrid(start=-2.0, stop=2.0, n_points=5)},
+                actions={"c": DiscreteGrid(values=jnp.asarray([0, 1]))},
+                constraints={"solvent": _solvent},
+                functions={"utility": _own_assets},
+            ),
+        },
+        n_periods=1,
+        edges={},
+        initial_nodes=InitialNodes(by_period={0: ("couple", "single_f", "single_m")}),
+        regime_id_class=_Household,
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+    )
+
+    solution = model.solve(params={}, log_level="off")
+
+    assert np.asarray(solution.values[0]["couple"]).tolist() == expected

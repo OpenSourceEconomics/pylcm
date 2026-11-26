@@ -1,6 +1,6 @@
 """Reject ambiguous time declarations before DAG compilation or specialization."""
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from types import MappingProxyType
 from typing import cast
 
@@ -161,18 +161,25 @@ def validate_stages(  # noqa: C901, PLR0912 - one pass over the regimes' edges a
             if within:
                 within_ages.add(age)
             if within and len(within) < len(at_age):
+                crossing = sorted(at_age - set(within))
                 problems.append(
                     f"at {coordinate_kind(time)} {format_age(float(age))}, the edges "
                     f"of '{name}' in stage '{names[stage]}' land in its period, "
-                    f"into {within}, and in the next period, into "
-                    f"{sorted(at_age - set(within))}; "
+                    f"into {within}, and in the next period, into {crossing}; "
                     "a source's edges at one age either all stay in its period or "
                     "all cross into the next one"
+                    + "".join(
+                        _pass_through(
+                            regime=target,
+                            stages=_sat_out(
+                                names=names, stage=stage, landing=stage_of[target]
+                            ),
+                        )
+                        for target in crossing
+                    )
                 )
         skipped = {
-            target: names[stage + 1 :] + names[: stage_of[target]]
-            if stage_of[target] <= stage
-            else names[stage + 1 : stage_of[target]]
+            target: _sat_out(names=names, stage=stage, landing=stage_of[target])
             for target in targets
         }
         for target in laws[name].gated_edges:
@@ -188,6 +195,12 @@ def validate_stages(  # noqa: C901, PLR0912 - one pass over the regimes' edges a
                 f"the gated edge '{name}' -> '{target}' lands in '{landing}' of "
                 f"stage '{names[stage_of[landing]]}'; a gated edge and its "
                 "fallbacks land in the next stage"
+                + _pass_through(
+                    regime=landing,
+                    stages=_sat_out(
+                        names=names, stage=stage, landing=stage_of[landing]
+                    ),
+                )
                 for landing in gated
                 if stage_of[landing] != (stage + 1) % time.n_stages
             )
@@ -201,8 +214,8 @@ def validate_stages(  # noqa: C901, PLR0912 - one pass over the regimes' edges a
                 problems.append(
                     f"'{target}' sits out stage '{sat_out[0]}' on the edge from "
                     f"'{name}', so its continuous stochastic processes "
-                    f"{processes} are not drawn there; declare a regime of its "
-                    f"own in stage '{sat_out[0]}'"
+                    f"{processes} are not drawn there"
+                    + _pass_through(regime=target, stages=sat_out)
                 )
         exit_ = regime.exit
         destinations = (
@@ -267,3 +280,26 @@ def validate_stages(  # noqa: C901, PLR0912 - one pass over the regimes' edges a
             + "."
         )
     return MappingProxyType(linked)
+
+
+def _sat_out(*, names: Sequence[str], stage: int, landing: int) -> list[str]:
+    """Return the stages an edge from `stage` skips before it lands in `landing`."""
+    if landing <= stage:
+        return [*names[stage + 1 :], *names[:landing]]
+    return list(names[stage + 1 : landing])
+
+
+def _pass_through(*, regime: RegimeName, stages: Sequence[str]) -> str:
+    """Advise declaring the pass-through of a regime that sits out `stages`."""
+    if not stages:
+        return ""
+    where = (
+        f"stage '{stages[0]}'"
+        if len(stages) == 1
+        else f"each of the stages {list(stages)}"
+    )
+    return (
+        f"; declare the pass-through of '{regime}' in {where} explicitly (a "
+        "regime with the same states, one action, no shock, zero utility and "
+        "the value handed through) and let the edge land in it"
+    )

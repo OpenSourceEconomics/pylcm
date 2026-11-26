@@ -33,7 +33,7 @@ from lcm.exceptions import (
     InvalidValueFunctionError,
     ModelInitializationError,
     NoFeasibleActionError,
-    UnsupportedOperationError,
+    RegimeInitializationError,
 )
 from lcm.solvers import GridSearch
 from lcm.typing import (
@@ -811,12 +811,17 @@ def test_readout_follows_the_empty_tie_and_nan_contract(
 def test_household_ties_in_the_objectives_go_to_the_stored_values(
     *, order: tuple[int, ...]
 ) -> None:
-    """Actions 0 and 1 tie in every objective; f's higher stored value decides."""
+    """Actions 0 and 1 tie in the household objective; f's higher stored value decides.
+
+    Specification, section 13.5: ties in the objective go to the members by their
+    stored values, in member order. The members' own objectives do not enter the
+    tie, so f's larger objective at action 0 does not decide.
+    """
     from _lcm.regime_building.decoupled import (  # noqa: PLC0415
         household_argmax_and_readout,
     )
 
-    selection = jnp.asarray([[1.0, 2.0], [1.0, 2.0], [0.0, 0.0]])[jnp.asarray(order)]
+    selection = jnp.asarray([[2.0, 1.0], [1.0, 2.0], [0.0, 0.0]])[jnp.asarray(order)]
     readout = jnp.asarray([[3.0, 9.0], [4.0, 1.0], [8.0, 8.0]])[jnp.asarray(order)]
     _, value = household_argmax_and_readout(
         selection=selection,
@@ -825,6 +830,196 @@ def test_household_ties_in_the_objectives_go_to_the_stored_values(
         weights=jnp.asarray([0.5, 0.5]),
     )
     assert_array_equal(value, [4.0, 1.0])
+
+
+@lcm.categorical(ordered=False)
+class Alternative:
+    first: ScalarInt
+    second: ScalarInt
+
+
+def no_utility(
+    *, alternative: DiscreteAction, c: ContinuousAction, s: ContinuousState
+) -> FloatND:
+    return jnp.zeros_like(alternative + c + s)
+
+
+def utility_falls_in_c(
+    *, alternative: DiscreteAction, c: ContinuousAction, s: ContinuousState
+) -> FloatND:
+    return 1.0 - c + 0.0 * (alternative + s)
+
+
+def lands_at_c(*, c: ContinuousAction) -> ContinuousState:
+    return c
+
+
+def end_zero(*, s: ContinuousState) -> FloatND:
+    return 0.0 * s
+
+
+def end_s(*, s: ContinuousState) -> FloatND:
+    return s
+
+
+def end_one_plus_s(*, s: ContinuousState) -> FloatND:
+    return 1.0 + s
+
+
+def end_one_minus_s(*, s: ContinuousState) -> FloatND:
+    return 1.0 - s
+
+
+def objective_is_utility(*, utility: FloatND, CE: FloatND) -> FloatND:
+    return utility + 0.0 * CE
+
+
+def value_is_CE(*, utility: FloatND, CE: FloatND) -> FloatND:
+    return CE + 0.0 * utility
+
+
+TIE_SCALE = 0.5
+
+# Per case: the deciding regime's utilities, the terminal utilities, whether
+# taste shocks are declared, the solved values at `s = 0` in member order, and
+# the simulated `c`. The objective is the period utility and the stored value
+# the continuation, which `c` moves to `s`; every objective ties across `c`.
+TIE_CASES: dict[
+    str,
+    tuple[
+        Mapping[str, UserFunction], Mapping[str, UserFunction], bool, list[float], float
+    ],
+] = {
+    # Spec 14.5a, step 3: one member, taste shocks. Its stored values are 1 and
+    # 2, so c = 1 in both alternatives, each with probability one half.
+    "one member, taste shocks": (
+        {"self": no_utility},
+        {"self": end_one_plus_s},
+        True,
+        [2.0 + TIE_SCALE * np.log(2.0)],
+        1.0,
+    ),
+    # Spec 8.5, 13.5: f decides; m's objective prefers c = 0, his stored
+    # value c = 1. His stored value decides.
+    "the other member's stored value": (
+        {"f": no_utility, "m": utility_falls_in_c},
+        {"f": end_zero, "m": end_s},
+        False,
+        [0.0, 1.0],
+        1.0,
+    ),
+    "the other member's stored value, taste shocks": (
+        {"f": no_utility, "m": utility_falls_in_c},
+        {"f": end_zero, "m": end_s},
+        True,
+        [TIE_SCALE * np.log(2.0), 1.0],
+        1.0,
+    ),
+    # Spec 14.5a: the other members come before the decider. m's stored value
+    # prefers c = 0, f's own c = 1.
+    "the other member before the decider": (
+        {"f": no_utility, "m": no_utility},
+        {"f": end_s, "m": end_one_minus_s},
+        False,
+        [0.0, 1.0],
+        0.0,
+    ),
+}
+
+
+def _tie_model(
+    *,
+    utilities: Mapping[str, UserFunction],
+    end_utilities: Mapping[str, UserFunction],
+    taste_shocks: bool,
+) -> lcm.Model:
+    """`decide` at period 0 moves `s` to its action `c`; `end` pays `s` by member."""
+    s = lcm.LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
+    single = list(utilities) == ["self"]
+    weights = {"f": 1.0, "m": 0.0}
+    return lcm.Model(
+        n_periods=2,
+        regimes={
+            "decide": lcm.Regime(
+                actions={
+                    "alternative": lcm.DiscreteGrid(Alternative),
+                    "c": lcm.LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
+                },
+                states={"s": s},
+                state_transitions={"s": lands_at_c},
+                functions={
+                    "utility": utilities["self"]
+                    if single
+                    else lcm.CollectiveUtility(
+                        utilities=dict(utilities),
+                        objective=lcm.ParetoObjective(weights=weights),
+                    )
+                },
+                koopmans_aggregator=lcm.Decoupled(
+                    objective=objective_is_utility, value=value_is_CE
+                ),
+                taste_shocks=lcm.ExtremeValueTasteShocks() if taste_shocks else None,
+            ),
+            "end": lcm.Regime(
+                states={"s": s},
+                functions={
+                    "utility": end_utilities["self"]
+                    if single
+                    else lcm.CollectiveUtility(utilities=dict(end_utilities))
+                },
+            ),
+        },
+        regime_id_class=RegimeId,
+        initial_nodes=lcm.InitialNodes(by_period={0: "decide"}),
+        edges={"decide": {"end": lcm.Periods(values=(0,))}},
+    )
+
+
+@pytest.mark.parametrize("case", list(TIE_CASES))
+def test_objective_ties_go_to_the_other_members_then_to_the_decider(
+    *, case: str
+) -> None:
+    """Ties in the objective go to the stored values: others first, the decider last.
+
+    Specification, sections 8.5, 13.5 and 14.5a: among the actions with the
+    highest objective of the deciding member, those with the highest stored
+    value of each other member in member order, then those with the highest
+    stored value of the deciding member. With taste shocks the rule picks the
+    other actions inside each alternative. Solve and simulation agree.
+    """
+    utilities, end_utilities, taste_shocks, expected, expected_c = TIE_CASES[case]
+    model = _tie_model(
+        utilities=utilities, end_utilities=end_utilities, taste_shocks=taste_shocks
+    )
+    params: UserParams = (
+        {"decide": {"taste_shocks": {"scale": TIE_SCALE}}} if taste_shocks else {}
+    )
+    solution = model.solve(params=params, log_level="off")
+    members = tuple(utilities)
+    conditions = {
+        "s": jnp.zeros(len(members)),
+        "regime_id": jnp.full(len(members), RegimeId.decide),
+        "period": jnp.zeros(len(members), dtype=jnp.int32),
+    }
+    if members != ("self",):
+        conditions["own_member"] = jnp.asarray(
+            [model.member_names_to_ids[member] for member in members],
+            dtype=jnp.int32,
+        )
+    df = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions=conditions,
+        log_level="off",
+        seed=0,
+    ).to_dataframe()
+
+    assert_array_almost_equal(
+        solution.value(period=0, regime="decide")[0],
+        expected,
+        decimal=DECIMAL_PRECISION,
+    )
+    assert_array_equal(df.loc[df["period"] == 0, "c"], expected_c)
 
 
 @pytest.mark.parametrize("period", [0, 1])
@@ -1356,74 +1551,481 @@ def test_params_template_is_one_namespace_over_all_three_aggregators() -> None:
     }
 
 
-def _stay(wealth: ContinuousState) -> ContinuousState:
-    return wealth
+@lcm.categorical(ordered=False)
+class _ExitRegimeId:
+    couple: ScalarInt
+    single_f: ScalarInt
+    single_m: ScalarInt
+    end: ScalarInt
+    end_f: ScalarInt
+    end_m: ScalarInt
 
 
-def _wealth_utility(wealth: ContinuousState) -> FloatND:
-    return wealth
+@lcm.categorical(ordered=True)
+class _Weight:
+    low: ScalarInt
+    high: ScalarInt
 
 
-def test_an_exit_source_refuses_unrepresented_decoupled_selection() -> None:
-    """A native exit query must not rank actions by the reported value."""
+def _her_utility(
+    *, c: ContinuousAction, s: ContinuousState, mu: DiscreteState
+) -> FloatND:
+    return 1.0 - c + 0.0 * s + 0.1 * mu
 
-    @lcm.categorical(ordered=False)
-    class ExitRegimeId:
-        alive: ScalarInt
-        alone: ScalarInt
-        end: ScalarInt
 
-    def source_utility(*, wealth: ContinuousState, effort: ContinuousAction) -> FloatND:
-        return wealth + effort
+def _his_utility(
+    *, c: ContinuousAction, s: ContinuousState, mu: DiscreteState
+) -> FloatND:
+    return c + 0.0 * s - 0.1 * mu
 
-    def opposite_objective(*, utility: FloatND, CE: FloatND) -> FloatND:
-        return -utility + CE
 
-    wealth = lcm.LinSpacedGrid(start=1, stop=5, n_points=3)
-    # Equal continuation makes effort zero the objective maximizer; the
-    # reported aggregator instead ranks effort one highest.
-    effort = lcm.LinSpacedGrid(start=0, stop=1, n_points=2)
-    with pytest.raises(UnsupportedOperationError, match="Decoupled"):
-        lcm.Model(
-            regimes={
-                "alive": lcm.Regime(
-                    states={"wealth": wealth},
-                    state_transitions={"wealth": _stay},
-                    actions={"effort": effort},
-                    functions={"utility": source_utility},
-                    koopmans_aggregator=lcm.Decoupled(
-                        objective=opposite_objective, value=additive
-                    ),
-                    exit=lcm.Exit(
-                        targets={
-                            "self": lcm.ExitTarget(
-                                regime="alone", projection={"wealth": _stay}
-                            )
-                        },
-                        rule=lcm.Unilateral(),
-                    ),
-                ),
-                "alone": lcm.Regime(
-                    states={"wealth": wealth},
-                    state_transitions={"wealth": _stay},
-                    functions={"utility": _wealth_utility},
-                    # Declared per regime, since `alive` declares its own.
-                    koopmans_aggregator=additive,
-                ),
-                "end": lcm.Regime(
-                    states={"wealth": wealth},
-                    functions={"utility": _wealth_utility},
-                ),
+def _single_utility(*, c: ContinuousAction, s: ContinuousState) -> FloatND:
+    return 0.5 * c + 0.0 * s - 1.0
+
+
+def _keep_s(*, s: ContinuousState) -> ContinuousState:
+    return s
+
+
+def _s_is_c(*, c: ContinuousAction) -> ContinuousState:
+    return c
+
+
+def _low_mu(*, s: ContinuousState) -> DiscreteState:
+    return jnp.zeros_like(s, dtype=jnp.int32)
+
+
+def _end_s_mu(*, s: ContinuousState, mu: DiscreteState) -> FloatND:
+    return s + 0.0 * mu
+
+
+def _half_continuation(*, utility: FloatND, CE: FloatND) -> FloatND:
+    return utility + 0.5 * CE
+
+
+def _paid(*, t: FloatND) -> FloatND:
+    return t
+
+
+def _no_payment(*, s: ContinuousState) -> FloatND:
+    return 0.0 * s
+
+
+def _rule_exit(rule: str) -> lcm.Exit:
+    """Return the exit of `rule`; a formation is declared on `single_f`."""
+    if rule == "formation":
+        return lcm.Exit(
+            targets={
+                "self": lcm.ExitTarget(
+                    regime="couple", role="f", projection={"s": _keep_s, "mu": _low_mu}
+                )
             },
-            ages=lcm.AgeGrid(start=0, inclusive_stop=1, step="Y"),
-            regime_id_class=ExitRegimeId,
-            initial_nodes=lcm.InitialNodes(by_age={0.0: ("alive", "alone")}),
-            edges={
-                "alive": lcm.Transition(law="end"),
-                "alone": lcm.Transition(law="end"),
-            },
-            enable_jit=False,
+            rule=lcm.Consent(
+                counterparty=lcm.Counterparty(
+                    regime="single_m", role="m", projection={"s": _keep_s}
+                )
+            ),
         )
+    targets = {
+        member: lcm.ExitTarget(
+            regime=f"single_{member}",
+            projection={"s": _keep_s},
+            utility_adjustment=_paid
+            if rule == "settlement" and member == "f"
+            else None,
+        )
+        for member in ("f", "m")
+    }
+    rules = {
+        "unilateral": lcm.Unilateral(),
+        "renegotiation": lcm.Unilateral(renegotiate=lcm.Renegotiate(state="mu")),
+        "settlement": lcm.MutualConsent(
+            settle=lcm.Settlement(
+                name="t",
+                candidates=lcm.LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
+                default=_no_payment,
+            )
+        ),
+    }
+    return lcm.Exit(rule=rules[rule], targets=targets)
+
+
+def _exit_model(
+    *, rule: str, aggregator: UserFunction | lcm.Phased | lcm.Decoupled
+) -> lcm.Model:
+    """Two periods; the regime with the move of `rule` declares `aggregator`.
+
+    `couple` (f, m) exits to `single_f` and `single_m`, except under a
+    formation, where `single_f` forms `couple` with `single_m`.
+    """
+    s = lcm.LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
+    c = lcm.LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
+    forms = rule == "formation"
+
+    def single(*, mover: bool) -> lcm.Regime:
+        return lcm.Regime(
+            actions={"c": c},
+            states={"s": s},
+            state_transitions={"s": _s_is_c},
+            functions={"utility": _single_utility},
+            koopmans_aggregator=aggregator if mover else additive,
+            exit=_rule_exit(rule) if mover else None,
+        )
+
+    return lcm.Model(
+        n_periods=2,
+        regimes={
+            "couple": lcm.Regime(
+                actions={"c": c},
+                states={"s": s, "mu": lcm.DiscreteGrid(_Weight)},
+                state_transitions={"s": _s_is_c, "mu": lcm.fixed_transition("mu")},
+                functions={
+                    "utility": lcm.CollectiveUtility(
+                        utilities={"f": _her_utility, "m": _his_utility}
+                    )
+                },
+                koopmans_aggregator=additive if forms else aggregator,
+                exit=None if forms else _rule_exit(rule),
+            ),
+            "single_f": single(mover=forms),
+            "single_m": single(mover=False),
+            "end": lcm.Regime(
+                states={"s": s, "mu": lcm.DiscreteGrid(_Weight)},
+                functions={
+                    "utility": lcm.CollectiveUtility(
+                        utilities={"f": _end_s_mu, "m": _end_s_mu}
+                    )
+                },
+            ),
+            "end_f": lcm.Regime(states={"s": s}, functions={"utility": end_s}),
+            "end_m": lcm.Regime(states={"s": s}, functions={"utility": end_s}),
+        },
+        regime_id_class=_ExitRegimeId,
+        initial_nodes=lcm.InitialNodes(
+            by_period={0: ("couple", "single_f", "single_m")}
+        ),
+        edges={
+            "couple": {"end": lcm.Periods(values=(0,))},
+            "single_f": {"end_f": lcm.Periods(values=(0,))},
+            "single_m": {"end_m": lcm.Periods(values=(0,))},
+        },
+    )
+
+
+_RULES = ("unilateral", "renegotiation", "formation", "settlement")
+
+
+@pytest.mark.parametrize("rule", _RULES)
+def test_a_separate_objective_is_refused_on_a_regime_with_its_own_exit(
+    *, rule: str
+) -> None:
+    """A regime with an exit, a renegotiation, a settlement or a formation of its
+    own declares no separate objective (specification 13.5, [A 20]).
+
+    The refusal comes when the model is built and names the regime, the two
+    declarations and the way out.
+    """
+    mover = "single_f" if rule == "formation" else "couple"
+    with pytest.raises(
+        RegimeInitializationError,
+        match=(
+            rf"Regime '{mover}' declares a separate objective \(`Decoupled`\) and "
+            r"its own exit or formation\. A separate objective is for regimes "
+            r"without an exit or a formation of their own: drop the separate "
+            r"objective, or let the current self choose differently by declaring "
+            r"`koopmans_aggregator=Phased\(solve=\.\.\., simulate=\.\.\.\)`\."
+        ),
+    ):
+        _exit_model(
+            rule=rule,
+            aggregator=lcm.Decoupled(objective=_half_continuation, value=additive),
+        )
+
+
+@pytest.mark.parametrize("rule", _RULES)
+def test_a_current_self_solves_and_simulates_on_a_regime_with_its_own_exit(
+    *, rule: str
+) -> None:
+    """The current self (specification 13.2) is not limited to regimes without an
+    exit (specification 13.5, [A 20]).
+
+    Its solve is that of the solve-phase aggregator, and the simulation runs.
+    """
+    current_self = _exit_model(
+        rule=rule, aggregator=lcm.Phased(solve=additive, simulate=_half_continuation)
+    )
+    solution = current_self.solve(params={}, log_level="off")
+    plain = _exit_model(rule=rule, aggregator=additive).solve(
+        params={}, log_level="off"
+    )
+    for regime in ("couple", "single_f", "single_m"):
+        assert_array_equal(
+            solution.value(period=0, regime=regime),
+            plain.value(period=0, regime=regime),
+        )
+    start = _ExitRegimeId.single_f if rule == "formation" else _ExitRegimeId.couple
+    frame = current_self.simulate(
+        params={},
+        solution=solution,
+        initial_conditions={
+            "s": jnp.zeros(2),
+            "mu": jnp.zeros(2, dtype=jnp.int32),
+            "period": jnp.zeros(2, dtype=jnp.int32),
+            "regime_id": jnp.full(2, start),
+            "own_member": jnp.asarray(
+                [current_self.member_names_to_ids[m] for m in ("f", "m")],
+                dtype=jnp.int32,
+            ),
+        },
+        log_level="off",
+        seed=0,
+    ).to_dataframe(use_categorical_codes=True)
+    first = frame.loc[frame["period"] == 0]
+    assert len(first) == 2
+    assert np.isfinite(first[["value_f", "value_m"]].to_numpy()).all()
+
+
+def _tied_objective_utility(
+    *, c: ContinuousAction, alternative: DiscreteAction, s: ContinuousState
+) -> FloatND:
+    """With `s' = c`, the objective `u + s'/2` ties at `c = 0` and `c = 1/2` above
+    `c = 1`; the stored `u + s'` is 0, 1/4 and 3/8 there."""
+    return jnp.where(c > 0.75, -0.625, -0.5 * c) + 0.125 * alternative + 0.0 * s
+
+
+def _member_utility(offset: float) -> UserFunction:
+    def utility(
+        *,
+        c: ContinuousAction,
+        alternative: DiscreteAction,
+        s: ContinuousState,
+        mu: DiscreteState,
+    ) -> FloatND:
+        return _tied_objective_utility(c=c, alternative=alternative, s=s) + (
+            offset + 0.0 * mu
+        )
+
+    return utility
+
+
+def _constant_utility(offset: float) -> UserFunction:
+    def utility(
+        *,
+        c: ContinuousAction,
+        alternative: DiscreteAction,
+        s: ContinuousState,
+        mu: DiscreteState,
+    ) -> FloatND:
+        return offset + 0.0 * (c + alternative + s + mu)
+
+    return utility
+
+
+def _end_zero_mu(*, s: ContinuousState, mu: DiscreteState) -> FloatND:
+    return 0.0 * (s + mu)
+
+
+# Per read: the rule and the regime that declares the separate objective.
+_READS = {
+    "target of a unilateral exit": ("unilateral", "single_f"),
+    "target of a renegotiation": ("renegotiation", "single_f"),
+    "target of a settlement": ("settlement", "single_m"),
+    "counterparty of a formation": ("formation", "single_m"),
+    "couple a formation forms": ("formation", "couple"),
+}
+
+# m's flow utility in the formed couple when the counterparty is read: between
+# single_m's value at its objective's choice and its best stored value, without
+# and with taste shocks (3/8 and 1/2; 0.663 and 0.788 at scale 1/2).
+_COUNTERPARTY_GAIN = {False: 0.4375, True: 0.75}
+
+
+def _read_model(*, rule: str, read: str, taste_shocks: bool) -> lcm.Model:
+    """`read` declares a separate objective; another regime's move only reads it.
+
+    A couple that exits stays at -10, so both members leave. A formed couple
+    gives f one more than she has alone and m a constant.
+    """
+    s = lcm.LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
+    c = lcm.LinSpacedGrid(start=0.0, stop=1.0, n_points=3)
+    actions = {"c": c, "alternative": lcm.DiscreteGrid(Alternative)}
+    forms = rule == "formation"
+
+    def aggregator(name: str) -> UserFunction | lcm.Decoupled:
+        if name != read:
+            return additive
+        return lcm.Decoupled(objective=_half_continuation, value=additive)
+
+    def taste(name: str) -> lcm.ExtremeValueTasteShocks | None:
+        return lcm.ExtremeValueTasteShocks() if taste_shocks and name == read else None
+
+    def single(name: str) -> lcm.Regime:
+        return lcm.Regime(
+            actions=actions,
+            states={"s": s},
+            state_transitions={"s": _s_is_c},
+            functions={"utility": _tied_objective_utility},
+            exit=_rule_exit("formation") if forms and name == "single_f" else None,
+            koopmans_aggregator=aggregator(name),
+            taste_shocks=taste(name),
+        )
+
+    utilities = (
+        {
+            "f": _member_utility(1.0),
+            "m": _constant_utility(
+                _COUNTERPARTY_GAIN[taste_shocks] if read == "single_m" else 2.0
+            ),
+        }
+        if forms
+        else {"f": _member_utility(-10.0), "m": _member_utility(-10.0)}
+    )
+    return lcm.Model(
+        n_periods=2,
+        regimes={
+            "couple": lcm.Regime(
+                actions=actions,
+                states={"s": s, "mu": lcm.DiscreteGrid(_Weight)},
+                state_transitions={"s": _s_is_c, "mu": lcm.fixed_transition("mu")},
+                functions={
+                    "utility": lcm.CollectiveUtility(
+                        utilities=utilities,
+                        objective=lcm.ParetoObjective(weights={"f": 1.0, "m": 0.0}),
+                    )
+                },
+                exit=None if forms else _read_exit(rule),
+                koopmans_aggregator=aggregator("couple"),
+                taste_shocks=taste("couple"),
+            ),
+            "single_f": single("single_f"),
+            "single_m": single("single_m"),
+            "end": lcm.Regime(
+                states={"s": s, "mu": lcm.DiscreteGrid(_Weight)},
+                functions={
+                    "utility": lcm.CollectiveUtility(
+                        utilities={
+                            "f": _end_s_mu,
+                            "m": _end_zero_mu if forms else _end_s_mu,
+                        }
+                    )
+                },
+            ),
+            "end_f": lcm.Regime(states={"s": s}, functions={"utility": end_s}),
+            "end_m": lcm.Regime(states={"s": s}, functions={"utility": end_s}),
+        },
+        regime_id_class=_ExitRegimeId,
+        initial_nodes=lcm.InitialNodes(
+            by_period={0: ("couple", "single_f", "single_m")}
+        ),
+        edges={
+            "couple": {"end": lcm.Periods(values=(0,))},
+            "single_f": {"end_f": lcm.Periods(values=(0,))},
+            "single_m": {"end_m": lcm.Periods(values=(0,))},
+        },
+    )
+
+
+def _read_exit(rule: str) -> lcm.Exit:
+    """The couple's exit under `rule`; under a settlement m's payoff is adjusted."""
+    exit_ = _rule_exit(rule)
+    if rule != "settlement":
+        return exit_
+    return lcm.Exit(
+        rule=exit_.rule,
+        targets={
+            "f": lcm.ExitTarget(regime="single_f", projection={"s": _keep_s}),
+            "m": lcm.ExitTarget(
+                regime="single_m", projection={"s": _keep_s}, utility_adjustment=_paid
+            ),
+        },
+    )
+
+
+def _read_params(*, read: str, taste_shocks: bool) -> UserParams:
+    return {read: {"taste_shocks": {"scale": 0.5}}} if taste_shocks else {}
+
+
+@pytest.mark.parametrize("taste_shocks", [False, True])
+@pytest.mark.parametrize("read", list(_READS))
+def test_a_read_of_a_separate_objective_takes_the_stored_values_at_its_choice(
+    *, read: str, taste_shocks: bool
+) -> None:
+    """Another regime's exit or formation reads a regime with a separate objective
+    at that regime's own selection (specification 14.4, 13.5 and 14.5).
+
+    The read value is the read regime's own solution value, bitwise: the stored
+    values where its objective chooses, objective ties going to the stored
+    values. Without taste shocks the objective ties at two actions and a third
+    has the highest stored value, so the read is 1/4 above the alternative's
+    1/8 there, not the 3/8 of the best stored value.
+    """
+    rule, regime = _READS[read]
+    model = _read_model(rule=rule, read=regime, taste_shocks=taste_shocks)
+    solution = model.solve(
+        params=_read_params(read=regime, taste_shocks=taste_shocks), log_level="off"
+    )
+    couple = np.asarray(solution.value(period=0, regime="couple"))
+    # A single regime keeps its one member on a trailing axis.
+    single_f = np.asarray(solution.value(period=0, regime="single_f"))[..., 0]
+    if rule != "formation":
+        member = 0 if regime == "single_f" else 1
+        target = np.asarray(solution.value(period=0, regime=regime))[..., 0]
+        assert_array_equal(
+            couple[..., member], np.broadcast_to(target[:, None], (2, 2))
+        )
+        if not taste_shocks:
+            assert_array_equal(target, [0.375, 0.375])
+        return
+    # The formation happens, so f's value alone is hers in the formed couple at
+    # the projected weight `low`.
+    assert_array_equal(single_f, couple[:, 0, 0])
+    if taste_shocks:
+        return
+    if regime == "couple":
+        assert_array_equal(couple[:, 0, 0], [1.375, 1.375])
+    else:
+        assert_array_equal(
+            np.asarray(solution.value(period=0, regime=regime))[..., 0], [0.375, 0.375]
+        )
+
+
+@pytest.mark.parametrize("read", list(_READS))
+def test_a_simulated_move_into_a_separate_objective_takes_the_solved_value(
+    *, read: str
+) -> None:
+    """A person who moves into, or forms a couple with, a regime with a separate
+    objective has the value the solve publishes for that move (specification
+    14.4 and 13.5)."""
+    rule, regime = _READS[read]
+    model = _read_model(rule=rule, read=regime, taste_shocks=False)
+    solution = model.solve(params={}, log_level="off")
+    forms = rule == "formation"
+    start = _ExitRegimeId.single_f if forms else _ExitRegimeId.couple
+    frame = model.simulate(
+        params={},
+        solution=solution,
+        initial_conditions={
+            "s": jnp.zeros(2),
+            "mu": jnp.zeros(2, dtype=jnp.int32),
+            "period": jnp.zeros(2, dtype=jnp.int32),
+            "regime_id": jnp.full(2, start),
+            "own_member": jnp.asarray(
+                [model.member_names_to_ids[m] for m in ("f", "m")], dtype=jnp.int32
+            ),
+        },
+        log_level="off",
+        seed=0,
+    ).to_dataframe(use_categorical_codes=True)
+    first = frame.loc[frame["period"] == 0].set_index("subject_id")
+    if forms:
+        solved = np.asarray(solution.value(period=0, regime="single_f"))[0]
+        assert first.loc[0, "regime_name"] == "couple"
+        assert first.loc[0, "value_f"] == solved
+        return
+    solved = np.asarray(solution.value(period=0, regime="couple"))[0, 0]
+    for subject, member in enumerate(("f", "m")):
+        assert first.loc[subject, "regime_name"] == f"single_{member}"
+        assert first.loc[subject, "value"] == solved[subject]
 
 
 def _bounded_decoupled_model(*, taste_shocks: bool, invalid_income: float) -> lcm.Model:

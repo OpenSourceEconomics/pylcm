@@ -1595,7 +1595,15 @@ def _out_of_stage_order(case: str) -> _StagedChange:
         ("observes", r"observes \['eps'\] of 'spending', drawn in its later stage"),
         ("aggregator", r"'working' declares a Koopmans aggregator in stage 'work'"),
         ("egm", r"'working' uses an endogenous-grid solver in stage 'work'"),
-        ("process", r"'spending' sits out stage 'work' .* processes \['income'\]"),
+        (
+            "process",
+            (
+                r"'spending' sits out stage 'work' .* processes \['income'\] are "
+                r"not drawn there; declare the pass-through of 'spending' in stage "
+                r"'work' explicitly \(a regime with the same states, one action, no "
+                r"shock, zero utility and the value handed through\)"
+            ),
+        ),
         ("beyond", r"lands in 'final' at its next occurrence, which lies beyond"),
         ("pair", r"'working' maps to a `Phased` pair of transitions. Phase"),
         ("final", r"'spending' → 'working' selects only the final age"),
@@ -1604,7 +1612,9 @@ def _out_of_stage_order(case: str) -> _StagedChange:
             (
                 r"at period 0, the edges of 'working' in stage 'work' land in its "
                 r"period, into \['spending'\], and in the next period, into "
-                r"\['working'\]"
+                r"\['working'\]; a source's edges at one age either all stay in its "
+                r"period or all cross into the next one; declare the pass-through of "
+                r"'working' in stage 'spend' explicitly"
             ),
         ),
     ],
@@ -1612,9 +1622,119 @@ def _out_of_stage_order(case: str) -> _StagedChange:
 def test_stages_refuse_declarations_out_of_stage_order(
     *, case: str, match: str
 ) -> None:
-    """A refusal names the regimes and stages it concerns."""
+    """A refusal names the regimes and stages it concerns.
+
+    Where an edge into a regime that sits out a stage is refused, the refusal
+    asks for that regime's pass-through in the stage, which the modeller can
+    declare explicitly (specification, [A 14]).
+    """
     with pytest.raises(ModelInitializationError, match=match):
         _staged_model(clock="staged", **_out_of_stage_order(case))
+
+
+@lcm.categorical(ordered=False)
+class SearchId:
+    search: ScalarInt
+    trainee: ScalarInt
+    employed: ScalarInt
+    unemployed: ScalarInt
+
+
+def _search_cost(effort: DiscreteAction) -> FloatND:
+    return -0.3 * effort
+
+
+def _offer_wage(effort: DiscreteAction) -> FloatND:
+    return 0.5 + 1.0 * effort
+
+
+def _trainee_utility() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def _employed_utility(*, wage: ContinuousState, hours: DiscreteAction) -> FloatND:
+    return wage + 0.1 * hours
+
+
+def _unemployed_utility(wage: ContinuousState) -> FloatND:
+    return 0.5 * wage
+
+
+def _offer_is_good(wage: ContinuousState) -> BoolND:
+    return wage >= 1.0
+
+
+def _benefit(wage: ContinuousState) -> FloatND:
+    return 2.0 + 0.0 * wage
+
+
+def _certain() -> FloatND:
+    return jnp.asarray(1.0)
+
+
+def test_a_gated_edge_that_skips_a_stage_asks_for_the_pass_through() -> None:
+    """A gated edge from `search` into `consume` skips the stage `train`.
+
+    The refusal names the landing regimes and asks for their pass-through in
+    `train`, which the modeller can declare explicitly (specification, [A 14]).
+    """
+    wage = lcm.LinSpacedGrid(start=0.0, stop=3.0, n_points=7)
+    with pytest.raises(
+        ModelInitializationError,
+        match=(
+            r"the gated edge 'search' -> 'employed' lands in 'employed' of stage "
+            r"'consume'; a gated edge and its fallbacks land in the next stage; "
+            r"declare the pass-through of 'employed' in stage 'train' explicitly"
+            r".*declare the pass-through of 'unemployed' in stage 'train' "
+            r"explicitly"
+        ),
+    ):
+        lcm.Model(
+            n_periods=1,
+            stages={
+                "search": ("search",),
+                "train": ("trainee",),
+                "consume": ("employed", "unemployed"),
+            },
+            regimes={
+                "search": lcm.Regime(
+                    actions={"effort": lcm.DiscreteGrid(values=jnp.asarray([0, 1]))},
+                    functions={"utility": _search_cost},
+                    state_transitions={"wage": _offer_wage},
+                ),
+                "trainee": lcm.Regime(functions={"utility": _trainee_utility}),
+                "employed": lcm.Regime(
+                    states={"wage": wage},
+                    actions={"hours": lcm.DiscreteGrid(values=jnp.asarray([0, 1]))},
+                    functions={"utility": _employed_utility},
+                ),
+                "unemployed": lcm.Regime(
+                    states={"wage": wage}, functions={"utility": _unemployed_utility}
+                ),
+            },
+            regime_id_class=SearchId,
+            initial_nodes=lcm.InitialNodes(by_period={0: ("search", "trainee")}),
+            edges={
+                "search": lcm.Transition(
+                    law=lcm.ByPeriod(
+                        cases={0: {"employed": lcm.StochasticTransition(func=_certain)}}
+                    ),
+                    gates={
+                        "employed": lcm.Gate(
+                            predicate=_offer_is_good,
+                            routes={
+                                "only": lcm.MemberRoute(
+                                    fallback=lcm.ProjectedRegimeValue(
+                                        regime="unemployed",
+                                        projection={"wage": _benefit},
+                                    )
+                                )
+                            },
+                        )
+                    },
+                )
+            },
+        )
 
 
 @lcm.categorical(ordered=False)

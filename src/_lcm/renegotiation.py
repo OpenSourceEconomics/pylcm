@@ -41,13 +41,19 @@ class RenegotiationQueries:
         *,
         arguments: Mapping[ReferenceName, PytreeValue],
         outside: Float1D,
+        undefined: Bool1D,
         active: BoolND,
     ) -> tuple[IntND, BoolND]:
-        """Return the selected node index and whether the pair stays."""
+        """Return the selected node index and whether the pair stays.
+
+        A member whose destination has no feasible action (`undefined`) accepts
+        every node with a feasible action, whatever the rule's `tie`.
+        """
         answers = tuple(cast("PolicyAnswer", arguments[name]) for name in self.operands)
         values = jnp.stack(tuple(answer[0] for answer in answers))
         support = jnp.stack(tuple(answer[2] for answer in answers))
         willing = values >= outside if self.tie == "stay" else values > outside
+        willing |= undefined
         willing &= support[:, None]
         incumbent = jnp.asarray(arguments[self.state], dtype=jnp.int32)
         current = willing[incumbent]

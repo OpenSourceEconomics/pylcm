@@ -37,6 +37,8 @@ from _lcm.regime_building.collective import (
     ParetoWeights,
     _weighted_sum,
     decider_choice,
+    member_tie_keys,
+    values_from_tie_keys,
 )
 from _lcm.regime_building.max_Q_over_a import (
     TASTE_SHOCK_SCALE_PARAM,
@@ -85,10 +87,11 @@ def household_argmax_and_readout(
     `selection` and `readout` carry a trailing member axis that `where` does
     not; the action axes are reduced:
 
-    - the household chooses on the weighted sum of `selection`; ties go to each
-      member's objective, then to each member's stored value, both in member
-      order, and then to the smallest flat index, so the published values do not
-      depend on the order in which the actions are declared;
+    - the household chooses on the weighted sum of `selection`; ties go to the
+      members' stored values in member order, the sole member with a positive
+      weight last (`member_tie_keys`), and then to the smallest flat index, so
+      the published values do not depend on the order in which the actions are
+      declared;
     - each member's value is its `readout` at that index;
     - no feasible element gives index `-1` and value `-inf`;
     - a NaN household objective at a feasible element makes every value NaN and
@@ -107,21 +110,23 @@ def household_argmax_and_readout(
     """
     n_members = weights.shape[0]
     objectives = jnp.reshape(selection, (-1, n_members)).T
-    stored = jnp.reshape(readout, (-1, n_members)).T
+    stored = jnp.reshape(readout, (-1, n_members))
     feasible = jnp.ravel(jnp.broadcast_to(where, selection.shape[:-1]))
     objective = _weighted_sum(
         member_Q={str(m): objectives[m] for m in range(n_members)},
         weights={str(m): weights[m] for m in range(n_members)},
     )
-    values, index = max_lexicographic_and_smallest_id(
-        values=(objective, *objectives, *stored),
+    (_, *keys), index = max_lexicographic_and_smallest_id(
+        values=(objective, *member_tie_keys(readout=stored, weights=weights)),
         ids=jnp.arange(feasible.size, dtype=jnp.int32),
         where=feasible,
     )
     empty = ~jnp.any(feasible)
     household_nan = jnp.any(feasible & jnp.isnan(objective))
-    member_nan = jnp.any(feasible & (jnp.isnan(objectives) | jnp.isnan(stored)), axis=1)
-    value = jnp.where(empty, -jnp.inf, jnp.stack(values[-n_members:]))
+    member_nan = jnp.any(
+        feasible & (jnp.isnan(objectives) | jnp.isnan(stored.T)), axis=1
+    )
+    value = jnp.where(empty, -jnp.inf, values_from_tie_keys(keys=keys, weights=weights))
     return (
         jnp.where(empty, -1, jnp.where(household_nan, 0, index)).astype(jnp.int32),
         jnp.where(household_nan | member_nan, jnp.nan, value),
@@ -323,12 +328,16 @@ class _DecoupledQOverA:
         flat_index = (
             discrete * n_continuous + jnp.ravel(conditional.continuous_index)[discrete]
         )
+        # Without an alternative worth more than `-inf` to the decider there is
+        # nothing to draw: the cell publishes no action, as one without a
+        # feasible action does.
+        worthless = jnp.all(jnp.isneginf(conditional.objective))
         return _with_bound_summary(
             evaluated=evaluated,
             output=(
-                jnp.where(empty, -1, flat_index).astype(jnp.int32),
+                jnp.where(worthless, -1, flat_index).astype(jnp.int32),
                 jnp.where(
-                    empty, -jnp.inf, _stored_at(smoothed=smoothed, flat=discrete)
+                    worthless, -jnp.inf, _stored_at(smoothed=smoothed, flat=discrete)
                 ),
             ),
         )
@@ -371,27 +380,18 @@ def smoothed_profiles(
 ) -> SmoothedProfiles:
     """Choose the continuous actions on the decider's objective, per combination.
 
-    The household's decider chooses on its own objective, and every member's
-    stored value is read at that choice.
+    The household's decider chooses on its own objective, ties going to the
+    members' stored values (`decider_choice`), and every member's stored value
+    is read at that choice.
     """
     shape = parts.F.shape[:n_discrete_action_axes]
     n_members = parts.Q.shape[-1]
-    decider, objective, continuous_index, _ = decider_choice(
+    decider, objective, continuous_index, stored = decider_choice(
         Q=cast("FloatND", parts.Q_objective),
         feasibility=parts.F,
         weights=weights,
         n_discrete_action_axes=n_discrete_action_axes,
-    )
-    feasible = jnp.any(parts.F.reshape(objective.shape[0], -1), axis=1)
-    stored = jnp.take_along_axis(
-        parts.Q.reshape(objective.shape[0], -1, n_members),
-        continuous_index[:, None, None],
-        axis=1,
-    )[:, 0]
-    stored = jnp.where(
-        jnp.isnan(objective)[:, None],
-        jnp.nan,
-        jnp.where(feasible[:, None], stored, -jnp.inf),
+        readout=parts.Q,
     )
     return SmoothedProfiles(
         conditional=ConditionalProfiles(
@@ -415,7 +415,9 @@ def smoothed_logsum(
 
     The decider's value is `decoupled_logsum` of its own profiles. Every other
     member gets the mean of its stored value under the decider's choice
-    probabilities, which a combination of probability zero leaves out.
+    probabilities, which a combination of probability zero leaves out. Where
+    the decider's objective is `-inf` at every combination there are no
+    probabilities, and every member's value is `-inf`.
     """
     value, probabilities = decoupled_logsum(
         conditional=smoothed.conditional, scale=scale, parts=smoothed.parts
@@ -430,7 +432,8 @@ def smoothed_logsum(
     )
     n_members = smoothed.stored.shape[-1]
     values = jnp.where(jnp.arange(n_members) == smoothed.decider, value, means)
-    return jnp.where(jnp.any(smoothed.parts.F), values, -jnp.inf), probabilities
+    worthless = jnp.all(jnp.isneginf(smoothed.conditional.objective))
+    return jnp.where(worthless, -jnp.inf, values), probabilities
 
 
 def _stored_at(*, smoothed: SmoothedProfiles, flat: Array) -> FloatND:

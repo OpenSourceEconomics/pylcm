@@ -165,6 +165,7 @@ def validate_exit_targets(
                 declaration=declaration, regime=regime, law=laws[source], phase=phase
             )
             _validate_no_taste_shocks(source=source, regime=regime)
+            _validate_no_separate_objective(source=source, regime=regime)
             _validate_settlement(declaration=declaration, regime=regime)
             for target in declaration.targets.values():
                 context = f"Exit of {source}"
@@ -340,6 +341,18 @@ def _validate_no_taste_shocks(*, source: RegimeName, regime: Regime) -> None:
             "shocks cannot have its own exit or formation: drop `taste_shocks` on "
             "this regime, or move the exit decision to a regime without taste "
             "shocks."
+        )
+
+
+def _validate_no_separate_objective(*, source: RegimeName, regime: Regime) -> None:
+    """Refuse an exit or a formation declared on a regime with a separate objective."""
+    if isinstance(regime.koopmans_aggregator, Decoupled):
+        raise RegimeInitializationError(
+            f"Regime {source!r} declares a separate objective (`Decoupled`) and its "
+            "own exit or formation. A separate objective is for regimes without an "
+            "exit or a formation of their own: drop the separate objective, or let "
+            "the current self choose differently by declaring "
+            "`koopmans_aggregator=Phased(solve=..., simulate=...)`."
         )
 
 

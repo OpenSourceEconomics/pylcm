@@ -53,6 +53,11 @@ from _lcm.regime_building.collective import (
     decider_choice,
     decider_expected_values,
 )
+from _lcm.regime_building.decoupled import (
+    household_argmax_and_readout,
+    smoothed_logsum,
+    smoothed_profiles,
+)
 from _lcm.regime_building.max_Q_over_a import (
     _evaluate_pareto_weights,
     _stacked_pareto_weights,
@@ -61,7 +66,7 @@ from _lcm.regime_building.Q_and_F import (
     CanonicalActionKernel,
     EvaluatedQAndF,
     LandingCheck,
-    has_objective_profile,
+    QAndFParts,
     runtime_bound_specs,
 )
 from _lcm.regime_building.V import get_V_interpolator
@@ -546,8 +551,9 @@ type PolicyAnswer = tuple[FloatND, IntND, BoolND, BoolND, IntND]
 # A destination's tabulated values and support, read by its stored outside reads.
 type OutsideTable = tuple[FloatND, BoolND]
 
-# Q, feasibility, integrity and landing counts over the action grid.
-type StayTable = tuple[FloatND, BoolND, BoolND, IntND]
+# Q, feasibility, integrity and landing counts over the action grid, and the
+# objective's Q of a regime with a separate objective (`None` without one).
+type StayTable = tuple[FloatND, BoolND, BoolND, IntND, FloatND | None]
 
 
 def _query_landing_checks(*, node: QueryNode) -> tuple[LandingCheck, ...]:
@@ -1365,7 +1371,6 @@ def _admit_node(*, node: QueryNode, period: int) -> None:
     _admit_query_solver(context=context, period=period)
     if period not in context.Q_and_F_functions:
         raise ValueError("The target action problem is inactive at this period.")
-    _admit_query_objective(context=context, period=period)
     _fail_if_projection_incomplete(node=node, reader="A query")
     if context.invariant_bindings or context.action_partitions != 1:
         raise UnsupportedOperationError(
@@ -1390,15 +1395,6 @@ def _fail_if_projection_incomplete(*, node: QueryNode, reader: str) -> None:
             f"{reader} of regime {node.read.target!r} needs exactly one projection "
             f"per state of its value function ({expected}); got "
             f"{sorted(node.read.projection)}."
-        )
-
-
-def _admit_query_objective(*, context: SolverBuildContext, period: int) -> None:
-    """Refuse a separate selection profile the query does not transport."""
-    if has_objective_profile(Q_and_F=context.Q_and_F_functions[period]):
-        raise UnsupportedOperationError(
-            "Native policy query does not represent Decoupled objective selection; "
-            "the query reduces reported values."
         )
 
 
@@ -2288,7 +2284,7 @@ def kept_table(
     if node.participation is None:
         return table
     participation = node.participation
-    q, ordinary, valid, landings = table
+    q, ordinary, valid, landings, objective = table
     names = node.context.state_action_space.action_names
     grids = jnp.meshgrid(
         *(jnp.asarray(arguments[name]) for name in names), indexing="ij"
@@ -2319,7 +2315,7 @@ def kept_table(
         tuple(grid.reshape(size) for grid in grids),
         q.reshape((size, *q.shape[ordinary.ndim :])),
     ).reshape(ordinary.shape)
-    return q, ordinary & keep, valid, landings
+    return q, ordinary & keep, valid, landings, objective
 
 
 def _active_query_cell(
@@ -2348,7 +2344,7 @@ def _active_query_cell(
             node=node, live=live, guard=guard, arguments=arguments, mapped=mapped
         )
     context = node.context
-    q, feasible, valid, landing_counts = (
+    q, feasible, valid, landing_counts, objective = (
         stay_table(
             node=node,
             period=period,
@@ -2367,10 +2363,19 @@ def _active_query_cell(
         action, value, taste_valid = _taste_query_choice(
             node=node,
             q=q,
+            objective=objective,
             feasible=feasible,
             arguments=arguments,
         )
         valid &= taste_valid
+    elif objective is not None:
+        # A separate objective chooses as in the regime's own solve.
+        action, value = household_argmax_and_readout(
+            selection=objective,
+            readout=q,
+            where=feasible,
+            weights=_taste_weights(node=node, arguments=arguments),
+        )
     else:
         pareto_weights = context.pareto_weights
         action, values, _ = collective_argmax_and_readout(
@@ -2514,10 +2519,15 @@ def _taste_query_choice(
     *,
     node: QueryNode,
     q: FloatND,
+    objective: FloatND | None,
     feasible: BoolND,
     arguments: Mapping[str, PytreeValue],
 ) -> tuple[IntND, FloatND, BoolND]:
-    """Price hidden target taste at its logsum; draw only in the acting pass."""
+    """Price hidden target taste at its logsum; draw only in the acting pass.
+
+    With a separate `objective`, the alternatives and their prices are those of
+    the regime's own solve (`smoothed_profiles`, `smoothed_logsum`).
+    """
     from _lcm.regime_building.max_Q_over_a import (  # noqa: PLC0415
         TASTE_SHOCK_SCALE_PARAM,
     )
@@ -2529,24 +2539,54 @@ def _taste_query_choice(
     )
     if not n_discrete:
         raise ValueError("EV1 policy queries require a discrete action axis.")
-    discrete_values, identifiers, at_choice, decider = _taste_stay_roster(
-        q=q,
-        feasible=feasible,
-        n_discrete=n_discrete,
-        weights=_taste_weights(node=node, arguments=arguments),
-    )
+    weights = _taste_weights(node=node, arguments=arguments)
     scale = cast("FloatND", arguments[TASTE_SHOCK_SCALE_PARAM])
-    discrete, value = taste_choice(
-        values=discrete_values,
-        at_choice=at_choice,
-        decider=decider,
-        scale=scale,
-        key=cast("jax.Array", arguments["taste_shock_key"])
+    key = (
+        cast("jax.Array", arguments["taste_shock_key"])
         if arguments.get(_ACTING, False)
-        else None,
+        else None
     )
-    action = identifiers[discrete]
-    return action, value, jnp.all(jnp.isfinite(scale) & (scale > 0))
+    if objective is None:
+        discrete_values, identifiers, at_choice, decider = _taste_stay_roster(
+            q=q, feasible=feasible, n_discrete=n_discrete, weights=weights
+        )
+        discrete, value = taste_choice(
+            values=discrete_values,
+            at_choice=at_choice,
+            decider=decider,
+            scale=scale,
+            key=key,
+        )
+        return identifiers[discrete], value, _scale_is_valid(scale)
+    smoothed = smoothed_profiles(
+        # The reduction reads only F, Q and Q_objective of the parts.
+        parts=QAndFParts(U=q, F=feasible, CE=q, Q=q, Q_objective=objective),
+        weights=weights,
+        n_discrete_action_axes=n_discrete,
+    )
+    discrete_values = smoothed.conditional.objective.ravel()
+    identifiers = (
+        jnp.arange(discrete_values.size, dtype=jnp.int32)
+        * math.prod(feasible.shape[n_discrete:])
+        + smoothed.conditional.continuous_index.ravel()
+    ).astype(jnp.int32)
+    if key is None:
+        discrete = jnp.argmax(discrete_values)
+        value = smoothed_logsum(smoothed=smoothed, scale=scale)[0]
+    else:
+        discrete, value = taste_choice(
+            values=discrete_values,
+            at_choice=smoothed.stored.reshape(-1, q.shape[-1]),
+            decider=smoothed.decider,
+            scale=scale,
+            key=key,
+        )
+    return identifiers[discrete], value, _scale_is_valid(scale)
+
+
+def _scale_is_valid(scale: FloatND) -> BoolND:
+    """Whether the taste-shock scale is finite and positive."""
+    return jnp.all(jnp.isfinite(scale) & (scale > 0))
 
 
 def _taste_weights(*, node: QueryNode, arguments: Mapping[str, PytreeValue]) -> FloatND:
@@ -2683,7 +2723,7 @@ def _query_action(
     dependencies: Mapping[str, PolicyAnswer],
     participate: bool = True,
     **actions: PytreeValue,
-) -> tuple[FloatND, BoolND, BoolND, IntND]:
+) -> StayTable:
     """Preserve the canonical Q/F arrays and add only declared participation."""
     inputs = {**arguments, **actions}
     evaluated = cast("EvaluatedQAndF | None", arguments.get(_EVALUATED))
@@ -2707,7 +2747,7 @@ def _query_action(
         for flag in status:
             valid &= ~jnp.any(flag)
     if node.participation is None or not participate:
-        return q, ordinary, valid, landings
+        return q, ordinary, valid, landings, parts.Q_objective
     operands = {**inputs, **dependencies, "q": q}
     keep = node.participation(
         **{
@@ -2719,7 +2759,7 @@ def _query_action(
         raise TypeError("Query participation must be boolean.")
     if keep.ndim != 0:
         raise ValueError("Query participation must be scalar per action.")
-    return q, ordinary & keep, valid, landings
+    return q, ordinary & keep, valid, landings, parts.Q_objective
 
 
 def _evaluate_query_action(

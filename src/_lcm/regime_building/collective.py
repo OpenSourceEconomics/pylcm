@@ -20,7 +20,7 @@ probabilities; `decider_choice` is the part the simulated draw shares with it.
 """
 
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 
@@ -171,22 +171,59 @@ def collective_readout(
     return values, dissolution
 
 
+def member_tie_keys(*, readout: FloatND, weights: FloatND) -> tuple[FloatND, ...]:
+    """Return the keys by which a tie in the objective goes to the members.
+
+    Ties go to the members' values in declared order. Where exactly one member
+    has a positive weight, that member decides, and the other members come
+    first and the decider last. The keys are every member's value with the
+    decider's replaced by zero, followed by the decider's value, zero where no
+    single member decides; `values_from_tie_keys` reads the values back.
+
+    Args:
+        readout: Each member's value, the members on the trailing axis.
+        weights: The Pareto weights in member order, shape `(n_members,)`.
+
+    Returns:
+        One key per member, then the decider's key, each without the member axis.
+    """
+    decides = _sole_decider(weights)
+    decider_value = jnp.where(
+        jnp.any(decides), jnp.take(readout, jnp.argmax(decides), axis=-1), 0
+    )
+    return (*jnp.unstack(jnp.where(decides, 0, readout), axis=-1), decider_value)
+
+
+def values_from_tie_keys(*, keys: Sequence[FloatND], weights: FloatND) -> FloatND:
+    """Return each member's value from its `member_tie_keys`, members trailing."""
+    return jnp.where(
+        _sole_decider(weights), keys[-1][..., None], jnp.stack(keys[:-1], axis=-1)
+    )
+
+
+def _sole_decider(weights: FloatND) -> BoolND:
+    """Mark the member with the only positive weight; none if there are several."""
+    positive = weights > 0
+    return positive & (jnp.sum(positive) == 1)
+
+
 def decider_choice(
     *,
     Q: FloatND,
     feasibility: BoolND,
     weights: FloatND,
     n_discrete_action_axes: int,
+    readout: FloatND | None = None,
 ) -> tuple[IntND, FloatND, IntND, FloatND]:
     """Locate the decider and its best continuous action per discrete action.
 
     The decider is the member whose Pareto weight is positive; the caller
-    guarantees there is exactly one. The decider's own action values are
+    guarantees there is exactly one. The decider's own action values `Q` are
     maximized over the feasible continuous actions, conditional on each
-    discrete action, and every member's action value is read at that
-    conditional argmax. Ties in the decider's value go to the members in
-    declared order, then to the first continuous action, as in
-    `collective_readout`. The member axis is the trailing axis of `Q` and is
+    discrete action, and every member's `readout` is read at that conditional
+    argmax. Ties in the decider's value go to the other members' readouts in
+    declared order, then to the decider's, then to the first continuous action
+    (`member_tie_keys`). The member axis is the trailing axis of `Q` and is
     handled for any length.
 
     Args:
@@ -196,13 +233,15 @@ def decider_choice(
             *continuous_actions)`.
         weights: The Pareto weights in member order, shape `(n_members,)`.
         n_discrete_action_axes: Number of leading discrete-action axes.
+        readout: Per-member stored values of the shape of `Q`, where they differ
+            from the action values that choose; `None` reads `Q` itself.
 
     Returns:
         Tuple `(decider, Qc, continuous_argmax, at_choice)`: the decider's
         member index; its conditional maxima over the continuous actions, one
         per discrete-action cell in C order, `-inf` where none is feasible and
         NaN where a feasible decider value is NaN; the flat continuous index
-        attaining each, zero in those two cases; and each member's action value
+        attaining each, zero in those two cases; and each member's readout
         there, of shape `(n_discrete_cells, n_members)`, `-inf` and NaN in the
         same two cases.
     """
@@ -210,15 +249,17 @@ def decider_choice(
     n_discrete_cells = math.prod(feasibility.shape[:n_discrete_action_axes])
     n_continuous_cells = math.prod(feasibility.shape[n_discrete_action_axes:])
     flat_Q = Q.reshape(n_discrete_cells, n_continuous_cells, Q.shape[-1])
+    flat_readout = flat_Q if readout is None else readout.reshape(flat_Q.shape)
     feasible = feasibility.reshape(n_discrete_cells, n_continuous_cells)
     decider_Q = jnp.take(flat_Q, decider, axis=-1)
-    (Qc, *at_choice), continuous_argmax = max_lexicographic_and_smallest_id(
-        values=(decider_Q, *jnp.unstack(flat_Q, axis=-1)),
+    (Qc, *keys), continuous_argmax = max_lexicographic_and_smallest_id(
+        values=(decider_Q, *member_tie_keys(readout=flat_readout, weights=weights)),
         ids=jnp.broadcast_to(
             jnp.arange(n_continuous_cells, dtype=jnp.int32), feasible.shape
         ),
         where=feasible,
     )
+    at_choice = values_from_tie_keys(keys=keys, weights=weights)
     # A NaN decider value at a feasible action leaves the discrete cell without a
     # value: every member publishes NaN there, at continuous action zero. A cell
     # with no feasible action is worth `-inf` to every member.
@@ -228,7 +269,7 @@ def decider_choice(
     at_choice = jnp.where(
         undefined[:, None],
         jnp.nan,
-        jnp.where(infeasible[:, None], -jnp.inf, jnp.stack(at_choice, axis=-1)),
+        jnp.where(infeasible[:, None], -jnp.inf, at_choice),
     )
     return (
         decider,
@@ -262,9 +303,9 @@ def decider_smoothed_readout(
     is the mean of its own action value under the decider's choice. A
     discrete action with probability zero contributes exactly zero, whatever
     the member's value there. Where the decider's every feasible action is
-    worth `-inf` it takes the first discrete action with probability one, the
-    action its simulated draw takes. A cell with no feasible action publishes
-    `-inf` for every member, beside the dissolution flag `D = True`.
+    worth `-inf` the cell has no choice probabilities and is worth `-inf` to
+    every member. A cell with no feasible action publishes `-inf` for every
+    member, beside the dissolution flag `D = True`.
 
     Args:
         Q: Per-member action values of shape
@@ -286,15 +327,10 @@ def decider_smoothed_readout(
         weights=weights,
         n_discrete_action_axes=n_discrete_action_axes,
     )
-    dissolution = ~jnp.any(feasibility)
-    values = jnp.where(
-        dissolution,
-        -jnp.inf,
-        decider_expected_values(
-            decider=decider, Qc=Qc, at_choice=at_choice, scale=scale
-        ),
+    values = decider_expected_values(
+        decider=decider, Qc=Qc, at_choice=at_choice, scale=scale
     )
-    return values, dissolution
+    return values, ~jnp.any(feasibility)
 
 
 def decider_expected_values(
@@ -305,8 +341,8 @@ def decider_expected_values(
     The decider's value is the log-sum of its values `Qc`; every other member's
     is the mean of its value `at_choice` under the decider's choice
     probabilities, where an alternative of probability zero contributes exactly
-    zero. A decider without a finite alternative takes the first one with
-    probability one, the alternative its simulated draw takes.
+    zero. Where every alternative is worth `-inf` to the decider there are no
+    choice probabilities, and every member's value is `-inf`.
 
     Args:
         decider: The decider's member index.
@@ -319,11 +355,6 @@ def decider_expected_values(
         The member values, shape `(n_members,)`.
     """
     smoothed, probabilities = logsum_and_softmax(values=Qc, scale=scale, axes=(0,))
-    probabilities = jnp.where(
-        jnp.isneginf(smoothed),
-        jnp.arange(Qc.shape[0]) == jnp.argmax(Qc),
-        probabilities,
-    ).astype(probabilities.dtype)
     means = jnp.sum(
         zero_safe_weighted_term(
             weight=probabilities[:, None],
@@ -332,7 +363,8 @@ def decider_expected_values(
         ),
         axis=0,
     )
-    return jnp.where(jnp.arange(at_choice.shape[-1]) == decider, smoothed, means)
+    values = jnp.where(jnp.arange(at_choice.shape[-1]) == decider, smoothed, means)
+    return jnp.where(jnp.isneginf(smoothed), -jnp.inf, values)
 
 
 def _weighted_sum(

@@ -599,7 +599,7 @@ _SOURCE_SEALS = {
     "src/_lcm/egm/step.py": "02b305b09e38e2e2623343494a7134a2ea6a1697c15f2b621ebd8274bd106b6e",
     "src/_lcm/egm/step_core.py": "7938a9c1f8d2cf600bd06f6091732306415f333d7498ad69c23fe5a6f7d91377",
     "src/_lcm/solution/dcegm.py": "9337be976261b40124c706ae116bee53789a663cdb41e03a0c447f11110fd922",
-    DECOUPLED_BOUND_SOURCE: "a733d46fc565d5d5015d17ff67a79bc472693430e1914a3f16f6cb08245ec431",
+    DECOUPLED_BOUND_SOURCE: "f33bd5728a4b31dec5cd83b4b43134e5a347053e852259ddf691d6c47b4ff069",
     S03_EULER_SOURCE: "a5e95cde939adcefdf3d8310f6617df4f203ae3479bc318cd92ac51c020d0f55",
     S03_DECLARED_LAW_SOURCE: "635329b1a16ebe7b80ae57acfcc3fa3fd2c1b65a7b6778d1f72dc985f47e0e69",
     S03_INTERP_SOURCE: "5342395107f83af0473fcab69b8e73c5aae2f4024b67c0d0c00d33d543132159",
@@ -690,8 +690,8 @@ _SOURCE_SEALS = {
     SIMULATION_RUNTIME_SOURCE: "0623ad63ded8ee0ae880003228814e7e300a7a4394b3abecb3f5dd27acc58009",
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "6d04156b235903b1be395523d063c584c8cd789202604c13283259f9058c5416",
-    COLLECTIVE_SOURCE: "eb64a9f86df451988a48e39de4aa2457c1688de01f57ba8ee4822cf978caaaf1",
-    MAX_Q_SOURCE: "9de0539e947ea9d3750b98a84afd9298bcfe281c6fdce1b2358d4f9592071bfb",
+    COLLECTIVE_SOURCE: "ba4fe8e35ae5f965d8ac8777cd905243b263601d58991c6d35b5d45f44b5232d",
+    MAX_Q_SOURCE: "58ac0c1a9254dc4032291b9b8a46cdf8e5b5e9d43bdbf5f14288a95a6c51bd4e",
     PROCESSING_SOURCE: "0560f78714bb57273aae168e64f77ec5bd5e02584b1ff9425a19528d7b2c9450",
     GRID_SEARCH_SOURCE: "2c5642f4f872dfe57426c65c47c91bad903dc4f489f1a3032c54f049f897a964",
     CORE_PROGRAM_SOURCE: "7d8197a3d2607a3380be63408ae4cf2b8d8ebbe68b043cc3aff76bf1f5c6b78a",
@@ -3025,16 +3025,16 @@ _CORRIDOR_PINS: dict[str, tuple[str | None, dict[str, str]]] = {
         },
     ),
     "src/_lcm/regime_building/decoupled.py": (
-        "228c6e097cbbf199742ced85349656a21f8e8e0fb35750d987257964592732d5",
+        "f95e9b5e7d8217a9f43757f86b6bd8468d6feeaec660df4d53390df56bca1b21",
         {
             "DecoupledTasteShockLookup.__call__": "9d04d30c7643accc3c6efd557a2403421a996ee19ad8a696b43e2459f42105e6",
             "DecoupledWithActionParts.__call__": "0828a70e3b480e8998afdcb95c2ad5ad45e1fa441e965bccf313694cfe816a65",
-            "_DecoupledQOverA.__call__": "419583703841aceed0aa39f66c0dfe33a7e62ad9fe730ab237fd37a50c84469f",
+            "_DecoupledQOverA.__call__": "785fe125bdc583d53b3da527a0a962933f3cb62fdee9a4874e66f44b8647b20d",
             "decoupled_logsum": "76dee3957e4adf72e6524c280a97893dd6f19e000ba14be848c729f70d5a387c",
             "get_decoupled_Q_over_a": "62a58f0696263f5b3d1bcf7b88bb785c1eb10bbf4306379f4f5b6e5392c5bef1",
             "get_decoupled_max_Q_over_a": "7dc36d9f51015cd257bd12bee7577db450a1b23d6ae97db985e209ee1c2d3e35",
-            "household_argmax_and_readout": "c2d56cda9c850507b97384dcb7f5be9107b120ef9fd15eb5747050836e92c8b0",
-            "smoothed_profiles": "1c9cc01bdfd885048b7d5e98fed09057fcdf355697a7fa2559fec5b366b0b051",
+            "household_argmax_and_readout": "c268c59e62bb01c13915503ee5397b950377c03355903897c492554701674a02",
+            "smoothed_profiles": "46a66b168e02d7c774bbf75e2dc5ddb8c0c136c93c3b64182eafc9b67be24001",
         },
     ),
     "src/_lcm/utils/counts.py": (
@@ -9874,58 +9874,77 @@ def _decider_reducer_errors(tree: ast.Module) -> list[str]:
     that also carries every member's value, and log-summed over the discrete
     ones; every member is read at the decider's continuous argmax and weighted
     zero-safely by the decider's choice probabilities (`decider_expected_values`,
-    which the smoothed readout calls and an exit's taste roster shares). No
-    other candidate-changing expression is admitted.
+    which the smoothed readout calls and an exit's taste roster shares). Ties in
+    the decider's value go to the members' readouts, the sole decider last
+    (`member_tie_keys`, read back by `values_from_tie_keys`). No other
+    candidate-changing expression is admitted.
     """
     errors: list[str] = []
     try:
         choice = _definition(tree=tree, name="decider_choice")
         readout = _definition(tree=tree, name="decider_smoothed_readout")
         expected = _definition(tree=tree, name="decider_expected_values")
+        tie_keys = _definition(tree=tree, name="member_tie_keys")
+        from_keys = _definition(tree=tree, name="values_from_tie_keys")
+        sole = _definition(tree=tree, name="_sole_decider")
     except ValueError as error:
         return [f"decider reducer: {error}"]
-    if choice.decorator_list or readout.decorator_list or expected.decorator_list:
+    helpers = (choice, readout, expected, tie_keys, from_keys, sole)
+    if any(node.decorator_list for node in helpers):
         errors.append("decider reducer: decorators are not allowlisted")
     signatures = (
         (
             choice,
-            ("Q", "feasibility", "weights", "n_discrete_action_axes"),
+            ("Q", "feasibility", "weights", "n_discrete_action_axes", "readout"),
+            (None, None, None, None, "None"),
             "decider choice",
         ),
         (
             readout,
             ("Q", "feasibility", "weights", "n_discrete_action_axes", "scale"),
+            None,
             "smoothed readout",
         ),
         (
             expected,
             ("decider", "Qc", "at_choice", "scale"),
+            None,
             "expected values",
         ),
+        (tie_keys, ("readout", "weights"), None, "tie keys"),
+        (from_keys, ("keys", "weights"), None, "values from tie keys"),
     )
-    for node, names, label in signatures:
-        if not _keyword_only_signature(node=node, names=names):
+    for node, names, defaults, label in signatures:
+        if not _keyword_only_signature(node=node, names=names, defaults=defaults):
             errors.append(f"decider reducer: {label} signature changed")
+    if (
+        tuple(item.arg for item in sole.args.args) != ("weights",)
+        or sole.args.kwonlyargs
+        or sole.args.defaults
+    ):
+        errors.append("decider reducer: sole decider signature changed")
     expected_choice = r"""decider = jnp.argmax(weights > 0).astype(jnp.int32)
 n_discrete_cells = math.prod(feasibility.shape[:n_discrete_action_axes])
 n_continuous_cells = math.prod(feasibility.shape[n_discrete_action_axes:])
 flat_Q = Q.reshape(n_discrete_cells, n_continuous_cells, Q.shape[-1])
+flat_readout = flat_Q if readout is None else readout.reshape(flat_Q.shape)
 feasible = feasibility.reshape(n_discrete_cells, n_continuous_cells)
 decider_Q = jnp.take(flat_Q, decider, axis=-1)
-(Qc, *at_choice), continuous_argmax = max_lexicographic_and_smallest_id(
-    values=(decider_Q, *jnp.unstack(flat_Q, axis=-1)),
+(Qc, *keys), continuous_argmax = max_lexicographic_and_smallest_id(
+    values=(decider_Q, *member_tie_keys(readout=flat_readout, weights=weights)),
     ids=jnp.broadcast_to(
         jnp.arange(n_continuous_cells, dtype=jnp.int32), feasible.shape
     ),
     where=feasible,
 )
+at_choice = values_from_tie_keys(keys=keys, weights=weights)
 undefined = jnp.any(feasible & jnp.isnan(decider_Q), axis=1)
 infeasible = ~jnp.any(feasible, axis=1)
 Qc = jnp.where(undefined, jnp.nan, jnp.where(infeasible, -jnp.inf, Qc))
 at_choice = jnp.where(
     undefined[:, None],
     jnp.nan,
-    jnp.where(infeasible[:, None], -jnp.inf, jnp.stack(at_choice, axis=-1)),
+    jnp.where(infeasible[:, None], -jnp.inf, at_choice),
 )
 return (
     decider,
@@ -9940,22 +9959,12 @@ return (
     weights=weights,
     n_discrete_action_axes=n_discrete_action_axes,
 )
-dissolution = ~jnp.any(feasibility)
-values = jnp.where(
-    dissolution,
-    -jnp.inf,
-    decider_expected_values(
-        decider=decider, Qc=Qc, at_choice=at_choice, scale=scale
-    ),
+values = decider_expected_values(
+    decider=decider, Qc=Qc, at_choice=at_choice, scale=scale
 )
-return values, dissolution
+return values, ~jnp.any(feasibility)
 """
     expected_values = r"""smoothed, probabilities = logsum_and_softmax(values=Qc, scale=scale, axes=(0,))
-probabilities = jnp.where(
-    jnp.isneginf(smoothed),
-    jnp.arange(Qc.shape[0]) == jnp.argmax(Qc),
-    probabilities,
-).astype(probabilities.dtype)
 means = jnp.sum(
     zero_safe_weighted_term(
         weight=probabilities[:, None],
@@ -9964,12 +9973,29 @@ means = jnp.sum(
     ),
     axis=0,
 )
-return jnp.where(jnp.arange(at_choice.shape[-1]) == decider, smoothed, means)
+values = jnp.where(jnp.arange(at_choice.shape[-1]) == decider, smoothed, means)
+return jnp.where(jnp.isneginf(smoothed), -jnp.inf, values)
+"""
+    expected_tie_keys = r"""decides = _sole_decider(weights)
+decider_value = jnp.where(
+    jnp.any(decides), jnp.take(readout, jnp.argmax(decides), axis=-1), 0
+)
+return (*jnp.unstack(jnp.where(decides, 0, readout), axis=-1), decider_value)
+"""
+    expected_from_keys = r"""return jnp.where(
+    _sole_decider(weights), keys[-1][..., None], jnp.stack(keys[:-1], axis=-1)
+)
+"""
+    expected_sole = r"""positive = weights > 0
+return positive & (jnp.sum(positive) == 1)
 """
     for node, body, label in (
         (choice, expected_choice, "decider choice"),
         (readout, expected_readout, "smoothed readout"),
         (expected, expected_values, "expected values"),
+        (tie_keys, expected_tie_keys, "tie keys"),
+        (from_keys, expected_from_keys, "values from tie keys"),
+        (sole, expected_sole, "sole decider"),
     ):
         if not _body_matches(node=node, expected_source=body):
             errors.append(
@@ -9983,6 +10009,11 @@ return jnp.where(jnp.arange(at_choice.shape[-1]) == decider, smoothed, means)
             "decider_expected_values",
             "logsum_and_softmax",
         }
+        & _assigned_names(statement)
+        for statement in tree.body
+    ) or any(
+        isinstance(statement, ast.Assign | ast.AnnAssign | ast.AugAssign)
+        and {"member_tie_keys", "values_from_tie_keys", "_sole_decider"}
         & _assigned_names(statement)
         for statement in tree.body
     ):
@@ -10044,10 +10075,10 @@ values = jnp.where(
     Qc[discrete_argmax],
     at_choice[discrete_argmax],
 )
-any_feasible = jnp.any(F_arr)
+worthless = jnp.all(jnp.isneginf(Qc))
 return (
-    jnp.where(any_feasible, flat_index, -1).astype(jnp.int32),
-    jnp.where(any_feasible, values, -jnp.inf),
+    jnp.where(worthless, -1, flat_index).astype(jnp.int32),
+    jnp.where(worthless, -jnp.inf, values),
 )
 """
     for node, body, label in (
@@ -15932,8 +15963,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "taste_shock_solve:continuous_max_slice": replace_once(
             source=collective_source,
-            old="        where=feasible,\n    )\n    # A NaN decider value",
-            new="        where=feasible.at[:, 0].set(False),\n    )\n    # A NaN decider value",
+            old="        where=feasible,\n    )\n    at_choice = values_from_tie_keys(",
+            new="        where=feasible.at[:, 0].set(False),\n    )\n"
+            "    at_choice = values_from_tie_keys(",
             label="decider continuous support",
         ),
         "taste_shock_solve:continuous_axis_prefix": replace_once(
@@ -19268,15 +19300,15 @@ _UPSTREAM_COMPOSITION_MUTATIONS = {
         "expression",
         (
             "_with_bound_summary(evaluated=evaluated, "
-            "output=(jnp.where(empty, -1, "
+            "output=(jnp.where(worthless, -1, "
             "flat_index).astype(jnp.int32), "
-            "jnp.where(empty, -jnp.inf, "
+            "jnp.where(worthless, -jnp.inf, "
             "_stored_at(smoothed=smoothed, flat=discrete))))"
         ),
         (
-            "(jnp.where(empty, -1, "
+            "(jnp.where(worthless, -1, "
             "flat_index).astype(jnp.int32), "
-            "jnp.where(empty, -jnp.inf, "
+            "jnp.where(worthless, -jnp.inf, "
             "_stored_at(smoothed=smoothed, flat=discrete)))"
         ),
         1,
@@ -19306,19 +19338,19 @@ _UPSTREAM_COMPOSITION_MUTATIONS = {
         "src/_lcm/regime_building/decoupled.py",
         "household_argmax_and_readout",
         "expression",
-        "jnp.reshape(readout, (-1, n_members)).T",
-        "jnp.reshape(selection, (-1, n_members)).T",
+        "jnp.reshape(readout, (-1, n_members))",
+        "jnp.reshape(selection, (-1, n_members))",
         1,
         None,
     ),
     "combined_source:conditional_stored_profile": (
         "src/_lcm/regime_building/decoupled.py",
         "smoothed_profiles",
-        "expression",
-        "parts.Q.reshape(objective.shape[0], -1, n_members)",
-        'cast("FloatND", parts.Q_objective).reshape(objective.shape[0], -1, n_members)',
+        "keyword",
+        "readout",
+        'cast("FloatND", parts.Q_objective)',
         1,
-        None,
+        "decider_choice",
     ),
     "combined_source:ev1_economic_infinite_support": (
         "src/_lcm/regime_building/decoupled.py",

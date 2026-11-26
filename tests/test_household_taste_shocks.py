@@ -16,6 +16,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import (
     AgeGrid,
     CollectiveUtility,
+    Decoupled,
     DiscreteGrid,
     InitialNodes,
     Model,
@@ -24,7 +25,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.exceptions import InvalidParamsError
+from lcm.exceptions import InvalidParamsError, NoFeasibleActionError
 from lcm.shocks import Normal, ShockGroup, UserNodes
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import (
@@ -288,23 +289,58 @@ def _utility_m_prefers_b(choice: DiscreteAction) -> FloatND:
     return jnp.where(choice == Choice.a, 2.0, 7.0)
 
 
-def test_a_decider_without_a_finite_action_takes_the_first_action() -> None:
-    """With every action worth `-inf` to her, she takes `a` with probability one.
+def _discounted(*, utility: FloatND, CE: FloatND, discount_factor: FloatND) -> FloatND:
+    return utility + discount_factor * CE
 
-    Her value is `-inf`; his is his value of `a`, the action her simulated
-    draw takes when no action is worth anything to her, not his 7 at `b`.
+
+def _discounted_value(
+    *, utility: FloatND, CE: FloatND, discount_factor: FloatND
+) -> FloatND:
+    return discount_factor * CE + utility
+
+
+@pytest.mark.parametrize("decoupled", [False, True], ids=["plain", "decoupled"])
+def test_a_decider_without_a_finite_alternative_leaves_every_member_minus_inf(
+    *, decoupled: bool
+) -> None:
+    """With every alternative worth `-inf` to her, the node is worth `-inf` to both.
+
+    Specification, section 14.5a: if every feasible alternative of the deciding
+    member is worth `-inf`, the node has the value `-inf` for every member and
+    no choice probabilities, so his 2 at `a` and 7 at `b` do not count; a
+    simulation that reaches the node fails, as at a node with no feasible action.
     """
-    model = _couple_model(
-        _couple(
-            objective=ParetoObjective(weights={"f": 1.0, "m": 0.0}),
-            utility_f=_utility_f_minus_inf_everywhere,
-            utility_m=_utility_m_prefers_b,
-        )
+    couple = _couple(
+        objective=ParetoObjective(weights={"f": 1.0, "m": 0.0}),
+        utility_f=_utility_f_minus_inf_everywhere,
+        utility_m=_utility_m_prefers_b,
     )
+    if decoupled:
+        couple = couple.replace(
+            koopmans_aggregator=Decoupled(
+                objective=_discounted, value=_discounted_value
+            )
+        )
+    model = _couple_model(couple)
+    params = _couple_params(scale=0.5)
 
-    solution = model.solve(params=_couple_params(scale=0.5), log_level="debug")
+    solution = model.solve(params=params, log_level="off")
 
-    assert np.asarray(solution.values[0]["couple"]).tolist() == [-np.inf, 2.0]
+    assert np.asarray(solution.values[0]["couple"]).tolist() == [-np.inf, -np.inf]
+    with pytest.raises(NoFeasibleActionError, match="no feasible action"):
+        model.simulate(
+            params=params,
+            solution=solution,
+            initial_conditions={
+                "age": jnp.zeros(1),
+                "regime_id": jnp.zeros(1, dtype=jnp.int32),
+                "own_member": jnp.asarray(
+                    [model.member_names_to_ids["f"]], dtype=jnp.int32
+                ),
+            },
+            seed=0,
+            log_level="off",
+        )
 
 
 @pytest.mark.parametrize(

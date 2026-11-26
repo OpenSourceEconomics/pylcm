@@ -221,7 +221,8 @@ class _ExitReducer:
         """Apply built-in dissolution thresholds before the common stay argmax.
 
         A member is willing to stay when its stay value is above its exit payoff,
-        or equal to it when the rule's `tie` is `"stay"`.
+        or equal to it when the rule's `tie` is `"stay"`, and always where its
+        destination has no feasible action (`_undefined`).
         """
         rule = None if self.declaration is None else self.declaration.rule
         if compares_at_optimum(rule) or not isinstance(rule, Unilateral):
@@ -230,7 +231,21 @@ class _ExitReducer:
         payoffs, active, _ = self._payoffs(operands=operands)
         threshold = jnp.stack(tuple(payoffs[member] for member in self.members))
         comparisons = q >= threshold if rule.tie == "stay" else q > threshold
-        return ~active | jnp.all(comparisons)
+        return ~active | jnp.all(comparisons | self._undefined(operands=operands))
+
+    def _undefined(self, *, operands: Mapping[ReferenceName, PytreeValue]) -> BoolND:
+        """Mark each member whose destination has no feasible action.
+
+        Such a member's outside value is `-inf`, and it accepts every feasible
+        stay action whatever the rule's `tie`.
+        """
+        return jnp.stack(
+            tuple(
+                member in self.targets
+                and ~cast("PolicyAnswer", operands[self.targets[member][0]])[2]
+                for member in self.members
+            )
+        )
 
     def __call__(self, **operands: PytreeValue) -> PolicyAnswer:
         """Route weak dissolution or strict consent, preserving common tuple/ID."""
@@ -271,7 +286,10 @@ class _ExitReducer:
         adjustment = cast("RenegotiationQueries", self.renegotiation)
         outside = jnp.stack(tuple(payoffs[member] for member in self.members))
         index, kept = adjustment.select(
-            arguments=operands, outside=outside, active=active
+            arguments=operands,
+            outside=outside,
+            undefined=self._undefined(operands=operands),
+            active=active,
         )
         raw = tuple(
             cast("PolicyAnswer", operands[name]) for name in adjustment.operands
@@ -314,9 +332,10 @@ class _ExitReducer:
         rule = cast("Unilateral | MutualConsent", cast("Exit", self.declaration).rule)
         inside = stay[0]
         outside = jnp.stack(tuple(payoffs[member] for member in self.members))
-        willing = (inside >= outside if rule.tie == "stay" else inside > outside) & (
-            stay[2]
-        )
+        willing = (
+            (inside >= outside if rule.tie == "stay" else inside > outside)
+            | self._undefined(operands=operands)
+        ) & stay[2]
         stays = jnp.all(willing) if isinstance(rule, Unilateral) else jnp.any(willing)
         identifier = jnp.asarray(self.n_actions)
         settles = jnp.asarray(a=False)
@@ -394,6 +413,7 @@ class _ExitReducer:
         index, kept = adjustment.select(
             arguments=operands,
             outside=jnp.stack(tuple(payoffs[member] for member in self.members)),
+            undefined=self._undefined(operands=operands),
             active=active,
         )
         return jnp.where(kept, index, cast("IntND", operands[adjustment.state]))

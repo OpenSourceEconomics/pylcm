@@ -1171,10 +1171,13 @@ def _household_taste_shock_draw(
         Qc[discrete_argmax],
         at_choice[discrete_argmax],
     )
-    any_feasible = jnp.any(F_arr)
+    # Without an alternative worth more than `-inf` to the decider there is
+    # nothing to draw: the cell publishes no action, as one without a feasible
+    # action does.
+    worthless = jnp.all(jnp.isneginf(Qc))
     return (
-        jnp.where(any_feasible, flat_index, -1).astype(jnp.int32),
-        jnp.where(any_feasible, values, -jnp.inf),
+        jnp.where(worthless, -1, flat_index).astype(jnp.int32),
+        jnp.where(worthless, -jnp.inf, values),
     )
 
 
