@@ -5368,8 +5368,12 @@ class Model:
             GridSearch regime with taste shocks returns no actions; it returns the
             smoothed maximum as the value, and per discrete-action combination
             `Qc`, the choice probabilities and the continuous actions attaining
-            `Qc`. A discrete action declared with `values` is returned as a plain
-            array of those numbers; a category-class action as its codes.
+            `Qc`. Where every discrete alternative is worth negative infinity,
+            the value and `Qc` are negative infinity and the choice probabilities
+            are all zero: there is no distribution, and `simulate` refuses a
+            subject there with `NoFeasibleActionError`. A discrete action declared
+            with `values` is returned as a plain array of those numbers; a
+            category-class action as its codes.
 
             In a household with taste shocks, the member with the positive
             Pareto weight decides. `Qc` is that member's own conditional value,

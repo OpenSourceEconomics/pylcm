@@ -2179,3 +2179,31 @@ def test_callable_floor_decoupled_rejects_invalid_floor_with_no_feasible_action(
                 states={"wealth": jnp.array([1.0]), "income": jnp.array([0.5])},
                 keep_intermediates=("Q", "F", "U", "CE", "Q_objective"),
             )
+
+
+def _objective_at_minus_infinity(*, utility: FloatND, CE: FloatND) -> FloatND:
+    return jnp.full_like(utility + CE, -jnp.inf)
+
+
+def test_an_objective_at_minus_infinity_leaves_the_choice_to_stored_values() -> None:
+    """Every feasible action ties in an objective worth minus infinity, so the
+    stored values decide (specification 13.5): the regime chooses and stores as
+    under the stored aggregator alone, and the simulation acts."""
+    separate = _model(
+        koopmans_aggregator=lcm.Decoupled(
+            objective=_objective_at_minus_infinity, value=additive
+        )
+    )
+    plain = _model(koopmans_aggregator=additive)
+
+    separate_values = separate.solve(params={}, log_level="off").values
+    plain_values = plain.solve(params={}, log_level="off").values
+    for period in (0, 1):
+        assert_array_equal(
+            separate_values[period]["decide"], plain_values[period]["decide"]
+        )
+    pd.testing.assert_frame_equal(
+        _simulate(model=separate, params={}),
+        _simulate(model=plain, params={}),
+        check_exact=True,
+    )

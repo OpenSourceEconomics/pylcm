@@ -12,19 +12,38 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
+from numpy.testing import assert_array_equal
 
 from _lcm import logsum
 from _lcm.regime_building.max_Q_over_a import draw_taste_shock_noise
-from lcm import EULER_GAMMA, AgeGrid, DiscreteGrid, Model, Regime, categorical
-from lcm.exceptions import InvalidParamsError, ModelInitializationError
-from lcm.solvers import GridSearch
+from lcm import (
+    EULER_GAMMA,
+    AgeGrid,
+    DiscreteGrid,
+    InitialNodes,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    Transition,
+    categorical,
+    fixed_transition,
+)
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.exceptions import (
+    InvalidParamsError,
+    ModelInitializationError,
+    NoFeasibleActionError,
+)
+from lcm.solvers import DCEGM, GridSearch
 from lcm.taste_shocks import (
     ExtremeValueTasteShocks,
 )
 from lcm.typing import (
     BoolND,
     ContinuousAction,
+    ContinuousState,
     DiscreteAction,
+    DiscreteState,
     FloatND,
     ScalarInt,
     UserParamsNode,
@@ -477,3 +496,186 @@ def test_location_zero_shift_preserves_unshifted_constraint_inputs(
         assert float(naive_value) > float(location_zero_value)
     else:
         aaae(naive_value, location_zero_value, decimal=DECIMAL_PRECISION)
+
+
+@categorical(ordered=False)
+class _Doomed:
+    no: ScalarInt
+    yes: ScalarInt
+
+
+@categorical(ordered=False)
+class _Work:
+    no: ScalarInt
+    yes: ScalarInt
+
+
+@categorical(ordered=False)
+class _DoomRegimeId:
+    decide: ScalarInt
+    done: ScalarInt
+
+
+def _doomed_utility(
+    *, consumption: ContinuousAction, work: DiscreteAction, doomed: DiscreteState
+) -> FloatND:
+    return (
+        jnp.log(consumption)
+        - 0.1 * work
+        + jnp.where(doomed == _Doomed.yes, -jnp.inf, 0.0)
+    )
+
+
+def _savings(*, wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+    return wealth - consumption
+
+
+def _wealth_from_savings(*, savings: FloatND, work: DiscreteAction) -> ContinuousState:
+    return savings + 0.5 * work
+
+
+def _wealth_from_consumption(
+    *, wealth: ContinuousState, consumption: ContinuousAction, work: DiscreteAction
+) -> ContinuousState:
+    return wealth - consumption + 0.5 * work
+
+
+def _borrowing(*, consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
+    return consumption <= wealth
+
+
+def _inverse_marginal_log_utility(*, marginal_continuation: FloatND) -> FloatND:
+    return 1.0 / marginal_continuation
+
+
+def _terminal_wealth(*, wealth: ContinuousState, doomed: DiscreteState) -> FloatND:
+    return wealth + 0.0 * doomed
+
+
+_DOOM_PARAMS = {
+    "decide": {
+        "taste_shocks": {"scale": 0.5},
+        "koopmans_aggregator": {"discount_factor": 1.0},
+    }
+}
+
+
+def _doom_model(*, solver: str) -> Model:
+    """One single regime with taste shocks; at `doomed = yes` both alternatives are
+    worth minus infinity at every consumption."""
+    states = {
+        "wealth": LinSpacedGrid(start=0.5, stop=5.0, n_points=10),
+        "doomed": DiscreteGrid(_Doomed),
+    }
+    actions = {
+        "work": DiscreteGrid(_Work),
+        "consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=50),
+    }
+    decide = (
+        ConsumptionSavingsRegime(
+            states=states,
+            actions=actions,
+            taste_shocks=ExtremeValueTasteShocks(),
+            state_transitions={
+                "wealth": _wealth_from_savings,
+                "doomed": fixed_transition("doomed"),
+            },
+            functions={
+                "utility": _doomed_utility,
+                "savings": _savings,
+                "inverse_marginal_utility": _inverse_marginal_log_utility,
+            },
+            solver=DCEGM(savings_grid=LinSpacedGrid(start=0.0, stop=5.0, n_points=40)),
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="wealth",
+                post_decision_state="savings",
+            ),
+        )
+        if solver == "dcegm"
+        else Regime(
+            states=states,
+            actions=actions,
+            taste_shocks=ExtremeValueTasteShocks(),
+            state_transitions={
+                "wealth": _wealth_from_consumption,
+                "doomed": fixed_transition("doomed"),
+            },
+            constraints={"borrowing": _borrowing},
+            functions={"utility": _doomed_utility},
+            solver=GridSearch(),
+        )
+    )
+    return Model(
+        regimes={
+            "decide": decide,
+            "done": Regime(
+                states={
+                    "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=20),
+                    "doomed": DiscreteGrid(_Doomed),
+                },
+                functions={"utility": _terminal_wealth},
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=_DoomRegimeId,
+        initial_nodes=InitialNodes(by_age={0.0: ("decide",)}),
+        edges={"decide": Transition(law="done")},
+    )
+
+
+@pytest.mark.parametrize("solver", ["grid_search", "dcegm"])
+def test_a_cell_where_every_alternative_is_minus_infinity_is_worth_minus_infinity(
+    *, solver: str
+) -> None:
+    """Specification 14.5a: where every alternative is worth minus infinity, the
+    node is worth minus infinity and has no choice probabilities, and a subject
+    who reaches it is a fault of the model, as for a node without a feasible
+    action. The simulation refuses it under both solvers."""
+    model = _doom_model(solver=solver)
+    solution = model.solve(params=_DOOM_PARAMS, log_level="off")
+    values = np.asarray(solution.values[0]["decide"])[..., 0]
+
+    assert np.isfinite(values[_Doomed.no]).all()
+    assert np.isneginf(values[_Doomed.yes]).all()
+    with pytest.raises(NoFeasibleActionError, match="no feasible action"):
+        model.simulate(
+            params=_DOOM_PARAMS,
+            solution=solution,
+            initial_conditions={
+                "wealth": jnp.full(2, 2.0),
+                "doomed": jnp.full(2, _Doomed.yes),
+                "regime_id": jnp.full(2, _DoomRegimeId.decide),
+                "age": jnp.zeros(2),
+            },
+            log_level="off",
+        )
+
+
+def test_policy_lookup_has_no_choice_probabilities_at_a_minus_infinity_cell() -> None:
+    """At a cell where every alternative is worth minus infinity the lookup gives
+    the value minus infinity, `Qc` minus infinity and choice probabilities that
+    are all zero: there is no distribution to draw from (specification 14.5a)."""
+    model = _doom_model(solver="grid_search")
+    solution = model.solve(params=_DOOM_PARAMS, log_level="off")
+
+    lookup = model.lookup_policy(
+        params=_DOOM_PARAMS,
+        solution=solution,
+        period=0,
+        regime_name="decide",
+        states={
+            "wealth": jnp.asarray([2.0, 2.0]),
+            "doomed": jnp.asarray([_Doomed.no, _Doomed.yes]),
+        },
+        use_categorical_codes=True,
+    )
+
+    value = np.asarray(lookup.value)[..., 0]
+    probabilities = np.asarray(lookup.choice_probabilities)
+    assert np.isfinite(value[0])
+    aaae(probabilities[0].sum(), 1.0, decimal=DECIMAL_PRECISION)
+    assert np.isneginf(value[1])
+    assert np.isneginf(np.asarray(lookup.Qc)[1]).all()
+    assert_array_equal(probabilities[1], [0.0, 0.0])
