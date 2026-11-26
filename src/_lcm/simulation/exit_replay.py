@@ -208,6 +208,7 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
             regime_name=name,
             period=period_of_step(ages=ages, step=period),
             states=states[name],
+            refusal="no action is feasible and no move was taken",
         )
         root = plan.full.definitions[plan.full.root]
         if root.state_updates:
@@ -382,6 +383,7 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
             regime_name=name,
             period=period_of_step(ages=ages, step=period),
             states=final_states[name],
+            refusal="the final current-period policy has no feasible action",
         )
         if selected_states:
             final_states[name] = run_simulation_operation(
@@ -641,6 +643,7 @@ def _check_answer(
     regime_name: RegimeName,
     period: int,
     states: Mapping[str, FloatND | IntND],
+    refusal: str,
 ) -> None:
     invalid, empty = run_simulation_operation(
         memory=memory,
@@ -660,8 +663,7 @@ def _check_answer(
         row = int(np.flatnonzero(np.asarray(holders & ~answer[2]))[0])
         state = {name: np.asarray(value)[row].item() for name, value in states.items()}
         raise NoFeasibleActionError(
-            f"Regime '{regime_name}', period {period}, state {state}: the final "
-            "current-period policy has no feasible action."
+            f"Regime '{regime_name}', period {period}, state {state}: {refusal}."
         )
     if queries.landing_checks:
         totals = run_simulation_operation(

@@ -11,28 +11,40 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from numpy.testing import assert_array_almost_equal
 
 from lcm import (
     AgeGrid,
     CollectiveUtility,
+    Consent,
+    Counterparty,
     DiscreteGrid,
     ExecutionConfig,
+    Exit,
+    ExitTarget,
+    InitialNodes,
     InvariantBlockSchedule,
     JointNormalIIDProcess,
     LinSpacedGrid,
     Model,
+    ParetoObjective,
+    Periods,
     Regime,
+    Unilateral,
     categorical,
     exceptions,
     fixed_transition,
 )
 from lcm.component_jobs import plan_component_jobs, run_component_job
+from lcm.exits import ExitRule
 from lcm.typing import (
     BoolND,
     ContinuousAction,
     ContinuousState,
+    DiscreteAction,
     DiscreteState,
     FloatND,
+    RegimeName,
     ScalarInt,
     UserInitialConditions,
     UserParams,
@@ -1241,3 +1253,257 @@ def _scope_of(message: str) -> str:
     """Return the codes label a component count carries, or `""`."""
     match = re.search(r", pref_type codes \(.*\) only", message)
     return match.group(0) if match else ""
+
+
+@categorical(ordered=False)
+class _Case:
+    """The constrained party's position in the current-period move models.
+
+    - `finite`: no feasible action; its value in the move's destination is finite
+    - `minus_inf`: no feasible action; its value in the destination is minus infinity
+    - `feasible`: it has a feasible action
+    """
+
+    finite: ScalarInt
+    minus_inf: ScalarInt
+    feasible: ScalarInt
+
+
+@categorical(ordered=True)
+class _Work:
+    leisure: ScalarInt
+    work: ScalarInt
+
+
+@categorical(ordered=False)
+class _MoveId:
+    pre: ScalarInt
+    single_f: ScalarInt
+    single_m: ScalarInt
+    married: ScalarInt
+
+
+def _identity_case(case: DiscreteState) -> DiscreteState:
+    return case
+
+
+def _feasible_case(*, case: DiscreteState, work: DiscreteAction) -> BoolND:
+    return (case == _Case.feasible) & (work >= 0)
+
+
+def _zero_at(case: DiscreteState) -> FloatND:
+    return 0.0 * case
+
+
+def _one_at(*, case: DiscreteState, work: DiscreteAction) -> FloatND:
+    return 1.0 + 0.0 * case + 0.0 * work
+
+
+def _two_at(*, case: DiscreteState, work: DiscreteAction) -> FloatND:
+    return 2.0 + 0.0 * case + 0.0 * work
+
+
+def _half_at(*, case: DiscreteState, work: DiscreteAction) -> FloatND:
+    return 0.5 + 0.0 * case + 0.0 * work
+
+
+def _mover_formed(*, case: DiscreteState, work: DiscreteAction) -> FloatND:
+    finite_or_tie = jnp.where(case == _Case.finite, 2.0, 1.0)
+    return jnp.where(case == _Case.minus_inf, -jnp.inf, finite_or_tie) + 0.0 * work
+
+
+def _counterparty_single(*, case: DiscreteState, work: DiscreteAction) -> FloatND:
+    """Five where he has no feasible action: he refuses there unless it is ignored."""
+    return jnp.where(case == _Case.feasible, 0.5, 5.0) + 0.0 * work
+
+
+def _counterparty_formed(*, case: DiscreteState, work: DiscreteAction) -> FloatND:
+    return jnp.where(case == _Case.minus_inf, -jnp.inf, 1.0) + 0.0 * work
+
+
+def _move_model(
+    *, constrained: Literal["mover", "counterparty"], rule: ExitRule
+) -> Model:
+    """`pre` hands `case` to `single_f`, who moves in the current period.
+
+    Under `Consent` she forms `married` with `single_m`; under `Unilateral` she
+    leaves for `single_m`. `constrained` names the party whose action set is empty
+    outside `_Case.feasible`. The couple's objective weights only the other party,
+    so a minus-infinity value of the constrained party leaves the couple feasible.
+    """
+    mover = constrained == "mover"
+    case = DiscreteGrid(category_class=_Case)
+    work = {"work": DiscreteGrid(category_class=_Work)}
+    feasible = {"feasible": _feasible_case}
+    target = (
+        ExitTarget(regime="married", role="f", projection={"case": _identity_case})
+        if isinstance(rule, Consent)
+        else ExitTarget(regime="single_m", projection={"case": _identity_case})
+    )
+    return Model(
+        regimes={
+            "pre": Regime(
+                states={"case": case},
+                state_transitions={"case": fixed_transition("case")},
+                functions={"utility": _zero_at},
+            ),
+            "single_f": Regime(
+                states={"case": case},
+                actions=work,
+                constraints=feasible if mover else {},
+                functions={"utility": _one_at},
+                exit=Exit(targets={"self": target}, rule=rule),
+            ),
+            "single_m": Regime(
+                states={"case": case},
+                actions=work,
+                constraints={} if mover else feasible,
+                functions={"utility": _half_at if mover else _counterparty_single},
+            ),
+            "married": Regime(
+                states={"case": case},
+                actions=work,
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={
+                            "f": _mover_formed if mover else _two_at,
+                            "m": _one_at if mover else _counterparty_formed,
+                        },
+                        objective=ParetoObjective(
+                            weights={"f": 0.0, "m": 1.0}
+                            if mover
+                            else {"f": 1.0, "m": 0.0}
+                        ),
+                    )
+                },
+            ),
+        },
+        n_periods=2,
+        regime_id_class=_MoveId,
+        initial_nodes=InitialNodes(by_period={0: "pre", 1: "single_f"}),
+        edges={"pre": {"single_f": Periods(values=(0,))}},
+    )
+
+
+def _consent() -> Consent:
+    return Consent(
+        counterparty=Counterparty(
+            regime="single_m", role="m", projection={"case": _identity_case}
+        )
+    )
+
+
+def _move_start(
+    *, case: ScalarInt, entry: Literal["start", "arrive"]
+) -> UserInitialConditions:
+    """One subject starting in `single_f` at period 1, or arriving there from `pre`."""
+    start = entry == "start"
+    return {
+        "case": jnp.asarray([case], dtype=jnp.int32),
+        "period": jnp.asarray([1 if start else 0], dtype=jnp.int32),
+        "regime_id": jnp.asarray(
+            [_MoveId.single_f if start else _MoveId.pre], dtype=jnp.int32
+        ),
+    }
+
+
+@pytest.mark.parametrize(
+    ("constrained", "rule", "expected"),
+    [
+        ("mover", "consent", (2.0, -np.inf, 1.0)),
+        ("counterparty", "consent", (2.0, 1.0, 2.0)),
+        ("mover", "each_action", (0.5, 0.5, 1.0)),
+        ("mover", "optimum", (0.5, 0.5, 1.0)),
+    ],
+)
+def test_solve_values_a_party_without_a_feasible_action_at_minus_infinity(
+    *,
+    constrained: Literal["mover", "counterparty"],
+    rule: Literal["consent", "each_action", "optimum"],
+    expected: tuple[float, float, float],
+) -> None:
+    """A party with an empty action set gains exactly if its destination is finite.
+
+    Under `Consent` she forms where her formed value is finite and both gain
+    strictly, and a tie keeps her single; the counterparty consents where his
+    formed value is finite. A `Unilateral` exit leaves wherever no stay action is
+    feasible.
+    """
+    model = _move_model(
+        constrained=constrained,
+        rule=_consent() if rule == "consent" else Unilateral(compares=rule),
+    )
+    values = model.solve(params={"discount_factor": 1.0}, log_level="off").values
+    published = np.asarray(values[1]["single_f"])[:, 0]
+    np.testing.assert_array_equal(np.isneginf(published), np.isneginf(expected))
+    finite = np.isfinite(expected)
+    assert_array_almost_equal(
+        published[finite],
+        np.asarray(expected)[finite],
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@pytest.mark.parametrize("entry", ["start", "arrive"])
+@pytest.mark.parametrize(
+    ("constrained", "rule", "case", "regime", "value"),
+    [
+        ("mover", "consent", _Case.finite, "married", 2.0),
+        ("mover", "consent", _Case.feasible, "single_f", 1.0),
+        ("counterparty", "consent", _Case.finite, "married", 2.0),
+        ("counterparty", "consent", _Case.minus_inf, "single_f", 1.0),
+        ("mover", "each_action", _Case.finite, "single_m", 0.5),
+        ("mover", "optimum", _Case.minus_inf, "single_m", 0.5),
+    ],
+)
+def test_a_person_without_a_feasible_action_moves_where_the_solve_moves(
+    *,
+    entry: Literal["start", "arrive"],
+    constrained: Literal["mover", "counterparty"],
+    rule: Literal["consent", "each_action", "optimum"],
+    case: ScalarInt,
+    regime: RegimeName,
+    value: float,
+) -> None:
+    """A person starting at a state or arriving there takes the solve's move."""
+    model = _move_model(
+        constrained=constrained,
+        rule=_consent() if rule == "consent" else Unilateral(compares=rule),
+    )
+    params = {"discount_factor": 1.0}
+    frame = model.simulate(
+        params=params,
+        solution=model.solve(params=params, log_level="off"),
+        initial_conditions=_move_start(case=case, entry=entry),
+        log_level="off",
+        seed=0,
+    ).to_dataframe(use_categorical_codes=True)
+    row = frame[frame["period"] == 1].iloc[0]
+    assert row["regime_name"] == regime
+    assert_array_almost_equal(
+        row["value_f" if regime == "married" else "value"],
+        value,
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@pytest.mark.parametrize("entry", ["start", "arrive"])
+def test_a_person_without_a_feasible_action_or_a_move_is_refused(
+    *, entry: Literal["start", "arrive"]
+) -> None:
+    """Without a feasible action and without a formation, nothing can be done."""
+    model = _move_model(constrained="mover", rule=_consent())
+    params = {"discount_factor": 1.0}
+    solution = model.solve(params=params, log_level="off")
+    with pytest.raises(
+        exceptions.NoFeasibleActionError,
+        match=r"Regime 'single_f', period 1, .*no action is feasible and no move "
+        r"was taken",
+    ):
+        model.simulate(
+            params=params,
+            solution=solution,
+            initial_conditions=_move_start(case=_Case.minus_inf, entry=entry),
+            log_level="off",
+            seed=0,
+        )

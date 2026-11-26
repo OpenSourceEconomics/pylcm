@@ -115,13 +115,15 @@ or a DataFrame with a `"regime_name"` column, ages and categorical labels — an
 
 A subject is feasible when at least one combination of its regime's declared action-grid
 points satisfies every constraint jointly or, in a regime without actions, when every
-state-only constraint holds. Both methods apply every initial-condition check `simulate`
-applies, including the `own_member` declaration a collective start needs, and take no
-`log_level`: they always raise. The verdict does not depend on how the check is
-executed; at present both run in one eager pass on the default device, without
-device-memory admission or subject padding. When a constraint depends on an
-age-specialized function, each subject is checked against the constraints and functions
-resolved at its own start period.
+state-only constraint holds. A subject starting where its regime's current-period exit
+decides is accepted without a feasible stay action, since only the solution says whether
+the exit moves it; `simulate` raises `NoFeasibleActionError` if it then neither acts nor
+moves. Both methods apply every initial-condition check `simulate` applies, including
+the `own_member` declaration a collective start needs, and take no `log_level`: they
+always raise. The verdict does not depend on how the check is executed; at present both
+run in one eager pass on the default device, without device-memory admission or subject
+padding. When a constraint depends on an age-specialized function, each subject is
+checked against the constraints and functions resolved at its own start period.
 
 `model.initial_state_grids(regime_name=...)` returns an immutable mapping of finalized
 public state declarations for initial-condition recipes. A generated `CompositeState`
@@ -321,9 +323,10 @@ remain in `Model(edges=...)`.
   points are supplied at run time is refused when the model is built.
 - `Consent(counterparty=Counterparty(regime=..., role=..., projection=...))` compares
   each party's payoff at the destination's common Participating policy strictly against
-  that party's Raw stay value. Equality keeps the original state. The counterparty's
-  projection follows the same rule as a target's. A formation pays nothing: its target
-  declares no `utility_adjustment`.
+  that party's Raw stay value. Equality keeps the original state. A party with no
+  feasible action has the value minus infinity, so it gains exactly where its value at
+  the destination is finite. The counterparty's projection follows the same rule as a
+  target's. A formation pays nothing: its target declares no `utility_adjustment`.
 - Built-in `rule=Unilateral()` keeps the match only if every member is willing to stay.
   A member is willing when its stay value is above its exit payoff, or equal to it under
   the default `tie="stay"`; `tie="leave"` makes an indifferent member leave. Among the

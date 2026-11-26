@@ -333,14 +333,17 @@ model.validate_initial_conditions(initial_conditions=feasible_rows, params=param
 `initial_conditions_feasibility` returns a boolean array with one entry per row, `True`
 where at least one combination of the regime's action-grid points satisfies every
 constraint jointly (or, in a regime without actions, where every state-only constraint
-holds). `validate_initial_conditions` raises `InvalidInitialConditionsError` exactly
-when that mask contains a `False`, with the diagnostics `simulate(log_level="debug")`
-would print. A malformed structure — unknown regime, missing or extra state, unequal
-lengths, off-grid age, inactive regime, unknown categorical label, a collective start
-without its `own_member` — raises from both methods rather than being counted as
-infeasible, so a population they accept is one `simulate` accepts. Neither method takes
-a `log_level`: they always raise. A constraint that depends on an age-specialized
-function while subjects start at different ages cannot be evaluated and raises
+holds). A row starting where its regime's current-period exit decides counts as
+feasible: only the solution says whether the exit moves it, and `simulate` raises
+`NoFeasibleActionError` if it then neither has a feasible action nor moves.
+`validate_initial_conditions` raises `InvalidInitialConditionsError` exactly when that
+mask contains a `False`, with the diagnostics `simulate(log_level="debug")` would print.
+A malformed structure — unknown regime, missing or extra state, unequal lengths,
+off-grid age, inactive regime, unknown categorical label, a collective start without its
+`own_member` — raises from both methods rather than being counted as infeasible, so a
+population they accept is one `simulate` accepts. Neither method takes a `log_level`:
+they always raise. A constraint that depends on an age-specialized function while
+subjects start at different ages cannot be evaluated and raises
 `UnsupportedOperationError`.
 
 ### Further arguments

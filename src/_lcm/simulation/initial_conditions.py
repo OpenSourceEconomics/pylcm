@@ -1087,8 +1087,10 @@ def initial_conditions_feasibility_mask(
     feasibility itself is reported per subject. A subject is feasible
     when at least one combination of its regime's declared action-grid points
     satisfies every constraint jointly, or, in an action-free regime, when
-    every state-only constraint holds. The mask is computed eagerly on the
-    default device without device-memory admission or subject padding.
+    every state-only constraint holds. A subject starting where its regime's
+    current-period exit decides is feasible; the simulation judges it. The mask
+    is computed eagerly on the default device without device-memory admission
+    or subject padding.
 
     Args:
         initial_conditions: Mapping of state names (plus `"regime_id"`) to arrays.
@@ -2304,12 +2306,49 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
 
     # The summary route returned above, so the serial index array is present.
     return _RegimeFeasibility(
-        feasible=feasible,
+        feasible=_admit_exit_decided_starts(
+            feasible=feasible,
+            regime=regime,
+            initial_states=initial_states,
+            subject_indices=subject_indices,
+            ages=ages,
+        ),
         subject_states=subject_states,
         flat_actions=flat_actions,
         idx_arr=cast("Int1D | _HostIntArray", idx_arr),
         state_names=tuple(state_names),
     )
+
+
+def _admit_exit_decided_starts(
+    *,
+    feasible: Bool1D,
+    regime: Regime,
+    initial_states: Mapping[StateName, FloatND | IntND],
+    subject_indices: list[int],
+    ages: TimeAxis,
+) -> Bool1D:
+    """Admit every subject starting at a step where the regime's exit decides.
+
+    Such a start is judged by the first simulated period instead: the subject may
+    lack a feasible stay action if the exit moves it there, and that period raises
+    `NoFeasibleActionError` if it neither has a feasible action nor moves. The
+    reduced summary route counts such a start as infeasible, which sends the call
+    to this serial verdict.
+    """
+    steps = [
+        step
+        for step, plan in regime.simulation.exit_queries.items()
+        if plan.full is not None and plan.full.definitions[plan.full.root].exit_targets
+    ]
+    if not steps:
+        return feasible
+    periods, _ = resolve_initial_periods(
+        ages=ages,
+        initial_ages=np.asarray(initial_states["age"])[np.asarray(subject_indices)],
+    )
+    decided = np.isin(periods + stage_position(ages=ages, regime=regime.name), steps)
+    return jnp.asarray(np.asarray(feasible) | decided)
 
 
 def _validate_initial_bound_status(

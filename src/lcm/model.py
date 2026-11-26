@@ -6117,6 +6117,9 @@ class Model:
         A subject is feasible when at least one combination of its regime's
         declared action-grid points satisfies every constraint jointly, or, in
         an action-free regime, when every state-only constraint holds.
+        A subject starting where its regime's current-period exit decides is
+        feasible: only the solution says whether the exit moves it, and
+        `simulate` raises if it then neither has a feasible action nor moves.
         Malformed inputs, including a collective start without the role
         declaration `simulate` demands, raise rather than being reported
         infeasible; `validate_initial_conditions` succeeds exactly when this
