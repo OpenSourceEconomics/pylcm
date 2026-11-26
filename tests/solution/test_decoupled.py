@@ -2299,7 +2299,7 @@ def _entry_model(
     *,
     alternatives: str,
     separate_objective: bool,
-    members: tuple[str, ...],
+    member_names: tuple[str, ...],
     continuous: bool,
     draw: str,
     taste_shocks: bool,
@@ -2321,18 +2321,18 @@ def _entry_model(
     else:
         deciders_utility = _DECIDERS_UTILITY[alternatives]
         aggregator = additive
-    if members:
+    if member_names:
         target_utility: UserFunction | lcm.CollectiveUtility = lcm.CollectiveUtility(
             utilities={
                 name: deciders_utility if name == "x" else _others_utility
-                for name in members
+                for name in member_names
             },
             objective=lcm.ParetoObjective(
-                weights={name: float(name == "x") for name in members}
+                weights={name: float(name == "x") for name in member_names}
             ),
         )
         end_utility: UserFunction | lcm.CollectiveUtility = lcm.CollectiveUtility(
-            utilities=dict.fromkeys(members, zero_utility)
+            utilities=dict.fromkeys(member_names, zero_utility)
         )
     else:
         target_utility = deciders_utility
@@ -2361,7 +2361,7 @@ def _entry_model(
                         "self": lcm.Destination(
                             regime="target",
                             projection={},
-                            role="x" if members else None,
+                            role="x" if member_names else None,
                         )
                     },
                     rule=lcm.PCOnActions(),
@@ -2446,11 +2446,11 @@ def test_a_composition_action_into_a_taste_node_without_a_finite_alternative_fai
     value there: 3 to the deciding member and 7 to `y`, plus the bonus of the
     best `c`.
     """
-    separate_objective, members, continuous, draw = _ENTRY_CASES[case]
+    separate_objective, member_names, continuous, draw = _ENTRY_CASES[case]
     model = _entry_model(
         alternatives=alternatives,
         separate_objective=separate_objective,
-        members=members,
+        member_names=member_names,
         continuous=continuous,
         draw=draw,
         taste_shocks=True,
@@ -2468,16 +2468,16 @@ def test_a_composition_action_into_a_taste_node_without_a_finite_alternative_fai
     assert (first["regime_name"] == "target").all()
     assert (first["alternative"] == Alternative.second).all()
     bonus = 0.25 if continuous else 0.0
-    if members:
+    if member_names:
         assert (first["value_x"] == 3.0 + bonus).all()
         assert (first["value_y"] == 7.0 + 2.0 * bonus).all()
     else:
         assert (first["value"] == 3.0 + bonus).all()
 
 
-@pytest.mark.parametrize("members", [(), ("y", "x")])
+@pytest.mark.parametrize("member_names", [(), ("y", "x")])
 def test_a_composition_action_into_a_hard_max_at_minus_infinity_takes_the_tie(
-    *, members: tuple[str, ...]
+    *, member_names: tuple[str, ...]
 ) -> None:
     """Without taste shocks, a separate objective worth minus infinity at every
     action ties them all, and the stored values choose (specification 14.5a):
@@ -2487,7 +2487,7 @@ def test_a_composition_action_into_a_hard_max_at_minus_infinity_takes_the_tie(
     model = _entry_model(
         alternatives="none",
         separate_objective=True,
-        members=members,
+        member_names=member_names,
         continuous=True,
         draw="none",
         taste_shocks=False,
@@ -2496,7 +2496,7 @@ def test_a_composition_action_into_a_hard_max_at_minus_infinity_takes_the_tie(
     frame = _simulate_entry(model=model, params={})
     first = frame.loc[frame["period"] == 0]
     assert (first["regime_name"] == "target").all()
-    if members:
+    if member_names:
         assert (first["alternative"] == Alternative.first).all()
         assert (first["value_x"] == 2.25).all()
         assert (first["value_y"] == 11.5).all()
