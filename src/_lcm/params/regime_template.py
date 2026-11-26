@@ -21,7 +21,11 @@ from typing import Literal, cast
 import dags.tree as dt
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 
-from _lcm.exits import ExitFunctionPath, exit_functions, settlement_names
+from _lcm.composition_actions import (
+    CompositionActionFunctionPath,
+    composition_action_functions,
+    transfer_names,
+)
 from _lcm.params.edges import (
     EDGES,
     FALLBACK,
@@ -106,8 +110,12 @@ def create_regime_params_template(  # noqa: C901 - classify ordinary and law-onl
     other_regime_state_names: frozenset[StateName] = frozenset(),
     declared_variables: frozenset[ReferenceName] = frozenset(),
     current_iid_helpers: frozenset[FunctionName] = frozenset(),
-    exit_function_paths: Mapping[Phase, frozenset[ExitFunctionPath]] | None = None,
-    exit_helper_roots: Mapping[Phase, tuple[UserFunction, ...]] | None = None,
+    composition_action_function_paths: Mapping[
+        Phase, frozenset[CompositionActionFunctionPath]
+    ]
+    | None = None,
+    composition_action_helper_roots: Mapping[Phase, tuple[UserFunction, ...]]
+    | None = None,
 ) -> RegimeParamsTemplate:
     """Create parameter template from a regime specification.
 
@@ -179,12 +187,12 @@ def create_regime_params_template(  # noqa: C901 - classify ordinary and law-onl
     # parameter would answer a next-period question with a constant the user
     # supplies. That is rejected rather than classified.
     template_functions = _collect_all_functions_for_template(user_regime, law=law)
-    excluded_exit_helpers = _undemanded_exit_helpers(
+    excluded_composition_action_helpers = _undemanded_composition_action_helpers(
         user_regime=user_regime,
         template_functions=template_functions,
-        exit_function_paths=exit_function_paths,
+        composition_action_function_paths=composition_action_function_paths,
         current_iid_helpers=current_iid_helpers,
-        ordinary_roots=exit_helper_roots,
+        ordinary_roots=composition_action_helper_roots,
     )
     shared_helpers = set(user_regime.output_only_functions) & current_iid_helpers
     for phase in ("solve", "simulate"):
@@ -241,7 +249,7 @@ def create_regime_params_template(  # noqa: C901 - classify ordinary and law-onl
     )
 
     for name, func in template_functions.items():
-        if name in excluded_exit_helpers:
+        if name in excluded_composition_action_helpers:
             continue
         if name in edge_entry_names:
             continue
@@ -333,11 +341,11 @@ def create_regime_params_template(  # noqa: C901 - classify ordinary and law-onl
         )
 
     per_target_params.update(
-        _exit_params_template(
+        _composition_action_params_template(
             user_regime=user_regime,
             variables=variables,
             reserved=frozenset(function_params) | frozenset(per_target_params),
-            demanded_paths=exit_function_paths,
+            demanded_paths=composition_action_function_paths,
         )
     )
 
@@ -354,18 +362,21 @@ def create_regime_params_template(  # noqa: C901 - classify ordinary and law-onl
     )
 
 
-def _undemanded_exit_helpers(
+def _undemanded_composition_action_helpers(
     *,
     user_regime: UserRegime,
     template_functions: Mapping[FunctionName, UserFunction | Phased],
-    exit_function_paths: Mapping[Phase, frozenset[ExitFunctionPath]] | None,
+    composition_action_function_paths: Mapping[
+        Phase, frozenset[CompositionActionFunctionPath]
+    ]
+    | None,
     current_iid_helpers: frozenset[FunctionName],
     ordinary_roots: Mapping[Phase, tuple[UserFunction, ...]] | None,
 ) -> frozenset[FunctionName]:
     """Drop slots exclusive to ignored callbacks, preserving independent readers."""
     if (
-        user_regime.exit is None
-        or exit_function_paths is None
+        user_regime.composition_action is None
+        or composition_action_function_paths is None
         or ordinary_roots is None
     ):
         return frozenset()
@@ -404,8 +415,10 @@ def _undemanded_exit_helpers(
                         pending.append(pool[name])
             return found
 
-        callbacks = exit_functions(declaration=user_regime.exit, phase=phase)
-        demanded = exit_function_paths.get(phase, frozenset())
+        callbacks = composition_action_functions(
+            declaration=user_regime.composition_action, phase=phase
+        )
+        demanded = composition_action_function_paths.get(phase, frozenset())
         local_ignored = reads(
             functions=[
                 function for path, function in callbacks.items() if path not in demanded
@@ -426,21 +439,26 @@ def _undemanded_exit_helpers(
     return frozenset(ignored - required)
 
 
-def _exit_params_template(
+def _composition_action_params_template(
     *,
     user_regime: UserRegime,
     variables: frozenset[ReferenceName],
     reserved: frozenset[str],
-    demanded_paths: Mapping[Phase, frozenset[ExitFunctionPath]] | None,
+    demanded_paths: Mapping[Phase, frozenset[CompositionActionFunctionPath]] | None,
 ) -> dict[str, dict[str, _TemplateBranch]]:
-    """Union both settlement phases under the exit's exact public path."""
-    if user_regime.exit is None:
+    """Union both transfer phases under the composition action's exact public path."""
+    if user_regime.composition_action is None:
         return {}
-    if "exit" in reserved:
-        raise InvalidNameError("Exit parameters conflict with the regime name 'exit'.")
-    exit_params: _TemplateBranch = {}
+    if "composition_action" in reserved:
+        raise InvalidNameError(
+            "Composition action parameters conflict with the regime name "
+            "'composition_action'."
+        )
+    composition_action_params: _TemplateBranch = {}
     for phase in ("solve", "simulate"):
-        functions = exit_functions(declaration=user_regime.exit, phase=phase)
+        functions = composition_action_functions(
+            declaration=user_regime.composition_action, phase=phase
+        )
         for path, function in functions.items():
             if demanded_paths is not None and path not in demanded_paths.get(
                 phase, frozenset()
@@ -449,17 +467,22 @@ def _exit_params_template(
             params = _discovered_params(
                 name=qname_from_tree_path(path),
                 func=function,
-                non_params=variables | settlement_names(user_regime.exit),
+                non_params=variables | transfer_names(user_regime.composition_action),
             )
-            branch = exit_params
+            branch = composition_action_params
             for segment in path[1:]:
                 branch = cast("_TemplateBranch", branch.setdefault(segment, {}))
             branch.update(merge_template_params(left=branch, right=params))
-    # Every top-level exit slot (`available`, `targets`, `counterparty`) is a branch.
+    # Every top-level composition action slot (`available`, `targets`, `counterparty`)
+    # is a branch.
     return (
         {}
-        if not exit_params
-        else {"exit": cast("dict[str, _TemplateBranch]", exit_params)}
+        if not composition_action_params
+        else {
+            "composition_action": cast(
+                "dict[str, _TemplateBranch]", composition_action_params
+            )
+        }
     )
 
 
@@ -922,10 +945,10 @@ def _wired_names(user_regime: UserRegime) -> frozenset[ReferenceName]:
         "CE",
     }
     # `utility` never surfaces as a user-facing param. The member `"self"`
-    # names its utility function `utility`; a household carries per-member
-    # `utility_<s>` functions, but the Bellman aggregator H still takes a
-    # `utility` argument — engine-wired (the stacked per-member utilities),
-    # exactly like `E_next_V`.
+    # names its utility function `utility`. A regime with several members
+    # carries per-member `utility_<s>` functions, but the Bellman aggregator H
+    # still takes a `utility` argument — engine-wired (the stacked per-member
+    # utilities), exactly like `E_next_V`.
     variables.add("utility")
     # `<name>_code` reads the code of the discrete variable `<name>`.
     variables.update(

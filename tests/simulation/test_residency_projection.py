@@ -34,7 +34,7 @@ def _scope(
     return SimulationMemory(
         budget_bytes=1_000_000,
         devices=devices,
-        subject_devices=devices[:1],
+        agent_devices=devices[:1],
         operations=ProfiledSimulationOperations(),
         inputs=inputs,
     )
@@ -178,7 +178,7 @@ def test_host_operation_refuses_execution_outside_projection_budget() -> None:
         ProfiledSimulationOperations().dispatch(
             function=_no_op,
             arguments={},
-            subject_arg_names=(),
+            agent_arg_names=(),
             devices=(cpu,),
             live_footprint=live,
             budget_devices=(gpu,),

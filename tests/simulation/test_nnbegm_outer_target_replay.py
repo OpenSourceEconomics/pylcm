@@ -15,6 +15,7 @@ value function is not defined.
 
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
 from tests.test_models import n_nbegm_toy as toy
@@ -24,7 +25,7 @@ _PARAMS = {"discount_factor": 0.95}
 
 # `1.37` is not representable in binary, so full divestment from it cancels two
 # operands of its own magnitude — exact at float64, one operand-ULP off at
-# float32. The other three subjects hold stocks that cancel exactly at both.
+# float32. The other three agents hold stocks that cancel exactly at both.
 _INITIAL = {
     "wealth": jnp.array([4.3, 11.7, 19.9, 8.1]),
     "illiquid": jnp.array([1.37, 6.6, 13.2, 17.5]),
@@ -34,7 +35,7 @@ _INITIAL = {
 
 
 @pytest.fixture(scope="module")
-def simulated():
+def simulated() -> pd.DataFrame:
     return (
         toy.build_model(variant="n_nbegm", n_periods=3)
         .simulate(
@@ -47,7 +48,9 @@ def simulated():
     )
 
 
-def test_simulated_durable_stock_stays_inside_its_declared_grid(simulated) -> None:
+def test_simulated_durable_stock_stays_inside_its_declared_grid(
+    simulated: pd.DataFrame,
+) -> None:
     """No simulated durable stock leaves the domain its own grid declares."""
     points = np.asarray(toy.ILLIQUID_GRID.to_jax())
     stock = simulated["illiquid"].to_numpy()
@@ -56,7 +59,9 @@ def test_simulated_durable_stock_stays_inside_its_declared_grid(simulated) -> No
     assert observed.max() <= points[-1]
 
 
-def test_simulated_value_is_finite_for_every_alive_subject_period(simulated) -> None:
+def test_simulated_value_is_finite_for_every_alive_agent_period(
+    simulated: pd.DataFrame,
+) -> None:
     """A feasible corner yields a value, not the infeasible sentinel."""
     alive = simulated.loc[simulated["regime_name"] == "alive", "value"].to_numpy()
     assert np.isfinite(alive).all()

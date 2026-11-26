@@ -139,7 +139,7 @@ class RegimeSpec(TypedDict, total=False):
 
 class ExecutionKwargs(TypedDict):
     devices: tuple[int, ...]
-    simulation_sharding: NotRequired[Literal["legacy", "subjects"]]
+    simulation_sharding: NotRequired[Literal["legacy", "agents"]]
     axis_widths: NotRequired[Mapping[str, int]]
 
 
@@ -482,8 +482,8 @@ def report_stateless(*, decimal: int) -> PlacementReport:
     return report
 
 
-def report_subject_sharded(*, decimal: int) -> PlacementReport:
-    """Report the forward model simulated with subjects spread over every device."""
+def report_agent_sharded(*, decimal: int) -> PlacementReport:
+    """Report the forward model simulated with agents spread over every device."""
     model = _build(
         regimes={
             "working": _working(
@@ -498,8 +498,8 @@ def report_subject_sharded(*, decimal: int) -> PlacementReport:
         },
         sharded=("kind",),
         devices=tuple(range(_N_DEVICES)),
-        simulation_sharding="subjects",
-        axis_widths={"subject": _N_DEVICES},
+        simulation_sharding="agents",
+        axis_widths={"agent": _N_DEVICES},
     )
     reference = forward_model(devices=(0,), sharded=())
     mismatch, _ = _simulations_agree(
@@ -568,9 +568,9 @@ def mirror() -> PlacementReport:
 
 
 @pytest.fixture(scope="module")
-def subject_sharded() -> PlacementReport:
-    """Return the subject-sharded report from one four-device child process."""
-    return _run_in_four_device_process(entry_point="report_subject_sharded")
+def agent_sharded() -> PlacementReport:
+    """Return the agent-sharded report from one four-device child process."""
+    return _run_in_four_device_process(entry_point="report_agent_sharded")
 
 
 def test_a_non_terminal_regime_may_prune_a_sharded_state(
@@ -693,11 +693,11 @@ def test_regimes_without_a_grid_of_their_own_read_across_placements() -> None:
     )
 
 
-def test_subject_sharded_simulation_equals_the_single_device_simulation(
-    subject_sharded: PlacementReport,
+def test_agent_sharded_simulation_equals_the_single_device_simulation(
+    agent_sharded: PlacementReport,
 ) -> None:
-    """Sharding forward subjects over every device leaves the frames unchanged."""
-    assert subject_sharded["simulation_matches_reference"] is True
+    """Sharding forward agents over every device leaves the frames unchanged."""
+    assert agent_sharded["simulation_matches_reference"] is True
 
 
 def test_a_sharded_state_every_regime_prunes_is_refused() -> None:

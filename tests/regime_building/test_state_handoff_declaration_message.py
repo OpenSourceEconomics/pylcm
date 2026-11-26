@@ -331,7 +331,7 @@ def test_handoff_error_in_a_staged_model_names_the_period_of_each_end() -> None:
         _build_provenance_model(
             carried=False,
             action_name="choice",
-            stages={"move": ("source",), "settle": ("target", "terminal")},
+            stages={"move": ("source",), "transfer": ("target", "terminal")},
         )
     assert "period 0 (age 0.0), source 'source' -> period 0 (age 0.0)" in str(
         captured.value

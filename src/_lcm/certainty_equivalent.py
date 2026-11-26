@@ -610,8 +610,8 @@ def aggregates_nonlinearly(
 ) -> bool:
     """Whether this certainty equivalent is anything other than the linear one.
 
-    A household's certainty equivalents keyed by member aggregate nonlinearly
-    when any member's does.
+    In a regime with several members, the certainty equivalents are keyed by
+    member. They aggregate nonlinearly when any member's does.
 
     The cut is the type, not whether a value is attached. `LinearExpectation`
     is a real class with a real `aggregate` and is what a regime that declared

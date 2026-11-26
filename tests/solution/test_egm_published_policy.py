@@ -2,7 +2,7 @@
 
 The Euler inversion plus upper envelope recover the exact off-grid optimal
 continuous action on the resources grid. The solve hands that policy to
-`simulate` as a per-period `EGMSimPolicy`, so a simulated subject's continuous
+`simulate` as a per-period `EGMSimPolicy`, so a simulated agent's continuous
 action can be interpolated at its resources rather than snapped to the action
 grid. This test pins the published artifact directly: interpolating it must
 reproduce the closed-form consumption, including at resources strictly between

@@ -1,4 +1,4 @@
-"""A query below a formation exit runs once per class of its callers' rows it reads.
+"""A query below a formation runs once per class of its callers' rows it reads.
 
 Each single may marry into one couple by consent. Its rows cross its own wage and
 taste shocks, an offer group (whether an offer arrives, and the offered partner's
@@ -8,8 +8,8 @@ couple shocks. Each query therefore runs once per distinct combination of the
 caller columns it, its guards and its own descendants read, and its consumers
 gather that answer back to every caller row.
 
-The counts below are those of a solve that enumerates every node of the offer
-group; tests/solution/test_exit_available_rows.py counts the rows of one that
+The counts below are those of a solve that enumerates every node of the offer group;
+tests/solution/test_composition_action_available_rows.py counts the rows of one that
 collapses the nodes without an offer into one.
 """
 
@@ -27,25 +27,25 @@ import numpy as np
 import pytest
 from dags import with_signature
 
-from _lcm import exit_queries, policy_queries, query_information
+from _lcm import composition_queries, policy_queries, query_information
 from _lcm.policy_queries import QueryKind, QueryNode
 from _lcm.regime_building import Q_and_F
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.typing import PytreeValue, QAndFKwargs
 from lcm import (
     CollectiveUtility,
+    CompositionAction,
     Consent,
     Counterparty,
+    Destination,
     DiscreteGrid,
     ExecutionConfig,
-    Exit,
-    ExitTarget,
     InitialNodes,
     LinSpacedGrid,
     Model,
+    PCOnActions,
     Periods,
     Regime,
-    Unilateral,
     categorical,
 )
 from lcm.shocks import (
@@ -216,12 +216,14 @@ def _next_m(*, experience_m: IntND, work_m: IntND) -> IntND:
     return jnp.minimum(experience_m + work_m, _N_EXP - 1)
 
 
-def _formation(*, member: str, nodes: QuasiMonteCarlo | None = None) -> Exit:
+def _formation(
+    *, member: str, nodes: QuasiMonteCarlo | None = None
+) -> CompositionAction:
     spouse = "m" if member == "f" else "f"
     offered = _offered_m if member == "f" else _offered_f
-    return Exit(
-        targets={
-            "self": ExitTarget(
+    return CompositionAction(
+        destinations={
+            "self": Destination(
                 regime="couple",
                 role=member,
                 projection={
@@ -243,10 +245,10 @@ def _formation(*, member: str, nodes: QuasiMonteCarlo | None = None) -> Exit:
     )
 
 
-def _dissolve() -> Exit:
-    return Exit(
-        targets={
-            member: ExitTarget(
+def _dissolve() -> CompositionAction:
+    return CompositionAction(
+        destinations={
+            member: Destination(
                 regime=f"alone_{member}",
                 projection={
                     "experience": _experience_f if member == "f" else _experience_m
@@ -254,7 +256,7 @@ def _dissolve() -> Exit:
             )
             for member in ("f", "m")
         },
-        rule=Unilateral(tie="leave"),
+        rule=PCOnActions(tie="leave"),
     )
 
 
@@ -293,7 +295,7 @@ def _model(
             functions={"utility": _single_f if member == "f" else _single_m},
             shocks=(f"wage_{member}", f"taste_{member}", f"marriage_from_{member}"),
             state_transitions={"experience": _next_experience},
-            exit=_formation(member=member, nodes=nodes),
+            composition_action=_formation(member=member, nodes=nodes),
         )
         for member in ("f", "m")
     }
@@ -314,7 +316,7 @@ def _model(
             ),
         },
         shocks=("wage_f", "wage_m", "match"),
-        exit=_dissolve() if dissolution else None,
+        composition_action=_dissolve() if dissolution else None,
     )
     if dissolution:
         for member in ("f", "m"):
@@ -332,7 +334,7 @@ def _model(
             shocks=tuple(
                 group for group in regime.shocks if not group.startswith("marriage")
             ),
-            exit=None,
+            composition_action=None,
         )
     if lasting_match:
         regimes["couple_terminal"] = replace(
@@ -448,13 +450,12 @@ def test_each_caller_prices_a_couple_once_per_read_class(
     """Per single state, a caller has 144 rows: wage 2 x taste 3 x offer 2 x
     offered 3 x observed wage 2 x match 2.
 
-    The couple reads all but taste, so it runs 48 times. Its offer flag is read by
-    the exit's availability guard, so offer stays a class. The own stay benchmark
-    reads wage, taste and the guard: 12. The counterparty reads the offered
-    partner, the observed wage and the guard (12 classes), times its own 3 taste
-    rows.
+    The couple reads all but taste, so it runs 48 times. Its offer flag is read by the
+    composition action's availability guard, so offer stays a class. The own stay
+    benchmark reads wage, taste and the guard: 12. The counterparty reads the offered
+    partner, the observed wage and the guard (12 classes), times its own 3 taste rows.
     """
-    monkeypatch.setattr(exit_queries, "_COLLAPSE_UNAVAILABLE_NODES", False)
+    monkeypatch.setattr(composition_queries, "_COLLAPSE_UNAVAILABLE_NODES", False)
     rows = _evaluated_rows(model=_model(), monkeypatch=monkeypatch)
     for member, spouse in (("f", "m"), ("m", "f")):
         root = f"single_{member}"
@@ -619,7 +620,7 @@ def test_dissolution_benchmarks_run_once_per_class_of_both_ancestors(
     The wife's reads her own wage and the offer guard (4 classes); the husband's
     also reads the offered experience he leaves with (12).
     """
-    monkeypatch.setattr(exit_queries, "_COLLAPSE_UNAVAILABLE_NODES", False)
+    monkeypatch.setattr(composition_queries, "_COLLAPSE_UNAVAILABLE_NODES", False)
     rows = _evaluated_rows(model=_model(dissolution=True), monkeypatch=monkeypatch)
     assert rows[("single_f", "RAW", "alone_f")] == 4
     assert rows[("single_f", "RAW", "alone_m")] == 12
@@ -703,8 +704,9 @@ def test_a_caller_evaluates_its_own_stay_once_per_class_it_reads(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A single's 144 rows differ in shocks its own stay problem never reads: the
-    offer group and the observed couple shocks matter only to its exit. Its stay
-    problem reads its wage and taste, so it runs 6 times; the exit decision still
+    offer group and the observed couple shocks matter only to its composition action.
+    Its stay problem reads its wage and taste, so it runs 6 times; the composition
+    action decision still
     runs at every row."""
     maps = _root_stay_maps(model=_model(), monkeypatch=monkeypatch)
     assert {name: math.prod(maps[name]) for name in ("single_f", "single_m")} == {
@@ -822,8 +824,8 @@ def test_a_query_computes_its_continuation_once_per_class_that_fixes_it(
     per offer flag and offered partner (3 x 6) when read at its point, and once
     per state of the table the read takes from (3) when stored.
     """
-    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
-    monkeypatch.setattr(exit_queries, "_COLLAPSE_UNAVAILABLE_NODES", False)
+    monkeypatch.setattr(composition_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
+    monkeypatch.setattr(composition_queries, "_COLLAPSE_UNAVAILABLE_NODES", False)
     values = _continuation_values(
         model=_model(n_match=n_match), monkeypatch=monkeypatch
     )
@@ -848,8 +850,8 @@ def test_a_continuation_reading_an_observed_shock_runs_once_per_class(
     6 x `n_match` classes per single state. A single's counterparty continuation
     runs as in the model without the lasting match.
     """
-    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
-    monkeypatch.setattr(exit_queries, "_COLLAPSE_UNAVAILABLE_NODES", False)
+    monkeypatch.setattr(composition_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
+    monkeypatch.setattr(composition_queries, "_COLLAPSE_UNAVAILABLE_NODES", False)
     values = _continuation_values(
         model=_model(n_match=n_match, lasting_match=True), monkeypatch=monkeypatch
     )
@@ -915,8 +917,8 @@ def test_a_query_weights_one_term_per_representative_of_its_rows(
     stored, it gathers one value and weights nothing. The single's own stay
     benchmark repeats the caller's row.
     """
-    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
-    monkeypatch.setattr(exit_queries, "_COLLAPSE_UNAVAILABLE_NODES", False)
+    monkeypatch.setattr(composition_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
+    monkeypatch.setattr(composition_queries, "_COLLAPSE_UNAVAILABLE_NODES", False)
     shapes = _weighted_shapes(model=_model(n_match=n_match), monkeypatch=monkeypatch)
     assert {
         key[1:]: values[0]
@@ -947,7 +949,7 @@ def test_a_query_holds_one_shock_factor_per_row_whatever_it_answers_with(
 def test_a_drawn_formation_crosses_its_stay_rows_with_the_draws(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """With 4 draws on the exit a single has 30 rows, not 144.
+    """With 4 draws on the composition action a single has 30 rows, not 144.
 
     Its stay problem reads its wage and taste, whose 6 node combinations stay
     exact. Every stay row meets the same 4 draws among offers, with the observed
@@ -1016,10 +1018,10 @@ def test_a_drawn_formation_equals_the_product_when_the_draws_are_exact() -> None
 def test_a_drawn_formation_draws_only_offers(offer: float) -> None:
     """A rare or impossible offer still integrates exactly.
 
-    Draws fall only where the exit is available, so all 64 integrate the offered
-    partner and the couple shocks exactly as in the dyadic case, while the mass
-    without an offer enters once at the stay value. Without an offer at all the
-    value is the stay value.
+    Draws fall only where the composition action is available, so all 64 integrate the
+    offered partner and the couple shocks exactly as in the dyadic case, while the mass
+    without an offer enters once at the stay value. Without an offer at all the value is
+    the stay value.
     """
     rare = partial(
         _model, offer_probs=(1 - offer, offer), offered_probs=(0.25, 0.5, 0.25)
@@ -1062,9 +1064,9 @@ def test_an_unset_chunk_width_fills_one_step_with_the_widest_query(
     7281 cells of 144 rows are the most that stay within the 1048576 lanes of one
     step, so a query with few rows does not pay one launch per 64 cells.
     """
-    monkeypatch.setattr(exit_queries, "_COLLAPSE_UNAVAILABLE_NODES", False)
+    monkeypatch.setattr(composition_queries, "_COLLAPSE_UNAVAILABLE_NODES", False)
     requested = {}
-    build = exit_queries.build_policy_query_kernel
+    build = composition_queries.build_policy_query_kernel
 
     def record(
         *,
@@ -1085,6 +1087,6 @@ def test_an_unset_chunk_width_fills_one_step_with_the_widest_query(
             outside_tables=outside_tables,
         )
 
-    monkeypatch.setattr(exit_queries, "build_policy_query_kernel", record)
+    monkeypatch.setattr(composition_queries, "build_policy_query_kernel", record)
     _model(query_cell=query_cell)
     assert requested["single_f"] == expected

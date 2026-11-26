@@ -172,7 +172,7 @@ def _numerical_inputs(
     """A two-period oracle: V_alive=2+0.5*6=5 and V_done=6.
 
     `alive` draws between two terminal regimes. The draw into `gone` is a fixed
-    zero, so every subject lands in `done` and only the parameterized `done`
+    zero, so every agent lands in `done` and only the parameterized `done`
     probability is left to admit and validate.
     """
     model = Model(
@@ -263,7 +263,7 @@ def test_admitted_regime_probability_pytree_completes() -> None:
     expected = oracle.simulate(
         params=params, initial_conditions=initial, seed=17, log_level="debug"
     )
-    assert result.n_subjects == expected.n_subjects == 3
+    assert result.n_agents == expected.n_agents == 3
     assert set(result.raw_results) == {"alive", "done", "gone"}
     assert set(result.raw_results["alive"]) == {0}
     assert set(result.raw_results["done"]) == {1}

@@ -27,7 +27,7 @@ from _lcm.simulation import chunk_admission as admission
 from _lcm.simulation.chunk_planning import SimulationChunkProfile, _required_bytes
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.simulation.program_arguments import current_iid_arguments
-from _lcm.simulation.program_types import SUBJECT_WIDTH_KEYWORD
+from _lcm.simulation.program_types import AGENT_WIDTH_KEYWORD
 from _lcm.simulation.random_address import RandomAddress, draw_row_keys
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
@@ -920,7 +920,7 @@ def test_public_simulation_replays_fresh_addressed_physical_draws() -> None:
 def test_rbg_physical_replay_matches_scalar_addressed_draws(
     *, uniform: bool, width: int
 ) -> None:
-    """Every key keeps its scalar draw under native subject tiling."""
+    """Every key keeps its scalar draw under native agent tiling."""
 
     model = Model(
         regimes={
@@ -932,7 +932,7 @@ def test_rbg_physical_replay_matches_scalar_addressed_draws(
         regime_id_class=_TerminalId,
         initial_nodes=InitialNodes(by_period={0: "alive"}),
         edges={},
-        execution_config=ExecutionConfig(axis_widths={"subject": width}),
+        execution_config=ExecutionConfig(axis_widths={"agent": width}),
         shocks={
             "innovation": ShockGroup(
                 shocks={
@@ -958,7 +958,7 @@ def test_rbg_physical_replay_matches_scalar_addressed_draws(
     )
     regime = model._regimes["alive"]
     program = regime.simulation.programs.decision[0]
-    output = jax.jit(program.function, static_argnames=(SUBJECT_WIDTH_KEYWORD,))(
+    output = jax.jit(program.function, static_argnames=(AGENT_WIDTH_KEYWORD,))(
         **{
             **current_iid_arguments(
                 regime=regime,
@@ -969,7 +969,7 @@ def test_rbg_physical_replay_matches_scalar_addressed_draws(
             "period": jnp.int32(0),
             "age": jnp.int32(0),
             "next_regime_to_V_arr": {},
-            SUBJECT_WIDTH_KEYWORD: width,
+            AGENT_WIDTH_KEYWORD: width,
         }
     )
     expected = np.asarray(
@@ -1300,7 +1300,7 @@ def test_current_law_replay_uses_actual_carried_state(*, budgeted: bool) -> None
         initial_nodes=InitialNodes(by_period={0: "alive"}),
         edges={"alive": {"last": Periods(values=(0,))}},
         execution_config=ExecutionConfig(
-            device_memory_bytes=2**26, axis_widths={"subject": 1}
+            device_memory_bytes=2**26, axis_widths={"agent": 1}
         )
         if budgeted
         else ExecutionConfig(),
@@ -1370,7 +1370,7 @@ def test_forward_inventory_reserves_physical_bank_and_actual_producers(
         initial_nodes=InitialNodes(by_period={0: "alive"}),
         edges={},
         execution_config=ExecutionConfig(
-            device_memory_bytes=2**27, axis_widths={"subject": 32}
+            device_memory_bytes=2**27, axis_widths={"agent": 32}
         ),
         shocks={
             "innovation": ShockGroup(
@@ -1890,7 +1890,7 @@ def _sharded_flow(*, wealth: FloatND, eps: FloatND) -> FloatND:
 
 
 @pytest.mark.requires(min_devices=2, device="cpu")
-def test_current_iid_preserves_native_state_and_subject_sharding() -> None:
+def test_current_iid_preserves_native_state_and_agent_sharding() -> None:
     if len(jax.devices()) < 2:
         pytest.skip("Requires two visible CPU devices.")
     model = Model(
@@ -1962,7 +1962,7 @@ def test_ordinary_native_consumers_read_the_published_physical_bits(
         initial_nodes=InitialNodes(by_period={0: "alive"}),
         edges={},
         enable_jit=compiled,
-        execution_config=ExecutionConfig(axis_widths={"subject": width}),
+        execution_config=ExecutionConfig(axis_widths={"agent": width}),
         shocks={
             "innovation": ShockGroup(
                 shocks={"eps": Normal(mu=1e20, sigma=1)},

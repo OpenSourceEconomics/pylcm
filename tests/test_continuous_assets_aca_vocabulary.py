@@ -159,7 +159,7 @@ def _model(
             sharded_states=(("assets", "pref_type") if extra_shard else ("assets",))
             if sharded
             else (),
-            axis_widths={"action_product": widths[0], "cell": widths[1], "subject": 32},
+            axis_widths={"action_product": widths[0], "cell": widths[1], "agent": 32},
             device_memory_bytes=budget,
         ),
         initial_nodes={0: "working"},

@@ -2,7 +2,7 @@
 
 An empty query stands for one row, and one row cannot be split across devices.
 A stateful query reads the next period's values wherever the solve left them,
-gives its rows however many of them each subject device holds, and admits
+gives its rows however many of them each agent device holds, and admits
 copying the values under a memory budget before it copies them.
 Each device count runs in its own subprocess with forced host devices, so the
 witness does not depend on the ambient topology.
@@ -63,7 +63,7 @@ _SCRIPT = textwrap.dedent(
         execution_config=ExecutionConfig(
             devices=tuple(device.id for device in jax.devices()),
             sharded_states=(),
-            simulation_sharding="subjects",
+            simulation_sharding="agents",
             device_memory_bytes=2**30,
         ),
     )
@@ -107,15 +107,15 @@ _STATEFUL_SCRIPT = textwrap.dedent(
 
     execution_config = {
         "default": None,
-        "subjects": ExecutionConfig(
+        "agents": ExecutionConfig(
             devices=tuple(device.id for device in jax.devices()),
             sharded_states=(),
-            simulation_sharding="subjects",
+            simulation_sharding="agents",
         ),
-        "subjects-budgeted": ExecutionConfig(
+        "agents-budgeted": ExecutionConfig(
             devices=tuple(device.id for device in jax.devices()),
             sharded_states=(),
-            simulation_sharding="subjects",
+            simulation_sharding="agents",
             device_memory_bytes=2**30,
         ),
     }[execution]
@@ -180,7 +180,7 @@ _ADMISSION_SCRIPT = textwrap.dedent(
         execution_config=ExecutionConfig(
             devices=tuple(device.id for device in jax.devices()),
             sharded_states=(),
-            simulation_sharding="subjects",
+            simulation_sharding="agents",
             device_memory_bytes=budget,
             device_memory_headroom_fraction=0.0,
         ),
@@ -295,7 +295,7 @@ _ALIGNED_SCRIPT = textwrap.dedent(
         execution_config=ExecutionConfig(
             devices=(0,),
             sharded_states=(),
-            simulation_sharding="subjects",
+            simulation_sharding="agents",
             device_memory_bytes=2**30,
         ),
     )
@@ -362,7 +362,7 @@ _TRIM_SCRIPT = textwrap.dedent(
         execution_config=ExecutionConfig(
             devices=tuple(device.id for device in jax.devices()),
             sharded_states=(),
-            simulation_sharding="subjects",
+            simulation_sharding="agents",
             device_memory_bytes=budget,
             device_memory_headroom_fraction=0.0,
         ),
@@ -482,12 +482,12 @@ def test_stateful_lookup_on_several_devices_matches_one_device(
 
 
 @pytest.mark.parametrize("keep_all_intermediates", [False, True])
-@pytest.mark.parametrize("execution", ["subjects", "subjects-budgeted"])
+@pytest.mark.parametrize("execution", ["agents", "agents-budgeted"])
 @pytest.mark.parametrize("n_devices", [2, 8])
-def test_subject_sharded_lookup_of_uneven_rows_matches_one_device(
+def test_agent_sharded_lookup_of_uneven_rows_matches_one_device(
     *, n_devices: int, execution: str, keep_all_intermediates: bool
 ) -> None:
-    """Three rows split over the subject devices give the three one-device rows."""
+    """Three rows split over the agent devices give the three one-device rows."""
     got = _lookup_on_devices(
         n_devices=n_devices,
         keep_all_intermediates=keep_all_intermediates,
@@ -503,12 +503,12 @@ def test_subject_sharded_lookup_of_uneven_rows_matches_one_device(
     assert got == expected
 
 
-@pytest.mark.parametrize("execution", ["subjects", "subjects-budgeted"])
+@pytest.mark.parametrize("execution", ["agents", "agents-budgeted"])
 @pytest.mark.parametrize("n_devices", [2, 8])
-def test_subject_sharded_lookup_keeps_one_row_of_every_intermediate_per_query(
+def test_agent_sharded_lookup_keeps_one_row_of_every_intermediate_per_query(
     *, n_devices: int, execution: str
 ) -> None:
-    """Three rows split over the subject devices keep three rows of each intermediate.
+    """Three rows split over the agent devices keep three rows of each intermediate.
 
     The comparison with the one-device rows cannot see an intermediate that is
     dropped on both sides, so the rows are counted on their own.
@@ -537,7 +537,7 @@ def test_budgeted_lookup_refuses_a_value_copy_before_making_it(
 
     Growing a replacement action grid on the second device fills its budget.
     Up to some length the lookup admits copying the next-period values onto the
-    subject devices; one action more, the call is admitted at entry but refuses
+    agent devices; one action more, the call is admitted at entry but refuses
     with no value copied. A one-point grid returns rows.
     """
     got = _lookup_on_devices(
@@ -577,7 +577,7 @@ def test_budgeted_lookup_admits_trimming_padded_rows_within_the_budget(
 ) -> None:
     """Returned action values fit the per-device budget, or the lookup refuses.
 
-    Three rows padded to eight subject devices trim to a layout that holds every
+    Three rows padded to eight agent devices trim to a layout that holds every
     row of `Q` on each device, beyond the budget; eight rows stay split over the
     devices and fit it.
     """

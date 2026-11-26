@@ -93,7 +93,7 @@ type StatesPerRegime = MappingProxyType[RegimeName, RegimeStates]
 # Read-protocol typing so callers don't have to wrap a dict in
 # `MappingProxyType` before passing it in; pylcm producers still wrap on
 # the way out to preserve immutability at runtime. Values are 1-D arrays
-# of length `n_subjects`; the validator checks the rank-1 invariant.
+# of length `n_agents`; the validator checks the rank-1 invariant.
 type InitialConditions = Mapping[
     StateName | Literal["regime_id", "own_member"], Float1D | Int1D
 ]
@@ -556,9 +556,9 @@ class RegimeTransitionFunction(Protocol):
 class VmappedRegimeTransitionFunction(Protocol):
     """The processed regime transition function for the simulate phase.
 
-    The `vmap`-over-subjects counterpart of `RegimeTransitionFunction`:
+    The `vmap`-over-agents counterpart of `RegimeTransitionFunction`:
     same mapping output, with each probability array carrying a leading
-    per-subject axis.
+    per-agent axis.
 
     Used for both type checking and beartype runtime checks.
 

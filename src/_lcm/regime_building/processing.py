@@ -38,6 +38,7 @@ from jax import numpy as jnp
 from _lcm.additive_shock_transition import AdditiveShockTransition
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.coarse_transition import _CoarseTransitionCell
+from _lcm.composition_actions import CompositionActionFunctionDemand
 from _lcm.constraints.dynamic_bound import validate_declared_bounds
 from _lcm.continuation import (
     ContinuationSpec,
@@ -96,7 +97,6 @@ from _lcm.execution.placement import (
     SubmeshPlacement,
     plan_submesh_placement,
 )
-from _lcm.exits import ExitFunctionDemand
 from _lcm.grids import ContinuousGrid, Grid
 from _lcm.grids.coordinates import get_irreg_coordinate
 from _lcm.identity_transition import _IdentityTransition
@@ -109,7 +109,7 @@ from _lcm.params.processing import get_flat_param_names
 from _lcm.params.regime_template import (
     EdgeVocabulary,
     _collect_all_functions_for_template,
-    _undemanded_exit_helpers,
+    _undemanded_composition_action_helpers,
     create_edge_params_template,
     create_edge_vocabulary,
     create_regime_params_template,
@@ -187,7 +187,7 @@ from _lcm.regime_building.phases import (
 from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.shock_registry import ShockBinding
 from _lcm.simulation.program_types import (
-    _PerSubjectFunction,
+    _PerAgentFunction,
     route_output_roles,
     transition_output_roles,
 )
@@ -395,14 +395,14 @@ class PreparedModelStructure:
     original_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] = MappingProxyType(
         {}
     )
-    """Physical entry cohorts, before any same-period exit routes them."""
+    """Physical entry cohorts, before any same-period composition action routes them."""
 
     query_periods_by_phase: MappingProxyType[
         str, MappingProxyType[RegimeName, tuple[int, ...]]
     ] = MappingProxyType({})
     """Canonical query Q/F periods, independent of physical source occupancy."""
 
-    exit_function_demand: ExitFunctionDemand | None = None
+    composition_action_function_demand: CompositionActionFunctionDemand | None = None
     """Exact phase callback paths demanded by Full/Participating policy contexts."""
 
     current_iid_bindings: Mapping[
@@ -491,7 +491,7 @@ def prepare_model_structure(
     query_periods_by_phase: Mapping[
         str, Mapping[RegimeName, tuple[int, ...]]
     ] = MappingProxyType({}),
-    exit_function_demand: ExitFunctionDemand | None = None,
+    composition_action_function_demand: CompositionActionFunctionDemand | None = None,
     post_decision_shocks: Mapping[RegimeName, Mapping[StateName, _IIDProcess]]
     | None = None,
     broadcast_variables: Mapping[RegimeName, frozenset[StateOrActionName]]
@@ -502,7 +502,7 @@ def prepare_model_structure(
     `active_periods_by_regime`, `support_by_phase` and `gated_source_periods`
     are the coverage, the per-period targets and the per-edge gated source
     periods resolved once from the declarations by the caller;
-    `visited_periods_by_regime` are the periods a subject can occupy, where the
+    `visited_periods_by_regime` are the periods an agent can occupy, where the
     simulate graph is active. `declared_transitions` are the `Transition`s as
     `Model(edges=...)` declares them and `declared_edge_vocabulary` the names
     each regime declares before demand prunes any. `broadcast_variables` are,
@@ -543,7 +543,7 @@ def prepare_model_structure(
         raise ModelInitializationError(str(error)) from error
     return PreparedModelStructure(
         original_periods_by_regime=MappingProxyType(dict(original_periods_by_regime)),
-        exit_function_demand=exit_function_demand,
+        composition_action_function_demand=composition_action_function_demand,
         value_periods_by_regime=None
         if value_periods_by_regime is None
         else MappingProxyType(dict(value_periods_by_regime)),
@@ -887,14 +887,14 @@ def prepare_regime_builder(
             # post-decision shock is no state of any regime, but its draw is a
             # transition value all the same.
             regime_name: create_regime_params_template(
-                exit_helper_roots=_ordinary_query_helper_roots(
+                composition_action_helper_roots=_ordinary_query_helper_roots(
                     regime_name=regime_name,
                     user_regime=user_regime,
                     laws=laws,
                 ),
-                exit_function_paths=None
-                if prepared_structure.exit_function_demand is None
-                else prepared_structure.exit_function_demand[regime_name],
+                composition_action_function_paths=None
+                if prepared_structure.composition_action_function_demand is None
+                else prepared_structure.composition_action_function_demand[regime_name],
                 current_iid_helpers=current_iid_helpers[regime_name],
                 user_regime=user_regime,
                 law=laws[regime_name],
@@ -974,16 +974,16 @@ def prepare_regime_builder(
 
     specs = MappingProxyType(
         {
-            name: _without_undemanded_exit_helpers(
+            name: _without_undemanded_composition_action_helpers(
                 spec=specs[name],
-                excluded=_undemanded_exit_helpers(
+                excluded=_undemanded_composition_action_helpers(
                     user_regime=user_regime,
                     template_functions=_collect_all_functions_for_template(
                         user_regime, law=laws[name]
                     ),
-                    exit_function_paths=None
-                    if prepared_structure.exit_function_demand is None
-                    else prepared_structure.exit_function_demand[name],
+                    composition_action_function_paths=None
+                    if prepared_structure.composition_action_function_demand is None
+                    else prepared_structure.composition_action_function_demand[name],
                     current_iid_helpers=current_iid_helpers[name],
                     ordinary_roots=_ordinary_query_helper_roots(
                         regime_name=name, user_regime=user_regime, laws=laws
@@ -1125,7 +1125,7 @@ def finish_regime_builder(
     return ensure_containers_are_immutable(canonical_regimes)
 
 
-def _without_undemanded_exit_helpers(
+def _without_undemanded_composition_action_helpers(
     *, spec: PhasedRegimeSpec, excluded: frozenset[FunctionName]
 ) -> PhasedRegimeSpec:
     """Prune the same exclusive callback closure from canonical runtime pools."""
@@ -1162,7 +1162,7 @@ def _ordinary_query_helper_roots(
                 for name, function in root_functions(
                     regime_name=regime_name, regime=user_regime, laws=laws, phase=phase
                 ).items()
-                if not name.startswith("exit__")
+                if not name.startswith("composition_action__")
             )
             for phase in ("solve", "simulate")
         }
@@ -1425,7 +1425,7 @@ class _CanonicalRegimeBuilder:
             regime_name
         ]
 
-        # Resolve the household Pareto weights once (equal weights when
+        # Resolve the regime's Pareto weights once (equal weights when
         # undeclared) and thread the member names / weights into both
         # phase builds.
         members = user_regime.members
@@ -1743,7 +1743,7 @@ class _CanonicalRegimeBuilder:
         solution_builds: Mapping[RegimeName, _SolutionBuild],
         simulation_builds: Mapping[RegimeName, _SimulationBuild],
     ) -> MappingProxyType[RegimeName, Regime]:
-        """Install the original identity/read/exit declarations."""
+        """Install the original identity/read/composition_action declarations."""
         declared = _with_declared_continuation_reads(
             canonical_regimes=canonical_regimes, solution_builds=solution_builds
         )
@@ -1751,25 +1751,25 @@ class _CanonicalRegimeBuilder:
             name: build.context for name, build in solution_builds.items()
         }
         if not any(
-            regime.exit is not None
+            regime.composition_action is not None
             for regime in self.representative_user_regimes.values()
         ):
             return declared
-        from _lcm.exit_queries import install_exit_policy_queries  # noqa: PLC0415
+        from _lcm.composition_queries import install_composition_policy_queries  # noqa: PLC0415
 
-        declared = install_exit_policy_queries(
+        declared = install_composition_policy_queries(
             canonical_regimes=declared,
             contexts=solution_contexts,
             value_periods_by_regime=self.value_periods_by_regime,
         )
-        from _lcm.simulation.exits import (  # noqa: PLC0415
-            install_exit_simulation_queries,
+        from _lcm.simulation.composition_actions import (  # noqa: PLC0415
+            install_composition_simulation_queries,
         )
 
         simulation_contexts = {
             name: build.context for name, build in simulation_builds.items()
         }
-        return install_exit_simulation_queries(
+        return install_composition_simulation_queries(
             canonical_regimes=declared,
             contexts=simulation_contexts,
             original_periods_by_regime=self.original_periods_by_regime,
@@ -2849,7 +2849,7 @@ def _attach_gated_edge_folds(
                     regime_to_v_interpolation_info=regime_to_v_interpolation_info,
                 )
                 # Never wrapped in `jax.jit` here: it is consumed only inside
-                # `route_gated_edges`'s own `jax.vmap` over subjects, which
+                # `route_gated_edges`'s own `jax.vmap` over agents, which
                 # stages it out anyway.
                 evaluators_by_group[group_key] = get_edge_simulate_gate_evaluator(
                     edge=resolved_edge,
@@ -2873,7 +2873,7 @@ def _attach_gated_edge_folds(
                         route=leg.route,
                         phase=None if leg.simulate_fallback is None else "simulate",
                         # A routed row lands in the fallback regime as a
-                        # SIMULATED subject, so it owes a coordinate on every
+                        # SIMULATED agent, so it owes a coordinate on every
                         # state that regime carries in simulation — the states
                         # it carries only there (no solve axis) included.
                         fallback_simulate_state_names=regimes[
@@ -3107,7 +3107,7 @@ def _edge_reference_regimes(
 def _resolve_pareto_weights(
     *, user_regime: UserRegime, spec: PhasedRegimeSpec
 ) -> ParetoWeights:
-    """Resolve a regime's household Pareto weight evaluator.
+    """Resolve a regime's Pareto weight evaluator.
 
     Every regime gets the evaluator its kernels call at every cell — built
     from the declared `pareto_objective`, or from equal weights when it
@@ -3135,7 +3135,7 @@ def _resolve_pareto_weights(
 def _fail_if_a_pareto_weight_reads_an_action(user_regime: UserRegime) -> None:
     """Reject a Pareto weight that depends on the choice it helps make.
 
-    The household solves one argmax against one weighting. A weight that varies
+    The members' argmax runs against one Pareto weighting. A weight that varies
     with the action states a different objective per candidate, and the
     maximizer of that is a Pareto optimum of no fixed weighting — so it is
     refused where it is declared rather than silently maximized.
@@ -3155,7 +3155,7 @@ def _fail_if_a_pareto_weight_reads_an_action(user_regime: UserRegime) -> None:
             msg = (
                 f"The Pareto weight of member {name!r} reads the "
                 f"action(s) {read}. A weight that varies with the choice it "
-                "helps make states a different household objective per "
+                "helps make states a different Pareto-weighted objective per "
                 "candidate, whose maximizer is a Pareto optimum of no fixed "
                 "weighting. Read a state instead, or move the dependence into "
                 "the members' own utilities."
@@ -3417,11 +3417,11 @@ def _fail_if_duplicate_fallback_regimes(
 
     `route_gated_edges`
     (`_lcm.simulation.gated_routing`) writes EVERY leg's own projected
-    fallback state into `leg.fallback.regime`'s per-subject state slot, one
-    leg at a time, masked by `subjects_in_regime` — never keyed by leg. If
+    fallback state into `leg.fallback.regime`'s per-agent state slot, one
+    leg at a time, masked by `agents_in_regime` — never keyed by leg. If
     two legs of the SAME edge name the same fallback regime with different
     projections, the second leg's write silently overwrites the
-    first's for every subject in the source regime, regardless of which leg
+    first's for every agent in the source regime, regardless of which leg
     `_select_own_leg` would actually select for a given row — a genuine data
     corruption, not merely an unused branch. A singleton source (exactly one
     leg) can never trigger this; only a multi-leg (collective) source can.
@@ -3476,9 +3476,9 @@ def _fail_if_duplicate_fallback_regimes(
             f"{prefix}two or more legs share the same fallback regime "
             f"{sorted(duplicates)}. Forward simulation writes each leg's "
             "own projected fallback state into its fallback regime's "
-            "per-subject slot; legs sharing a fallback regime would have "
+            "per-agent slot; legs sharing a fallback regime would have "
             "one leg's write silently overwrite the other's for every "
-            "subject, regardless of which leg is actually selected. Give "
+            "agent, regardless of which leg is actually selected. Give "
             "each leg its own fallback regime. Legs may share one only where "
             "their fallbacks name the same member and the same "
             "projection function for every state, and none of those "
@@ -3551,7 +3551,7 @@ def _fail_if_ref_invalid(
     - `"simulate"` — a LEG FALLBACK additionally writes the dissolved
       member's next-period row into the fallback regime, and forward
       simulation carries every one of that regime's simulate states per
-      subject. A state left unprojected keeps whatever the row held before
+      agent. A state left unprojected keeps whatever the row held before
       the edge routed it there. The solve states are a subset, so the same
       projection still serves the fold's V read, which picks the axes it
       interpolates over by name.
@@ -4787,12 +4787,12 @@ def _prepare_numerical_solution_phase(
                 current_values_on_nodes=True,
                 current_shock_names=_current_shock_names(
                     current_iid_bindings=current_iid_bindings,
-                    has_exit=any(
+                    has_composition_action=any(
                         (
                             user_regimes
                             if period_regimes is None
                             else period_regimes.by_period.get(step, user_regimes)
-                        )[regime_name].exit
+                        )[regime_name].composition_action
                         is not None
                         for step in regimes_to_active_periods[regime_name]
                     ),
@@ -5812,7 +5812,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     every other simulate consumer reads the carried value.
 
     Q_and_F always uses the solve (non-vmapped) regime transition probs because
-    it evaluates on the Cartesian grid, not per-subject.
+    it evaluates on the Cartesian grid, not per-agent.
 
     For an endogenous-grid regime, the budget constraint the solve enforces
     intrinsically is synthesized and injected into the constraint set: the
@@ -5861,11 +5861,11 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             discrete actions.
         solver: The regime's solver configuration; a DC-EGM or NEGM regime
             gets the synthesized intrinsic budget constraint.
-        certainty_equivalent: Certainty equivalent declared by the regime, a
-            household's possibly keyed by member, or `None`.
+        certainty_equivalent: Certainty equivalent declared by the regime, or
+            `None`. In a regime with several members it can be keyed by member.
         members: Ordered member names of the regime.
-        pareto_weights: The household's Pareto weight evaluator — feeds the
-            simulate-side argmax's household scalarization.
+        pareto_weights: The regime's Pareto weight evaluator. It feeds the
+            Pareto-weighted sum over the members in the simulate-side argmax.
         gated_continuations: Mapping of target regime names to the gated-edge
             continuation schedule that target's leaf is read under, keyed by the
             period the edge folds at. Empty for a
@@ -5879,8 +5879,8 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         Complete simulate functions container.
 
     """
-    # Occupied/acting periods own forward subject programs. Demanded query-only
-    # periods additionally need evaluator contexts, without gaining subject routes.
+    # Occupied/acting periods own forward agent programs. Demanded query-only
+    # periods additionally need evaluator contexts, without gaining agent routes.
     simulated_periods = _simulated_periods(
         phase_reachability=simulation_reachability,
         regimes_to_active_periods=regimes_to_active_periods,
@@ -6021,22 +6021,22 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     # (`get_Q_and_F_terminal_collective` / `get_Q_and_F_collective`,
     # value-masked exactly like solve), so the simulated argmax never picks
     # an action the solved value function excluded;
-    # `get_argmax_and_max_Q_over_a` (below) recomputes the household argmax and
-    # gathers each member's own value at it.
+    # `get_argmax_and_max_Q_over_a` (below) recomputes the argmax of the
+    # Pareto-weighted objective and gathers each member's own value at it.
     type_local_Q_and_F_functions: MappingProxyType[int, QAndFFunction] = (
         MappingProxyType({})
     )
     query_Q_and_F_functions: MappingProxyType[int, QAndFFunction] = MappingProxyType({})
     if not law.terminal and not context_periods:
         # Neither an occupied/acting period nor a query demands this nonterminal.
-        # Subject programs remain restricted to simulated_periods below.
+        # Agent programs remain restricted to simulated_periods below.
         compute_regime_transition_probs = None
-        per_subject_route = None
+        per_agent_route = None
         realized_validation_probs = None
         Q_and_F_functions = MappingProxyType({})
     elif law.terminal:
         compute_regime_transition_probs = None
-        per_subject_route = None
+        per_agent_route = None
         realized_validation_probs = None
         Q_and_F_functions = MappingProxyType(
             dict.fromkeys(
@@ -6061,7 +6061,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             flat_param_names=flat_param_names,
             is_stochastic=spec.simulation.stochastic_regime_transition,
             enable_jit=enable_jit,
-            shape="per_subject",
+            shape="per_agent",
             next_regime_cells=(
                 core.next_regime_cells
                 if core.next_regime_func is not None
@@ -6098,7 +6098,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
                 ),
             )
         )
-        per_subject_route = build_per_subject_regime_transition_probs(
+        per_agent_route = build_per_agent_regime_transition_probs(
             functions=simulate_functions,
             compute_regime_transition_probs=core.next_regime_func,
             grids=simulate_grids,
@@ -6113,7 +6113,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             ),
         )
         # Q_and_F uses the solve (non-vmapped) regime transition probs since
-        # it evaluates on the Cartesian grid, not per-subject. The solve
+        # it evaluates on the Cartesian grid, not per-agent. The solve
         # phase built that function unconditionally for non-terminal regimes.
         assert solve_compute_regime_transition_probs is not None  # noqa: S101
         # Q is built from two phase-closed halves — the agent acts on its beliefs
@@ -6160,7 +6160,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             grid_schedule=grid_schedule,
             gated_continuations=gated_continuations,
             # The simulation reads the solve's continuation, so it contracts the
-            # same draws; a subject's process value may lie off its nodes.
+            # same draws; an agent's process value may lie off its nodes.
             lottery_contraction_source=_lottery_contraction_source(
                 solver=solver,
                 state_grids=state_grids[regime_name],
@@ -6171,8 +6171,10 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
                 current_values_on_nodes=False,
                 current_shock_names=_current_shock_names(
                     current_iid_bindings=current_iid_bindings,
-                    has_exit=any(
-                        solver_context.user_regimes_at(period=step)[regime_name].exit
+                    has_composition_action=any(
+                        solver_context.user_regimes_at(period=step)[
+                            regime_name
+                        ].composition_action
                         is not None
                         for step in regimes_to_active_periods[regime_name]
                     ),
@@ -6218,7 +6220,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
             if step in context_periods
         }
     )
-    per_subject_decisions = _build_per_subject_decisions_per_period(
+    per_agent_decisions = _build_per_agent_decisions_per_period(
         current_iid_draw_plan=CurrentIIDDrawPlan(bindings=current_iid_bindings)
         if current_iid_bindings
         else None,
@@ -6228,7 +6230,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         members=members,
         pareto_weights=pareto_weights,
     )
-    type_local_per_subject_decisions = _build_per_subject_decisions_per_period(
+    type_local_per_agent_decisions = _build_per_agent_decisions_per_period(
         state_action_space=state_action_space,
         Q_and_F_functions=type_local_Q_and_F_functions,
         has_taste_shocks=has_taste_shocks,
@@ -6256,13 +6258,13 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     next_state = next_state_build.by_period
 
     # Simulation reads the solve-phase EGM policy (policy-first) wherever the
-    # published rows sit on the coordinates the subject is read at: standalone
+    # published rows sit on the coordinates the agent is read at: standalone
     # DC-EGM with its default `replay="candidate"`, phase-invariant
     # declarations, no taste shocks, no passive continuous-state row axes,
     # process row axes only with fixed, unconditioned nodes, a scalar savings
     # floor, and the single-post-state kernel. Every upper-envelope backend
     # qualifies; a read that leaves its row support falls back to the grid
-    # argmax per subject. A ride-along NB-EGM regime reads its state-grid policy
+    # argmax per agent. A ride-along NB-EGM regime reads its state-grid policy
     # under the same conditions.
     phase_invariant = (
         not regime_declares_phased(user_regime, law=law)
@@ -6537,8 +6539,8 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     # callables, so an unresolved `PeriodizedEconFunction` never reaches a
     # consumer. Additional-target computation reads them, and so does the
     # initial-conditions feasibility check while no constraint reads an
-    # age-specialized function; otherwise that check judges each subject by
-    # `feasibility_pools_by_period` at the subject's start period. `next_state`
+    # age-specialized function; otherwise that check judges each agent by
+    # `feasibility_pools_by_period` at the agent's start period. `next_state`
     # above resolves `simulate_functions` per period; per-period *target* reads of
     # a periodized node are rejected by the guard via
     # `age_specialized_function_names` (a rep-period closure would be wrong).
@@ -6576,28 +6578,29 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         state_action_space=create_state_action_space(
             variables=simulation_variables, grids=simulate_grids
         ),
-        # Only demanded exit queries need integration banks in the forward phase.
+        # Only demanded composition action queries need integration banks in the forward
+        # phase.
         current_iid_plans=MappingProxyType({}),
         current_iid_draw_plan=CurrentIIDDrawPlan(bindings=current_iid_bindings)
         if current_iid_bindings
         else None,
     )
     programs = build_simulation_programs(
-        # Ordinary replay supplies the solve-state roster plus actual carried
-        # law inputs. Exit queries retain the complete simulate-state context
+        # Ordinary replay supplies the solve-state roster plus actual carried law
+        # inputs. Composition action queries retain the complete simulate-state context
         # above, so a carried callback reads its actual mapped coordinates.
         context=dataclass_replace(
             simulation_context, state_action_space=state_action_space
         ),
         Q_and_F_functions=Q_and_F_functions,
-        per_subject_decisions=per_subject_decisions,
-        per_subject_transitions=next_state_build.per_subject_by_period,
-        per_subject_route=per_subject_route,
+        per_agent_decisions=per_agent_decisions,
+        per_agent_transitions=next_state_build.per_agent_by_period,
+        per_agent_route=per_agent_route,
         simulation_state_names=simulation_variables.state_names,
         active_periods=tuple(simulated_periods[regime_name]),
         has_gated_edges=bool(law.gated_edges),
         type_local_Q_and_F_functions=type_local_Q_and_F_functions,
-        type_local_per_subject_decisions=type_local_per_subject_decisions,
+        type_local_per_agent_decisions=type_local_per_agent_decisions,
     )
 
     phase = SimulationPhase(
@@ -6637,7 +6640,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
                         if step + 1 in schedule.by_period
                     ),
                 )
-                for step, func in per_subject_decisions.items()
+                for step, func in per_agent_decisions.items()
                 if EDGE_REF_V_ARG in get_union_of_args([func])
             }
         ),
@@ -9248,7 +9251,7 @@ def build_regime_transition_probs_functions(
     flat_param_names: frozenset[QualifiedName],
     is_stochastic: bool,
     enable_jit: bool,
-    shape: Literal["grid", "per_subject"],
+    shape: Literal["grid", "per_agent"],
     next_regime_cells: MappingProxyType[RegimeName, EconFunction] | None = None,
 ) -> RegimeTransitionFunction | VmappedRegimeTransitionFunction:
     """Build a regime transition probability function in the given shape.
@@ -9265,7 +9268,7 @@ def build_regime_transition_probs_functions(
         enable_jit: Whether to JIT-compile the functions.
         shape: How the function is evaluated, whichever phase's law it holds:
             - `"grid"` ⇒ on grid arguments, as the solve step and validation do;
-            - `"per_subject"` ⇒ vmapped over subjects, as simulation does.
+            - `"per_agent"` ⇒ vmapped over agents, as simulation does.
         next_regime_cells: Per-target regime transition probability functions;
             `None` for coarse regime transitions.
 
@@ -9280,7 +9283,7 @@ def build_regime_transition_probs_functions(
     if shape == "grid":
         return jax.jit(next_regime) if enable_jit else next_regime
 
-    per_subject = per_subject_regime_transition_probs(
+    per_agent = per_agent_regime_transition_probs(
         next_regime=next_regime,
         grids=grids,
         flat_param_names=flat_param_names,
@@ -9290,8 +9293,8 @@ def build_regime_transition_probs_functions(
         ),
     )
     next_regime_vmapped = vmap_1d(
-        func=cast("RegimeTransitionFunction", per_subject.function),
-        variables=per_subject.subject_arg_names,
+        func=cast("RegimeTransitionFunction", per_agent.function),
+        variables=per_agent.agent_arg_names,
     )
 
     return jax.jit(next_regime_vmapped) if enable_jit else next_regime_vmapped
@@ -9340,7 +9343,7 @@ def _concatenated_regime_transition_probs(
     )
 
 
-def build_per_subject_regime_transition_probs(
+def build_per_agent_regime_transition_probs(
     *,
     functions: EconFunctionsMapping,
     compute_regime_transition_probs: TransitionFunction | None,
@@ -9349,9 +9352,9 @@ def build_per_subject_regime_transition_probs(
     flat_param_names: frozenset[QualifiedName],
     is_stochastic: bool,
     next_regime_cells: MappingProxyType[RegimeName, EconFunction] | None = None,
-) -> _PerSubjectFunction:
-    """Build the regime-transition probabilities at one subject's state cell."""
-    return per_subject_regime_transition_probs(
+) -> _PerAgentFunction:
+    """Build the regime-transition probabilities at one agent's state cell."""
+    return per_agent_regime_transition_probs(
         next_regime=_concatenated_regime_transition_probs(
             functions=functions,
             compute_regime_transition_probs=compute_regime_transition_probs,
@@ -9389,18 +9392,18 @@ def _route_target_regime_names(
     )
 
 
-def per_subject_regime_transition_probs(
+def per_agent_regime_transition_probs(
     *,
     next_regime: RegimeTransitionFunction,
     grids: MappingProxyType[StateOrActionName, Grid],
     flat_param_names: frozenset[QualifiedName],
     target_regime_names: tuple[RegimeName, ...],
-) -> _PerSubjectFunction:
-    """Return the regime-transition probabilities at one subject's state cell.
+) -> _PerAgentFunction:
+    """Return the regime-transition probabilities at one agent's state cell.
 
     The body accepts every state the regime declares, whether or not the
     transition reads it, because a transition function with no argument at all
-    cannot be mapped over the subject axis. `target_regime_names` is the key
+    cannot be mapped over the agent axis. `target_regime_names` is the key
     order the body's own probability mapping carries.
     """
     sig_args = list(inspect.signature(next_regime).parameters)
@@ -9408,9 +9411,9 @@ def per_subject_regime_transition_probs(
         next_regime,
         args=sig_args + [state for state in grids if state not in sig_args],
     )
-    return _PerSubjectFunction(
+    return _PerAgentFunction(
         function=next_regime_accepting_all,
-        subject_arg_names=_get_vmap_params(
+        agent_arg_names=_get_vmap_params(
             all_args=tuple(inspect.signature(next_regime_accepting_all).parameters),
             flat_param_names=flat_param_names,
         ),
@@ -9690,23 +9693,23 @@ def _query_periods_without_co_map(
 ) -> tuple[int, ...]:
     """Return the periods whose Q/F a query evaluates.
 
-    A regime that co-maps a state adds the periods in which it has an exit, as
-    `SolverBuildContext.user_regimes_at` resolves it: an exit's root is a query
-    too, so it reads the state's whole axis there.
+    A regime that co-maps a state adds the periods in which it has a composition action,
+    as `SolverBuildContext.user_regimes_at` resolves it: a composition action's root is
+    a query too, so it reads the state's whole axis there.
     """
     if not co_map_state_names:
         return query_periods
-    exit_periods = (
+    composition_periods = (
         period
         for period in active_periods
         if (
             user_regimes
             if period_regimes is None
             else period_regimes.by_period.get(period, user_regimes)
-        )[regime_name].exit
+        )[regime_name].composition_action
         is not None
     )
-    return tuple(sorted({*query_periods, *exit_periods}))
+    return tuple(sorted({*query_periods, *composition_periods}))
 
 
 def _co_map_state_names(
@@ -9785,15 +9788,15 @@ def _lottery_contraction_source(
 def _current_shock_names(
     *,
     current_iid_bindings: Mapping[ShockGroupName, ShockBinding],
-    has_exit: bool = True,
+    has_composition_action: bool = True,
 ) -> frozenset[ReferenceName]:
     """Return the regime's current shocks a query binds after building its tables.
 
-    A query binds them per information row inside its loops. An exit's root query
-    reads the regime's own Q, so with `has_exit` false its ordinary Q, read by no
-    query, gets none.
+    A query binds them per information row inside its loops. A composition action's root
+    query reads the regime's own Q, so with `has_composition_action` false its ordinary
+    Q, read by no query, gets none.
     """
-    if not has_exit:
+    if not has_composition_action:
         return frozenset()
     return frozenset(
         name
@@ -9944,8 +9947,8 @@ def _build_Q_and_F_per_period(
             renamed to qnames.
         objective_aggregator: The aggregator the actions are chosen with, params
             renamed, or `None` when the Bellman aggregator also chooses.
-        certainty_equivalent: Certainty equivalent declared by the regime, a
-            household's possibly keyed by member, or `None`.
+        certainty_equivalent: Certainty equivalent declared by the regime, or
+            `None`. In a regime with several members it can be keyed by member.
         members: Ordered member names of the regime. The per-period closures
             come from `get_Q_and_F_collective` (per-member continuation,
             trailing member axis on Q).
@@ -10072,7 +10075,8 @@ def _build_Q_and_F_per_period(
             # current flow and
             # continuation from the SAME pool. Mixing them — current flow from
             # the SOLVE transitions, continuation from the SIMULATE/decision
-            # pool — is a hybrid sub-DAG that can reverse the household argmax.
+            # pool — is a hybrid sub-DAG that can reverse the argmax of the
+            # Pareto-weighted objective.
             # A solve build passes `None` here, where the continuation pool
             # coincides with `functions`.
             continuation_functions=(
@@ -10098,7 +10102,7 @@ def _build_Q_and_F_per_period(
     )
 
 
-def _build_per_subject_decisions_per_period(
+def _build_per_agent_decisions_per_period(
     *,
     current_iid_draw_plan: CurrentIIDDrawPlan | None = None,
     state_action_space: StateActionSpace,
@@ -10107,9 +10111,9 @@ def _build_per_subject_decisions_per_period(
     members: tuple[str, ...],
     pareto_weights: ParetoWeights,
 ) -> MappingProxyType[int, ArgmaxQOverAFunction[BoundedArgmaxOutput]]:
-    """Build the canonical argmax reducer at one subject's state cell, per period.
+    """Build the canonical argmax reducer at one agent's state cell, per period.
 
-    The execution planner owns the subject width. Periods sharing a
+    The execution planner owns the agent width. Periods sharing a
     `Q_and_F` object share one reducer.
     """
     built: dict[int, ArgmaxQOverAFunction[BoundedArgmaxOutput]] = {}
@@ -10154,11 +10158,11 @@ def _build_pointwise_Q_and_F_per_period(
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
     enable_jit: bool,
 ) -> MappingProxyType[int, QAndFFunction[PytreeValue]]:
-    """Build per-subject pointwise Q-and-feasibility closures for each period.
+    """Build per-agent pointwise Q-and-feasibility closures for each period.
 
     Unlike `argmax_and_max_Q_over_a`, which maximizes over the Cartesian product
     of the action grids, this maps every action alongside the states over the
-    subject axis: each subject supplies its own action value and receives that
+    agent axis: each agent supplies its own action value and receives that
     one state-action pair's value and feasibility. Off-grid candidate actions are
     scored through here, so their values share the grid maximization's objective.
 
@@ -10169,7 +10173,7 @@ def _build_pointwise_Q_and_F_per_period(
         has_action_integrity,
     )
 
-    subject_mapped_names = (
+    agent_mapped_names = (
         *state_action_space.state_names,
         *state_action_space.action_names,
     )
@@ -10180,7 +10184,7 @@ def _build_pointwise_Q_and_F_per_period(
         q_id = id(Q_and_F)
         if q_id not in built:
             # A terminal period's Q_and_F takes no actions, so only the names it
-            # actually declares can be mapped over the subject axis.
+            # actually declares can be mapped over the agent axis.
             declared = frozenset(inspect.signature(Q_and_F).parameters)
             bounded = has_action_integrity(function=Q_and_F)
             actual = BoundedQAndF(function=Q_and_F) if bounded else Q_and_F
@@ -10190,26 +10194,26 @@ def _build_pointwise_Q_and_F_per_period(
                 action_names=(),
                 bound_summary=False,
                 state_names=tuple(
-                    name for name in subject_mapped_names if name in declared
+                    name for name in agent_mapped_names if name in declared
                 ),
             )
             built[q_id] = cast(
                 "QAndFFunction[PytreeValue]",
-                _SubjectPointwiseQAndF(function=mapped) if bounded else mapped,
+                _AgentPointwiseQAndF(function=mapped) if bounded else mapped,
             )
         result[period] = built[q_id]
     return MappingProxyType(result)
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
-class _SubjectPointwiseQAndF:
-    """Summarize actual-action integrity over its source subject holders."""
+class _AgentPointwiseQAndF:
+    """Summarize actual-action integrity over its source agent holders."""
 
     function: Callable[..., PytreeValue]
 
     def __post_init__(self) -> None:
         from _lcm.simulation.program_arguments import (  # noqa: PLC0415 - forward operand namespace
-            ACTIVE_SUBJECTS_ARGUMENT,
+            ACTIVE_AGENTS_ARGUMENT,
         )
 
         signature = inspect.signature(self.function)
@@ -10219,7 +10223,7 @@ class _SubjectPointwiseQAndF:
                 parameters=(
                     *signature.parameters.values(),
                     inspect.Parameter(
-                        ACTIVE_SUBJECTS_ARGUMENT,
+                        ACTIVE_AGENTS_ARGUMENT,
                         inspect.Parameter.KEYWORD_ONLY,
                         default=None,
                     ),
@@ -10229,7 +10233,7 @@ class _SubjectPointwiseQAndF:
 
     def __call__(self, **kwargs: PytreeValue) -> PytreeValue:
         from _lcm.simulation.program_arguments import (  # noqa: PLC0415 - forward operand namespace
-            ACTIVE_SUBJECTS_ARGUMENT,
+            ACTIVE_AGENTS_ARGUMENT,
         )
         from _lcm.solution.feasibility import (  # noqa: PLC0415 - pointwise status owner
             BoundedResult,
@@ -10238,7 +10242,7 @@ class _SubjectPointwiseQAndF:
             reduce_query_input_status,
         )
 
-        active = cast("BoolND | None", kwargs.pop(ACTIVE_SUBJECTS_ARGUMENT, None))
+        active = cast("BoolND | None", kwargs.pop(ACTIVE_AGENTS_ARGUMENT, None))
         result = self.function(**kwargs)
         if type(result) is not BoundedResult:
             raise TypeError("Pointwise integrity requires its original bounded result.")
@@ -10307,10 +10311,10 @@ class _NextStateBuild:
     """One regime's next-state bodies, per period, in both mapped forms."""
 
     by_period: MappingProxyType[int, NextStateSimulationFunction]
-    """Period to the body already mapped over the subject axis."""
+    """Period to the body already mapped over the agent axis."""
 
-    per_subject_by_period: MappingProxyType[int, _PerSubjectFunction]
-    """Period to the same body at one subject's state cell."""
+    per_agent_by_period: MappingProxyType[int, _PerAgentFunction]
+    """Period to the same body at one agent's state cell."""
 
 
 def _build_next_state_vmapped(
@@ -10349,7 +10353,7 @@ def _build_next_state_vmapped(
     built: dict[
         tuple[tuple[RegimeName, ...], Hashable], NextStateSimulationFunction
     ] = {}
-    per_subject: dict[tuple[tuple[RegimeName, ...], Hashable], _PerSubjectFunction] = {}
+    per_agent: dict[tuple[tuple[RegimeName, ...], Hashable], _PerAgentFunction] = {}
     for key, periods in configs.items():
         period_targets, _ = key
         representative_period = periods[0]
@@ -10390,9 +10394,9 @@ def _build_next_state_vmapped(
             next_state_vmapped, kwargs=sig_args, enforce=False
         )
         built[key] = jax.jit(next_state_vmapped) if enable_jit else next_state_vmapped
-        per_subject[key] = _PerSubjectFunction(
+        per_agent[key] = _PerAgentFunction(
             function=next_state,
-            subject_arg_names=vmap_variables,
+            agent_arg_names=vmap_variables,
             output_roles=transition_output_roles(
                 target_next_state_names={
                     target: [
@@ -10408,8 +10412,8 @@ def _build_next_state_vmapped(
         by_period=expand_groups_to_periods(
             grouped_periods=configs, built_by_group=built
         ),
-        per_subject_by_period=expand_groups_to_periods(
-            grouped_periods=configs, built_by_group=per_subject
+        per_agent_by_period=expand_groups_to_periods(
+            grouped_periods=configs, built_by_group=per_agent
         ),
     )
 

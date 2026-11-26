@@ -16,27 +16,28 @@ from numpy.testing import assert_array_almost_equal
 from lcm import (
     AgeGrid,
     CollectiveUtility,
+    CompositionAction,
     Consent,
     Counterparty,
+    Destination,
     DiscreteGrid,
     ExecutionConfig,
-    Exit,
-    ExitTarget,
     InitialNodes,
     InvariantBlockSchedule,
     JointNormalIIDProcess,
     LinSpacedGrid,
     Model,
     ParetoObjective,
+    PCOnActions,
+    PCOnWeight,
     Periods,
     Regime,
-    Unilateral,
     categorical,
     exceptions,
     fixed_transition,
 )
 from lcm.component_jobs import plan_component_jobs, run_component_job
-from lcm.exits import ExitRule
+from lcm.composition_actions import CompositionRule
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -297,8 +298,8 @@ def test_a_fully_feasible_debug_solve_has_only_off_grid_warning(
 def test_empty_other_regime_and_padded_rows_do_not_refuse_owned_decisions(
     *, enable_jit: bool
 ) -> None:
-    """Mixed regimes and a short subject tile keep the working subjects' actions."""
-    model = _model(enable_jit=enable_jit, axis_widths={"subject": 3})
+    """Mixed regimes and a short agent tile keep the working agents' actions."""
+    model = _model(enable_jit=enable_jit, axis_widths={"agent": 3})
     result = model.simulate(
         params={"discount_factor": 0.5},
         initial_conditions={
@@ -324,11 +325,11 @@ def test_empty_other_regime_and_padded_rows_do_not_refuse_owned_decisions(
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
-def test_the_owned_row_in_a_short_subject_tile_still_refuses_empty_actions(
+def test_the_owned_row_in_a_short_agent_tile_still_refuses_empty_actions(
     *, enable_jit: bool
 ) -> None:
-    """The last real subject reaches an empty set despite its tile's padding."""
-    model = _model(enable_jit=enable_jit, axis_widths={"subject": 3})
+    """The last real agent reaches an empty set despite its tile's padding."""
+    model = _model(enable_jit=enable_jit, axis_widths={"agent": 3})
     with pytest.raises(
         exceptions.NoFeasibleActionError, match=r"working.*period 1.*wealth.*0"
     ):
@@ -455,7 +456,7 @@ def _blocked_model(
 
 
 _BLOCKED_PARAMS: UserParams = {"discount_factor": 0.5}
-_BLOCKED_SUBJECT: UserInitialConditions = {
+_BLOCKED_AGENT: UserInitialConditions = {
     "age": jnp.asarray([0.0]),
     "wealth": jnp.asarray([2.0]),
     "pref_type": jnp.asarray([PreferenceType.first], dtype=jnp.int32),
@@ -628,7 +629,7 @@ def test_component_simulation_job_reports_each_count_once(
         params=_BLOCKED_PARAMS,
         directory=directory,
         n_jobs=1,
-        initial_conditions=_BLOCKED_SUBJECT,
+        initial_conditions=_BLOCKED_AGENT,
         seed=0,
     )
     caplog.clear()
@@ -638,7 +639,7 @@ def test_component_simulation_job_reports_each_count_once(
         directory=directory,
         job=0,
         log_level="warning",
-        initial_conditions=_BLOCKED_SUBJECT,
+        initial_conditions=_BLOCKED_AGENT,
     )
     messages = [record.getMessage() for record in caplog.records]
 
@@ -651,7 +652,7 @@ def test_block_major_simulation_reports_each_count_once(
     """Solving every component while simulating warns once per regime-period."""
     _blocked_model().simulate(
         params=_BLOCKED_PARAMS,
-        initial_conditions=_BLOCKED_SUBJECT,
+        initial_conditions=_BLOCKED_AGENT,
         seed=0,
         log_level="warning",
     )
@@ -1080,7 +1081,7 @@ def _initial_joint_states(
 ) -> tuple[dict[str, float | str], dict[str, float]]:
     """Return the empty-set error's state and the control's entered state.
 
-    Both models start one subject at wealth zero; only the constrained model
+    Both models start one agent at wealth zero; only the constrained model
     rejects every action there, so the unconstrained control enters the same
     physical state and records it.
     """
@@ -1124,7 +1125,7 @@ def _initial_joint_states(
 def test_initial_joint_empty_state_reports_entered_physical_values(
     *, checks: bool, memory_budget: int | None
 ) -> None:
-    """An initial empty-set error names the physical state the subject entered."""
+    """An initial empty-set error names the physical state the agent entered."""
     state, entered = _initial_joint_states(
         control=_joint_empty_model(
             constrained=False, runtime=False, memory_budget=memory_budget
@@ -1231,12 +1232,12 @@ def test_simulation_logs_the_solve_counts_before_refusing_an_empty_set(
     """The solve's empty-set counts are logged even when the simulation refuses.
 
     Block-major has solved the empty and the first type when the first-type
-    subject reaches wealth zero, so its count covers those two codes and says so.
+    agent reaches wealth zero, so its count covers those two codes and says so.
     """
     with pytest.raises(exceptions.NoFeasibleActionError):
         _blocked_model(schedule=schedule).simulate(
             params=_BLOCKED_PARAMS,
-            initial_conditions={**_BLOCKED_SUBJECT, "wealth": jnp.asarray([1.0])},
+            initial_conditions={**_BLOCKED_AGENT, "wealth": jnp.asarray([1.0])},
             seed=0,
             log_level="warning",
         )
@@ -1322,11 +1323,11 @@ def _counterparty_formed(*, case: DiscreteState, work: DiscreteAction) -> FloatN
 
 
 def _move_model(
-    *, constrained: Literal["mover", "counterparty"], rule: ExitRule
+    *, constrained: Literal["mover", "counterparty"], rule: CompositionRule
 ) -> Model:
     """`pre` hands `case` to `single_f`, who moves in the current period.
 
-    Under `Consent` she forms `married` with `single_m`; under `Unilateral` she
+    Under `Consent` she forms `married` with `single_m`; under `PCOnActions` she
     leaves for `single_m`. `constrained` names the party whose action set is empty
     outside `_Case.feasible`. The couple's objective weights only the other party,
     so a minus-infinity value of the constrained party leaves the couple feasible.
@@ -1336,9 +1337,9 @@ def _move_model(
     work = {"work": DiscreteGrid(category_class=_Work)}
     feasible = {"feasible": _feasible_case}
     target = (
-        ExitTarget(regime="married", role="f", projection={"case": _identity_case})
+        Destination(regime="married", role="f", projection={"case": _identity_case})
         if isinstance(rule, Consent)
-        else ExitTarget(regime="single_m", projection={"case": _identity_case})
+        else Destination(regime="single_m", projection={"case": _identity_case})
     )
     return Model(
         regimes={
@@ -1352,7 +1353,9 @@ def _move_model(
                 actions=work,
                 constraints=feasible if mover else {},
                 functions={"utility": _one_at},
-                exit=Exit(targets={"self": target}, rule=rule),
+                composition_action=CompositionAction(
+                    destinations={"self": target}, rule=rule
+                ),
             ),
             "single_m": Regime(
                 states={"case": case},
@@ -1396,7 +1399,7 @@ def _consent() -> Consent:
 def _move_start(
     *, case: ScalarInt, entry: Literal["start", "arrive"]
 ) -> UserInitialConditions:
-    """One subject starting in `single_f` at period 1, or arriving there from `pre`."""
+    """One agent starting in `single_f` at period 1, or arriving there from `pre`."""
     start = entry == "start"
     return {
         "case": jnp.asarray([case], dtype=jnp.int32),
@@ -1424,14 +1427,16 @@ def test_solve_values_a_party_without_a_feasible_action_at_minus_infinity(
 ) -> None:
     """A party with an empty action set gains exactly if its destination is finite.
 
-    Under `Consent` she forms where her formed value is finite and both gain
-    strictly, and a tie keeps her single; the counterparty consents where his
-    formed value is finite. A `Unilateral` exit leaves wherever no stay action is
+    Under `Consent` she forms where her formed value is finite and both gain strictly,
+    and a tie keeps her single; the counterparty consents where his formed value is
+    finite. A `PCOnActions` composition action leaves wherever no stay action is
     feasible.
     """
     model = _move_model(
         constrained=constrained,
-        rule=_consent() if rule == "consent" else Unilateral(compares=rule),
+        rule=_consent()
+        if rule == "consent"
+        else (PCOnActions() if rule == "each_action" else PCOnWeight()),
     )
     values = model.solve(params={"discount_factor": 1.0}, log_level="off").values
     published = np.asarray(values[1]["single_f"])[:, 0]
@@ -1468,7 +1473,9 @@ def test_a_person_without_a_feasible_action_moves_where_the_solve_moves(
     """A person starting at a state or arriving there takes the solve's move."""
     model = _move_model(
         constrained=constrained,
-        rule=_consent() if rule == "consent" else Unilateral(compares=rule),
+        rule=_consent()
+        if rule == "consent"
+        else (PCOnActions() if rule == "each_action" else PCOnWeight()),
     )
     params = {"discount_factor": 1.0}
     frame = model.simulate(

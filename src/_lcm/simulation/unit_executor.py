@@ -76,7 +76,7 @@ class SimulationUnitExecutor:
         program: CoreProgram,
         arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
-        n_subjects: int,
+        n_agents: int,
     ) -> PytreeValue:
         """Budget each dispatch afresh and finish its workspace before the next one."""
         if self._closed:
@@ -86,7 +86,7 @@ class SimulationUnitExecutor:
             program=program,
             arguments=arguments,
             period=period,
-            n_subjects=n_subjects,
+            n_agents=n_agents,
             residency=(
                 SimulationDispatchContext(
                     live_footprint=self._live,

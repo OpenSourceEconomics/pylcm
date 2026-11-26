@@ -587,13 +587,16 @@ def _fail_if_a_group_is_observed_in_part(
     regime: Regime,
     groups: Mapping[ShockGroupName, ShockGroup],
 ) -> None:
-    """Refuse an exit that observes some but not all shocks of one group."""
-    observed = frozenset(() if regime.exit is None else regime.exit.observes)
+    """Refuse a decision on the composition that observes part of a shock group."""
+    observed = frozenset(
+        () if regime.composition_action is None else regime.composition_action.observes
+    )
     for group_name, group in groups.items():
         seen = observed & group.shocks.keys()
         if seen and seen != group.shocks.keys():
             raise ShockDeclarationError(
-                f"The exit of {regime_name!r} observes {sorted(seen)!r} of shock "
+                f"The composition action of {regime_name!r} observes {sorted(seen)!r} "
+                "of shock "
                 f"group {group_name!r} but not {sorted(group.shocks.keys() - seen)!r}:"
                 " a group is observed whole or not at all."
             )

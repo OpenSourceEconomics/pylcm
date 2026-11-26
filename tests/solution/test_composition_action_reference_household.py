@@ -192,11 +192,13 @@ def unilateral(
     *,
     q: dict[str, ExactArray],
     feasible: BoolArray,
-    v_exit: dict[str, Frac | float],
+    v_composition_action: dict[str, Frac | float],
     weight: dict[str, Frac],
 ) -> int:
     """Choose under limited commitment: any member can force the exit."""
-    choice = participating(q=q, feasible=feasible, outside=v_exit, weight=weight).choice
+    choice = participating(
+        q=q, feasible=feasible, outside=v_composition_action, weight=weight
+    ).choice
     return len(feasible) if choice == NO_POLICY else choice
 
 
@@ -204,13 +206,15 @@ def mutual(
     *,
     q: dict[str, ExactArray],
     feasible: BoolArray,
-    v_exit: dict[str, Frac | float],
+    v_composition_action: dict[str, Frac | float],
     weight: dict[str, Frac],
 ) -> int:
     """Choose under the dissolution-type `mutual` rule: the exit needs every member."""
     wanted = np.zeros(len(feasible), dtype=bool)
     for s, q_s in q.items():
-        wanted |= np.array([q_s[a] >= v_exit[s] for a in range(len(feasible))])
+        wanted |= np.array(
+            [q_s[a] >= v_composition_action[s] for a in range(len(feasible))]
+        )
     choice = _pareto_argmax(q=q, kept=feasible & wanted, weight=weight)
     return len(feasible) if choice == NO_POLICY else choice
 
@@ -712,7 +716,7 @@ def test_unilateral_drops_the_best_alternative_a_member_vetoes() -> None:
         unilateral(
             q=q,
             feasible=_all(3),
-            v_exit={"f": Frac(5, 2), "m": Frac(3, 2)},
+            v_composition_action={"f": Frac(5, 2), "m": Frac(3, 2)},
             weight=HALF,
         )
         == 1
@@ -726,7 +730,7 @@ def test_mutual_keeps_the_best_alternative_one_member_wants() -> None:
         mutual(
             q=q,
             feasible=_all(3),
-            v_exit={"f": Frac(5, 2), "m": Frac(3, 2)},
+            v_composition_action={"f": Frac(5, 2), "m": Frac(3, 2)},
             weight=HALF,
         )
         == 0
@@ -800,7 +804,7 @@ def test_equal_pareto_sums_go_to_the_lowest_alternative(rule: str) -> None:
     q = _q(f=[1, 2], m=[2, 1])
     assert (
         DISSOLUTION_RULES[rule](
-            q=q, feasible=_all(2), v_exit={"f": 0, "m": 0}, weight=HALF
+            q=q, feasible=_all(2), v_composition_action={"f": 0, "m": 0}, weight=HALF
         )
         == 0
     )
@@ -811,19 +815,22 @@ def test_an_exact_tie_keeps_staying(rule: str) -> None:
     q = _q(f=[1], m=[1])
     assert (
         DISSOLUTION_RULES[rule](
-            q=q, feasible=_all(1), v_exit={"f": 1, "m": 1}, weight=HALF
+            q=q, feasible=_all(1), v_composition_action={"f": 1, "m": 1}, weight=HALF
         )
         == 0
     )
 
 
 @pytest.mark.parametrize("rule", DISSOLUTION_RULES)
-def test_an_exit_one_ulp_above_the_tie_is_taken(rule: str) -> None:
+def test_a_composition_action_one_ulp_above_the_tie_is_taken(rule: str) -> None:
     above = Frac(np.nextafter(1.0, np.inf))
     q = _q(f=[1], m=[1])
     assert (
         DISSOLUTION_RULES[rule](
-            q=q, feasible=_all(1), v_exit={"f": above, "m": above}, weight=HALF
+            q=q,
+            feasible=_all(1),
+            v_composition_action={"f": above, "m": above},
+            weight=HALF,
         )
         == 1
     )
@@ -845,7 +852,10 @@ def test_a_couple_divorces_when_a_divorce_value_is_one_ulp_above_its_value() -> 
 def test_an_empty_feasible_set_dissolves(rule: str) -> None:
     q = _q(f=[9, 9], m=[9, 9])
     choice = DISSOLUTION_RULES[rule](
-        q=q, feasible=np.zeros(2, dtype=bool), v_exit={"f": 0, "m": 0}, weight=HALF
+        q=q,
+        feasible=np.zeros(2, dtype=bool),
+        v_composition_action={"f": 0, "m": 0},
+        weight=HALF,
     )
     assert choice == 2
 
@@ -859,18 +869,30 @@ def test_a_couple_with_no_feasible_alternative_takes_its_divorce_values() -> Non
     )
 
 
-def test_unilateral_ignores_a_member_whose_exit_is_minus_infinity() -> None:
+def test_unilateral_ignores_a_member_whose_composition_action_is_minus_infinity() -> (
+    None
+):
     q = _q(f=[1], m=[-(10**300)])
     assert (
-        unilateral(q=q, feasible=_all(1), v_exit={"f": 0, "m": NEG_INF}, weight=HALF)
+        unilateral(
+            q=q,
+            feasible=_all(1),
+            v_composition_action={"f": 0, "m": NEG_INF},
+            weight=HALF,
+        )
         == 0
     )
 
 
-def test_mutual_never_exits_to_a_target_at_minus_infinity() -> None:
+def test_mutual_consent_never_separates_to_a_destination_at_minus_infinity() -> None:
     q = _q(f=[-(10**300)], m=[-(10**300)])
     assert (
-        mutual(q=q, feasible=_all(1), v_exit={"f": NEG_INF, "m": NEG_INF}, weight=HALF)
+        mutual(
+            q=q,
+            feasible=_all(1),
+            v_composition_action={"f": NEG_INF, "m": NEG_INF},
+            weight=HALF,
+        )
         == 0
     )
 
@@ -1296,8 +1318,8 @@ def test_opposing_movers_act_once_in_final_regime() -> None:
         ],
     )
     assert [
-        [(row["choice"], row["acting_regime"], row["acting_choice"]) for row in subject]
-        for subject in rows
+        [(row["choice"], row["acting_regime"], row["acting_choice"]) for row in agent]
+        for agent in rows
     ] == [[(MARRY, "couple", 0)], [(DIVORCE, "single", 1)]]
 
 

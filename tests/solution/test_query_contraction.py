@@ -1,13 +1,13 @@
-"""Lottery contraction in exit queries and collective regimes.
+"""Lottery contraction in composition action queries and collective regimes.
 
-A consent marriage: each single's health and each spouse's health is a Markov draw
-whose weights read only its own current value, so `GridSearch(lottery_contraction=True)`
-sums it into the target's value array, also where an exit query or a collective
-continuation reads it. Income is a Rouwenhorst process whose weights read its own
-value, so a query, which evaluates its regime at projected states, keeps it
-enumerated and extends it beyond its nodes. The terminal couple's income follows
-another law, so the solve's couple queries extend it too. A single's consent exit is
-available in good health only, so the query guards each lane.
+A consent marriage: each single's health and each spouse's health is a Markov draw whose
+weights read only its own current value, so `GridSearch(lottery_contraction=True)` sums
+it into the target's value array, also where a composition action query or a collective
+continuation reads it. Income is a Rouwenhorst process whose weights read its own value,
+so a query, which evaluates its regime at projected states, keeps it enumerated and
+extends it beyond its nodes. The terminal couple's income follows another law, so the
+solve's couple queries extend it too. A single's consent composition action is available
+in good health only, so the query guards each lane.
 """
 
 from collections.abc import Callable, Mapping
@@ -20,7 +20,7 @@ import pandas as pd
 import pytest
 from jax.core import Tracer
 
-from _lcm import exit_queries
+from _lcm import composition_queries
 from _lcm.outside_values import OutsideValueTable
 from _lcm.policy_queries import (
     PolicyAnswer,
@@ -48,19 +48,19 @@ from _lcm.typing import (
 )
 from lcm import (
     CollectiveUtility,
+    CompositionAction,
     Consent,
     Counterparty,
+    Destination,
     DiscreteGrid,
-    Exit,
-    ExitTarget,
     InitialNodes,
     LinSpacedGrid,
     Model,
+    PCOnActions,
     Periods,
     Regime,
     RouwenhorstAR1Process,
     StochasticTransition,
-    Unilateral,
 )
 from lcm.exceptions import UnsupportedOperationError
 from lcm.shocks import GaussHermite, Normal, Product, ShockGroup
@@ -225,15 +225,15 @@ def _model(
             projection={"health": _health, "income": _income},
         )
     )
-    to_couple = ExitTarget(
+    to_couple = Destination(
         regime="couple",
         role="f",
         projection={"health_f": _health, "health_m": _health, "income": _income},
     )
     regimes = {
         "single_f": single.replace(
-            exit=Exit(
-                targets={"self": to_couple},
+            composition_action=CompositionAction(
+                destinations={"self": to_couple},
                 rule=consent,
                 available=_healthy,
                 observes=("offer",) if observe_offer else (),
@@ -241,23 +241,25 @@ def _model(
         ),
         "single_m": single,
         "couple": couple.replace(
-            exit=Exit(
-                targets={
-                    "f": ExitTarget(
+            composition_action=CompositionAction(
+                destinations={
+                    "f": Destination(
                         regime="single_f",
                         projection={"health": _health_f, "income": _income},
                     ),
-                    "m": ExitTarget(
+                    "m": Destination(
                         regime="single_m",
                         projection={"health": _health_m, "income": _income},
                     ),
                 },
-                rule=Unilateral(),
+                rule=PCOnActions(),
             )
         ),
     }
     for name, regime in tuple(regimes.items()):
-        regimes[f"{name}_terminal"] = regime.replace(exit=None, state_transitions={})
+        regimes[f"{name}_terminal"] = regime.replace(
+            composition_action=None, state_transitions={}
+        )
     regimes["couple_terminal"] = regimes["couple_terminal"].replace(
         states={
             **regimes["couple_terminal"].states,
@@ -415,7 +417,7 @@ def test_contraction_agrees_with_enumeration_to_16_ulp(
     shocks, so a draw whose weights read one, directly, through a helper or alone,
     stays enumerated there.
     """
-    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
+    monkeypatch.setattr(composition_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
     if offer_moves_health is not None:
         model = _model(
             contract=True, observe_offer=True, offer_moves_health=offer_moves_health
@@ -475,19 +477,19 @@ def _simulate(
             log_level="off",
         )
         .to_dataframe(use_categorical_codes=True)
-        .sort_values(["subject_id", "period"])
+        .sort_values(["agent_id", "period"])
     )
 
 
 def test_simulation_with_contraction_chooses_and_moves_as_without() -> None:
-    """The simulation contracts what the solve contracts, exits and couples included.
+    """The simulation contracts what the solve contracts, couples included.
 
-    Away from ties, both routes take the same actions and exits, and report the same
-    values to rounding at the panel's scale.
+    Away from ties, both routes take the same actions and composition actions, and
+    report the same values to rounding at the panel's scale.
     """
     off = _simulate(contract=False)
     on = _simulate(contract=True)
-    discrete = ["subject_id", "period", "regime_name", "work"]
+    discrete = ["agent_id", "period", "regime_name", "work"]
     pd.testing.assert_frame_equal(
         on[discrete].reset_index(drop=True), off[discrete].reset_index(drop=True)
     )
@@ -577,7 +579,9 @@ def _query_tables_built_in_place(
 @pytest.mark.parametrize(
     ("observe_offer", "offer_moves_health", "reads_information"),
     [
-        pytest.param(False, None, False, id="exits-couples-and-edge-corners"),
+        pytest.param(
+            False, None, False, id="composition actions-couples-and-edge-corners"
+        ),
         pytest.param(True, None, True, id="consent-observing-an-offer"),
         pytest.param(True, "directly", True, id="a-draw-reading-the-offer"),
     ],
@@ -589,8 +593,9 @@ def test_query_programs_read_only_prepared_tables(
     offer_moves_health: str | None,
     reads_information: bool,
 ) -> None:
-    """Exit, consent, outside-value and simulated queries build no table in place.
+    """The queries of a composition action build no table in place.
 
+    These are the composition action, consent, outside-value and simulated queries.
     The edge extension's corner reads included, and, where a consent observes an
     offer, the information queries. A draw whose weights read the offer stays
     enumerated there rather than being summed in place.

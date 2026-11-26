@@ -21,7 +21,7 @@ import pytest
 from _lcm.solution import backward_induction, negm
 from lcm import AgeGrid, DiscreteGrid, ExecutionConfig, LinSpacedGrid, Model
 from lcm.solvers import AdaptiveOuterMesh, GridSearch
-from tests.solution.test_public_exit_queries import _sharing_control_model
+from tests.solution.test_public_composition_action_queries import _sharing_control_model
 from tests.solution.test_solution_result import _small_grid_search_inputs
 from tests.test_models import n_nbegm_toy
 from tests.test_models.deterministic.regression import (

@@ -1,8 +1,8 @@
 """Budgeted admission derives gate requirements from the forward inventory.
 
-A registered gated regime that no subject can occupy owes no gate programs, so
+A registered gated regime that no agent can occupy owes no gate programs, so
 its declaration must not veto a memory-budgeted simulation of the regimes that
-subjects do occupy. A gated regime subjects can occupy still needs its compiled
+agents do occupy. A gated regime agents can occupy still needs its compiled
 gate stages.
 """
 
@@ -105,7 +105,7 @@ def _model(
         execution_config=(
             ExecutionConfig(
                 devices=(0,),
-                axis_widths={"subject": width},
+                axis_widths={"agent": width},
                 device_memory_bytes=2**30,
             )
             if budgeted

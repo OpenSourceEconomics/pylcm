@@ -270,7 +270,7 @@ def _panel(*, model: Model, composite: bool) -> pd.DataFrame:
         use_categorical_codes=True,
         additional_targets=list(_MEMBERS) if composite else None,
     )
-    columns = ["subject_id", "period", "regime_name", "choice", "consumption"]
+    columns = ["agent_id", "period", "regime_name", "choice", "consumption"]
     out = frame[[*columns, "wealth", "offer", *_MEMBERS]].copy()
     out[list(_MEMBERS)] = out[list(_MEMBERS)].astype(float)
     return out.reset_index(drop=True)
@@ -315,7 +315,7 @@ def test_initial_member_tuple_outside_the_code_set_is_refused() -> None:
 
 
 def test_labelled_initial_frame_names_members_like_the_dense_model() -> None:
-    """A DataFrame of member labels starts subjects at the same composite codes."""
+    """A DataFrame of member labels starts agents at the same composite codes."""
     conditions = _initial_conditions()
     frame = pd.DataFrame(
         {
@@ -330,7 +330,7 @@ def test_labelled_initial_frame_names_members_like_the_dense_model() -> None:
     def run(model: Model) -> pd.DataFrame:
         return model.simulate(
             params=_PARAMS, initial_conditions=frame, log_level="off", seed=11
-        ).to_dataframe(use_categorical_codes=True)[["subject_id", "period", "choice"]]
+        ).to_dataframe(use_categorical_codes=True)[["agent_id", "period", "choice"]]
 
     pd.testing.assert_frame_equal(run(_composite()), run(_model()))
 
@@ -565,7 +565,7 @@ def _two_start_codes() -> Model:
 
 
 def test_labelled_start_with_nonzero_member_label_decodes_to_its_code() -> None:
-    """A subject starting at `count_a="one"` reads member code 1 in period 0."""
+    """An agent starting at `count_a="one"` reads member code 1 in period 0."""
     frame = pd.DataFrame(
         {
             "regime_name": ["alive", "alive"],
@@ -582,7 +582,7 @@ def test_labelled_start_with_nonzero_member_label_decodes_to_its_code() -> None:
         .simulate(params=_PARAMS, initial_conditions=frame, log_level="off", seed=3)
         .to_dataframe(use_categorical_codes=True, additional_targets=list(_MEMBERS))
     )
-    first = panel[panel["period"] == 0].sort_values("subject_id")
+    first = panel[panel["period"] == 0].sort_values("agent_id")
     assert first[list(_MEMBERS)].to_numpy().tolist() == [[1, 0, 0], [0, 0, 0]]
 
 

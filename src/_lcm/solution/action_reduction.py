@@ -1,6 +1,6 @@
 """Exact hard maxima over a canonical global action order.
 
-The household hard max in `collective_action_reduction` folds every action block
+The collective hard max in `collective_action_reduction` folds every action block
 a regime's solve and simulation decision reduce. `HARD_MAX_REDUCTION` declares the
 same exact contract for a reduced axis whose fold lives in its own step, such as
 NB-EGM's branch axis.

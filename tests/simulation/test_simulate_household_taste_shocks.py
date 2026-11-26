@@ -36,12 +36,12 @@ def _reference_decider_work_probability(*, wealth: float) -> float:
     return float(probabilities[1] / probabilities.sum())
 
 
-def _initial_conditions(n_subjects: int) -> dict[str, jnp.ndarray]:
+def _initial_conditions(n_agents: int) -> dict[str, jnp.ndarray]:
     return {
-        "age": jnp.full(n_subjects, 40.0),
-        "wealth": jnp.full(n_subjects, _INITIAL_WEALTH),
+        "age": jnp.full(n_agents, 40.0),
+        "wealth": jnp.full(n_agents, _INITIAL_WEALTH),
         "regime_id": jnp.full(
-            n_subjects, taste_shocks_toy.ToyRegimeId.alive, dtype=jnp.int32
+            n_agents, taste_shocks_toy.ToyRegimeId.alive, dtype=jnp.int32
         ),
     }
 
@@ -49,18 +49,18 @@ def _initial_conditions(n_subjects: int) -> dict[str, jnp.ndarray]:
 def test_simulated_work_frequency_of_the_decider_is_its_softmax_probability() -> None:
     """The household works as often as the decider's logit probability says.
 
-    Member `x` decides and its problem is the single's. With 20k subjects at
+    Member `x` decides and its problem is the single's. With 20k agents at
     one wealth node the Monte Carlo standard error of the frequency is below
     0.005.
     """
-    n_subjects = 20_000
+    n_agents = 20_000
     result = taste_shocks_toy.get_household_model(
         weights={"x": 1.0, "y": 0.0}
     ).simulate(
         params=taste_shocks_toy.get_household_params(
             scale=_SCALE, discount_factor=_DISCOUNT_FACTOR
         ),
-        initial_conditions=_initial_conditions(n_subjects),
+        initial_conditions=_initial_conditions(n_agents),
         log_level="debug",
         seed=5471,
     )
@@ -76,12 +76,12 @@ def test_simulated_work_frequency_of_the_decider_is_its_softmax_probability() ->
 
 def test_household_of_one_decider_draws_the_singles_choices() -> None:
     """A household of one member with weight 1 draws exactly the single's actions."""
-    n_subjects = 64
+    n_agents = 64
     single = taste_shocks_toy.get_model().simulate(
         params=taste_shocks_toy.get_params(
             scale=_SCALE, discount_factor=_DISCOUNT_FACTOR
         ),
-        initial_conditions=_initial_conditions(n_subjects),
+        initial_conditions=_initial_conditions(n_agents),
         log_level="debug",
         seed=5471,
     )
@@ -89,7 +89,7 @@ def test_household_of_one_decider_draws_the_singles_choices() -> None:
         params=taste_shocks_toy.get_household_params(
             scale=_SCALE, discount_factor=_DISCOUNT_FACTOR
         ),
-        initial_conditions=_initial_conditions(n_subjects),
+        initial_conditions=_initial_conditions(n_agents),
         log_level="debug",
         seed=5471,
     )

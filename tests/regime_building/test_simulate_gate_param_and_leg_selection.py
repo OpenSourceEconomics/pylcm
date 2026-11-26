@@ -205,7 +205,7 @@ def test_stateless_gated_target_routes_without_vmap_axis_size_error() -> None:
     `jax.vmap(f)(batched)` with `batched == {}` raises `ValueError: vmap
     wrapped function must be passed at least one argument containing an array
     or axis_size must be specified`. The routing call below must simply work,
-    and produce a per-subject gate of the right length.
+    and produce a per-agent gate of the right length.
     """
     regimes, regime_names_to_ids, flat_params, solution = _solve_f3_fixture()
     src = regimes["src"]
@@ -227,7 +227,7 @@ def test_stateless_gated_target_routes_without_vmap_axis_size_error() -> None:
     )
     assert "stateless_target" in same_period_mappings
 
-    n_subjects = 3
+    n_agents = 3
     next_states = MappingProxyType(
         {
             "stateless_target": MappingProxyType({}),
@@ -242,19 +242,19 @@ def test_stateless_gated_target_routes_without_vmap_axis_size_error() -> None:
         same_period_mappings=same_period_mappings,
         next_states=next_states,
         regime_names_to_ids=regime_names_to_ids,
-        new_subject_regime_ids=jnp.array([target_id] * n_subjects, dtype=jnp.int32),
-        subjects_in_regime=jnp.array([True] * n_subjects),
+        new_agent_regime_ids=jnp.array([target_id] * n_agents, dtype=jnp.int32),
+        agents_in_regime=jnp.array([True] * n_agents),
         flat_params=flat_params,
         own_member=jnp.full_like(
-            jnp.array([True] * n_subjects), NO_ROLE, dtype=jnp.int32
+            jnp.array([True] * n_agents), NO_ROLE, dtype=jnp.int32
         ),
         new_own_member=jnp.full_like(
-            jnp.array([True] * n_subjects), NO_ROLE, dtype=jnp.int32
+            jnp.array([True] * n_agents), NO_ROLE, dtype=jnp.int32
         ),
     )
-    # The gate is OPEN for every subject; the routing is per-subject
-    # (length n_subjects), not a collapsed scalar.
-    np.testing.assert_array_equal(np.asarray(routed_ids), [target_id] * n_subjects)
+    # The gate is OPEN for every agent; the routing is per-agent
+    # (length n_agents), not a collapsed scalar.
+    np.testing.assert_array_equal(np.asarray(routed_ids), [target_id] * n_agents)
 
 
 def test_vmap_without_axis_size_fails_for_a_stateless_target() -> None:
@@ -283,12 +283,12 @@ def test_vmap_without_axis_size_fails_for_a_stateless_target() -> None:
     evaluator = src.gated_edges["stateless_target"].simulate_gate_evaluator_at(period=1)
     static = {SAME_PERIOD_V_ARG: same_period_mappings["stateless_target"]}
 
-    def _call_one_subject(one_subject_kwargs: dict[str, FloatND]) -> BoolND:
-        return evaluator(**one_subject_kwargs, **static)
+    def _call_one_agent(one_agent_kwargs: dict[str, FloatND]) -> BoolND:
+        return evaluator(**one_agent_kwargs, **static)
 
     # The same body, verbatim except for the missing `axis_size`.
     with pytest.raises(ValueError, match="at least one argument"):
-        jax.vmap(_call_one_subject)({})
+        jax.vmap(_call_one_agent)({})
 
     # And the production body, on the identical inputs, does not raise.
     result = _call_vmapped_with_accepted_kwargs(
@@ -318,7 +318,7 @@ def _seed(
     regime_name: RegimeName,
     role: int | None,
 ) -> Int1D:
-    """Read the seeded roles of a one-subject cohort starting in `regime_name`."""
+    """Read the seeded roles of a one-agent cohort starting in `regime_name`."""
     return _initial_own_member(
         initial_conditions=MappingProxyType(
             {

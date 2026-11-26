@@ -267,7 +267,7 @@ def test_joint_weight_without_stochastic_axes_closes_over_no_empty_array() -> No
     """The weight's staged program reads no zero-size array.
 
     An array a simulation body closes over becomes an operand of the
-    `shard_map` that splits subjects over devices, and the CPU compiler crashes
+    `shard_map` that splits agents over devices, and the CPU compiler crashes
     on a zero-size operand of a manual computation.
     """
     weights = _get_joint_weights_function(regime_name="test", variables=())

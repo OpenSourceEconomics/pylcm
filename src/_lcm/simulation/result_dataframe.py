@@ -44,7 +44,7 @@ def _create_flat_dataframe(
     metadata: ResultMetadata,
     additional_targets: tuple[FunctionName, ...] | None,
     ages: TimeAxis,
-    subject_batch_size: int | None = None,
+    agent_batch_size: int | None = None,
 ) -> pd.DataFrame:
     """Create a single flat DataFrame from all regime results.
 
@@ -71,7 +71,7 @@ def _create_flat_dataframe(
             publishes_role=bool(metadata.member_names_to_ids),
             additional_targets=additional_targets,
             ages=ages,
-            subject_batch_size=subject_batch_size,
+            agent_batch_size=agent_batch_size,
         )
         for name in metadata.regime_names
         if raw_results[name]
@@ -169,13 +169,13 @@ def _process_regime(
     publishes_role: bool,
     additional_targets: tuple[FunctionName, ...] | None,
     ages: TimeAxis,
-    subject_batch_size: int | None = None,
+    agent_batch_size: int | None = None,
 ) -> pd.DataFrame:
     """Process results for a single regime into a DataFrame.
 
     `publishes_role` is a property of the MODEL, not of this regime: a model
     with any collective regime publishes `own_member` for every regime,
-    since a row that leaves a household still has to say it now occupies no
+    since a row that leaves a collective regime still has to say it now occupies no
     role. A model with none would carry a column that is the sentinel in every
     row, so it publishes none.
 
@@ -214,7 +214,7 @@ def _process_regime(
         data=data,
         joint_normals=joint_normals,
         regime_params=regime_params,
-        subject_batch_size=subject_batch_size,
+        agent_batch_size=agent_batch_size,
     )
 
     if additional_targets:
@@ -234,12 +234,12 @@ def _process_regime(
                 targets=targets_for_regime,
                 regime=regime,
                 regime_params=regime_params,
-                subject_batch_size=subject_batch_size,
+                agent_batch_size=agent_batch_size,
             )
             n_rows = len(data["period"])
             data.update(
                 {
-                    # A target that reads no per-subject variable evaluates to one
+                    # A target that reads no per-agent variable evaluates to one
                     # value for the whole regime and arrives 0-d. Give it its rows
                     # here rather than leaving pandas to broadcast it: pandas does
                     # not recognize a 0-d device array as a numeric scalar and
@@ -261,7 +261,7 @@ def _project_joint_shocks(
     data: dict[str, np.ndarray | FloatND | IntND | BoolND | Sequence[str]],
     joint_normals: MappingProxyType[ProcessName, JointNormalIIDProcess],
     regime_params: FlatRegimeParams,
-    subject_batch_size: int | None,
+    agent_batch_size: int | None,
 ) -> None:
     """Publish named shocks without retaining the compiled decision programs."""
     for group, process in joint_normals.items():
@@ -270,7 +270,7 @@ def _project_joint_shocks(
         names = coordinate_names(group=group, process=process)
         standard = np.stack([np.asarray(data[name]) for name in names], axis=-1)
         n_rows = len(standard)
-        batch_size = subject_batch_size or max(n_rows, 1)
+        batch_size = agent_batch_size or max(n_rows, 1)
         transform = jax.jit(jax.vmap(partial(process.transform, mean=mean, cov=cov)))
         chunks = [
             np.asarray(
@@ -325,7 +325,7 @@ def _extract_period_data(
 ) -> dict[str, FloatND | IntND | BoolND]:
     """Extract data from a single period's simulation results."""
     data: dict[str, FloatND | IntND | BoolND] = {
-        "subject_id": jnp.arange(len(result.in_regime), dtype=jnp.int32),
+        "agent_id": jnp.arange(len(result.in_regime), dtype=jnp.int32),
         "period": jnp.full_like(result.in_regime, period, dtype=jnp.int32),
         "_in_regime": result.in_regime,
         "value": result.V_arr,
@@ -337,7 +337,7 @@ def _extract_period_data(
     if publishes_role:
         data["own_member"] = result.own_member
 
-    # Per-subject flag that a continuous-outer off-grid policy read was refused
+    # Per-agent flag that a continuous-outer off-grid policy read was refused
     # and the grid-argmax pair retained. Only NNBEGM regimes can publish the flag;
     # omitting it elsewhere avoids a constant-False column in unrelated results.
     if publishes_nested_policy:
@@ -358,7 +358,7 @@ def _extract_period_data(
 def _concatenate_and_filter(
     period_dicts: list[dict[str, FloatND | IntND | BoolND]],
 ) -> dict[str, np.ndarray]:
-    """Concatenate period data on host and filter to in-regime subjects.
+    """Concatenate period data on host and filter to in-regime agents.
 
     Walks `period_dicts` one period at a time. For each leaf the
     transfer goes through `_to_host`, which falls back to `np.asarray`
@@ -442,7 +442,7 @@ def _assemble_dataframe(
         action_names=action_names,
         member_value_names=member_value_names,
     )
-    return df.sort_values(["subject_id", "period"]).reset_index(drop=True)
+    return df.sort_values(["agent_id", "period"]).reset_index(drop=True)
 
 
 def _empty_dataframe(
@@ -451,7 +451,7 @@ def _empty_dataframe(
     action_names: tuple[ActionName, ...],
 ) -> pd.DataFrame:
     """Create empty DataFrame with correct columns."""
-    columns = ["subject_id", "period", "regime_name", "value"]
+    columns = ["agent_id", "period", "regime_name", "value"]
     columns.extend(state_names)
     columns.extend(action_names)
     return pd.DataFrame(columns=pd.Index(columns))
@@ -482,7 +482,7 @@ def _reorder_columns(
 ) -> pd.DataFrame:
     """Reorder columns: id, period, regime_name, role, value, states, actions, rest.
 
-    `subject_id`, `period` and `regime_name` identify a row and are named
+    `agent_id`, `period` and `regime_name` identify a row and are named
     unconditionally, so a frame that lacks one raises here rather than being
     published one column narrower. Two entries are conditional. A model with
     no collective regime publishes no `own_member`, and where it is
@@ -497,7 +497,7 @@ def _reorder_columns(
     rather than by a `value_` prefix leaves an ordinary computed column such as
     `value_of_leisure` in the trailing `rest` block where it belongs.
     """
-    base = ["subject_id", "period", "regime_name"]
+    base = ["agent_id", "period", "regime_name"]
     if "own_member" in df.columns:
         base = [*base, "own_member"]
     if "value" in df.columns:

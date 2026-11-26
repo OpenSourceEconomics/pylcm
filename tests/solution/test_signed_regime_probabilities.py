@@ -178,7 +178,7 @@ def test_runtime_checks_control_invalid_regime_probabilities(
             runtime_checks=runtime_checks,
             seed=0,
         )
-        assert result.n_subjects == 1
+        assert result.n_agents == 1
     else:
         solution = model.solve(
             params=_PARAMS,

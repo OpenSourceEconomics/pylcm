@@ -249,7 +249,7 @@ emit(
             "x64": jax.config.jax_enable_x64,
             "matmul": str(jax.config.jax_default_matmul_precision),
         },
-        "economic_widths": {"action_product": 1, "cell": 1, "subject": 432}
+        "economic_widths": {"action_product": 1, "cell": 1, "agent": 432}
         if args.family == "continuous"
         else "fixture defaults",
     }

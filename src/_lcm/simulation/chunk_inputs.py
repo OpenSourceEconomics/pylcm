@@ -9,9 +9,9 @@ import jax
 from _lcm.engine import Regime, StateActionSpace
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
+from _lcm.simulation.agent_devices import simulation_agent_devices
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.operand_placement import place_simulation_arguments
-from _lcm.simulation.subject_devices import simulation_subject_devices
 from _lcm.typing import FlatParams, RegimeName, StateName, StateOrActionName
 from lcm.typing import (
     ActionName,
@@ -70,10 +70,10 @@ def prepare_simulation_call_inputs(
     remains the existing eager entry boundary; its outputs are charged immediately,
     without claiming those computations were pre-admitted by a compiler profile.
     """
-    devices = simulation_subject_devices(regimes=regimes, device_ids=device_ids)
+    devices = simulation_agent_devices(regimes=regimes, device_ids=device_ids)
     shared = place_simulation_arguments(
         arguments={"params": flat_params},
-        subject_arg_names=(),
+        agent_arg_names=(),
         value_reads=(),
         devices=devices,
         budget_bytes=None if memory is None else memory.budget_bytes,
@@ -102,18 +102,18 @@ def prepare_simulation_call_inputs(
 
 @dataclass(frozen=True, kw_only=True)
 class SimulationChunkInputs:
-    """Keep one chunk's shared grids and initial subject operands."""
+    """Keep one chunk's shared grids and initial agent operands."""
 
     devices: tuple[jax.Device, ...]
-    """Actual ordered devices that evaluate subjects."""
+    """Actual ordered devices that evaluate agents."""
     flat_params: FlatParams
-    """Parameters replicated on the subject devices."""
+    """Parameters replicated on the agent devices."""
     initial_regime_ids: Int1D
-    """Seeded regime ids in subject layout."""
+    """Seeded regime ids in agent layout."""
     initial_own_member: Int1D
-    """Seeded member roles in subject layout."""
+    """Seeded member roles in agent layout."""
     starting_periods: Int1D
-    """Entry periods in subject layout."""
+    """Entry periods in agent layout."""
     base_state_action_spaces: Mapping[RegimeName, StateActionSpace]
     """Parameters-completed spaces shared across the chunk's periods."""
 
@@ -151,22 +151,22 @@ def prepare_simulation_chunk_inputs(
     flat_params = call_inputs.flat_params
     if memory is not None:
         memory.hold(tree=flat_params)
-    subject_inputs = place_simulation_arguments(
+    agent_inputs = place_simulation_arguments(
         arguments={
             "regime_ids": initial_regime_ids,
             "roles": initial_own_member,
             "starting_periods": starting_periods,
         },
-        subject_arg_names=("regime_ids", "roles", "starting_periods"),
+        agent_arg_names=("regime_ids", "roles", "starting_periods"),
         value_reads=(),
         devices=devices,
         budget_bytes=None if memory is None else memory.budget_bytes,
         live_footprint=None if memory is None else memory.snapshot(),
         budget_devices=() if memory is None else memory.devices,
     )
-    initial_regime_ids = subject_inputs["regime_ids"]
-    initial_own_member = subject_inputs["roles"]
-    starting_periods = subject_inputs["starting_periods"]
+    initial_regime_ids = agent_inputs["regime_ids"]
+    initial_own_member = agent_inputs["roles"]
+    starting_periods = agent_inputs["starting_periods"]
     base_state_action_spaces = call_inputs.base_state_action_spaces
     if memory is not None:
         memory.set_chunk_inputs(

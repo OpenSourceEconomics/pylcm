@@ -20,10 +20,10 @@ from tests.test_models.deterministic.regression import (
 )
 
 
-@pytest.mark.parametrize("n_subjects", [1, 13, 56])
+@pytest.mark.parametrize("n_agents", [1, 13, 56])
 @pytest.mark.parametrize("budgeted", [False, True])
-def test_public_subject_partition_matches_supplied_solution_reference(
-    *, n_subjects: int, budgeted: bool, monkeypatch: pytest.MonkeyPatch
+def test_public_agent_partition_matches_supplied_solution_reference(
+    *, n_agents: int, budgeted: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     if len(jax.devices()) < 8:
         pytest.skip("Select this test with eight visible devices.")
@@ -41,9 +41,9 @@ def test_public_subject_partition_matches_supplied_solution_reference(
         execution_config=ExecutionConfig(
             devices=ids,
             sharded_states=(),
-            simulation_sharding="subjects",
+            simulation_sharding="agents",
             device_memory_bytes=(1 << 28) if budgeted else None,
-            axis_widths={"subject": 3} if budgeted else {},
+            axis_widths={"agent": 3} if budgeted else {},
         ),
     )
     params = get_params(n_periods=2)
@@ -52,9 +52,9 @@ def test_public_subject_partition_matches_supplied_solution_reference(
     reference_solution = reference.solve(params=params, log_level="off")
     solution = target.solve(params=params, log_level="off")
     initial = {
-        "wealth": jnp.linspace(1.0, 3.0, n_subjects),
-        "age": jnp.full(n_subjects, 18.0),
-        "regime_id": jnp.full(n_subjects, RegimeId.working_life, dtype=jnp.int32),
+        "wealth": jnp.linspace(1.0, 3.0, n_agents),
+        "age": jnp.full(n_agents, 18.0),
+        "regime_id": jnp.full(n_agents, RegimeId.working_life, dtype=jnp.int32),
     }
     expected = reference.simulate(
         params=params,
@@ -70,17 +70,17 @@ def test_public_subject_partition_matches_supplied_solution_reference(
         self: SimulationRuntime, **kwargs: Unpack[RuntimeDispatch]
     ) -> PytreeValue:
         result = dispatch(self, **kwargs)
-        if self.execution.simulation_sharding == "subjects":
+        if self.execution.simulation_sharding == "agents":
             for leaf in jax.tree.leaves(result):
                 if (
                     isinstance(leaf, jax.Array)
                     and leaf.ndim
-                    and leaf.shape[0] == kwargs["n_subjects"]
+                    and leaf.shape[0] == kwargs["n_agents"]
                 ):
                     births.append(
                         tuple(shard.data.shape[0] for shard in leaf.addressable_shards)
                     )
-                    assert tuple(device.id for device in self.subject_devices) == ids
+                    assert tuple(device.id for device in self.agent_devices) == ids
         return result
 
     monkeypatch.setattr(SimulationRuntime, "dispatch", observe)
@@ -91,7 +91,7 @@ def test_public_subject_partition_matches_supplied_solution_reference(
         seed=17,
         log_level="off",
     )
-    assert actual.n_subjects == n_subjects
+    assert actual.n_agents == n_agents
     assert births
     assert all(len(sizes) == 8 and len(set(sizes)) == 1 for sizes in births)
     _assert_panel_bitwise_equal(
@@ -110,7 +110,7 @@ def test_public_subject_partition_matches_supplied_solution_reference(
     )
     for leaf in jax.tree.leaves(initial):
         assert not leaf.is_deleted()
-        assert np.asarray(leaf).shape == (n_subjects,)
+        assert np.asarray(leaf).shape == (n_agents,)
 
 
 def _assert_panel_bitwise_equal(

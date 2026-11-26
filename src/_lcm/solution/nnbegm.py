@@ -1171,7 +1171,7 @@ class _NNBEGMPeriodKernel:
     depend on one call's params), and `period`/`age`."""
 
     replay_state_names: frozenset[StateName]
-    """The states a replay reads at each subject."""
+    """The states a replay reads at each agent."""
 
     branch_fixed_cost: UniformObservedFixedCost | None
     """The uniform observed fixed-cost aggregator, or `None` for the
@@ -2692,7 +2692,7 @@ def _fail_if_the_solve_grid_cannot_reconstruct_a_candidate(
     period, which is the price of not letting a published policy depend on how
     loudly the run was asked to talk.
 
-    A failure first met at a realized off-grid subject is a different case and
+    A failure first met at a realized off-grid agent is a different case and
     keeps its drop-and-announce behaviour: there the state landed awkwardly,
     which the model author cannot be expected to have precluded.
     """

@@ -97,7 +97,7 @@ def _evaluate_pareto_weights(
     pareto_weights: ParetoWeights,
     states_actions_params: QAndFKwargs,
 ) -> dict[str, FloatND]:
-    """Evaluate the household's Pareto weights at one cell.
+    """Evaluate the regime's Pareto weights at one cell.
 
     The kernel's own signature carries every argument the declaration reads, so
     the weights are read out of the cell rather than closed over — which is
@@ -167,9 +167,10 @@ def get_max_Q_over_a(
         has_taste_shocks: Whether the regime declares EV1 taste shocks. When
             set, the hard maximum over the discrete-action axes is replaced by
             the smoothed expected maximum with the runtime scale param
-            `taste_shocks__scale`; in a household, the expected maximum of the
-            member with the positive Pareto weight, every other member's value
-            read off its choice (`decider_smoothed_readout`).
+            `taste_shocks__scale`. In a regime with several members, it is the
+            expected maximum of the member with the positive Pareto weight.
+            Every other member's value is read off that member's choice
+            (`decider_smoothed_readout`).
         co_map_state_names: Tuple of fixed (never-transitioning) distributed state
             names, the leading axes of the value-function array. Each is mapped by an
             outer `vmap` that co-maps the matching axis of every `next_regime_to_V_arr`
@@ -183,9 +184,9 @@ def get_max_Q_over_a(
             e.g. a target regime where the state is pruned).
         members: Ordered member names. `Q_and_F` returns a stacked per-member
             `Q` (trailing member axis) and the inner reduction reads off each
-            member's own value at the shared household argmax
-            (`collective_readout`).
-        pareto_weights: The household's Pareto weight evaluator, called at each
+            member's own value at the shared argmax of the Pareto-weighted
+            objective (`collective_readout`).
+        pareto_weights: The regime's Pareto weight evaluator, called at each
             cell with the states and parameters its declaration reads.
 
     Returns:
@@ -330,10 +331,10 @@ class _SmoothedMaxQOverA:
     """Number of leading discrete-action axes the smoothed maximum reduces."""
 
     members: tuple[str, ...]
-    """Ordered member names of the household."""
+    """Ordered member names of the regime."""
 
     pareto_weights: ParetoWeights
-    """The household's Pareto weight evaluator."""
+    """The regime's Pareto weight evaluator."""
 
     def __call__(
         self,
@@ -374,7 +375,7 @@ def _stacked_pareto_weights(
     members: tuple[str, ...],
     states_actions_params: QAndFKwargs,
 ) -> FloatND:
-    """Evaluate the household's Pareto weights at one cell, in member order."""
+    """Evaluate the regime's Pareto weights at one cell, in member order."""
     weights = _evaluate_pareto_weights(
         pareto_weights=pareto_weights, states_actions_params=states_actions_params
     )
@@ -399,10 +400,10 @@ class _HardMaxQOverA:
     """The regime's action value and feasibility, mapped over the action product."""
 
     members: tuple[str, ...]
-    """Ordered member names of the household."""
+    """Ordered member names of the regime."""
 
     pareto_weights: ParetoWeights
-    """The household's Pareto weight evaluator."""
+    """The regime's Pareto weight evaluator."""
 
     def __call__(
         self,
@@ -419,8 +420,8 @@ class _HardMaxQOverA:
             evaluated.output if type(evaluated) is BoundedResult else evaluated,
         )
         # Q_arr carries a trailing member axis (the action product-map keeps it
-        # last); F_arr does not. Split Q_arr per member, take the household
-        # argmax of the scalarization over the masked action axes, and read off
+        # last); F_arr does not. Split Q_arr per member, take the argmax of
+        # the Pareto-weighted sum over the masked action axes, and read off
         # each member's OWN value at that shared argmax. The returned pair is
         # the member value vector (re-stacked on a trailing axis, which the
         # outer state product-map turns into `(*states, n_members)`) plus the
@@ -470,7 +471,7 @@ def get_streaming_max_Q_over_a(
     `action_width_keyword`. The execution planner selects a collision-free name and
     binds that width before tracing. For each state cell, the fixed-cell reducer
     evaluates actions in canonical C order and publishes each member's value at
-    one shared household winner plus the empty-feasible-set flag. Ordinary
+    one shared winner plus the empty-feasible-set flag. Ordinary
     states use the existing state productmap. Fixed distributed states retain the
     dense route co-map access law: each state axis is mapped in lockstep with axis
     zero of every continuation leaf that carries it.
@@ -589,10 +590,10 @@ class _StreamedMaxQOverA:
     """Action variable names, discrete first, spanning the streamed product."""
 
     members: tuple[str, ...]
-    """Ordered member names of the household."""
+    """Ordered member names of the regime."""
 
     pareto_weights: ParetoWeights
-    """The household's Pareto weight evaluator."""
+    """The regime's Pareto weight evaluator."""
 
     q_and_f_arg_names: frozenset[ReferenceName]
     """The argument names `Q_and_F` declares, which select what it is handed."""
@@ -661,8 +662,8 @@ def get_action_partitioned_max_Q_over_a(
     contiguous run of whole action blocks `ActionPartitionLayout` assigns it at
     the planner-bound width, gathers one hard-max accumulator per state cell
     from every device of the axis and merges them in partition order, so all
-    devices publish the same value: every member's value at the household's
-    one shared winner and the dissolution flag.
+    devices publish the same value: every member's value at the members' one
+    shared winner and the dissolution flag.
 
     Taste shocks and co-mapped states are not served; model construction
     refuses them before this is called.
@@ -775,10 +776,10 @@ class _ActionPartitionedMaxQOverA:
     """Devices along the action axis, each owning one run of blocks."""
 
     members: tuple[str, ...]
-    """Ordered member names of the household."""
+    """Ordered member names of the regime."""
 
     pareto_weights: ParetoWeights
-    """The household's Pareto weight evaluator."""
+    """The regime's Pareto weight evaluator."""
 
     def __call__(
         self,
@@ -1001,14 +1002,14 @@ def get_argmax_and_max_Q_over_a(
             is added to the masked maxima over the continuous axes before the
             discrete argmax — exactly logit-consistent with the smoothed solve.
         members: Ordered member names. `Q_and_F` returns a stacked per-member
-            `Q` (trailing member axis); the household argmax of the weighted
+            `Q` (trailing member axis); the argmax of the Pareto-weighted
             scalarization is computed once (`collective_argmax_and_readout`)
             and each member's own value is gathered at that shared index —
             mirrors the solve-side `get_max_Q_over_a` so simulate recomputes the
             identical argmax. With `has_taste_shocks`, the member with the
             positive Pareto weight draws the action, and each member's own value
             is gathered at the drawn index.
-        pareto_weights: The household's Pareto weight evaluator, called at each
+        pareto_weights: The regime's Pareto weight evaluator, called at each
             cell with the states and parameters its declaration reads.
 
     Returns:
@@ -1099,10 +1100,10 @@ class _TasteShockArgmaxQOverA:
     """Number of leading discrete-action axes the noisy draw chooses among."""
 
     members: tuple[str, ...]
-    """Ordered member names of the household."""
+    """Ordered member names of the regime."""
 
     pareto_weights: ParetoWeights
-    """The household's Pareto weight evaluator."""
+    """The regime's Pareto weight evaluator."""
 
     def __call__(
         self,
@@ -1145,11 +1146,12 @@ def _household_taste_shock_draw(
     taste_shock_key: Array,
     scale: FloatND,
 ) -> ArgmaxOutput:
-    """Draw a household's action as its decider's, and read every member there.
+    """Draw the members' action as the deciding member's; read every member there.
 
-    The decider is the member with the positive Pareto weight. Its draw adds
-    one mean-zero Gumbel term per discrete action to its own conditional maxima
-    over the continuous actions. The decider publishes its conditional maximum
+    The deciding member is the member with the positive Pareto weight. Its draw
+    adds one mean-zero Gumbel term per discrete action to its own conditional
+    maxima over the continuous actions. The deciding member publishes its
+    conditional maximum
     at the drawn action, and every other member its own noise-free action
     value there.
     """
@@ -1172,7 +1174,7 @@ def _household_taste_shock_draw(
         Qc[discrete_argmax],
         at_choice[discrete_argmax],
     )
-    # Without an alternative worth more than `-inf` to the decider there is
+    # Without an alternative worth more than `-inf` to the deciding member, there is
     # nothing to draw: the cell publishes no action, as one without a feasible
     # action does.
     worthless = jnp.all(jnp.isneginf(Qc))
@@ -1200,10 +1202,10 @@ class _HardMaxArgmaxQOverA:
     """The regime's action value and feasibility, mapped over the action product."""
 
     members: tuple[str, ...]
-    """Ordered member names of the household."""
+    """Ordered member names of the regime."""
 
     pareto_weights: ParetoWeights
-    """The household's Pareto weight evaluator."""
+    """The regime's Pareto weight evaluator."""
 
     def __call__(
         self,
@@ -1220,7 +1222,7 @@ class _HardMaxArgmaxQOverA:
             evaluated.output if type(evaluated) is BoundedResult else evaluated,
         )
         # Mirrors the solve-side `get_max_Q_over_a` — split the stacked Q by
-        # member, argmax the household scalarization once over the value-masked
+        # member, argmax the Pareto-weighted sum once over the value-masked
         # feasible action set, and gather each member's OWN value at that shared
         # index. The simulate-only addition vs. the solve readout
         # (`collective_readout`) is the argmax index itself, needed to look up

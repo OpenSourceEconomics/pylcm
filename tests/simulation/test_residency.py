@@ -281,13 +281,13 @@ def test_fresh_admission_uses_current_residency_with_cached_width_candidates() -
     """Output growth narrows then refuses a plan without recompiling cached widths."""
     device = jax.devices()[0]
     axis = TiledOutputAxis(
-        name="subject", state_names=("subject",), extent=4, width_keyword="width"
+        name="agent", state_names=("agent",), extent=4, width_keyword="width"
     )
     cached: dict[int, _CompiledCandidate] = {}
     compiled_widths = []
 
     def compile_candidate(widths: Mapping[str, int]) -> _CompiledCandidate:
-        width = widths["subject"]
+        width = widths["agent"]
         if width not in cached:
             cached[width] = _CompiledCandidate(
                 width=width, peak_bytes={4: 80, 2: 80, 1: 40}[width]

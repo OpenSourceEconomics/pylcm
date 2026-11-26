@@ -12,7 +12,7 @@ is complete and flushed, so a reader sees a whole file or none; an interrupted
 writer leaves a hidden `.tmp` file that no reader opens.
 
 A fragment holds, per code of its job, the exact host bytes of every value
-block, and optionally the rows of its subjects' simulated panel. Each array is
+block, and optionally the rows of its agents' simulated panel. Each array is
 stored with a SHA-256 over its logical address, shape, dtype and bytes, and
 the JSON manifest with a SHA-256 of its own bytes. Reading a fragment verifies
 all of them before any array is returned. No model, callable or Python object
@@ -67,10 +67,10 @@ type LeafAddress = tuple[RegimeName, int, str, str | None]
 class FragmentPanel:
     """The simulated rows one job holds."""
 
-    n_subjects: int
-    """Number of real subjects in the whole population."""
+    n_agents: int
+    """Number of real agents in the whole population."""
 
-    subject_batch_size: int
+    agent_batch_size: int
     """Rows of every chunk the job dispatched."""
 
     rows: np.ndarray
@@ -327,8 +327,8 @@ def _write_fragment_file(
         if panel is not None:
             panel_group = file.create_group(_PANEL)
             manifest["panel"] = {
-                "n_subjects": panel.n_subjects,
-                "subject_batch_size": panel.subject_batch_size,
+                "n_agents": panel.n_agents,
+                "agent_batch_size": panel.agent_batch_size,
                 "regimes": [
                     [regime, list(periods)] for regime, periods in panel.regimes
                 ],
@@ -613,11 +613,11 @@ def _read_panel(
             _require_exact_dict(value=leaf["layout"], label="raw leaf layout")
         )
     return FragmentPanel(
-        n_subjects=_require_nonnegative_exact_int(
-            value=entry["n_subjects"], label="raw population count"
+        n_agents=_require_nonnegative_exact_int(
+            value=entry["n_agents"], label="raw population count"
         ),
-        subject_batch_size=_require_positive_exact_int(
-            value=entry["subject_batch_size"], label="raw chunk width"
+        agent_batch_size=_require_positive_exact_int(
+            value=entry["agent_batch_size"], label="raw chunk width"
         ),
         rows=rows,
         regimes=tuple(

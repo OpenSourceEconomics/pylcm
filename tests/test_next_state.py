@@ -26,7 +26,7 @@ from tests.test_models.deterministic.regression import (
 )
 
 
-def test_get_next_state_function_with_solve_target():
+def test_get_next_state_function_with_solve_target() -> None:
     ages = AgeGrid(start=0, inclusive_stop=4, step="Y")
     user_regimes = {"working_life": working_life, "dead": dead}
     laws = bind_laws(
@@ -80,13 +80,13 @@ def test_get_next_state_function_with_solve_target():
     assert got == {"next_wealth": 1.05 * (20 - 10)}
 
 
-def test_get_next_state_function_with_simulate_target():
+def test_get_next_state_function_with_simulate_target() -> None:
     """Outputs are nested by target regime: `{target: {next_state: array}}`.
 
     The combined function dispatches inputs to the per-target DAG and
     returns a mapping from target regime name to that target's
     `{next_<state>: array}` outputs, matching what
-    `_update_states_for_subjects` consumes.
+    `_update_states_for_agents` consumes.
     """
 
     def f_a(state: ContinuousState) -> ContinuousState:
@@ -133,7 +133,7 @@ def test_get_next_state_function_with_simulate_target():
     assert jnp.array_equal(got["mock"]["next_b"], jnp.array([2.0, 3.0]))
 
 
-def test_create_stochastic_next_func():
+def test_create_stochastic_next_func() -> None:
     labels = jnp.arange(2, dtype=jnp.int32)
     got_func = _create_discrete_stochastic_next_func(
         target_regime_name="t", next_state_name="next_a", labels=labels

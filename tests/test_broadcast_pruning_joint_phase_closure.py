@@ -624,10 +624,10 @@ def test_the_phased_model_simulates_like_the_regime_level_control() -> None:
     )
 
     expected = regime_level.to_dataframe(use_categorical_codes=True).sort_values(
-        ["subject_id", "period"]
+        ["agent_id", "period"]
     )
     got = model_level.to_dataframe(use_categorical_codes=True).sort_values(
-        ["subject_id", "period"]
+        ["agent_id", "period"]
     )
     assert list(got.columns) == list(expected.columns)
     np.testing.assert_array_almost_equal(

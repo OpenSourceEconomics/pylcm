@@ -1,9 +1,9 @@
 """Forward simulation of a population grouped by an invariant state.
 
-When the forward phase provably never changes a blocked state, every subject
+When the forward phase provably never changes a blocked state, every agent
 keeps the code it starts with. Forward simulation then runs each code's
-subjects in chunks of their own, reading every stored value that carries the
-state through that code's block, while each subject keeps:
+agents in chunks of their own, reading every stored value that carries the
+state through that code's block, while each agent keeps:
 
 - the random keys of its original row, gathered from the full-population
   streams rather than drawn again for its position in a group;
@@ -38,8 +38,8 @@ _FAMILY = "simulation"
 
 
 @dataclass(frozen=True, kw_only=True)
-class SubjectGroupingRoute:
-    """The invariant state a model's forward simulation groups its subjects by."""
+class AgentGroupingRoute:
+    """The invariant state a model's forward simulation groups its agents by."""
 
     state_name: StateName
     """Name of the grouping state."""
@@ -66,10 +66,10 @@ class ComponentValueSource(Protocol):
         ...
 
     @property
-    def subject_codes(self) -> tuple[int, ...] | None:
-        """Return the codes whose subjects are simulated, or `None` for every code.
+    def agent_codes(self) -> tuple[int, ...] | None:
+        """Return the codes whose agents are simulated, or `None` for every code.
 
-        A source holding a selection of the codes simulates the subjects of
+        A source holding a selection of the codes simulates the agents of
         those codes alone; the result then holds their rows only.
         """
         ...
@@ -81,7 +81,7 @@ class ComponentValueSource(Protocol):
         ...
 
     def release(self, *, code: int) -> None:
-        """Finish with the code's values once its subjects are simulated."""
+        """Finish with the code's values once its agents are simulated."""
         ...
 
     def abandon(self, *, code: int) -> None:
@@ -94,7 +94,7 @@ class ComponentValueSource(Protocol):
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
-class SubjectRows:
+class AgentRows:
     """The original population rows one chunk simulates, in chunk order."""
 
     rows: np.ndarray
@@ -102,21 +102,21 @@ class SubjectRows:
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
-class SubjectChunk:
-    """One chunk of a single code's subjects."""
+class AgentChunk:
+    """One chunk of a single code's agents."""
 
     code: int
-    """The code every subject of the chunk holds."""
+    """The code every agent of the chunk holds."""
 
     rows: np.ndarray
     """Original rows simulated by the chunk."""
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
-class SubjectGroupPlan:
+class AgentGroupPlan:
     """Every grouped chunk of one call and the way back to the public order."""
 
-    chunks: tuple[SubjectChunk, ...]
+    chunks: tuple[AgentChunk, ...]
     """Chunks in dispatch order: by code, then by original row."""
 
     positions: np.ndarray
@@ -127,14 +127,14 @@ class SubjectGroupPlan:
 
 
 def group_codes(
-    *, route: SubjectGroupingRoute, codes: np.ndarray | None, n_real: int
+    *, route: AgentGroupingRoute, codes: np.ndarray | None, n_real: int
 ) -> np.ndarray:
     """Return the group code of each real row.
 
     Args:
         route: The grouping route.
-        codes: The state's initial codes, or `None` when no subject supplies it.
-        n_real: Number of real subjects, which lead the population.
+        codes: The state's initial codes, or `None` when no agent supplies it.
+        n_real: Number of real agents, which lead the population.
 
     Returns:
         One code per real row; a code outside the grid becomes the first code.
@@ -147,9 +147,9 @@ def group_codes(
 
 
 def group_sizes(
-    *, route: SubjectGroupingRoute, codes: np.ndarray | None, n_real: int
+    *, route: AgentGroupingRoute, codes: np.ndarray | None, n_real: int
 ) -> tuple[int, ...]:
-    """Return the number of real subjects in each code's group, in grid order."""
+    """Return the number of real agents in each code's group, in grid order."""
     keys = group_codes(route=route, codes=codes, n_real=n_real)
     return tuple(int(np.count_nonzero(keys == code)) for code in route.codes)
 
@@ -164,14 +164,14 @@ def grouped_rows(*, sizes: tuple[int, ...], width: int) -> int:
     return sum(-(-size // width) * width for size in sizes)
 
 
-def plan_subject_groups(
+def plan_agent_groups(
     *,
-    route: SubjectGroupingRoute,
+    route: AgentGroupingRoute,
     codes: np.ndarray | None,
     n_real: int,
     width: int,
     selected: tuple[int, ...] | None = None,
-) -> SubjectGroupPlan:
+) -> AgentGroupPlan:
     """Partition the real rows into chunks of one code each.
 
     Each code's rows keep their original order and are cut into chunks of
@@ -180,8 +180,8 @@ def plan_subject_groups(
 
     Args:
         route: The grouping route.
-        codes: The state's initial codes, or `None` when no subject supplies it.
-        n_real: Number of real subjects, which lead the population.
+        codes: The state's initial codes, or `None` when no agent supplies it.
+        n_real: Number of real agents, which lead the population.
         width: Rows per chunk.
         selected: Codes whose rows are planned, or `None` for every code. The
             chunks of a selected code are the chunks the whole population's
@@ -192,7 +192,7 @@ def plan_subject_groups(
 
     """
     keys = group_codes(route=route, codes=codes, n_real=n_real)
-    chunks: list[SubjectChunk] = []
+    chunks: list[AgentChunk] = []
     positions = np.empty(n_real, dtype=np.int32)
     offset = 0
     for code in route.codes:
@@ -204,19 +204,19 @@ def plan_subject_groups(
             positions[part] = offset + np.arange(len(part), dtype=np.int32)
             if len(part) < width:
                 part = np.concatenate([part, np.repeat(part[-1:], width - len(part))])
-            chunks.append(SubjectChunk(code=int(code), rows=part))
+            chunks.append(AgentChunk(code=int(code), rows=part))
             offset += width
     if selected is None:
-        return SubjectGroupPlan(chunks=tuple(chunks), positions=positions, rows=None)
+        return AgentGroupPlan(chunks=tuple(chunks), positions=positions, rows=None)
     planned = np.flatnonzero(np.isin(keys, selected)).astype(np.int32)
-    return SubjectGroupPlan(
+    return AgentGroupPlan(
         chunks=tuple(chunks), positions=positions[planned], rows=planned
     )
 
 
 def type_local_view(
     *,
-    route: SubjectGroupingRoute,
+    route: AgentGroupingRoute,
     read: ValueRead,
     stored: ValueND | jax.ShapeDtypeStruct,
     required_sharding: jax.sharding.Sharding,
@@ -256,7 +256,7 @@ def type_local_view(
 
 def type_local_transfer(
     *,
-    route: SubjectGroupingRoute | None,
+    route: AgentGroupingRoute | None,
     code: int | None,
     read: ValueRead,
     stored: ValueND | jax.ShapeDtypeStruct,
@@ -307,7 +307,7 @@ def type_local_transfer(
 
 def type_local_template(
     *,
-    route: SubjectGroupingRoute | None,
+    route: AgentGroupingRoute | None,
     regime: RegimeName,
     leaf: jax.Array | jax.ShapeDtypeStruct,
 ) -> jax.Array | jax.ShapeDtypeStruct:

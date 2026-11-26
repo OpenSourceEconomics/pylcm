@@ -1,14 +1,14 @@
-"""Simulating subjects in chunks must not change any simulated value.
+"""Simulating agents in chunks must not change any simulated value.
 
-The ExecutionConfig subject width controls how many subjects enter the forward
+The ExecutionConfig agent width controls how many agents enter the forward
 simulation at once. It is a pure memory knob: the `to_dataframe()` output must be
-structurally exact whether subjects run in one pass or in chunks. Only the published
+structurally exact whether agents run in one pass or in chunks. Only the published
 `value` and derived targets, which each chunk's independently compiled kernel
 recomputes from exact states and actions, receive eight ordered representable
 steps. The model
 used here has both a categorical `StochasticTransition` (health) and a continuous shock
-process (income), so the per-subject RNG feeds both `jax.random.choice` and
-`draw_shock` — the case that would silently diverge if a subject's draws depended on
+process (income), so the per-agent RNG feeds both `jax.random.choice` and
+`draw_shock` — the case that would silently diverge if an agent's draws depended on
 the chunk it lands in.
 """
 
@@ -46,7 +46,7 @@ _INITIAL_CONDITIONS = {
 
 def _simulate_df(
     *,
-    subject_batch_size: int,
+    agent_batch_size: int,
     additional_targets: list[FunctionName] | None = None,
     repeat: bool = False,
 ) -> pd.DataFrame:
@@ -58,9 +58,7 @@ def _simulate_df(
         ages=base.ages,
         fixed_params=dict(base.fixed_params),
         execution_config=ExecutionConfig(
-            axis_widths={}
-            if subject_batch_size == 0
-            else {"subject": subject_batch_size}
+            axis_widths={} if agent_batch_size == 0 else {"agent": agent_batch_size}
         ),
         initial_nodes=initial_nodes_of(model=base),
     )
@@ -93,52 +91,52 @@ def _assert_columns_invariant(*, baseline: pd.DataFrame, batched: pd.DataFrame) 
     )
 
 
-@pytest.mark.parametrize("subject_batch_size", [2, 3, 100])
-def test_simulation_output_is_invariant_to_subject_batch_size(
-    subject_batch_size: int,
+@pytest.mark.parametrize("agent_batch_size", [2, 3, 100])
+def test_simulation_output_is_invariant_to_agent_batch_size(
+    agent_batch_size: int,
 ) -> None:
     """Chunked simulation preserves structure and the published-value budget.
 
-    Across an even split (2 over 7 subjects), an uneven one (3 → 3, 3, 1), and a
+    Across an even split (2 over 7 agents), an uneven one (3 → 3, 3, 1), and a
     chunk larger than the population (100 → single chunk), every discrete column
     matches the unbatched run exactly, as do continuous states/actions. Only the
     independently compiled published `value` column receives eight ordered steps.
     """
-    baseline = _simulate_df(subject_batch_size=0)
-    batched = _simulate_df(subject_batch_size=subject_batch_size)
+    baseline = _simulate_df(agent_batch_size=0)
+    batched = _simulate_df(agent_batch_size=agent_batch_size)
     _assert_columns_invariant(baseline=baseline, batched=batched)
 
 
-@pytest.mark.parametrize("subject_batch_size", [2, 3, 100])
-def test_to_dataframe_targets_are_invariant_to_subject_batch_size(
-    subject_batch_size: int,
+@pytest.mark.parametrize("agent_batch_size", [2, 3, 100])
+def test_to_dataframe_targets_are_invariant_to_agent_batch_size(
+    agent_batch_size: int,
 ) -> None:
     """Eagerly computed `additional_targets` are invariant to the chunk size.
 
     The target DAG (`utility`) is evaluated over the in-regime rows in chunks of
-    `subject_batch_size` when set; every split reproduces the single-pass
-    `utility` column for every subject-period within the value allowance, and
+    `agent_batch_size` when set; every split reproduces the single-pass
+    `utility` column for every agent-period within the value allowance, and
     the states and actions it is computed from exactly.
     """
-    baseline = _simulate_df(subject_batch_size=0, additional_targets=["utility"])
+    baseline = _simulate_df(agent_batch_size=0, additional_targets=["utility"])
     batched = _simulate_df(
-        subject_batch_size=subject_batch_size, additional_targets=["utility"]
+        agent_batch_size=agent_batch_size, additional_targets=["utility"]
     )
     _assert_columns_invariant(baseline=baseline, batched=batched)
 
 
-@pytest.mark.parametrize("subject_batch_size", [2, 3, 4])
-def test_warm_simulation_is_invariant_to_subject_batch_size(
-    subject_batch_size: int,
+@pytest.mark.parametrize("agent_batch_size", [2, 3, 4])
+def test_warm_simulation_is_invariant_to_agent_batch_size(
+    agent_batch_size: int,
 ) -> None:
-    """Warm chunked calls match the unbatched simulation for every subject-period."""
-    baseline = _simulate_df(subject_batch_size=0)
-    batched = _simulate_df(subject_batch_size=subject_batch_size, repeat=True)
+    """Warm chunked calls match the unbatched simulation for every agent-period."""
+    baseline = _simulate_df(agent_batch_size=0)
+    batched = _simulate_df(agent_batch_size=agent_batch_size, repeat=True)
     _assert_columns_invariant(baseline=baseline, batched=batched)
 
 
 def test_raw_results_are_host_resident_jax_arrays_when_batched() -> None:
-    """With `subject_batch_size` set, `raw_results` leaves are host-backed jax.Arrays.
+    """With `agent_batch_size` set, `raw_results` leaves are host-backed jax.Arrays.
 
     Each chunk is offloaded to host as it completes, so the leaves stay `jax.Array`
     (not numpy) and live on the CPU device.
@@ -152,7 +150,7 @@ def test_raw_results_are_host_resident_jax_arrays_when_batched() -> None:
         fixed_params=dict(base.fixed_params),
         # Unbudgeted pinned chunks offload each one; a budget may admit one chunk.
         execution_config=ExecutionConfig(
-            axis_widths={"subject": 2}, device_memory_bytes=None
+            axis_widths={"agent": 2}, device_memory_bytes=None
         ),
         initial_nodes=initial_nodes_of(model=base),
     )
@@ -177,7 +175,7 @@ def test_additional_target_column_has_a_numeric_dtype() -> None:
     value, so the column stays float and supports arithmetic, aggregation and
     round-tripping through Arrow.
     """
-    df = _simulate_df(subject_batch_size=0, additional_targets=["utility"])
+    df = _simulate_df(agent_batch_size=0, additional_targets=["utility"])
     assert pd.api.types.is_float_dtype(df["utility"])
 
 
@@ -242,7 +240,7 @@ def test_deferred_targets_preserve_real_rows_and_dtypes(
             targets=targets,
             regime=model._regimes["alive"],
             regime_params=regime_kernel_params(params, regime_name="alive"),
-            subject_batch_size=capacity,
+            agent_batch_size=capacity,
         )
     expected = {
         "offset_report": wealth + float_dtype(0.25),
@@ -309,7 +307,7 @@ def test_deferred_targets_reuse_capacity_and_release_caller_storage(
                 targets=("offset_report",),
                 regime=model._regimes["alive"],
                 regime_params=flat_params,
-                subject_batch_size=4,
+                agent_batch_size=4,
             )["offset_report"]
             jax.block_until_ready(output)
             counts.append(len(events))

@@ -38,7 +38,7 @@ def _on_nodes(*, off_grid: OffGrid = "extrapolate") -> TauchenAR1Process:
 def _simulate(
     *, process: _ContinuousStochasticProcess, starts: np.ndarray, seed: int = 11
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return each subject's period-0 value and period-1 state."""
+    """Return each agent's period-0 value and period-1 state."""
     model = _model(process)
     solution = model.solve(params={}, log_level="off")
     frame = model.simulate(
@@ -52,8 +52,8 @@ def _simulate(
         seed=seed,
         log_level="off",
     ).to_dataframe(use_categorical_codes=True)
-    first = frame.loc[frame["period"] == 0].sort_values("subject_id")
-    second = frame.loc[frame["period"] == 1].sort_values("subject_id")
+    first = frame.loc[frame["period"] == 0].sort_values("agent_id")
+    second = frame.loc[frame["period"] == 1].sort_values("agent_id")
     return first["value"].to_numpy(), second["income"].to_numpy()
 
 

@@ -35,7 +35,7 @@ def test_unrelated_retained_input_does_not_fulfill_future_setup() -> None:
         memory=compiler_memory_reservation(compiled=compiled, widths={}),
     )
     profile = SimulationChunkProfile(
-        n_subjects=32,
+        n_agents=32,
         padded_population=32,
         stages=(stage,),
         fixed_reservation=MappingProxyType({device: source.nbytes}),
@@ -58,7 +58,7 @@ def test_unrelated_retained_input_does_not_fulfill_future_setup() -> None:
     memory = SimulationMemory(
         budget_bytes=budget,
         devices=(device,),
-        subject_devices=(device,),
+        agent_devices=(device,),
         operations=ProfiledSimulationOperations(),
         inputs=original,
     )

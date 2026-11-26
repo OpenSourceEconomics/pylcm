@@ -22,11 +22,11 @@ from _lcm.regime_building.max_Q_over_a import get_argmax_and_max_Q_over_a
 from _lcm.simulation import programs as simulation_programs
 from _lcm.simulation.program_types import SimulationPrograms
 from _lcm.simulation.programs import (
-    SUBJECT_AXIS,
-    SUBJECT_WIDTH_KEYWORD,
+    AGENT_AXIS,
+    AGENT_WIDTH_KEYWORD,
+    _AgentTiled,
     _ArgumentsBoundAtDispatch,
     _StreamedArgmaxQOverA,
-    _SubjectTiled,
 )
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.solution.grid_search import _ActionStreamingDisposition
@@ -78,18 +78,18 @@ def _program(*, witness: str, regime: RegimeName, family: str) -> CoreProgram:
 
 
 def _cell_body(*, program: CoreProgram) -> Callable[..., PytreeValue]:
-    """Return the per-subject body one tiled program evaluates."""
-    return cast("_SubjectTiled", program.function).func
+    """Return the per-agent body one tiled program evaluates."""
+    return cast("_AgentTiled", program.function).func
 
 
 @pytest.mark.parametrize(("witness", "regime"), [_STREAMED, _COLLECTIVE])
-def test_decision_program_declares_action_product_and_subject_axes(
+def test_decision_program_declares_action_product_and_agent_axes(
     *, witness: str, regime: RegimeName
 ) -> None:
     """A single's or a household's decision streams the action product and tiles
-    subjects."""
+    agents."""
     program = _program(witness=witness, regime=regime, family="decision")
-    assert program.requirements.axis_names == (ACTION_PRODUCT_AXIS, SUBJECT_AXIS)
+    assert program.requirements.axis_names == (ACTION_PRODUCT_AXIS, AGENT_AXIS)
 
 
 def test_decision_program_is_planned() -> None:
@@ -98,23 +98,23 @@ def test_decision_program_is_planned() -> None:
     assert program.disposition is CoreExecutionDisposition.PLANNED
 
 
-def test_taste_shock_decision_program_declares_the_subject_axis_only() -> None:
-    """An EV1 decision tiles subjects and keeps its action product dense."""
+def test_taste_shock_decision_program_declares_the_agent_axis_only() -> None:
+    """An EV1 decision tiles agents and keeps its action product dense."""
     model = taste_shocks_toy.get_model()
     programs = model._regimes["alive"].simulation.programs.decision
-    assert programs[next(iter(programs))].requirements.axis_names == (SUBJECT_AXIS,)
+    assert programs[next(iter(programs))].requirements.axis_names == (AGENT_AXIS,)
 
 
-def test_transition_program_declares_the_subject_axis_only() -> None:
-    """A law of motion tiles subjects and reduces no axis."""
+def test_transition_program_declares_the_agent_axis_only() -> None:
+    """A law of motion tiles agents and reduces no axis."""
     program = _program(witness=_STREAMED[0], regime=_STREAMED[1], family="transition")
-    assert program.requirements.axis_names == (SUBJECT_AXIS,)
+    assert program.requirements.axis_names == (AGENT_AXIS,)
 
 
-def test_route_program_declares_the_subject_axis_only() -> None:
-    """A regime-transition draw tiles subjects and reduces no axis."""
+def test_route_program_declares_the_agent_axis_only() -> None:
+    """A regime-transition draw tiles agents and reduces no axis."""
     program = _program(witness=_STREAMED[0], regime=_STREAMED[1], family="route")
-    assert program.requirements.axis_names == (SUBJECT_AXIS,)
+    assert program.requirements.axis_names == (AGENT_AXIS,)
 
 
 def test_gated_route_program_is_planned() -> None:
@@ -123,10 +123,10 @@ def test_gated_route_program_is_planned() -> None:
     assert program.disposition is CoreExecutionDisposition.PLANNED
 
 
-def test_gated_route_program_declares_the_subject_axis_only() -> None:
-    """A gated routing draw tiles subjects and reduces no axis."""
+def test_gated_route_program_declares_the_agent_axis_only() -> None:
+    """A gated routing draw tiles agents and reduces no axis."""
     program = _program(witness=_COLLECTIVE[0], regime=_COLLECTIVE[1], family="route")
-    assert program.requirements.axis_names == (SUBJECT_AXIS,)
+    assert program.requirements.axis_names == (AGENT_AXIS,)
 
 
 def test_terminal_regime_declares_no_route_program() -> None:
@@ -148,7 +148,7 @@ def test_decision_program_declares_its_continuation_reads() -> None:
 
 
 def test_ungated_route_program_declares_no_value_read() -> None:
-    """An ungated draw reads the subject's own states, and no stored value."""
+    """An ungated draw reads the agent's own states, and no stored value."""
     program = _program(witness=_STREAMED[0], regime=_STREAMED[1], family="route")
     assert program.requirements.value_reads == ()
 
@@ -201,7 +201,7 @@ def test_a_simulation_program_refuses_to_bind_arguments_at_model_build() -> None
 
 @categorical(ordered=False)
 class _BranchRegimeId:
-    """Two regimes a subject can move between, and the one it ends in."""
+    """Two regimes an agent can move between, and the one it ends in."""
 
     stay: ScalarInt
     switch: ScalarInt
@@ -228,7 +228,7 @@ def _branch_affordable(
 
 
 def _branch_next_regime(*, wealth: ContinuousState) -> ScalarInt:
-    """Return the regime a subject moves into, by how wealthy it is."""
+    """Return the regime an agent moves into, by how wealthy it is."""
     return jnp.where(wealth > 2.0, _BranchRegimeId.switch, _BranchRegimeId.stay)
 
 
@@ -238,7 +238,7 @@ def _branch_terminal_utility() -> FloatND:
 
 
 def _branching_regime() -> UserRegime:
-    """Return one of the two regimes a subject moves between."""
+    """Return one of the two regimes an agent moves between."""
     return UserRegime(
         states={"wealth": LinSpacedGrid(start=1.0, stop=5.0, n_points=4)},
         state_transitions={"wealth": _branch_next_wealth},
@@ -273,7 +273,7 @@ def _two_target_model() -> Model:
 def _cell_arguments(
     *, model: Model, regime: RegimeName, period: int, body: Callable[..., PytreeValue]
 ) -> dict[str, jax.Array]:
-    """Bind one subject's cell of a simulation body, from the regime's grids."""
+    """Bind one agent's cell of a simulation body, from the regime's grids."""
     grids = dict(model._regimes[regime].simulation.grids)
     arguments: dict[str, jax.Array] = {}
     for name in inspect.signature(body).parameters:
@@ -360,7 +360,7 @@ def test_a_streamed_decision_is_refused_where_the_hard_max_is_not_the_reduction(
 
 
 def _tiled_cell(*, position: FloatND, offset: FloatND) -> dict[str, FloatND | IntND]:
-    """Return one subject's shifted position and the bucket it falls in."""
+    """Return one agent's shifted position and the bucket it falls in."""
     return {
         "shifted": position * 2.0 + offset,
         "bucket": jnp.int32(jnp.floor(position)),
@@ -370,16 +370,16 @@ def _tiled_cell(*, position: FloatND, offset: FloatND) -> dict[str, FloatND | In
 @pytest.mark.parametrize(
     ("extent", "width"), [(8, 1), (8, 2), (8, 4), (8, 8), (7, 2), (7, 3), (7, 7)]
 )
-def test_subject_tiles_reproduce_the_whole_populations_float_output(
+def test_agent_tiles_reproduce_the_whole_populations_float_output(
     *, extent: int, width: int
 ) -> None:
-    """Tiling the subject axis at any width reports every subject's own value."""
+    """Tiling the agent axis at any width reports every agent's own value."""
     positions = jnp.linspace(0.0, 6.0, extent)
     offset = jnp.asarray(0.25)
-    tiled = _SubjectTiled(func=_tiled_cell, subject_arg_names=("position",))
+    tiled = _AgentTiled(func=_tiled_cell, agent_arg_names=("position",))
     got = cast(
         "Mapping[str, FloatND]",
-        tiled(position=positions, offset=offset, **{SUBJECT_WIDTH_KEYWORD: width}),
+        tiled(position=positions, offset=offset, **{AGENT_WIDTH_KEYWORD: width}),
     )
     expected = jnp.stack(
         [_tiled_cell(position=one, offset=offset)["shifted"] for one in positions]
@@ -390,16 +390,16 @@ def test_subject_tiles_reproduce_the_whole_populations_float_output(
 @pytest.mark.parametrize(
     ("extent", "width"), [(8, 1), (8, 2), (8, 4), (8, 8), (7, 2), (7, 3), (7, 7)]
 )
-def test_subject_tiles_reproduce_the_whole_populations_structural_output(
+def test_agent_tiles_reproduce_the_whole_populations_structural_output(
     *, extent: int, width: int
 ) -> None:
-    """Tiling the subject axis at any width keeps every subject in its own row."""
+    """Tiling the agent axis at any width keeps every agent in its own row."""
     positions = jnp.linspace(0.0, 6.0, extent)
     offset = jnp.asarray(0.25)
-    tiled = _SubjectTiled(func=_tiled_cell, subject_arg_names=("position",))
+    tiled = _AgentTiled(func=_tiled_cell, agent_arg_names=("position",))
     got = cast(
         "Mapping[str, FloatND]",
-        tiled(position=positions, offset=offset, **{SUBJECT_WIDTH_KEYWORD: width}),
+        tiled(position=positions, offset=offset, **{AGENT_WIDTH_KEYWORD: width}),
     )
     expected = jnp.stack(
         [_tiled_cell(position=one, offset=offset)["bucket"] for one in positions]
@@ -407,15 +407,15 @@ def test_subject_tiles_reproduce_the_whole_populations_structural_output(
     assert jnp.array_equal(got["bucket"], expected)
 
 
-def test_a_body_with_no_per_subject_argument_is_called_once() -> None:
-    """A body no subject varies has no axis to tile and takes no leading axis."""
-    tiled = _SubjectTiled(func=_tiled_cell, subject_arg_names=())
+def test_a_body_with_no_per_agent_argument_is_called_once() -> None:
+    """A body no agent varies has no axis to tile and takes no leading axis."""
+    tiled = _AgentTiled(func=_tiled_cell, agent_arg_names=())
     got = cast(
         "Mapping[str, FloatND]",
         tiled(
             position=jnp.asarray(3.0),
             offset=jnp.asarray(0.25),
-            **{SUBJECT_WIDTH_KEYWORD: 4},
+            **{AGENT_WIDTH_KEYWORD: 4},
         ),
     )
     assert got["shifted"].shape == ()

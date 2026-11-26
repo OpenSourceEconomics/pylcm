@@ -1,11 +1,11 @@
-"""Collective-regime readout: every member's value at the household argmax.
+"""Collective-regime readout: every member's value at the shared argmax.
 
-A collective regime carries one per-member action-value array `Q^s` each,
-chooses the action that maximizes a household *scalarization*
-`O = Σ_s λ_s Q^s` over the feasible set, and then reads off *each member's
-own* `Q^s` at that common argmax — NOT the scalarized value `O`. The household
-maximizes the weighted objective, but the individual values are each member's
-own utility stream under that joint choice.
+A collective regime carries one action-value array `Q^s` per member. It
+chooses the action that maximizes the Pareto-weighted *scalarization*
+`O = Σ_s λ_s Q^s` over the feasible set. It then reads off *each member's
+own* `Q^s` at that common argmax — NOT the scalarized value `O`. The members
+maximize the weighted objective, but each member's value is its own utility
+stream under that joint choice.
 
 This module is a pure, engine-topology-free building block: it takes already-computed
 per-member `Q` arrays and the feasibility mask and returns the per-member
@@ -13,10 +13,11 @@ per-member `Q` arrays and the feasibility mask and returns the per-member
 kept distinct from a numeric `-inf` that can arise on-path). The terminal and
 non-terminal solve kernels call it after building their `Q^s`.
 
-Under EV1 taste shocks a household has one decider, the member with the positive
-Pareto weight. `decider_smoothed_readout` publishes that member's smoothed expected
-maximum and every other member's mean action value under the decider's choice
-probabilities; `decider_choice` is the part the simulated draw shares with it.
+Under EV1 taste shocks a collective regime has one deciding member, the member
+with the positive Pareto weight. `decider_smoothed_readout` publishes that
+member's smoothed expected maximum. It publishes every other member's mean
+action value under the deciding member's choice probabilities. `decider_choice`
+is the part the simulated draw shares with it.
 """
 
 import math
@@ -56,7 +57,7 @@ def collective_argmax_and_readout(
     weights: Mapping[str, FloatND | float],
     action_axes: tuple[int, ...],
 ) -> tuple[IntND, dict[str, FloatND], BoolND]:
-    r"""Like `collective_readout`, but also returns the household argmax index.
+    r"""Like `collective_readout`, but also returns the shared argmax index.
 
     The solve-side readout (`collective_readout`) only needs the
     per-member VALUES at the shared argmax; the simulate-side value
@@ -104,9 +105,9 @@ def collective_argmax_and_readout(
         ),
         where=feasible,
     )
-    # A NaN objective at a feasible action has no household value: every member
-    # publishes NaN so the solve's checks see it, and the index is action zero.
-    # Without a feasible action the index is `NO_ID`.
+    # A NaN objective at a feasible action leaves the members without a value:
+    # every member publishes NaN so the solve's checks see it, and the index is
+    # action zero. Without a feasible action the index is `NO_ID`.
     dissolution = argmax_flat == NO_ID
     values = {
         name: jnp.where(undefined, jnp.nan, jnp.where(dissolution, -jnp.inf, value))
@@ -122,18 +123,18 @@ def collective_readout(
     weights: Mapping[str, FloatND | float],
     action_axes: tuple[int, ...],
 ) -> tuple[dict[str, FloatND], BoolND]:
-    r"""Household argmax of the scalarization, then per-member value readout.
+    r"""Argmax of the Pareto-weighted scalarization, then per-member readout.
 
-    One household maximizes the Pareto-weighted sum of its members' action
-    values over the feasible actions, and each member's value is its own
-    action value read at that single choice:
+    The members maximize the Pareto-weighted sum of their action values over
+    the feasible actions. Each member's value is its own action value read at
+    that single choice:
 
     ```{math}
         a^*(x) = \arg\max_{a\,:\,F(x,a)} \sum_s \lambda_s\, Q^s(x, a),
         \qquad V^s(x) = Q^s(x, a^*(x)).
     ```
 
-    All members share the same argmax `a*` (the joint household choice). Ties in
+    All members share the same argmax `a*` (the members' joint choice). Ties in
     the objective go to the members in declared order: among its maximizers, the
     actions the first member values most, then the second, and so on, then the
     first action in grid order. The steps before the last read no position of an
@@ -176,17 +177,19 @@ def member_tie_keys(*, readout: FloatND, weights: FloatND) -> tuple[FloatND, ...
     """Return the keys by which a tie in the objective goes to the members.
 
     Ties go to the members' values in declared order. Where exactly one member
-    has a positive weight, that member decides, and the other members come
-    first and the decider last. The keys are every member's value with the
-    decider's replaced by zero, followed by the decider's value, zero where no
-    single member decides; `values_from_tie_keys` reads the values back.
+    has a positive Pareto weight, that member decides. The other members come
+    first and the deciding member last. The keys are every member's value with
+    the deciding member's replaced by zero, followed by the deciding member's
+    value. That last key is zero where no single member decides.
+    `values_from_tie_keys` reads the values back.
 
     Args:
         readout: Each member's value, the members on the trailing axis.
         weights: The Pareto weights in member order, shape `(n_members,)`.
 
     Returns:
-        One key per member, then the decider's key, each without the member axis.
+        One key per member, then the deciding member's key, each without the
+        member axis.
     """
     decides = _sole_decider(weights)
     decider_value = jnp.where(
@@ -203,7 +206,7 @@ def values_from_tie_keys(*, keys: Sequence[FloatND], weights: FloatND) -> FloatN
 
 
 def _sole_decider(weights: FloatND) -> BoolND:
-    """Mark the member with the only positive weight; none if there are several."""
+    """Mark the member with the only positive Pareto weight; none if several."""
     positive = weights > 0
     return positive & (jnp.sum(positive) == 1)
 
@@ -216,16 +219,16 @@ def decider_choice(
     n_discrete_action_axes: int,
     readout: FloatND | None = None,
 ) -> tuple[IntND, FloatND, IntND, FloatND]:
-    """Locate the decider and its best continuous action per discrete action.
+    """Locate the deciding member and its best continuous action per discrete action.
 
-    The decider is the member whose Pareto weight is positive; the caller
-    guarantees there is exactly one. The decider's own action values `Q` are
-    maximized over the feasible continuous actions, conditional on each
-    discrete action, and every member's `readout` is read at that conditional
-    argmax. Ties in the decider's value go to the other members' readouts in
-    declared order, then to the decider's, then to the first continuous action
-    (`member_tie_keys`). The member axis is the trailing axis of `Q` and is
-    handled for any length.
+    The deciding member is the member whose Pareto weight is positive. The
+    caller guarantees there is exactly one. The deciding member's own action
+    values `Q` are maximized over the feasible continuous actions, conditional
+    on each discrete action. Every member's `readout` is read at that
+    conditional argmax. Ties in the deciding member's value go to the other
+    members' readouts in declared order, then to the deciding member's, then
+    to the first continuous action (`member_tie_keys`). The member axis is the
+    trailing axis of `Q` and is handled for any length.
 
     Args:
         Q: Per-member action values of shape
@@ -238,13 +241,13 @@ def decider_choice(
             from the action values that choose; `None` reads `Q` itself.
 
     Returns:
-        Tuple `(decider, Qc, continuous_argmax, at_choice)`: the decider's
-        member index; its conditional maxima over the continuous actions, one
+        Tuple `(decider, Qc, continuous_argmax, at_choice)`: the deciding
+        member's index; its conditional maxima over the continuous actions, one
         per discrete-action cell in C order, `-inf` where none is feasible and
-        NaN where a feasible decider value is NaN; the flat continuous index
-        attaining each, zero in those two cases; and each member's readout
-        there, of shape `(n_discrete_cells, n_members)`, `-inf` and NaN in the
-        same two cases.
+        NaN where a feasible value of the deciding member is NaN; the flat
+        continuous index attaining each, zero in those two cases; and each
+        member's readout there, of shape `(n_discrete_cells, n_members)`,
+        `-inf` and NaN in the same two cases.
     """
     decider = jnp.argmax(weights > 0).astype(jnp.int32)
     n_discrete_cells = math.prod(feasibility.shape[:n_discrete_action_axes])
@@ -261,9 +264,10 @@ def decider_choice(
         where=feasible,
     )
     at_choice = values_from_tie_keys(keys=keys, weights=weights)
-    # A NaN decider value at a feasible action leaves the discrete cell without a
-    # value: every member publishes NaN there, at continuous action zero. A cell
-    # with no feasible action is worth `-inf` to every member.
+    # A NaN value of the deciding member at a feasible action leaves the
+    # discrete cell without a value: every member publishes NaN there, at
+    # continuous action zero. A cell with no feasible action is worth `-inf`
+    # to every member.
     infeasible = continuous_argmax == NO_ID
     Qc = jnp.where(undefined, jnp.nan, jnp.where(infeasible, -jnp.inf, Qc))
     at_choice = jnp.where(
@@ -289,9 +293,9 @@ def decider_smoothed_readout(
 ) -> tuple[FloatND, BoolND]:
     r"""Read off every member's value when one member decides under EV1 shocks.
 
-    With decider $d$, conditional maxima $Q^d_c(j) = \max_c Q^d(j, c)$ over the
-    feasible continuous actions $c$ of each discrete action $j$, and
-    $c^*(j)$ attaining it:
+    With deciding member $d$, conditional maxima
+    $Q^d_c(j) = \max_c Q^d(j, c)$ over the feasible continuous actions $c$ of
+    each discrete action $j$, and $c^*(j)$ attaining it:
 
     ```{math}
         V^d = \sigma \log \sum_j e^{Q^d_c(j) / \sigma}, \qquad
@@ -299,13 +303,13 @@ def decider_smoothed_readout(
         V^s = \sum_j P(j)\, Q^s(j, c^*(j)) \quad (s \neq d).
     ```
 
-    The decider's value is its expected maximum; every other member's value
-    is the mean of its own action value under the decider's choice. A
-    discrete action with probability zero contributes exactly zero, whatever
-    the member's value there. Where the decider's every feasible action is
-    worth `-inf` the cell has no choice probabilities and is worth `-inf` to
-    every member. A cell with no feasible action publishes `-inf` for every
-    member, beside the dissolution flag `D = True`.
+    The deciding member's value is its expected maximum. Every other member's
+    value is the mean of its own action value under the deciding member's
+    choice. A discrete action with probability zero contributes exactly zero,
+    whatever the member's value there. Where every feasible action of the
+    deciding member is worth `-inf`, the cell has no choice probabilities. It
+    is then worth `-inf` to every member. A cell with no feasible action
+    publishes `-inf` for every member, beside the dissolution flag `D = True`.
 
     Args:
         Q: Per-member action values of shape
@@ -336,17 +340,19 @@ def decider_smoothed_readout(
 def decider_expected_values(
     *, decider: IntND, Qc: FloatND, at_choice: FloatND, scale: ScalarFloat
 ) -> FloatND:
-    """Every member's value under the decider's logit over its alternatives.
+    """Every member's value under the deciding member's logit over alternatives.
 
-    The decider's value is the log-sum of its values `Qc`; every other member's
-    is the mean of its value `at_choice` under the decider's choice
-    probabilities, where an alternative of probability zero contributes exactly
-    zero. Where every alternative is worth `-inf` to the decider there are no
-    choice probabilities, and every member's value is `-inf`.
+    The deciding member's value is the log-sum of its values `Qc`. Every other
+    member's value is the mean of its value `at_choice` under the deciding
+    member's choice probabilities. An alternative of probability zero
+    contributes exactly zero. Where every alternative is worth `-inf` to the
+    deciding member, there are no choice probabilities, and every member's
+    value is `-inf`.
 
     Args:
-        decider: The decider's member index.
-        Qc: The decider's value of each alternative, shape `(n_alternatives,)`.
+        decider: The deciding member's index.
+        Qc: The deciding member's value of each alternative, shape
+            `(n_alternatives,)`.
         at_choice: Every member's value of each alternative, shape
             `(n_alternatives, n_members)`.
         scale: The taste-shock scale, strictly positive.
@@ -372,13 +378,13 @@ def _weighted_sum(
     member_Q: Mapping[str, FloatND],
     weights: Mapping[str, FloatND | float],
 ) -> FloatND:
-    """Scalarize the per-member Q into the household objective Σ_s λ_s Q^s.
+    """Scalarize the per-member Q into the Pareto-weighted objective Σ_s λ_s Q^s.
 
-    Zero-safe: a member excluded from the household scalarization via a
+    Zero-safe: a member excluded from the scalarization via a
     zero Pareto weight may still hold an admissible on-path `-inf` `Q^s` (e.g.
     a feasible zero-consumption action for that partner); `weight * Q` would
     then be `0.0 * -inf = nan`, poisoning the objective — and, via the
-    argmax, the WRONG member's `Q` would decide the household's choice.
+    argmax, the WRONG member's `Q` would decide the members' choice.
     Each term goes through `zero_safe_weighted_term` so a zero-weight
     member contributes exactly `0.0` regardless of its own `Q^s`.
     """
@@ -391,9 +397,9 @@ def _weighted_sum(
     # `subnormal_is_accounted_for=False`: the weight arrives at whatever size
     # the model chose and nothing upstream has put it on a scale, so the term
     # moves the exponent itself rather than let a below-normal weight flush and
-    # price a member out of the household objective entirely.
+    # price a member out of the Pareto-weighted objective entirely.
     #
-    # The objective only selects the household's action; a value's derivative
+    # The objective only selects the members' action; a value's derivative
     # flows through the member values read at that action. Its operands are
     # therefore held constant under differentiation, which the weighted term,
     # computed on bit patterns, could not differentiate otherwise.
@@ -432,7 +438,7 @@ def _actions_last(
 # Template key the Pareto weights' free parameters live under.
 PARETO_OBJECTIVE_ENTRY = "pareto_objective"
 
-# The role a subject in a singleton regime carries: it occupies none. Negative
+# The role an agent in a singleton regime carries: it occupies none. Negative
 # so it can never collide with a declared role's code, and so an out-of-range
 # read is a visible mistake rather than someone else's role.
 NO_ROLE = -1
@@ -442,7 +448,7 @@ def role_code(*, name: str | None, role_ids: Mapping[str, int]) -> int:
     """Return the row code of a member name.
 
     `NO_ROLE` for no member and for the member `"self"`: a row in a regime whose
-    only member is `"self"` occupies no household role.
+    only member is `"self"` occupies no member role.
     """
     return NO_ROLE if name in (None, "self") else role_ids[name]
 
@@ -514,9 +520,9 @@ class ParetoWeights:
     """A collective regime's Pareto weights, as the kernel evaluates them.
 
     Built once per regime and called at every cell, so the weights are as much
-    a function of the state as any other node — and the household still solves
-    one argmax against one weighting, because a weight may not read the action
-    it helps choose.
+    a function of the state as any other node. The members still solve one
+    argmax against one Pareto weighting, because a Pareto weight may not read
+    the action it helps choose.
     """
 
     compute: Callable[..., dict[str, FloatND]]
@@ -641,8 +647,8 @@ def build_pareto_weights(
             # Bring the weights down to (0, 1] before summing. Nothing in the
             # admissibility contract bounds how large a finite weight may be,
             # and a raw total that leaves the working format sends every share
-            # to zero — which ties the members and lets the household take
-            # an action no declared weighting ranks first.
+            # to zero — which ties the members and lets them take an action
+            # no declared weighting ranks first.
             #
             # The rescale is a power of two applied with `ldexp`, not a divide
             # by the largest weight. Division would be evaluated as a multiply
@@ -654,7 +660,7 @@ def build_pareto_weights(
             _, exponent = jnp.frexp(jnp.max(stacked, axis=0))
             scaled = jnp.ldexp(stacked, -exponent)
             # Member names are economically inert, so the total is summed
-            # in value order: relabelling the household must not select a
+            # in value order: relabelling the members must not select a
             # different reduction tree and hence a different normalizer. The
             # scale is itself order-invariant, so it does not reintroduce one.
             total = sum_in_value_order(values=scaled)

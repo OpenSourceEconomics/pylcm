@@ -336,16 +336,16 @@ def test_public_case_r_replay_matches_the_literal_policy_at_off_node_shocks() ->
     model = _interior_model()
     params = _params()
     result = model.solve(params=params, log_level="warning", max_compilation_workers=1)
-    n_subjects = 8
+    n_agents = 8
     frame = model.simulate(
         params=params,
         solution=result,
         seed=19,
         log_level="warning",
         initial_conditions={
-            "regime_id": np.zeros(n_subjects, dtype=int),
-            "age": np.zeros(n_subjects, dtype=int),
-            "wealth": np.linspace(2.5, 4.0, n_subjects, dtype=canonical_float_dtype()),
+            "regime_id": np.zeros(n_agents, dtype=int),
+            "age": np.zeros(n_agents, dtype=int),
+            "wealth": np.linspace(2.5, 4.0, n_agents, dtype=canonical_float_dtype()),
         },
     )
     child = frame.raw_results["child"][1]

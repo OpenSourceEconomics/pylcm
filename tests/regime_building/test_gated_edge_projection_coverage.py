@@ -3,8 +3,8 @@
 A `ProjectedRegimeValue` on a gated edge is read by two different consumers, and they
 need different coordinates of the regime it names:
 
-- a LEG FALLBACK sends a subject INTO that regime, so forward simulation writes
-  a per-subject row there. The row occupies every state the regime carries in
+- a LEG FALLBACK sends an agent INTO that regime, so forward simulation writes
+  a per-agent row there. The row occupies every state the regime carries in
   simulation, carried states (`Phased(solve=..., simulate=Grid)`) included, so
   the projection owes a landing point on each of them.
 - the solve-side reader only READS that regime's value function, whose axes are
@@ -80,7 +80,7 @@ class RegimeId:
     src: ScalarInt
     src_exit: ScalarInt
     fallback: ScalarInt
-    fallback_exit: ScalarInt
+    fallback_composition_action: ScalarInt
 
 
 @categorical(ordered=False)
@@ -95,8 +95,8 @@ class AgeSpecializedRegimeId:
 def test_leg_fallback_projection_must_cover_a_carried_state_of_its_regime() -> None:
     """A leg's fallback projection owes a coordinate on the regime's `career`.
 
-    `fallback` carries `career` per subject once simulation runs, so a leg
-    routing a subject into it must say where on that axis the subject lands.
+    `fallback` carries `career` per agent once simulation runs, so a leg
+    routing an agent into it must say where on that axis the agent lands.
     A projection covering the solve state alone is rejected at model build,
     naming both states it has to supply.
     """
@@ -110,7 +110,7 @@ def test_fallback_covering_a_carried_state_solves() -> None:
     """The fallback owes `career`, and supplying it builds, solves and simulates.
 
     Gate open at wage 2 (src_exit pays 0), closed at wage 1 (fallback pays the
-    wage), so src's value is `wage + 0.5 * (1, 0)`. A subject routed to the
+    wage), so src's value is `wage + 0.5 * (1, 0)`. An agent routed to the
     fallback lands with career `2 * wage`.
     """
     model = _build_model(fallback_projects_career=True)
@@ -138,7 +138,7 @@ def test_leg_fallback_projection_must_cover_an_age_specialized_state_of_its_regi
 
     `annuity` holds `principal` on a grid whose ceiling moves with age. That
     makes it no less a state the regime carries in simulation, so a leg routing
-    a subject there must say where on that axis it lands. An empty projection is
+    an agent there must say where on that axis it lands. An empty projection is
     rejected at model build, naming the state it has to supply.
     """
     with pytest.raises(
@@ -318,7 +318,7 @@ def _build_model(*, fallback_projects_career: bool) -> Model:
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_fallback},
     )
-    fallback_exit = Regime(
+    fallback_composition_action = Regime(
         states={"wage": _WAGE},
         functions={"utility": _utility_no_payoff},
     )
@@ -327,7 +327,7 @@ def _build_model(*, fallback_projects_career: bool) -> Model:
             "src": src,
             "src_exit": src_exit,
             "fallback": fallback,
-            "fallback_exit": fallback_exit,
+            "fallback_composition_action": fallback_composition_action,
         },
         edges={
             "src": Transition(
@@ -353,7 +353,7 @@ def _build_model(*, fallback_projects_career: bool) -> Model:
                     )
                 },
             ),
-            "fallback": {"fallback_exit": 1},
+            "fallback": {"fallback_composition_action": 1},
         },
         ages=_AGES,
         regime_id_class=RegimeId,
@@ -382,7 +382,7 @@ def _principal_grid(age: float) -> LinSpacedGrid:
 
 
 def _project_principal(wage: ContinuousState) -> FloatND:
-    """The principal a subject rolls into the annuity on entering it."""
+    """The principal an agent rolls into the annuity on entering it."""
     return 2.0 * wage
 
 
@@ -392,12 +392,12 @@ def _utility_annuity(principal: ContinuousState) -> FloatND:
 
 
 def _identity_wage(wage: ContinuousState) -> ContinuousState:
-    """A subject keeps its wage on entering the fallback regime."""
+    """An agent keeps its wage on entering the fallback regime."""
     return wage
 
 
 def _project_career(wage: ContinuousState) -> FloatND:
-    """The career a subject starts the fallback regime at."""
+    """The career an agent starts the fallback regime at."""
     return 2.0 * wage
 
 

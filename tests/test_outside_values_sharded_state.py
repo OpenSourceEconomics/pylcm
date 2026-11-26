@@ -1,8 +1,8 @@
-"""Stored outside reads when the regimes of an exit are sharded over devices.
+"""Stored outside reads when a composition action's regimes are sharded over devices.
 
-A reader's kernel tabulates each destination its aligned outside reads take and
-gathers from that table. These witnesses pin what that does on several devices, so
-that later work cannot make a multi-device solve with exits worse than reading every
+A reader's kernel tabulates each destination its aligned outside reads take and gathers
+from that table. These witnesses pin what that does on several devices, so that later
+work cannot make a multi-device solve with composition actions worse than reading every
 outside value at its point:
 
 - a reader and a destination that both carry a sharded discrete state whose law of
@@ -11,20 +11,20 @@ outside value at its point:
   destination's continuation by the transfer the point read uses, it is replicated
   on the reader's devices, charged to the reader's cell and released with its kernel;
 - a destination that prunes the reader's sharded model-level state, because it does
-  not read it, takes the exit's projection of the states it carries and solves as on
-  one device, with stored and with point reads;
+  not read it, takes the composition action's projection of the states it carries and
+  solves as on one device, with stored and with point reads;
 - a sharded state that keeps its value on the reader or the destination is co-mapped
-  in that regime's ordinary solve, which reads only each device's slice; the exit
-  still solves as on one device, with stored and with point reads, because a query
-  takes the state as an ordinary axis. Each of the reader's devices computes the
-  whole grid of the state in the exit period and holds every next-period value that
-  carries it whole, and the reader's published value keeps only each device's own
-  slice. A projection that flips the fixed state and a reader that prunes it are
+  in that regime's ordinary solve, which reads only each device's slice; the composition
+  action still solves as on one device, with stored and with point reads, because a
+  query takes the state as an ordinary axis. Each of the reader's devices computes the
+  whole grid of the state in the composition action period and holds every next-period
+  value that carries it whole, and the reader's published value keeps only each device's
+  own slice. A projection that flips the fixed state and a reader that prunes it are
   covered;
 - singles, with or without a state of their own, who marry by consent into a couple
   that shards a model-level state, flipping or fixed, and dissolves into them,
   neither single reading the state, solve as on one device;
-- a simulation over subjects sharded across devices reproduces the unsharded one.
+- a simulation over agents sharded across devices reproduces the unsharded one.
 
 The witnesses run in child processes, because the placements under test only exist
 where several devices do, and a topology is pinned before JAX initializes a backend.
@@ -51,15 +51,15 @@ import pytest
 import tests.conftest
 from _lcm.execution.output_layout import PlannedCore
 from lcm import (
+    CompositionAction,
+    Destination,
     DiscreteGrid,
     ExecutionConfig,
-    Exit,
-    ExitTarget,
     InitialNodes,
     Model,
+    PCOnActions,
     Periods,
     Regime,
-    Unilateral,
     categorical,
     fixed_transition,
 )
@@ -158,18 +158,18 @@ def build_model(
     project_kind: bool = True,
     kind_projection: Literal["keep", "flip"] = "keep",
     reader_reads_kind: bool = True,
-    simulation_sharding: Literal["legacy", "subjects"] = "legacy",
+    simulation_sharding: Literal["legacy", "agents"] = "legacy",
 ) -> Model:
     """Build a source that may leave for a destination in the first of two periods.
 
     Both carry wealth onto the grid of their terminal successor. The source reads a
     model-level discrete `kind` unless `reader_reads_kind` is False; the destination
-    reads it too unless `destination_law` is None. A regime that does not read the
-    kind prunes it. The exit projects every state the destination declares, the
-    model-level kind included, unless `project_kind` is False: a reader that reads
-    the kind keeps it or flips it, one that prunes it lands on the low kind. With
-    the kind kept, leaving pays where `1.9 * wealth > 0.64 + 0.05 * kind`: at wealth
-    0.5 and 1, never at 0.
+    reads it too unless `destination_law` is None. A regime that does not read the kind
+    prunes it. The composition action projects every state the destination declares, the
+    model-level kind included, unless `project_kind` is False: a reader that reads the
+    kind keeps it or flips it, one that prunes it lands on the low kind. With the kind
+    kept, leaving pays where `1.9 * wealth > 0.64 + 0.05 * kind`: at wealth 0.5 and 1,
+    never at 0.
 
     Args:
         devices: Device ids the model is planned for.
@@ -177,10 +177,10 @@ def build_model(
         reader_law: Law of the source's kind toward its successor.
         destination_law: Law of the destination's kind toward its successor, or
             None for a destination that does not read the kind.
-        project_kind: Whether the exit projects the kind as well as wealth.
-        kind_projection: Whether the exit keeps the reader's kind or flips it.
-        reader_reads_kind: Whether the source reads the kind.
-        simulation_sharding: How the simulated subjects are spread over devices.
+        project_kind: Whether the composition action projects the kind as well as
+        wealth. kind_projection: Whether the composition action keeps the reader's kind
+        or flips it. reader_reads_kind: Whether the source reads the kind.
+        simulation_sharding: How the simulated agents are spread over devices.
 
     Returns:
         The model.
@@ -211,15 +211,15 @@ def build_model(
                 states={"wealth": _wealth_grid()},
                 functions={"utility": source_utility},
                 state_transitions={"wealth": _keep_wealth, **source_kind},
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
                             regime="destination",
                             projection={"wealth": _wealth}
                             | ({"kind": projected_kind} if project_kind else {}),
                         )
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                 ),
             ),
             "destination": Regime(
@@ -266,7 +266,8 @@ class _Laws(TypedDict):
 
 _DEVICE_LOCAL: _Laws = {"reader_law": "flip", "destination_law": "flip"}
 
-#: Exits whose reader or destination keeps a sharded kind fixed, so that the kind
+# : Composition actions whose reader or destination keeps a sharded kind fixed, so that
+# the kind
 #: is co-mapped in that regime's own solve.
 _FIXED_CASES: dict[str, _Laws] = {
     "fixed reader, pruning destination": {
@@ -345,7 +346,7 @@ class MarriageReport(TypedDict):
 
 class SimulationReport(TypedDict):
     regimes: list[str]
-    subjects_match_unsharded: str
+    agents_match_unsharded: str
     stored_matches_point: str
 
 
@@ -389,7 +390,7 @@ class _TableRecord:
 
 def _solve_arm(*, stored: bool, devices: tuple[int, ...], laws: _Laws) -> SolveArm:
     """Solve the model with stored or point reads and record its plan."""
-    from _lcm import exit_queries, policy_queries  # noqa: PLC0415
+    from _lcm import composition_queries, policy_queries  # noqa: PLC0415
     from _lcm.solution import backward_induction  # noqa: PLC0415
 
     cores: list[PlannedCore] = []
@@ -397,7 +398,7 @@ def _solve_arm(*, stored: bool, devices: tuple[int, ...], laws: _Laws) -> SolveA
     tables = _TableRecord()
     kernel_class = policy_queries._PolicyQueryKernel
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
+        patch.setattr(composition_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
         patch.setattr(
             backward_induction,
             "_attach_resolved_output_layout",
@@ -498,10 +499,10 @@ def _pruned_destination_values(
     *, stored: bool, devices: tuple[int, ...]
 ) -> _ValueLists:
     """Solve the model whose destination prunes the kind; its values by key."""
-    from _lcm import exit_queries  # noqa: PLC0415
+    from _lcm import composition_queries  # noqa: PLC0415
 
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
+        patch.setattr(composition_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
         solution = build_model(
             devices=devices,
             sharded=("kind",) if len(devices) > 1 else (),
@@ -533,10 +534,10 @@ def _marriage_values(
     stored: bool = True,
 ) -> _ValueLists:
     """Solve the marriage whose couple alone reads the model-level match."""
-    from _lcm import exit_queries  # noqa: PLC0415
+    from _lcm import composition_queries  # noqa: PLC0415
 
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
+        patch.setattr(composition_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
         solution = marriage_model(
             model_level=True,
             single_states=single_states,
@@ -578,7 +579,7 @@ def report_fixed_marriage() -> PrunedReport:
     }
 
 
-#: Subjects start in the source at every wealth point and both kinds.
+#: Agents start in the source at every wealth point and both kinds.
 _INITIAL_WEALTH = (0.0, 0.5, 1.0, 0.0, 0.5, 1.0)
 _INITIAL_KIND = (0, 0, 0, 1, 1, 1)
 
@@ -587,28 +588,28 @@ def _simulate(
     *,
     stored: bool,
     devices: tuple[int, ...],
-    subjects: bool,
+    agents: bool,
     sharded: tuple[str, ...] = (),
     laws: _Laws = _DEVICE_LOCAL,
 ) -> pd.DataFrame:
-    """Solve with stored or point reads, then simulate the subjects."""
-    from _lcm import exit_queries  # noqa: PLC0415
+    """Solve with stored or point reads, then simulate the agents."""
+    from _lcm import composition_queries  # noqa: PLC0415
 
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
+        patch.setattr(composition_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
         model = build_model(
             devices=devices,
             sharded=sharded,
-            simulation_sharding="subjects" if subjects else "legacy",
+            simulation_sharding="agents" if agents else "legacy",
             **laws,
         )
         solution = model.solve(params=_PARAMS, log_level="off", runtime_checks=False)
-    n_subjects = len(_INITIAL_WEALTH)
+    n_agents = len(_INITIAL_WEALTH)
     return model.simulate(
         params=_PARAMS,
         initial_conditions={
-            "period": jnp.zeros(n_subjects, dtype=jnp.int32),
-            "regime_id": jnp.full(n_subjects, _RegimeId.source, dtype=jnp.int32),
+            "period": jnp.zeros(n_agents, dtype=jnp.int32),
+            "regime_id": jnp.full(n_agents, _RegimeId.source, dtype=jnp.int32),
             "wealth": jnp.asarray(_INITIAL_WEALTH),
             "kind": jnp.asarray(_INITIAL_KIND, dtype=jnp.int32),
         },
@@ -627,16 +628,16 @@ def _mismatch(*, check: Callable[[], None]) -> str:
     return ""
 
 
-def report_subject_sharded_simulation(*, decimal: int) -> SimulationReport:
-    """Simulate stored-read solutions over sharded and unsharded subjects."""
-    sharded = _simulate(stored=True, devices=tuple(range(_N_DEVICES)), subjects=True)
-    unsharded = _simulate(stored=True, devices=(0,), subjects=False)
-    point = _simulate(stored=False, devices=(0,), subjects=False)
+def report_agent_sharded_simulation(*, decimal: int) -> SimulationReport:
+    """Simulate stored-read solutions over sharded and unsharded agents."""
+    sharded = _simulate(stored=True, devices=tuple(range(_N_DEVICES)), agents=True)
+    unsharded = _simulate(stored=True, devices=(0,), agents=False)
+    point = _simulate(stored=False, devices=(0,), agents=False)
     tolerance = 10.0**-decimal
-    first = sharded.loc[sharded["period"] == 0].sort_values("subject_id")
+    first = sharded.loc[sharded["period"] == 0].sort_values("agent_id")
     return {
         "regimes": [str(name) for name in first["regime_name"]],
-        "subjects_match_unsharded": _mismatch(
+        "agents_match_unsharded": _mismatch(
             check=lambda: pd.testing.assert_frame_equal(
                 sharded, unsharded, check_exact=True
             )
@@ -655,7 +656,7 @@ def report_fixed_reader_simulation(*, decimal: int) -> dict[str, str]:
     The value is each four-device read's mismatch with point reads on one device.
     """
     laws = _FIXED_CASES["fixed reader, pruning destination"]
-    one_device = _simulate(stored=False, devices=(0,), subjects=False, laws=laws)
+    one_device = _simulate(stored=False, devices=(0,), agents=False, laws=laws)
     tolerance = 10.0**-decimal
     return {
         name: _mismatch(
@@ -664,7 +665,7 @@ def report_fixed_reader_simulation(*, decimal: int) -> dict[str, str]:
                 _simulate(
                     stored=stored,
                     devices=tuple(range(_N_DEVICES)),
-                    subjects=False,
+                    agents=False,
                     sharded=("kind",),
                     laws=laws,
                 ),
@@ -691,7 +692,7 @@ def _run_in_child_process(
 
 @overload
 def _run_in_child_process(
-    *, entry_point: Literal["report_subject_sharded_simulation"], arguments: str = ""
+    *, entry_point: Literal["report_agent_sharded_simulation"], arguments: str = ""
 ) -> SimulationReport: ...
 
 
@@ -790,10 +791,10 @@ def fixed_marriage() -> PrunedReport:
 
 
 @pytest.fixture(scope="module")
-def subject_sharded() -> SimulationReport:
-    """Return the subject-sharded simulation from one four-device child process."""
+def agent_sharded() -> SimulationReport:
+    """Return the agent-sharded simulation from one four-device child process."""
     return _run_in_child_process(
-        entry_point="report_subject_sharded_simulation",
+        entry_point="report_agent_sharded_simulation",
         arguments=f"decimal={tests.conftest.DECIMAL_PRECISION!r}",
     )
 
@@ -918,8 +919,8 @@ def test_a_pruned_destination_solves_as_point_reads_on_one_device(
     pruned_destination: PrunedReport,
 ) -> None:
     """A destination that does not read the reader's sharded model-level kind prunes
-    it, and the exit, which projects the kind too, solves on four devices and with
-    stored reads as with point reads on one device, to 16 ULP.
+    it, and the composition action, which projects the kind too, solves on four devices
+    and with stored reads as with point reads on one device, to 16 ULP.
     """
     _assert_agree(
         got=_values(pruned_destination[arm]),
@@ -932,9 +933,11 @@ def test_a_pruned_destination_solves_as_point_reads_on_one_device(
 def test_a_fixed_sharded_kind_solves_as_point_reads_on_one_device(
     *, case: str, arm: Literal["point", "stored", "one_device_stored"]
 ) -> None:
-    """An exit whose reader or destination keeps the sharded kind fixed solves on
-    four devices, with stored and with point reads, as with point reads on one
-    device, to 16 ULP.
+    """Four devices solve as one, to 16 ULP, when the sharded kind stays fixed.
+
+    The composition action's reader or destination keeps the sharded kind fixed.
+    On four devices, stored and point reads both give the values of point reads
+    on one device.
     """
     report = _fixed_case(case)
     _assert_agree(
@@ -955,9 +958,10 @@ def test_a_fixed_sharded_kind_solves_as_point_reads_on_one_device(
 def test_the_reader_publishes_its_value_split_along_the_kind(
     *, case: str, arm: Literal["point", "stored"]
 ) -> None:
-    """The reader's exit-period value lives on the reader's two devices, each
-    holding one kind and every wealth point; the query evaluates the whole grid
-    inside the reader's program and no device keeps the other's kind.
+    """The value for the period of leaving lives on the reader's two devices.
+
+    Each device holds one kind and every wealth point. The query evaluates the whole
+    grid inside the reader's program, and no device keeps the other's kind.
     """
     solved = _fixed_case(case)[arm]
     assert (
@@ -1066,27 +1070,29 @@ def test_a_fixed_sharded_couple_state_solves_as_point_reads_on_one_device(
     )
 
 
-def test_an_exit_projection_names_every_state_its_destination_declares() -> None:
-    """A model-level state is declared in every regime, so an exit's projection
-    names it even where the destination prunes it.
+def test_a_projection_names_every_state_its_destination_declares() -> None:
+    """A projection names a model-level state even where the destination prunes it.
+
+    A model-level state is declared in every regime, so a composition action's
+    projection names it.
     """
     with pytest.raises(
         RegimeInitializationError,
         match=re.escape(
-            "Exit of source solve projection must name destination states "
-            "['kind', 'wealth']."
+            "Composition action of source solve projection must name destination "
+            "states ['kind', 'wealth']."
         ),
     ):
         build_model(devices=(0,), sharded=(), destination_law=None, project_kind=False)
 
 
 def test_movers_leave_where_the_destination_pays_more(
-    subject_sharded: SimulationReport,
+    agent_sharded: SimulationReport,
 ) -> None:
-    """Subjects at wealth 0.5 and 1 leave for the destination; at wealth 0 they
+    """Agents at wealth 0.5 and 1 leave for the destination; at wealth 0 they
     stay, for either kind.
     """
-    assert subject_sharded["regimes"] == [
+    assert agent_sharded["regimes"] == [
         "source",
         "destination",
         "destination",
@@ -1096,22 +1102,22 @@ def test_movers_leave_where_the_destination_pays_more(
     ]
 
 
-def test_a_subject_sharded_simulation_reproduces_the_unsharded_one(
-    subject_sharded: SimulationReport,
+def test_an_agent_sharded_simulation_reproduces_the_unsharded_one(
+    agent_sharded: SimulationReport,
 ) -> None:
-    """Spreading the subjects of a stored-read solve over four devices leaves every
+    """Spreading the agents of a stored-read solve over four devices leaves every
     simulated value unchanged, bit for bit.
     """
-    assert subject_sharded["subjects_match_unsharded"] == ""
+    assert agent_sharded["agents_match_unsharded"] == ""
 
 
 def test_a_stored_read_solve_simulates_like_a_point_read_solve(
-    subject_sharded: SimulationReport,
+    agent_sharded: SimulationReport,
 ) -> None:
-    """The simulation of a stored-read solve over sharded subjects matches that of
+    """The simulation of a stored-read solve over sharded agents matches that of
     a point-read solve on one device, to this precision's decimals.
     """
-    assert subject_sharded["stored_matches_point"] == ""
+    assert agent_sharded["stored_matches_point"] == ""
 
 
 def test_a_fixed_reader_sharded_on_four_devices_simulates_as_on_one() -> None:

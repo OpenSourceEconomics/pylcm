@@ -1,4 +1,4 @@
-"""A public exit declares a current-period choice and immutable mapped targets."""
+"""A composition action declares a current choice and immutable mapped targets."""
 
 from collections.abc import Mapping
 from dataclasses import FrozenInstanceError
@@ -8,29 +8,67 @@ import numpy as np
 import pytest
 
 import lcm
-from _lcm.exits import exit_without_pruned_states
+from _lcm.composition_actions import composition_action_without_pruned_states
 from _lcm.grids import Grid
-from lcm import Consent, Counterparty, Exit, ExitTarget, Model
+from lcm import CompositionAction, Consent, Counterparty, Destination, Model
+from lcm.composition_actions import CompositionRule, PCOnActions
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.exits import ExitRule, Unilateral
 from lcm.typing import BoolND, FloatND, IntND, StateName, UserFunction, UserParams
 
-_UNILATERAL = Unilateral()
+_UNILATERAL = PCOnActions()
 
 
 def _half(wealth: FloatND) -> FloatND:
     return wealth / 2
 
 
-def test_exit_targets_snapshot_the_authored_projection() -> None:
-    """An exit keeps its declared projection when caller mappings change."""
+# The former names, spelled in pieces so that no rename of the current names reaches
+# them.
+_FORMER_MODULE = "lcm." + "ex" + "its"
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["Unilateral", "Renegotiate", "Settl" + "ement", "Ex" + "it", "Ex" + "itTarget"],
+)
+def test_the_rule_classes_carry_the_literatures_names_only(name: str) -> None:
+    """The rules are named by the literature's terms; the former names are gone."""
+    for public in (
+        "PCOnActions",
+        "PCOnWeight",
+        "MutualConsent",
+        "Transfer",
+        "Consent",
+        "CompositionAction",
+        "Destination",
+    ):
+        assert hasattr(lcm, public)
+    assert not hasattr(lcm, name)
+    with pytest.raises(ImportError):
+        exec(f"from lcm.composition_actions import {name}", {})  # noqa: S102
+    with pytest.raises(ImportError):
+        exec(f"import {_FORMER_MODULE}", {})  # noqa: S102
+
+
+def test_participation_constraints_on_the_pareto_weight_carry_the_state() -> None:
+    """`PCOnWeight` holds the adjusted state or none; other rules hold no choice."""
+    weight_rule = lcm.PCOnWeight(state="mu", tie="leave")
+    assert (weight_rule.state, weight_rule.tie) == ("mu", "leave")
+    assert lcm.PCOnWeight().state is None
+    assert not hasattr(lcm.PCOnActions(), "compares")
+    assert not hasattr(lcm.PCOnActions(), "state")
+    assert "compares" not in lcm.MutualConsent.__dataclass_fields__
+
+
+def test_composition_action_targets_snapshot_the_authored_projection() -> None:
+    """A composition action keeps the declared projection if caller mappings change."""
     projection = {"wealth": _half}
-    target = ExitTarget(regime="single", projection=projection)
+    target = Destination(regime="single", projection=projection)
     targets = {"self": target}
-    declaration = Exit(targets=targets, rule=Unilateral())
+    declaration = CompositionAction(destinations=targets, rule=PCOnActions())
     projection.clear()
     targets.clear()
-    actual_projection = declaration.targets["self"].projection
+    actual_projection = declaration.destinations["self"].projection
     assert isinstance(actual_projection, Mapping)
     assert actual_projection["wealth"] is _half
     with pytest.raises(FrozenInstanceError):
@@ -41,21 +79,21 @@ def _utility() -> float:
     return 1.0
 
 
-def test_regime_replacement_preserves_its_exit() -> None:
-    """Replacing an economic helper retains its authored exit declaration."""
-    declaration = Exit(
-        targets={"self": ExitTarget(regime="single", projection={})},
-        rule=Unilateral(),
+def test_regime_replacement_preserves_its_composition_action() -> None:
+    """Replacing an economic helper keeps the authored composition action."""
+    declaration = CompositionAction(
+        destinations={"self": Destination(regime="single", projection={})},
+        rule=PCOnActions(),
     )
-    regime = lcm.Regime(functions={"utility": _utility}, exit=declaration)
-    assert regime.replace(description="another label").exit is declaration
+    regime = lcm.Regime(functions={"utility": _utility}, composition_action=declaration)
+    assert regime.replace(description="another label").composition_action is declaration
 
 
-def test_phased_projection_snapshots_both_settlements() -> None:
-    """Caller edits cannot alter either phase's destination settlement."""
+def test_phased_projection_snapshots_both_transfers() -> None:
+    """Caller edits cannot alter either phase's destination transfer."""
     solve = {"wealth": _half}
     simulate = {"wealth": _half}
-    target = ExitTarget(
+    target = Destination(
         regime="single", projection=lcm.Phased(solve=solve, simulate=simulate)
     )
     solve.clear()
@@ -68,22 +106,24 @@ def test_phased_projection_snapshots_both_settlements() -> None:
 @pytest.mark.parametrize(
     "kind", ["empty", "observes", "target_name", "consent_payment"]
 )
-def test_malformed_exit_declarations_fail_at_construction(kind: str) -> None:
+def test_malformed_composition_action_declarations_fail_at_construction(
+    kind: str,
+) -> None:
     """Empty targets, invalid names, duplicate observations and a paid formation."""
-    target = ExitTarget
-    declaration = Exit
+    target = Destination
+    declaration = CompositionAction
     with pytest.raises(RegimeInitializationError):  # noqa: PT012 - malformed constructor variants
         if kind == "empty":
-            declaration(targets={}, rule=Unilateral())
+            declaration(destinations={}, rule=PCOnActions())
         elif kind == "observes":
             declaration(
-                targets={"self": target(regime="single", projection={})},
-                rule=Unilateral(),
+                destinations={"self": target(regime="single", projection={})},
+                rule=PCOnActions(),
                 observes=("offer", "offer"),
             )
         elif kind == "consent_payment":
             declaration(
-                targets={
+                destinations={
                     "self": target(
                         regime="couple",
                         role="f",
@@ -99,27 +139,27 @@ def test_malformed_exit_declarations_fail_at_construction(kind: str) -> None:
             target(regime="bad__regime", projection={})
 
 
-def test_collective_exit_names_every_source_member() -> None:
+def test_collective_composition_action_names_every_source_member() -> None:
     """A couple cannot silently omit a member's destination benchmark."""
-    with pytest.raises(RegimeInitializationError, match="targets"):
+    with pytest.raises(RegimeInitializationError, match="destination"):
         lcm.Regime(
             functions={
                 "utility": lcm.CollectiveUtility(
                     utilities={"f": _utility, "m": _utility}
                 )
             },
-            exit=Exit(
-                targets={"f": ExitTarget(regime="single", projection={})},
-                rule=Unilateral(),
+            composition_action=CompositionAction(
+                destinations={"f": Destination(regime="single", projection={})},
+                rule=PCOnActions(),
             ),
         )
 
 
-def _settlement(*, wealth: FloatND, share: FloatND) -> FloatND:
+def _transfer(*, wealth: FloatND, share: FloatND) -> FloatND:
     return wealth * share
 
 
-def _realized_settlement(*, wealth: FloatND, realized_share: FloatND) -> FloatND:
+def _realized_transfer(*, wealth: FloatND, realized_share: FloatND) -> FloatND:
     return wealth * realized_share
 
 
@@ -138,7 +178,7 @@ def _wealth_utility(wealth: FloatND) -> FloatND:
 def _declared_model(
     *,
     fixed_params: UserParams | None = None,
-    rule: ExitRule = _UNILATERAL,
+    rule: CompositionRule = _UNILATERAL,
     grid: Grid | None = None,
 ) -> Model:
     from lcm import InitialNodes, LinSpacedGrid, Model, Phased, Regime  # noqa: PLC0415
@@ -154,13 +194,13 @@ def _declared_model(
         regimes={
             "source": Regime(
                 functions={"utility": _utility},
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
                             regime="target",
                             projection=Phased(
-                                solve={"wealth": _settlement},
-                                simulate={"wealth": _realized_settlement},
+                                solve={"wealth": _transfer},
+                                simulate={"wealth": _realized_transfer},
                             ),
                             utility_adjustment=_cost,
                         )
@@ -183,12 +223,12 @@ def _declared_model(
     )
 
 
-def test_exit_only_state_and_phase_parameters_remain_declared() -> None:
-    """Both settlement phases and their free inputs remain in the template."""
+def test_composition_action_only_state_and_phase_parameters_remain_declared() -> None:
+    """Both transfer phases and their free inputs remain in the template."""
     model = _declared_model()
-    assert model.get_params_template()["source"]["exit"] == {
+    assert model.get_params_template()["source"]["composition_action"] == {
         "available": {"threshold": "FloatND"},
-        "targets": {
+        "destinations": {
             "self": {
                 "projection": {
                     "wealth": {"share": "FloatND", "realized_share": "FloatND"}
@@ -200,7 +240,9 @@ def test_exit_only_state_and_phase_parameters_remain_declared() -> None:
     assert "wealth" in model.user_regimes["source"].states
 
 
-def test_bound_exit_model_cannot_silently_run_a_stay_only_problem() -> None:
+def test_bound_composition_action_model_cannot_silently_run_a_stay_only_problem() -> (
+    None
+):
     """The public declaration's superior outside option changes its Full value."""
     solution = _declared_model().solve(
         params={"share": 1.0, "realized_share": 1.0, "threshold": 0.0, "cost": 0.0},
@@ -215,8 +257,8 @@ def _switch_wealth(wealth: FloatND) -> FloatND:
     return jnp.where(wealth > 15, 10.0, 20.0)
 
 
-def test_exit_settlement_reads_physical_grid_values_and_returns_target_codes() -> None:
-    """A settlement decodes source values and encodes destination codes."""
+def test_transfer_reads_physical_grid_values_and_returns_target_codes() -> None:
+    """A transfer decodes source values and encodes destination codes."""
     import jax.numpy as jnp  # noqa: PLC0415
 
     from lcm import DiscreteGrid, InitialNodes, Model, Regime  # noqa: PLC0415
@@ -231,13 +273,13 @@ def test_exit_settlement_reads_physical_grid_values_and_returns_target_codes() -
         regimes={
             "source": Regime(
                 functions={"utility": _utility},
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
                             regime="target", projection={"wealth": _switch_wealth}
                         )
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                 ),
             ),
             "target": Regime(functions={"utility": _wealth_utility}),
@@ -249,14 +291,18 @@ def test_exit_settlement_reads_physical_grid_values_and_returns_target_codes() -
         edges={},
     )
     projection = (
-        cast("Exit", model.user_regimes["source"].exit).targets["self"].projection
+        cast("CompositionAction", model.user_regimes["source"].composition_action)
+        .destinations["self"]
+        .projection
     )
     assert isinstance(projection, Mapping)
     assert projection["wealth"](wealth=jnp.int32(1)) == 0
 
 
 @pytest.mark.parametrize("kind", ["unknown", "missing_role", "bad_role", "projection"])
-def test_exit_destination_must_be_a_complete_declared_policy_context(kind: str) -> None:
+def test_composition_action_destination_must_be_a_complete_declared_policy_context(
+    kind: str,
+) -> None:
     """Destination names, collective roles and projected states are model-owned."""
     from lcm import InitialNodes, LinSpacedGrid, Model, Regime  # noqa: PLC0415
     from lcm.typing import ScalarInt  # noqa: PLC0415
@@ -266,17 +312,19 @@ def test_exit_destination_must_be_a_complete_declared_policy_context(kind: str) 
         source: ScalarInt
         target: ScalarInt
 
-    target = ExitTarget(
+    target = Destination(
         regime="missing" if kind == "unknown" else "target",
         projection={} if kind == "projection" else {"wealth": _half},
         role="other" if kind == "bad_role" else None,
     )
-    with pytest.raises(RegimeInitializationError, match=r"[Ee]xit"):
+    with pytest.raises(RegimeInitializationError, match=r"[Cc]omposition action"):
         Model(
             regimes={
                 "source": Regime(
                     functions={"utility": _wealth_utility},
-                    exit=Exit(targets={"self": target}, rule=Unilateral()),
+                    composition_action=CompositionAction(
+                        destinations={"self": target}, rule=PCOnActions()
+                    ),
                 ),
                 "target": Regime(
                     functions={
@@ -296,19 +344,23 @@ def test_exit_destination_must_be_a_complete_declared_policy_context(kind: str) 
         )
 
 
-def test_fixed_exit_parameter_is_removed_from_the_runtime_template() -> None:
+def test_fixed_composition_action_parameter_is_removed_from_the_runtime_template() -> (
+    None
+):
     """A fixed adjustment uses its own exact declaration slot."""
     model = _declared_model(
         fixed_params={
             "source": {
-                "exit": {"targets": {"self": {"utility_adjustment": {"cost": 0.0}}}}
+                "composition_action": {
+                    "destinations": {"self": {"utility_adjustment": {"cost": 0.0}}}
+                }
             }
         }
     )
-    template = model.get_params_template()["source"]["exit"]
+    template = model.get_params_template()["source"]["composition_action"]
     assert template == {
         "available": {"threshold": "FloatND"},
-        "targets": {
+        "destinations": {
             "self": {
                 "projection": {
                     "wealth": {"share": "FloatND", "realized_share": "FloatND"}
@@ -365,9 +417,9 @@ def test_consent_counterparty_is_a_coherent_declared_policy_context(kind: str) -
             regimes={
                 "source": lcm.Regime(
                     functions={"utility": _wealth_utility},
-                    exit=Exit(
-                        targets={
-                            "self": ExitTarget(
+                    composition_action=CompositionAction(
+                        destinations={
+                            "self": Destination(
                                 regime="couple",
                                 role="f",
                                 projection={"wealth": _half},
@@ -404,31 +456,40 @@ def test_consent_counterparty_is_a_coherent_declared_policy_context(kind: str) -
         )
 
 
-def test_exit_settlement_phase_variation_is_reported() -> None:
-    """Different solve and realised settlements prohibit invariant replay."""
+def test_composition_action_transfer_phase_variation_is_reported() -> None:
+    """Different solve and realised transfers prohibit invariant replay."""
     from _lcm.regime_building.phases import phase_variation_paths  # noqa: PLC0415
 
     model = _declared_model()
     paths = phase_variation_paths(
         user_regime=model.user_regimes["source"], law=model.graph.laws["source"]
     )
-    assert "exit.targets['self'].projection" in paths
+    assert "composition_action.destinations['self'].projection" in paths
 
 
-def _exit_signal(*, eps: FloatND, signal_scale: FloatND) -> FloatND:
+def _composition_action_signal(*, eps: FloatND, signal_scale: FloatND) -> FloatND:
     return eps * signal_scale
 
 
-def _signal_available(*, exit_signal: FloatND, threshold: FloatND) -> BoolND:
-    return exit_signal > threshold
+def _signal_available(
+    *, composition_action_signal: FloatND, threshold: FloatND
+) -> BoolND:
+    return composition_action_signal > threshold
 
 
-def _signal_adjustment(*, eps: FloatND, exit_signal: FloatND, fee: FloatND) -> FloatND:
-    return eps + exit_signal - fee
+def _signal_adjustment(
+    *, eps: FloatND, composition_action_signal: FloatND, fee: FloatND
+) -> FloatND:
+    return eps + composition_action_signal - fee
 
 
-def test_exit_observed_shock_and_helper_reads_are_not_parameters() -> None:
-    """Exit callback ancestors retain physical shock operands and helper slots."""
+def test_composition_action_observed_shock_and_helper_reads_are_not_parameters() -> (
+    None
+):
+    """Composition action callback ancestors keep physical shock operands.
+
+    They also keep their helper slots.
+    """
     from lcm.shocks import GaussHermite, Normal, Product, ShockGroup  # noqa: PLC0415
     from lcm.typing import ScalarInt  # noqa: PLC0415
 
@@ -440,17 +501,20 @@ def test_exit_observed_shock_and_helper_reads_are_not_parameters() -> None:
     model = Model(
         regimes={
             "source": lcm.Regime(
-                functions={"utility": _utility, "exit_signal": _exit_signal},
+                functions={
+                    "utility": _utility,
+                    "composition_action_signal": _composition_action_signal,
+                },
                 shocks=("innovation",),
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
                             regime="target",
                             projection={},
                             utility_adjustment=_signal_adjustment,
                         )
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                     available=_signal_available,
                 ),
             ),
@@ -468,26 +532,31 @@ def test_exit_observed_shock_and_helper_reads_are_not_parameters() -> None:
         edges={},
     )
     source = model.get_params_template()["source"]
-    assert source["exit_signal"] == {"signal_scale": "FloatND"}
-    assert source["exit"] == {
+    assert source["composition_action_signal"] == {"signal_scale": "FloatND"}
+    assert source["composition_action"] == {
         "available": {"threshold": "FloatND"},
-        "targets": {"self": {"utility_adjustment": {"fee": "FloatND"}}},
+        "destinations": {"self": {"utility_adjustment": {"fee": "FloatND"}}},
     }
 
 
 def test_shared_projection_object_remains_phase_invariant() -> None:
-    """Snapshotting one explicitly shared settlement preserves replay identity."""
+    """Snapshotting one explicitly shared transfer preserves replay identity."""
     projection = {"wealth": _half}
-    target = ExitTarget(
+    target = Destination(
         regime="single", projection=lcm.Phased(solve=projection, simulate=projection)
     )
     assert isinstance(target.projection, lcm.Phased)
     assert target.projection.solve is target.projection.simulate
 
 
-@pytest.mark.parametrize("change", ["settlement", "information", "rule"])
-def test_exit_declarations_enter_durable_model_identity(change: str) -> None:
-    """Stored solutions identify exit settlements, information and decision rules."""
+@pytest.mark.parametrize("change", ["transfer", "information", "rule"])
+def test_composition_action_declarations_enter_durable_model_identity(
+    change: str,
+) -> None:
+    """Stored solutions identify each part of a composition action.
+
+    The parts are its transfers, its information and its decision rule.
+    """
     from dataclasses import replace  # noqa: PLC0415
 
     from _lcm.regime_law import bind_regime_law  # noqa: PLC0415
@@ -496,27 +565,31 @@ def test_exit_declarations_enter_durable_model_identity(change: str) -> None:
         _semantic_fingerprint,
     )
 
-    base = Exit(
-        targets={"self": ExitTarget(regime="single", projection={"wealth": _half})},
-        rule=Unilateral(),
+    base = CompositionAction(
+        destinations={
+            "self": Destination(regime="single", projection={"wealth": _half})
+        },
+        rule=PCOnActions(),
     )
-    if change == "settlement":
+    if change == "transfer":
         changed = replace(
             base,
-            targets={
-                "self": ExitTarget(regime="single", projection={"wealth": _settlement})
+            destinations={
+                "self": Destination(regime="single", projection={"wealth": _transfer})
             },
         )
     elif change == "information":
         changed = replace(base, observes=("offer",))
     else:
-        changed = replace(base, rule=Unilateral(tie="leave"))
-    regime = lcm.Regime(functions={"utility": _utility}, exit=base)
+        changed = replace(base, rule=PCOnActions(tie="leave"))
+    regime = lcm.Regime(functions={"utility": _utility}, composition_action=base)
     law = bind_regime_law(None)
     assert _semantic_fingerprint(
         _project_user_regime_declaration(regime, law=law)
     ) != _semantic_fingerprint(
-        _project_user_regime_declaration(regime.replace(exit=changed), law=law)
+        _project_user_regime_declaration(
+            regime.replace(composition_action=changed), law=law
+        )
     )
 
 
@@ -529,10 +602,10 @@ def _never_available() -> bool:
 
 
 @pytest.mark.parametrize("available", [_only_period_one, _never_available])
-def test_exit_time_only_availability_can_exclude_inactive_contexts(
+def test_composition_action_time_only_availability_can_exclude_inactive_contexts(
     available: lcm.typing.UserFunction,
 ) -> None:
-    """An unavailable exit does not require an inactive destination policy."""
+    """An unavailable composition action needs no inactive destination policy."""
     from lcm.typing import ScalarInt  # noqa: PLC0415
 
     @lcm.categorical(ordered=False)
@@ -544,9 +617,9 @@ def test_exit_time_only_availability_can_exclude_inactive_contexts(
         regimes={
             "source": lcm.Regime(
                 functions={"utility": _utility},
-                exit=Exit(
-                    targets={"self": ExitTarget(regime="later", projection={})},
-                    rule=Unilateral(),
+                composition_action=CompositionAction(
+                    destinations={"self": Destination(regime="later", projection={})},
+                    rule=PCOnActions(),
                     available=available,
                 ),
             ),
@@ -557,7 +630,9 @@ def test_exit_time_only_availability_can_exclude_inactive_contexts(
         initial_nodes=lcm.InitialNodes(by_period={0: "source", 1: "later"}),
         edges={"later": {"source": lcm.Periods(values=(1,))}},
     )
-    assert model.get_params_template()["source"]["exit"] == {"available": {}}
+    assert model.get_params_template()["source"]["composition_action"] == {
+        "available": {}
+    }
 
 
 def _kind(kind: IntND) -> IntND:
@@ -568,11 +643,11 @@ def _double(wealth: FloatND) -> FloatND:
     return 2 * wealth
 
 
-def test_exit_without_pruned_states_returns_an_exit_with_nothing_to_drop() -> None:
+def test_without_pruned_states_returns_the_action_with_nothing_to_drop() -> None:
     """Where no destination prunes a projected state, the declaration itself returns."""
-    declaration = Exit(
-        targets={
-            "self": ExitTarget(
+    declaration = CompositionAction(
+        destinations={
+            "self": Destination(
                 regime="couple", role="f", projection={"wealth": _half, "kind": _kind}
             )
         },
@@ -583,29 +658,29 @@ def test_exit_without_pruned_states_returns_an_exit_with_nothing_to_drop() -> No
         ),
     )
     pruned = {"single_f": frozenset({"kind"}), "single_m": frozenset({"kind"})}
-    assert exit_without_pruned_states(declaration=declaration, pruned=pruned) is (
-        declaration
-    )
+    assert composition_action_without_pruned_states(
+        declaration=declaration, pruned=pruned
+    ) is (declaration)
 
 
-def test_exit_without_pruned_states_drops_a_target_s_pruned_state_only() -> None:
+def test_without_pruned_states_drops_a_destination_s_pruned_state_only() -> None:
     """The projection onto the pruned `kind` goes; wealth and health stay in order."""
-    declaration = Exit(
-        targets={
-            "self": ExitTarget(
+    declaration = CompositionAction(
+        destinations={
+            "self": Destination(
                 regime="single",
                 projection={"wealth": _half, "kind": _kind, "health": _double},
             )
         },
         rule=_UNILATERAL,
     )
-    result = exit_without_pruned_states(
+    result = composition_action_without_pruned_states(
         declaration=declaration, pruned={"single": frozenset({"kind"})}
     )
     assert result is not None
     assert tuple(
         cast(
-            "Mapping[StateName, UserFunction]", result.targets["self"].projection
+            "Mapping[StateName, UserFunction]", result.destinations["self"].projection
         ).items()
     ) == (
         ("wealth", _half),
@@ -613,13 +688,13 @@ def test_exit_without_pruned_states_drops_a_target_s_pruned_state_only() -> None
     )
 
 
-def test_exit_without_pruned_states_drops_by_each_destination_s_own_pruning() -> None:
+def test_without_pruned_states_drops_by_each_destination_s_own_pruning() -> None:
     """The counterparty's single prunes `kind` and loses its projection onto it; the
     couple carries `kind` and keeps the target's projection onto the same name.
     """
-    declaration = Exit(
-        targets={
-            "self": ExitTarget(
+    declaration = CompositionAction(
+        destinations={
+            "self": Destination(
                 regime="couple", role="f", projection={"kind": _kind, "wealth": _half}
             )
         },
@@ -629,7 +704,7 @@ def test_exit_without_pruned_states_drops_by_each_destination_s_own_pruning() ->
             )
         ),
     )
-    result = exit_without_pruned_states(
+    result = composition_action_without_pruned_states(
         declaration=declaration,
         pruned={
             "single_f": frozenset({"kind"}),
@@ -641,7 +716,10 @@ def test_exit_without_pruned_states_drops_by_each_destination_s_own_pruning() ->
     assert isinstance(result.rule, Consent)
     assert (
         tuple(
-            cast("Mapping[StateName, UserFunction]", result.targets["self"].projection)
+            cast(
+                "Mapping[StateName, UserFunction]",
+                result.destinations["self"].projection,
+            )
         ),
         tuple(
             cast(
@@ -651,13 +729,13 @@ def test_exit_without_pruned_states_drops_by_each_destination_s_own_pruning() ->
     ) == (("kind", "wealth"), ("wealth",))
 
 
-def test_exit_without_pruned_states_drops_a_phased_projection_by_phase() -> None:
-    """Each settlement loses its projection onto the pruned `kind`, and keeps its own
+def test_without_pruned_states_drops_a_phased_projection_by_phase() -> None:
+    """Each transfer loses its projection onto the pruned `kind`, and keeps its own
     projection onto wealth, as a `Phased` projection.
     """
-    declaration = Exit(
-        targets={
-            "self": ExitTarget(
+    declaration = CompositionAction(
+        destinations={
+            "self": Destination(
                 regime="single",
                 projection=lcm.Phased(
                     solve={"wealth": _half, "kind": _kind},
@@ -667,11 +745,11 @@ def test_exit_without_pruned_states_drops_a_phased_projection_by_phase() -> None
         },
         rule=_UNILATERAL,
     )
-    result = exit_without_pruned_states(
+    result = composition_action_without_pruned_states(
         declaration=declaration, pruned={"single": frozenset({"kind"})}
     )
     assert result is not None
-    projection = result.targets["self"].projection
+    projection = result.destinations["self"].projection
     assert isinstance(projection, lcm.Phased)
     assert (dict(projection.solve), dict(projection.simulate)) == (
         {"wealth": _half},
@@ -744,12 +822,17 @@ def _halve_gain(gain: FloatND) -> FloatND:
 
 
 _DIFFERS = ", which differs between solve and simulation"
-_PAYMENT = "The payment of the exit from regime 'couple' to target 'f_alone' reads "
-_AVAILABLE = "The availability condition of the exit from regime 'couple' reads "
-_DEFAULT = "The settlement default of the exit from regime 'couple' reads "
+_PAYMENT = (
+    "The payment of the composition action from regime 'couple' to destination "
+    "'f_alone' reads "
+)
+_AVAILABLE = (
+    "The availability condition of the composition action from regime 'couple' reads "
+)
+_DEFAULT = "The transfer default of the composition action from regime 'couple' reads "
 _PROJECTION = (
-    "The projection of the exit from regime 'couple' to target 'f_alone' is "
-    "declared `Phased` and reads the settlement 'division'"
+    "The projection of the composition action from regime 'couple' to destination "
+    "'f_alone' is declared `Phased` and reads the transfer 'division'"
 )
 
 
@@ -767,14 +850,14 @@ _PROJECTION = (
     ],
     ids=["payment", "helper", "carried", "law", "available", "default", "projection"],
 )
-def test_exit_payments_and_conditions_are_common_to_solve_and_simulation(
+def test_composition_action_payments_and_conditions_are_common_to_solve_and_simulation(
     *, form: str, message: str, differs: bool
 ) -> None:
     """A payment, default or availability reading a phase-dependent name is refused.
 
-    So is a `Phased` projection reading the settlement. The same declaration builds
+    So is a `Phased` projection reading the transfer. The same declaration builds
     when the name it reads is the same in both phases, beside a member utility that
-    differs, and so does a `Phased` projection reading no settlement.
+    differs, and so does a `Phased` projection reading no transfer.
     """
     from lcm import (  # noqa: PLC0415
         AgeGrid,
@@ -783,7 +866,7 @@ def test_exit_payments_and_conditions_are_common_to_solve_and_simulation(
         MutualConsent,
         Phased,
         Regime,
-        Settlement,
+        Transfer,
         fixed_transition,
     )
     from lcm.regime import (  # noqa: PLC0415
@@ -846,17 +929,17 @@ def test_exit_payments_and_conditions_are_common_to_solve_and_simulation(
                         ),
                         **helpers,
                     },
-                    exit=Exit(
-                        targets={
-                            "f": ExitTarget(
+                    composition_action=CompositionAction(
+                        destinations={
+                            "f": Destination(
                                 regime="f_alone",
                                 projection=projection,
                                 utility_adjustment=payment,
                             ),
-                            "m": ExitTarget(regime="m_alone", projection={}),
+                            "m": Destination(regime="m_alone", projection={}),
                         },
                         rule=MutualConsent(
-                            settle=Settlement(
+                            transfer=Transfer(
                                 name="division",
                                 candidates=grid,
                                 default=_pays_penalty
@@ -865,7 +948,7 @@ def test_exit_payments_and_conditions_are_common_to_solve_and_simulation(
                             )
                         )
                         if form in {"default", "projection"}
-                        else Unilateral(),
+                        else PCOnActions(),
                         available=_open_at_penalty if form == "available" else None,
                     ),
                 ),

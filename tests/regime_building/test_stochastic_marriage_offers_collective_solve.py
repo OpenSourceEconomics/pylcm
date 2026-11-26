@@ -17,7 +17,7 @@ in the engine: a spouse-type offer, drawn via a `StochasticTransition` on a
 target-only state conditioned on the single's own education, entering a
 collective target through an always-open gate that names the single's role.
 `test_stochastic_marriage_offer_*` proves this composition numerically,
-hand-computed. Consent to the match is decided by an `Exit` of the single
+hand-computed. Consent to the match is decided by a `CompositionAction` of the single
 before any transition draw (see `lcm_examples.collective_household`), so it is
 not part of this composition. `test_job_offer_gates_...` pins the
 adjacent (already-generic) claim that ordinary discrete stochastic states can

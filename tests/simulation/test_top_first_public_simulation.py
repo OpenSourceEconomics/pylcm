@@ -33,7 +33,7 @@ def test_full_cohort_is_profiled_once_before_dispatch_on_each_public_call(
         regime_id_class=_LifecycleRegimeId,
         execution_config=ExecutionConfig(
             devices=(jax.devices()[0].id,),
-            axis_widths={"subject": 2},
+            axis_widths={"agent": 2},
             device_memory_bytes=2**32,
         ),
         initial_nodes=initial_nodes_of(model=base),
@@ -43,12 +43,12 @@ def test_full_cohort_is_profiled_once_before_dispatch_on_each_public_call(
     profiles: list[int] = []
     chunks: list[int] = []
     profile_widths = admission._ChunkProfiler.profile_widths
-    run_chunk = simulation._simulate_subject_chunk
+    run_chunk = simulation._simulate_agent_chunk
 
     def observe_profile(
         self: admission._ChunkProfiler, **kwargs: Unpack[WidthProfileInputs]
     ) -> SimulationChunkProfile:
-        profiles.append(kwargs["n_subjects"])
+        profiles.append(kwargs["n_agents"])
         return profile_widths(self, **kwargs)
 
     def observe_chunk(**kwargs: Unpack[SimulationChunkInputs]) -> ChunkResults:
@@ -58,7 +58,7 @@ def test_full_cohort_is_profiled_once_before_dispatch_on_each_public_call(
         return run_chunk(**kwargs)
 
     monkeypatch.setattr(admission._ChunkProfiler, "profile_widths", observe_profile)
-    monkeypatch.setattr(simulation, "_simulate_subject_chunk", observe_chunk)
+    monkeypatch.setattr(simulation, "_simulate_agent_chunk", observe_chunk)
     for _ in range(2):
         result = model.simulate(
             params=params,
@@ -71,7 +71,7 @@ def test_full_cohort_is_profiled_once_before_dispatch_on_each_public_call(
             seed=17,
             log_level="off",
         )
-        assert result.n_subjects == 7
+        assert result.n_agents == 7
         del result
     # Compiled programs may be reused; current-call admission is never skipped.
     assert profiles == [7, 7]

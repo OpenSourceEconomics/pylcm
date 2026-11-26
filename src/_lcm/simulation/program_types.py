@@ -17,15 +17,15 @@ from typing import Protocol, runtime_checkable
 
 from _lcm.execution.core_program import CoreBuildContext, CoreProgram, TiledOutputAxis
 from _lcm.execution.output_layout import OutputRoleTree
-from _lcm.simulation.subject_groups import SubjectGroupingRoute
+from _lcm.simulation.agent_groups import AgentGroupingRoute
 from _lcm.typing import PytreeValue, RegimeName, ShapeDtypePytree, StateOrActionName
 from lcm.typing import ReferenceName
 
-# Planner name of the per-subject axis every simulation program tiles.
-SUBJECT_AXIS = "subject"
+# Planner name of the per-agent axis every simulation program tiles.
+AGENT_AXIS = "agent"
 
 # Keyword each simulation program body accepts for the planner-bound tile width.
-SUBJECT_WIDTH_KEYWORD = "__lcm_subject_width__"
+AGENT_WIDTH_KEYWORD = "__lcm_agent_width__"
 
 # Graph key of the one program each simulation family publishes per period.
 DECISION_PROGRAM = "simulate_decision"
@@ -60,13 +60,13 @@ GATED_REGIME_ID = "gated_regime_id"
 GATED_ROLE = "gated_role"
 GATED_ROUTE_MASK = "gated_route_mask"
 
-# Subject count a declared tile axis carries until the lowering path rebinds it.
+# Agent count a declared tile axis carries until the lowering path rebinds it.
 #
 # The population is a runtime fact — it arrives with the initial conditions and
 # is chunked per call — while the declaration is built once, at model build. The
 # lowering path replaces the axis with the chunk width it lowers for, so this
 # value never reaches a compiled program.
-UNRESOLVED_SUBJECT_EXTENT = 1
+UNRESOLVED_AGENT_EXTENT = 1
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -74,7 +74,7 @@ class SimulationBuildContext(CoreBuildContext):
     """Complete dynamic arguments for one forward program invocation."""
 
     call_arguments: MappingProxyType[ReferenceName, PytreeValue | ShapeDtypePytree]
-    """Subject states, action operands, parameters, keys and addressed value reads."""
+    """Agent states, action operands, parameters, keys and addressed value reads."""
 
 
 @runtime_checkable
@@ -87,21 +87,21 @@ class SimulationProgramExecutor(Protocol):
         program: CoreProgram,
         arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
-        n_subjects: int,
+        n_agents: int,
     ) -> PytreeValue:
         """Select and invoke the executable for this argument signature."""
         ...
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
-class _PerSubjectFunction:
-    """One simulation body at a single subject's state cell."""
+class _PerAgentFunction:
+    """One simulation body at a single agent's state cell."""
 
     function: Callable[..., PytreeValue]
-    """The body, taking one subject's states and actions as scalars."""
+    """The body, taking one agent's states and actions as scalars."""
 
-    subject_arg_names: tuple[ReferenceName, ...]
-    """Arguments carrying a per-subject leading axis, which the tile splits."""
+    agent_arg_names: tuple[ReferenceName, ...]
+    """Arguments carrying a per-agent leading axis, which the tile splits."""
 
     output_roles: OutputRoleTree
     """Role tree of the same structure as the body's output, one role per leaf."""
@@ -157,8 +157,8 @@ class SimulationPrograms:
     utility and the certainty-equivalent continuation, for policy lookup. A
     regime with taste shocks publishes, in place of the decision's pair, the
     smoothed maximum, the conditional values, the choice probabilities and the
-    conditional continuous action. Empty for a household without taste
-    shocks.
+    conditional continuous action. Empty for a regime with several
+    members and without taste shocks.
     Compiled only when dispatched."""
 
     exit_full: MappingProxyType[int, CoreProgram] = dataclasses.field(
@@ -171,8 +171,8 @@ class SimulationPrograms:
     )
     """Final actors' Participating decisions after once-only routing/revelation."""
 
-    grouping: SubjectGroupingRoute | None = None
-    """The invariant state forward simulation groups subjects by, or `None`."""
+    grouping: AgentGroupingRoute | None = None
+    """The invariant state forward simulation groups agents by, or `None`."""
 
     executor: SimulationProgramExecutor | None = None
     """Call-local lowering and dispatch owner, absent from model declarations."""
@@ -181,7 +181,7 @@ class SimulationPrograms:
     def forward_decision(self) -> MappingProxyType[int, CoreProgram]:
         """Return the decision forward simulation dispatches at each period.
 
-        On the grouped route every subject of a dispatch holds one code of the
+        On the grouped route every agent of a dispatch holds one code of the
         grouping state, so the type-local decision replaces the ordinary one
         wherever it is declared.
         """
@@ -216,11 +216,11 @@ def route_output_roles(
     return MappingProxyType(dict.fromkeys(target_regime_names, REGIME_TRANSITION_PROB))
 
 
-def subject_axis(*, state_names: tuple[StateOrActionName, ...]) -> TiledOutputAxis:
-    """Declare the per-subject axis a simulation program tiles."""
+def agent_axis(*, state_names: tuple[StateOrActionName, ...]) -> TiledOutputAxis:
+    """Declare the per-agent axis a simulation program tiles."""
     return TiledOutputAxis(
-        name=SUBJECT_AXIS,
+        name=AGENT_AXIS,
         state_names=state_names,
-        extent=UNRESOLVED_SUBJECT_EXTENT,
-        width_keyword=SUBJECT_WIDTH_KEYWORD,
+        extent=UNRESOLVED_AGENT_EXTENT,
+        width_keyword=AGENT_WIDTH_KEYWORD,
     )

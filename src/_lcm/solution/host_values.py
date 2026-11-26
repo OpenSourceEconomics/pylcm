@@ -28,9 +28,9 @@ from lcm.typing import FloatND, RegimeName
 HOST_MEMORY_KIND: Literal["pinned_host"] = "pinned_host"
 
 # Periods whose device copies a read-through view keeps at once: a simulation
-# step reads its own period, the one its subjects land in and, replaying a
-# same-period exit, the one after that; the next period's reads, copied early
-# while this period runs, add one more.
+# step reads its own period, the one its agents land in and, replaying a
+# same-period decision on the composition, the one after that; the next period's
+# reads, copied early while this period runs, add one more.
 _CACHED_PERIODS = 4
 
 # What a read-through view reads from, hands out, and describes to planners: a

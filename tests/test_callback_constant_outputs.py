@@ -1,8 +1,8 @@
 """User functions may return Python scalars where the engine expects arrays.
 
 A felicity (under grid search and every endogenous-grid family), a constraint,
-a next state, a regime-transition probability, a stochastic weight, an exit
-utility adjustment, exit availability, a gate predicate, a
+a next state, a regime-transition probability, a stochastic weight, a composition action
+utility adjustment, composition action availability, a gate predicate, a
 fallback projection, a joint-transition output or probability, a current-IID
 law parameter and a borrowing floor may each return `0`, `0.0`, `True` or an
 array. Each solves and simulates to the same values as its array-returning
@@ -20,9 +20,9 @@ import pytest
 from lcm import (
     AgeGrid,
     ByAge,
+    CompositionAction,
+    Destination,
     DiscreteGrid,
-    Exit,
-    ExitTarget,
     Gate,
     InitialNodes,
     IrregSpacedGrid,
@@ -40,8 +40,8 @@ from lcm import (
     ref,
 )
 from lcm.collective import CollectiveUtility
+from lcm.composition_actions import PCOnActions
 from lcm.exceptions import InvalidFunctionOutputError, InvalidValueFunctionError
-from lcm.exits import Unilateral
 from lcm.regime import StateTransitionEntry
 from lcm.shocks import Discrete, GaussHermite, Normal, Product, ShockGroup
 from lcm.transition import TransitionLaw
@@ -163,7 +163,7 @@ def _simulated(model: Model) -> pd.DataFrame:
     return (
         model.simulate(params=_PARAMS, initial_conditions=_INITIAL, log_level="off")
         .to_dataframe()
-        .sort_values(["subject_id", "period"])
+        .sort_values(["agent_id", "period"])
         .reset_index(drop=True)
     )
 
@@ -437,7 +437,7 @@ def test_constant_per_target_regime_probability(*, form: str) -> None:
             log_level="off",
         )
         .to_dataframe()
-        .sort_values(["subject_id", "period"])
+        .sort_values(["agent_id", "period"])
     )
     np.testing.assert_array_equal(df["regime_name"], ["alive", "final"] * 2)
 
@@ -503,7 +503,7 @@ def _stay(*, wealth: FloatND) -> FloatND:
     return wealth
 
 
-def _exit_model(
+def _composition_action_model(
     *,
     adjustment: UserFunction,
     projection: UserFunction = _stay,
@@ -513,15 +513,15 @@ def _exit_model(
         regimes={
             "source": Regime(
                 functions={"utility": _source_utility},
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
                             regime="target",
                             projection={"wealth": projection},
                             utility_adjustment=adjustment,
                         )
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                     available=available,
                 ),
             ),
@@ -536,14 +536,14 @@ def _exit_model(
 
 
 @pytest.mark.parametrize("form", _NUMBER_FORMS)
-def test_constant_exit_utility_adjustment(*, form: str) -> None:
+def test_constant_composition_action_utility_adjustment(*, form: str) -> None:
     """A zero adjustment leaves the outside option at the target's value."""
     raw = _constant(form=form, value=0)
 
     def adjustment() -> FloatND:
         return raw  # ty: ignore[invalid-return-type]
 
-    model = _exit_model(adjustment=adjustment)
+    model = _composition_action_model(adjustment=adjustment)
     values = model.solve(params={}, log_level="off")
     np.testing.assert_array_equal(values.values[0]["source"][..., 0], [1.0, 1.0, 2.0])
     df = model.simulate(
@@ -555,7 +555,7 @@ def test_constant_exit_utility_adjustment(*, form: str) -> None:
         },
         log_level="off",
     ).to_dataframe()
-    np.testing.assert_array_equal(df.sort_values("subject_id")["value"], [1.0, 2.0])
+    np.testing.assert_array_equal(df.sort_values("agent_id")["value"], [1.0, 2.0])
 
 
 def _floor_values(*, lower: UserFunction, handwritten: bool) -> FloatND:
@@ -605,8 +605,10 @@ def test_constant_borrowing_floor(
 @pytest.mark.parametrize(
     "form", ["python_int", "python_float", "int_array", "float_array"]
 )
-def test_constant_exit_projection_lands_on_its_float_node(*, form: str) -> None:
-    """Projecting every leaver to wealth `2` values the exit at the target's `2.0`."""
+def test_constant_composition_action_projection_lands_on_its_float_node(
+    *, form: str
+) -> None:
+    """Projecting every leaver to wealth `2` values leaving at the target's `2.0`."""
     raw = _constant(form=form, value=2)
 
     def projection() -> FloatND:
@@ -615,12 +617,12 @@ def test_constant_exit_projection_lands_on_its_float_node(*, form: str) -> None:
     def no_adjustment() -> FloatND:
         return jnp.asarray(0.0)
 
-    model = _exit_model(adjustment=no_adjustment, projection=projection)
+    model = _composition_action_model(adjustment=no_adjustment, projection=projection)
     values = model.solve(params={}, log_level="off").values
     np.testing.assert_array_equal(values[0]["source"][..., 0], [2.0, 2.0, 2.0])
 
 
-def test_boolean_exit_projection_is_refused() -> None:
+def test_boolean_composition_action_projection_is_refused() -> None:
     """A projection onto a continuous state returns a number, not a comparison."""
 
     def projection() -> FloatND:
@@ -629,7 +631,7 @@ def test_boolean_exit_projection_is_refused() -> None:
     def no_adjustment() -> FloatND:
         return jnp.asarray(0.0)
 
-    model = _exit_model(adjustment=no_adjustment, projection=projection)
+    model = _composition_action_model(adjustment=no_adjustment, projection=projection)
     with pytest.raises(
         InvalidFunctionOutputError,
         match=r"^The projection of state 'wealth' returned dtype 'bool'",
@@ -707,10 +709,10 @@ def _no_adjustment() -> FloatND:
 @pytest.mark.parametrize("value", [0, 1])
 @pytest.mark.parametrize("form", _BOOLEAN_FORMS)
 @pytest.mark.parametrize("reads_state", [False, True])
-def test_constant_exit_availability(
+def test_constant_composition_action_availability(
     *, value: int, form: str, reads_state: bool
 ) -> None:
-    """Availability `True` or `False` opens or closes the exit."""
+    """Availability `True` or `False` opens or closes the composition action."""
     raw = _constant(form=form, value=value)
 
     def constant() -> BoolND:
@@ -719,7 +721,7 @@ def test_constant_exit_availability(
     def by_state(*, wealth: FloatND) -> BoolND:  # noqa: ARG001
         return raw  # ty: ignore[invalid-return-type]
 
-    model = _exit_model(
+    model = _composition_action_model(
         adjustment=_no_adjustment, available=by_state if reads_state else constant
     )
     values = model.solve(params={}, log_level="off").values[0]["source"][..., 0]
@@ -727,17 +729,17 @@ def test_constant_exit_availability(
 
 
 @pytest.mark.parametrize("form", ["python_int", "int_array", "float_array"])
-def test_numeric_exit_availability_is_refused(*, form: str) -> None:
+def test_numeric_composition_action_availability_is_refused(*, form: str) -> None:
     """An availability `1` is a number, not a Boolean, and is refused."""
     raw = _constant(form=form, value=1)
 
     def availability(*, wealth: FloatND) -> BoolND:  # noqa: ARG001
         return raw  # ty: ignore[invalid-return-type]
 
-    model = _exit_model(adjustment=_no_adjustment, available=availability)
+    model = _composition_action_model(adjustment=_no_adjustment, available=availability)
     with pytest.raises(
         InvalidFunctionOutputError,
-        match=r"^Exit availability 'availability' returned dtype",
+        match=r"^Composition action availability 'availability' returned dtype",
     ):
         model.solve(params={}, log_level="off")
 
@@ -800,7 +802,7 @@ def _gated_values(model: Model) -> np.ndarray:
 
 
 def _gated_landings(model: Model) -> pd.DataFrame:
-    """Each subject's regime and wealth in the period after the gated edge."""
+    """Each agent's regime and wealth in the period after the gated edge."""
     frame = model.simulate(
         params={"discount_factor": 1.0},
         initial_conditions={
@@ -810,7 +812,7 @@ def _gated_landings(model: Model) -> pd.DataFrame:
         },
         log_level="off",
     ).to_dataframe()
-    landed = frame[frame["period"] == 1].sort_values("subject_id")
+    landed = frame[frame["period"] == 1].sort_values("agent_id")
     return landed[["regime_name", "wealth"]].reset_index(drop=True)
 
 
@@ -987,7 +989,7 @@ def _joint_landings(model: Model) -> pd.DataFrame:
 
 @pytest.mark.parametrize("form", _NUMBER_FORMS)
 def test_constant_joint_transition_output(*, form: str) -> None:
-    """A joint output `1` lands every subject on wealth 1.0."""
+    """A joint output `1` lands every agent on wealth 1.0."""
     raw = _constant(form=form, value=1)
 
     def wealth() -> FloatND:
@@ -1195,13 +1197,13 @@ def test_boolean_discrete_next_state_names_codes_zero_and_one() -> None:
     np.testing.assert_array_equal(values.values[0]["alive"][..., 0], [1.0, 1.0])
 
 
-def test_boolean_exit_utility_adjustment_is_refused() -> None:
-    """An exit's utility adjustment is a number, not a comparison."""
+def test_boolean_composition_action_utility_adjustment_is_refused() -> None:
+    """A composition action's utility adjustment is a number, not a comparison."""
 
     def adjustment() -> FloatND:
         return True  # ty: ignore[invalid-return-type]
 
-    model = _exit_model(adjustment=adjustment)
+    model = _composition_action_model(adjustment=adjustment)
     with pytest.raises(
         InvalidFunctionOutputError, match="returned dtype 'bool', but must return a"
     ):

@@ -62,15 +62,15 @@ def test_uniform_controls_preserve_both_historical_mutation_populations() -> Non
     assert len(historical) == 345
     assert (
         _name_digest(historical)
-        == "3682587108e4a0ca73e145c5a69fe037fd238096c1ac23a2e2b6a5373d7fb449"
+        == "beec45a5615b3b5e9f48bfa84169d60aa238955c3f27021e6020e7fff336bdd3"
     )
     assert len(registered) == 362
     assert _name_digest(registered) == (
-        "1addb68c5045e4d9cb0ba5d1a9a56d78bff3d135f1f6f8e115ec1520634e8c8b"
+        "06e2d12297b5811c6808bdd7056ee03ab896f19a8b48ddbd0cdcfa043fdf882c"
     )
     assert len(supplemental) == 94
     assert _name_digest(supplemental) == (
-        "f8f427f6dbbee3f52840b8e77e9fa36344a5131be9e1ed24e874523b09cf1673"
+        "7608b456ddbde38de63537034bbecdfdaa3f443b84ced77ed1e6ea1a558679ba"
     )
     assert len(uniform) == 37
     assert _name_digest(uniform) == (

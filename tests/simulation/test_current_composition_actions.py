@@ -1,4 +1,4 @@
-"""Current exits choose with caller information and act once after revelation."""
+"""Composition actions choose with caller information and act once after revelation."""
 
 import math
 from functools import partial
@@ -19,28 +19,28 @@ from _lcm.execution.workspace_planning import BOOTSTRAP_TILE_WIDTH_CAP
 from _lcm.params.edges import regime_kernel_params
 from _lcm.regime_building import processing
 from _lcm.simulation.chunk_profiles import profile_simulation_chunk
-from _lcm.simulation.exits import (
-    ExitRoute,
-    OriginalExitOutput,
-    ParticipatingExitOutput,
-    _BatchedExitDecision,
-    route_original_subjects,
+from _lcm.simulation.composition_actions import (
+    CompositionRoute,
+    OriginalCompositionOutput,
+    ParticipatingCompositionOutput,
+    _BatchedCompositionDecision,
+    route_original_agents,
 )
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.random_address import (
     RandomAddress,
     draw_window_keys,
-    encode_subject_row,
+    encode_agent_row,
 )
 from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_by_device
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.typing import PytreeValue
 from lcm import (
+    CompositionAction,
+    Destination,
     DiscreteGrid,
     ExecutionConfig,
-    Exit,
-    ExitTarget,
     InitialNodes,
     LinSpacedGrid,
     Model,
@@ -49,11 +49,11 @@ from lcm import (
     Regime,
     categorical,
 )
+from lcm.composition_actions import CompositionRule, PCOnActions
 from lcm.exceptions import (
     InvalidSimulationInputError,
     ShockDeclarationError,
 )
-from lcm.exits import ExitRule, Unilateral
 from lcm.shocks import (
     BaseInnovations,
     Discrete,
@@ -67,7 +67,10 @@ from lcm.typing import BoolND, FloatND, RegimeName, ScalarInt
 from tests.conftest import DECIMAL_PRECISION, assert_agrees_to_ulp
 from tests.simulation._callback_types import HostDispatch, RuntimeDispatch
 from tests.simulation.test_aot_collective_and_gated import _capture_compiled_dispatches
-from tests.solution.test_public_exit_queries import _household, _rule_model
+from tests.solution.test_public_composition_action_queries import (
+    _household,
+    _rule_model,
+)
 
 
 @categorical(ordered=False)
@@ -102,9 +105,9 @@ def _addressed_taste_actions(*, regime: RegimeName, values: FloatND) -> np.ndarr
         address_words=np.asarray(
             RandomAddress(kind="taste", name=regime).words(), dtype=np.uint32
         ),
-        subject_start=encode_subject_row(row=0),
-        last_real_subject=encode_subject_row(row=11),
-        subject_count=12,
+        agent_start=encode_agent_row(row=0),
+        last_real_agent=encode_agent_row(row=11),
+        agent_count=12,
         period=0,
     )
     noise = jax.vmap(
@@ -117,9 +120,9 @@ def _addressed_taste_actions(*, regime: RegimeName, values: FloatND) -> np.ndarr
 def test_opposing_routes_read_original_membership_and_coordinates(
     *, reverse: bool
 ) -> None:
-    """An entrant cannot take the destination's original occupants' exit."""
+    """An entrant cannot take the composition action of the original occupants."""
     routes = (
-        ExitRoute(
+        CompositionRoute(
             source="source",
             target="target",
             identifier=1,
@@ -127,7 +130,7 @@ def test_opposing_routes_read_original_membership_and_coordinates(
             target_role=-1,
             projection="outward",
         ),
-        ExitRoute(
+        CompositionRoute(
             source="target",
             target="source",
             identifier=1,
@@ -136,7 +139,7 @@ def test_opposing_routes_read_original_membership_and_coordinates(
             projection="inward",
         ),
     )
-    ids, _, states, moved, paid = route_original_subjects(
+    ids, _, states, moved, paid = route_original_agents(
         original_regime_ids=jnp.asarray([0, 1, 0], dtype=jnp.int32),
         original_roles=jnp.full(3, -1, dtype=jnp.int32),
         original_states={
@@ -189,7 +192,7 @@ def _shock_location(*, wealth: FloatND) -> FloatND:
 def test_mover_rows_publish_original_current_shocks(
     *, enable_jit: bool, n_periods: int
 ) -> None:
-    """Mover rows retain the exit's draw."""
+    """Mover rows retain the composition action's draw."""
     wealth = LinSpacedGrid(start=0, stop=5, n_points=3)
     model = Model(
         regimes={
@@ -198,9 +201,9 @@ def test_mover_rows_publish_original_current_shocks(
                 functions={"utility": _source_shock_flow},
                 shocks=("innovation",),
                 state_transitions={"wealth": _shock_location} if n_periods > 1 else {},
-                exit=Exit(
-                    targets={"self": ExitTarget(regime="target", projection={})},
-                    rule=Unilateral(),
+                composition_action=CompositionAction(
+                    destinations={"self": Destination(regime="target", projection={})},
+                    rule=PCOnActions(),
                     available=_first_period,
                 ),
             ),
@@ -258,14 +261,14 @@ def test_mover_rows_publish_original_current_shocks(
             runtime_checks=False,
         )
         .to_dataframe(use_categorical_codes=True)
-        .sort_values("subject_id")
+        .sort_values("agent_id")
     )
     entry = frame.loc[frame["period"] == 0]
     np.testing.assert_array_equal(entry["regime_name"], ["target", "source"])
     assert_array_almost_equal(entry["value"], [5.0, 10.0], decimal=DECIMAL_PRECISION)
     assert_array_almost_equal(entry["eps"], [0.0, 5.0], decimal=DECIMAL_PRECISION)
     if n_periods > 1:
-        later = frame.loc[(frame["period"] > 0) & (frame["subject_id"] == 0)]
+        later = frame.loc[(frame["period"] > 0) & (frame["agent_id"] == 0)]
         assert len(later) == n_periods - 1
         assert later["eps"].isna().all()
 
@@ -274,7 +277,7 @@ def test_mover_rows_publish_original_current_shocks(
     backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
 )
 @pytest.mark.parametrize("use_categorical_codes", [False, True])
-def test_exit_source_observations_keep_discrete_codes_and_labels(
+def test_composition_action_source_observations_keep_discrete_codes_and_labels(
     *, use_categorical_codes: bool
 ) -> None:
     """Observed source draws retain their category meaning on both final actors."""
@@ -296,18 +299,18 @@ def test_exit_source_observations_keep_discrete_codes_and_labels(
     )
     frame = result.to_dataframe(
         use_categorical_codes=use_categorical_codes
-    ).sort_values("subject_id")
+    ).sort_values("agent_id")
     np.testing.assert_array_equal(
         frame["offer"], [0, 1, 0] if use_categorical_codes else ["low", "high", "low"]
     )
     np.testing.assert_array_equal(
-        frame.loc[frame["subject_id"] == 1, "source__offer"],
+        frame.loc[frame["agent_id"] == 1, "source__offer"],
         [1] if use_categorical_codes else ["high"],
     )
     source_codes = result.raw_results["target"][0].shocks["source__offer"]
     assert source_codes.dtype == jnp.int32
     np.testing.assert_array_equal(source_codes, [0, 1, -1])
-    assert frame.loc[frame["subject_id"] == 2, "source__offer"].isna().all()
+    assert frame.loc[frame["agent_id"] == 2, "source__offer"].isna().all()
 
 
 def _target(*, offer: ScalarInt, choice: ScalarInt) -> FloatND:
@@ -335,15 +338,15 @@ def _hidden_offer_model(
             "source": Regime(
                 functions={"utility": _stay},
                 shocks=("unused",) if permit_unused else (),
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
                             regime="target",
                             projection={},
                             utility_adjustment=_adjustment,
                         )
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                     observes=("offer",) if observed else (),
                 ),
             ),
@@ -393,7 +396,7 @@ def _hidden_offer_model(
     backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
 )
 @pytest.mark.parametrize("enable_jit", [False, True])
-def test_hidden_target_reveals_action_and_value_after_irrevocable_exit(
+def test_hidden_target_reveals_action_and_value_after_irrevocable_composition_action(
     *,
     enable_jit: bool,
 ) -> None:
@@ -423,7 +426,7 @@ def test_hidden_target_reveals_action_and_value_after_irrevocable_exit(
     )
 
 
-def test_original_exit_frame_evaluates_only_demanded_permitted_groups() -> None:
+def test_original_composition_frame_evaluates_only_demanded_permitted_groups() -> None:
     """Permission alone does not execute a law in the occupant's source frame."""
     model = _hidden_offer_model(observed=False, enable_jit=True, permit_unused=True)
     solution = model.solve(params={}, log_level="off", runtime_checks=False)
@@ -443,7 +446,9 @@ def test_original_exit_frame_evaluates_only_demanded_permitted_groups() -> None:
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("entry", [False, True])
-def test_tagged_exit_innovations_preserve_hidden_pricing(*, entry: bool) -> None:
+def test_tagged_composition_action_innovations_preserve_hidden_pricing(
+    *, entry: bool
+) -> None:
     """A supplied low target draw changes the final action, not hidden pricing."""
     model = _hidden_offer_model(observed=False, enable_jit=True)
     initial = {
@@ -486,15 +491,15 @@ def _dated_override_model() -> Model:
             ),
             "source": Regime(
                 functions={"utility": _stay},
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
                             regime="target",
                             projection={},
                             utility_adjustment=_adjustment,
                         )
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                 ),
             ),
             "target": Regime(
@@ -565,7 +570,7 @@ def test_target_only_complete_history_keeps_original_rows(*, physical: bool) -> 
         log_level="off",
         runtime_checks=False,
     ).to_dataframe(use_categorical_codes=True)
-    acting = frame.loc[frame["period"] == 1].sort_values("subject_id")
+    acting = frame.loc[frame["period"] == 1].sort_values("agent_id")
     np.testing.assert_array_equal(acting["regime_name"], "target")
     np.testing.assert_array_equal(acting["offer"], [0, 1, 0])
     np.testing.assert_array_equal(acting["choice"], [0, 1, 0])
@@ -613,14 +618,14 @@ def _correlated_override_utility(
 def test_target_only_correlated_physical_frame_uses_mapped_producer(
     *, complete: bool, runtime_checks: bool
 ) -> None:
-    """A complete low physical frame reveals after exit; partial frames refuse."""
+    """A complete low physical frame reveals after leaving; a partial frame refuses."""
     model = Model(
         regimes={
             "source": Regime(
                 functions={"utility": _stay},
-                exit=Exit(
-                    targets={"self": ExitTarget(regime="target", projection={})},
-                    rule=Unilateral(),
+                composition_action=CompositionAction(
+                    destinations={"self": Destination(regime="target", projection={})},
+                    rule=PCOnActions(),
                 ),
             ),
             "target": Regime(
@@ -723,16 +728,16 @@ def test_observed_target_choice_uses_same_original_innovation(
             runtime_checks=False,
         )
         .to_dataframe(use_categorical_codes=True)
-        .sort_values("subject_id")
+        .sort_values("agent_id")
     )
     keys = draw_window_keys(
         key=jax.random.key(17),
         address_words=np.asarray(
             RandomAddress(kind="shock", name="offer").words(), dtype=np.uint32
         ),
-        subject_start=encode_subject_row(row=0),
-        last_real_subject=encode_subject_row(row=11),
-        subject_count=12,
+        agent_start=encode_agent_row(row=0),
+        last_real_agent=encode_agent_row(row=11),
+        agent_count=12,
         period=0,
     )
     expected_offer = np.asarray(jax.vmap(jax.random.uniform)(keys)) >= 0.5
@@ -750,7 +755,7 @@ def test_observed_target_choice_uses_same_original_innovation(
 @pytest.mark.coverage(
     backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
 )
-def test_exit_replay_uses_compiled_programs_across_original_row_chunks(
+def test_composition_action_replay_uses_compiled_programs_across_original_row_chunks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Actual outer chunks keep the same original-row observations and actions."""
@@ -765,7 +770,7 @@ def test_exit_replay_uses_compiled_programs_across_original_row_chunks(
             "simulate_exit_full",
             "simulate_exit_participating",
         }:
-            seen.add((call["program"].name, call["n_subjects"]))
+            seen.add((call["program"].name, call["n_agents"]))
         return native_dispatch(self, **call)
 
     monkeypatch.setattr(SimulationRuntime, "dispatch", observe_native)
@@ -775,7 +780,7 @@ def test_exit_replay_uses_compiled_programs_across_original_row_chunks(
             observed=True,
             enable_jit=True,
             execution_config=ExecutionConfig(
-                device_memory_bytes=None, axis_widths={"subject": width}
+                device_memory_bytes=None, axis_widths={"agent": width}
             ),
         )
         solution = model.solve(params={}, log_level="off", runtime_checks=False)
@@ -792,7 +797,7 @@ def test_exit_replay_uses_compiled_programs_across_original_row_chunks(
                 runtime_checks=False,
             )
             .to_dataframe(use_categorical_codes=True)
-            .sort_values("subject_id")
+            .sort_values("agent_id")
             .reset_index(drop=True)
         )
     assert compiled
@@ -807,7 +812,7 @@ def test_exit_replay_uses_compiled_programs_across_original_row_chunks(
 @pytest.mark.coverage(
     backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
 )
-def test_exit_chunk_profile_inventories_native_queries_and_retained_frames() -> None:
+def test_composition_chunk_profile_inventories_native_queries_and_frames() -> None:
     """Outer admission includes the actual once-only route, not just final actions."""
     model = _hidden_offer_model(observed=True, enable_jit=True)
     solution = model.solve(params={}, log_level="off", runtime_checks=False)
@@ -835,17 +840,17 @@ def test_exit_chunk_profile_inventories_native_queries_and_retained_frames() -> 
             "regime_id": jnp.zeros(3, dtype=jnp.int32),
         },
         regime_names_to_ids=model.regime_names_to_ids,
-        n_subjects=3,
+        n_agents=3,
         population=3,
         original_population=3,
-        widths={"subject": 3},
+        widths={"agent": 3},
         independent_taste=False,
         log_level="off",
     )
     assert {
         "core:exit_full",
         "core:exit_participating",
-        "route_original_subjects",
+        "route_original_agents",
         "_original_bases",
         "_answer_status",
         "_final_decision",
@@ -873,7 +878,7 @@ def test_original_innovation_keys_remain_charged_until_routing(
     def observe_host(
         self: ProfiledSimulationOperations, **call: Unpack[HostDispatch]
     ) -> PytreeValue:
-        if call["function"] is route_original_subjects:
+        if call["function"] is route_original_agents:
             assert banks
             missing = resident_bytes_by_device(
                 live=measure_buffer_footprint(tree=tuple(banks)),
@@ -978,9 +983,9 @@ def test_simulated_formation_keeps_nested_mapped_lagged_outside_states() -> None
 @pytest.mark.coverage(
     backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
 )
-def test_hidden_destination_taste_acts_after_strict_exit_without_repricing() -> None:
+def test_hidden_destination_taste_acts_after_strict_leaving_without_repricing() -> None:
     """Source prices log4, commits, then target draws its own unshocked action."""
-    model = _rule_model(rule=Unilateral(tie="leave"), target_taste=True)
+    model = _rule_model(rule=PCOnActions(tie="leave"), target_taste=True)
     solution = model.solve(params={}, log_level="off", runtime_checks=False)
     assert_array_almost_equal(
         solution.values[0]["single_f"], np.log(4.0), decimal=DECIMAL_PRECISION
@@ -1047,16 +1052,16 @@ def _return_fee() -> float:
     return -0.5
 
 
-def _opposing_model(*, rule: ExitRule, reverse: bool = False) -> Model:
+def _opposing_model(*, rule: CompositionRule, reverse: bool = False) -> Model:
     grid = LinSpacedGrid(start=0, stop=100, n_points=3)
     regimes = {
         "source": Regime(
             functions={"utility": _x_flow},
             states={"x": grid},
             state_transitions={"x": _next_x},
-            exit=Exit(
-                targets={
-                    "self": ExitTarget(
+            composition_action=CompositionAction(
+                destinations={
+                    "self": Destination(
                         regime="target",
                         projection={"y": _into_target},
                         utility_adjustment=_adjustment,
@@ -1070,9 +1075,9 @@ def _opposing_model(*, rule: ExitRule, reverse: bool = False) -> Model:
             functions={"utility": _y_flow},
             states={"y": grid},
             state_transitions={"y": _next_y},
-            exit=Exit(
-                targets={
-                    "self": ExitTarget(
+            composition_action=CompositionAction(
+                destinations={
+                    "self": Destination(
                         regime="source",
                         projection={"x": _into_source},
                         utility_adjustment=_return_fee,
@@ -1097,7 +1102,7 @@ def _opposing_model(*, rule: ExitRule, reverse: bool = False) -> Model:
     )
 
 
-def test_reciprocal_unilateral_exits_read_each_other_s_problem() -> None:
+def test_reciprocal_unilateral_composition_actions_read_each_other_s_problem() -> None:
     """Each regime leaves from its lowest cell for the other's problem value.
 
     With discount factor 0.5, a stay is worth `x + 0.5 * (x + 1)` in the source and
@@ -1105,7 +1110,7 @@ def test_reciprocal_unilateral_exits_read_each_other_s_problem() -> None:
     target's problem at y = 10 is worth 16, less the fee 0.25; at y = 0 the source's
     problem at x = 20 is worth 30.5, less the fee 0.5. Every other cell stays.
     """
-    solution = _opposing_model(rule=Unilateral()).solve(
+    solution = _opposing_model(rule=PCOnActions()).solve(
         params={"discount_factor": 0.5}, log_level="off", runtime_checks=False
     )
     assert_array_almost_equal(
@@ -1134,15 +1139,17 @@ def _helper_flow(*, benefit: float) -> float:
 @pytest.mark.coverage(
     backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
 )
-def test_public_exit_replay_uses_simulation_phase_helper_closure() -> None:
+def test_public_composition_action_replay_uses_simulation_phase_helper_closure() -> (
+    None
+):
     """A target's actual helper yields3 while its solve-period price was2."""
     model = Model(
         regimes={
             "source": Regime(
                 functions={"utility": _solve_flow},
-                exit=Exit(
-                    targets={"self": ExitTarget(regime="target", projection={})},
-                    rule=Unilateral(),
+                composition_action=CompositionAction(
+                    destinations={"self": Destination(regime="target", projection={})},
+                    rule=PCOnActions(),
                 ),
             ),
             "target": Regime(
@@ -1207,9 +1214,9 @@ def test_forward_query_context_retains_actual_simulation_q_and_helpers() -> None
 
 _SCALE = 3.0
 
-# Subject counts below, at and just above one block of subjects evaluated together,
+# Agent counts below, at and just above one block of agents evaluated together,
 # and one spanning three blocks with a padded remainder.
-_SUBJECT_COUNTS = (
+_AGENT_COUNTS = (
     BOOTSTRAP_TILE_WIDTH_CAP - 1,
     BOOTSTRAP_TILE_WIDTH_CAP,
     BOOTSTRAP_TILE_WIDTH_CAP + 1,
@@ -1217,17 +1224,17 @@ _SUBJECT_COUNTS = (
 )
 
 
-def _branching_subject(
+def _branching_agent(
     *,
     x: FloatND,
     threefry_key: jax.Array,
     rbg_key: jax.Array,
     empty: FloatND,
     scale: FloatND,
-) -> ParticipatingExitOutput:
-    """One subject whose untaken branch is undefined: a log of a negative number.
+) -> ParticipatingCompositionOutput:
+    """One agent whose untaken branch is undefined: a log of a negative number.
 
-    `empty` is a per-subject array without elements, such as a roster no subject
+    `empty` is a per-agent array without elements, such as a roster no agent
     fills; it is read and published with nothing but its shape.
     """
     taken = x > 0
@@ -1242,7 +1249,7 @@ def _branching_subject(
 
 
 def _published(
-    output: OriginalExitOutput | ParticipatingExitOutput,
+    output: OriginalCompositionOutput | ParticipatingCompositionOutput,
 ) -> dict[str, jax.Array]:
     answer, frame = output[0], output[1]
     return {
@@ -1254,32 +1261,32 @@ def _published(
     }
 
 
-def _subject_rows(*, n_subjects: int, rbg: bool) -> dict[str, jax.Array]:
-    threefry = jax.random.split(jax.random.key(0), n_subjects)
+def _agent_rows(*, n_agents: int, rbg: bool) -> dict[str, jax.Array]:
+    threefry = jax.random.split(jax.random.key(0), n_agents)
     return {
-        "x": jnp.linspace(-1.0, 1.0, n_subjects),
+        "x": jnp.linspace(-1.0, 1.0, n_agents),
         "threefry_key": threefry,
         # A key implementation other than threefry carries the scalar-dispatch axis.
         "rbg_key": (
-            jax.random.split(jax.random.key(1, impl="rbg"), n_subjects)[:, None]
+            jax.random.split(jax.random.key(1, impl="rbg"), n_agents)[:, None]
             if rbg
             else threefry
         ),
-        "empty": jnp.zeros((n_subjects, 0)),
+        "empty": jnp.zeros((n_agents, 0)),
     }
 
 
 def _decide_batched(rows: dict[str, jax.Array]) -> dict[str, jax.Array]:
-    decision = _BatchedExitDecision(body=_branching_subject)
+    decision = _BatchedCompositionDecision(body=_branching_agent)
     return _published(jax.vmap(partial(decision, scale=jnp.asarray(_SCALE)))(**rows))
 
 
-def _decide_one_subject(row: dict[str, jax.Array]) -> dict[str, jax.Array]:
-    return _published(_branching_subject(**row, scale=jnp.asarray(_SCALE)))
+def _decide_one_agent(row: dict[str, jax.Array]) -> dict[str, jax.Array]:
+    return _published(_branching_agent(**row, scale=jnp.asarray(_SCALE)))
 
 
 def _decide_one_by_one(rows: dict[str, jax.Array]) -> dict[str, jax.Array]:
-    return jax.lax.map(_decide_one_subject, rows)
+    return jax.lax.map(_decide_one_agent, rows)
 
 
 def _scan_lengths(*, jaxpr: Jaxpr) -> list[int]:
@@ -1297,32 +1304,36 @@ def _scan_lengths(*, jaxpr: Jaxpr) -> list[int]:
     return lengths
 
 
-@pytest.mark.parametrize("n_subjects", _SUBJECT_COUNTS)
-def test_exit_decision_loops_over_blocks_not_subjects(n_subjects: int) -> None:
-    """Batched subjects run vectorized in blocks; no loop steps once per subject."""
-    rows = _subject_rows(n_subjects=n_subjects, rbg=False)
+@pytest.mark.parametrize("n_agents", _AGENT_COUNTS)
+def test_composition_action_decision_loops_over_blocks_not_agents(
+    n_agents: int,
+) -> None:
+    """Batched agents run vectorized in blocks; no loop steps once per agent."""
+    rows = _agent_rows(n_agents=n_agents, rbg=False)
     traced = jax.make_jaxpr(_decide_batched)(rows)
     assert max(_scan_lengths(jaxpr=traced.jaxpr), default=1) <= math.ceil(
-        n_subjects / BOOTSTRAP_TILE_WIDTH_CAP
+        n_agents / BOOTSTRAP_TILE_WIDTH_CAP
     )
 
 
 @pytest.mark.parametrize("output", ["action_index", "support", "uniform", "normal"])
-@pytest.mark.parametrize("n_subjects", _SUBJECT_COUNTS)
-def test_exit_decision_choices_and_draws_match_one_subject_at_a_time(
-    *, n_subjects: int, output: str
+@pytest.mark.parametrize("n_agents", _AGENT_COUNTS)
+def test_composition_action_decision_choices_and_draws_match_one_agent_at_a_time(
+    *, n_agents: int, output: str
 ) -> None:
-    """Branch choices and both key implementations' draws are each subject's own."""
-    rows = _subject_rows(n_subjects=n_subjects, rbg=True)
+    """Branch choices and both key implementations' draws are each agent's own."""
+    rows = _agent_rows(n_agents=n_agents, rbg=True)
     got = jax.jit(_decide_batched)(rows)[output]
     expected = jax.jit(_decide_one_by_one)(rows)[output]
     np.testing.assert_array_equal(got, expected)
 
 
-@pytest.mark.parametrize("n_subjects", _SUBJECT_COUNTS)
-def test_exit_decision_values_match_one_subject_at_a_time(n_subjects: int) -> None:
-    """The taken branch's value reaches each subject; the untaken branch's never."""
-    rows = _subject_rows(n_subjects=n_subjects, rbg=True)
+@pytest.mark.parametrize("n_agents", _AGENT_COUNTS)
+def test_composition_action_decision_values_match_one_agent_at_a_time(
+    n_agents: int,
+) -> None:
+    """The taken branch's value reaches each agent; the untaken branch's never."""
+    rows = _agent_rows(n_agents=n_agents, rbg=True)
     got = jax.jit(_decide_batched)(rows)["decision_value"]
     expected = jax.jit(_decide_one_by_one)(rows)["decision_value"]
     assert_agrees_to_ulp(got=got, expected=expected, n_ulp=4)

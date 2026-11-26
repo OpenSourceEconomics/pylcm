@@ -71,7 +71,7 @@ class InvalidInitialConditionsError(PyLCMError):
 
 
 class NoFeasibleActionError(InvalidInitialConditionsError):
-    """Raised when a simulated subject's state admits no feasible action."""
+    """Raised when a simulated agent's state admits no feasible action."""
 
 
 class InvalidSimulationInputError(PyLCMError):
@@ -134,7 +134,7 @@ class InvalidAdditionalTargetsError(PyLCMError):
 class InvalidFunctionOutputError(PyLCMError):
     """Raised when a user function returns a value of the wrong kind.
 
-    A predicate (constraint, gate or exit availability) returns a
+    A predicate (constraint, gate or composition action availability) returns a
     Boolean, a discrete state's law an integer code, and a utility, continuous
     law or probability a number. Only the returned dtype is checked.
     """
@@ -161,8 +161,9 @@ class RegimeInitializationError(ModelInitializationError):
 class GateReadsValueError(RegimeInitializationError):
     """Raised when a `Gate` predicate reads a value of its target regime.
 
-    A gate routes on the target's states and parameters. A move decided by
-    comparing values is an `Exit` of the regime that decides.
+    A gate routes on the target's states and parameters. A decision on the
+    composition that compares values is a `CompositionAction` of the regime that
+    decides.
     """
 
 
@@ -243,6 +244,6 @@ class UnrepresentableOuterCandidateError(PyLCMError):
     N-NB-EGM recovers the outer action from the post-decision target the solve
     retained. At a realized state the recovered action can reach a stock outside
     the outer state's declared domain, where no value function exists. Such a
-    candidate is dropped from that subject's choice set rather than published,
+    candidate is dropped from that agent's choice set rather than published,
     and this reports how many were dropped.
     """

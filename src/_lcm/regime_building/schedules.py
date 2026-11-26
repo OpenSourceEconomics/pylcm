@@ -16,7 +16,7 @@ This module is the single place that reads it for that purpose:
 Availability alone solves nothing. `resolve_demand` expands the declared starts
 into two sets of `(period, regime)` pairs:
 
-- H, the visited pairs: those a subject can physically visit;
+- H, the visited pairs: those an agent can physically visit;
 - S, the valued pairs: H and every pair whose value a problem in S reads.
 
 S is the coverage every later stage reads. Support comes only from the
@@ -164,8 +164,8 @@ class RegimeSchedules:
     ] = MappingProxyType({})
     """Typed Raw/Participating Q/F contexts, distinct from stored Full demand."""
 
-    exit_acting_nodes: frozenset[tuple[int, RegimeName]] = frozenset()
-    """Potential final regimes acting once after an original subject exits."""
+    composition_acting_nodes: frozenset[tuple[int, RegimeName]] = frozenset()
+    """Potential final regimes, acting once after a composition action lands."""
 
     @property
     def query_periods_by_phase(
@@ -202,7 +202,7 @@ class RegimeSchedules:
     @property
     def acting_periods_by_regime(self) -> MappingProxyType[RegimeName, tuple[int, ...]]:
         """Retain physical transitions for original occupants and final actors."""
-        physical = self.visited_nodes | self.exit_acting_nodes
+        physical = self.visited_nodes | self.composition_acting_nodes
         return MappingProxyType(
             {
                 name: tuple(sorted(p for p, n in physical if n == name))
@@ -629,7 +629,7 @@ def resolve_demand(  # noqa: C901, PLR0915 - shared fixed point for occupancy, v
     policy_reads_by_phase: Mapping[
         str, Mapping[tuple[int, RegimeName, str], tuple[tuple[RegimeName, str], ...]]
     ] = MappingProxyType({}),
-    exit_targets_by_period: Mapping[
+    composition_targets_by_period: Mapping[
         tuple[int, RegimeName], tuple[RegimeName, ...]
     ] = MappingProxyType({}),
 ) -> RegimeSchedules:
@@ -658,7 +658,7 @@ def resolve_demand(  # noqa: C901, PLR0915 - shared fixed point for occupancy, v
         name: frozenset(periods)
         for name, periods in schedules.coverage_by_regime.items()
     }
-    # A subject starts in its regime's own stage of the period.
+    # An agent starts in its regime's own stage of the period.
     work: deque[tuple[bool, int, RegimeName, str]] = deque(
         (
             True,
@@ -692,17 +692,19 @@ def resolve_demand(  # noqa: C901, PLR0915 - shared fixed point for occupancy, v
     def read_policies(
         *, phase: str, period: int, reads: tuple[tuple[RegimeName, str], ...]
     ) -> None:
-        """Queue the exit reads of `period`; a later stage's are value reads.
+        """Queue the composition action's reads of `period`.
 
-        An exit reads a regime of its own stage at its step and one of a later
-        stage of its period at that regime's occurrence, where its value is read.
+        A composition action reads a regime of its own stage as a policy query
+        at its step. It reads a regime of a later stage of its period as a
+        value, at that regime's occurrence.
         """
         for target, kind in reads:
             occurrence = landing_step(ages=ages, step=period - 1, target=target)
             if occurrence == period:
                 query_work.append((phase, period, target, kind))
             else:
-                work.append((False, occurrence, target, f"an exit read of '{target}'"))
+                requester = f"a composition action's read of '{target}'"
+                work.append((False, occurrence, target, requester))
 
     while work or query_work:
         if not work:
@@ -731,7 +733,7 @@ def resolve_demand(  # noqa: C901, PLR0915 - shared fixed point for occupancy, v
                 ),
             )
             # Actual Q/F reads next-period Full continuation, even when no
-            # subject ever occupies this current-period query context.
+            # agent ever occupies this current-period query context.
             requester = f"the continuation of {kind}[{name}]"
             work.extend(
                 (
@@ -777,16 +779,17 @@ def resolve_demand(  # noqa: C901, PLR0915 - shared fixed point for occupancy, v
             ),
         )
         if physical:
-            for target in exit_targets_by_period.get((period, name), ()):
+            for target in composition_targets_by_period.get((period, name), ()):
                 occurrence = landing_step(ages=ages, step=period - 1, target=target)
-                # A subject who leaves for a later stage is there at its step.
+                # An agent who leaves for a later stage is there at its step.
                 if occurrence != period:
-                    work.append((True, occurrence, target, f"the exit of '{name}'"))
+                    requester = f"the composition action of '{name}'"
+                    work.append((True, occurrence, target, requester))
                     continue
                 if (period, target) in acting:
                     continue
                 acting.add((period, target))
-                actor = f"the final exit actor {target!r}"
+                actor = f"the final actor {target!r} of a composition action"
                 work.extend(
                     (
                         True,
@@ -799,7 +802,9 @@ def resolve_demand(  # noqa: C901, PLR0915 - shared fixed point for occupancy, v
                         *schedules.landings_by_regime.get(target, {}).get(period, ()),
                     )
                 )
-                routing = f"the routing of final exit actor {target!r}"
+                routing = (
+                    f"the routing of the final actor {target!r} of a composition action"
+                )
                 work.extend(
                     (
                         False,
@@ -879,7 +884,7 @@ def resolve_demand(  # noqa: C901, PLR0915 - shared fixed point for occupancy, v
         query_nodes_by_phase=MappingProxyType(
             {phase: frozenset(nodes) for phase, nodes in queried.items()}
         ),
-        exit_acting_nodes=frozenset(acting),
+        composition_acting_nodes=frozenset(acting),
     )
 
 

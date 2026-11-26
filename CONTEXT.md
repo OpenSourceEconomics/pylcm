@@ -8,14 +8,20 @@ documentation and the engine; it is not a specification.
 
 ### Population
 
-**Subject**:
-One unit of the population handed to a simulation or a feasibility check; a
-subject starts in exactly one regime at one model time coordinate.
-_Avoid_: individual, agent, row, person
+**Agent**:
+One person, followed through life. The population handed to a simulation or a
+feasibility check is a set of agents. An agent starts in exactly one regime at one model
+time coordinate.
+_Avoid_: subject, decision maker, individual, row
+
+**Composition**:
+Who is in the unit: single, couple, parent with child. It is a state of the agent. It
+changes by a probability on an edge or by the decision on the composition.
+_Avoid_: household (for the unit), status
 
 **Initial conditions**:
-The subject-indexed collection of starting regime and starting states, supplied
-either as a mapping of arrays or as a DataFrame with one row per subject.
+The agent-indexed collection of starting regime and starting states, supplied
+either as a mapping of arrays or as a DataFrame with one row per agent.
 _Avoid_: initial observations, initial population, starting sample
 
 **Initial states**:
@@ -26,59 +32,101 @@ _Avoid_: initial values, start states
 ### Model structure
 
 **Regime**:
-What a subject is in at a step: an action problem (states, actions, constraints,
+What an agent is in at a step: an action problem (states, actions, constraints,
 functions and laws of motion) together with the rule for leaving it. It is the model's
 only noun for this; the action problem is part of the regime, not an object of its own.
 _Avoid_: problem (as a separate object), visible regime, status, view
 
 **Member**:
-A party of a regime whose value is tracked. Every regime has at least one member: a
-regime declared with a plain utility function has the single member "self", and a
-household names its members in its collective utility.
-_Avoid_: stakeholder
+An agent's position in a regime. Every regime has at least one member, and its value is
+tracked per member. A regime declared with a plain utility function has the single
+member "self". A regime with several members names them in its collective utility.
+_Avoid_: stakeholder, subject
 
-**Household**:
+**Collective regime**:
 A regime that names its members in a collective utility and takes one action for all of
-them. A household may have one member.
-_Avoid_: couple (unless it has two members)
+them. A collective regime may have one member.
+_Avoid_: household, couple (unless it has two members)
 
-**Decider**:
-The one member of a household with a positive Pareto weight when the household has taste
-shocks; its choice is the household's.
-_Avoid_: mover, leader
+**Counterparty**:
+The other agent at a formation: its regime, its member and its landing states.
+
+**Pareto weight**:
+The weight on one member's action value when a collective regime takes one action for
+all members. Under `PCOnWeight` with a `state`, a discrete state holds the Pareto weight,
+and the rule can move it within the period.
+_Avoid_: bargaining state, weight (bare)
+
+**Deciding member**:
+The one member of a collective regime with a positive Pareto weight when the regime has
+taste shocks. Its choice is the regime's choice.
+_Avoid_: mover, leader, decision maker
+
+**Composition action**:
+The object a regime declares for the decision on the composition (`CompositionAction`).
+It names one destination per member and the rule that decides. The decision happens at
+the current step, before the action.
+_Avoid_: exit, participation check, current-period transition
+
+**Decision on the composition**:
+What the members decide through the composition action: the decision to stay or to
+separate, or the decision to form a couple. A member who separates leaves the regime. An
+agent decides on its composition at most once per period.
+_Avoid_: move (as a noun), exit, settlement
 
 **Rule**:
-How a regime turns its members' action values and their outside values into its value at
-a step: which action is taken, and whether the subject stays or moves. It reads the
-regime's own action values and the outside values, and nothing else.
+How a regime turns its members' action values and the values of their outside options
+into its value at a step: which action is taken, and whether the composition changes. It reads
+the regime's own action values and the values of the outside options, and nothing else.
+The rules carry the literature's names:
+
+- unilateral divorce with participation constraints on actions (`PCOnActions`): each
+  member's value of staying is compared with the value of its outside option at every
+  stay action, and the members keep the best action that all of them accept;
+- unilateral divorce with participation constraints on the Pareto weight (`PCOnWeight`):
+  the comparison is at the unconstrained optimum; with a `state`, the Pareto weight
+  first moves toward the refusing member to the first node where both members accept;
+- mutual consent divorce (`MutualConsent`): the comparison is at the unconstrained
+  optimum, and the members can shift the transfer;
+- formation by consent (`Consent`): both agents must prefer the formed couple to staying
+  apart.
+
+Write "separation" instead of "divorce" where the unit is not a marriage.
 _Avoid_: participation check, constraint on values
 
-**Problem value**:
-The value of a regime's action problem at a step, without its rule for leaving; it reads
-the next step's values and nothing of the current step.
-_Avoid_: hidden value
+**Transfer**:
+The divorce transfer under mutual consent divorce. Its default is the division by law,
+and the members can shift it to one of its candidates before they separate.
+_Avoid_: settlement
+
+**Value without the composition action**:
+The value of a regime at a step when it does not decide on its composition. It reads the
+next step's values and nothing of the current step.
+_Avoid_: problem value, hidden value
 
 **Value**:
-What a member of a regime gets at a step after the regime's rule, including any move.
+What a member of a regime gets at a step after the regime's rule, including the decision
+on the composition.
 
-**Staying value**:
-A regime's value where its rule keeps the subject in it; it is not defined where the rule
-moves the subject out. Under renegotiation it is the problem value at the moved
-bargaining state.
-_Avoid_: participation value
+**Value of staying**:
+A regime's value where its rule keeps the members in it; it is not defined where the
+members separate. Under `PCOnWeight` with a `state`, it is the value without the
+composition action at the Pareto weight that the rule selects.
+_Avoid_: staying value, participation value
 
-**Outside value**:
+**Landing state**:
+The state at which a member arrives in its destination. The destination's projection
+gives it from the current states.
+_Avoid_: projected state
+
+**Value of the outside option**:
 What a member of a regime gets by leaving it at the current step: the destination's
-problem value at the member's projected state under the destination grid's `off_grid`
-rule, given the current shocks the decision observes, and with no further move in that
-period. A move that needs the consent of the destination's members reads the
-destination's staying value instead.
-_Avoid_: benchmark, threat point
-
-**Exit**:
-A regime's move at the current step, before the action, decided by its rule from
-compared values; it names the destination regime of each member.
-_Avoid_: participation check, current-period transition
+value without the composition action at the member's landing state under the
+destination grid's `off_grid`
+rule, given the current shocks the decision observes, and with no further decision on
+the composition in that period. Under formation by consent, the destination is the
+formed couple, and the value is the couple's value of staying.
+_Avoid_: outside value (in prose; code identifiers keep it), benchmark, threat point
 
 **Gate**:
 A branch on the transition into one target regime that keeps the target or takes a
@@ -101,12 +149,12 @@ period's graph retains. It is a one-step property of a source and a period.
 _Avoid_: reachable regime, reachable target
 
 **Reachable regime**:
-A regime some subject can be in at a given period, given the regimes the subjects
+A regime some agent can be in at a given period, given the regimes the agents
 start in; the forward closure of period targets from the starting regimes.
 _Avoid_: period target, active regime (an active regime need not be reachable)
 
 **Regime-transition law**:
-The law that decides which of a source regime's outgoing edges a subject takes,
+The law that decides which of a source regime's outgoing edges an agent takes,
 together with any gates and route fallbacks declared with it. It
 belongs to the edges, and so do its parameters; the source regime owns neither.
 _Avoid_: next-regime function, edge law
@@ -132,7 +180,7 @@ source's law at the source's current value.
 _Avoid_: dropped shock, ephemeral state
 
 **Age**:
-The subject's biological age, when the model uses an age grid as its time coordinate.
+The agent's biological age, when the model uses an age grid as its time coordinate.
 
 **Period**:
 An interval of economic time, such as a year or a quarter; in an age model, one to one
@@ -153,9 +201,26 @@ _Avoid_: date, time step
 
 **Next occurrence**:
 The first step after the current one that belongs to a regime's stage; where an edge
-into the regime lands and whose value it reads. A subject has no row at a step its
+into the regime lands and whose value it reads. An agent has no row at a step its
 regime sits out.
 _Avoid_: pass-through, waiting regime
+
+### Phases
+
+A `Phased` declaration has three parts.
+
+**Perceived model**:
+The `solve` variant: the laws the agent believes. They price the continuation, and the
+value function is solved under them.
+
+**Current self**:
+The agent as it chooses now. It uses the `simulate` variant of the current-period
+primitives: period utility, feasibility and the Koopmans aggregator.
+
+**Actual laws**:
+The `simulate` variant of the laws of motion. They govern what happens as the simulation
+goes forward.
+_Avoid_: realized laws, truth
 
 ### Parameters
 
@@ -173,29 +238,29 @@ function that consumes it.
 
 ### Feasibility
 
-**Feasible (subject)**:
-A subject for which at least one combination of the regime's declared action-grid
-points satisfies every constraint jointly; in an action-free regime, a subject whose
+**Feasible (agent)**:
+An agent for which at least one combination of the regime's declared action-grid
+points satisfies every constraint jointly; in an action-free regime, an agent whose
 state-only constraints all hold.
 _Avoid_: valid, admissible (reserved for individual actions), allowed
 
-**Infeasible (subject)**:
-A subject that is not feasible. Infeasibility is a property of the supplied initial
+**Infeasible (agent)**:
+An agent that is not feasible. Infeasibility is a property of the supplied initial
 conditions, never of the model.
 
 **Feasibility mask**:
-The one-dimensional boolean array, in subject order, that is `True` exactly for the
-feasible subjects.
+The one-dimensional boolean array, in agent order, that is `True` exactly for the
+feasible agents.
 _Avoid_: acceptance mask, validity flags
 
 **Invalid initial conditions**:
 Initial conditions that are structurally malformed (unknown regime, missing or
 extra state, wrong length, off-grid age, inactive regime at that age, unknown
-categorical label) or that contain an infeasible subject.
+categorical label) or that contain an infeasible agent.
 
 **Unsupported check**:
 A feasibility question the engine cannot answer for the given model shape, e.g. a
-constraint that depends on an age-specialized function while subjects start at
+constraint that depends on an age-specialized function while agents start at
 different ages. An unsupported check is a property of the model, is reported by
 raising, and never counts as feasible.
 _Avoid_: skipped check, unavailable check

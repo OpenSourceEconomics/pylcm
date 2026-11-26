@@ -1,10 +1,10 @@
 """A gated edge's closed branch may value one thing and realize another.
 
-What a household expects from leaving and what a settlement actually hands it
+What a household expects from leaving and what a transfer actually hands it
 are two objects, not one. The value the source maximizes against has to be the
 expectation — that is what the decision was taken under — while the row a
 simulation writes has to be the realization, in the regime and at the state the
-settlement really produces.
+transfer really produces.
 
 `MemberRoute(fallback=Phased(solve=..., simulate=...))` declares them separately:
 the solve leg is folded into `Wbar` and prices the decision, and the simulate
@@ -41,7 +41,7 @@ _WEALTH = LinSpacedGrid(start=0.0, stop=2.0, n_points=3)
 # The edge stays open above this wealth, so only the top node keeps the target.
 _KEEPS_THE_TARGET_ABOVE = 1.5
 
-# What the settlement actually hands a routed row, as a share of its wealth.
+# What the transfer actually hands a routed row, as a share of its wealth.
 _SETTLEMENT_SHARE = 0.5
 
 
@@ -83,7 +83,7 @@ def _whole_wealth(wealth: ContinuousState) -> ContinuousState:
 
 
 def _settled_wealth(wealth: ContinuousState) -> ContinuousState:
-    """What the settlement hands her: strictly less, and only in simulation."""
+    """What the transfer hands her: strictly less, and only in simulation."""
     return _SETTLEMENT_SHARE * wealth
 
 
@@ -166,7 +166,7 @@ _PARAMS = {
 
 
 def _simulate(*, model: Model, solution: SolutionResult) -> SimulationResult:
-    """Two subjects, one on each side of the gate."""
+    """Two agents, one on each side of the gate."""
     return model.simulate(
         params=_PARAMS,
         initial_conditions={
@@ -185,11 +185,11 @@ def test_a_routed_row_lands_in_the_simulate_legs_regime() -> None:
 
     On the wealth nodes `(0, 1, 2)` the gate closes at the first two, so the
     source's continuation is `V_hardship = (0, 1)` there and `V_retired = 20` at
-    the top node. The realized settlement is worth far more (`shelter` pays
+    the top node. The realized transfer is worth far more (`shelter` pays
     `100 * wealth`), so a solve that read the simulate leg would report a
     strictly larger value at both closed nodes.
 
-    The closed row enters `shelter`, the regime the settlement names, at
+    The closed row enters `shelter`, the regime the transfer names, at
     `0.5 * wealth` and as the `guest` of the household that took her in; a
     router reading the priced leg would put her in `hardship` without a role.
     The row above the gate still retires, at its own wealth.

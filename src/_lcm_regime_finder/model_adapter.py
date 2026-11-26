@@ -416,7 +416,7 @@ def _stage_channels(snapshot: dict, regimes: dict, nodes: dict) -> tuple[dict[st
         patterns[name] = pattern
         if name not in terminal:
             payload = {key: declaration.get(key) for key in ("states", "actions", "functions", "constraints", "koopmans_aggregator", "certainty_equivalent", "__routing_owner")}
-            # The stage digest keys a household's members, `None` for an individual.
+            # The stage digest keys a regime's members, `None` for an individual.
             payload["members"] = _household_members(declaration)
             signatures[pattern].add(digest(_semantic_shape(payload)))
     keys = {pattern: digest(sorted(items))[:12] for pattern, items in signatures.items()}
@@ -450,7 +450,7 @@ def _value_route_obligations(snapshot: dict, regimes: dict) -> tuple[dict[str, s
 
 
 def _household_members(declaration: dict[str, Any]) -> Any:
-    """Return a household's declared members, `None` for an individual.
+    """Return a regime's declared members, `None` for an individual.
 
     The one member "self" is the individual a plain utility function declares,
     so a regime recording it reads exactly as one recording no members.
@@ -478,13 +478,13 @@ def adapt_snapshot(snapshot: dict[str, Any], *, name: str = "Constructed pylcm m
     def query_only_reference(value):
         if isinstance(value, dict):
             tag = value.get('type')
-            if isinstance(tag, str) and tag.split('.')[-1] in {'ProjectedRegimeValue', 'ArrivalRead', 'ExitTarget', 'Counterparty'}:
+            if isinstance(tag, str) and tag.split('.')[-1] in {'ProjectedRegimeValue', 'ArrivalRead', 'Destination', 'Counterparty'}:
                 return fields(value).get('regime') not in nodes
             return any(query_only_reference(child) for child in value.values())
         return isinstance(value, list) and any(query_only_reference(child) for child in value)
     if any(query_only_reference(fields(raw).get(key) or {})
            for raw in snapshot['user_regimes'].values()
-           for key in ('exit',)):
+           for key in ('composition_action',)):
         raise ModelAdapterError('Legacy scalar adapter cannot represent policy-query owners; use find_regimes(native_snapshot) production normalization')
     ages = sorted({a for aa in nodes.values() for a in aa})
     lanes = _lanes(nodes)
@@ -576,7 +576,7 @@ def adapt_snapshot(snapshot: dict[str, Any], *, name: str = "Constructed pylcm m
                 outputs[operator + "_dependencies"] = expression(value)
         if snapshot.get("shocks"):
             outputs["shock_distribution_dependencies"] = expression(snapshot["shocks"])
-        special = {key: declaration.get(key) for key in ("joint_transitions", "exit")
+        special = {key: declaration.get(key) for key in ("joint_transitions", "composition_action")
                    if declaration.get(key)}
         if _household_members(declaration):
             special = {"members": declaration["members"], **special}
@@ -584,7 +584,7 @@ def adapt_snapshot(snapshot: dict[str, Any], *, name: str = "Constructed pylcm m
             # Until each value/read/joint route is lowered, retaining all local
             # state axes is a safe advisory result, not semantic certification.
             outputs["unlowered_structural_consumers"] = {"opaque": digest({"special": special, "value_route": regime in protected_value_routes}), "reads": sorted(coordinates)}
-            local_notes.append("Value/joint/exit consumers retained conservatively; semantic bridge unresolved")
+            local_notes.append("Value/joint/composition_action consumers retained conservatively; semantic bridge unresolved")
         rows = []
         for phase, graph_phase in phase_graphs.items():
             targets_by_period = graph_phase.get("targets_by_period", [])

@@ -147,8 +147,8 @@ class _SimulationKwargs(TypedDict):
     ]
     seed: NotRequired[int | None]
     taste_shock_seed: NotRequired[int | None]
-    subject_batch_size: NotRequired[int]
-    original_n_subjects: NotRequired[int | None]
+    agent_batch_size: NotRequired[int]
+    original_n_agents: NotRequired[int | None]
     device_ids: NotRequired[tuple[int, ...]]
     retained_footprint: NotRequired[simulation_module.DeviceBufferFootprint | None]
     prepared_chunks: NotRequired[simulation_module.PreparedSimulationChunks | None]
@@ -718,7 +718,7 @@ def test_model_instance_id_survives_pickle_for_result_replay() -> None:
         seed=0,
     )
 
-    assert result.n_subjects == 1
+    assert result.n_agents == 1
 
 
 def test_legacy_model_pickle_backfills_solution_instance_id() -> None:
@@ -829,7 +829,7 @@ def test_adaptive_authority_and_result_survive_pickle_for_valid_replay(
         seed=42,
     )
 
-    assert replay.n_subjects == len(_INITIAL["wealth"])
+    assert replay.n_agents == len(_INITIAL["wealth"])
 
 
 def test_retained_dissolution_result_replay_matches_automatic_solve() -> None:

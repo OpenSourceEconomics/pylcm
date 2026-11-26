@@ -1,10 +1,10 @@
 """A `Gate` routes on target states and params, never on a value.
 
-A predicate naming a target value component or the dissolution flag is refused
-when the gate is declared, with a message pointing to the two declarations that
-express a value-driven move, each an `Exit` of the regime that decides: formation
-under a `Consent` rule on the source regime, dissolution as the household regime's
-own `Exit`.
+A predicate naming a target value component or the dissolution flag is refused when the
+gate is declared. The message points to the two declarations of a decision on the
+composition that compares values, each a `CompositionAction` of the regime that
+decides: formation under a `Consent` rule on the source regime, and separation as the
+own `CompositionAction` of the regime with several members.
 """
 
 import pytest
@@ -53,8 +53,8 @@ def test_a_value_reading_gate_predicate_is_refused(
 
     message = str(excinfo.value)
     assert operand in message
-    assert "`Exit` with a `Consent` rule on the source regime" in message
-    assert "the household regime's own `Exit`" in message
+    assert "`CompositionAction` with a `Consent` rule on the source regime" in message
+    assert "own `CompositionAction` of the regime with several members" in message
 
 
 def test_gate_reads_value_error_is_a_regime_initialization_error() -> None:

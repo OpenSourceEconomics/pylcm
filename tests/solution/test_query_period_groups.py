@@ -14,7 +14,7 @@ import jax
 import numpy as np
 import pytest
 
-from _lcm import exit_queries
+from _lcm import composition_queries
 from _lcm.solution import backward_induction as backward
 from lcm.shocks import QuasiMonteCarlo
 from tests.conftest import assert_agrees_to_ulp
@@ -65,7 +65,10 @@ def test_a_shared_chunk_program_reproduces_each_period_s_own(
     shared = _four_period_values()
     tokens = count()
     monkeypatch.setattr(
-        exit_queries, "_traced_structure", lambda **_: next(tokens), raising=False
+        composition_queries,
+        "_traced_structure",
+        lambda **_: next(tokens),
+        raising=False,
     )
     own = _four_period_values()
     assert_agrees_to_ulp(

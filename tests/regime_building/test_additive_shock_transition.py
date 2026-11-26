@@ -476,7 +476,7 @@ def test_the_fp32_value_matches_the_fp64_reference_at_the_plain_law_accuracy(
 
 
 def test_the_additive_shock_policy_equals_the_plain_law_policy() -> None:
-    """Simulated consumption agrees subject by subject in the first period."""
+    """Simulated consumption agrees agent by agent in the first period."""
     wealth = jnp.asarray(np.asarray(_wealth_grid().to_jax())[::3])
     n = wealth.shape[0]
     consumption = {}

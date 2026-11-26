@@ -329,14 +329,14 @@ def lower_composite_initial_conditions(
 ) -> UserInitialConditions | pd.DataFrame:
     """Replace member columns of initial conditions by composite codes.
 
-    Only subjects whose initial regime carries the members are encoded; every other
-    subject keeps the missing code (`None` in a labelled frame), as the dense model
+    Only agents whose initial regime carries the members are encoded; every other
+    agent keeps the missing code (`None` in a labelled frame), as the dense model
     does for a state its regime lacks. Member codes are checked for integrality and
     the int32 range before any conversion.
 
     Raises:
-        InvalidInitialConditionsError: If a carrying subject's member tuple has no
-            composite code, or a carrying subject's label is no category of its
+        InvalidInitialConditionsError: If a carrying agent's member tuple has no
+            composite code, or a carrying agent's label is no category of its
             member.
         ValueError: If a member code is fractional or outside the int32 range.
 
@@ -354,18 +354,18 @@ def lower_composite_initial_conditions(
             member: np.asarray(safe_to_int_dtype(value=out.pop(member), name=member))
             for member in present
         }
-        n_subjects = (
+        n_agents = (
             len(np.asarray(out["regime_id"]))
             if "regime_id" in out
             else len(columns[present[0]])
         )
         wrong_length = sorted(
-            member for member, codes in columns.items() if len(codes) != n_subjects
+            member for member, codes in columns.items() if len(codes) != n_agents
         )
         if wrong_length:
             msg = (
                 f"Initial member columns {wrong_length} must give one code per "
-                f"subject ({n_subjects})."
+                f"agent ({n_agents})."
             )
             raise InvalidInitialConditionsError(msg)
         carrying = (
@@ -374,15 +374,15 @@ def lower_composite_initial_conditions(
                 [int(regime_names_to_ids[regime]) for regime in lowering.carriers],
             )
             if "regime_id" in out
-            else np.ones(n_subjects, dtype=bool)
+            else np.ones(n_agents, dtype=bool)
         )
-        composite = np.full(n_subjects, MISSING_CAT_CODE, dtype=np.int32)
+        composite = np.full(n_agents, MISSING_CAT_CODE, dtype=np.int32)
         if carrying.any():
             missing = sorted(set(lowering.members) - set(present))
             if missing:
                 msg = (
                     f"Initial conditions give {present} but not {missing}, which "
-                    "subjects starting in a regime that carries them need."
+                    "agents starting in a regime that carries them need."
                 )
                 raise InvalidInitialConditionsError(msg)
             rows = np.stack(
@@ -398,7 +398,7 @@ def lower_composite_initial_conditions(
 def _lower_labelled_frame(
     *, frame: pd.DataFrame, lowerings: Mapping[StateName, CompositeLowering]
 ) -> pd.DataFrame:
-    """Replace member label columns by composite labels on carrying subjects."""
+    """Replace member label columns by composite labels on carrying agents."""
     out = frame.copy()
     for name, lowering in lowerings.items():
         if not any(member in out for member in lowering.members):

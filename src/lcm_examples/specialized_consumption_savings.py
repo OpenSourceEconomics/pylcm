@@ -225,7 +225,7 @@ def kinked_tax_params() -> dict[str, UserParamsNode]:
 def kinked_tax_initial_conditions() -> dict[
     StateName | Literal["regime_id"], FloatND | IntND
 ]:
-    """Two subjects on opposite sides of the tax exemption."""
+    """Two agents on opposite sides of the tax exemption."""
     return {
         "age": jnp.array([0, 0]),
         "liquid": jnp.array([5.0, 10.0]),
@@ -367,7 +367,7 @@ def example_params() -> dict[str, UserParamsNode]:
 def example_initial_conditions(
     *, nested: bool = False
 ) -> dict[StateName | Literal["regime_id"], FloatND | IntND]:
-    """Two subjects at the start of either example."""
+    """Two agents at the start of either example."""
     conditions = {
         "age": jnp.array([0, 0]),
         "wealth": jnp.array([5.0, 10.0]),

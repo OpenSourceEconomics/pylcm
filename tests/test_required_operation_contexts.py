@@ -713,9 +713,9 @@ def test_realized_law_is_checked_on_the_carried_state_grid(
 
 
 @pytest.mark.parametrize("seed", [0, 9])
-@pytest.mark.parametrize("n_subjects", [2, 5])
+@pytest.mark.parametrize("n_agents", [2, 5])
 def test_realized_routing_reads_the_actual_carried_state(
-    *, n_subjects: int, seed: int
+    *, n_agents: int, seed: int
 ) -> None:
     """A carried share of 0 routes right and a share of 1 routes left, surely."""
     model = _carried_model()
@@ -725,17 +725,17 @@ def test_realized_routing_reads_the_actual_carried_state(
         params=params,
         solution=solution,
         initial_conditions={
-            "age": jnp.zeros(n_subjects),
-            "regime_id": jnp.full(n_subjects, model.regime_names_to_ids["working"]),
-            "wealth": jnp.ones(n_subjects),
-            "carried_share": jnp.asarray(np.arange(n_subjects) % 2, dtype=float),
+            "age": jnp.zeros(n_agents),
+            "regime_id": jnp.full(n_agents, model.regime_names_to_ids["working"]),
+            "wealth": jnp.ones(n_agents),
+            "carried_share": jnp.asarray(np.arange(n_agents) % 2, dtype=float),
         },
         seed=seed,
         log_level="off",
     ).to_dataframe()
-    last = panel.query("period == 1").sort_values("subject_id")
+    last = panel.query("period == 1").sort_values("agent_id")
     assert list(last["regime_name"]) == [
-        "right" if subject % 2 == 0 else "left" for subject in range(n_subjects)
+        "right" if agent % 2 == 0 else "left" for agent in range(n_agents)
     ]
 
 
@@ -868,7 +868,7 @@ def test_probability_check_rejects_a_bad_feasible_row_on_a_refined_grid(
 
 
 def test_simulation_admits_a_law_that_is_nan_only_at_infeasible_rows() -> None:
-    """Each subject consumes its whole wealth, the feasible maximum."""
+    """Each agent consumes its whole wealth, the feasible maximum."""
     model = _feasibility_model(bad_feasible=False)
     params = {"discount_factor": 0.5}
     panel = model.simulate(
@@ -882,12 +882,12 @@ def test_simulation_admits_a_law_that_is_nan_only_at_infeasible_rows() -> None:
         seed=0,
         log_level="off",
     ).to_dataframe()
-    first = panel.query("period == 0").sort_values("subject_id")
+    first = panel.query("period == 0").sort_values("agent_id")
     np.testing.assert_array_equal(first["consumption"].to_numpy(), [0.0, 1.0])
 
 
 def test_mixed_age_regime_simulates_its_visited_age() -> None:
-    """With `late_rate = 1`, every subject leaves `perceived` at age 2 for `end`."""
+    """With `late_rate = 1`, every agent leaves `perceived` at age 2 for `end`."""
     model = _mixed_age_model(calls=[])
     params = {
         "discount_factor": 0.5,
@@ -907,7 +907,7 @@ def test_mixed_age_regime_simulates_its_visited_age() -> None:
         seed=0,
         log_level="off",
     ).to_dataframe()
-    assert list(panel.sort_values(["period", "subject_id"])["regime_name"]) == [
+    assert list(panel.sort_values(["period", "agent_id"])["regime_name"]) == [
         "source",
         "source",
         "realized",

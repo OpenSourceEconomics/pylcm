@@ -36,7 +36,7 @@ class RuntimePreparation(TypedDict):
     program: CoreProgram
     arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]
     period: int
-    n_subjects: int
+    n_agents: int
     widths: Mapping[str, int]
 
 
@@ -44,12 +44,12 @@ class RuntimeDispatch(TypedDict):
     program: CoreProgram
     arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]
     period: int
-    n_subjects: int
+    n_agents: int
     residency: NotRequired[SimulationDispatchContext | None]
 
 
 class WidthProfileInputs(TypedDict):
-    n_subjects: int
+    n_agents: int
     widths: Mapping[str, int]
 
 
@@ -67,7 +67,7 @@ class WorkspacePlanning[Compiled](TypedDict):
 
 class OperandPlacement[Operand: _OperandValue](TypedDict):
     arguments: Mapping[ReferenceName, Operand]
-    subject_arg_names: tuple[ReferenceName, ...]
+    agent_arg_names: tuple[ReferenceName, ...]
     value_reads: tuple[ValueRead, ...]
     devices: tuple[jax.Device, ...]
     budget_bytes: NotRequired[int | None]
@@ -82,11 +82,11 @@ class SimulationChunkInputs(TypedDict):
     ]
     initial_regime_ids: simulation.Int1D
     starting_periods: simulation.Int1D
-    n_subjects: int
-    subject_slice: slice | simulation.SubjectRows
+    n_agents: int
+    agent_slice: slice | simulation.AgentRows
     code: NotRequired[int | None]
     stored_codes: NotRequired[tuple[int, ...] | None]
-    original_n_subjects: NotRequired[int | None]
+    original_n_agents: NotRequired[int | None]
     regimes: simulation.MappingProxyType[simulation.RegimeName, simulation.Regime]
     regime_names_to_ids: simulation.RegimeNamesToIds
     regime_ids_to_names: simulation.RegimeIdsToNames
@@ -125,7 +125,7 @@ class ChunkProfileInputs(TypedDict):
     ages: chunk_profiles.TimeAxis
     initial_conditions: chunk_profiles.Mapping[str, chunk_profiles.jax.Array]
     regime_names_to_ids: chunk_profiles.RegimeNamesToIds
-    n_subjects: int
+    n_agents: int
     population: int
     original_population: int
     widths: chunk_profiles.Mapping[str, int]
@@ -165,7 +165,7 @@ class ChunkProfileKeyInputs(TypedDict):
     ages: chunk_admission.TimeAxis
     initial_conditions: chunk_admission.Mapping[str, chunk_admission.jax.Array]
     regime_names_to_ids: chunk_admission.RegimeNamesToIds
-    n_subjects: int
+    n_agents: int
     population: int
     original_population: int
     widths: chunk_admission.Mapping[str, int]
@@ -181,7 +181,7 @@ class HostDispatch(TypedDict):
     arguments: host_operations.Mapping[
         host_operations.ReferenceName, host_operations.PytreeValue
     ]
-    subject_arg_names: tuple[host_operations.ReferenceName, ...]
+    agent_arg_names: tuple[host_operations.ReferenceName, ...]
     devices: tuple[host_operations.jax.Device, ...]
     live_footprint: host_operations.Callable[[], host_operations.DeviceBufferFootprint]
     budget_devices: tuple[host_operations.jax.Device, ...]
@@ -189,7 +189,7 @@ class HostDispatch(TypedDict):
     static_arguments: NotRequired[
         host_operations.Mapping[str, host_operations.StaticArgument]
     ]
-    subject_outputs: NotRequired[bool]
+    agent_outputs: NotRequired[bool]
 
 
 class InventoryCompiled(TypedDict):
@@ -258,7 +258,7 @@ class ProducerAdmission(TypedDict):
 class MemoryCreation(TypedDict):
     budget_bytes: int
     devices: tuple[memory.jax.Device, ...]
-    subject_devices: tuple[memory.jax.Device, ...]
+    agent_devices: tuple[memory.jax.Device, ...]
     operations: memory.ProfiledSimulationOperations
     inputs: memory.DeviceBufferFootprint
     producers: NotRequired[memory.ProfiledSimulationOperations]
@@ -306,7 +306,7 @@ class DiagnosticInputs(TypedDict, total=False):
     memory: simulation.SimulationMemory | None
     time_kind: Literal["age", "period"]
     value: simulation.FloatND
-    subject_ids_in_regime: simulation.BoolND
+    agent_ids_in_regime: simulation.BoolND
     regime_name: simulation.RegimeName
     prev_regime_ids: lcm_logging.Int1D
     new_regime_ids: lcm_logging.Int1D

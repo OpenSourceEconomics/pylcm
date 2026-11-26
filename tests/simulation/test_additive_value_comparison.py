@@ -22,7 +22,7 @@ import pytest
 
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.regime_building.Q_and_F import _CollectiveQAndF, _EachMemberAggregator
-from _lcm.simulation.programs import _StreamedArgmaxQOverA, _SubjectTiled
+from _lcm.simulation.programs import _AgentTiled, _StreamedArgmaxQOverA
 from _lcm.typing import (
     FlatParams,
     FlatRegimeParams,
@@ -107,7 +107,7 @@ def _unwrap(
             assert isinstance(
                 owner,
                 (
-                    _SubjectTiled,
+                    _AgentTiled,
                     _StreamedArgmaxQOverA,
                     _CollectiveQAndF,
                     LinearAggregator,
@@ -125,9 +125,9 @@ def _decision_q(
     function: Callable[..., PytreeValue],
 ) -> tuple[_CollectiveQAndF, dict[str, QAndFArg]]:
     """Reach the declared streamed decision's original canonical Q functor."""
-    subject, bound = _unwrap(function)
-    assert isinstance(subject, _SubjectTiled)
-    reducer, reducer_bound = _unwrap(subject.func)
+    agent, bound = _unwrap(function)
+    assert isinstance(agent, _AgentTiled)
+    reducer, reducer_bound = _unwrap(agent.func)
     assert isinstance(reducer, _StreamedArgmaxQOverA)
     q, q_bound = _unwrap(reducer.Q_and_F)
     assert isinstance(q, _CollectiveQAndF)
@@ -200,13 +200,13 @@ def reference_additive_norms(
         if regime.terminal:
             np.testing.assert_array_equal(row["value"], 0)
             continue
-        period, subject = int(row["period"]), int(row["subject_id"])
+        period, agent = int(row["period"]), int(row["agent_id"])
         q, bound = _decision_q(regime.simulation.programs.decision[period].function)
         raw = result.raw_results[name][period]
         regime_params = flat_params[name]
         assert _is_regime_params(regime_params)
         cell: dict[str, QAndFArg] = dict(regime_params) | {
-            key: value[subject]
+            key: value[agent]
             for key, value in (dict(raw.states) | dict(raw.actions)).items()
         }
         assert model.ages is not None

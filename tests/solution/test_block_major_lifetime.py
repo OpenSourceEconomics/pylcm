@@ -3,7 +3,7 @@
 `ExecutionConfig(invariant_block_schedule=InvariantBlockSchedule.BLOCK_MAJOR)`
 solves every component of the blocked state — one code — through all of its
 periods before the next code starts. A combined `simulate` runs that code's
-subjects while its values are still on the device. The component's values are
+agents while its values are still on the device. The component's values are
 then retained on the host and its device buffers are deleted, so the device
 holds one code's lifetime values at a time.
 
@@ -73,7 +73,7 @@ def _config(
     *,
     schedule: InvariantBlockSchedule | None,
     budget: int | None = None,
-    subject_width: int | None = None,
+    agent_width: int | None = None,
     axis_widths: Mapping[str, int] = MappingProxyType({}),
 ) -> ExecutionConfig:
     """Return an execution config: unblocked when `schedule` is `None`."""
@@ -83,7 +83,7 @@ def _config(
         device_memory_bytes=budget,
         axis_widths={
             **axis_widths,
-            **({} if subject_width is None else {"subject": subject_width}),
+            **({} if agent_width is None else {"agent": agent_width}),
         },
     )
 
@@ -102,7 +102,7 @@ def _life_cycle_model(
         ages=model.ages,
         regime_id_class=life_cycle._RegimeId,
         initial_nodes={0: "work"},
-        execution_config=_config(schedule=schedule, budget=budget, subject_width=3),
+        execution_config=_config(schedule=schedule, budget=budget, agent_width=3),
     )
 
 
@@ -399,7 +399,7 @@ def _assert_panels_match_the_references(
 
 @pytest.fixture
 def rounding_panel() -> tuple[Model, SimulationResult]:
-    """Return a real one-subject panel for published-result rounding witnesses."""
+    """Return a real one-agent panel for published-result rounding witnesses."""
     model = _life_cycle_model(schedule=None)
     result = _simulate(
         model=model,
@@ -638,7 +638,7 @@ def test_combined_simulation_matches_the_reference_routes(
 ) -> None:
     """Solving and simulating one code at a time gives the period-major panel.
 
-    A code no subject holds is still solved, so the published solution is
+    A code no agent holds is still solved, so the published solution is
     complete and holds the period-major values.
     """
     params = life_cycle._params(typed_dead=True)

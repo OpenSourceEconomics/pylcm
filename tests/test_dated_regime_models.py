@@ -1,6 +1,6 @@
 """Models built from dated regime declarations: coverage, support and values."""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from fractions import Fraction
 from inspect import get_annotations
 from typing import Literal, cast
@@ -54,6 +54,7 @@ from lcm.typing import (
     RegimeName,
     ScalarInt,
     UserAge,
+    UserFunction,
 )
 from tests.regime_building.test_gate_output_dtype import _boolean_gate
 from tests.regime_building.test_gate_output_dtype import _make_model as _gated_model
@@ -279,7 +280,9 @@ def test_target_age_mapping_declares_edges_at_source_age() -> None:
     ],
 )
 def test_target_age_mapping_rejects_mass_outside_current_support(
-    *, wrapper, func
+    *,
+    wrapper: Callable[..., DeterministicTransition | StochasticTransition],
+    func: UserFunction,
 ) -> None:
     """A target allowed at another age cannot receive mass at the current age."""
     model = _dated_model(
@@ -308,7 +311,7 @@ def test_target_age_mapping_rejects_mass_outside_current_support(
     ids=["bare-callable", "targetless-vector"],
 )
 def test_dated_model_accepts_targetless_kernels_with_explicit_graph(
-    *, transition
+    *, transition: UserFunction | StochasticTransition
 ) -> None:
     """Numerical kernels get their structural support solely from Model.edges."""
     model = _dated_model(
@@ -850,7 +853,7 @@ def test_undeclared_monthly_start_raises_at_every_log_level(
 def test_declared_monthly_start_simulates_from_its_period(
     *, age_source: Literal["grid", "literal"], log_level: LogLevel
 ) -> None:
-    """A subject admitted one month in to a terminal regime is recorded at period 1."""
+    """An agent admitted one month in to a terminal regime is recorded at period 1."""
     result = _monthly_start(
         age=_first_month(age_source),
         log_level=log_level,

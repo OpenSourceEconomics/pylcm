@@ -82,7 +82,8 @@ def support_size(*, node: QueryNode, period: int) -> int:
 
 def draw_rows(*, node: QueryNode) -> int:
     """Rows a drawn query gives each kept row: its samples, and one more that
-    carries the mass where no exit is available when its draws avoid that mass.
+    carries the mass where no composition action is available when its draws
+    avoid that mass.
     """
     rule = cast("tuple[MonteCarlo | QuasiMonteCarlo, tuple[int, ...]]", node.sample)[0]
     return rule.n + (node.draw_condition is not None)
@@ -113,6 +114,7 @@ def _uniforms(
 ) -> np.ndarray:
     """One point of the unit cube per sample, fixed by the rule, period and owner."""
     encoded = json.dumps(
+        # Frozen identity: the tag seeds the draws and keeps its spelling.
         ("pylcm-exit-query-rule", 1, rule.seed, period, owner),
         ensure_ascii=True,
         separators=(",", ":"),
@@ -134,8 +136,8 @@ def _uniforms(
 def sample_uniforms(*, node: QueryNode) -> np.ndarray:
     """A drawn query's points: one column per drawn group, then per observation.
 
-    The row that carries the mass without an available exit gets the cube's
-    centre; its value is the stay value, which reads no drawn axis.
+    The row that carries the mass without an available composition action gets
+    the cube's centre; its value is the stay value, which reads no drawn axis.
     """
     rule, kept = cast(
         "tuple[MonteCarlo | QuasiMonteCarlo, tuple[int, ...]]", node.sample
@@ -186,7 +188,7 @@ def _draw_available(
 
     Args:
         weights: The group's factors, one row per factor, over its nodes.
-        available: Whether an exit is available at each node.
+        available: Whether the composition action is available at each node.
         uniform: Points of the unit interval, one per draw.
 
     Returns:
@@ -209,13 +211,14 @@ def _draw_available(
     return jnp.append(row, node), jnp.append(scale, rest_scale)
 
 
-def _exit_available(
+def _composition_action_available(
     *,
     predicate: Callable[..., PytreeValue],
     arguments: QAndFKwargs,
     physical: Mapping[ShockName, FloatND | IntND],
 ) -> BoolND:
-    """Whether the exit is available at each node of one group's realisation."""
+    """Whether the composition action is available at each node of one group's
+    realisation."""
 
     def at_node(shocks: Mapping[ShockName, FloatND | IntND]) -> BoolND:
         return jnp.asarray(
@@ -622,7 +625,7 @@ def _callable_reads(
     and through the parent projection helpers it applies first. Any other
     callable that takes the physical frames could read anything.
     """
-    from _lcm.exit_queries import _Available  # noqa: PLC0415
+    from _lcm.composition_queries import _Available  # noqa: PLC0415
     from _lcm.policy_queries import _PHYSICAL_CONTEXTS  # noqa: PLC0415
     from _lcm.utils.functools import ComposedProjection  # noqa: PLC0415
 
@@ -1143,9 +1146,9 @@ def own_stay_classes(
     """Classes of a query's own rows its action problem cannot tell apart.
 
     Only an unguarded policy query qualifies: its stay table is then the same
-    at every row of a class, and its exit decision still runs at every row. A
-    guarded query's guard may read any of its rows. See `_row_classes` for the
-    result.
+    at every row of a class, and its decision on the composition still runs at
+    every row. A guarded query's guard may read any of its rows. See
+    `_row_classes` for the result.
     """
     node = definitions[name]
     if (
@@ -1685,8 +1688,8 @@ class InformationQueryCell:
         realises, and one uniform per observation axis and row.
 
         Under a draw condition (`QueryNode.draw_condition`) that group is drawn
-        among the nodes where an exit is available, and a last sample per kept
-        row stands for the rest of its mass at full sample weight.
+        among the nodes where the composition action is available, and a last
+        sample per kept row stands for the rest of its mass at full sample weight.
         """
         rule, kept = cast(
             "tuple[MonteCarlo | QuasiMonteCarlo, tuple[int, ...]]", node.sample
@@ -1726,9 +1729,10 @@ class InformationQueryCell:
                     if column != node.draw_condition
                     else _draw_available(
                         weights=weights,
-                        available=_exit_available(
+                        available=_composition_action_available(
                             predicate=cast(
-                                "Callable[..., PytreeValue]", node.exit_availability
+                                "Callable[..., PytreeValue]",
+                                node.composition_action_availability,
                             ),
                             arguments=arguments,
                             physical=site_frame.physical,
@@ -1862,7 +1866,7 @@ class InformationQueryCell:
         """The observed group's node at `row`: its frame, weights and node index.
 
         An unavailable observation yields the neutral representative, which
-        names node zero. Its settlement and law run only on a discarded batch
+        names node zero. Its transfer and law run only on a discarded batch
         lane, reading the producer's stand-in state rather than an unusable
         projection.
 
@@ -2123,8 +2127,8 @@ class InformationQueryCell:
         """This query's stay table once per class of its own rows, and the class
         of each row position; None when every row position is its own class.
 
-        The table holds no participation, which reads the row's exit payoffs; the
-        cell adds it at each row.
+        The table holds no participation, which reads the row's composition action
+        payoffs; the cell adds it at each row.
         """
         from _lcm.policy_queries import (  # noqa: PLC0415
             _PHYSICAL_CONTEXTS,
@@ -2433,7 +2437,7 @@ def _with_unavailable_nodes(
 
 def _standing_rows(*, node: QueryNode) -> np.ndarray:
     """Whether each plan row of a query realises the node standing for the nodes
-    where its exit is unavailable (`QueryNode.available_nodes`)."""
+    where its composition action is unavailable (`QueryNode.available_nodes`)."""
     column, available = cast("tuple[int, tuple[bool, ...]]", node.available_nodes)
     plan = cast("CurrentIIDPlan", _plan(node=node))
     return ~np.asarray(available)[np.asarray(plan.indices)[:, column]]

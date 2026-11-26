@@ -477,7 +477,7 @@ def test_block_major_action_partitions_publish_complete_period_major_values(
 def test_block_major_action_partitions_preserve_the_complete_simulated_panel(
     *, report: _Report, route: str
 ) -> None:
-    """Same-subject panels keep their metadata and raw bytes, including signed zero."""
+    """Same-agent panels keep their metadata and raw bytes, including signed zero."""
     assert {
         layout: result["panel_mismatches"][route]
         for layout, result in report["block_major"].items()

@@ -13,8 +13,8 @@ from _lcm.execution.core_program import (
     CoreProgram,
 )
 from _lcm.execution.execution_plan import ResolvedExecution
-from _lcm.simulation.program_types import subject_axis
-from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
+from _lcm.simulation.program_types import agent_axis
+from _lcm.simulation.programs import _AgentTiled, _ArgumentsBoundAtDispatch
 from _lcm.simulation.residency import measure_buffer_footprint
 from _lcm.simulation.runtime import (
     CompiledSimulationProgram,
@@ -38,13 +38,13 @@ def _increment(*, state: jax.Array) -> jax.Array:
 
 def _program() -> CoreProgram:
     return CoreProgram(
-        name="subject_partition_transition",
-        function=_SubjectTiled(func=_increment, subject_arg_names=("state",)),
+        name="agent_partition_transition",
+        function=_AgentTiled(func=_increment, agent_arg_names=("state",)),
         argument_builder=_ArgumentsBoundAtDispatch(
-            program_name="subject_partition_transition", subject_arg_names=("state",)
+            program_name="agent_partition_transition", agent_arg_names=("state",)
         ),
         requirements=CoreExecutionRequirements(
-            tiled_axes=(subject_axis(state_names=("state",)),)
+            tiled_axes=(agent_axis(state_names=("state",)),)
         ),
         output_roles="next_state",
         disposition=CoreExecutionDisposition.PLANNED,
@@ -59,12 +59,12 @@ def _runtime(
         execution=ResolvedExecution(
             device_ids=tuple(device.id for device in devices),
             sharded_states=frozenset(),
-            axis_widths=MappingProxyType({"subject": 3}),
+            axis_widths=MappingProxyType({"agent": 3}),
             device_memory_bytes=budget,
-            simulation_sharding="subjects",
+            simulation_sharding="agents",
         ),
         enable_jit=True,
-        subject_devices=devices,
+        agent_devices=devices,
     )
 
 
@@ -78,13 +78,13 @@ def test_real_runtime_abstract_profile_and_repeated_dispatch() -> None:
         program=program,
         arguments={"state": jax.ShapeDtypeStruct((16,), jnp.float32, sharding=layout)},
         period=0,
-        n_subjects=16,
-        widths={"subject": 3},
+        n_agents=16,
+        widths={"agent": 3},
     )
     for offset in (0, 10):
         source = jax.device_put(np.arange(16, dtype=np.float32) + offset, layout)
         result = runtime.dispatch(
-            program=program, arguments={"state": source}, period=0, n_subjects=16
+            program=program, arguments={"state": source}, period=0, n_agents=16
         )
         assert isinstance(result, jax.Array)
         np.testing.assert_array_equal(result, np.arange(16) + offset + 1)
@@ -115,13 +115,13 @@ def test_last_device_retained_owner_refuses_before_numerical_dispatch(
             program=_program(),
             arguments={"state": source},
             period=0,
-            n_subjects=16,
+            n_agents=16,
             residency=SimulationDispatchContext(
                 live_footprint=lambda: measure_buffer_footprint(
                     tree=(retained, source)
                 ),
                 budget_devices=devices,
-                axis_widths=MappingProxyType({"subject": 3}),
+                axis_widths=MappingProxyType({"agent": 3}),
             ),
         )
     assert calls == []

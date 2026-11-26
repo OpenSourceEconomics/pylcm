@@ -2,10 +2,10 @@
 
 A regime solved by `NBEGM` with a state besides its liquid state publishes the
 optimal consumption on its state grid every period. Simulation reads that policy
-at each subject's realized state: linear in the liquid state, and, for a process
+at each agent's realized state: linear in the liquid state, and, for a process
 state between its nodes, linear in the node coordinate, the rule the process's
 transition weights follow off node. The dense action-grid argmax (`decide()`,
-the `"decision"` simulation program) then runs only for subjects whose read is
+the `"decision"` simulation program) then runs only for agents whose read is
 rejected, for example a liquid state outside the published grid.
 """
 
@@ -159,11 +159,11 @@ def _nbegm_model(
 
 
 def _initial_conditions(
-    *, ride: str, n_subjects: int, wealth: np.ndarray | None = None
+    *, ride: str, n_agents: int, wealth: np.ndarray | None = None
 ) -> dict[str, jnp.ndarray]:
     rng = np.random.default_rng(0)
     if wealth is None:
-        wealth = rng.uniform(1.0, 5.0, size=n_subjects)
+        wealth = rng.uniform(1.0, 5.0, size=n_agents)
     conditions = {
         "wealth": jnp.asarray(wealth),
         "period": jnp.zeros(wealth.shape, dtype=jnp.int32),
@@ -182,18 +182,18 @@ def _simulate(
     *,
     model: Model,
     ride: str,
-    n_subjects: int = 200,
+    n_agents: int = 200,
     solution: SolutionResult | None = None,
 ) -> pd.DataFrame:
-    """Panel of a simulate run, sorted by subject and period."""
+    """Panel of a simulate run, sorted by agent and period."""
     frame = model.simulate(
         params={},
-        initial_conditions=_initial_conditions(ride=ride, n_subjects=n_subjects),
+        initial_conditions=_initial_conditions(ride=ride, n_agents=n_agents),
         seed=0,
         log_level="off",
         solution=solution,
     ).to_dataframe(use_categorical_codes=True)
-    return frame.sort_values(["subject_id", "period"]).reset_index(drop=True)
+    return frame.sort_values(["agent_id", "period"]).reset_index(drop=True)
 
 
 def _resources(*, first: pd.DataFrame, ride: str) -> np.ndarray:
@@ -207,7 +207,7 @@ def _resources(*, first: pd.DataFrame, ride: str) -> np.ndarray:
 def test_default_nbegm_simulate_does_not_run_the_grid_argmax(
     *, ride: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Subjects inside the published state grid never reach the decision program."""
+    """Agents inside the published state grid never reach the decision program."""
     model = _nbegm_model(ride=ride)
     executed = _decision_program_owners(monkeypatch=monkeypatch)
 
@@ -216,7 +216,7 @@ def test_default_nbegm_simulate_does_not_run_the_grid_argmax(
     assert "alive" not in executed, executed
 
 
-def test_a_subject_off_the_published_grid_takes_the_grid_argmax(
+def test_an_agent_off_the_published_grid_takes_the_grid_argmax(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Positive control: a liquid state beyond the state grid runs the fallback."""
@@ -227,7 +227,7 @@ def test_a_subject_off_the_published_grid_takes_the_grid_argmax(
     model.simulate(
         params={},
         initial_conditions=_initial_conditions(
-            ride="health", n_subjects=3, wealth=wealth
+            ride="health", n_agents=3, wealth=wealth
         ),
         seed=0,
         log_level="off",
@@ -241,7 +241,7 @@ def test_nbegm_reads_the_euler_policy_between_wealth_nodes() -> None:
 
     With a discrete ride-along state the solve publishes `R / 2` at every
     state-grid node, so the linear read in wealth is exact between nodes. Next
-    period's wealth is the savings of the same consumption the subject reports.
+    period's wealth is the savings of the same consumption the agent reports.
     """
     frame = _simulate(model=_nbegm_model(ride="health"), ride="health")
     first = frame[frame["period"] == 0]
@@ -266,7 +266,7 @@ def test_work_choice_follows_the_larger_published_branch_value() -> None:
     """The branch whose published value reads larger wins, with its own policy.
 
     The solve publishes each work choice's conditional value and consumption on
-    the state grid. Each subject reads both values linearly in wealth at its
+    the state grid. Each agent reads both values linearly in wealth at its
     health row, takes the larger, and consumes that branch's policy read the same
     way. Both choices occur in the panel, and the budget is the chosen branch's.
     """
@@ -353,11 +353,11 @@ def test_off_node_draw_reads_the_bilinear_blend_of_the_published_policy() -> Non
     """An off-node draw blends its two bracketing node policies, each linear in wealth.
 
     The published policy holds one consumption per (shock node, wealth node).
-    A subject at wealth coordinate `i + u` and shock coordinate `j + v` reads
+    An agent at wealth coordinate `i + u` and shock coordinate `j + v` reads
     `sum (1 - u | u) (1 - v | v) c[j | j + 1, i | i + 1]`; the shock coordinate
     extrapolates along the edge segment beyond the outer nodes, as the transition
     weights of an off-node process value do. Next period's wealth is the savings
-    of the same consumption the subject reports.
+    of the same consumption the agent reports.
     """
     model = _nbegm_model(ride="shock")
     solution = model.solve(params={}, log_level="off")

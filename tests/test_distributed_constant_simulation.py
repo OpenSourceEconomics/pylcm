@@ -15,7 +15,7 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.simulation.chunk_planning import SimulationStageProfile
-from _lcm.simulation.operand_placement import subject_operand_sharding
+from _lcm.simulation.operand_placement import agent_operand_sharding
 from _lcm.simulation.programs import _ArgumentsBoundAtDispatch
 from _lcm.simulation.residency import measure_buffer_footprint
 from _lcm.simulation.runtime import SimulationDispatchContext, SimulationRuntime
@@ -33,11 +33,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _constant_outputs(
-    *, dead: IntND, __lcm_subject_width__: int
-) -> tuple[IntND, IntND]:
-    """Return scalar and subject outputs without reading the input array."""
-    del dead, __lcm_subject_width__
+def _constant_outputs(*, dead: IntND, __lcm_agent_width__: int) -> tuple[IntND, IntND]:
+    """Return scalar and agent outputs without reading the input array."""
+    del dead, __lcm_agent_width__
     return jnp.asarray(7, dtype=jnp.int32), jnp.full((4,), 5, dtype=jnp.int32)
 
 
@@ -56,27 +54,27 @@ def test_constant_program_uses_selected_devices_after_all_inputs_are_dropped(
             device_memory_bytes=budget,
         ),
         enable_jit=True,
-        subject_devices=devices,
+        agent_devices=devices,
     )
     program = CoreProgram(
         name="constant_outputs",
         function=_constant_outputs,
         argument_builder=_ArgumentsBoundAtDispatch(
-            program_name="constant_outputs", subject_arg_names=("dead",)
+            program_name="constant_outputs", agent_arg_names=("dead",)
         ),
         requirements=CoreExecutionRequirements(),
-        output_roles=("scalar", "subjects"),
+        output_roles=("scalar", "agents"),
         disposition=CoreExecutionDisposition.PLANNED,
         donation_candidates=(),
     )
     # The dead operand is divisible by every selected mesh. Output rank and
-    # length deliberately differ; no subject-axis assumption may shard a scalar.
-    layout = subject_operand_sharding(devices=devices)
+    # length deliberately differ; no agent-axis assumption may shard a scalar.
+    layout = agent_operand_sharding(devices=devices)
     compiled = runtime.prepare_abstract(
         program=program,
         arguments={"dead": jax.ShapeDtypeStruct((12,), np.int32, sharding=layout)},
         period=0,
-        n_subjects=12,
+        n_agents=12,
         widths=MappingProxyType({}),
     )
     assert isinstance(compiled.executable, jax.stages.Compiled)
@@ -99,7 +97,7 @@ def test_constant_program_uses_selected_devices_after_all_inputs_are_dropped(
             program=program,
             arguments=arguments,
             period=0,
-            n_subjects=12,
+            n_agents=12,
             residency=residency if budget is not None else None,
         )
         assert isinstance(outputs, tuple)

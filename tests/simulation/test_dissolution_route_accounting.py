@@ -61,9 +61,9 @@ from lcm.typing import (
 def _outcome_arrays(*, outcome: RerouteOutcome) -> FootprintTree:
     return (
         outcome.states,
-        outcome.subject_regime_ids,
+        outcome.agent_regime_ids,
         outcome.own_member,
-        outcome.new_subject_regime_ids,
+        outcome.new_agent_regime_ids,
         outcome.new_own_member,
         outcome.entered_through,
         outcome.rerouted,
@@ -94,7 +94,7 @@ def test_a_held_reroute_outcome_measures_every_array_field(
     model = _build_model(
         payoff_name="bowl",
         execution_config=ExecutionConfig(
-            devices=(0,), axis_widths={"subject": 2}, device_memory_bytes=2**30
+            devices=(0,), axis_widths={"agent": 2}, device_memory_bytes=2**30
         ),
     )
     solution = model.solve(params=_PARAMS, log_level="off")
@@ -120,7 +120,7 @@ def _budgeted_model() -> Model:
     return _build_model(
         payoff_name="bowl",
         execution_config=ExecutionConfig(
-            devices=(0,), axis_widths={"subject": 2}, device_memory_bytes=2**30
+            devices=(0,), axis_widths={"agent": 2}, device_memory_bytes=2**30
         ),
     )
 
@@ -152,17 +152,17 @@ def _record_entry_operations(
         memory: SimulationMemory | None,
         function: Callable[..., T],
         arguments: Mapping[ReferenceName, PytreeValue],
-        subject_arg_names: tuple[ReferenceName, ...] = (),
+        agent_arg_names: tuple[ReferenceName, ...] = (),
         static_arguments: Mapping[str, StaticArgument] = MappingProxyType({}),
-        subject_outputs: bool = False,
+        agent_outputs: bool = False,
     ) -> T:
         result = original_run(
             memory=memory,
             function=function,
             arguments=arguments,
-            subject_arg_names=subject_arg_names,
+            agent_arg_names=agent_arg_names,
             static_arguments=static_arguments,
-            subject_outputs=subject_outputs,
+            agent_outputs=agent_outputs,
         )
         if function in (empty_gated_entries, record_open_entries):
             name = "empty" if function is empty_gated_entries else "record"

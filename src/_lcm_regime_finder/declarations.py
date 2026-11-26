@@ -39,8 +39,8 @@ def short(value):
 
 
 def renegotiated_states(value):
-    """Return the states a `Renegotiate` anywhere in an exit declaration moves."""
-    if short(value) == "Renegotiate": return [fields(value).get("state")]
+    """Return the Pareto weight state a `PCOnWeight` anywhere in a composition action moves."""
+    if short(value) == "PCOnWeight": return [state] if (state := fields(value).get("state")) is not None else []
     children = value.values() if isinstance(value, dict) else value if isinstance(value, list) else ()
     return sorted({state for child in children for state in renegotiated_states(child)})
 
@@ -280,16 +280,16 @@ def declaration_graph(source,regimes,times,starts,coordinate_kind):
                 selected_gate=_select(gate,phase,period+1,times[period+1])
                 gate_fields=fields(selected_gate) or {}
                 # Gate references price other owners at the landing date;
-                # only a route's fallback declares a physical settlement.
+                # only a route's fallback declares a physical transfer.
                 for route in gate_fields.get('legs',gate_fields.get('routes',{})).values():
                     selected_route=_select(route,phase,period+1,times[period+1])
                     fallback=_select((fields(selected_route) or {}).get('fallback'),phase,period+1,times[period+1])
                     if fallback is not None:
                         # The supplied engine contract makes this particular
-                        # legacy leg payload a settlement as well as a value
+                        # legacy leg payload a transfer as well as a value
                         # read. Other current-read types do not inherit it.
                         if short(fallback)!='ProjectedRegimeValue':
-                            raise DeclarationError('Physical fallback settlement contract unavailable for '+short(fallback))
+                            raise DeclarationError('Physical fallback transfer contract unavailable for '+short(fallback))
                         pending.append((period+1,fields(fallback).get('regime')))
     return [[times[p],name] for p,name in sorted(admitted)],phases,laws,gates
 
@@ -845,14 +845,15 @@ def normalize_declarations(snapshot,production_contract=None):
               'structural_roles':{k:copy.deepcopy(declaration[k]) for k in ('liquid','outer_continuous') if declaration.get(k) is not None},
               'solver_identity':normal.value_digest(declaration['solver']) if declaration.get('solver') is not None else None,
               'operators':{k:(normal.value_digest(declaration[k]) if declaration.get(k) is not None else None) for k in ('koopmans_aggregator','certainty_equivalent','pareto_objective','taste_shocks')},
-              # A household stores one value per member, in member order, and
-              # an individual (the one member "self") reads as no household; the
-              # whole exit is part of the regime's problem, and a renegotiated
-              # state links its own codes within the period.
+              # A regime with several members stores one value per member, in
+              # member order. An individual (the one member "self") reads as no
+              # members. The whole composition action is part of the regime's
+              # problem. A Pareto weight state links its own codes within the
+              # period.
               'members':(None if list(declaration.get('members') or ['self'])==['self']
                              else copy.deepcopy(declaration['members'])),
-              'exit_identity':normal.value_digest(declaration['exit']) if declaration.get('exit') is not None else None,
-              'renegotiated_states':renegotiated_states(declaration.get('exit')),
+              'composition_action_identity':normal.value_digest(declaration['composition_action']) if declaration.get('composition_action') is not None else None,
+              'renegotiated_states':renegotiated_states(declaration.get('composition_action')),
               'role':contract.get('roles',{}).get(name,declaration.get('semantic_role')),
               'ownership':None,'terminal':True,'admissible_start':key in start_set,
               'report_tags':list(contract.get('report_tags',{}).get(name,[])),
@@ -908,7 +909,7 @@ def normalize_declarations(snapshot,production_contract=None):
                 cid = normal.callback(selected, pointer(pointer(base, 'shocks'), group), phase)
                 cell['consumers'].append({'kind':'shock_law', 'callback':cid, 'phase':phase, 'group':group})
         # The solve prices the solve variants of the utility, the aggregator,
-        # the household objective and the discount; the simulated choice prices
+        # the Pareto objective and the discount; the simulated choice prices
         # their simulate variants. A state that either variant reads is live.
         # Constraints are phase-invariant; reported outputs are simulated.
         for output,value in declaration.get('constraints',{}).items():
@@ -943,7 +944,7 @@ def normalize_declarations(snapshot,production_contract=None):
             cell['consumers'].append({'kind':'structural_margin','callback':cid,'phase':'solve'})
         known_slots={'states','actions','functions','constraints','state_transitions','joint_transitions','derived_categoricals',
                      'output_only_functions','koopmans_aggregator','certainty_equivalent','pareto_objective',
-                     'exit','description','solver','taste_shocks','shocks','members','liquid','outer_continuous',
+                     'composition_action','description','solver','taste_shocks','shocks','members','liquid','outer_continuous',
                      'semantic_role','stage'}
         for slot,value in declaration.items():
             if slot not in known_slots and value is not None and value!={} and value!=[]:
@@ -976,7 +977,7 @@ def normalize_declarations(snapshot,production_contract=None):
         if short(value)=='Phased':
             side='solve' if phase=='solve' else 'simulate'
             yield from query_references(fields(value).get(side),pointer(pointer(path,'fields'),side),phase)
-        elif short(value) in {'ProjectedRegimeValue','ArrivalRead','ExitTarget','Counterparty'}:
+        elif short(value) in {'ProjectedRegimeValue','ArrivalRead','Destination','Counterparty'}:
             yield value,path
         elif isinstance(value,dict):
             for key,child in value.items():yield from query_references(child,pointer(path,key),phase)
@@ -1000,7 +1001,7 @@ def normalize_declarations(snapshot,production_contract=None):
                 'admission':'policy_query_only','storage':'not_asserted','dependencies':[]}
         query_owners[qid]=record
         fp=pointer(path,'fields') if raw.get('kind') in {'dataclass','object'} else path
-        for key in ('exit',):
+        for key in ('composition_action',):
             for reference,reference_path in query_references(declaration.get(key) or {},pointer(fp,key),phase):
                 name=fields(reference).get('regime')
                 if (period,name) in by_pair:
@@ -1071,7 +1072,7 @@ def normalize_declarations(snapshot,production_contract=None):
                 for side,p in [('solve','solve'),('simulate','simulation')]:
                     if phase in {'both',p}:references(fields(value).get(side),pointer(pointer(path,'fields'),side),kind,ownership,p,offset,origin,incoming_source)
                 return
-            if short(value) in {'ProjectedRegimeValue','ArrivalRead','ExitTarget','Counterparty'}:
+            if short(value) in {'ProjectedRegimeValue','ArrivalRead','Destination','Counterparty'}:
                 f=fields(value);target=f.get('regime');tid=by_pair.get((period+offset,target))
                 if tid is None:
                     # The reference can price a separately declared owner's
@@ -1089,7 +1090,7 @@ def normalize_declarations(snapshot,production_contract=None):
                                         query_target=qid,reference_kind=kind,reference_sha256=normal.value_digest(value),
                                         callbacks=[cb],produces=[],ownership=copy.deepcopy(ownership),
                                         incoming_source=incoming_source,member=f.get('member',f.get('role')),
-                                        read_type=f.get('kind','Participating' if short(value)=='ExitTarget' else 'Raw' if short(value)=='Counterparty' else 'value'),
+                                        read_type=f.get('kind','Participating' if short(value)=='Destination' else 'Raw' if short(value)=='Counterparty' else 'value'),
                                         read_field=f.get('field','value'),observes=copy.deepcopy(f.get('observes',[])))
                     return
                 projection_value=f.get('projection',{})
@@ -1099,7 +1100,7 @@ def normalize_declarations(snapshot,production_contract=None):
                     extra_callbacks=[normal.callback(f['utility_adjustment'],pointer(path,'utility_adjustment'))] if f.get('utility_adjustment') is not None else []
                     normal.relation(kind,origin or cell['id'],[tid],normal.source_path(value,path),p,state_updates=projection,produces=sorted(projection),ownership=ownership,
                                     callbacks=extra_callbacks,incoming_source=incoming_source,member=f.get('member',f.get('role')),
-                                    read_type=f.get('kind','Participating' if short(value)=='ExitTarget' else 'Raw' if short(value)=='Counterparty' else 'value'),
+                                    read_type=f.get('kind','Participating' if short(value)=='Destination' else 'Raw' if short(value)=='Counterparty' else 'value'),
                                     read_field=f.get('field','value'),observes=f.get('observes',[]),original=copy.deepcopy(value))
                 if ownership is not None:
                     owners=by_id[tid].setdefault('ownership',[])
@@ -1112,11 +1113,11 @@ def normalize_declarations(snapshot,production_contract=None):
                 for k,v in value.items():references(v,pointer(path,k),kind,ownership,phase,offset,origin,incoming_source)
             elif isinstance(value,list):
                 for i,v in enumerate(value):references(v,pointer(path,i),kind,ownership,phase,offset,origin,incoming_source)
-        for key in ('exit',):
-            references(declaration.get(key) or {},pointer(fp,key),'exit' if key=='exit' else 'value_read')
-            if key=='exit' and declaration.get(key) is not None:
+        for key in ('composition_action',):
+            references(declaration.get(key) or {},pointer(fp,key),'composition_action' if key=='composition_action' else 'value_read')
+            if key=='composition_action' and declaration.get(key) is not None:
                 value=declaration[key]
-                normal.relation('exit',cell['id'],[],pointer(fp,key),callbacks=[normal.callback(value,pointer(fp,key))],original=copy.deepcopy(value),
+                normal.relation('composition_action',cell['id'],[],pointer(fp,key),callbacks=[normal.callback(value,pointer(fp,key))],original=copy.deepcopy(value),
                                 observes=copy.deepcopy((fields(value) or {}).get('observes',[])))
         declared_source_law=fields(laws.get(name,{})) or {}
         gate_rows=[(phase,_transition_gates(declared_source_law,'gated_edges','arrivals')) for phase in ('solve','simulation')] if not declaration_gates else [(phase,declaration_gates.get((phase,period,name),{})) for phase in ('solve','simulation')]
@@ -1132,7 +1133,7 @@ def normalize_declarations(snapshot,production_contract=None):
             if tid is None:continue
             predicate_slot='predicate' if gf.get('predicate') is not None else 'gate'
             callbacks=[normal.callback(gf[predicate_slot],pointer(gp,predicate_slot))] if gf.get(predicate_slot) is not None else []
-            # Gate/arrival predicates and settlement projections see the landing
+            # Gate/arrival predicates and transfer projections see the landing
             # target grid. Their authority remains the particular incoming leg.
             normal.relation('arrival' if short(gate)=='ArrivalDecision' else 'gate',tid,[tid],normal.source_path(gate,gp),gate_phase,
                             callbacks=callbacks,produces=[],incoming_source=cell['id'],ownership={'source_regime':name,'target_regime':target},

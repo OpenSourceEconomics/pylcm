@@ -74,7 +74,7 @@ def test_placed_build_context_nodes_stay_read_only_mappings() -> None:
     """Device placement of a context's nodes returns the read-only mapping type."""
     placed = place_simulation_arguments(
         arguments={"state_nodes": _NODES},
-        subject_arg_names=(),
+        agent_arg_names=(),
         value_reads=(),
         devices=(jax.devices()[0],),
     )

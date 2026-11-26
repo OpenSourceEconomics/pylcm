@@ -245,7 +245,7 @@ class SimulationEntryAllocations:
             live = self.snapshot()
             arguments = place_simulation_arguments(
                 arguments={"solve_params": parameters},
-                subject_arg_names=(),
+                agent_arg_names=(),
                 value_reads=(),
                 devices=devices,
                 budget_bytes=self.budget_bytes,
@@ -309,7 +309,7 @@ class SimulationEntryAllocations:
                 live = self.snapshot()
                 copied = place_simulation_arguments(
                     arguments={"query_solve_params": values},
-                    subject_arg_names=(),
+                    agent_arg_names=(),
                     value_reads=(),
                     devices=devices,
                     budget_bytes=self.budget_bytes,
@@ -353,7 +353,7 @@ class SimulationEntryAllocations:
         budget_devices = tuple(dict.fromkeys((*self.devices, *live.spans)))
         placed = place_simulation_arguments(
             arguments=MappingProxyType({name: canonical}),
-            subject_arg_names=(),
+            agent_arg_names=(),
             value_reads=(),
             devices=(self.devices[0],),
             budget_bytes=self.budget_bytes,
@@ -571,7 +571,7 @@ class SimulationEntryAllocations:
         memory = SimulationMemory(
             budget_bytes=self.budget_bytes,
             devices=resolve_budget_devices(execution_devices=self.devices, live=live),
-            subject_devices=(self.devices[0],),
+            agent_devices=(self.devices[0],),
             operations=self.operations,
             producers=self.operations,
             inputs=live,
@@ -597,10 +597,10 @@ class SimulationEntryAllocations:
         The canonical input mapping and earlier padded leaves remain owned for
         the whole loop. The caller publishes the returned mapping at handoff.
         """
-        original_n_subjects = len(next(iter(initial_conditions.values())))
-        if multiple <= 1 or original_n_subjects % multiple == 0:
-            return initial_conditions, original_n_subjects
-        pad = multiple - original_n_subjects % multiple
+        original_n_agents = len(next(iter(initial_conditions.values())))
+        if multiple <= 1 or original_n_agents % multiple == 0:
+            return initial_conditions, original_n_agents
+        pad = multiple - original_n_agents % multiple
         self._stages["initial"] = initial_conditions
         padded: dict[str, jax.Array] = {}
         for name, array in initial_conditions.items():
@@ -611,7 +611,7 @@ class SimulationEntryAllocations:
                     function=_pad_initial_leaf,
                     arguments={"array": array},
                     static_arguments={"pad": pad},
-                    subject_arg_names=(),
+                    agent_arg_names=(),
                     devices=(self.devices[0],),
                     live_footprint=self.snapshot,
                     budget_devices=tuple(dict.fromkeys((*self.devices, *live.spans))),
@@ -620,7 +620,7 @@ class SimulationEntryAllocations:
             )
             self._pending.append(result)
             padded[name] = result
-        return cast("InitialConditions", MappingProxyType(padded)), original_n_subjects
+        return cast("InitialConditions", MappingProxyType(padded)), original_n_agents
 
     def update_solution(
         self,

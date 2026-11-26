@@ -203,11 +203,11 @@ def test_gated_self_loop_carries_career_once_before_ordinary_exit() -> None:
         log_level="off",
     )
     frame = result.to_dataframe()
-    original = frame.loc[frame["period"] == 0].sort_values("subject_id")
-    np.testing.assert_array_equal(original["subject_id"], [0, 1])
+    original = frame.loc[frame["period"] == 0].sort_values("agent_id")
+    np.testing.assert_array_equal(original["agent_id"], [0, 1])
     np.testing.assert_array_equal(original["career"], [10.0, 20.0])
-    landed = frame.loc[frame["period"] == 1].sort_values("subject_id")
-    np.testing.assert_array_equal(landed["subject_id"], [0, 1])
+    landed = frame.loc[frame["period"] == 1].sort_values("agent_id")
+    np.testing.assert_array_equal(landed["agent_id"], [0, 1])
     np.testing.assert_array_equal(landed["regime_name"], ["src_fallback", "src"])
     np.testing.assert_array_equal(landed["wage"], [1.0, 2.0])
     np.testing.assert_array_equal(
@@ -218,7 +218,7 @@ def test_gated_self_loop_carries_career_once_before_ordinary_exit() -> None:
     )
     assert "career" not in result.raw_results["src_fallback"][1].states
     exited = frame.loc[(frame["period"] == 2) & (frame["regime_name"] == "src_exit")]
-    np.testing.assert_array_equal(exited["subject_id"], [1])
+    np.testing.assert_array_equal(exited["agent_id"], [1])
     np.testing.assert_array_equal(exited["wage"], [2.0])
     np.testing.assert_array_equal(exited["value"], [1.0])
     assert "career" not in result.raw_results["src_exit"][2].states

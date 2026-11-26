@@ -141,9 +141,9 @@ it is the route that prevents a consumer from confusing an age with a period pos
 
 ## Several decisions in one period
 
-A household may first decide whether to stay together and then how much to consume, or
-two players may move in turn. Declare the decisions of one period as an ordered mapping
-from stage names to the regimes of each stage:
+A couple may first decide whether to stay together and then how much to consume, or two
+players may move in turn. Declare the decisions of one period as an ordered mapping from
+stage names to the regimes of each stage:
 
 ```python
 model = Model(
@@ -170,12 +170,13 @@ that decides in two stages of one period is two declared regimes.
   without discounting; crossing into the next period discounts once, however many stages
   are skipped. An edge into a regime of the source's own stage lands in the next period.
   Its selector names the source's period, as in a model without stages.
-- An exit enters a regime of its own stage or of a later stage of its period. In a later
-  stage its outside value is the destination's value at its occurrence later in the
-  period, at the landing state, without discounting. The exit cannot observe a shock the
-  destination draws in its own stage, which is not drawn yet: draw it in the earlier
-  stage and carry it as a state.
-- Subjects start in their regime's own stage, so `initial_nodes` and initial conditions
+- A composition action leads to a regime of its own stage or of a later stage of its
+  period. For a destination in a later stage, the value of the outside option is the
+  destination's value at its occurrence later in the period, at the landing state,
+  without discounting. The decision on the composition cannot observe a shock that the
+  destination draws in its own stage, because that shock is not drawn yet. Draw it in
+  the earlier stage and carry it as a state.
+- Agents start in their regime's own stage, so `initial_nodes` and initial conditions
   may name a regime of any stage.
 - The stages of a period are linked without discounting: where a regime's edges land in
   its period, it adds their certainty equivalent to its utility. Its edges at one age
@@ -186,7 +187,7 @@ that decides in two stages of one period is two declared regimes.
 
 A regime with one decision per period, such as a single among couples who first decide
 whether to stay together and then how much to consume, is declared once, in the stage
-where it decides. An edge into it reads its value at its next occurrence, and a subject
+where it decides. An edge into it reads its value at its next occurrence, and an agent
 in it has no row and no transition at a step it sits out. The parameter template,
 `model.regime_names_to_ids`, `model.initial_nodes`, the solution's values, the raw
 simulation results and the simulated frame list only declared regimes, so they have no
@@ -204,18 +205,19 @@ value is the regime's value handed through; let the refused edge land in the
 pass-through instead.
 
 - `period` and `age` are the period's wherever the model reads them: in functions,
-  constraints and conditions, laws, gates, exits and settlements, Pareto weights and
-  shock laws. A condition that reads `period` then offers a solver no structure, as one
-  built with `Condition.from_callable` does. `TimeVarying` and other time-indexed
-  parameters are indexed by period, and the simulated frame has a `stage` column next to
-  `period`.
+  constraints and conditions, laws, gates, composition actions and transfers, Pareto
+  weights and shock laws. A condition that reads `period` then offers a solver no
+  structure, as one built with `Condition.from_callable` does. `TimeVarying` and other
+  time-indexed parameters are indexed by period, and the simulated frame has a `stage`
+  column next to `period`.
 - A regime decides in its own stage of every period, so a selector that names only the
   final period is refused for a regime of the last stage, where no transition happens.
   The regime finder does not analyse a model with stages.
 
-Two players who move in turn are one household regime per stage, each with both players
-as members and a `ParetoObjective` that puts all weight on the player who moves: the
-mover maximizes its own value, and the other player's value follows the mover's choice.
+Two players who move in turn are one regime per stage. Each regime has both players as
+members and a `ParetoObjective` that puts the whole Pareto weight on the player who
+moves. The deciding member maximizes its own value. The other member's value follows the
+deciding member's choice.
 
 The engine solves one step per pair of a period and a stage. `model.n_periods` counts
 periods and `model.n_steps` counts steps. The solution's values, its accessors

@@ -32,12 +32,12 @@ that model; it applies to any integer or boolean array a solve publishes.
 
 Covered and uncovered solves must also lead forward simulation to the same
 discrete choices. That check runs on specimens whose parameters make the
-simulated discrete actions vary across subjects:
+simulated discrete actions vary across agents:
 
-- the GridSearch model with a lower disutility of work, so that some subjects
+- the GridSearch model with a lower disutility of work, so that some agents
   work and others retire;
 - the NB-EGM toy, at its two-period and its default sizes, with a higher
-  insurance premium, so that some subjects buy private insurance and others do
+  insurance premium, so that some agents buy private insurance and others do
   not.
 
 Each distinct solve runs once per worker and is shared across tests.
@@ -106,7 +106,7 @@ _SIMULATION_PARAMS: dict[str, dict[str, float]] = {
     _GRID_SEARCH: {"disutility_of_work": 0.25},
     _NBEGM: {"premium": 3.0},
 }
-_N_SUBJECTS = 400
+_N_AGENTS = 400
 _SIMULATION_SEED = 1
 _NON_FINITE_CLASSES: dict[str, Callable[[NDArray[np.floating]], NDArray[np.bool_]]] = {
     "nan": np.isnan,
@@ -217,24 +217,24 @@ def _simulate(
 
 
 def _initial_conditions(solver: str) -> dict[str, jax.Array]:
-    """Subjects spread over the model's wealth-like state, all alive at the start.
+    """Agents spread over the model's wealth-like state, all alive at the start.
 
-    GridSearch subjects start at wealth 47 or more. Below that, a subject who
+    GridSearch agents start at wealth 47 or more. Below that, an agent who
     consumes a node within one unit of its wealth and does not work enters period
     1 with less wealth than the smallest consumption node, a state with no
     feasible action, which simulation refuses.
     """
-    regime_id = jnp.zeros(_N_SUBJECTS, dtype=jnp.int32)
+    regime_id = jnp.zeros(_N_AGENTS, dtype=jnp.int32)
     if solver == _NBEGM:
         return {
-            "liquid": jnp.linspace(0.0, 30.0, _N_SUBJECTS),
-            "income": jnp.zeros(_N_SUBJECTS),
-            "age": jnp.zeros(_N_SUBJECTS),
+            "liquid": jnp.linspace(0.0, 30.0, _N_AGENTS),
+            "income": jnp.zeros(_N_AGENTS),
+            "age": jnp.zeros(_N_AGENTS),
             "regime_id": regime_id,
         }
     return {
-        "wealth": jnp.linspace(47.0, 150.0, _N_SUBJECTS),
-        "age": jnp.full(_N_SUBJECTS, float(regression.START_AGE)),
+        "wealth": jnp.linspace(47.0, 150.0, _N_AGENTS),
+        "age": jnp.full(_N_AGENTS, float(regression.START_AGE)),
         "regime_id": regime_id,
     }
 
@@ -332,7 +332,9 @@ def _shapes_and_dtypes(
     }
 
 
-def _class_masks(*, result, non_finite: str) -> dict[_PublishedArrayKey, bytes]:
+def _class_masks(
+    *, result: SolutionResult, non_finite: str
+) -> dict[_PublishedArrayKey, bytes]:
     """Where each float array holds the `non_finite` class, as raw mask bytes."""
     predicate = _NON_FINITE_CLASSES[non_finite]
     return {
@@ -340,7 +342,9 @@ def _class_masks(*, result, non_finite: str) -> dict[_PublishedArrayKey, bytes]:
     }
 
 
-def _ulp_excess(*, covered, uncovered) -> dict[_PublishedArrayKey, tuple[int, int]]:
+def _ulp_excess(
+    *, covered: SolutionResult, uncovered: SolutionResult
+) -> dict[_PublishedArrayKey, tuple[int, int]]:
     """Worst ULP distance and bound of every float array that exceeds its bound."""
     excess: dict[_PublishedArrayKey, tuple[int, int]] = {}
     reference = _float_arrays(uncovered)
@@ -438,7 +442,7 @@ def test_covering_keeps_simulated_discrete_choices_identical(
 ) -> None:
     """Simulating from a covered and an uncovered solve, with the same initial
     conditions and seed, yields the same label for every discrete action, discrete
-    state and regime of every subject in every period."""
+    state and regime of every agent in every period."""
     solver, arm = case
     model, covered_census, covered = _simulate(solver=solver, arm=arm, covered=True)
     _, uncovered_census, uncovered = _simulate(solver=solver, arm=arm, covered=False)

@@ -406,7 +406,7 @@ def test_node_draws_do_not_depend_on_runtime_checks_or_logging(
     np.testing.assert_array_equal(got["income"], reference["income"])
 
 
-def test_node_kernel_accepts_empty_subject_keys() -> None:
+def test_node_kernel_accepts_empty_agent_keys() -> None:
     process = NormalIIDProcess(
         n_points=3, gauss_hermite=True, mu=0.0, sigma=1.0, simulated_draws="nodes"
     )
@@ -983,7 +983,7 @@ def _period_zero_continuations(
         seed=11,
         log_level="off",
     ).to_dataframe(use_categorical_codes=True)
-    values = frame.loc[frame["period"] == 0].sort_values("subject_id")["value"]
+    values = frame.loc[frame["period"] == 0].sort_values("agent_id")["value"]
     return values.to_numpy() - (starts**2 + 1.0)
 
 
@@ -1573,7 +1573,7 @@ def test_process_edge_sharing_preserves_the_continuation(case: str) -> None:
         seed=11,
         log_level="off",
     ).to_dataframe(use_categorical_codes=True)
-    got = frame.loc[frame["period"] == 0].sort_values("subject_id")["value"]
+    got = frame.loc[frame["period"] == 0].sort_values("agent_id")["value"]
     expected = {
         "linear": [3.8, 2.6, 1.4],
         "distinct-laws": [1.1, 1.7, 2.3],

@@ -12,26 +12,26 @@ from _lcm.execution.core_program import CoreBuildContext
 from _lcm.regime_building.collective import role_code
 from _lcm.simulation.chunk_operations import _regime_mask
 from _lcm.simulation.chunk_profile_inventory import ChunkProfileInventory, abstract_tree
-from _lcm.simulation.current_iid_overrides import (
-    CurrentIIDOverrideSchema,
-    current_iid_override_prototype,
-)
-from _lcm.simulation.exit_replay import (
+from _lcm.simulation.composition_actions import route_original_agents
+from _lcm.simulation.composition_replay import (
     _answer_status,
     _final_decision,
     _moving_actor_rows,
     _original_bases,
     _original_produced,
     _query_reached_landing_totals,
-    exit_bindings,
+    composition_action_bindings,
 )
-from _lcm.simulation.exits import route_original_subjects
+from _lcm.simulation.current_iid_overrides import (
+    CurrentIIDOverrideSchema,
+    current_iid_override_prototype,
+)
 from _lcm.simulation.forward_program_profiles import (
     PreparedDecisionProfile,
     _concrete_widths,
     _profile_program,
 )
-from _lcm.simulation.operand_placement import subject_operand_sharding
+from _lcm.simulation.operand_placement import agent_operand_sharding
 from _lcm.simulation.random_address import draw_window_keys
 from _lcm.simulation.taste_stream import draw_taste_shock_keys
 from _lcm.simulation.value_placement import simulation_value_sharding
@@ -57,7 +57,7 @@ type _RouteOutput = tuple[
 ]
 
 
-def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner walk
+def profile_composition_period(  # noqa: C901, PLR0915 - retain replay's ordered owner walk
     *,
     inventory: ChunkProfileInventory,
     regimes: Mapping[RegimeName, Regime],
@@ -71,7 +71,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
     ages: TimeAxis,
     key: jax.ShapeDtypeStruct,
     taste_key: jax.ShapeDtypeStruct | None,
-    n_subjects: int,
+    n_agents: int,
     widths: Mapping[str, int],
     logger: logging.Logger,
     max_compilation_workers: int | None = None,
@@ -82,7 +82,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
     jax.ShapeDtypeStruct,
     Mapping[str, PreparedDecisionProfile],
 ]:
-    """Compile independent exit frontiers before adopting their ordered profiles.
+    """Compile independent frontiers of composition decisions, then adopt profiles.
 
     Full decisions read the original carrier. Revealed decisions
     read their routed outputs, so their wave starts only after those compiled
@@ -92,14 +92,14 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
     actors = {
         name: regime
         for name, regime in regimes.items()
-        if period in regime.simulation.exit_queries
+        if period in regime.simulation.composition_queries
     }
     if not actors:
         return states, regime_ids, roles, {}
-    bindings = exit_bindings(actors=actors, period=period)
-    devices = inventory.runtime.subject_devices
-    subject = subject_operand_sharding(devices=devices)
-    shared = simulation_value_sharding(stored_sharding=subject, devices=devices)
+    bindings = composition_action_bindings(actors=actors, period=period)
+    devices = inventory.runtime.agent_devices
+    agent = agent_operand_sharding(devices=devices)
+    shared = simulation_value_sharding(stored_sharding=agent, devices=devices)
     codes = {
         name: jax.ShapeDtypeStruct(
             jax.typeof(code).shape,
@@ -122,16 +122,16 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                     "address_words": jax.ShapeDtypeStruct(
                         (8,), np.uint32, sharding=shared
                     ),
-                    "subject_start": jax.ShapeDtypeStruct(
+                    "agent_start": jax.ShapeDtypeStruct(
                         (2,), np.uint32, sharding=shared
                     ),
-                    "last_real_subject": jax.ShapeDtypeStruct(
+                    "last_real_agent": jax.ShapeDtypeStruct(
                         (2,), np.uint32, sharding=shared
                     ),
                     "period": jax.ShapeDtypeStruct((), np.uint32, sharding=shared),
                 },
-                static_arguments={"subject_count": n_subjects},
-                subject_outputs=True,
+                static_arguments={"agent_count": n_agents},
+                agent_outputs=True,
             ),
         )
 
@@ -153,8 +153,8 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
         names=tuple(
             shock for binding in bindings.values() for shock in binding.group.shocks
         ),
-        n_subjects=n_subjects,
-        sharding=subject,
+        n_agents=n_agents,
+        sharding=agent,
     )
 
     def native(
@@ -168,7 +168,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
         wave: CompilationWave | None = None,
     ) -> tuple[ShapeDtypePytree, ...]:
         regime = actors[name]
-        plan = regime.simulation.exit_queries[period]
+        plan = regime.simulation.composition_queries[period]
         queries = plan.full if family == "exit_full" else plan.participating[name]
         if queries is None:
             raise ExecutionPlanningError("An incoming-only actor has no Full program.")
@@ -214,7 +214,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
             # The prepass discards these lowered-only descriptors. Ordered
             # profiling below uses the compiled executable's actual layouts.
             concrete_widths = _concrete_widths(
-                program=program, n_subjects=n_subjects, widths=widths
+                program=program, n_agents=n_agents, widths=widths
             )
             return cast(
                 "tuple[ShapeDtypePytree, ...]",
@@ -222,7 +222,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                     program=program,
                     arguments=inputs,
                     period=period,
-                    n_subjects=n_subjects,
+                    n_agents=n_agents,
                     widths=concrete_widths,
                     wave=wave,
                     label=(
@@ -235,7 +235,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
             program=program,
             arguments=inputs,
             period=period,
-            n_subjects=n_subjects,
+            n_agents=n_agents,
             widths=widths,
         )
         return cast(
@@ -272,7 +272,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
     routes = []
     full_holders = {}
     for name, regime in actors.items():
-        queries = regime.simulation.exit_queries[period].full
+        queries = regime.simulation.composition_queries[period].full
         if queries is None:
             continue
         holders = cast(
@@ -280,8 +280,8 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
             inventory.operation(
                 function=_regime_mask,
                 arguments={"regime_ids": regime_ids, "regime_id": codes[name]},
-                subject_arg_names=("regime_ids",),
-                subject_outputs=True,
+                agent_arg_names=("regime_ids",),
+                agent_outputs=True,
             ),
         )
         full_holders[name] = holders
@@ -298,7 +298,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                     wave=wave,
                 )
     for name, regime in actors.items():
-        queries = regime.simulation.exit_queries[period].full
+        queries = regime.simulation.composition_queries[period].full
         if queries is None:
             continue
         holders = full_holders[name]
@@ -315,7 +315,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
         paid = cast("Mapping[str, ShapeDtypePytree]", output[3])
         for identifier, members in queries.definitions[
             queries.root
-        ].exit_targets.items():
+        ].composition_action_targets.items():
             for member, query in members.items():
                 target = queries.definitions[query].read
                 address = f"{name}:{query}"
@@ -343,7 +343,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
     final_ids, final_roles, final_states, moved, paid = cast(
         "_RouteOutput",
         inventory.operation(
-            function=route_original_subjects,
+            function=route_original_agents,
             arguments={
                 "original_regime_ids": regime_ids,
                 "original_roles": roles,
@@ -354,7 +354,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                 "regime_ids": codes,
             },
             static_arguments={"routes": tuple(routes)},
-            subject_arg_names=(
+            agent_arg_names=(
                 "original_regime_ids",
                 "original_roles",
                 "original_states",
@@ -362,7 +362,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                 "projections",
                 "adjustments",
             ),
-            subject_outputs=True,
+            agent_outputs=True,
         ),
     )
     bases = inventory.operation(
@@ -372,8 +372,8 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
             "bases": {name: frame[2] for name, (_, frame) in originals.items()},
             "regime_names_to_ids": codes,
         },
-        subject_arg_names=("regime_ids", "bases"),
-        subject_outputs=True,
+        agent_arg_names=("regime_ids", "bases"),
+        agent_outputs=True,
     )
     produced = inventory.operation(
         function=_original_produced,
@@ -388,8 +388,8 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                 for name, (_, frame) in originals.items()
             ),
         },
-        subject_arg_names=("regime_ids", "availability"),
-        subject_outputs=True,
+        agent_arg_names=("regime_ids", "availability"),
+        agent_outputs=True,
     )
     moving_holders = {}
     for name in actors:
@@ -402,8 +402,8 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                     "regime_ids": final_ids,
                     "regime_id": codes[name],
                 },
-                subject_arg_names=("moved", "regime_ids"),
-                subject_outputs=True,
+                agent_arg_names=("moved", "regime_ids"),
+                agent_outputs=True,
             ),
         )
         moving_holders[name] = holders
@@ -437,13 +437,13 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
             frame=frame,
             holders=holders,
             landings=bool(
-                regime.simulation.exit_queries[period]
+                regime.simulation.composition_queries[period]
                 .participating[name]
                 .landing_checks
             ),
         )
         source_answer, source_frame = originals.get(name, (answer, frame))
-        names = regime.simulation.exit_queries[period].physical_names
+        names = regime.simulation.composition_queries[period].physical_names
         source_physical = cast("Mapping[str, jax.ShapeDtypeStruct]", source_frame[0])
         target_physical = cast("Mapping[str, jax.ShapeDtypeStruct]", frame[0])
         reporting_sources = {name} | {
@@ -489,7 +489,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                         for member in regime.members
                     ),
                 },
-                subject_arg_names=(
+                agent_arg_names=(
                     "moved",
                     "roles",
                     "paid",
@@ -503,7 +503,7 @@ def profile_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                     "original_physical",
                     "original_available",
                 ),
-                subject_outputs=True,
+                agent_outputs=True,
             ),
         )
     return final_states, final_ids, final_roles, prepared

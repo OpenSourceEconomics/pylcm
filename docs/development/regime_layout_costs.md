@@ -16,9 +16,10 @@ described in [Dependency facts](regime_facts.md).
 
 - **Dense regimes** (:126-146). Nonterminal regimes of one kind pool according to their
   taste shocks. A regime's kind is its stage, solver, aggregator, certainty equivalent,
-  Pareto objective, members and exit (rule, tie, comparison, renegotiation, settlement,
-  targets with their roles, observed shocks and availability), so a collective regime
-  never pools with a single-agent one, and regimes with different exits never pool:
+  Pareto objective, members and composition action. The composition action enters with
+  its rule, tie, Pareto weight state, transfer, destinations with their roles, observed
+  shocks and availability. So a regime with several members never pools with a regime
+  with one member, and regimes with different composition actions never pool:
 
   - Regimes without taste shocks pool together.
   - A regime with taste shocks stays alone.
@@ -29,10 +30,11 @@ described in [Dependency facts](regime_facts.md).
 
 - **Statuses, fibres and lanes** (:181-229).
 
-  - A status is a categorical state. The state an exit's `Renegotiate` moves is not a
-    status of that regime: the value at one of its codes reads the stay values at the
-    others within the period, so it is an ordinary state there, live in every period,
-    never split into lanes and never carried as a status.
+  - A status is a categorical state. The state that holds the Pareto weight of a
+    `PCOnWeight` rule is not a status of that regime. The value at one of its codes
+    reads the stay values at the other codes within the period. So it is an ordinary
+    state there: live in every period, never split into lanes and never carried as a
+    status.
   - A fibre is a regime and a period, with one value for each of the regime's statuses.
   - A lane is a regime with one value for each status, across periods.
 
@@ -49,8 +51,8 @@ described in [Dependency facts](regime_facts.md).
 
   A block pays `|T_B| · |X_B| · |S_B| · |A_B|` evaluations and `|T_B| · |X_B| · |S_B|`
   stored values, where `T_B` is the set of the block's own periods and `S_B` the members
-  of its regimes (one for a single-agent regime): a collective regime stores one value
-  and computes one action value per member.
+  of its regimes (one for a regime with one member). A regime with several members
+  stores one value and computes one action value per member.
 
 - **Layouts** (:594-617). The lanes of a dense regime are partitioned into groups, which
   stay fixed for all periods. Each group's active periods are cut into intervals. Each
@@ -60,11 +62,12 @@ Two rules settle cases that the Supplement leaves to the implementation:
 
 - The regime label is live at every fibre of a pooled dense regime. A block therefore
   pays for the number of regimes it holds.
-- A member without a status holds it at the first label of its grid. If the members of a
-  dense regime start that grid with different labels, a note records it. If no member of
-  a block has an action, every value of that action except the first is excluded, and
-  the block records these values as `excluded_actions`. This does not change prices,
-  because a block's actions come from its members' own cells.
+- A pooled regime without a status holds it at the first label of its grid. If the
+  pooled regimes of a dense regime start that grid with different labels, a note records
+  it. If no pooled regime of a block has an action, every value of that action except
+  the first is excluded, and the block records these values as `excluded_actions`. This
+  does not change prices, because a block's actions come from its pooled regimes' own
+  cells.
 
 `search_layouts` lists both rules under `deviations`.
 
@@ -85,7 +88,7 @@ then by storage. Every point carries its witness layout.
 | ------------------- | --------- | ---------------------------------------------------------------------------- |
 | `max_blocks`        | `n0 + 12` | Largest block budget `k`. `n0` is the number of dense regimes.               |
 | `lanes_per_regime`  | 12        | Above this, statuses are contracted until every dense regime fits.           |
-| `contract_unproved` | `True`    | Contract statuses that pass (I1) only over each member's own grid.           |
+| `contract_unproved` | `True`    | Contract statuses that pass (I1) only over each pooled regime's own grid.    |
 | `seconds`           | none      | Time limit for facts and search; on expiry the search raises `TimeoutError`. |
 
 ## Contraction and exactness
@@ -97,8 +100,8 @@ status is certified inert when two conditions hold:
   dense regime's grid of the status.
 - (I2): every part has the contracted fibre's live set.
 
-A status fails (I1) if its grid differs across the members of a dense regime, or if some
-member lacks it.
+A status fails (I1) if its grid differs across the pooled regimes of a dense regime, or
+if some pooled regime lacks it.
 
 By default, such a status is still contracted, but as a restriction. Every point is then
 exact for the contracted family and an upper bound for the full family. The reason: a

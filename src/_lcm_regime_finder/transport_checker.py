@@ -401,7 +401,7 @@ def evaluate(model, support):
 
 
 def check_case(report, raw):
-    keys(raw, ("id", "parameters", "original", "reduced", "starts", "certificate", "subjects"),
+    keys(raw, ("id", "parameters", "original", "reduced", "starts", "certificate", "agents"),
          ("operators", "allocation"), where="case")
     case = raw["id"]
     identifier(case, "case id")
@@ -489,17 +489,17 @@ def check_case(report, raw):
         for b, a in embed.items():
             embedded_fixed = fixed if action_fixed is None else action_fixed[b]
             action_pair(report, x, y, a, b, projection, embedded_fixed, context)
-    keys(raw["subjects"], ("original", "reduced"), where="subjects")
-    subjects_old, subjects_new = raw["subjects"]["original"], raw["subjects"]["reduced"]
-    need(isinstance(subjects_old, dict) and isinstance(subjects_new, dict), "subjects must be objects keyed by immutable subject id")
-    report.test(set(subjects_old) == set(subjects_new), "subject_identity", case=case)
-    for subject in sorted(set(subjects_old) & set(subjects_new)):
-        a, b = subjects_old[subject], subjects_new[subject]
-        keys(a, ("node", "tags", "outputs"), where="original subject")
-        keys(b, ("node", "tags", "outputs"), where="reduced subject")
+    keys(raw["agents"], ("original", "reduced"), where="agents")
+    agents_old, agents_new = raw["agents"]["original"], raw["agents"]["reduced"]
+    need(isinstance(agents_old, dict) and isinstance(agents_new, dict), "agents must be objects keyed by immutable agent id")
+    report.test(set(agents_old) == set(agents_new), "agent_identity", case=case)
+    for agent in sorted(set(agents_old) & set(agents_new)):
+        a, b = agents_old[agent], agents_new[agent]
+        keys(a, ("node", "tags", "outputs"), where="original agent")
+        keys(b, ("node", "tags", "outputs"), where="reduced agent")
         report.test(a["node"] in projection and projection.get(a["node"]) == b["node"]
                     and a["tags"] == b["tags"] and a["outputs"] == b["outputs"], "immutable_report_tag_join", case=case,
-                    subject=subject, original=a, reduced=b)
+                    agent=agent, original=a, reduced=b)
     # Corroboration is independent from local transport checks and never rescues a failed certificate.
     evaluation = {"status": "not_run", "reason": "primitive certificate or admission unresolved"}
     relevant = [w for w in report.layers["finite_model"]["witnesses"] if w.get("case") == case]

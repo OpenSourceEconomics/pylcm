@@ -26,7 +26,7 @@ from tests.test_models.deterministic.regression import (
 
 def test_model_constructor_has_no_population_parameter() -> None:
     """A model's structural constructor does not declare a simulation population."""
-    assert "n_subjects" not in inspect.signature(Model).parameters
+    assert "n_agents" not in inspect.signature(Model).parameters
 
 
 def _model() -> Model:
@@ -52,12 +52,12 @@ def _initial(*, count: int) -> dict[str, Array]:
 @pytest.mark.parametrize("population", [None, 0, 4])
 def test_model_constructor_rejects_population_keyword(population: int | None) -> None:
     """Unsupported constructor keywords raise instead of being silently ignored."""
-    with pytest.raises(TypeError, match="n_subjects"):
+    with pytest.raises(TypeError, match="n_agents"):
         Model(
             regimes={"working_life": working_life, "dead": dead},
             ages=AgeGrid(start=18, inclusive_stop=20, step="Y"),
             regime_id_class=RegimeId,
-            n_subjects=population,  # ty: ignore[unknown-argument]
+            n_agents=population,  # ty: ignore[unknown-argument]
             initial_nodes={18: "working_life"},
             edges={"working_life": {"working_life": 18, "dead": (18, 19)}},
         )
@@ -88,7 +88,7 @@ def test_one_model_accepts_different_call_time_populations(
             )
             .to_dataframe(use_categorical_codes=True)
         )
-        assert result.n_subjects == count
+        assert result.n_agents == count
         assert frame.loc[frame["period"] == 0, "wealth"].tolist() == (
             initial["wealth"].tolist()
         )

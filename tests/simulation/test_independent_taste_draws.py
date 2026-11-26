@@ -3,7 +3,7 @@
 The expected actions come from a scalar reference that rebuilds the documented
 taste-stream address with `hashlib`/`json`/`struct` and draws one centered
 Gumbel pair per addressed key, outside any `jax.vmap`. It imports no pylcm
-helper, so it shares neither the production address code nor the subject
+helper, so it shares neither the production address code nor the agent
 transform that batches the draws.
 
 The model has two actions with finite utilities `Q = (0, bias)` and no
@@ -34,7 +34,7 @@ from lcm import (
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import ContinuousState, DiscreteAction, FloatND, ScalarInt, UserSeed
 
-_N_SUBJECTS = 7
+_N_AGENTS = 7
 _FOLD_CHILD = 5
 _SOURCE_SEEDS = (17, 0, 1, 721)
 
@@ -80,7 +80,7 @@ def _scalar_address_keys(*, root: jax.Array) -> list[jax.Array]:
             ),
             np.uint32(0),
         )
-        for row in range(_N_SUBJECTS)
+        for row in range(_N_AGENTS)
     ]
 
 
@@ -141,7 +141,7 @@ def _public_choices(
     auto_solve: bool = False,
     enable_jit: bool = True,
 ) -> np.ndarray:
-    """Return period-0 work codes in original subject order."""
+    """Return period-0 work codes in original agent order."""
     model = Model(
         regimes={
             "alive": Regime(
@@ -156,7 +156,7 @@ def _public_choices(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
         execution_config=ExecutionConfig(
-            axis_widths={"subject": width}, device_memory_bytes=budget
+            axis_widths={"agent": width}, device_memory_bytes=budget
         ),
         initial_nodes={0: "alive"},
         edges={"alive": {"done": 0}},
@@ -173,16 +173,16 @@ def _public_choices(
     result = model.simulate(
         params=params,
         initial_conditions={
-            "wealth": jnp.full(_N_SUBJECTS, 1.5),
-            "age": jnp.zeros(_N_SUBJECTS),
-            "regime_id": jnp.full(_N_SUBJECTS, _RegimeId.alive, dtype=jnp.int32),
+            "wealth": jnp.full(_N_AGENTS, 1.5),
+            "age": jnp.zeros(_N_AGENTS),
+            "regime_id": jnp.full(_N_AGENTS, _RegimeId.alive, dtype=jnp.int32),
         },
         solution=solution,
         seed=11,
         taste_shock_seed=root,
         log_level="off",
     ).to_dataframe(use_categorical_codes=True)
-    period_zero = result.query("period == 0").sort_values("subject_id")
+    period_zero = result.query("period == 0").sort_values("agent_id")
     return period_zero["work"].to_numpy()
 
 
@@ -190,7 +190,7 @@ def _public_choices(
 def test_calibration_separates_scalar_and_batched_choices(impl: str) -> None:
     """The bias makes a batched draw choose against the scalar draw on one row."""
     _, _, row = _calibration(impl)
-    assert 0 <= row < _N_SUBJECTS
+    assert 0 <= row < _N_AGENTS
 
 
 @pytest.mark.parametrize("width", [1, 3, 7])
@@ -199,7 +199,7 @@ def test_calibration_separates_scalar_and_batched_choices(impl: str) -> None:
 def test_independent_taste_choices_match_scalar_draws(
     *, impl: str, budget: int | None, width: int
 ) -> None:
-    """Every subject width, padded or not, chooses with each row's scalar draw."""
+    """Every agent width, padded or not, chooses with each row's scalar draw."""
     root, bias, _ = _calibration(impl)
     actual = _public_choices(root=root, width=width, budget=budget, bias=bias)
     np.testing.assert_array_equal(actual, _scalar_choices(root=root, bias=bias))

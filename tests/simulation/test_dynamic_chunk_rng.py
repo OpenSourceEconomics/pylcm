@@ -50,8 +50,8 @@ def test_budgeted_chunk_windows_share_one_profile_and_preserve_every_key(
                 key=key,
                 names=["health", "shock"],
                 n_initial_states=9,
-                original_n_subjects=original,
-                subject_slice=slice(start, start + width),
+                original_n_agents=original,
+                agent_slice=slice(start, start + width),
                 memory=memory,
             )
             np.testing.assert_array_equal(
@@ -78,8 +78,8 @@ def test_dynamic_rng_windows_refuse_clamping_or_striding(window: slice) -> None:
             key=key,
             names=["health"],
             n_initial_states=9,
-            original_n_subjects=7,
-            subject_slice=window,
+            original_n_agents=7,
+            agent_slice=window,
             memory=memory,
         )
     assert not memory.operations.cache

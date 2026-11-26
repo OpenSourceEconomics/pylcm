@@ -187,7 +187,7 @@ class PreparedReplayReader:
                 "state_nodes": self.context.state_nodes,
                 "action_nodes": self.context.action_nodes,
             },
-            subject_arg_names=(),
+            agent_arg_names=(),
             value_reads=(),
             devices=devices,
         )

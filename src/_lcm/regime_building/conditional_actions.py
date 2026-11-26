@@ -224,7 +224,7 @@ def bind_specialized_annotations(
     Every concrete callable such a reader builds has the same call signature at
     every age or period. Each phase's reader is built where that phase needs it:
     a solve reader at the regime's first solved period, a simulation reader at the
-    first period subjects visit, since a simulation factory need not be defined at
+    first period agents visit, since a simulation factory need not be defined at
     a period the regime is only valued in.
 
     Args:
@@ -232,7 +232,7 @@ def bind_specialized_annotations(
         ages: The model's time axis; `None` leaves the regimes unchanged.
         active_periods_by_regime: The periods each regime is solved in; `None`
             leaves the regimes unchanged.
-        visited_periods_by_regime: The periods subjects can be in each regime;
+        visited_periods_by_regime: The periods agents can be in each regime;
             `None`, or no visited period, builds simulation readers at the first
             solved period too.
 

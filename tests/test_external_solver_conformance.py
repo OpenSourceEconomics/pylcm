@@ -431,7 +431,7 @@ def _impute_pension_wealth(*, wealth: ContinuousState) -> ContinuousState:
 
 
 def _next_pension_wealth(*, pension_wealth: ContinuousState) -> ContinuousState:
-    """Carry the true per-subject pension value through simulation."""
+    """Carry the true per-agent pension value through simulation."""
     return pension_wealth
 
 
@@ -520,7 +520,7 @@ def _model(
 
 
 def _initial_conditions() -> dict[str, jax.Array]:
-    """Return two subjects at exact policy-grid nodes."""
+    """Return two agents at exact policy-grid nodes."""
     return {
         "wealth": jnp.asarray([1.0, 3.0]),
         "productivity": jnp.asarray([0.5, 1.0]),
@@ -1236,7 +1236,7 @@ def test_external_reader_rejects_non_finite_actions_with_validation_off(
 
 
 def test_external_reader_broadcasts_a_valid_scalar_action() -> None:
-    """Validation preserves the public scalar-to-subject broadcasting contract."""
+    """Validation preserves the public scalar-to-agent broadcasting contract."""
     model = _model(solver=_ScalarActionSolver(kind="finite"))
 
     panel = model.simulate(
@@ -2030,7 +2030,7 @@ def test_fresh_replay_context_uses_solve_axes_with_a_carried_state(
     )
     pension = panel.query("regime_name == 'active'").pivot(
         index="period",
-        columns="subject_id",
+        columns="agent_id",
         values="pension_wealth",
     )
     np.testing.assert_array_equal(

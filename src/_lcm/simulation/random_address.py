@@ -56,7 +56,7 @@ class RandomAddress:
         return struct.unpack(">8I", hashlib.sha256(encoded).digest())
 
 
-def encode_subject_row(row: int) -> RowWords:
+def encode_agent_row(row: int) -> RowWords:
     """Encode an original row without narrowing its high bits in float32 mode."""
     if type(row) is not int or not 0 <= row < 2**64:
         raise ValueError(f"A random row must fit an unsigned 64-bit integer: {row!r}.")
@@ -67,16 +67,16 @@ def draw_window_keys(
     *,
     key: ScalarKey,
     address_words: AddressWords,
-    subject_start: RowWords,
-    last_real_subject: RowWords,
-    subject_count: int,
+    agent_start: RowWords,
+    last_real_agent: RowWords,
+    agent_count: int,
     period: int | Word | np.uint32,
 ) -> KeyBank:
     """Address one chunk, duplicating the last real row in its padding."""
-    if type(subject_count) is not int or not 0 <= subject_count < 2**64:
+    if type(agent_count) is not int or not 0 <= agent_count < 2**64:
         raise ValueError("A random chunk requires a nonnegative uint64 row count.")
-    start, last = jnp.asarray(subject_start), jnp.asarray(last_real_subject)
-    offset_high, offset_low = _row_offset_words(count=subject_count)
+    start, last = jnp.asarray(agent_start), jnp.asarray(last_real_agent)
+    offset_high, offset_low = _row_offset_words(count=agent_count)
     low = start[1] + offset_low
     carry = (low < start[1]).astype(jnp.uint32)
     high_before_carry = start[0] + offset_high
@@ -106,9 +106,9 @@ def draw_row_keys(
     addressed_key = _fold_address_words(key=key, address_words=address_words)
     draw_axis = scalar_draw_axis(dtype=addressed_key.dtype)
     fold = (
-        jax.custom_batching.sequential_vmap(_fold_subject_key)
+        jax.custom_batching.sequential_vmap(_fold_agent_key)
         if draw_axis
-        else _fold_subject_key
+        else _fold_agent_key
     )
     keys = jax.vmap(fold, in_axes=(None, 0, 0, None))(
         addressed_key,
@@ -120,7 +120,7 @@ def draw_row_keys(
 
 
 def scalar_draw_axis(*, dtype: np.dtype | ExtendedDType) -> tuple[int, ...]:
-    """Mark roots whose batched draws require scalar dispatch per subject."""
+    """Mark roots whose batched draws require scalar dispatch per agent."""
     return () if dtype == _threefry_key_dtype() else (1,)
 
 
@@ -184,7 +184,7 @@ def _fold_address_words(*, key: ScalarKey, address_words: AddressWords) -> Scala
 
 
 # keyword-only-exempt: library-callback=jax.vmap
-def _fold_subject_key(
+def _fold_agent_key(
     key: ScalarKey, high: Word, low: Word, period: int | Word | np.uint32
 ) -> ScalarKey:
     """Apply the versioned fixed-order original-row and period encoding."""

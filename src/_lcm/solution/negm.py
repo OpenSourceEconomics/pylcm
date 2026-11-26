@@ -330,7 +330,7 @@ class NEGM(TwoMarginSolver):
         A constraint is therefore rebound against each branch's own pool. The
         routes carry the same period groups the keeper build uses, because an
         age-specialized no-adjustment map changes which concrete function is in
-        scope. Simulation sees a complete subject-level candidate and uses the
+        scope. Simulation sees a complete agent-level candidate and uses the
         shared unrestricted route.
         """
         bound = cast("_BoundNEGM", self)

@@ -127,7 +127,7 @@ class CurrentIIDDrawFrame(NamedTuple):
 
 @dataclass(frozen=True, kw_only=True)
 class CurrentIIDDrawPlan:
-    """Bind one fresh physical realization to one native subject decision."""
+    """Bind one fresh physical realization to one native agent decision."""
 
     bindings: Mapping[ShockGroupName, ShockBinding]
     """Phase-specific law/helper bindings, preserving complete joint groups."""
@@ -382,7 +382,7 @@ def _replay_output(
 
 
 def _draw_base_value(*, key: PRNGKeyND, uniform: bool) -> FloatND:
-    """Preserve S1's scalar-dispatch marker under the outer subject vmap."""
+    """Preserve S1's scalar-dispatch marker under the outer agent vmap."""
     draw = (
         partial(jax.random.uniform, dtype=canonical_float_dtype())
         if uniform
@@ -781,8 +781,8 @@ def _integrate_nodes(
 ) -> CurrentIIDMaxOutput:
     """Integrate the per-node values over the node axis.
 
-    A household's values carry a trailing member axis, which each node's
-    factors broadcast against and which the integral keeps.
+    In a regime with several members, the values carry a trailing member axis.
+    Each node's factors broadcast against it, and the integral keeps it.
     """
     values, empty = cast("tuple[FloatND, BoolND]", evaluated)
     support = jnp.all(~is_represented_zero(factor_array), axis=0)

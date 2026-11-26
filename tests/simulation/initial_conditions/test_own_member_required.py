@@ -1,20 +1,20 @@
-"""Routing a collective regime's exit needs the simulated row's own role.
+"""Routing a collective regime's composition action needs the simulated row's own role.
 
-A collective regime declares one exit target per member, and each target
+A collective regime declares one composition action target per member, and each target
 sends the leaving row into *that* member's own continuing regime under
 *that* member's own state projection. A `simulate()` call over a collective
 source therefore has to say which role its population carries: a cohort routed
 without one would follow a single partner's dissolution path for every row —
 each divorced husband simulated as his wife, with her regime and her state.
 
-`initial_conditions["own_member"]` names that role, one entry per subject,
-and a subject starting in a collective regime must carry one wherever a route
+`initial_conditions["own_member"]` names that role, one entry per agent,
+and an agent starting in a collective regime must carry one wherever a route
 it can still reach differs by role. A row keeps its role across an ordinary
 regime transition, so that question is asked over the start's forward closure:
-a two-target exit the cohort runs into later demands a seed, and one in a regime
-the cohort can never arrive at demands nothing. A singleton source's consented
-exit gives its row the role it enters with, so a cohort starting there needs none
-either, and both unseeded cases simulate unchanged.
+a two-target composition action the cohort runs into later demands a seed, and one in a
+regime the cohort can never arrive at demands nothing. A singleton source's consented
+composition action gives its row the role it enters with, so a cohort starting there
+needs none either, and both unseeded cases simulate unchanged.
 """
 
 import jax.numpy as jnp
@@ -34,8 +34,8 @@ from lcm import (
     categorical,
     fixed_transition,
 )
+from lcm.composition_actions import CompositionAction, Destination
 from lcm.exceptions import InvalidInitialConditionsError
-from lcm.exits import Exit, ExitTarget
 from lcm.result import SimulationResult
 from lcm.solver_api import ResultRetention, SolutionResult
 from lcm.typing import (
@@ -60,12 +60,12 @@ from tests.regime_building.test_collective_regime_simulate import (
     _u_effort_collective,
 )
 
-# The three wage nodes the dissolution miniature is solved on. The exit of
+# The three wage nodes the dissolution miniature is solved on. The composition action of
 # `married_ir` leaves no action both members accept at wage 2 alone, so exactly
-# the middle subject dissolves.
+# the middle agent dissolves.
 DISSOLUTION_WAGES = (1.0, 2.0, 3.0)
 
-# Which subject of `DISSOLUTION_WAGES` leaves the collective regime.
+# Which agent of `DISSOLUTION_WAGES` leaves the collective regime.
 DISSOLVING_ROW_MEMBERSHIP = (False, True, False)
 
 # Nobody leaves through the leg the cohort's role did not name.
@@ -75,10 +75,10 @@ UNTAKEN_LEG_MEMBERSHIP = (False, False, False)
 # low-wage row marries, the high-wage row stays single.
 CONSENT_WAGES = (1.0, 2.0)
 
-# Which consent-model subject reaches the collective target.
+# Which consent-model agent reaches the collective target.
 CONSENT_MARRIED_MEMBERSHIP = (True, False)
 
-# The edges of the dissolution miniature: the couple meets its own exit in
+# The edges of the dissolution miniature: the couple meets its own composition action in
 # `married_ir`, whose targets send each member to that member's single regime.
 DISSOLUTION_EDGES = {
     "married": {"married_ir": 0},
@@ -108,7 +108,7 @@ def _u_married_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
 
 
 def _make_consent_regimes() -> dict[RegimeName, Regime]:
-    """Return a singleton `single_f` whose consented exit enters `married`.
+    """Return a one-member `single_f` that can enter `married` by consent.
 
     She marries where both partners' married values strictly exceed their single
     ones: at wage 1 (`2 > 1` and `1 > 0.5`), not at wage 2 (`2 < 5` for him).
@@ -118,9 +118,9 @@ def _make_consent_regimes() -> dict[RegimeName, Regime]:
             states={"wage": _WAGE_2},
             actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_single_f},
-            exit=Exit(
-                targets={
-                    "self": ExitTarget(
+            composition_action=CompositionAction(
+                destinations={
+                    "self": Destination(
                         regime="married",
                         role="f",
                         projection={"wage": _identity_wage},
@@ -163,8 +163,8 @@ class ConsentRegimeId:
 def dissolution_model_and_solution() -> tuple[Model, SolutionResult]:
     """Solve the two-leg collective dissolution miniature once.
 
-    `married` carries the members `("f", "m")` into `married_ir`, whose exit
-    sends the wife to `single_f` and the husband to `single_m`.
+    `married` carries the members `("f", "m")` into `married_ir`, whose composition
+    action sends the wife to `single_f` and the husband to `single_m`.
     """
     model = Model(
         regimes=_make_dissolution_regimes(),
@@ -181,8 +181,8 @@ def dissolution_model_and_solution() -> tuple[Model, SolutionResult]:
 def consent_model_and_solution() -> tuple[Model, SolutionResult]:
     """Solve the singleton-source consent miniature once.
 
-    `single_f` is a singleton whose consented exit enters the collective
-    `married` as its member `f`; the exit itself names the role.
+    `single_f` is a singleton whose consented composition action enters the collective
+    `married` as its member `f`; the composition action itself names the role.
     """
     model = Model(
         regimes=_make_consent_regimes(),
@@ -227,8 +227,9 @@ def test_named_own_role_routes_the_dissolving_row_to_its_own_leg(
 ) -> None:
     """An all-husbands cohort dissolves into `single_m`, never into `single_f`.
 
-    The role selects the exit target, and the target selects the continuing
-    regime, so the wife's stays empty for a cohort that declared itself the husbands.
+    The role selects the composition action target, and the target selects the
+    continuing regime, so the wife's stays empty for a cohort that declared itself the
+    husbands.
     """
     result = _simulate_dissolution_cohort(
         setup=dissolution_model_and_solution, own_member="m"
@@ -243,11 +244,11 @@ def test_named_own_role_routes_the_dissolving_row_to_its_own_leg(
 def test_singleton_source_needs_no_own_role(
     consent_model_and_solution: tuple[Model, SolutionResult],
 ) -> None:
-    """A cohort starting single enters the couple through its exit with no role seeded.
+    """A cohort starting single enters the couple with no role seeded.
 
-    The role decides between one member's exit target and another's, and a
-    singleton source's consented exit names the role it enters with, so requiring
-    a role there would refuse a model that is perfectly well specified.
+    The role decides between one member's composition action target and another's, and a
+    singleton source's consented composition action names the role it enters with, so
+    requiring a role there would refuse a model that is perfectly well specified.
     """
     model, solution = consent_model_and_solution
 
@@ -276,16 +277,16 @@ def test_singleton_source_needs_no_own_role(
 def test_collective_source_with_no_role_dependent_route_needs_no_own_role() -> None:
     """A collective cohort whose model declares no multi-leg edge simulates unseeded.
 
-    Nothing in such a model reads the role: there is no exit or gated edge whose
-    targets differ by member, so no route, regime or state projection can turn on
-    it. Demanding a seed there would refuse a well specified model over a
-    column that decides nothing.
+    Nothing in such a model reads the role: there is no composition action or gated edge
+    whose targets differ by member, so no route, regime or state projection can turn on
+    it. Demanding a seed there would refuse a well specified model over a column that
+    decides nothing.
     """
     model, params = make_two_member_model()
 
     result = model.simulate(
         params=params,
-        initial_conditions=make_couple_initial_conditions(n_subjects=2),
+        initial_conditions=make_couple_initial_conditions(n_agents=2),
         log_level="off",
         seed=0,
     )
@@ -299,7 +300,7 @@ def test_collective_source_with_no_role_dependent_route_needs_no_own_role() -> N
 def _simulate_dissolution_cohort(
     *, setup: tuple[Model, SolutionResult], own_member: str | None
 ) -> SimulationResult:
-    """Simulate the dissolution miniature's three-subject cohort at one role."""
+    """Simulate the dissolution miniature's three-agent cohort at one role."""
     model, solution = setup
     return model.simulate(
         params=_DISSOLUTION_PARAMS,
@@ -345,12 +346,12 @@ class UnreachableRoleRoutingRegimeId:
 
 
 def _make_unreachable_role_routing_regimes() -> dict[RegimeName, Regime]:
-    """Add a collective start that cannot reach the two-target dissolution exit.
+    """Add a collective start that cannot reach the two-target divorce.
 
-    `alone` carries the same members as `married` and runs out into its own
-    terminal regime. Its only outgoing edge leads to `alone_terminal`, so no
-    path leads from it to `married_ir` and none of its exit targets can ever
-    select on a role a subject started in `alone` with.
+    `alone` carries the same members as `married` and runs out into its own terminal
+    regime. Its only outgoing edge leads to `alone_terminal`, so no path leads from it
+    to `married_ir` and none of its composition action targets can ever select on a role
+    an agent started in `alone` with.
     """
     alone = Regime(
         states={"wage": _WAGE_3},
@@ -381,11 +382,11 @@ def _make_unreachable_role_routing_regimes() -> dict[RegimeName, Regime]:
 def test_a_start_that_cannot_reach_a_role_dependent_route_needs_no_own_role() -> None:
     """A collective cohort is seeded for its own routes, not the model's.
 
-    The role a subject starts with selects among the targets of an exit it can
-    actually arrive at. A collective regime elsewhere in the model whose
-    exit does distinguish roles decides nothing for a cohort that can never
-    reach it, so demanding a seed on its account refuses a well specified
-    model over a column that would go unread.
+    The role an agent starts with selects among the targets of a composition action it
+    can actually arrive at. A collective regime elsewhere in the model whose composition
+    action does distinguish roles decides nothing for a cohort that can never reach it,
+    so demanding a seed on its account refuses a well specified model over a column that
+    would go unread.
     """
     model = Model(
         regimes=_make_unreachable_role_routing_regimes(),
@@ -434,12 +435,12 @@ class ReachableRoleRoutingRegimeId:
 def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role() -> (
     None
 ):
-    """A role is demanded wherever a subject can still arrive at a two-target exit.
+    """A role is required where an agent can reach a two-target composition action.
 
     A row keeps the role it started with across an ordinary regime transition,
     so a collective start that declares no role-dependent route of its own but
     runs into a regime that does is exactly the case the seed answers. Reading
-    only the start regime's own exit would let such a cohort simulate with
+    only the start regime's own composition action would let such a cohort simulate with
     every row following one partner's dissolution path.
     """
     prelude = Regime(
@@ -485,8 +486,8 @@ def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role()
 
 
 @pytest.fixture(scope="module")
-def current_exit_model_and_solution() -> tuple[Model, SolutionResult]:
-    """Start in the actual current-exit actor."""
+def current_composition_action_model_and_solution() -> tuple[Model, SolutionResult]:
+    """Start in the actual current-composition action actor."""
     model = Model(
         regimes=_make_dissolution_regimes(),
         ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
@@ -503,11 +504,13 @@ def current_exit_model_and_solution() -> tuple[Model, SolutionResult]:
 
 
 @pytest.mark.parametrize("role", [None, -1, 7], ids=["missing", "no-role", "unknown"])
-def test_current_exit_requires_an_actual_source_member_role(
-    *, current_exit_model_and_solution: tuple[Model, SolutionResult], role: int | None
+def test_current_composition_action_requires_an_actual_source_member_role(
+    *,
+    current_composition_action_model_and_solution: tuple[Model, SolutionResult],
+    role: int | None,
 ) -> None:
-    """A role-dependent current exit refuses missing, no-role and unknown codes."""
-    model, solution = current_exit_model_and_solution
+    """Role-dependent composition actions refuse missing, no-role and unknown codes."""
+    model, solution = current_composition_action_model_and_solution
     initial_conditions = {
         "wage": jnp.asarray([2.0]),
         "age": jnp.asarray([1.0]),
@@ -530,15 +533,15 @@ def test_current_exit_requires_an_actual_source_member_role(
     [("f", "single_f", 5.0), ("m", "single_m", 0.8)],
     ids=["wife", "husband"],
 )
-def test_current_exit_settles_the_named_original_source_member(
+def test_current_composition_action_settles_the_named_original_source_member(
     *,
-    current_exit_model_and_solution: tuple[Model, SolutionResult],
+    current_composition_action_model_and_solution: tuple[Model, SolutionResult],
     role: str,
     destination: RegimeName,
     payoff: float,
 ) -> None:
-    """Current-exit occupants receive their member's unpaid outside value."""
-    model, solution = current_exit_model_and_solution
+    """Occupants who leave receive their member's unpaid value of the outside option."""
+    model, solution = current_composition_action_model_and_solution
     frame = model.simulate(
         params=_DISSOLUTION_PARAMS,
         initial_conditions={
@@ -552,7 +555,7 @@ def test_current_exit_settles_the_named_original_source_member(
         seed=0,
     ).to_dataframe()
     acting = frame.loc[frame["period"] == 1]
-    np.testing.assert_array_equal(acting["subject_id"], [0])
+    np.testing.assert_array_equal(acting["agent_id"], [0])
     np.testing.assert_array_equal(acting["regime_name"].to_numpy(), [destination])
     np.testing.assert_array_equal(acting["wage"], [2.0])
     # The payoff is an outside value less a dissolution cost, each rounded in the

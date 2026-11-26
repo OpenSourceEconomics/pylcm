@@ -1,7 +1,7 @@
 """Collected component-job raw results land where the placement contract says.
 
-A single-process block-major simulation cuts each invariant code's subjects into
-chunks of the subject width. With several chunks in total, every raw leaf ends up
+A single-process block-major simulation cuts each invariant code's agents into
+chunks of the agent width. With several chunks in total, every raw leaf ends up
 on the host assembly device: the first selected CPU on a CPU backend, CPU 0 on a
 GPU backend. With one chunk, every raw leaf stays on the selected compute device.
 

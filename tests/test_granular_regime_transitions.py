@@ -286,7 +286,7 @@ def test_unknown_target_in_granular_dict_raises() -> None:
 
 
 @pytest.mark.parametrize("phase_local_handoffs", [False, True])
-def test_disjoint_phase_targets_price_perceived_choice_and_realize_exit(
+def test_disjoint_phase_targets_price_perceived_choice_and_realize_composition_action(
     *,
     phase_local_handoffs: bool,
 ) -> None:

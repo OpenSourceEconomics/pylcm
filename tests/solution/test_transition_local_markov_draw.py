@@ -7,7 +7,7 @@ source's Markov law, with that law's parameters, inside the transition and then
 discarded. `other` is reached only at age 1, when every edge leads to `dead`, so
 no edge out of `other` carries the shock at all.
 
-At age 1 every subject dies, and `dead` values wealth linearly, so the age-1
+At age 1 every agent dies, and `dead` values wealth linearly, so the age-1
 value of a living regime is the scalar maximum
 
 ```{math}

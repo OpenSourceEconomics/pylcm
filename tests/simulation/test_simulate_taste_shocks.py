@@ -15,7 +15,7 @@ from tests.test_models import taste_shocks_toy
 
 pytestmark = pytest.mark.slow
 
-N_SUBJECTS = 20_000
+N_AGENTS = 20_000
 
 
 def _reference_work_probability(
@@ -44,11 +44,11 @@ def _reference_work_probability(
     return float(probs[1])
 
 
-def test_simulated_work_frequency_converges_to_softmax_probability():
+def test_simulated_work_frequency_converges_to_softmax_probability() -> None:
     """The simulated work share matches the logit choice probability.
 
-    All subjects start at the same wealth node, so the period-0 choice
-    probability is a single number; with 20k subjects the Monte Carlo standard
+    All agents start at the same wealth node, so the period-0 choice
+    probability is a single number; with 20k agents the Monte Carlo standard
     error of the frequency is below 0.005.
     """
     scale = 0.2
@@ -60,10 +60,10 @@ def test_simulated_work_frequency_converges_to_softmax_probability():
     result = model.simulate(
         params=params,
         initial_conditions={
-            "age": jnp.full(N_SUBJECTS, 40.0),
-            "wealth": jnp.full(N_SUBJECTS, initial_wealth),
+            "age": jnp.full(N_AGENTS, 40.0),
+            "wealth": jnp.full(N_AGENTS, initial_wealth),
             "regime_id": jnp.full(
-                N_SUBJECTS, taste_shocks_toy.ToyRegimeId.alive, dtype=jnp.int32
+                N_AGENTS, taste_shocks_toy.ToyRegimeId.alive, dtype=jnp.int32
             ),
         },
         log_level="debug",
@@ -78,27 +78,27 @@ def test_simulated_work_frequency_converges_to_softmax_probability():
     np.testing.assert_allclose(work_freq, expected, atol=0.015)
 
 
-def test_taste_shock_draws_are_invariant_to_subject_chunking():
+def test_taste_shock_draws_are_invariant_to_agent_chunking() -> None:
     """Chunked and unchunked simulations draw identical taste shocks.
 
-    Per-subject Gumbel keys are generated for the full population and sliced
-    by global subject index, so `subject_batch_size` never changes any
-    subject's simulated choices.
+    Per-agent Gumbel keys are generated for the full population and sliced
+    by global agent index, so `agent_batch_size` never changes any
+    agent's simulated choices.
     """
-    n_subjects = 64
+    n_agents = 64
     params = taste_shocks_toy.get_params(scale=0.2, discount_factor=0.95)
     initial_conditions = {
-        "age": jnp.full(n_subjects, 40.0),
-        "wealth": jnp.full(n_subjects, 4.6),
+        "age": jnp.full(n_agents, 40.0),
+        "wealth": jnp.full(n_agents, 4.6),
         "regime_id": jnp.full(
-            n_subjects, taste_shocks_toy.ToyRegimeId.alive, dtype=jnp.int32
+            n_agents, taste_shocks_toy.ToyRegimeId.alive, dtype=jnp.int32
         ),
     }
 
     results = {
         batch_size: taste_shocks_toy.get_model(
             execution_config=ExecutionConfig(
-                axis_widths={} if batch_size == 0 else {"subject": batch_size}
+                axis_widths={} if batch_size == 0 else {"agent": batch_size}
             )
         )
         .simulate(
@@ -116,15 +116,15 @@ def test_taste_shock_draws_are_invariant_to_subject_chunking():
     )
 
 
-def test_repeated_simulation_draws_identical_taste_shock_choices():
+def test_repeated_simulation_draws_identical_taste_shock_choices() -> None:
     """Repeated simulation yields the same seeded taste-shock choices."""
-    n_subjects = 16
+    n_agents = 16
     params = taste_shocks_toy.get_params(scale=0.2, discount_factor=0.95)
     initial_conditions = {
-        "age": jnp.full(n_subjects, 40.0),
-        "wealth": jnp.full(n_subjects, 4.6),
+        "age": jnp.full(n_agents, 40.0),
+        "wealth": jnp.full(n_agents, 4.6),
         "regime_id": jnp.full(
-            n_subjects, taste_shocks_toy.ToyRegimeId.alive, dtype=jnp.int32
+            n_agents, taste_shocks_toy.ToyRegimeId.alive, dtype=jnp.int32
         ),
     }
 

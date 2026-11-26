@@ -1,4 +1,4 @@
-"""Numeric entry staging uses the first selected device before subject sharding.
+"""Numeric entry staging uses the first selected device before agent sharding.
 
 Run alone in a fresh four-CPU-device process.
 """
@@ -87,13 +87,13 @@ class HeadroomArguments(TypedDict):
 class DispatchArguments(TypedDict):
     function: Callable[..., PytreeValue]
     arguments: Mapping[ReferenceName, PytreeValue]
-    subject_arg_names: tuple[ReferenceName, ...]
+    agent_arg_names: tuple[ReferenceName, ...]
     devices: tuple[jax.Device, ...]
     live_footprint: Callable[[], DeviceBufferFootprint]
     budget_devices: tuple[jax.Device, ...]
     budget_bytes: int
     static_arguments: NotRequired[Mapping[str, StaticArgument]]
-    subject_outputs: NotRequired[bool]
+    agent_outputs: NotRequired[bool]
 
 
 class ActionGridArguments(TypedDict):
@@ -153,7 +153,7 @@ def test_numeric_entry_stages_and_pads_on_the_first_actual_device(
     owner.publish(stage="initial", tree=padded)
     placed = place_simulation_arguments(
         arguments=padded,
-        subject_arg_names=("regime_id",),
+        agent_arg_names=("regime_id",),
         value_reads=(),
         devices=devices,
         budget_bytes=owner.budget_bytes,

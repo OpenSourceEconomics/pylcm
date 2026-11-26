@@ -90,7 +90,7 @@ def _capture_decision_keys(*, monkeypatch: pytest.MonkeyPatch) -> list[np.ndarra
         family: str,
         period: int,
         arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
-        n_subjects: int,
+        n_agents: int,
     ) -> PytreeValue:
         if family == "decision" and "taste_shock_key" in arguments:
             captured.append(
@@ -106,7 +106,7 @@ def _capture_decision_keys(*, monkeypatch: pytest.MonkeyPatch) -> list[np.ndarra
             family=family,
             period=period,
             arguments=arguments,
-            n_subjects=n_subjects,
+            n_agents=n_agents,
         )
 
     monkeypatch.setattr(simulation, "execute_simulation_program", record)
@@ -116,7 +116,7 @@ def _capture_decision_keys(*, monkeypatch: pytest.MonkeyPatch) -> list[np.ndarra
 def test_policy_and_ordinary_seed_changes_preserve_independent_taste_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The dispatched subject keys agree while policy changes actual choices."""
+    """The dispatched agent keys agree while policy changes actual choices."""
     captured = _capture_decision_keys(monkeypatch=monkeypatch)
     choices = []
     for ordinary_seed, kappa in ((11, 0.0), (92, 5.0)):
@@ -144,7 +144,7 @@ def test_policy_and_ordinary_seed_changes_preserve_independent_taste_keys(
     assert np.any(choices[0] != choices[1])
 
 
-def test_independent_seed_is_effective_and_subject_window_is_stable(
+def test_independent_seed_is_effective_and_agent_window_is_stable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Chunking preserves real-row keys and changing the taste seed changes them."""
@@ -154,7 +154,7 @@ def test_independent_seed_is_effective_and_subject_window_is_stable(
         # The pinned chunks are the windows under test; a budget may merge them.
         model = taste_shocks_toy.get_model(
             execution_config=ExecutionConfig(
-                axis_widths={} if batch == 0 else {"subject": batch},
+                axis_widths={} if batch == 0 else {"agent": batch},
                 device_memory_bytes=None,
             )
         )
@@ -226,7 +226,7 @@ def test_budgeted_padded_chunks_preserve_independent_taste_keys_and_choices(
         for width in (0, 3):
             model = taste_shocks_toy.get_model(
                 execution_config=ExecutionConfig(
-                    axis_widths={} if width == 0 else {"subject": width},
+                    axis_widths={} if width == 0 else {"agent": width},
                     device_memory_bytes=None if width == 0 else 2**30,
                 )
             )
@@ -245,7 +245,7 @@ def test_budgeted_padded_chunks_preserve_independent_taste_keys_and_choices(
     # This control owns exact RNG, state and selected-action semantics. Value
     # arithmetic remains covered by the separate width-comparison contracts.
     for column in (
-        "subject_id",
+        "agent_id",
         "period",
         "regime_name",
         "wealth",
@@ -266,7 +266,7 @@ def test_typed_seed_matches_integer_draws_and_choices(
     captured = _capture_decision_keys(monkeypatch=monkeypatch)
     model = taste_shocks_toy.get_model(
         execution_config=ExecutionConfig(
-            axis_widths={"subject": 3} if budgeted else {},
+            axis_widths={"agent": 3} if budgeted else {},
             device_memory_bytes=2**30 if budgeted else None,
         )
     )
@@ -332,7 +332,7 @@ def test_legacy_seed_names_typed_key_constructor_before_solving() -> None:
 
 @pytest.mark.parametrize("impl", ["rbg", "unsafe_rbg"])
 def test_simulate_refuses_a_non_threefry_ordinary_seed(impl: str) -> None:
-    """Only Threefry keeps ordinary draws independent of the subject chunk width."""
+    """Only Threefry keeps ordinary draws independent of the agent chunk width."""
     model = taste_shocks_toy.get_model()
     with pytest.raises(InvalidSimulationInputError, match="threefry2x32"):
         model.simulate(
@@ -348,7 +348,7 @@ def test_integer_seed_draws_threefry_under_an_rbg_default(*, budgeted: bool) -> 
     """An integer `seed` gives the Threefry population whatever the default PRNG."""
     model = taste_shocks_toy.get_model(
         execution_config=ExecutionConfig(
-            axis_widths={"subject": 3} if budgeted else {},
+            axis_widths={"agent": 3} if budgeted else {},
             device_memory_bytes=2**30 if budgeted else None,
         )
     )
@@ -374,16 +374,16 @@ def test_integer_seed_draws_threefry_under_an_rbg_default(*, budgeted: bool) -> 
 
 
 @pytest.mark.parametrize("width", [1, 4])
-def test_integer_seed_draws_ignore_subject_width_under_an_rbg_default(
+def test_integer_seed_draws_ignore_agent_width_under_an_rbg_default(
     width: int,
 ) -> None:
-    """Ordinary-stream choices do not move with the subject chunk width."""
+    """Ordinary-stream choices do not move with the agent chunk width."""
     params = taste_shocks_toy.get_params(scale=0.2)
     frames = []
-    for subject_width in (width, 32):
+    for agent_width in (width, 32):
         model = taste_shocks_toy.get_model(
             execution_config=ExecutionConfig(
-                axis_widths={"subject": subject_width},
+                axis_widths={"agent": agent_width},
                 device_memory_bytes=2**30,
             )
         )
@@ -409,7 +409,7 @@ def test_independent_taste_key_keeps_its_implementation(
     captured = _capture_decision_keys(monkeypatch=monkeypatch)
     model = taste_shocks_toy.get_model(
         execution_config=ExecutionConfig(
-            axis_widths={"subject": 3} if budgeted else {},
+            axis_widths={"agent": 3} if budgeted else {},
             device_memory_bytes=2**30 if budgeted else None,
         )
     )

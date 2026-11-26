@@ -1,16 +1,17 @@
 """Small collective-regime models for the documentation.
 
-The first model isolates the household's shared argmax with member-specific
-values, declared as a single `CollectiveUtility`. The second adds same-period outside
-options through the household's own `Exit`: either partner can leave, a partner
-exactly indifferent leaves, and a partner who leaves pays a divorce cost, as in the
-Eckstein-Keane-Lifshitz model. The state and action spaces remain hand-checkable.
+The first model isolates the couple's shared argmax with member-specific values,
+declared as a single `CollectiveUtility`. The second adds same-period outside options
+through the couple's own `CompositionAction`, with unilateral divorce with
+participation constraints on the actions (`PCOnActions`). Either partner can leave, a
+partner exactly indifferent leaves, and a partner who leaves pays a divorce cost, as in
+the Eckstein-Keane-Lifshitz model. The state and action spaces remain hand-checkable.
 
-The household that dissolves is the regime that decides: the married household
-lands in `married_with_participation`, whose exit compares each member's value of
-staying, at every household action, with that member's own single regime minus the
-divorce cost, and keeps the best action both accept. Where no action is accepted,
-both partners leave in that period.
+The couple that separates is the regime that decides. The married couple lands in
+`married_with_participation`. Its composition action compares each member's value of
+staying, at every action of the couple, with the value of that member's own single
+regime minus the divorce cost. It keeps the best action both members accept. Where no
+action is accepted, both partners leave in that period.
 """
 
 import jax.numpy as jnp
@@ -25,8 +26,8 @@ from lcm import (
     categorical,
     fixed_transition,
 )
+from lcm.composition_actions import CompositionAction, Destination, PCOnActions
 from lcm.execution import ExecutionConfig
-from lcm.exits import Exit, ExitTarget, Unilateral
 from lcm.typing import (
     ContinuousState,
     DiscreteAction,
@@ -38,7 +39,7 @@ from lcm_examples import with_lottery_contraction
 
 @categorical(ordered=True)
 class Work:
-    """Household labor choice."""
+    """Labor choice the members make together."""
 
     leisure: ScalarInt
     work: ScalarInt
@@ -105,7 +106,7 @@ def _next_shared_wage(work: DiscreteAction) -> ContinuousState:
 def get_shared_decision_model() -> Model:
     """Build a two-period collective model with one shared labor choice.
 
-    Equal member weights select one household action. The value function keeps
+    Equal Pareto weights select one common action. The value function keeps
     both members' values at that common argmax.
     """
     shared_utility = CollectiveUtility(
@@ -190,9 +191,9 @@ def get_dissolution_model(
 ) -> Model:
     """Build a three-period collective model with participation and dissolution.
 
-    At wage two, neither household action satisfies both participation constraints,
-    so the household's exit sends each member to her or his own single regime in
-    period 1, paying the divorce cost. `lottery_contraction` is passed to every
+    At wage two, no action of the couple satisfies both participation constraints, so
+    the couple's composition action sends each member to her or his own single regime
+    in period 1, paying the divorce cost. `lottery_contraction` is passed to every
     regime's `GridSearch` solver.
     """
     single_f = Regime(
@@ -212,20 +213,20 @@ def get_dissolution_model(
                 utilities={"f": _participation_utility_f, "m": _participation_utility_m}
             )
         },
-        exit=Exit(
-            targets={
-                "f": ExitTarget(
+        composition_action=CompositionAction(
+            destinations={
+                "f": Destination(
                     regime="single_f",
                     projection={"wage": _identity_wage},
                     utility_adjustment=_divorce_cost_f,
                 ),
-                "m": ExitTarget(
+                "m": Destination(
                     regime="single_m",
                     projection={"wage": _identity_wage},
                     utility_adjustment=_divorce_cost_m,
                 ),
             },
-            rule=Unilateral(tie="leave"),
+            rule=PCOnActions(tie="leave"),
         ),
     )
     married = Regime(

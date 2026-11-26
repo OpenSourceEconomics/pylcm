@@ -119,7 +119,7 @@ def test_lookup_policy_last_alive_period_retires(solved: Solved) -> None:
 def test_lookup_policy_equals_what_simulate_records(
     *, solved: Solved, column: str
 ) -> None:
-    """At every simulated (period, subject), the lookup reproduces simulate's row."""
+    """At every simulated (period, agent), the lookup reproduces simulate's row."""
     model, params, solution = solved
     df = model.simulate(
         params=params,
@@ -518,7 +518,7 @@ def test_restored_budgeted_lookup_has_analytic_last_decision_policy(
     assert jax.default_backend() == "gpu"
     dtype = np.dtype("float64" if jax.config.x64_enabled else "float32")
     execution = lcm.ExecutionConfig(
-        axis_widths={"subject": 2000},
+        axis_widths={"agent": 2000},
         device_memory_bytes="device",
         device_memory_headroom_fraction=0.15,
     )
@@ -561,7 +561,7 @@ def test_restored_budgeted_lookup_has_analytic_last_decision_policy(
                 "dtype": dtype.name,
                 "device_pool_limits": limits,
                 "effective_budget_bytes": effective,
-                "requested_subject_width": 2000,
+                "requested_agent_width": 2000,
             },
             sort_keys=True,
         ),

@@ -568,7 +568,7 @@ def find_regimes(problem, budget=None):
         report['layers']['semantic']={'status':'PASS','checks':len(model['atoms'])+len(model['edges']),
             'notes':['Fixed semantic projections are derived by primitive partial evaluation, constant-action enumeration, and global predecessor liveness. No approximate equivalence-class discovery.',
                      'Opaque primitives are trusted pure total functions of the declared inputs; source-adapter provenance is separate.',
-                     'External immutable subject/report tags remain external and associated with original subjects.']}
+                     'External immutable agent/report tags remain external and associated with original agents.']}
         pc=model['probability_checks']
         finite=model['numerical_admission']
         report['layers']['numerical']={'status':'PASS' if not finite['unexecuted_atoms'] else 'NOT_RUN','checks':finite['rows_checked'],

@@ -1,7 +1,7 @@
-"""Budgeted simulation plans forward work only for pairs a subject can occupy.
+"""Budgeted simulation plans forward work only for pairs an agent can occupy.
 
 A pair solved only for its value (a perceived target of a phased transition that
-no subject physically reaches) has no decision program. Budgeted simulation must
+no agent physically reaches) has no decision program. Budgeted simulation must
 profile and dispatch exactly the forward pairs the unbudgeted path dispatches,
 while the solved-only pair's value stays available to the decision reading it.
 """
@@ -69,7 +69,7 @@ def _model(*, budgeted: bool, promote: bool, reverse: bool, width: int) -> Model
     execution_config = (
         ExecutionConfig(
             devices=(0,),
-            axis_widths={"subject": width},
+            axis_widths={"agent": width},
             device_memory_bytes=2**30,
         )
         if budgeted

@@ -18,24 +18,24 @@ import tests.conftest
 from lcm import (
     ByPeriod,
     CollectiveUtility,
+    CompositionAction,
+    Destination,
     DiscreteGrid,
     ExecutionConfig,
-    Exit,
-    ExitTarget,
     Gate,
     InitialNodes,
     LinSpacedGrid,
     MemberRoute,
     Model,
     ParetoObjective,
+    PCOnActions,
+    PCOnWeight,
     Periods,
     Phased,
     ProjectedRegimeValue,
     Regime,
-    Renegotiate,
     SimulationResult,
     Transition,
-    Unilateral,
     categorical,
     fixed_transition,
 )
@@ -119,8 +119,6 @@ def _model(
     execution_config: ExecutionConfig | None = None,
     mu_law: Callable[..., IntND] | None = None,
 ) -> Model:
-    renegotiate = getattr(lcm, "Renegotiate", None)
-    assert renegotiate is not None, "The public exit rule must declare Renegotiate."
     return Model(
         regimes={
             "couple": Regime(
@@ -141,10 +139,10 @@ def _model(
                         }
                     )
                 },
-                exit=Exit(
-                    rule=Unilateral(tie=tie, renegotiate=renegotiate(state="mu")),
-                    targets={
-                        member: ExitTarget(regime=f"single_{member}", projection={})
+                composition_action=CompositionAction(
+                    rule=PCOnWeight(state="mu", tie=tie),
+                    destinations={
+                        member: Destination(regime=f"single_{member}", projection={})
                         for member in ("f", "m")
                     },
                 ),
@@ -233,7 +231,7 @@ def test_renegotiation_carries_selected_state_and_its_action_to_the_next_period(
         log_level="off",
     )
     frame = result.to_dataframe(use_categorical_codes=True).sort_values(
-        ["period", "subject_id"]
+        ["period", "agent_id"]
     )
     np.testing.assert_array_equal(
         frame.loc[frame["regime_name"] == "couple", ["mu", "choice"]],
@@ -246,14 +244,15 @@ def test_renegotiation_refuses_a_name_that_is_not_a_state(*, state: StateName) -
     """The adjustment cannot silently index an action or an absent coordinate."""
     base = _model(values=_VALUES)
     couple = base.user_regimes["couple"]
-    declaration = couple.exit
-    assert isinstance(declaration, Exit)
-    changed = replace(
-        declaration, rule=Unilateral(renegotiate=lcm.Renegotiate(state=state))
-    )
+    declaration = couple.composition_action
+    assert isinstance(declaration, CompositionAction)
+    changed = replace(declaration, rule=PCOnWeight(state=state))
     with pytest.raises(RegimeInitializationError, match="declared discrete grid state"):
         Model(
-            regimes={**base.user_regimes, "couple": replace(couple, exit=changed)},
+            regimes={
+                **base.user_regimes,
+                "couple": replace(couple, composition_action=changed),
+            },
             n_periods=1,
             edges={},
             initial_nodes=InitialNodes(by_period={0: "couple"}),
@@ -315,12 +314,12 @@ def _separation_simulation(*, execution_config: ExecutionConfig) -> SimulationRe
     )
 
 
-def check_subject_sharded_renegotiation() -> None:
+def check_agent_sharded_renegotiation() -> None:
     """Check independent branch anchors and every native output under partitioning."""
     expected = _separation_simulation(
         execution_config=ExecutionConfig(devices=(0,), device_memory_bytes=None)
     )
-    frame = expected.to_dataframe(use_categorical_codes=True).sort_values("subject_id")
+    frame = expected.to_dataframe(use_categorical_codes=True).sort_values("agent_id")
     np.testing.assert_array_equal(
         frame["regime_name"],
         ["single_f", "single_m", "couple", "couple", "single_f", "couple", "couple"],
@@ -332,11 +331,11 @@ def check_subject_sharded_renegotiation() -> None:
     actual = _separation_simulation(
         execution_config=ExecutionConfig(
             devices=(0, 1, 2, 3),
-            simulation_sharding="subjects",
+            simulation_sharding="agents",
             device_memory_bytes=None,
         )
     )
-    assert actual.n_subjects == expected.n_subjects == 7
+    assert actual.n_agents == expected.n_agents == 7
     _assert_same_raw_results(actual=actual, expected=expected)
     expected_gate = _gated_outside_simulation(
         execution_config=ExecutionConfig(devices=(0,), device_memory_bytes=None)
@@ -344,12 +343,12 @@ def check_subject_sharded_renegotiation() -> None:
     actual_gate = _gated_outside_simulation(
         execution_config=ExecutionConfig(
             devices=(0, 1, 2, 3),
-            simulation_sharding="subjects",
+            simulation_sharding="agents",
             device_memory_bytes=None,
         )
     )
     gate_frame = expected_gate.to_dataframe(use_categorical_codes=True)
-    current = gate_frame.loc[gate_frame["period"] == 0].sort_values("subject_id")
+    current = gate_frame.loc[gate_frame["period"] == 0].sort_values("agent_id")
     np.testing.assert_array_equal(
         current["regime_name"],
         ["couple", "outside", "couple", "outside", "couple", "outside", "couple"],
@@ -386,17 +385,15 @@ def _assert_same_raw_results(
         np.testing.assert_array_equal(got, want)
 
 
-def test_renegotiation_subject_sharding_preserves_state_actions_and_separation() -> (
-    None
-):
-    """The selected state stays subject-local, including padding and split exits."""
+def test_renegotiation_agent_sharding_preserves_state_actions_and_separation() -> None:
+    """The selected state stays agent-local, with padding and split separations."""
     code = (
         "import jax; jax.config.update('jax_num_cpu_devices', 4); "
         "jax.config.update('jax_platform_name', 'cpu'); "
         f"jax.config.update('jax_enable_x64', {tests.conftest.X64_ENABLED!r}); "
         "from tests.solution.test_renegotiation import "
-        f"{check_subject_sharded_renegotiation.__name__}; "
-        f"{check_subject_sharded_renegotiation.__name__}()"
+        f"{check_agent_sharded_renegotiation.__name__}; "
+        f"{check_agent_sharded_renegotiation.__name__}()"
     )
     pixi = which("pixi")
     assert pixi is not None, "The isolated topology check requires the Pixi runner."
@@ -410,7 +407,9 @@ def test_renegotiation_subject_sharding_preserves_state_actions_and_separation()
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_budgeted_exit_replay_reports_the_unbudgeted_raw_results() -> None:
+def test_budgeted_composition_action_replay_reports_the_unbudgeted_raw_results() -> (
+    None
+):
     """A device budget leaves every raw result and its state order unchanged."""
     expected = _gated_outside_simulation(
         execution_config=ExecutionConfig(devices=(0,), device_memory_bytes=None)
@@ -435,7 +434,9 @@ def test_policy_lookup_refuses_to_bypass_current_renegotiation() -> None:
     """An unrouted action lookup cannot report the incumbent Raw choice as Full."""
     model = _model(values=_VALUES)
     solution = model.solve(params={}, log_level="off")
-    with pytest.raises(UnsupportedOperationError, match="Renegotiating exits"):
+    with pytest.raises(
+        UnsupportedOperationError, match="PCOnWeight with a Pareto weight state"
+    ):
         model.lookup_policy(
             params={},
             solution=solution,
@@ -450,12 +451,14 @@ def test_renegotiation_is_part_of_the_durable_solution_identity() -> None:
     """Opting into adjustment cannot share the identity of ordinary dissolution."""
     adjusted = _model(values=_VALUES)
     couple = adjusted.user_regimes["couple"]
-    declaration = couple.exit
-    assert isinstance(declaration, Exit)
+    declaration = couple.composition_action
+    assert isinstance(declaration, CompositionAction)
     ordinary = Model(
         regimes={
             **adjusted.user_regimes,
-            "couple": replace(couple, exit=replace(declaration, rule=Unilateral())),
+            "couple": replace(
+                couple, composition_action=replace(declaration, rule=PCOnActions())
+            ),
         },
         n_periods=1,
         edges={},
@@ -591,10 +594,10 @@ def _gated_outside_model(
                         }
                     )
                 },
-                exit=Exit(
-                    rule=Unilateral(renegotiate=lcm.Renegotiate(state="mu")),
-                    targets={
-                        member: ExitTarget(
+                composition_action=CompositionAction(
+                    rule=PCOnWeight(state="mu"),
+                    destinations={
+                        member: Destination(
                             regime="outside",
                             role=member,
                             projection={"assets": fixed_transition("assets")},
@@ -707,7 +710,7 @@ def test_renegotiation_outside_option_keeps_future_personal_gate_values(
         log_level="off",
     )
     frame = result.to_dataframe(use_categorical_codes=True)
-    current = frame.loc[frame["period"] == 0].sort_values("subject_id")
+    current = frame.loc[frame["period"] == 0].sort_values("agent_id")
     np.testing.assert_array_equal(current["regime_name"], ["couple", "outside"])
     np.testing.assert_array_equal(
         current.loc[current["regime_name"] == "couple", ["mu", "choice"]],
@@ -1009,11 +1012,11 @@ def build_model(
                 actions={"choice": DiscreteGrid(values=jnp.asarray([0, 1]))},
                 functions={"utility": collective},
                 constraints={"feasible_choice": Feasibility(values=tuple(masks))},
-                exit=Exit(
-                    rule=Unilateral(tie=case.tie, renegotiate=Renegotiate(state="mu")),
+                composition_action=CompositionAction(
+                    rule=PCOnWeight(state="mu", tie=case.tie),
                     available=Availability(value=case.active),
-                    targets={
-                        member: ExitTarget(regime=f"single_{member}", projection={})
+                    destinations={
+                        member: Destination(regime=f"single_{member}", projection={})
                         for member in roles
                     },
                 ),
@@ -1091,7 +1094,7 @@ def expected_values(*, case: NativeCase) -> NDArray[np.float64]:
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("case", CASES, ids=lambda case: case.name)
-def test_feasible_objective_integrity_survives_exit_replacement(
+def test_feasible_objective_integrity_survives_composition_action_replacement(
     *, case: NativeCase
 ) -> None:
     """Undefined feasible candidates fail; extended-real controls retain values."""
@@ -1148,10 +1151,10 @@ def test_phase_specific_undefined_objective_fails_before_routing(
         )
 
 
-def check_subject_sharded_objective_integrity() -> None:
+def check_agent_sharded_objective_integrity() -> None:
     """Padded personal gate routes preserve values and reject undefined queries."""
     config = ExecutionConfig(
-        devices=(0, 1, 2, 3), simulation_sharding="subjects", device_memory_bytes=None
+        devices=(0, 1, 2, 3), simulation_sharding="agents", device_memory_bytes=None
     )
     base = _gated_outside_model(pointwise=True, execution_config=config)
     couple = base.user_regimes["couple"]
@@ -1227,15 +1230,15 @@ def check_subject_sharded_objective_integrity() -> None:
     _assert_same_raw_results(actual=actual, expected=expected)
 
 
-def test_undefined_objective_cannot_escape_padded_subject_replay() -> None:
+def test_undefined_objective_cannot_escape_padded_agent_replay() -> None:
     """Both personal outside routes retain numerical integrity under partitioning."""
     code = (
         "import jax; jax.config.update('jax_num_cpu_devices', 4); "
         "jax.config.update('jax_platform_name', 'cpu'); "
         f"jax.config.update('jax_enable_x64', {tests.conftest.X64_ENABLED!r}); "
         "from tests.solution.test_renegotiation import "
-        f"{check_subject_sharded_objective_integrity.__name__}; "
-        f"{check_subject_sharded_objective_integrity.__name__}()"
+        f"{check_agent_sharded_objective_integrity.__name__}; "
+        f"{check_agent_sharded_objective_integrity.__name__}()"
     )
     pixi = which("pixi")
     assert pixi is not None, "The isolated topology check requires the Pixi runner."

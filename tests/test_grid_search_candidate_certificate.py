@@ -162,8 +162,8 @@ class _KernelOutputArguments(TypedDict, closed=True):
 class _TasteKeyArguments(TypedDict, closed=True):
     key: PRNGKeyND
     address_words: tuple[int, ...]
-    subject_slice: slice
-    original_n_subjects: int
+    agent_slice: slice
+    original_n_agents: int
     memory: SimulationMemory | None
     period: NotRequired[int]
 
@@ -1157,7 +1157,7 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
     assert len(original_names) == 327
     assert (
         hashlib.sha256(("\n".join(sorted(original_names)) + "\n").encode()).hexdigest()
-        == "91b111ab3c18ee5ba898f63ee5f50d2dd2043fbba0e0984582532f78854cc862"
+        == "66d817f877b0ef3da4269807395d1ea96a20c8d03daef3df49e88b43eefda0bc"
     )
     historical_names = {
         name
@@ -1173,12 +1173,12 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
         hashlib.sha256(
             ("\n".join(sorted(historical_names)) + "\n").encode()
         ).hexdigest()
-        == "3682587108e4a0ca73e145c5a69fe037fd238096c1ac23a2e2b6a5373d7fb449"
+        == "beec45a5615b3b5e9f48bfa84169d60aa238955c3f27021e6020e7fff336bdd3"
     )
     assert len(names) == 362
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "1addb68c5045e4d9cb0ba5d1a9a56d78bff3d135f1f6f8e115ec1520634e8c8b"
+        == "06e2d12297b5811c6808bdd7056ee03ab896f19a8b48ddbd0cdcfa043fdf882c"
     )
 
 
@@ -1370,7 +1370,7 @@ def _build_model(
     constraints: Mapping[str, Callable[..., BoolND]],
     terminal_utility: Callable[..., FloatND] | CollectiveUtility,
     taste_shocks: bool = False,
-    subject_width: int | None = None,
+    agent_width: int | None = None,
 ) -> Model:
     """Build the one-decision model the sweeps solve.
 
@@ -1379,7 +1379,7 @@ def _build_model(
         constraints: The acting regime's constraints.
         terminal_utility: The terminal regime's utility declaration.
         taste_shocks: Whether the acting singleton declares EV1 taste shocks.
-        subject_width: Optional explicit forward subject width.
+        agent_width: Optional explicit forward agent width.
 
     Returns:
         The built model.
@@ -1406,7 +1406,7 @@ def _build_model(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(
-            axis_widths={} if subject_width is None else {"subject": subject_width}
+            axis_widths={} if agent_width is None else {"agent": agent_width}
         ),
         initial_nodes={0: "acting"},
         edges={"acting": {"done": 0}},
@@ -1444,7 +1444,7 @@ def _dedup_terminal_utility(wealth: ContinuousState) -> FloatND:
     return wealth
 
 
-def _build_dedup_collision_model(*, subject_width: int | None = None) -> Model:
+def _build_dedup_collision_model(*, agent_width: int | None = None) -> Model:
     """Build same-shaped regimes whose runtime argmax partials must remain distinct."""
     wealth_grid = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
 
@@ -1468,7 +1468,7 @@ def _build_dedup_collision_model(*, subject_width: int | None = None) -> Model:
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=DedupRegimeId,
         execution_config=ExecutionConfig(
-            axis_widths={} if subject_width is None else {"subject": subject_width}
+            axis_widths={} if agent_width is None else {"agent": agent_width}
         ),
         initial_nodes={0: ("left", "right")},
         edges={"left": {"done": 0}, "right": {"done": 0}},
@@ -1497,7 +1497,7 @@ def _simulate_dedup_model(*, model: Model, params: _ModelParams) -> pd.DataFrame
         log_level="debug",
     )
     frame = result.to_dataframe(use_categorical_codes=True)
-    return frame[frame["period"] == 0].sort_values("subject_id")
+    return frame[frame["period"] == 0].sort_values("agent_id")
 
 
 def _solve_acting(
@@ -1675,7 +1675,7 @@ def _simulate_acting(
         function_name: Params key of the function reading the two targets.
 
     Returns:
-        Mapping of each action name to its published value, one entry per subject.
+        Mapping of each action name to its published value, one entry per agent.
     """
     params = _mutable_params_template(model=model)
     params["acting"][function_name]["target_work"] = work
@@ -1807,14 +1807,14 @@ def _period_zero_action_views(
     raw = {name: raw_period.actions[name].tolist() for name in action_names}
 
     frame = result.to_dataframe(use_categorical_codes=True)
-    frame = frame[frame["period"] == 0].sort_values("subject_id")
+    frame = frame[frame["period"] == 0].sort_values("agent_id")
     ordinary = {name: frame[name].to_numpy().tolist() for name in action_names}
 
     enriched_frame = result.to_dataframe(
         additional_targets=["utility"], use_categorical_codes=True
     )
     enriched_frame = enriched_frame[enriched_frame["period"] == 0].sort_values(
-        "subject_id"
+        "agent_id"
     )
     enriched = {name: enriched_frame[name].to_numpy().tolist() for name in action_names}
     return raw, ordinary, enriched
@@ -2176,7 +2176,7 @@ def test_collapsing_plain_callable_dedup_keys_changes_the_published_candidate(
         log_level="debug",
     )
     frame = result.to_dataframe(use_categorical_codes=True)
-    period_0 = frame[frame["period"] == 0].sort_values("subject_id")
+    period_0 = frame[frame["period"] == 0].sort_values("agent_id")
 
     observed = list(
         zip(
@@ -2188,9 +2188,9 @@ def test_collapsing_plain_callable_dedup_keys_changes_the_published_candidate(
     assert observed != [(0, 1.0), (1, 3.0)]
 
 
-def test_padded_heterogeneous_candidates_remain_subject_aligned() -> None:
-    """Padding and trimming preserve each subject's selected candidate."""
-    model = _build_dedup_collision_model(subject_width=2)
+def test_padded_heterogeneous_candidates_remain_agent_aligned() -> None:
+    """Padding and trimming preserve each agent's selected candidate."""
+    model = _build_dedup_collision_model(agent_width=2)
     result = model.simulate(
         params=_supplied_params(params=_dedup_params(model)),
         initial_conditions={
@@ -2206,14 +2206,14 @@ def test_padded_heterogeneous_candidates_remain_subject_aligned() -> None:
     assert raw.actions["consumption"].tolist() == [1.0, 3.0, 1.0]
 
     period_0 = result.to_dataframe(use_categorical_codes=True)
-    period_0 = period_0[period_0["period"] == 0].sort_values("subject_id")
+    period_0 = period_0[period_0["period"] == 0].sort_values("agent_id")
     assert period_0["work"].to_numpy().tolist() == [0, 1, 0]
     assert period_0["consumption"].to_numpy().tolist() == [1.0, 3.0, 1.0]
 
     enriched = result.to_dataframe(
         additional_targets=["utility"], use_categorical_codes=True
     )
-    enriched = enriched[enriched["period"] == 0].sort_values("subject_id")
+    enriched = enriched[enriched["period"] == 0].sort_values("agent_id")
     assert enriched["work"].to_numpy().tolist() == [0, 1, 0]
     assert enriched["consumption"].to_numpy().tolist() == [1.0, 3.0, 1.0]
 
@@ -2238,7 +2238,7 @@ def test_additional_targets_preserve_unbatched_selected_candidates() -> None:
     frame = result.to_dataframe(
         additional_targets=["utility"], use_categorical_codes=True
     )
-    period_0 = frame[frame["period"] == 0].sort_values("subject_id")
+    period_0 = frame[frame["period"] == 0].sort_values("agent_id")
     assert period_0["work"].to_numpy().tolist() == [0, 1, 0]
     assert period_0["consumption"].to_numpy().tolist() == [1.0, 3.0, 1.0]
 
@@ -2315,11 +2315,11 @@ def _simulate_zero_weight_fold(model: Model) -> tuple[list[int], list[int], list
     )
     raw = result.raw_results["src"][0].actions["work"].tolist()
     frame = result.to_dataframe(use_categorical_codes=True)
-    frame = frame[frame["period"] == 0].sort_values("subject_id")
+    frame = frame[frame["period"] == 0].sort_values("agent_id")
     enriched = result.to_dataframe(
         additional_targets=["utility"], use_categorical_codes=True
     )
-    enriched = enriched[enriched["period"] == 0].sort_values("subject_id")
+    enriched = enriched[enriched["period"] == 0].sort_values("agent_id")
     return (
         raw,
         frame["work"].to_numpy().tolist(),
@@ -2356,22 +2356,22 @@ def test_negating_kernel_output_reverses_the_public_candidate(
     assert shifted == ([0], [0], [0])
 
 
-_RNG_N_SUBJECTS = 20
-_RNG_SUBJECT_BATCH_SIZE = 7
+_RNG_N_AGENTS = 20
+_RNG_AGENT_BATCH_SIZE = 7
 _RNG_RANKS = (2.0, 1.0, 0.0, 2.0, 1.0, 0.0)
 _RNG_MASK = tuple(True for _ in _CANDIDATES)
 
 
 def _simulate_seeded_taste_routing(*, model: Model) -> tuple[list[int], list[int]]:
-    """Publish raw and DataFrame choices for one fixed subject-key stream."""
+    """Publish raw and DataFrame choices for one fixed agent-key stream."""
     result = model.simulate(
         params=_supplied_params(
             params=_params_for_mask(model=model, mask=_RNG_MASK, ranks=_RNG_RANKS)
         ),
         initial_conditions={
-            "age": jnp.zeros(_RNG_N_SUBJECTS),
-            "wealth": jnp.ones(_RNG_N_SUBJECTS),
-            "regime_id": jnp.full(_RNG_N_SUBJECTS, RegimeId.acting),
+            "age": jnp.zeros(_RNG_N_AGENTS),
+            "wealth": jnp.ones(_RNG_N_AGENTS),
+            "regime_id": jnp.full(_RNG_N_AGENTS, RegimeId.acting),
         },
         log_level="debug",
         seed=409,
@@ -2380,12 +2380,12 @@ def _simulate_seeded_taste_routing(*, model: Model) -> tuple[list[int], list[int
     frame = result.to_dataframe(
         additional_targets=["utility"], use_categorical_codes=True
     )
-    period_0 = frame[frame["period"] == 0].sort_values("subject_id")
+    period_0 = frame[frame["period"] == 0].sort_values("agent_id")
     return raw, period_0["work"].to_numpy().tolist()
 
 
-def test_seeded_taste_keys_preserve_subject_identity_across_batching() -> None:
-    """A fixed subject keeps its taste draw under chunking and runtime dispatch."""
+def test_seeded_taste_keys_preserve_agent_identity_across_batching() -> None:
+    """A fixed agent keeps its taste draw under chunking and runtime dispatch."""
     unbatched, chunked = (
         _simulate_seeded_taste_routing(
             model=_build_model(
@@ -2393,10 +2393,10 @@ def test_seeded_taste_keys_preserve_subject_identity_across_batching() -> None:
                 constraints={"candidate_mask": _candidate_mask},
                 terminal_utility=lambda: jnp.array(0.0),
                 taste_shocks=True,
-                subject_width=width,
+                agent_width=width,
             )
         )
-        for width in (None, _RNG_SUBJECT_BATCH_SIZE)
+        for width in (None, _RNG_AGENT_BATCH_SIZE)
     )
 
     assert unbatched == chunked
@@ -2413,7 +2413,7 @@ def test_reassigning_taste_keys_changes_the_public_candidate(
         constraints={"candidate_mask": _candidate_mask},
         terminal_utility=lambda: jnp.array(0.0),
         taste_shocks=True,
-        subject_width=_RNG_SUBJECT_BATCH_SIZE,
+        agent_width=_RNG_AGENT_BATCH_SIZE,
     )
     baseline = _simulate_seeded_taste_routing(model=model)
     original = taste_stream_module.generate_taste_shock_keys
@@ -2793,8 +2793,8 @@ _S02_IMPORTED_HELPERS = (
     ("src/_lcm/solution/continuation_reads.py", "continuation_leaf_reads"),
     ("src/_lcm/solution/feasibility.py", "reduce_bound_input_status"),
     ("src/_lcm/utils/dispatchers.py", "_map_with_bound_summary"),
-    ("src/_lcm/simulation/subject_parallel.py", "shard_subject_function"),
-    ("src/_lcm/simulation/subject_parallel.py", "_evaluate_local_subjects"),
+    ("src/_lcm/simulation/agent_parallel.py", "shard_agent_function"),
+    ("src/_lcm/simulation/agent_parallel.py", "_evaluate_local_agents"),
     ("src/_lcm/solution/kernel_output.py", "consume_kernel_output"),
 )
 
@@ -2853,7 +2853,7 @@ def test_s02_query_status_sources_have_literal_inventory_obligations() -> None:
     assert isinstance(_parse("src/_lcm/egm/outer_envelope.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/egm/query_data.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/regime_building/Q_and_F.py"), ast.Module)
-    assert isinstance(_parse("src/_lcm/simulation/subject_parallel.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/agent_parallel.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/solution/egm.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/solution/kernel_output.py"), ast.Module)
 

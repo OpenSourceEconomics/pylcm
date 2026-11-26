@@ -134,8 +134,9 @@ def current_reads(
 ) -> set[str]:
     """Return what the cell's consumers and outgoing relation callbacks read.
 
-    Probability, gate, exit and read weights are always consumers. Updates are
-    propagated separately, only when the destination coordinate is live.
+    Probability, gate, composition action and read weights are always consumers.
+    Updates are propagated separately, only when the destination coordinate is
+    live.
     """
     reads: set[str] = set()
     for consumer in cell.get("consumers", []):
@@ -190,8 +191,9 @@ def live_states(
 ) -> tuple[dict[str, set[str]], dict[str, dict[str, list[str]]]]:
     """Return each cell's live states and why each is live.
 
-    A state is live if a current consumer reads it, if the cell's exit
-    renegotiates it, or if a live state of a possible successor is updated from it.
+    A state is live if a current consumer reads it, if it holds the Pareto weight
+    that the cell's composition action moves, or if a live state of a possible
+    successor is updated from it.
     """
     live: dict[str, set[str]] = {}
     reasons: dict[str, dict[str, list[str]]] = {}
@@ -263,8 +265,8 @@ def fibre_live(
     with the released statuses free at once (Remark "Reads must be joint"): the
     statuses start fixed at the point and are released in name order whenever
     the release adds no read of the released status. A status left fixed is live.
-    Statuses in `ordinary` are never fixed: the fibre is their union. A state the
-    cell's exit renegotiates is always live.
+    Statuses in `ordinary` are never fixed: the fibre is their union. The Pareto
+    weight state of the cell's composition action is always live.
     """
     key = (cell["id"], tuple(sorted(point.items())), ordinary)
     if key in memo:
@@ -579,8 +581,9 @@ class FactsBudgetError(RuntimeError):
 def status_axes(facts: Facts, cell: Record) -> tuple[tuple[str, tuple[int, ...]], ...]:
     """Return the cell's status axes: its categorical states with several codes.
 
-    A state the cell's exit renegotiates is no status: the value at one of its
-    codes reads the stay values at the others within the period.
+    The Pareto weight state of the cell's composition action is no status: the
+    value at one of its codes reads the values of staying at the others within the
+    period.
     """
     axes = []
     for name, domain_id in cell["states"].items():

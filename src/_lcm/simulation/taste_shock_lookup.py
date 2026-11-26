@@ -1,8 +1,8 @@
 """Policy lookup's decision in a regime with EV1 taste shocks.
 
 The body applies the solve's reduction, in the solve's order, to the simulation
-decision: it reduces on the household decider's own action values with the
-solve's household readout, so it publishes one value per member, and the parts.
+decision: it reduces on the deciding member's own action values with the
+solve's collective readout, so it publishes one value per member, and the parts.
 Its `Q` uses the simulate phase's current utility and aggregator with the solved
 continuation, so the smoothed maximum equals the stored solve value at grid rows
 when both phases share those primitives and the action grid is the declared one.
@@ -45,14 +45,15 @@ TASTE_SHOCK_LOOKUP_OUTPUT_ROLES = (
 
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
 class HouseholdTasteShockLookup:
-    """The EV1 decision of a household's one decider at one state cell.
+    """The EV1 decision of the one deciding member at one state cell.
 
-    The decider is the member with the positive Pareto weight. Returns:
+    The deciding member is the member with the positive Pareto weight. Returns:
 
-    - one value per member, in member order: the decider's smoothed maximum and
-      every other member's mean action value under the decider's choice
-      probabilities, as the solve reads them off (`decider_smoothed_readout`);
-    - the decider's conditional value `Qc` of each discrete-action combination,
+    - one value per member, in member order: the deciding member's smoothed
+      maximum and every other member's mean action value under the deciding
+      member's choice probabilities, as the solve reads them off
+      (`decider_smoothed_readout`);
+    - the deciding member's conditional value `Qc` of each discrete-action combination,
       its maximum over the feasible continuous actions;
     - the choice probability `softmax(Qc / scale)` of each combination, zero
       for a combination whose `Qc` is `-inf`;
@@ -66,7 +67,7 @@ class HouseholdTasteShockLookup:
     """Name `dags` reads off the callable when it reports an invalid argument."""
 
     parts: Callable[..., QAndFParts]
-    """The household's parts, with a trailing member axis, mapped over the action
+    """The regime's parts, with a trailing member axis, mapped over the action
     product."""
 
     n_discrete_action_axes: int
@@ -76,7 +77,7 @@ class HouseholdTasteShockLookup:
     """Ordered member names."""
 
     pareto_weights: ParetoWeights
-    """The household's Pareto weight evaluator."""
+    """The regime's Pareto weight evaluator."""
 
     def __call__(
         self, **kwargs: PytreeValue

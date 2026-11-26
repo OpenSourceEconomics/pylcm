@@ -24,7 +24,7 @@ from _lcm.simulation.policy_programs import (
     ReplayPayload,
     _Rank,
 )
-from _lcm.simulation.programs import _SubjectTiled
+from _lcm.simulation.programs import _AgentTiled
 from _lcm.simulation.runtime import (
     SimulationDispatchContext,
     SimulationRuntime,
@@ -47,7 +47,7 @@ class _Call:
     program: CoreProgram
     arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]
     result: PytreeValue
-    n_subjects: int
+    n_agents: int
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -65,14 +65,14 @@ class _RecordingRuntime(SimulationRuntime):
         program: CoreProgram,
         arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
-        n_subjects: int,
+        n_agents: int,
         residency: SimulationDispatchContext | None = None,
     ) -> PytreeValue:
         result = super().dispatch(
             program=program,
             arguments=arguments,
             period=period,
-            n_subjects=n_subjects,
+            n_agents=n_agents,
             residency=residency,
         )
         if program.name in (POLICY_PREPARE, POLICY_RANK):
@@ -81,7 +81,7 @@ class _RecordingRuntime(SimulationRuntime):
                     program=program,
                     arguments=arguments,
                     result=result,
-                    n_subjects=n_subjects,
+                    n_agents=n_agents,
                 )
             )
         return result
@@ -111,10 +111,10 @@ def produced_case(request: pytest.FixtureRequest) -> _ProducedCase:
         ages=base.ages,
         regime_id_class=smooth_toy.RegimeId,
         fixed_params=base.fixed_params,
-        # Unbudgeted: the fixture reads the executor cached per subject width, which
+        # Unbudgeted: the fixture reads the executor cached per agent width, which
         # a budget replaces with one keyed by the padded population.
         execution_config=ExecutionConfig(
-            axis_widths={"subject": 1}, device_memory_bytes=None
+            axis_widths={"agent": 1}, device_memory_bytes=None
         ),
         initial_nodes=initial_nodes_of(model=base),
     )
@@ -148,7 +148,7 @@ def produced_case(request: pytest.FixtureRequest) -> _ProducedCase:
         POLICY_PREPARE,
         POLICY_RANK,
     ]
-    assert [call.n_subjects for call in runtime.calls] == [1, 1, 1, 1]
+    assert [call.n_agents for call in runtime.calls] == [1, 1, 1, 1]
     preparation, ranking = runtime.calls[2 * row : 2 * row + 2]
     runtime.calls.clear()
     return _ProducedCase(
@@ -258,20 +258,20 @@ def _dispatch_same_executable(
         program=call.program,
         arguments=call.arguments,
         period=0,
-        n_subjects=call.n_subjects,
+        n_agents=call.n_agents,
     )
     replacement = case.runtime.prepare(
         program=call.program,
         arguments=arguments,
         period=0,
-        n_subjects=call.n_subjects,
+        n_agents=call.n_agents,
     )
     assert replacement is original
     return case.runtime.dispatch(
         program=call.program,
         arguments=arguments,
         period=0,
-        n_subjects=call.n_subjects,
+        n_agents=call.n_agents,
     )
 
 
@@ -317,7 +317,7 @@ def test_replacement_payload_changes_cached_prepare_and_rank(
         else:
             assert np.all(np.isnan(np.asarray(action)))
     np.testing.assert_array_equal(
-        ranked[2], np.zeros(case.ranking.n_subjects, dtype=bool)
+        ranked[2], np.zeros(case.ranking.n_agents, dtype=bool)
     )
     for call in (case.preparation, case.ranking):
         restored = _dispatch_same_executable(
@@ -367,7 +367,7 @@ def test_replacement_discrete_codes_remain_dynamic_in_cached_rank(
     )
     assert np.all(np.isfinite(np.asarray(ranked[1])))
     np.testing.assert_array_equal(
-        ranked[0][name], np.full(call.n_subjects, replacement_code)
+        ranked[0][name], np.full(call.n_agents, replacement_code)
     )
     assert int(ranked[0][name][0]) != int(original[0][name][0])
 
@@ -385,7 +385,7 @@ def test_actual_rank_program_keeps_first_tie_and_ignores_dropped_candidates(
     """The real tiled rank body takes the first live member of a published tie."""
     case = produced_case
     wrapper = case.ranking.program.function
-    assert isinstance(wrapper, _SubjectTiled)
+    assert isinstance(wrapper, _AgentTiled)
     body = wrapper.func
     assert isinstance(body, _Rank)
     regime = replace(
@@ -425,18 +425,18 @@ def test_actual_rank_program_keeps_first_tie_and_ignores_dropped_candidates(
         )
         winner = 0 if first_live else next_candidate
         np.testing.assert_array_equal(
-            ranked[0][case.policy.inner_action_name], np.ones(call.n_subjects)
+            ranked[0][case.policy.inner_action_name], np.ones(call.n_agents)
         )
         np.testing.assert_array_equal(
             ranked[0][case.policy.outer_action_name], original_bank[1][:, winner]
         )
-        np.testing.assert_array_equal(ranked[1], np.ones(call.n_subjects))
+        np.testing.assert_array_equal(ranked[1], np.ones(call.n_agents))
         if case.policy.candidate_discrete_actions is not None:
             for index, name in enumerate(case.policy.discrete_action_names):
                 np.testing.assert_array_equal(
                     ranked[0][name],
                     jnp.broadcast_to(
                         case.policy.candidate_discrete_actions[winner, index],
-                        (call.n_subjects,),
+                        (call.n_agents,),
                     ),
                 )

@@ -6,13 +6,13 @@ import jax
 def simulation_value_sharding(
     *, stored_sharding: jax.sharding.Sharding, devices: tuple[jax.Device, ...]
 ) -> jax.sharding.Sharding:
-    """Replicate a value across the devices evaluating simulated subjects.
+    """Replicate a value across the devices evaluating simulated agents.
 
     Preserve a full simulation mesh's identity so a sharded value reaches its
     replicated layout through the catalogue's ``ALL_GATHER`` operation. Values
-    stored on fewer devices use the common subject mesh instead. Comparing the
+    stored on fewer devices use the common agent mesh instead. Comparing the
     ordered devices also keeps the argument device assignment consistent with
-    the subject arrays when a stored mesh has a different device ordering.
+    the agent arrays when a stored mesh has a different device ordering.
 
     This chooses a layout only. The period's transfer owner applies it to the
     required reads and owns their copies; the stored solution stays unchanged.

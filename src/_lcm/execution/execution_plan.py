@@ -103,7 +103,7 @@ class ResolvedExecution:
     applies, although construction still reads the visible pool statistics once.
     """
 
-    simulation_sharding: Literal["legacy", "subjects"] = "legacy"
+    simulation_sharding: Literal["legacy", "agents"] = "legacy"
     """Forward placement and local-loop policy, separate from solve-state axes."""
 
     continuous_sharded_state: StateName | None = None

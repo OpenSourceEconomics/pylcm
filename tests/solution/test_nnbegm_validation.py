@@ -317,7 +317,9 @@ def test_a_finite_outer_grid_inside_the_outer_state_domain_is_accepted() -> None
     [logging.CRITICAL, logging.WARNING, logging.INFO, logging.DEBUG],
     ids=["off", "warning", "progress", "debug"],
 )
-def test_a_declared_node_the_solve_cannot_reconstruct_stops_the_solve(level) -> None:
+def test_a_declared_node_the_solve_cannot_reconstruct_stops_the_solve(
+    level: int,
+) -> None:
     """A solve-grid node the solve cannot reconstruct refuses at every log level.
 
     The candidate is a declared node, so an inverse landing outside the outer
@@ -512,7 +514,7 @@ def test_the_finite_outer_grid_recovers_the_action_a_doubled_map_needs() -> None
 def test_the_continuous_outer_mesh_refuses_a_second_passive_continuous_state() -> None:
     """Two passive continuous stocks in one regime stop the continuous solve.
 
-    Continuous-outer replay indexes the published branch rows at the subject's
+    Continuous-outer replay indexes the published branch rows at the agent's
     own passive stock, and it brackets exactly one such axis. A regime carrying
     two of them has rows the replay cannot address, so the solve refuses rather
     than publishing a policy simulation would answer with the action-grid winner.
@@ -550,8 +552,8 @@ def _published_capability(policy: ArtifactPayload) -> OuterReplayCapability:
 def test_the_continuous_outer_mesh_refuses_an_outer_map_replay_cannot_bind() -> None:
     """An outer map reading the inner action stops the continuous solve.
 
-    Continuous-outer replay evaluates the declared map at each subject from
-    that subject's states, the regime's parameters, `period` and `age`. It has
+    Continuous-outer replay evaluates the declared map at each agent from
+    that agent's states, the regime's parameters, `period` and `age`. It has
     no inner action to supply — the inner action is what the replay is solving
     for — so a map that reads one cannot be evaluated where the decision is
     rebuilt, and publishing for it would hand simulation the action-grid winner.

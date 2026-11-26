@@ -1,11 +1,12 @@
 """Build-time gates for the off-grid simulation policy read.
 
 `SimulationPhase.egm_policy_read` is set only where the published rows sit on
-the coordinates a subject is read at; every other configuration keeps the
+the coordinates an agent is read at; every other configuration keeps the
 grid-argmax simulate path.
 """
 
 import dataclasses
+from collections.abc import Mapping
 
 import jax.numpy as jnp
 import pytest
@@ -16,12 +17,20 @@ from lcm import (
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
+    Regime,
     Transition,
     fixed_transition,
 )
 from lcm.exceptions import ModelInitializationError
+from lcm.regime import StateEntry
 from lcm.solvers import FUESEnvelope
-from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
+from lcm.typing import (
+    ContinuousAction,
+    ContinuousState,
+    FloatND,
+    ScalarInt,
+    StateName,
+)
 from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID, next_wealth_from_savings
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.envelope_configs import EnvelopeName, envelope_config
@@ -42,7 +51,7 @@ _PORTABLE_DCEGM_RETIREMENT = dcegm_retirement.replace(solver=_PORTABLE_DCEGM_SOL
 
 
 @pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
-def test_negm_regime_does_not_qualify_for_the_policy_read():
+def test_negm_regime_does_not_qualify_for_the_policy_read() -> None:
     """A NEGM regime keeps the grid path: its published policy is keeper-only.
 
     The nested period kernel maximizes the value over keeper and adjuster
@@ -67,10 +76,12 @@ def test_negm_regime_does_not_qualify_for_the_policy_read():
         "ltm",
     ],
 )
-def test_every_envelope_backend_qualifies_for_the_policy_read(backend: EnvelopeName):
+def test_every_envelope_backend_qualifies_for_the_policy_read(
+    backend: EnvelopeName,
+) -> None:
     """Plain DC-EGM simulates policy-first under every upper-envelope backend.
 
-    The read needs no envelope certificate: a subject whose read leaves its
+    The read needs no envelope certificate: an agent whose read leaves its
     row support, or fails the budget or feasibility check, takes the grid
     argmax instead.
     """
@@ -78,14 +89,14 @@ def test_every_envelope_backend_qualifies_for_the_policy_read(backend: EnvelopeN
     assert model._regimes["retirement"].simulation.egm_policy_read is not None
 
 
-def test_grid_replay_keeps_the_grid_argmax():
+def test_grid_replay_keeps_the_grid_argmax() -> None:
     """`DCEGM(replay="grid")` opts a plain DC-EGM regime out of the policy read."""
     solver = dataclasses.replace(DCEGM_SOLVER, replay="grid")
     model = _model_from_alive(alive=dcegm_retirement.replace(solver=solver))
     assert model._regimes["retirement"].simulation.egm_policy_read is None
 
 
-def test_fixed_node_process_state_regime_qualifies_for_the_policy_read():
+def test_fixed_node_process_state_regime_qualifies_for_the_policy_read() -> None:
     """A process-state regime whose shock enters resources reads the policy.
 
     A process state is a node-valued row axis whose simulated value may fall
@@ -107,7 +118,7 @@ def test_fixed_node_process_state_regime_qualifies_for_the_policy_read():
 
 
 @pytest.mark.parametrize("sigma", [0.3, None], ids=["fixed", "runtime"])
-def test_process_state_entering_utility_is_refused(sigma: float | None):
+def test_process_state_entering_utility_is_refused(sigma: float | None) -> None:
     """An IID shock read by `utility` outside resources refuses the DC-EGM build.
 
     The refusal holds for a fixed-node law, which the read would blend, and for
@@ -134,7 +145,7 @@ def test_process_state_entering_utility_is_refused(sigma: float | None):
         _model_from_alive(alive=alive)
 
 
-def test_asset_row_regime_does_not_qualify_for_the_policy_read():
+def test_asset_row_regime_does_not_qualify_for_the_policy_read() -> None:
     """An asset-row DCEGM regime keeps the grid path: rows are pointwise optima.
 
     When a savings-stage function reads the current Euler state, DC-EGM solves
@@ -159,7 +170,7 @@ def test_asset_row_regime_does_not_qualify_for_the_policy_read():
     assert model._regimes["retirement"].simulation.egm_policy_read is None
 
 
-def test_passive_state_regime_does_not_qualify_for_the_policy_read():
+def test_passive_state_regime_does_not_qualify_for_the_policy_read() -> None:
     """A regime with a passive continuous state keeps the grid path.
 
     Each published row is already the upper-envelope policy conditional on one
@@ -200,7 +211,9 @@ def _retirement_model_with_backend(backend: EnvelopeName) -> Model:
     )
 
 
-def _model_from_alive(*, alive, dead_states=None) -> Model:
+def _model_from_alive(
+    *, alive: Regime, dead_states: Mapping[StateName, StateEntry] | None = None
+) -> Model:
     dead_regime = dead if dead_states is None else dead.replace(states=dead_states)
     return Model(
         regimes={"retirement": alive, "dead": dead_regime},

@@ -12,9 +12,9 @@ built from the ALREADY-SOLVED next-period arrays (no new solve-time work):
    `Wbar`, not the target's raw (ungated) value, or the simulated argmax
    would systematically differ from the one the solved V embeds.
 2. **Regime routing** (`route_gated_edges`) — genuinely new relative to
-   solve: forward simulation must decide, for each REALIZED subject, which
+   solve: forward simulation must decide, for each REALIZED agent, which
    regime it actually occupies next period and with what states. The gate is
-   RECOMPUTED at the subject's candidate target-state draw
+   RECOMPUTED at the agent's candidate target-state draw
    (the states `calculate_next_states` already computed for the target via
    the source's ordinary regime law — a gated edge's target is
    always ALSO an ordinary Markov transition target, so those candidate
@@ -23,34 +23,34 @@ built from the ALREADY-SOLVED next-period arrays (no new solve-time work):
    `gate` array and thresholding the interpolated float, which does not
    commute with a nonlinear predicate (see `_lcm.regime_building.gated_edges
    .get_edge_simulate_gate_evaluator`'s docstring for the full rationale).
-   The household is routed to the target when the recomputed gate is open,
+   The agent is routed to the target when the recomputed gate is open,
    or to a leg's FALLBACK regime when closed; the non-taken branch's
    coordinates are discarded.
 
-**Scope fence: one subject row stays one subject row.** A COLLECTIVE
+**Scope fence: one agent row stays one agent row.** A COLLECTIVE
 source's gated edge (e.g. a married couple's dissolution edge) declares one
 leg per member, each with its OWN fallback regime (wife -> her own
 single regime, husband -> his). pylcm's forward simulation is a single
-fixed-size population pass: one subject ROW cannot occupy two regimes at
+fixed-size population pass: one agent ROW cannot occupy two regimes at
 once, so a dissolution does NOT split a row into two independently tracked
-households. That splitting behaviour — LINKED mode, in which both partners
+rows. That splitting behaviour — LINKED mode, in which both partners
 are separately tracked rows that unlink from each other on dissolution — is
 not available; it would be a future engine feature.
 
 What this router does implement, faithfully and tested, is SYNTHETIC mode:
 it recomputes the gate at the realized state, computes EVERY leg's own
 fallback state coordinates via each leg's `fallback_state_projector` and
-writes each into its OWN fallback regime's per-subject state slot (so a
-dissolved household's row-level record of "what regime and state would each
+writes each into its OWN fallback regime's per-agent state slot (so a
+dissolving couple's row-level record of "what regime and state would each
 partner have started at" is complete and correct for every member),
 and then picks ONE of them as the row's OWN continuing regime membership:
 the leg whose `source_member` is the role THAT ROW carries. The role
-is per subject — seeded in the initial conditions, and set from the branch
+is per agent — seeded in the initial conditions, and set from the branch
 each gated edge actually takes — so one population may hold wives and
 husbands side by side, each following her or his own dissolution path. What
 stays synthetic is the partner: a dissolution writes every leg's fallback
-coordinates but continues only the row's own, so the partner's household is
-imputed rather than tracked as a row of its own. Two separately tracked
+coordinates but continues only the row's own, so the partner's regime and
+states are imputed rather than tracked as a row of its own. Two separately tracked
 rows that must unlink into each other on dissolution are what LINKED mode
 would add.
 
@@ -100,7 +100,7 @@ from _lcm.regime_building.gated_edges import (
 )
 from _lcm.regime_building.Q_and_F import SAME_PERIOD_V_ARG
 from _lcm.simulation.operand_placement import place_simulation_arguments
-from _lcm.simulation.transitions import _advance_states_for_subjects
+from _lcm.simulation.transitions import _advance_states_for_agents
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.backward_induction import (
     FoldAge,
@@ -148,7 +148,7 @@ type DerivedResidency = Mapping[
 # fallback-state projector, called with keyword arguments.
 type _EdgeCallable = Callable[..., ArrayTree]
 
-# A population call: the per-subject and the shared keyword pools, positionally.
+# A population call: the per-agent and the shared keyword pools, positionally.
 type _PopulationCall = Callable[
     [Mapping[ReferenceName, PytreeValue], Mapping[ReferenceName, PytreeValue]],
     ArrayTree,
@@ -170,7 +170,7 @@ def simulation_gate_fold(
     edge_values: Mapping[RegimeName, Mapping[RegimeName, FloatND]],
     flat_params: FlatParams,
     fold_age: FoldAge = None,
-    subject_devices: tuple[jax.Device, ...] = (),
+    agent_devices: tuple[jax.Device, ...] = (),
     on_derived: Callable[[DerivedResidency], None] | None = None,
 ) -> MappingProxyType[RegimeName, FloatND]:
     """Fold raw, already-acquired V at its declared paths.
@@ -196,7 +196,7 @@ def simulation_gate_fold(
         period_to_regime_to_V_arr={period + 1: landing_values},
         flat_params=flat_params,
         fold_age=fold_age,
-        subject_devices=subject_devices,
+        agent_devices=agent_devices,
         on_derived=on_derived,
     )
     if on_derived is not None:
@@ -213,14 +213,14 @@ def simulation_gate_route(
     edge_values: Mapping[RegimeName, Mapping[RegimeName, FloatND]],
     next_states: StatesPerRegime,
     regime_names_to_ids: RegimeNamesToIds,
-    new_subject_regime_ids: Int1D,
-    subjects_in_regime: Bool1D,
+    new_agent_regime_ids: Int1D,
+    agents_in_regime: Bool1D,
     flat_params: FlatParams,
     own_member: Int1D,
     new_own_member: Int1D,
     fold_age: FoldAge = None,
-    subject_devices: tuple[jax.Device, ...] = (),
-    subject_width: int | None = None,
+    agent_devices: tuple[jax.Device, ...] = (),
+    agent_width: int | None = None,
     on_derived: Callable[[DerivedResidency], None] | None = None,
 ) -> tuple[StatesPerRegime, Int1D, Int1D, MappingProxyType[RegimeName, Bool1D]]:
     """Route from raw V, reusing its owned destination copies.
@@ -244,14 +244,14 @@ def simulation_gate_route(
         same_period_mappings=mappings,
         next_states=next_states,
         regime_names_to_ids=regime_names_to_ids,
-        new_subject_regime_ids=new_subject_regime_ids,
-        subjects_in_regime=subjects_in_regime,
+        new_agent_regime_ids=new_agent_regime_ids,
+        agents_in_regime=agents_in_regime,
         flat_params=flat_params,
         own_member=own_member,
         new_own_member=new_own_member,
         fold_age=fold_age,
-        subject_devices=subject_devices,
-        subject_width=subject_width,
+        agent_devices=agent_devices,
+        agent_width=agent_width,
     )
     if on_derived is not None:
         jax.block_until_ready(outputs)
@@ -279,13 +279,13 @@ def simulation_gate_route_delta(
     edge_values: Mapping[RegimeName, Mapping[RegimeName, FloatND]],
     candidate_states: StatesPerRegime,
     regime_names_to_ids: RegimeNamesToIds,
-    new_subject_regime_ids: Int1D,
-    subjects_in_regime: Bool1D,
+    new_agent_regime_ids: Int1D,
+    agents_in_regime: Bool1D,
     flat_params: FlatParams,
     own_member: Int1D,
     new_own_member: Int1D,
     fold_age: FoldAge = None,
-    subject_width: int | None = None,
+    agent_width: int | None = None,
 ) -> tuple[MappingProxyType[RegimeName, GatedRouteDelta], Int1D, Int1D]:
     """Publish fixed-shape route deltas instead of a duplicate state carrier."""
     routed, routed_ids, routed_roles, closed_masks = simulation_gate_route(
@@ -294,13 +294,13 @@ def simulation_gate_route_delta(
         edge_values=edge_values,
         next_states=candidate_states,
         regime_names_to_ids=regime_names_to_ids,
-        new_subject_regime_ids=new_subject_regime_ids,
-        subjects_in_regime=subjects_in_regime,
+        new_agent_regime_ids=new_agent_regime_ids,
+        agents_in_regime=agents_in_regime,
         flat_params=flat_params,
         own_member=own_member,
         new_own_member=new_own_member,
         fold_age=fold_age,
-        subject_width=subject_width,
+        agent_width=agent_width,
     )
     delta: dict[RegimeName, GatedRouteDelta] = {}
     for target, edge in regime.gated_edges.items():
@@ -360,7 +360,7 @@ def substitute_gated_edge_continuations(
     period_to_regime_to_V_arr: Mapping[int, Mapping[RegimeName, FloatND]],
     flat_params: FlatParams,
     fold_age: FoldAge = None,
-    subject_devices: tuple[jax.Device, ...] = (),
+    agent_devices: tuple[jax.Device, ...] = (),
     on_derived: Callable[[DerivedResidency], None] | None = None,
 ) -> tuple[
     MappingProxyType[RegimeName, FloatND],
@@ -491,11 +491,11 @@ def substitute_gated_edge_continuations(
             shared_sharding=(
                 simulation_value_sharding(
                     stored_sharding=jax.sharding.make_single_device_sharding(
-                        subject_devices[0]
+                        agent_devices[0]
                     ),
-                    devices=subject_devices,
+                    devices=agent_devices,
                 )
-                if subject_devices
+                if agent_devices
                 else None
             ),
         )
@@ -522,16 +522,16 @@ def route_gated_edges(
     same_period_mappings: Mapping[RegimeName, Mapping[RegimeName, FloatND]],
     next_states: StatesPerRegime,
     regime_names_to_ids: RegimeNamesToIds,
-    new_subject_regime_ids: Int1D,
-    subjects_in_regime: Bool1D,
+    new_agent_regime_ids: Int1D,
+    agents_in_regime: Bool1D,
     flat_params: FlatParams,
     own_member: Int1D,
     new_own_member: Int1D,
     fold_age: FoldAge = None,
-    subject_devices: tuple[jax.Device, ...] = (),
-    subject_width: int | None = None,
+    agent_devices: tuple[jax.Device, ...] = (),
+    agent_width: int | None = None,
 ) -> tuple[StatesPerRegime, Int1D, Int1D, MappingProxyType[RegimeName, Bool1D]]:
-    """Route each subject through its regime's declared gated edges.
+    """Route each agent through its regime's declared gated edges.
 
     A no-op (returns the inputs unchanged) when `regime` declares no
     `gated_edges`.
@@ -546,10 +546,10 @@ def route_gated_edges(
     fold's baked boolean `gate` array and thresholding the result, which does
     not commute with a nonlinear predicate (see
     `_lcm.regime_building.gated_edges.get_edge_simulate_gate_evaluator`'s
-    docstring). A subject is eligible for the edge when it is
-    `subjects_in_regime` AND its ORDINARY next-regime draw
-    (`new_subject_regime_ids`, snapshotted before any edge is processed)
-    selected this edge's target. For each eligible subject the router then:
+    docstring). An agent is eligible for the edge when it is
+    `agents_in_regime` AND its ORDINARY next-regime draw
+    (`new_agent_regime_ids`, snapshotted before any edge is processed)
+    selected this edge's target. For each eligible agent the router then:
 
     - sets its own continuing regime membership to the target (gate open) or
       to its OWN leg's fallback (gate closed) — the leg is the one whose
@@ -558,7 +558,7 @@ def route_gated_edges(
       an open branch, its fallback's `member` on a closed one, and the
       no-role sentinel wherever the destination is a singleton regime;
     - writes every leg's own projected fallback state coordinates into that
-      leg's fallback regime, for the eligible subjects the gate TURNED AWAY
+      leg's fallback regime, for the eligible agents the gate TURNED AWAY
       only. A gate-open row continues in the target and enters no fallback
       regime, so its fallback state slots keep the values they held.
 
@@ -573,18 +573,18 @@ def route_gated_edges(
         fold_period: The period whose value arrays `same_period_mappings`
             holds, i.e. the source's `period + 1` — one AHEAD of the period
             the source is being simulated in, because the gate is decided on
-            the state the subject would enter next period. It selects the
+            the state the agent would enter next period. It selects the
             edge's gate evaluator compiled for that period.
         fold_age: Age corresponding to `fold_period`, supplied only to edge
             callables that declare `age`.
-        own_member: Each subject's role THIS period, as a code in the
-            model's role vocabulary, or the no-role sentinel for a subject
+        own_member: Each agent's role THIS period, as a code in the
+            model's role vocabulary, or the no-role sentinel for an agent
             occupying none. A collective source's legs carry roles, so this is
             what decides which leg a row follows — the wife's fallback for her,
             the husband's for him, in one cohort.
         new_own_member: The next period's roles as accumulated by the
-            regimes already routed this period, written into for the subjects
-            this edge moves. Mirrors `new_subject_regime_ids`: one array is
+            regimes already routed this period, written into for the agents
+            this edge moves. Mirrors `new_agent_regime_ids`: one array is
             filled in regime by regime, so a later regime never resets an
             earlier one's rows.
 
@@ -595,7 +595,7 @@ def route_gated_edges(
     if not regime.gated_edges:
         return (
             next_states,
-            new_subject_regime_ids,
+            new_agent_regime_ids,
             new_own_member,
             MappingProxyType({}),
         )
@@ -606,11 +606,11 @@ def route_gated_edges(
     # `routed_ids` — so which rows an edge is even eligible to touch does not
     # depend on what an EARLIER-processed edge did, making multiple edges
     # declaration-order-independent (see the routing-mask comment below).
-    ordinary_draw_ids = new_subject_regime_ids
+    ordinary_draw_ids = new_agent_regime_ids
 
     closed_masks: dict[RegimeName, Bool1D] = {}
     states = next_states
-    routed_ids = new_subject_regime_ids
+    routed_ids = new_agent_regime_ids
     routed_roles = new_own_member
     role_ids = regime.member_names_to_ids
     for target_name, edge in regime.gated_edges.items():
@@ -654,9 +654,9 @@ def route_gated_edges(
                 },
                 # A stateless target leaves `batched_kwargs` empty; `vmap`
                 # cannot infer a batch size from nothing.
-                axis_size=int(subjects_in_regime.shape[0]),
-                subject_devices=subject_devices,
-                subject_width=subject_width,
+                axis_size=int(agents_in_regime.shape[0]),
+                agent_devices=agent_devices,
+                agent_width=agent_width,
             )
         )
 
@@ -670,7 +670,7 @@ def route_gated_edges(
         # makes multiple edges from one source order-independent: each
         # edge's eligibility is decided from the SAME pre-loop draw,
         # regardless of what an earlier edge in this loop already wrote.
-        edge_mask = subjects_in_regime & (ordinary_draw_ids == target_id)
+        edge_mask = agents_in_regime & (ordinary_draw_ids == target_id)
 
         legs = edge.legs
         # Which leg a row follows is the row's own business: the wife's
@@ -709,11 +709,11 @@ def route_gated_edges(
             # solved policy never priced, and carries it into the next period.
             projector_provenance = projector.arg_provenance  # ty: ignore[unresolved-attribute]
             # A projection is an ordinary model function, written for ONE
-            # household's scalar state — the solve-side fold evaluates it at one
+            # agent's scalar state — the solve-side fold evaluates it at one
             # target grid cell — so the population is mapped over, exactly as the
             # gate evaluator above is. Handing it the whole state column instead
             # agrees only for an elementwise projection; a table lookup
-            # (`settlement[health]`) or any other rank-changing read returns one
+            # (`transfer[health]`) or any other rank-changing read returns one
             # number for the whole cohort.
             fallback_states = cast(
                 "Mapping[str, FloatND]",
@@ -733,11 +733,11 @@ def route_gated_edges(
                             fold_age=fold_age,
                         ),
                     },
-                    axis_size=int(subjects_in_regime.shape[0]),
-                    subject_devices=subject_devices,
+                    axis_size=int(agents_in_regime.shape[0]),
+                    agent_devices=agent_devices,
                 ),
             )
-            states = _advance_states_for_subjects(
+            states = _advance_states_for_agents(
                 states_per_regime=states,
                 next_states_per_regime=MappingProxyType(
                     {
@@ -746,7 +746,7 @@ def route_gated_edges(
                         )
                     }
                 ),
-                subject_indices=dissolving_mask,
+                agent_indices=dissolving_mask,
             )
 
     return states, routed_ids, routed_roles, MappingProxyType(closed_masks)
@@ -764,19 +764,19 @@ def _per_row_leg_outcomes(
     A leg owns four facts about where its rows go — the open branch's regime
     and role, and the closed branch's — and all four have to travel together:
     routing a row to the right regime while leaving it carrying the role it had
-    in the household it just left makes its next dissolution follow the wrong
+    in the regime it just left makes its next dissolution follow the wrong
     partner's leg.
 
     A singleton source declares one role-less leg, which answers for every row.
 
     Args:
         legs: The edge's resolved legs, in source member order.
-        own_member: Each subject's role code.
+        own_member: Each agent's role code.
         regime_names_to_ids: Immutable mapping of regime names to codes.
         role_ids: The model's role vocabulary.
 
     Returns:
-        Tuple of each subject's closed-branch regime id, its open-branch role,
+        Tuple of each agent's closed-branch regime id, its open-branch role,
         and its closed-branch role.
     """
     first = legs[0]
@@ -860,28 +860,28 @@ def _call_vmapped_with_accepted_kwargs(
     batched_kwargs: QAndFKwargs,
     static_kwargs: Mapping[ReferenceName, PytreeValue],
     axis_size: int,
-    subject_devices: tuple[jax.Device, ...] = (),
-    subject_width: int | None = None,
+    agent_devices: tuple[jax.Device, ...] = (),
+    agent_width: int | None = None,
 ) -> ArrayTree:
-    """Call a per-subject-scalar `func` over a whole population via `vmap`.
+    """Call a per-agent-scalar `func` over a whole population via `vmap`.
 
     `func` here is always a `_lcm.regime_building.V.get_V_interpolator`
     product (discrete-index lookup + `map_coordinates` interpolation): it is
-    written to be evaluated at a single subject's SCALAR discrete indices and
+    written to be evaluated at a single agent's SCALAR discrete indices and
     continuous coordinates, then `vmap`-ped or `productmap`-ped by its
     caller — the same idiom `_lcm.simulation.transitions
     .calculate_next_states` uses for `regime.simulation.next_state`. Calling
-    it directly on whole-population `(n_subjects,)` arrays only happens to
+    it directly on whole-population `(n_agents,)` arrays only happens to
     work when the target has zero discrete state axes (`map_coordinates`
     natively batches over query points when `len(coordinates) ==
     input.ndim`); the moment the target has >=1 discrete axis, the discrete
     lookup's fancy indexing collapses those axes into a leading batch
     dimension while leaving the continuous axes trailing, which breaks that
-    invariant. `vmap`-ing here makes every call genuinely scalar-per-subject
+    invariant. `vmap`-ing here makes every call genuinely scalar-per-agent
     for both discrete and continuous axes, which is correct in both cases.
 
-    `batched_kwargs` (mapped over subject axis 0 — e.g. the candidate target
-    states) and `static_kwargs` (held fixed across subjects — e.g. regime
+    `batched_kwargs` (mapped over agent axis 0 — e.g. the candidate target
+    states) and `static_kwargs` (held fixed across agents — e.g. regime
     params and the raw grid-level array being read) are filtered down to the
     names `func` accepts; on a name collision, `static_kwargs` wins. That
     precedence is safe here: `static_kwargs` carries the provenance-bound
@@ -899,7 +899,7 @@ def _call_vmapped_with_accepted_kwargs(
     batched, static = split_population_call_args(
         func=func, batched_kwargs=batched_kwargs, static_kwargs=static_kwargs
     )
-    if subject_devices:
+    if agent_devices:
         placed = place_simulation_arguments(
             arguments={
                 **batched,
@@ -909,9 +909,9 @@ def _call_vmapped_with_accepted_kwargs(
                     if name != SAME_PERIOD_V_ARG
                 },
             },
-            subject_arg_names=tuple(batched),
+            agent_arg_names=tuple(batched),
             value_reads=(),
-            devices=subject_devices,
+            devices=agent_devices,
         )
         # Value arrays were acquired by the period owner; preserve those exact
         # copies even when their mesh has a different named-axis structure.
@@ -920,7 +920,7 @@ def _call_vmapped_with_accepted_kwargs(
             name: value if name == SAME_PERIOD_V_ARG else placed[name]
             for name, value in static.items()
         }
-    return population_call(func=func, axis_size=axis_size, subject_width=subject_width)(
+    return population_call(func=func, axis_size=axis_size, agent_width=agent_width)(
         batched, static
     )
 
@@ -963,7 +963,7 @@ def _accepted_arg_names(func: _EdgeCallable) -> frozenset[str]:
     """Return the argument names `func` accepts, read off its signature once.
 
     An edge callable's signature is fixed at model build, while the router asks
-    for it once per edge per period per subject chunk.
+    for it once per edge per period per agent chunk.
     """
     accepted = _ACCEPTED_ARG_NAMES.get(func)
     if accepted is None:
@@ -981,18 +981,18 @@ def _role_code(*, name: str | None, role_ids: Mapping[str, int]) -> int:
 
 
 def population_call(
-    *, func: _EdgeCallable, axis_size: int, subject_width: int | None = None
+    *, func: _EdgeCallable, axis_size: int, agent_width: int | None = None
 ) -> _PopulationCall:
-    """Return `func` mapped over a population of `axis_size` subjects, compiled.
+    """Return `func` mapped over a population of `axis_size` agents, compiled.
 
-    Built ONCE per `(func, axis_size, subject_width)` and reused for every later call.
+    Built ONCE per `(func, axis_size, agent_width)` and reused for every later call.
     Rebuilding it per call would leave the compiled executable unreachable —
     `jax.jit` keys its cache on the wrapped function object, so a fresh
     closure each time recompiles each time — and every period and every
-    subject chunk calls the same edge callable again over the same population
+    agent chunk calls the same edge callable again over the same population
     size.
 
-    The per-subject and the shared arguments enter as two POSITIONAL
+    The per-agent and the shared arguments enter as two POSITIONAL
     arguments, because `in_axes` addresses positional arguments only: a
     keyword argument is always mapped along axis 0, which is exactly what the
     shared arguments (regime params, whole-grid value arrays) must not be.
@@ -1006,20 +1006,20 @@ def population_call(
     model rather than of the period or chunk, so the compilation is paid once.
     """
     per_axis_size = _POPULATION_CALLS.setdefault(func, {})
-    key = (axis_size, subject_width)
+    key = (axis_size, agent_width)
     call = per_axis_size.get(key)
     if call is None:
-        if subject_width is None:
+        if agent_width is None:
             mapped = jax.vmap(
-                partial(_call_one_subject, func=func),
+                partial(_call_one_agent, func=func),
                 in_axes=(0, None),
                 axis_size=axis_size,
             )
         else:
             mapped = partial(
-                _map_subject_tiles,
+                _map_agent_tiles,
                 func=func,
-                subject_width=subject_width,
+                agent_width=agent_width,
                 axis_size=axis_size,
             )
         call = jax.jit(mapped)
@@ -1028,47 +1028,47 @@ def population_call(
 
 
 # keyword-only-exempt: library-callback=jax.jit
-def _map_subject_tiles(
+def _map_agent_tiles(
     batched_kwargs: QAndFKwargs,
     shared_kwargs: Mapping[ReferenceName, PytreeValue],
     *,
     func: _EdgeCallable,
-    subject_width: int,
+    agent_width: int,
     axis_size: int,
 ) -> ArrayTree:
     """Tile stateful rows and preserve explicit extent for stateless rows."""
     if not jax.tree.leaves(batched_kwargs):
         # No mapped input carries N. This is a broadcast of shared/scalar work,
-        # not a subject-sized expensive branch hidden behind a mask.
+        # not an agent-sized expensive branch hidden behind a mask.
         return jax.vmap(
-            partial(_call_one_subject, func=func),
+            partial(_call_one_agent, func=func),
             in_axes=(0, None),
             axis_size=axis_size,
         )(batched_kwargs, shared_kwargs)
     return jax.lax.map(
-        partial(_call_one_subject_with_shared, func=func, shared=shared_kwargs),
+        partial(_call_one_agent_with_shared, func=func, shared=shared_kwargs),
         batched_kwargs,
-        batch_size=subject_width,
+        batch_size=agent_width,
     )
 
 
 # keyword-only-exempt: library-callback=jax.lax.map
-def _call_one_subject_with_shared(
-    one_subject_kwargs: QAndFKwargs,
+def _call_one_agent_with_shared(
+    one_agent_kwargs: QAndFKwargs,
     *,
     func: _EdgeCallable,
     shared: Mapping[ReferenceName, PytreeValue],
 ) -> ArrayTree:
     """Invoke one gate evaluator or projector with shared dynamic operands."""
-    return func(**one_subject_kwargs, **shared)
+    return func(**one_agent_kwargs, **shared)
 
 
 # keyword-only-exempt: library-callback=jax.vmap
-def _call_one_subject(
-    one_subject_kwargs: QAndFKwargs,
+def _call_one_agent(
+    one_agent_kwargs: QAndFKwargs,
     shared_kwargs: Mapping[ReferenceName, PytreeValue],
     *,
     func: _EdgeCallable,
 ) -> ArrayTree:
-    """Call `func` for one subject with its own and the shared keyword arguments."""
-    return func(**one_subject_kwargs, **shared_kwargs)
+    """Call `func` for one agent with its own and the shared keyword arguments."""
+    return func(**one_agent_kwargs, **shared_kwargs)

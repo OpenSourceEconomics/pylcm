@@ -43,7 +43,7 @@ class InvariantBlockSchedule(Enum):
     BLOCK_MAJOR = "block_major"
     """Solve each code through all of its periods before the next code.
 
-    Simulation of that code's subjects follows while its values are still on
+    Simulation of that code's agents follows while its values are still on
     the device; its values are then retained on the host and its device
     buffers deleted.
     """
@@ -260,9 +260,9 @@ class ExecutionConfig:
 
     When the simulate phase provably keeps the state fixed too, and no regime
     declares taste shocks, gated edges or a policy replay, `simulate` groups
-    subjects by their starting code: each code's subjects run in chunks of their
+    agents by their starting code: each code's agents run in chunks of their
     own and read each value carrying the state through that code's block. Each
-    subject keeps its original random keys and output row, so the panel is the
+    agent keeps its original random keys and output row, so the panel is the
     ungrouped one. Otherwise simulation is ungrouped.
     """
 
@@ -276,7 +276,7 @@ class ExecutionConfig:
       the solve returns.
     - `BLOCK_MAJOR` solves one code through all of its periods, then the next
       code. A combined `simulate` (no `solution` passed) runs that code's
-      subjects while its values are still on the device. The code's values are
+      agents while its values are still on the device. The code's values are
       then copied to the host and its device buffers deleted, so the device
       holds one code's values at a time. The result is still complete: each
       value is assembled from the retained codes, on the layout the
@@ -345,7 +345,7 @@ class ExecutionConfig:
     whole action blocks, each device of the regime's action group reduces its
     own run with the exact hard maximum, and the devices exchange one compact
     accumulator per state cell — best value, winning action identity and
-    feasibility, and a household's member values at its winner — which every
+    feasibility, and a collective regime's member values at its winner — which every
     device merges in partition order. Values equal the unpartitioned solve. The
     winning action is also the same, because both routes give a tie to the
     members in declared order and then to the lowest action identity, and the
@@ -371,11 +371,11 @@ class ExecutionConfig:
     ) = None
     """Device ids the model may use, or `None` for every device JAX reports."""
 
-    simulation_sharding: Literal["legacy", "subjects"] = "legacy"
-    """Use solve-derived placement, or shard forward subjects on every device.
+    simulation_sharding: Literal["legacy", "agents"] = "legacy"
+    """Use solve-derived placement, or shard forward agents on every device.
 
-    The subjects mode puts each compiled subject tile loop inside a device shard.
-    Its subject width is a per-device upper bound, independent of solve axes.
+    The agents mode puts each compiled agent tile loop inside a device shard.
+    Its agent width is a per-device upper bound, independent of solve axes.
     """
 
     donate_buffers: bool = True

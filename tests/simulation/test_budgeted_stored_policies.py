@@ -43,7 +43,7 @@ _NNBEGM_INITIAL_CONDITIONS = {
 }
 
 _EGM_N_PERIODS = 4
-# The last subject starts beyond the published rows, so the grid fallback beside
+# The last agent starts beyond the published rows, so the grid fallback beside
 # the policy-first read is planned and run as well.
 _EGM_WEALTH = np.append(np.linspace(20.5, 180.5, 9), 1000.0)
 
@@ -51,7 +51,7 @@ _EGM_WEALTH = np.append(np.linspace(20.5, 180.5, 9), 1000.0)
 def _execution(value_storage: ValueStorage) -> ExecutionConfig:
     return ExecutionConfig(
         device_memory_bytes=_BUDGET,
-        axis_widths={"subject": 1},
+        axis_widths={"agent": 1},
         value_storage=value_storage,
     )
 

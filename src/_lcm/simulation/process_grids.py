@@ -365,7 +365,7 @@ class SimulationProcessGrids:
             "Mapping[ParameterName, ValueND]",
             place_simulation_arguments(
                 arguments=parameters,
-                subject_arg_names=(),
+                agent_arg_names=(),
                 value_reads=(),
                 devices=execution_devices,
                 budget_bytes=self.budget_bytes,

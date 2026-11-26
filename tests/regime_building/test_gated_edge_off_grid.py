@@ -7,7 +7,7 @@ sides of the gate, a blend of the open and the closed branch — a number neithe
 branch pays, and one that can rank a source action above the one it should have
 taken. Reading each operand at the landing point and gating it there is the
 order forward simulation routes in, so the value the source maximizes and the
-branch a subject is sent down agree.
+branch an agent is sent down agree.
 
 The model below is exactly hand-computable, so every expected number is an
 integer or a half-integer rather than a tolerance-bounded approximation.
@@ -318,7 +318,7 @@ def test_solve_rejects_unknown_categories_in_a_process_fallback(
 
 
 def test_the_action_taken_is_the_one_the_gated_value_ranks_first() -> None:
-    """The simulated subject saves `1.5`, not `2.0`.
+    """The simulated agent saves `1.5`, not `2.0`.
 
     The two candidates are separated by a half unit of value, so this is a
     genuine reversal of the argmax rather than a rounding difference, and it is

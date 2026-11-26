@@ -9,10 +9,11 @@ differently.
 """
 
 import itertools
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from fractions import Fraction
 from types import MappingProxyType, SimpleNamespace
-from typing import TypedDict
+from typing import Never, TypedDict
 
 import jax
 import jax.numpy as jnp
@@ -33,7 +34,7 @@ from _lcm.simulation.simulate import (
     _replace_continuous_action_with_policy_read,
 )
 from lcm.exceptions import InvalidSimulationInputError
-from lcm.typing import ActionName, RegimeName
+from lcm.typing import ActionName, BoolND, FloatND, FunctionName, IntND, RegimeName
 from tests.conftest import DECIMAL_PRECISION
 
 
@@ -48,7 +49,7 @@ class _StubRegime(Regime):
         object.__setattr__(self, "simulation", simulation)
 
 
-def test_value_read_is_cubic_hermite_with_the_marginal_slopes():
+def test_value_read_is_cubic_hermite_with_the_marginal_slopes() -> None:
     """On nodes `(1, 0)`, `(2, log 2)` with slopes `(1, 1/2)`, the read at `1.5`
     is the cubic Hermite value `0.40907`, not the linear chord `0.34657`."""
     sim_policy = EGMSimPolicy(
@@ -62,13 +63,13 @@ def test_value_read_is_cubic_hermite_with_the_marginal_slopes():
         field="value",
         index=(),
         resources=jnp.array([1.5]),
-        n_subjects=1,
+        n_agents=1,
     )
     assert bool(in_support[0])
     assert float(value[0]) == pytest.approx(0.4090736, abs=1e-6)
 
 
-def test_policy_read_stays_piecewise_linear():
+def test_policy_read_stays_piecewise_linear() -> None:
     """The policy read is the linear chord: `0.75` midway between `0.5` and `1.0`.
 
     Only the value row carries exact node slopes (the marginal-utility row via
@@ -86,17 +87,19 @@ def test_policy_read_stays_piecewise_linear():
         field="policy",
         index=(),
         resources=jnp.array([1.5]),
-        n_subjects=1,
+        n_agents=1,
     )
     assert float(policy[0]) == pytest.approx(0.75, abs=1e-9)
 
 
-def test_policy_first_reports_the_read_value_of_the_emitted_action(monkeypatch):
+def test_policy_first_reports_the_read_value_of_the_emitted_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The policy-first decision reports the read value of the action it emits.
 
-    On nodes `(1, 0)`, `(2, log 2)` with slopes `(1, 1/2)` the subject at
+    On nodes `(1, 0)`, `(2, log 2)` with slopes `(1, 1/2)` the agent at
     resources `1.5` consumes the linear policy read `0.75` and reports the
-    cubic Hermite value read `0.40907`; the subject at `3.0` is off the row's
+    cubic Hermite value read `0.40907`; the agent at `3.0` is off the row's
     support and is rejected for the grid argmax.
     """
     read = EGMPolicyRead(
@@ -163,23 +166,23 @@ class _NestedDispatchInputs(TypedDict):
     next_regime_to_V_arr: MappingProxyType[RegimeName, jax.Array]
 
 
-def _nested_dispatch_inputs(*, n_subjects: int) -> _NestedDispatchInputs:
+def _nested_dispatch_inputs(*, n_agents: int) -> _NestedDispatchInputs:
     """Arguments of the nested policy-read dispatch, with stubbed reads."""
     return {
         "regime": _StubRegime(simulation=SimpleNamespace(post_decision_bounds=())),
         "sim_policy": object.__new__(NestedEGMSimPolicy),
-        "states": MappingProxyType({"wealth": jnp.ones(n_subjects)}),
+        "states": MappingProxyType({"wealth": jnp.ones(n_agents)}),
         "flat_params": MappingProxyType({}),
         "period": 0,
         "age": jnp.asarray(40.0),
-        "canonical_states": MappingProxyType({"wealth": jnp.ones(n_subjects)}),
+        "canonical_states": MappingProxyType({"wealth": jnp.ones(n_agents)}),
         "action_names": ("consumption", "investment"),
         "next_regime_to_V_arr": MappingProxyType({}),
     }
 
 
 def test_nested_policy_replay_emits_the_read_winner_over_a_better_grid_pair(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The read's pair is emitted with its canonical value, never compared to grid.
 
@@ -209,7 +212,7 @@ def test_nested_policy_replay_emits_the_read_winner_over_a_better_grid_pair(
     actions, reported_value, fallback = _replace_continuous_action_with_policy_read(
         optimal_actions=grid_actions,
         grid_values=jnp.asarray([5.0]),
-        **_nested_dispatch_inputs(n_subjects=1),
+        **_nested_dispatch_inputs(n_agents=1),
     )
 
     for name in ("consumption", "investment"):
@@ -225,7 +228,11 @@ def test_nested_policy_replay_emits_the_read_winner_over_a_better_grid_pair(
     list(itertools.product((False, True), repeat=3)),
 )
 def test_nested_policy_acceptance_truth_table(
-    *, monkeypatch, read_fallback, feasible, finite
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    read_fallback: bool,
+    feasible: bool,
+    finite: bool,
 ) -> None:
     """A supported, feasible, finitely scored read is emitted; else the grid pair."""
     nested_actions = MappingProxyType(
@@ -249,7 +256,7 @@ def test_nested_policy_acceptance_truth_table(
     actions, reported_value, fallback = _replace_continuous_action_with_policy_read(
         optimal_actions=grid_actions,
         grid_values=jnp.asarray([1.0]),
-        **_nested_dispatch_inputs(n_subjects=1),
+        **_nested_dispatch_inputs(n_agents=1),
     )
 
     accept = not read_fallback and feasible and finite
@@ -320,18 +327,22 @@ def _nested_payload(*, no_adjustment_name: str | None = None) -> NestedEGMSimPol
     )
 
 
-def _new_illiquid(*, illiquid, investment):
+def _new_illiquid(*, illiquid: FloatND, investment: FloatND) -> FloatND:
     """`s' = Z + Iz`: the outer post-decision the replay inverts."""
     return illiquid + investment
 
 
-def _resources(wealth):
+def _resources(wealth: FloatND) -> FloatND:
     """Liquid resources the recovered pair is checked against."""
     return wealth + 5.0
 
 
-def _read_with(*, payload, functions):
-    """Replay `payload` for one subject against the given simulate function pool."""
+def _read_with(
+    *,
+    payload: NestedEGMSimPolicy,
+    functions: Mapping[FunctionName, Callable[..., FloatND]],
+) -> tuple[MappingProxyType[ActionName, FloatND | IntND], BoolND]:
+    """Replay `payload` for one agent against the given simulate function pool."""
     return simulation_module._read_nested_policy(
         payload=payload,
         optimal_actions=MappingProxyType(
@@ -356,7 +367,7 @@ def _read_with(*, payload, functions):
     )
 
 
-def test_nested_read_replays_the_decision_when_every_function_resolves():
+def test_nested_read_replays_the_decision_when_every_function_resolves() -> None:
     """A payload whose declared functions all resolve replays without falling back."""
     _, fallback = _read_with(
         payload=_nested_payload(),
@@ -366,7 +377,7 @@ def test_nested_read_replays_the_decision_when_every_function_resolves():
     assert not bool(fallback[0])
 
 
-def test_nested_read_does_not_certify_the_declared_outer_map_itself():
+def test_nested_read_does_not_certify_the_declared_outer_map_itself() -> None:
     """The read consumes the published inversion verdict instead of re-deriving it.
 
     The solve settles the declared map's coefficient once, before publishing,
@@ -376,7 +387,7 @@ def test_nested_read_does_not_certify_the_declared_outer_map_itself():
     the duration of the read is what establishes that none is reached.
     """
 
-    def refuse(**_kwargs):
+    def refuse[Ignored](**_kwargs: Ignored) -> Never:
         raise AssertionError("the read re-certified the declared outer map")
 
     with pytest.MonkeyPatch.context() as patch:
@@ -390,7 +401,7 @@ def test_nested_read_does_not_certify_the_declared_outer_map_itself():
     assert not bool(fallback[0])
 
 
-def test_nested_read_refuses_a_payload_whose_capability_is_unsupported():
+def test_nested_read_refuses_a_payload_whose_capability_is_unsupported() -> None:
     """A payload the solve would not have published stops the read, loudly.
 
     Structural support is settled before publication, so the read never has to

@@ -164,7 +164,7 @@ def _build_aca_baseline(
     )
     try:
         model = aca_benchmark.create_benchmark_model(
-            n_subjects=1,
+            n_agents=1,
             pref_type_grid=DiscreteGrid(category_class=BenchmarkPrefType),
             **_gpu_mem.default_budget_execution_kwargs(),
         )

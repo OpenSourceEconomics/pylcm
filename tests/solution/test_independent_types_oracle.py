@@ -61,10 +61,10 @@ def test_simulated_consumption_follows_the_enumerated_policy() -> None:
     working = frame[frame["regime_name"] == "working"]
 
     expected = [
-        float(policies[int(period)][int(types[subject])][int(wealth_now)])
-        for period, subject, wealth_now in zip(
+        float(policies[int(period)][int(types[agent])][int(wealth_now)])
+        for period, agent, wealth_now in zip(
             working["period"].to_numpy(dtype=int),
-            working["subject_id"].to_numpy(dtype=int),
+            working["agent_id"].to_numpy(dtype=int),
             working["wealth"].to_numpy(dtype=float),
             strict=True,
         )

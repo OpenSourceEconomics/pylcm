@@ -1,4 +1,4 @@
-"""Subject-local loops preserve global order, keys and compiler-visible placement."""
+"""Agent-local loops preserve global order, keys and compiler-visible placement."""
 
 import gc
 import inspect
@@ -16,10 +16,10 @@ from _lcm.execution.output_layout import StateAxesLeading
 from _lcm.execution.placement import ACTION_PARTITION_AXIS
 from _lcm.regime_building.max_Q_over_a import get_action_partitioned_max_Q_over_a
 from _lcm.regime_building.Q_and_F import get_Q_and_F_terminal_collective
-from _lcm.simulation.program_types import SUBJECT_WIDTH_KEYWORD
-from _lcm.simulation.programs import _SubjectTiled
+from _lcm.simulation.agent_parallel import shard_agent_function
+from _lcm.simulation.program_types import AGENT_WIDTH_KEYWORD
+from _lcm.simulation.programs import _AgentTiled
 from _lcm.simulation.runtime import SimulationRuntime
-from _lcm.simulation.subject_parallel import shard_subject_function
 from _lcm.solution.action_reduction import CollectiveHardMaxAccumulator
 from _lcm.solution.action_streaming import build_partitioned_streaming_max_Q_over_a
 from _lcm.solution.feasibility import BoundedResult, summarize_bound_inputs
@@ -135,7 +135,7 @@ def test_native_action_partition_replicates_active_owner_integrity(
 
 @pytest.mark.parametrize("runtime_checks", [False, True])
 @pytest.mark.parametrize("reverse", [False, True])
-def test_public_subject_sharding_keeps_callable_floor_integrity(
+def test_public_agent_sharding_keeps_callable_floor_integrity(
     *,
     runtime_checks: bool,
     reverse: bool,
@@ -152,9 +152,9 @@ def test_public_subject_sharding_keeps_callable_floor_integrity(
         execution_config=ExecutionConfig(
             devices=tuple(device.id for device in devices),
             sharded_states=(),
-            simulation_sharding="subjects",
+            simulation_sharding="agents",
             device_memory_bytes=1 << 28,
-            axis_widths={"subject": 1},
+            axis_widths={"agent": 1},
         ),
     )
     params = {"discount_factor": 1.0}
@@ -170,7 +170,7 @@ def test_public_subject_sharding_keeps_callable_floor_integrity(
         **kwargs: Any,  # noqa: PAN002 - forwards whatever dispatch receives
     ) -> PytreeValue:
         result = dispatch(self, **kwargs)
-        if self.execution.simulation_sharding == "subjects":
+        if self.execution.simulation_sharding == "agents":
             scalar_flags = tuple(
                 leaf
                 for leaf in jax.tree.leaves(result)
@@ -181,7 +181,7 @@ def test_public_subject_sharding_keeps_callable_floor_integrity(
             if scalar_flags:
                 assert len(scalar_flags) == 2
                 assert all(leaf.sharding.spec == jax.P() for leaf in scalar_flags)
-                assert tuple(device.id for device in self.subject_devices) == tuple(
+                assert tuple(device.id for device in self.agent_devices) == tuple(
                     sorted(device.id for device in devices)
                 )
                 observed.append(jnp.stack(scalar_flags))
@@ -207,7 +207,7 @@ def test_public_subject_sharding_keeps_callable_floor_integrity(
     frame = positive.to_dataframe()
     np.testing.assert_allclose(frame.loc[frame["period"] == 0, "value"], [2.0] * 3)
     np.testing.assert_array_equal(
-        frame.groupby("subject_id")["consumption"].sum(), [2.0] * 3
+        frame.groupby("agent_id")["consumption"].sum(), [2.0] * 3
     )
     assert observed
     np.testing.assert_array_equal(
@@ -238,14 +238,14 @@ def _bounded_cell(
 @pytest.mark.parametrize("reverse", [False, True])
 @pytest.mark.parametrize("width", [1, 3])
 @pytest.mark.parametrize("active_last", [False, True])
-def test_subject_partitions_or_scalar_integrity_across_devices(
+def test_agent_partitions_or_scalar_integrity_across_devices(
     *, reverse: bool, width: int, active_last: bool
 ) -> None:
     """Ordinary rows keep their shards; active validity is globally replicated."""
-    code = inspect.unwrap(shard_subject_function).__code__
+    code = inspect.unwrap(shard_agent_function).__code__
     assert (
         "output_roles" in code.co_varnames[: code.co_argcount + code.co_kwonlyargcount]
-    ), "The subject sharding owner needs explicit mixed scalar output roles."
+    ), "The agent sharding owner needs explicit mixed scalar output roles."
     devices = _devices(count=2, reverse=reverse)
     mesh = _mesh(devices=devices)
     arguments = {
@@ -258,18 +258,18 @@ def test_subject_partitions_or_scalar_integrity_across_devices(
             jax.NamedSharding(mesh, jax.P("X")),
         ),
     }
-    tiled = _SubjectTiled(
+    tiled = _AgentTiled(
         func=_bounded_cell,
-        subject_arg_names=("floor", "active"),
+        agent_arg_names=("floor", "active"),
         n_bound_records=1,
     )
-    adapted = shard_subject_function(
+    adapted = shard_agent_function(
         function=tiled,
-        subject_arg_names=tiled.subject_shard_arg_names,
+        agent_arg_names=tiled.agent_shard_arg_names,
         arguments=arguments,
-        static_kwargs={SUBJECT_WIDTH_KEYWORD: width},
+        static_kwargs={AGENT_WIDTH_KEYWORD: width},
         devices=devices,
-        subject_width_keyword=SUBJECT_WIDTH_KEYWORD,
+        agent_width_keyword=AGENT_WIDTH_KEYWORD,
         output_roles=(
             "value",
             "active",
@@ -319,24 +319,24 @@ def test_local_tiles_match_vmap_and_keep_shards(
 ) -> None:
     devices = _devices(count=device_count, reverse=reverse)
     mesh = _mesh(devices=devices)
-    n_subjects = 7 * device_count
-    states = np.linspace(0, 1, n_subjects, dtype=np.float32)
-    keys = jax.random.split(jax.random.key(31), n_subjects)
-    # Same extent as the population is NOT a declaration of subject dependence.
-    grid = np.linspace(1, 2, n_subjects, dtype=np.float32)
+    n_agents = 7 * device_count
+    states = np.linspace(0, 1, n_agents, dtype=np.float32)
+    keys = jax.random.split(jax.random.key(31), n_agents)
+    # Same extent as the population is NOT a declaration of agent dependence.
+    grid = np.linspace(1, 2, n_agents, dtype=np.float32)
     arguments = {
         "state": jax.device_put(states, jax.NamedSharding(mesh, jax.P("X"))),
         "key": jax.device_put(keys, jax.NamedSharding(mesh, jax.P("X"))),
         "grid": jax.device_put(grid, jax.NamedSharding(mesh, jax.P())),
     }
-    tiled = _SubjectTiled(func=_cell, subject_arg_names=("state", "key"))
-    adapted = shard_subject_function(
+    tiled = _AgentTiled(func=_cell, agent_arg_names=("state", "key"))
+    adapted = shard_agent_function(
         function=tiled,
-        subject_arg_names=tiled.subject_shard_arg_names,
+        agent_arg_names=tiled.agent_shard_arg_names,
         arguments=arguments,
-        static_kwargs={SUBJECT_WIDTH_KEYWORD: width},
+        static_kwargs={AGENT_WIDTH_KEYWORD: width},
         devices=devices,
-        subject_width_keyword=SUBJECT_WIDTH_KEYWORD,
+        agent_width_keyword=AGENT_WIDTH_KEYWORD,
     )
     abstract = jax.tree.map(
         lambda leaf: jax.ShapeDtypeStruct(
@@ -360,7 +360,7 @@ def test_local_tiles_match_vmap_and_keep_shards(
         assert len(actual.addressable_shards) == device_count
         for index, shard in enumerate(actual.addressable_shards):
             assert shard.data.shape[0] == 7
-            assert shard.index[0].indices(n_subjects) == (7 * index, 7 * (index + 1), 1)
+            assert shard.index[0].indices(n_agents) == (7 * index, 7 * (index + 1), 1)
     for leaf in jax.tree.leaves(arguments):
         assert not leaf.is_deleted()
 
@@ -373,14 +373,14 @@ def test_wrapper_does_not_capture_call_owned_arrays() -> None:
     devices = _devices(count=1)
     array = jax.device_put(np.arange(16, dtype=np.float32), devices[0])
     reference = weakref.ref(array)
-    tiled = _SubjectTiled(func=_increment, subject_arg_names=("state",))
-    wrapper = shard_subject_function(
+    tiled = _AgentTiled(func=_increment, agent_arg_names=("state",))
+    wrapper = shard_agent_function(
         function=tiled,
-        subject_arg_names=("state",),
+        agent_arg_names=("state",),
         arguments={"state": array},
-        static_kwargs={SUBJECT_WIDTH_KEYWORD: 3},
+        static_kwargs={AGENT_WIDTH_KEYWORD: 3},
         devices=devices,
-        subject_width_keyword=SUBJECT_WIDTH_KEYWORD,
+        agent_width_keyword=AGENT_WIDTH_KEYWORD,
     )
     del array
     gc.collect()
@@ -388,51 +388,47 @@ def test_wrapper_does_not_capture_call_owned_arrays() -> None:
     assert callable(wrapper)
 
 
-@pytest.mark.parametrize("n_subjects", [1, 13, 17])
-def test_global_keys_survive_padding_and_device_partition(*, n_subjects: int) -> None:
+@pytest.mark.parametrize("n_agents", [1, 13, 17])
+def test_global_keys_survive_padding_and_device_partition(*, n_agents: int) -> None:
     devices = _devices(count=8)
     mesh = _mesh(devices=devices)
-    keys = jax.random.split(jax.random.key(17), n_subjects + 1)[1:]
-    padded = -(-n_subjects // 8) * 8
-    all_keys = jnp.concatenate(
-        [keys, jnp.repeat(keys[-1:], padded - n_subjects, axis=0)]
-    )
+    keys = jax.random.split(jax.random.key(17), n_agents + 1)[1:]
+    padded = -(-n_agents // 8) * 8
+    all_keys = jnp.concatenate([keys, jnp.repeat(keys[-1:], padded - n_agents, axis=0)])
     placed = jax.device_put(all_keys, jax.NamedSharding(mesh, jax.P("X")))
 
     def draw(*, key: jax.Array) -> jax.Array:
         return jax.random.bits(key, (), dtype=jnp.uint32)
 
-    tiled = _SubjectTiled(func=draw, subject_arg_names=("key",))
-    adapted = shard_subject_function(
+    tiled = _AgentTiled(func=draw, agent_arg_names=("key",))
+    adapted = shard_agent_function(
         function=tiled,
-        subject_arg_names=("key",),
+        agent_arg_names=("key",),
         arguments={"key": placed},
-        static_kwargs={SUBJECT_WIDTH_KEYWORD: 3},
+        static_kwargs={AGENT_WIDTH_KEYWORD: 3},
         devices=devices,
-        subject_width_keyword=SUBJECT_WIDTH_KEYWORD,
+        agent_width_keyword=AGENT_WIDTH_KEYWORD,
     )
     actual = jax.jit(adapted)(key=placed)
-    np.testing.assert_array_equal(actual[:n_subjects], jax.vmap(draw)(key=keys))
+    np.testing.assert_array_equal(actual[:n_agents], jax.vmap(draw)(key=keys))
 
 
 @pytest.mark.parametrize("bad_shape", [(), (0,), (15,)])
-def test_refuses_unaligned_or_missing_subject_axis(
-    *, bad_shape: tuple[int, ...]
-) -> None:
+def test_refuses_unaligned_or_missing_agent_axis(*, bad_shape: tuple[int, ...]) -> None:
     devices = _devices(count=8)
-    tiled = _SubjectTiled(func=_increment, subject_arg_names=("state",))
-    with pytest.raises(ValueError, match=r"(?i)subject"):
-        shard_subject_function(
+    tiled = _AgentTiled(func=_increment, agent_arg_names=("state",))
+    with pytest.raises(ValueError, match=r"(?i)agent"):
+        shard_agent_function(
             function=tiled,
-            subject_arg_names=("state",),
+            agent_arg_names=("state",),
             arguments={"state": jax.ShapeDtypeStruct(bad_shape, jnp.float32)},
-            static_kwargs={SUBJECT_WIDTH_KEYWORD: 3},
+            static_kwargs={AGENT_WIDTH_KEYWORD: 3},
             devices=devices,
-            subject_width_keyword=SUBJECT_WIDTH_KEYWORD,
+            agent_width_keyword=AGENT_WIDTH_KEYWORD,
         )
 
 
-def test_refuses_output_that_drops_the_subject_axis() -> None:
+def test_refuses_output_that_drops_the_agent_axis() -> None:
     devices = _devices(count=8)
     mesh = _mesh(devices=devices)
     array = jax.device_put(
@@ -442,13 +438,13 @@ def test_refuses_output_that_drops_the_subject_axis() -> None:
     def invalid(**arguments: jax.Array) -> jax.Array:
         return jnp.sum(arguments["state"])
 
-    adapted = shard_subject_function(
+    adapted = shard_agent_function(
         function=invalid,
-        subject_arg_names=("state",),
+        agent_arg_names=("state",),
         arguments={"state": array},
-        static_kwargs={SUBJECT_WIDTH_KEYWORD: 3},
+        static_kwargs={AGENT_WIDTH_KEYWORD: 3},
         devices=devices,
-        subject_width_keyword=SUBJECT_WIDTH_KEYWORD,
+        agent_width_keyword=AGENT_WIDTH_KEYWORD,
     )
     with pytest.raises(ValueError, match="preserve its leading extent"):
         jax.jit(adapted).lower(state=array)
@@ -473,14 +469,14 @@ def test_foreign_replica_mesh_and_eliminated_inputs(*, constant: bool) -> None:
     def cell(*, state: jax.Array, grid: jax.Array) -> jax.Array:
         return jnp.float32(4) if constant else jnp.sum(state + grid)
 
-    tiled = _SubjectTiled(func=cell, subject_arg_names=("state",))
-    adapted = shard_subject_function(
+    tiled = _AgentTiled(func=cell, agent_arg_names=("state",))
+    adapted = shard_agent_function(
         function=tiled,
-        subject_arg_names=("state",),
+        agent_arg_names=("state",),
         arguments=arguments,
-        static_kwargs={SUBJECT_WIDTH_KEYWORD: 3},
+        static_kwargs={AGENT_WIDTH_KEYWORD: 3},
         devices=devices,
-        subject_width_keyword=SUBJECT_WIDTH_KEYWORD,
+        agent_width_keyword=AGENT_WIDTH_KEYWORD,
     )
     with jax.set_mesh(mesh):
         compiled = jax.jit(adapted).lower(**arguments).compile()
@@ -500,23 +496,23 @@ def _increment_with_optional(*, state: jax.Array, optional: PytreeValue) -> jax.
     [{}, MappingProxyType({}), (), {"nested": ({}, [], None)}, None],
     ids=["dict", "mappingproxy", "tuple", "nested", "none"],
 )
-def test_empty_subject_subtrees_keep_real_array_extent(*, empty: PytreeValue) -> None:
+def test_empty_agent_subtrees_keep_real_array_extent(*, empty: PytreeValue) -> None:
     """Leafless optional inputs survive device mapping and local remainder tiles."""
     devices = _devices(count=2)
     mesh = _mesh(devices=devices)
     state = jax.device_put(
         np.arange(16, dtype=np.float32), jax.NamedSharding(mesh, jax.P("X"))
     )
-    tiled = _SubjectTiled(
-        func=_increment_with_optional, subject_arg_names=("state", "optional")
+    tiled = _AgentTiled(
+        func=_increment_with_optional, agent_arg_names=("state", "optional")
     )
-    adapted = shard_subject_function(
+    adapted = shard_agent_function(
         function=tiled,
-        subject_arg_names=tiled.subject_shard_arg_names,
+        agent_arg_names=tiled.agent_shard_arg_names,
         arguments={"state": state, "optional": empty},
-        static_kwargs={SUBJECT_WIDTH_KEYWORD: 3},
+        static_kwargs={AGENT_WIDTH_KEYWORD: 3},
         devices=devices,
-        subject_width_keyword=SUBJECT_WIDTH_KEYWORD,
+        agent_width_keyword=AGENT_WIDTH_KEYWORD,
     )
     result = jax.jit(adapted)(state=state, optional=empty)
     np.testing.assert_array_equal(result, np.arange(16, dtype=np.float32) + 1)
@@ -525,36 +521,36 @@ def test_empty_subject_subtrees_keep_real_array_extent(*, empty: PytreeValue) ->
     assert [shard.data.shape for shard in result.addressable_shards] == [(8,), (8,)]
 
 
-def test_empty_subject_subtrees_cannot_borrow_shared_array_extent() -> None:
-    """A shared array cannot supply the missing subject dimension."""
+def test_empty_agent_subtrees_cannot_borrow_shared_array_extent() -> None:
+    """A shared array cannot supply the missing agent dimension."""
     devices = _devices(count=2)
     with pytest.raises(ValueError, match="same leading extent"):
-        shard_subject_function(
+        shard_agent_function(
             function=_increment_with_optional,
-            subject_arg_names=("optional",),
+            agent_arg_names=("optional",),
             arguments={
                 "optional": {"nested": ({}, [], None)},
                 "state": jax.ShapeDtypeStruct((16,), jnp.float32),
             },
-            static_kwargs={SUBJECT_WIDTH_KEYWORD: 3},
+            static_kwargs={AGENT_WIDTH_KEYWORD: 3},
             devices=devices,
-            subject_width_keyword=SUBJECT_WIDTH_KEYWORD,
+            agent_width_keyword=AGENT_WIDTH_KEYWORD,
         )
 
 
-def test_empty_subject_subtrees_do_not_supply_missing_argument() -> None:
+def test_empty_agent_subtrees_do_not_supply_missing_argument() -> None:
     devices = _devices(count=2)
     with pytest.raises(ValueError, match="'missing' is missing"):
-        shard_subject_function(
+        shard_agent_function(
             function=_increment_with_optional,
-            subject_arg_names=("state", "optional", "missing"),
+            agent_arg_names=("state", "optional", "missing"),
             arguments={
                 "state": jax.ShapeDtypeStruct((16,), jnp.float32),
                 "optional": {},
             },
-            static_kwargs={SUBJECT_WIDTH_KEYWORD: 3},
+            static_kwargs={AGENT_WIDTH_KEYWORD: 3},
             devices=devices,
-            subject_width_keyword=SUBJECT_WIDTH_KEYWORD,
+            agent_width_keyword=AGENT_WIDTH_KEYWORD,
         )
 
 
@@ -568,19 +564,19 @@ def test_empty_subject_subtrees_do_not_supply_missing_argument() -> None:
     ],
     ids=["scalar-array", "zero-axis", "different-extent", "nonarray-scalar"],
 )
-def test_empty_subject_subtrees_do_not_hide_invalid_leaf(
+def test_empty_agent_subtrees_do_not_hide_invalid_leaf(
     *, bad_leaf: ArgumentTree
 ) -> None:
     devices = _devices(count=2)
-    with pytest.raises(ValueError, match=r"(?i)subject"):
-        shard_subject_function(
+    with pytest.raises(ValueError, match=r"(?i)agent"):
+        shard_agent_function(
             function=_increment_with_optional,
-            subject_arg_names=("state", "optional"),
+            agent_arg_names=("state", "optional"),
             arguments={
                 "state": jax.ShapeDtypeStruct((16,), jnp.float32),
                 "optional": {"empty": {}, "invalid": bad_leaf},
             },
-            static_kwargs={SUBJECT_WIDTH_KEYWORD: 3},
+            static_kwargs={AGENT_WIDTH_KEYWORD: 3},
             devices=devices,
-            subject_width_keyword=SUBJECT_WIDTH_KEYWORD,
+            agent_width_keyword=AGENT_WIDTH_KEYWORD,
         )

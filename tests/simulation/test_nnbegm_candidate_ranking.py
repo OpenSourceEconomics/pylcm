@@ -48,24 +48,22 @@ def _state_dependent_affine_outer_target(
 
 
 def _simulate_rows(
-    *, wealth: np.ndarray, illiquid: np.ndarray, subject_batch_size: int = 0
+    *, wealth: np.ndarray, illiquid: np.ndarray, agent_batch_size: int = 0
 ) -> pd.DataFrame:
-    n_subjects = len(wealth)
+    n_agents = len(wealth)
     result = toy.build_model(
         variant="n_nbegm",
         n_periods=2,
         execution_config=ExecutionConfig(
-            axis_widths={}
-            if subject_batch_size == 0
-            else {"subject": subject_batch_size}
+            axis_widths={} if agent_batch_size == 0 else {"agent": agent_batch_size}
         ),
     ).simulate(
         params=_PARAMS,
         initial_conditions={
             "wealth": jnp.asarray(wealth),
             "illiquid": jnp.asarray(illiquid),
-            "age": jnp.full(n_subjects, 20.0),
-            "regime_id": jnp.full(n_subjects, RegimeId.alive, dtype=jnp.int32),
+            "age": jnp.full(n_agents, 20.0),
+            "regime_id": jnp.full(n_agents, RegimeId.alive, dtype=jnp.int32),
         },
         log_level="debug",
         seed=17,
@@ -652,7 +650,7 @@ def _recorded_bank_and_owners(
     return bank, owners
 
 
-def test_candidate_ranking_is_invariant_to_subject_batching(
+def test_candidate_ranking_is_invariant_to_agent_batching(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Chunk widths preserve bank identity and bound emitted floating-point levels."""
@@ -664,10 +662,10 @@ def test_candidate_ranking_is_invariant_to_subject_batching(
         width: toy.build_model(
             variant="n_nbegm",
             n_periods=2,
-            # Unbudgeted: the recorder is read from the executor cached per subject
+            # Unbudgeted: the recorder is read from the executor cached per agent
             # width, which a budget replaces with one keyed by the padded population.
             execution_config=ExecutionConfig(
-                axis_widths={"subject": width}, device_memory_bytes=None
+                axis_widths={"agent": width}, device_memory_bytes=None
             ),
         )
         for width in (7, 3, 1)

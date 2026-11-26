@@ -3,7 +3,7 @@
 The streamed GridSearch route enumerates the canonical action product in fixed-width
 blocks and combines them with a mergeable hard-max state. It preserves value,
 feasibility, tie-breaking, and global action identity across block boundaries, and
-retains every member's value at one shared household winner. Compiler fusion,
+retains every member's value at one shared collective winner. Compiler fusion,
 rematerialization, and allocation still determine measured runtime and peak
 memory. Supported co-mapped routes preserve device-local continuation
 reads. Co-map intersections with separate reference-value channels remain dense.
@@ -43,7 +43,7 @@ from lcm.typing import ActionName, BoolND, FloatND, ReferenceName
 
 _INT32_MAX = 2_147_483_647
 _COLLECTIVE_BLOCK_NDIM = 2
-# A block is (values, feasible, ids); the household's puts its objectives before
+# A block is (values, feasible, ids); a collective block puts its objectives before
 # the member values.
 type _Block = tuple[jax.Array, ...]
 type _BoundedBlock = BoundedResult[_Block]
@@ -157,7 +157,7 @@ def merge_partition_accumulators(
     """Merge per-partition accumulators along their leading axis, then finalize.
 
     `order` lists every partition once; the merge visits them in that order.
-    The household hard-max merge is exact, commutative and associative, so
+    The collective hard-max merge is exact, commutative and associative, so
     every order publishes the same bits. Production merges in ascending
     partition order so the program is one fixed sequence.
     """
@@ -220,7 +220,7 @@ def build_streaming_collective_max_Q_over_a(
     """Build the fixed-state collective hard-max callable.
 
     Each action cell is evaluated once through Q_and_F. Its trailing member
-    vector is scalarized with the same zero-safe, canonical household objective as
+    vector is scalarized with the same zero-safe, canonical collective objective as
     dense collective_readout. The collective reduction then retains every member
     value at one global C-order winner and keeps the empty feasible set explicit.
     A block covering the whole product maps the named grids and reduces that
@@ -449,7 +449,7 @@ class _PartitionedStreamingHardMax:
             block_offsets=jnp.arange(self.block_width, dtype=jnp.int32),
             n_members=len(self.members),
         )
-        # The household scalarizes each block and reduces it with its own law.
+        # The collective route scalarizes each block and reduces it with its own law.
         evaluate_block = partial(
             _evaluate_collective_block,
             evaluate_block=evaluate_block,
@@ -678,7 +678,7 @@ def _evaluate_owned_block(
     """Evaluate one block, marking it infeasible outside the partition's run.
 
     The block's last two entries are its feasibility and its global identities;
-    a household's block carries its objectives and member values before them.
+    a collective block carries its objectives and member values before them.
     """
     evaluated = evaluate_block(block_index=block_index)
     *values, feasible, global_ids = (
@@ -712,7 +712,7 @@ def _evaluate_collective_block(
     members: tuple[str, ...],
     weights: Mapping[str, FloatND | float],
 ) -> _Block | _BoundedBlock:
-    """Evaluate one padded household block and put its objective first."""
+    """Evaluate one padded collective block and put its objective first."""
     evaluated = evaluate_block(block_index=block_index)
     bounded = isinstance(evaluated, BoundedResult)
     member_values, feasible, global_ids = evaluated.output if bounded else evaluated
@@ -733,7 +733,7 @@ def _household_objectives(
     members: tuple[str, ...],
     weights: Mapping[str, FloatND | float],
 ) -> jax.Array:
-    """Return the household objective of each action's trailing member values."""
+    """Return the collective objective of each action's trailing member values."""
     return _weighted_sum(
         member_Q={
             name: member_values[..., index] for index, name in enumerate(members)
@@ -801,7 +801,7 @@ def _trace_block(
 def _empty_collective_reduction(
     *, evaluate_block: Callable[..., _Block | _BoundedBlock]
 ) -> CollectiveHardMaxAccumulator:
-    """Create the empty household accumulator for the blocks `evaluate_block` makes."""
+    """Create the empty collective accumulator for the blocks `evaluate_block` makes."""
     block = _trace_block(evaluate_block=evaluate_block)
     member_values = block.shapes[1]
     return _typed_like(
@@ -909,7 +909,7 @@ def _add_block(
     accumulator: CollectiveHardMaxAccumulator,
     block: _Block,
 ) -> CollectiveHardMaxAccumulator:
-    """Merge one evaluated block into the household's hard-max state."""
+    """Merge one evaluated block into the collective hard-max state."""
     objectives, member_values, feasible, global_ids = block
     return reduction.add(
         accumulator=accumulator,

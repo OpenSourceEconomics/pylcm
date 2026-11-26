@@ -4,24 +4,25 @@ Each regime publishes three families of `CoreProgram`, keyed by the period they
 serve:
 
 - `decision`: the argmax over the action product and the value it attains, at
-  every subject's own state cell.
-- `transition`: the laws of motion carrying each subject into the next period.
+  every agent's own state cell.
+- `transition`: the laws of motion carrying each agent into the next period.
 - `route`: the regime-transition probabilities the realized draw reads.
 
 A singleton regime also publishes `action_values`, the dense decision that
 additionally returns, from the one kernel evaluation it maximizes over, the
 action values, their feasibility, the flow utility and the certainty-equivalent
 continuation. With taste shocks it publishes the EV1 decision's conditional
-values and choice probabilities in place of a drawn action. A household with
-taste shocks publishes it too, with its decider's conditional values and choice
+values and choice probabilities in place of a drawn action. A regime with
+several members and taste shocks publishes it too, with the deciding member's
+conditional values and choice
 probabilities, one value per member and no parts. Only policy lookup dispatches
 it, so it compiles only when requested.
 
-Every family tiles the subject axis, so the engine owns the width each body runs
+Every family tiles the agent axis, so the engine owns the width each body runs
 at. A decision whose solve counterpart streams its action product declares that
 product as a reduced axis too, with the same canonical order and the same exact
 hard-max reduction; a decision whose solve counterpart keeps the canonical dense
-reducer declares only the subject axis, and the absence of the reduced axis is
+reducer declares only the agent axis, and the absence of the reduced axis is
 what says the action product stays materialized.
 
 Every family declares an `output_roles` tree of the same structure its body
@@ -72,10 +73,12 @@ from _lcm.simulation.gated_routing import (
     simulation_gate_fold,
     simulation_gate_route_delta,
 )
-from _lcm.simulation.program_arguments import ACTIVE_SUBJECTS_ARGUMENT
+from _lcm.simulation.program_arguments import ACTIVE_AGENTS_ARGUMENT
 from _lcm.simulation.program_types import (
     ACTION_INDEX,
     ACTION_PARTS_ROLES,
+    AGENT_AXIS,
+    AGENT_WIDTH_KEYWORD,
     DECISION_PROGRAM,
     DECISION_VALUE,
     GATE_FOLD_PROGRAM,
@@ -87,13 +90,11 @@ from _lcm.simulation.program_types import (
     GATED_ROUTE_MASK,
     LOOKUP_PART_ROLES,
     ROUTE_PROGRAM,
-    SUBJECT_AXIS,
-    SUBJECT_WIDTH_KEYWORD,
     TRANSITION_PROGRAM,
     SimulationBuildContext,
     SimulationPrograms,
-    _PerSubjectFunction,
-    subject_axis,
+    _PerAgentFunction,
+    agent_axis,
 )
 from _lcm.simulation.taste_shock_lookup import (
     TASTE_SHOCK_LOOKUP_OUTPUT_ROLES,
@@ -158,16 +159,16 @@ def build_simulation_programs(
     *,
     context: SolverBuildContext,
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
-    per_subject_decisions: MappingProxyType[int, Callable[..., PytreeValue]],
-    per_subject_transitions: MappingProxyType[int, _PerSubjectFunction],
-    per_subject_route: _PerSubjectFunction | None,
+    per_agent_decisions: MappingProxyType[int, Callable[..., PytreeValue]],
+    per_agent_transitions: MappingProxyType[int, _PerAgentFunction],
+    per_agent_route: _PerAgentFunction | None,
     simulation_state_names: tuple[StateOrActionName, ...],
     active_periods: tuple[int, ...],
     has_gated_edges: bool,
     type_local_Q_and_F_functions: MappingProxyType[int, QAndFFunction] = (
         MappingProxyType({})
     ),
-    type_local_per_subject_decisions: MappingProxyType[
+    type_local_per_agent_decisions: MappingProxyType[
         int, Callable[..., PytreeValue]
     ] = MappingProxyType({}),
 ) -> SimulationPrograms:
@@ -180,15 +181,15 @@ def build_simulation_programs(
         Q_and_F_functions: The simulate phase's per-period action value and
             feasibility, whose object identity groups the periods that share a
             decision body.
-        per_subject_decisions: Period to the dense canonical argmax reducer for
-            that period, at one subject's state cell. Used where the solve
+        per_agent_decisions: Period to the dense canonical argmax reducer for
+            that period, at one agent's state cell. Used where the solve
             classification keeps the action product materialized.
-        per_subject_transitions: Period to the regime's law of motion at one
-            subject's state cell, with the arguments that vary per subject.
-        per_subject_route: The regime-transition probabilities at one subject's
+        per_agent_transitions: Period to the regime's law of motion at one
+            agent's state cell, with the arguments that vary per agent.
+        per_agent_route: The regime-transition probabilities at one agent's
             state cell, or `None` for a terminal regime.
-        simulation_state_names: Per-subject state names, which is what the
-            subject axis runs over.
+        simulation_state_names: Per-agent state names, which is what the
+            agent axis runs over.
         active_periods: Periods the regime is dispatched at.
         has_gated_edges: Whether the regime declares gated edges, whose routing
             a host loop drives.
@@ -196,8 +197,8 @@ def build_simulation_programs(
             value and feasibility reading every continuation that carries the
             blocked state without that axis; empty when no blocked state is
             carried.
-        type_local_per_subject_decisions: The dense reducers over
-            `type_local_Q_and_F_functions`, keyed like `per_subject_decisions`.
+        type_local_per_agent_decisions: The dense reducers over
+            `type_local_Q_and_F_functions`, keyed like `per_agent_decisions`.
 
     Returns:
         The regime's declared programs.
@@ -218,7 +219,7 @@ def build_simulation_programs(
     decision = _decision_programs(
         context=context,
         Q_and_F_functions=Q_and_F_functions,
-        per_subject_decisions=per_subject_decisions,
+        per_agent_decisions=per_agent_decisions,
         simulation_state_names=simulation_state_names,
         active_periods=active_periods,
         streams_actions=streams_actions,
@@ -228,7 +229,7 @@ def build_simulation_programs(
         _decision_programs(
             context=context,
             Q_and_F_functions=type_local_Q_and_F_functions,
-            per_subject_decisions=type_local_per_subject_decisions,
+            per_agent_decisions=type_local_per_agent_decisions,
             simulation_state_names=simulation_state_names,
             active_periods=active_periods,
             streams_actions=streams_actions,
@@ -239,20 +240,20 @@ def build_simulation_programs(
     )
 
     # The dense decision with its parts, even where the decision streams: same
-    # reads and subject tiling, no reduced action axis. A taste-shock regime
+    # reads and agent tiling, no reduced action axis. A taste-shock regime
     # applies the solve's EV1 reduction to its simulation decision, which draws
     # nothing.
     action_value_bodies: dict[int, Callable[..., PytreeValue]] = {}
     action_value_roles: dict[int, tuple[str, ...]] = {}
     action_values: dict[int, CoreProgram] = {}
     space = context.state_action_space
-    lookup_subject_arg_names = tuple(space.states)
+    lookup_agent_arg_names = tuple(space.states)
     for period in decision:
         kernel = Q_and_F_functions[period]
-        declared_lookup_subject_names = (
-            *lookup_subject_arg_names,
+        declared_lookup_agent_names = (
+            *lookup_agent_arg_names,
             *(
-                (ACTIVE_SUBJECTS_ARGUMENT,)
+                (ACTIVE_AGENTS_ARGUMENT,)
                 if has_action_integrity(function=kernel)
                 else ()
             ),
@@ -272,9 +273,9 @@ def build_simulation_programs(
                 body=body,
                 pareto_weights=context.pareto_weights,
             )
-            action_value_bodies[group] = _SubjectTiled(
+            action_value_bodies[group] = _AgentTiled(
                 func=lookup,
-                subject_arg_names=declared_lookup_subject_names,
+                agent_arg_names=declared_lookup_agent_names,
                 n_bound_records=len(runtime_bound_specs(function=kernel)),
             )
         action_values[period] = dataclasses.replace(
@@ -282,7 +283,7 @@ def build_simulation_programs(
             function=action_value_bodies[group],
             argument_builder=_ArgumentsBoundAtDispatch(
                 program_name=DECISION_PROGRAM,
-                subject_arg_names=declared_lookup_subject_names,
+                agent_arg_names=declared_lookup_agent_names,
             ),
             requirements=dataclasses.replace(
                 decision[period].requirements, reduced_axes=()
@@ -296,26 +297,26 @@ def build_simulation_programs(
     transition_bodies: dict[int, Callable[..., PytreeValue]] = {}
     transition: dict[int, CoreProgram] = {}
     for period in active_periods:
-        built = per_subject_transitions.get(period)
+        built = per_agent_transitions.get(period)
         # A period whose targets carry no state has a law of motion that writes
         # nothing, so the regime publishes no program for it.
         if built is None or not jax.tree.leaves(built.output_roles):
             continue
         group = id(built.function)
         if group not in transition_bodies:
-            transition_bodies[group] = _SubjectTiled(
+            transition_bodies[group] = _AgentTiled(
                 func=built.function,
-                subject_arg_names=built.subject_arg_names,
+                agent_arg_names=built.agent_arg_names,
             )
         transition[period] = CoreProgram(
             name=TRANSITION_PROGRAM,
             function=transition_bodies[group],
             argument_builder=_ArgumentsBoundAtDispatch(
                 program_name=TRANSITION_PROGRAM,
-                subject_arg_names=built.subject_arg_names,
+                agent_arg_names=built.agent_arg_names,
             ),
             requirements=CoreExecutionRequirements(
-                tiled_axes=(subject_axis(state_names=simulation_state_names),)
+                tiled_axes=(agent_axis(state_names=simulation_state_names),)
             ),
             output_roles=built.output_roles,
             disposition=CoreExecutionDisposition.PLANNED,
@@ -323,10 +324,10 @@ def build_simulation_programs(
         )
 
     route: dict[int, CoreProgram] = {}
-    if per_subject_route is not None:
-        route_body = _SubjectTiled(
-            func=per_subject_route.function,
-            subject_arg_names=per_subject_route.subject_arg_names,
+    if per_agent_route is not None:
+        route_body = _AgentTiled(
+            func=per_agent_route.function,
+            agent_arg_names=per_agent_route.agent_arg_names,
         )
         for period in active_periods:
             route[period] = CoreProgram(
@@ -334,12 +335,12 @@ def build_simulation_programs(
                 function=route_body,
                 argument_builder=_ArgumentsBoundAtDispatch(
                     program_name=ROUTE_PROGRAM,
-                    subject_arg_names=per_subject_route.subject_arg_names,
+                    agent_arg_names=per_agent_route.agent_arg_names,
                 ),
                 requirements=CoreExecutionRequirements(
-                    tiled_axes=(subject_axis(state_names=simulation_state_names),),
+                    tiled_axes=(agent_axis(state_names=simulation_state_names),),
                 ),
-                output_roles=per_subject_route.output_roles,
+                output_roles=per_agent_route.output_roles,
                 disposition=CoreExecutionDisposition.PLANNED,
                 donation_candidates=(),
             )
@@ -357,7 +358,7 @@ def _decision_programs(
     *,
     context: SolverBuildContext,
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
-    per_subject_decisions: MappingProxyType[int, Callable[..., PytreeValue]],
+    per_agent_decisions: MappingProxyType[int, Callable[..., PytreeValue]],
     simulation_state_names: tuple[StateOrActionName, ...],
     active_periods: tuple[int, ...],
     streams_actions: bool,
@@ -369,10 +370,10 @@ def _decision_programs(
     decision_bodies: dict[int, Callable[..., PytreeValue]] = {}
     decision: dict[int, CoreProgram] = {}
     for period in active_periods:
-        subject_arg_names = (
-            *_decision_subject_arg_names(context=context),
+        agent_arg_names = (
+            *_decision_agent_arg_names(context=context),
             *(
-                (ACTIVE_SUBJECTS_ARGUMENT,)
+                (ACTIVE_AGENTS_ARGUMENT,)
                 if has_action_integrity(function=Q_and_F_functions[period])
                 else ()
             ),
@@ -381,18 +382,18 @@ def _decision_programs(
         if group not in decision_bodies:
             decision_bodies[group] = _decision_body(
                 Q_and_F=Q_and_F_functions[period],
-                dense_reducer=per_subject_decisions[period],
+                dense_reducer=per_agent_decisions[period],
                 context=context,
                 streams_actions=streams_actions,
                 action_width_keyword=action_width_keyword,
-                subject_arg_names=subject_arg_names,
+                agent_arg_names=agent_arg_names,
             )
         decision[period] = CoreProgram(
             name=DECISION_PROGRAM,
             function=decision_bodies[group],
             argument_builder=_ArgumentsBoundAtDispatch(
                 program_name=DECISION_PROGRAM,
-                subject_arg_names=subject_arg_names,
+                agent_arg_names=agent_arg_names,
             ),
             requirements=CoreExecutionRequirements(
                 reduced_axes=(
@@ -409,7 +410,7 @@ def _decision_programs(
                     if streams_actions
                     else ()
                 ),
-                tiled_axes=(subject_axis(state_names=simulation_state_names),),
+                tiled_axes=(agent_axis(state_names=simulation_state_names),),
                 value_reads=rekeyed_value_reads(
                     reads=_decision_value_reads(context=context, period=period),
                     core_key=DECISION_PROGRAM,
@@ -499,12 +500,10 @@ def attach_gated_simulation_programs(
                 ),
                 argument_builder=_ArgumentsBoundAtDispatch(
                     program_name=GATE_ROUTE_PROGRAM,
-                    subject_arg_names=_GATE_ROUTE_SUBJECT_ARG_NAMES,
+                    agent_arg_names=_GATE_ROUTE_AGENT_ARG_NAMES,
                 ),
                 requirements=CoreExecutionRequirements(
-                    tiled_axes=(
-                        subject_axis(state_names=regime.simulation.state_names),
-                    )
+                    tiled_axes=(agent_axis(state_names=regime.simulation.state_names),)
                 ),
                 output_roles=(
                     MappingProxyType(
@@ -569,7 +568,7 @@ def budgeted_simulation_programs_ready(
 
     Requirements derive from `forward_regimes_by_period`, the inventory profiling
     and dispatch walk. A unit needs compiled programs, an in-graph decision route
-    and the gate stages it folds; a registered regime no subject can occupy owes
+    and the gate stages it folds; a registered regime no agent can occupy owes
     nothing, so its declaration never vetoes admission. Chunk admission and the
     simulation loop both ask this one question.
     """
@@ -613,9 +612,9 @@ def forward_regimes_by_period(
 ) -> tuple[MappingProxyType[RegimeName, Regime], ...]:
     """Return, per period, the regimes whose forward programs simulation runs.
 
-    A `(period, regime)` pair is forward work only when a subject can occupy it:
+    A `(period, regime)` pair is forward work only when an agent can occupy it:
     the regime is active at the period and the simulation graph reaches it. A
-    pair solved only for its value (a perceived target no subject physically
+    pair solved only for its value (a perceived target no agent physically
     enters) has no decision program and is absent here, while its solved value
     stays available to the decisions that read it. Each period keeps the
     insertion order of `regimes`, so traversal order and random-site identity
@@ -642,7 +641,7 @@ def order_targets_before_fallbacks(
 ) -> MappingProxyType[RegimeName, Regime]:
     """Order a period's regimes so each gated target runs before its fallbacks.
 
-    A household rerouted out of a gated target acts in a fallback regime in the
+    An agent rerouted out of a gated target acts in a fallback regime in the
     same period, so that fallback must not have run yet. The order is the
     declaration order wherever that already satisfies this, and otherwise the
     earliest-declared regime whose targets have all run comes next. Rows are
@@ -652,7 +651,7 @@ def order_targets_before_fallbacks(
 
     Where the targets and fallbacks active in the period form a cycle, no order
     lets every fallback run after its targets, and the earliest-declared regime
-    still waiting comes next. Simulation then refuses only a household actually
+    still waiting comes next. Simulation then refuses only an agent actually
     rerouted into a regime that already ran (`NoFeasibleActionError`).
     """
     must_follow: dict[RegimeName, set[RegimeName]] = {name: set() for name in active}
@@ -690,19 +689,19 @@ class _GateRouteArguments(TypedDict):
 
     edge_values: Mapping[RegimeName, Mapping[RegimeName, FloatND]]
     next_states: StatesPerRegime
-    new_subject_regime_ids: Int1D
-    subjects_in_regime: Bool1D
+    new_agent_regime_ids: Int1D
+    agents_in_regime: Bool1D
     flat_params: FlatParams
     own_member: Int1D
     new_own_member: Int1D
     fold_age: FoldAge
 
 
-#: Gate-route operands partitioned across subjects; every other one is shared.
-_GATE_ROUTE_SUBJECT_ARG_NAMES = (
+#: Gate-route operands partitioned across agents; every other one is shared.
+_GATE_ROUTE_AGENT_ARG_NAMES = (
     "next_states",
-    "new_subject_regime_ids",
-    "subjects_in_regime",
+    "new_agent_regime_ids",
+    "agents_in_regime",
     "own_member",
     "new_own_member",
 )
@@ -714,7 +713,7 @@ class _GateFoldBody:
 
     The fold reads the next period's value arrays over each
     target's own grid and writes the substituted continuation over that same
-    grid. No operand and no output carries a subject axis, so the body is
+    grid. No operand and no output carries an agent axis, so the body is
     replicated rather than partitioned wherever the population is spread over
     several devices, and the grids it publishes stay shared operands of the
     gate route that consumes them.
@@ -726,8 +725,8 @@ class _GateFoldBody:
     period: int
 
     @property
-    def subject_shard_arg_names(self) -> tuple[str, ...]:
-        """Declare that the fold partitions nothing: it has no subject axis."""
+    def agent_shard_arg_names(self) -> tuple[str, ...]:
+        """Declare that the fold partitions nothing: it has no agent axis."""
         return ()
 
     def __call__(self, **kwargs: PytreeValue) -> PytreeValue:
@@ -755,9 +754,9 @@ class _GateFoldBody:
 
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
 class _GateRouteBody:
-    """Each subject's own passage through its regime's gated edges.
+    """Each agent's own passage through its regime's gated edges.
 
-    Every step is taken at the subject's own row: the gate is recomputed at
+    Every step is taken at the agent's own row: the gate is recomputed at
     that row's realized candidate state, its leg's destinations follow the role
     the row carries, and the fallback coordinates are written under an
     elementwise mask. Nothing reduces, sorts or scatters across rows, so the
@@ -770,9 +769,9 @@ class _GateRouteBody:
     fold_period: int
 
     @property
-    def subject_shard_arg_names(self) -> tuple[str, ...]:
-        """Name the operands whose leaves carry the independent subject axis."""
-        return _GATE_ROUTE_SUBJECT_ARG_NAMES
+    def agent_shard_arg_names(self) -> tuple[str, ...]:
+        """Name the operands whose leaves carry the independent agent axis."""
+        return _GATE_ROUTE_AGENT_ARG_NAMES
 
     def __call__(self, **kwargs: PytreeValue) -> PytreeValue:
         arguments = cast("_GateRouteArguments", kwargs)
@@ -782,13 +781,13 @@ class _GateRouteBody:
             edge_values=arguments["edge_values"],
             candidate_states=arguments["next_states"],
             regime_names_to_ids=self.regime_names_to_ids,
-            new_subject_regime_ids=arguments["new_subject_regime_ids"],
-            subjects_in_regime=arguments["subjects_in_regime"],
+            new_agent_regime_ids=arguments["new_agent_regime_ids"],
+            agents_in_regime=arguments["agents_in_regime"],
             flat_params=arguments["flat_params"],
             own_member=arguments["own_member"],
             new_own_member=arguments["new_own_member"],
             fold_age=arguments["fold_age"],
-            subject_width=cast("int | None", kwargs[SUBJECT_WIDTH_KEYWORD]),
+            agent_width=cast("int | None", kwargs[AGENT_WIDTH_KEYWORD]),
         )
 
 
@@ -801,7 +800,7 @@ def _fail_if_the_streamed_reduction_is_wrong(
     kernel streams, so both reduce the same canonical product with the same
     exact hard max and a period's two phases cannot disagree about the winner.
     That mirror is sound only for a regime whose action reduction *is* that hard
-    max. A taste shock adds a per-subject Gumbel term to the choice, which makes
+    max. A taste shock adds a per-agent Gumbel term to the choice, which makes
     the streamed body answer a different question than the regime asks, so the
     mismatch is refused here rather than left to the classifier's ordering.
     """
@@ -809,15 +808,15 @@ def _fail_if_the_streamed_reduction_is_wrong(
         return
     msg = (
         f"Regime {regime_name!r} would declare a streamed simulation "
-        "decision, but taste shocks draw a per-subject Gumbel term, so its "
+        "decision, but taste shocks draw a per-agent Gumbel term, so its "
         "action reduction is not the exact hard max the streamed body folds. "
         "Declare a dense action product for this regime instead."
     )
     raise ExecutionPlanningError(msg)
 
 
-def _decision_subject_arg_names(*, context: SolverBuildContext) -> tuple[str, ...]:
-    """Return the decision arguments carrying a per-subject leading axis."""
+def _decision_agent_arg_names(*, context: SolverBuildContext) -> tuple[str, ...]:
+    """Return the decision arguments carrying a per-agent leading axis."""
     names = tuple(context.state_action_space.states)
     if context.has_taste_shocks:
         names = (*names, "taste_shock_key")
@@ -866,22 +865,22 @@ def _bound_output_roles(*, function: QAndFFunction) -> tuple[StateAxesLeading, .
     )
 
 
-def _flatten_subject_integrity[Output: PytreeValue](
+def _flatten_agent_integrity[Output: PytreeValue](
     *, result: BoundedResult[Output], n_records: int, n_query_records: int
 ) -> tuple[PytreeValue, ...]:
-    """Require scalar Boolean summaries before exposing the subject core's outputs."""
+    """Require scalar Boolean summaries before exposing the agent core's outputs."""
     if (
         type(result) is not BoundedResult
         or len(result.bound_status) != n_records
         or len(result.query_status or ()) != n_query_records
     ):
-        raise TypeError("Subject summaries must match model-owned declarations.")
+        raise TypeError("Agent summaries must match model-owned declarations.")
     if any(
         flag.shape != () or flag.dtype != jnp.bool_
         for status in (*result.bound_status, *(result.query_status or ()))
         for flag in status
     ):
-        raise TypeError("Subject integrity outputs must be scalar Boolean arrays.")
+        raise TypeError("Agent integrity outputs must be scalar Boolean arrays.")
     outputs = cast("tuple[PytreeValue, ...]", result.output)
     return (
         *outputs,
@@ -900,14 +899,14 @@ def _decision_body(
     context: SolverBuildContext,
     streams_actions: bool,
     action_width_keyword: str,
-    subject_arg_names: tuple[ReferenceName, ...],
+    agent_arg_names: tuple[ReferenceName, ...],
 ) -> Callable[..., PytreeValue]:
-    """Build one period group's decision body, tiled over the subject axis."""
+    """Build one period group's decision body, tiled over the agent axis."""
     n_bound_records = len(runtime_bound_specs(function=Q_and_F))
     if not streams_actions:
-        return _SubjectTiled(
+        return _AgentTiled(
             func=dense_reducer,
-            subject_arg_names=subject_arg_names,
+            agent_arg_names=agent_arg_names,
             n_bound_records=n_bound_records,
         )
     from _lcm.regime_building.max_Q_over_a import (  # noqa: PLC0415
@@ -944,9 +943,9 @@ def _decision_body(
     )
     if context.current_iid_draw_plan is not None:
         cell = context.current_iid_draw_plan.wrap(cell)
-    return _SubjectTiled(
+    return _AgentTiled(
         func=cell,
-        subject_arg_names=subject_arg_names,
+        agent_arg_names=agent_arg_names,
         n_bound_records=n_bound_records,
     )
 
@@ -1020,7 +1019,7 @@ def with_kept_action_parts(
 
     The decision's own outputs are always published, followed by the kept parts in
     the order the program publishes them. The selection is made at each state cell, so
-    a dropped part is never stacked over the subjects. Keeping every part returns
+    a dropped part is never stacked over the agents. Keeping every part returns
     `program` unchanged; one object per kept subset keeps the executor's
     compiled-route cache warm. `cache` belongs to the owner of `program`, so the
     derived programs live exactly as long as it does; the owner serializes calls.
@@ -1071,7 +1070,7 @@ def _select_cell_outputs(
 ) -> Callable[..., PytreeValue]:
     """Return `function` with its tiled cell body publishing only `positions`.
 
-    `function` is a subject-tiled body, possibly under the keyword bindings the
+    `function` is an agent-tiled body, possibly under the keyword bindings the
     model layer wraps around it; the bindings are kept around the new body.
     """
     bindings: list[Mapping[str, PytreeValue]] = []
@@ -1082,7 +1081,7 @@ def _select_cell_outputs(
             raise TypeError(msg)
         bindings.append(inner.keywords)
         inner = inner.func
-    tiled = cast("_SubjectTiled", inner)
+    tiled = cast("_AgentTiled", inner)
     selected: Callable[..., PytreeValue] = dataclasses.replace(
         tiled,
         func=with_signature(
@@ -1140,7 +1139,7 @@ def _decision_with_action_parts(
     """Return the dense decision extended by the parts it reduces.
 
     The result takes the arguments of the parts form of `Q_and_F` mapped once
-    over the action product, plus every argument a household's Pareto weights
+    over the action product, plus every argument the regime's Pareto weights
     read, and calls `body` built from it: the hard max over that `Q` and `F`, or
     the EV1 reduction the solve applies, both without a taste-shock draw.
     """
@@ -1231,10 +1230,10 @@ class _DecisionWithActionParts:
     """The kernel's parts, mapped over the action product."""
 
     members: tuple[str, ...]
-    """Ordered member names of the household."""
+    """Ordered member names of the regime."""
 
     pareto_weights: ParetoWeights
-    """The household's Pareto weight evaluator."""
+    """The regime's Pareto weight evaluator."""
 
     def __call__(self, **kwargs: PytreeValue) -> ActionPartsDecisionOutput:
         """Return the chosen flat index, its value, and `Q`, `F`, `U` and `CE`."""
@@ -1257,9 +1256,9 @@ class _StreamedArgmaxQOverA:
 
     Publishes the flat identity of the winning action in the canonical C order
     of the action product, and every member's value there — the same pair the
-    dense canonical reducer publishes, obtained by the exact household stream of
+    dense canonical reducer publishes, obtained by the exact collective stream of
     `build_streaming_collective_max_Q_over_a`, whose winner and tie rule are the
-    dense household argmax's. A block covering the whole product maps the
+    dense collective argmax's. A block covering the whole product maps the
     named grids and is reduced as one block, so its value can differ from a
     narrower fold's by rounding. The identity is therefore not width-invariant
     either: on a near-tie, that rounding can make the two widths name different
@@ -1286,10 +1285,10 @@ class _StreamedArgmaxQOverA:
     """Name of the planner-bound static action-block width in the call."""
 
     members: tuple[str, ...]
-    """Ordered member names of the household."""
+    """Ordered member names of the regime."""
 
     pareto_weights: ParetoWeights
-    """The household's Pareto weight evaluator."""
+    """The regime's Pareto weight evaluator."""
 
     def __call__(
         self,
@@ -1331,7 +1330,7 @@ class _StreamedArgmaxQOverA:
     ) -> Callable[
         ..., CollectiveHardMaxResult | BoundedResult[CollectiveHardMaxResult]
     ]:
-        """Return the household stream at the cell's Pareto weights."""
+        """Return the collective stream at the cell's Pareto weights."""
         weights = self.pareto_weights
         return build_streaming_collective_max_Q_over_a(
             Q_and_F=self.Q_and_F,
@@ -1346,23 +1345,23 @@ class _StreamedArgmaxQOverA:
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
-class _SubjectTiled:
-    """One per-subject body evaluated over tiles of the subject axis.
+class _AgentTiled:
+    """One per-agent body evaluated over tiles of the agent axis.
 
     The tile width arrives as a planner-bound keyword and sets the compiled
     evaluation window; the tiles are concatenated, never folded, so the result
     is the same array the whole population would produce. A body with no
-    per-subject argument has no axis to tile and is called once.
+    per-agent argument has no axis to tile and is called once.
     """
 
-    __name__: ClassVar[str] = "subject_tiled"
+    __name__: ClassVar[str] = "agent_tiled"
     """Name `dags` reads off the callable when it reports an invalid argument."""
 
     func: Callable[..., PytreeValue]
-    """The body, at one subject's state cell."""
+    """The body, at one agent's state cell."""
 
-    subject_arg_names: tuple[ReferenceName, ...]
-    """Arguments carrying the per-subject leading axis this splits into tiles."""
+    agent_arg_names: tuple[ReferenceName, ...]
+    """Arguments carrying the per-agent leading axis this splits into tiles."""
     n_bound_records: int = dataclasses.field(
         default=0,
         metadata={"fingerprint_omit_if_default": True},
@@ -1371,26 +1370,26 @@ class _SubjectTiled:
     n_query_records: int = dataclasses.field(
         default=0, metadata={"fingerprint_omit_if_default": True}
     )
-    """Actual projected paired-read slots kept through the same subject reduction."""
+    """Actual projected paired-read slots kept through the same agent reduction."""
 
     @property
-    def subject_shard_arg_names(self) -> tuple[str, ...]:
+    def agent_shard_arg_names(self) -> tuple[str, ...]:
         """Declare independent ordinary rows beside explicitly declared scalar roles."""
-        if self.subject_arg_names == (ACTIVE_SUBJECTS_ARGUMENT,):
+        if self.agent_arg_names == (ACTIVE_AGENTS_ARGUMENT,):
             return ()
-        return self.subject_arg_names
+        return self.agent_arg_names
 
     def __call__(self, **kwargs: PytreeValue) -> PytreeValue:
-        """Return the body's output for every subject, evaluated in tiles."""
-        width = cast("int", kwargs.pop(SUBJECT_WIDTH_KEYWORD))
-        active = cast("BoolND | None", kwargs.pop(ACTIVE_SUBJECTS_ARGUMENT, None))
+        """Return the body's output for every agent, evaluated in tiles."""
+        width = cast("int", kwargs.pop(AGENT_WIDTH_KEYWORD))
+        active = cast("BoolND | None", kwargs.pop(ACTIVE_AGENTS_ARGUMENT, None))
         if active is not None and (active.ndim != 1 or active.dtype != jnp.bool_):
-            raise TypeError("Subject activity must be a Boolean row mask.")
+            raise TypeError("Agent activity must be a Boolean row mask.")
         accepted = inspect.signature(self.func).parameters
-        subject_arg_names = tuple(
-            name for name in self.subject_arg_names if name != ACTIVE_SUBJECTS_ARGUMENT
+        agent_arg_names = tuple(
+            name for name in self.agent_arg_names if name != ACTIVE_AGENTS_ARGUMENT
         )
-        if not subject_arg_names:
+        if not agent_arg_names:
             result = self.func(
                 **{name: value for name, value in kwargs.items() if name in accepted}
             )
@@ -1406,7 +1405,7 @@ class _SubjectTiled:
                     ),
                 )
             return (
-                _flatten_subject_integrity(
+                _flatten_agent_integrity(
                     result=cast("BoundedResult[PytreeValue]", result),
                     n_records=self.n_bound_records,
                     n_query_records=self.n_query_records,
@@ -1414,34 +1413,34 @@ class _SubjectTiled:
                 if self.n_bound_records or self.n_query_records
                 else result
             )
-        tiles = {name: kwargs.pop(name) for name in subject_arg_names}
+        tiles = {name: kwargs.pop(name) for name in agent_arg_names}
         shared = {name: value for name, value in kwargs.items() if name in accepted}
         if self.n_bound_records or self.n_query_records:
             result = map_over_leading_axis(
-                func=partial(_evaluate_subject_tile, func=self.func, shared=shared),
+                func=partial(_evaluate_agent_tile, func=self.func, shared=shared),
                 xs=tiles,
                 batch_size=width,
                 bound_summary=True,
                 active=active,
             )
-            return _flatten_subject_integrity(
+            return _flatten_agent_integrity(
                 result=cast("BoundedResult[PytreeValue]", result),
                 n_records=self.n_bound_records,
                 n_query_records=self.n_query_records,
             )
         # A remainder shorter than the width would be traced and compiled as a
         # second program, whose rounding need not match the full tiles'. Pad it
-        # with copies of the last subject so every tile has the width's shape,
+        # with copies of the last agent so every tile has the width's shape,
         # then drop the copies. Only the remainder is padded: padding the whole
-        # subject axis would give it an extent the subject mesh cannot divide,
+        # agent axis would give it an extent the agent mesh cannot divide,
         # and the partitioner would then replicate the result. Full tiles and
         # the padded remainder call one jitted tile, so the body is traced once.
         tile = jax.jit(
-            jax.vmap(partial(_evaluate_subject_tile, func=self.func, shared=shared))
+            jax.vmap(partial(_evaluate_agent_tile, func=self.func, shared=shared))
         )
-        n_subjects = jax.tree.leaves(tiles)[0].shape[0]
-        n_rest = n_subjects % width
-        n_full = n_subjects - n_rest
+        n_agents = jax.tree.leaves(tiles)[0].shape[0]
+        n_rest = n_agents % width
+        n_full = n_agents - n_rest
         parts = []
         if n_full:
             head = jax.tree.map(
@@ -1471,21 +1470,21 @@ class _SubjectTiled:
 
 
 # keyword-only-exempt: library-callback=jax.lax.map
-def _evaluate_subject_tile(
-    subject: Mapping[ReferenceName, PytreeValue],
+def _evaluate_agent_tile(
+    agent: Mapping[ReferenceName, PytreeValue],
     *,
     func: Callable[..., PytreeValue],
     shared: Mapping[ReferenceName, PytreeValue],
 ) -> PytreeValue:
-    """Evaluate one subject's cell of a tiled simulation body."""
-    return func(**subject, **shared)
+    """Evaluate one agent's cell of a tiled simulation body."""
+    return func(**agent, **shared)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class _ArgumentsBoundAtDispatch:
     """The argument contract of a simulation program, refused until it runs.
 
-    A simulation program's arguments are a per-call fact: the subject population
+    A simulation program's arguments are a per-call fact: the agent population
     arrives with the initial conditions, and the states it carries are the ones
     the previous period wrote. Nothing binds them at model build, so asking for
     them there is a defect in the caller, and this says so rather than handing
@@ -1495,8 +1494,8 @@ class _ArgumentsBoundAtDispatch:
     program_name: str
     """Name of the program whose arguments the caller asked to bind."""
 
-    subject_arg_names: tuple[ReferenceName, ...] = ()
-    """Arguments partitioned across subjects; every other operand is shared."""
+    agent_arg_names: tuple[ReferenceName, ...] = ()
+    """Arguments partitioned across agents; every other operand is shared."""
 
     def __call__(
         self, context: CoreBuildContext
@@ -1513,8 +1512,8 @@ class _ArgumentsBoundAtDispatch:
 
 
 __all__ = [
-    "SUBJECT_AXIS",
-    "SUBJECT_WIDTH_KEYWORD",
+    "AGENT_AXIS",
+    "AGENT_WIDTH_KEYWORD",
     "SimulationPrograms",
     "build_simulation_programs",
 ]

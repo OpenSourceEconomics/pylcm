@@ -13,7 +13,7 @@ from _lcm.simulation.initial_conditions import (
     MISSING_CAT_CODE,
     build_initial_states,
 )
-from _lcm.simulation.transitions import _advance_states_for_subjects
+from _lcm.simulation.transitions import _advance_states_for_agents
 from lcm import Model
 from lcm.ages import AgeGrid
 from lcm.params import MappingLeaf
@@ -75,11 +75,11 @@ def test_missing_cat_code_is_int32_minimum() -> None:
     assert jnp.iinfo(jnp.int32).min == MISSING_CAT_CODE
 
 
-def test_advance_states_for_subjects_keeps_same_dtype_round_trip() -> None:
+def test_advance_states_for_agents_keeps_same_dtype_round_trip() -> None:
     """Canonical-dtype transition outputs round-trip through the state pool.
 
     With every input boundary pinned to the canonical dtype, a well-typed user
-    transition returns canonical-dtype outputs and `_advance_states_for_subjects`
+    transition returns canonical-dtype outputs and `_advance_states_for_agents`
     writes them through `jnp.where` without dtype change. This test pins the
     contract for the int side; mixed-dtype inputs are out of scope — the
     function does not defend against transitions that violate the canonical-
@@ -96,12 +96,12 @@ def test_advance_states_for_subjects_keeps_same_dtype_round_trip() -> None:
     next_states_per_regime = MappingProxyType(
         {"work": MappingProxyType({"health": next_values})}
     )
-    subjects = jnp.asarray([True, False, True, False])
+    agents = jnp.asarray([True, False, True, False])
 
-    next_states = _advance_states_for_subjects(
+    next_states = _advance_states_for_agents(
         states_per_regime=states_per_regime,
         next_states_per_regime=next_states_per_regime,
-        subject_indices=subjects,
+        agent_indices=agents,
     )
 
     assert next_states["work"]["health"].dtype == jnp.int32

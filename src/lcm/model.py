@@ -59,7 +59,7 @@ from _lcm.model_graph import (
     bind_edge_laws,
     collect_declared_transitions,
     complete_role_fallbacks,
-    demanded_exit_function_paths,
+    demanded_composition_action_function_paths,
     naming_cells_without_edges,
     prepare_graph,
 )
@@ -165,6 +165,7 @@ from _lcm.shock_registry import (
     bind_fixed_shock_params,
     create_shock_registry,
 )
+from _lcm.simulation.agent_groups import group_sizes, grouped_extent
 from _lcm.simulation.chunk_admission import prepare_simulation_chunks
 from _lcm.simulation.compile import bind_simulation_runtime
 from _lcm.simulation.current_iid_entry import SeededEntryFrames, SuppliedEntryFrames
@@ -230,7 +231,6 @@ from _lcm.simulation.simulate import (
     _require_next_period_values,
     simulate,
 )
-from _lcm.simulation.subject_groups import group_sizes, grouped_extent
 from _lcm.simulation.time_inputs import lower_initial_time
 from _lcm.simulation.transitions import create_regime_state_action_space
 from _lcm.simulation.unit_executor import SimulationUnitExecutor
@@ -341,7 +341,7 @@ from _lcm.typing import (
     StateName,
 )
 from _lcm.user_regime_validation import (
-    validate_exit_targets,
+    validate_composition_action_targets,
     validate_regimes,
 )
 from _lcm.utils.containers import (
@@ -1157,7 +1157,7 @@ class Model:
     """Runtime-only declaration custody before a genuine execution is installed."""
 
     _simulate_runtime_regimes: dict[int, MappingProxyType[RegimeName, Regime]]
-    """Program executors shared by calls with the same outer subject shape."""
+    """Program executors shared by calls with the same outer agent shape."""
 
     _shock_path_runtime_regimes: dict[
         tuple[
@@ -1178,7 +1178,7 @@ class Model:
     """
 
     _simulate_compile_lock: threading.Lock
-    """Serialize creation of runtime executors for each subject shape, and of the
+    """Serialize creation of runtime executors for each agent shape, and of the
     programs policy lookup derives from them."""
 
     _kept_parts_programs: KeptPartsPrograms
@@ -1234,7 +1234,7 @@ class Model:
                 has no age grid.
             stages: The decisions taken one after another within every period,
                 as an ordered mapping from stage names to the regimes of that
-                stage. Every regime is in exactly one stage; subjects start in
+                stage. Every regime is in exactly one stage; agents start in
                 their regime's stage, and an edge lands at its target's next
                 occurrence, the first step of the target's stage after it.
                 Stages of one period are linked without discounting. `period`
@@ -1568,7 +1568,7 @@ class Model:
         self._param_name_candidates = _get_param_name_candidates(merged_regimes)
         validate_time_declarations(regimes=merged_regimes, laws=laws, ages=self._time)
         validate_regimes(regimes=merged_regimes, laws=laws)
-        validate_exit_targets(regimes=merged_regimes, laws=laws)
+        validate_composition_action_targets(regimes=merged_regimes, laws=laws)
         linked = validate_stages(
             regimes=merged_regimes,
             laws=laws,
@@ -1616,7 +1616,7 @@ class Model:
                 for name, transition in demanded_transitions.items()
             }
         )
-        # A regime no subject visits owes its backward problem only, so none of
+        # A regime no agent visits owes its backward problem only, so none of
         # its simulate-side declarations is required.
         merged_regimes = {
             name: (
@@ -1794,7 +1794,7 @@ class Model:
         )
         prepared_structure = prepare_model_structure(
             original_periods_by_regime=schedules.visited_periods_by_regime,
-            exit_function_demand=demanded_exit_function_paths(
+            composition_action_function_demand=demanded_composition_action_function_paths(
                 regimes=self._user_regimes,
                 schedules=schedules,
                 ages=self._time,
@@ -4465,16 +4465,16 @@ class Model:
         """
         reasons = []
         if any(
-            period not in self._regimes[name].simulation.exit_queries
-            or self._regimes[name].simulation.exit_queries[period].full is None
+            period not in self._regimes[name].simulation.composition_queries
+            or self._regimes[name].simulation.composition_queries[period].full is None
             for name, declaration in self._user_regimes.items()
-            if declaration.exit is not None
+            if declaration.composition_action is not None
             for period in self._regimes[name].simulation.programs.decision
             if (self._time.exact_values[period], name) in self._graph.visited_nodes
         ):
             raise UnsupportedOperationError(
-                "Current-period exit simulation requires bound native "
-                "exit query programs."
+                "Current-period composition action simulation requires bound native "
+                "composition action query programs."
             )
         for regime_name, regime in self._regimes.items():
             route = regime.simulation.replay_route
@@ -4524,8 +4524,8 @@ class Model:
         the complete result from ``solve()`` to replay a separate solve without
         splitting values from solver-specific artifacts.
 
-        The model's execution configuration controls subject chunking through
-        ``axis_widths['subject']``. Per-subject random streams use the original
+        The model's execution configuration controls agent chunking through
+        ``axis_widths['agent']``. Per-agent random streams use the original
         population and global row positions, independently of chunk boundaries.
 
         Args:
@@ -4540,7 +4540,7 @@ class Model:
                 Values may be `pd.Series` with labeled indices; they are
                 auto-converted to JAX arrays.
             initial_conditions: Mapping of state names (plus `"regime_id"`) to arrays.
-                All arrays must have the same length (number of subjects). The
+                All arrays must have the same length (number of agents). The
                 `"regime_id"` entry must contain integer regime codes (from
                 `model.regime_names_to_ids`). A category-class state takes its
                 integer codes. A state declared with `values` takes those
@@ -4548,7 +4548,7 @@ class Model:
                 whose categories are exactly the grid's values in order, as
                 `SimulationResult.to_dataframe` publishes it. Integers match
                 exactly, floats within the grid's tolerance, and a value on no
-                node raises. Rows of subjects whose regime lacks the state are
+                node raises. Rows of agents whose regime lacks the state are
                 not read. May also be a `pd.DataFrame` with a `"regime_name"`
                 column carrying regime label strings, labels for category-class
                 states and values for value-grid states (auto-converted via
@@ -4556,13 +4556,13 @@ class Model:
                 A named current-IID shock may instead carry a `BaseInnovations`
                 or `PhysicalValues` entry vector. Its tag applies at each row's
                 actual entry period, before fresh draws in subsequent periods.
-                A subject starting in a COLLECTIVE regime that can reach a
+                An agent starting in a COLLECTIVE regime that can reach a
                 gated transition declaring more than one route --- its
                 own, or one further along --- also needs an `"own_member"`
                 entry naming the role it occupies, as an integer code from the
                 model's role vocabulary (`model.member_names_to_ids`):
                 which partner a row is decides which regime it enters when the
-                household dissolves. A collective start that can never arrive at
+                members separate. A collective start that can never arrive at
                 such a transition needs no entry.
             solution: Complete labelled result returned by ``solve()``. Required
                 replay artifacts are validated before forward simulation starts. Its
@@ -4589,7 +4589,7 @@ class Model:
                 configuration. `None` preserves the ordinary seeded stream.
             shock_paths: Given realised shock values indexed by step, one per
                 period without `stages`: `(steps,)` for a common path or
-                `(subjects, steps)` in original initial-condition row order.
+                `(agents, steps)` in original initial-condition row order.
                 Overrides the entry value and later draws, including IID and
                 persistent processes. Continuous
                 values must be in the distribution's support; discrete values are
@@ -4602,7 +4602,7 @@ class Model:
                 grid. A code maps to its value as `grid.values[code]`, e.g.
                 `DiscreteGrid(values=jnp.array([0, 4, 10])).values[2]` is `10`, and
                 values map to codes with `grid.encode`. A value is checked against
-                every regime the subject may occupy when it is read; unread cells
+                every regime the agent may occupy when it is read; unread cells
                 are ignored.
                 Transition-local draws use the destination's period. Solve
                 expectations and unnamed shocks' seeded streams are unchanged.
@@ -4669,7 +4669,7 @@ class Model:
                 else SimulationMemory(
                     budget_bytes=entry_allocations.budget_bytes,
                     devices=entry_allocations.devices,
-                    subject_devices=entry_allocations.devices[:1],
+                    agent_devices=entry_allocations.devices[:1],
                     operations=entry_allocations.operations,
                     producers=self._simulate_entry_operations,
                     inputs=entry_allocations.snapshot(),
@@ -4769,7 +4769,7 @@ class Model:
                     selection_memory = SimulationMemory(
                         budget_bytes=entry_allocations.budget_bytes,
                         devices=entry_allocations.devices,
-                        subject_devices=entry_allocations.devices[:1],
+                        agent_devices=entry_allocations.devices[:1],
                         operations=entry_allocations.operations,
                         producers=self._simulate_entry_operations,
                         inputs=entry_allocations.snapshot(),
@@ -4879,19 +4879,19 @@ class Model:
                 # Validate canonical device-aligned inputs before automatic
                 # solving. Additional chunk padding follows selection with actual
                 # solution owners.
-                subject_batch_size = self._execution.axis_widths.get("subject", 0)
+                agent_batch_size = self._execution.axis_widths.get("agent", 0)
                 n_devices = len(self._execution.device_ids)
-                distributes = self._distributes_subjects() and n_devices > 1
+                distributes = self._distributes_agents() and n_devices > 1
                 alignment = n_devices if distributes else 1
                 if entry_allocations is None:
-                    initial_conditions, original_n_subjects = (
+                    initial_conditions, original_n_agents = (
                         pad_initial_conditions_to_multiple(
                             initial_conditions=initial_conditions,
                             multiple=alignment,
                         )
                     )
                 else:
-                    initial_conditions, original_n_subjects = entry_allocations.pad(
+                    initial_conditions, original_n_agents = entry_allocations.pad(
                         initial_conditions=initial_conditions,
                         multiple=alignment,
                     )
@@ -4911,7 +4911,7 @@ class Model:
                         flat_params=flat_params,
                     )
                 validate_simulation_inputs(
-                    original_n_subjects=original_n_subjects,
+                    original_n_agents=original_n_agents,
                     supplied_frames=SeededEntryFrames(
                         entries=(
                             MappingProxyType({})
@@ -4937,7 +4937,7 @@ class Model:
                     process_grid_resolver=process_grid_resolver,
                     producers=self._simulate_entry_operations,
                 )
-                padded_n_subjects = len(next(iter(initial_conditions.values())))
+                padded_n_agents = len(next(iter(initial_conditions.values())))
             component_values: (
                 SolvingComponentValues | UploadedComponentValues | None
             ) = (
@@ -5053,7 +5053,7 @@ class Model:
                 # Values and replay artifacts retain their solve placement. The forward
                 # period owner acquires only the copies consumed by that period's units.
                 prepared_chunks = None
-                # Grouped by an invariant state, each code's subjects form chunks
+                # Grouped by an invariant state, each code's agents form chunks
                 # of their own, so no chunk spans more than the largest group and
                 # the population is not padded to a chunk multiple.
                 grouping = next(
@@ -5071,12 +5071,12 @@ class Model:
                             if grouping.state_name in initial_conditions
                             else None
                         ),
-                        n_real=original_n_subjects,
+                        n_real=original_n_agents,
                     )
                 )
                 if entry_allocations is not None:
                     simulate_regimes = self._shock_path_regimes_for_shape(
-                        compile_batch_size=padded_n_subjects,
+                        compile_batch_size=padded_n_agents,
                         supplied=frozenset(resolved_shock_paths)
                         | (
                             self._node_state_names
@@ -5093,7 +5093,7 @@ class Model:
                         ages=self._time,
                         initial_conditions=initial_conditions,
                         regime_names_to_ids=self.regime_names_to_ids,
-                        original_population=original_n_subjects,
+                        original_population=original_n_agents,
                         current_iid_override_schema=()
                         if current_iid_overrides is None
                         else current_iid_overrides.schema,
@@ -5111,7 +5111,7 @@ class Model:
                         max_compilation_workers=max_compilation_workers,
                         group_sizes=sizes,
                     )
-                    compile_batch_size = prepared_chunks.plan.profile.n_subjects
+                    compile_batch_size = prepared_chunks.plan.profile.n_agents
                     if sizes is None:
                         initial_conditions, _ = entry_allocations.pad(
                             initial_conditions=initial_conditions,
@@ -5122,8 +5122,8 @@ class Model:
                         )
                 else:
                     compile_batch_size = self._resolve_compile_batch_size(
-                        subject_batch_size=subject_batch_size,
-                        padded_n_subjects=padded_n_subjects
+                        agent_batch_size=agent_batch_size,
+                        padded_n_agents=padded_n_agents
                         if sizes is None
                         else grouped_extent(sizes=sizes, alignment=alignment),
                     )
@@ -5159,8 +5159,8 @@ class Model:
                 current_iid_overrides=current_iid_overrides,
                 node_axis_inputs=node_axis_inputs,
                 process_code_reads=self._process_code_reads,
-                subject_batch_size=compile_batch_size,
-                original_n_subjects=original_n_subjects,
+                agent_batch_size=compile_batch_size,
+                original_n_agents=original_n_agents,
                 device_ids=self._execution.device_ids,
                 prepared_chunks=prepared_chunks,
                 retained_footprint=(
@@ -5176,7 +5176,7 @@ class Model:
                 component_values.flush_feasibility_warnings()
             if (
                 isinstance(component_values, SolvingComponentValues)
-                and component_values.subject_codes is None
+                and component_values.agent_codes is None
             ):
                 solution = self._finish_solution(
                     preparation=cast("_SolutionPreparation", preparation),
@@ -5293,8 +5293,8 @@ class Model:
 
         Every failed condition is named at once:
 
-        - the forward phase does not group subjects by the blocked state, so a
-          subject could read another code's values;
+        - the forward phase does not group agents by the blocked state, so a
+          agent could read another code's values;
         - the simulation is budgeted, and chunk admission does not yet charge
           one code's values at a time;
         - diagnostic snapshots are requested, which hold every value at once.
@@ -5306,7 +5306,7 @@ class Model:
         failures = []
         if next(iter(self._regimes.values())).simulation.programs.grouping is None:
             failures.append(
-                "the simulate phase may change the blocked state, so subjects "
+                "the simulate phase may change the blocked state, so agents "
                 "cannot be grouped by its code"
             )
         if self._execution.device_memory_bytes is not None:
@@ -5345,10 +5345,10 @@ class Model:
 
         Evaluates the decision `simulate` runs: the simulate phase's current
         utility and aggregator with the solved continuation, on the requested
-        action grid. Without taste shocks, a subject standing at one of `states`
+        action grid. Without taste shocks, an agent standing at one of `states`
         in `(period, regime_name)` chooses exactly the returned actions and
         attains the returned value. With taste shocks, the returned choice
-        probabilities are the distribution of that subject's discrete choice.
+        probabilities are the distribution of that agent's discrete choice.
         Repeated calls with the same number of rows reuse one compiled program.
         A regime that `simulate` decides from its solved DC-EGM policy is looked
         up the same way, with the grid argmax only where that read is rejected;
@@ -5405,17 +5405,17 @@ class Model:
             `Qc`. Where every discrete alternative is worth negative infinity,
             the value and `Qc` are negative infinity and the choice probabilities
             are all zero: there is no distribution, and `simulate` refuses a
-            subject there with `NoFeasibleActionError`. A discrete action declared
+            agent there with `NoFeasibleActionError`. A discrete action declared
             with `values` is returned as a plain array of those numbers; a
             category-class action as its codes.
 
-            In a household with taste shocks, the member with the positive
-            Pareto weight decides. `Qc` is that member's own conditional value,
-            the choice probabilities are a softmax of it, and every member shares
-            the continuous actions attaining it. The value has a trailing member
-            axis in member order: the decider's smoothed maximum, and every other
-            member's mean action value at those actions under the decider's
-            choice probabilities.
+            In a regime with several members and taste shocks, the member with
+            the positive Pareto weight decides. `Qc` is that member's own
+            conditional value, the choice probabilities are a softmax of it, and
+            every member shares the continuous actions attaining it. The value
+            has a trailing member axis in member order: the deciding member's
+            smoothed maximum, and every other member's mean action value at
+            those actions under the deciding member's choice probabilities.
 
             With a `Decoupled` Koopmans aggregator the actions maximize the
             objective and the value is the value profile there. With taste shocks,
@@ -5430,8 +5430,9 @@ class Model:
                 taste shocks has no feasible action, as `simulate` refuses it. A
                 regime without actions returns the value negative infinity there
                 instead.
-            UnsupportedOperationError: An active renegotiating exit needs changed
-                current states and routed destinations; use `simulate` instead.
+            UnsupportedOperationError: An active `PCOnWeight` with a Pareto weight
+                state changes current states and routes destinations; use
+                `simulate` instead.
 
         """
         self._check_identity_runtime()
@@ -5507,11 +5508,11 @@ class Model:
             )
             n_rows = len(next(iter(states.values()))) if states else 0
             if states:
-                # Rows split evenly over the subject devices, as simulated
-                # subjects do: the last row is repeated and trimmed afterwards.
+                # Rows split evenly over the agent devices, as simulated
+                # agents do: the last row is repeated and trimmed afterwards.
                 n_devices = len(self._execution.device_ids)
                 alignment = (
-                    n_devices if self._distributes_subjects() and n_devices > 1 else 1
+                    n_devices if self._distributes_agents() and n_devices > 1 else 1
                 )
                 if allocations is None:
                     states, _ = pad_initial_conditions_to_multiple(
@@ -5678,7 +5679,7 @@ class Model:
         executor = cast("SimulationProgramExecutor", programs.executor)
         if isinstance(executor, SimulationRuntime):
             # The solve may leave a regime's values on any of its devices; the
-            # decision reads them replicated over the subject devices, as in
+            # decision reads them replicated over the agent devices, as in
             # simulation.
             next_V, references = _place_lookup_values(
                 values=(next_V, references),
@@ -5697,7 +5698,7 @@ class Model:
                 runtime=executor,
                 live_footprint=call_live,
                 budget_devices=resolve_budget_devices(
-                    execution_devices=executor.subject_devices, live=call_live()
+                    execution_devices=executor.agent_devices, live=call_live()
                 ),
             )
             executor = unit
@@ -5775,9 +5776,9 @@ class Model:
                     executor.dispatch(
                         program=program,
                         period=period,
-                        n_subjects=n_rows,
+                        n_agents=n_rows,
                         arguments=decision_arguments(
-                            active_subjects=np.ones(n_rows, dtype=np.bool_),
+                            active_agents=np.ones(n_rows, dtype=np.bool_),
                             states=space.states,
                             discrete_actions={
                                 n: grids[n] for n in space.discrete_actions
@@ -5802,7 +5803,7 @@ class Model:
             ),
         )
         if not space.states:
-            # Without states the decision has no per-subject argument and runs
+            # Without states the decision has no per-agent argument and runs
             # once, for the one row an empty query stands for; every output gets
             # that row here.
             outputs = tuple(output[None] for output in outputs)
@@ -5850,9 +5851,9 @@ class Model:
                     function=_lookup_values_from_indices,
                     arguments={"flat_indices": indices, "grids": lookup_grids},
                     # The one row of a stateless query is not divisible across
-                    # subject devices, so it is decoded replicated.
-                    subject_arg_names=("flat_indices",) if space.states else (),
-                    devices=unit.runtime.subject_devices,
+                    # agent devices, so it is decoded replicated.
+                    agent_arg_names=("flat_indices",) if space.states else (),
+                    devices=unit.runtime.agent_devices,
                     live_footprint=functools.partial(
                         _lookup_live_footprint,
                         allocations=allocations,
@@ -5902,7 +5903,7 @@ class Model:
         generated code grid. Other declarations retain their finalized user
         form, including `Phased` and joint-normal coordinates. This is not
         a mapping of value-array axes: use `state_names` and `state_grid` for
-        those, and `initial_state_names` for physical per-subject names.
+        those, and `initial_state_names` for physical per-agent names.
         """
         regime = self.user_regimes.get(regime_name)
         if regime is None:
@@ -5918,7 +5919,7 @@ class Model:
         return MappingProxyType(grids)
 
     def initial_state_names(self, *, regime_name: RegimeName) -> tuple[StateName, ...]:
-        """Return physical per-subject state names for initial observations.
+        """Return physical per-agent state names for initial observations.
 
         Includes folded and carried states. Joint-normal coordinates are replaced
         by their declared physical names and composite codes by their members;
@@ -6113,7 +6114,7 @@ class Model:
         needs, and always raises; there is no `log_level` that downgrades a
         failure to a warning. The verdict does not depend on how the check is
         executed: at present it runs in one eager pass on the default device,
-        without device-memory admission or subject padding.
+        without device-memory admission or agent padding.
 
         Current-IID feasibility checks do not draw random values. When composed
         feasibility needs a current shock, supply a `PhysicalValues` or
@@ -6123,7 +6124,7 @@ class Model:
 
         Args:
             initial_conditions: Starting regime and states, one entry per
-                subject.
+                agent.
             params: User parameters, processed exactly as for `simulate`.
             use_categorical_codes: Whether discrete states, value-grid states
                 included, and the discrete levels of a `pd.Series` in `params` hold
@@ -6134,8 +6135,8 @@ class Model:
                 (unknown regime, missing or extra state, unequal lengths,
                 off-grid age, inactive regime, invalid categorical code, a
                 value on no node of its value grid), if
-                some subject admits no jointly feasible action combination, or
-                if subjects start in a collective regime without declaring
+                some agent admits no jointly feasible action combination, or
+                if agents start in a collective regime without declaring
                 their role where routing needs one.
             ModelSealError: If a binding captured at `Model(...)` has moved.
 
@@ -6162,20 +6163,19 @@ class Model:
         params: UserParams,
         use_categorical_codes: bool = False,
     ) -> Bool1D:
-        """Return the per-subject feasibility mask without solving or simulating.
+        """Return the per-agent feasibility mask without solving or simulating.
 
-        A subject is feasible when at least one combination of its regime's
-        declared action-grid points satisfies every constraint jointly, or, in
-        an action-free regime, when every state-only constraint holds.
-        A subject starting where its regime's current-period exit decides is
-        feasible: only the solution says whether the exit moves it, and
-        `simulate` raises if it then neither has a feasible action nor moves.
-        Malformed inputs, including a collective start without the role
-        declaration `simulate` demands, raise rather than being reported
-        infeasible; `validate_initial_conditions` succeeds exactly when this
-        mask is all `True`. The verdict does not depend on how the check is
-        executed: at present it runs in one eager pass on the default device,
-        without device-memory admission or subject padding.
+        An agent is feasible when at least one combination of its regime's declared
+        action-grid points satisfies every constraint jointly, or, in an action-free
+        regime, when every state-only constraint holds. An agent starting where its
+        regime's current-period composition action decides is feasible: only the
+        solution says whether the agent leaves, and `simulate` raises if it then
+        neither has a feasible action nor leaves. Malformed inputs, including a
+        collective start without the role declaration `simulate` demands, raise rather
+        than being reported infeasible; `validate_initial_conditions` succeeds exactly
+        when this mask is all `True`. The verdict does not depend on how the check is
+        executed: at present it runs in one eager pass on the default device, without
+        device-memory admission or agent padding.
 
         Current-IID feasibility checks do not draw random values. When composed
         feasibility needs a current shock, supply a `PhysicalValues` or
@@ -6185,15 +6185,15 @@ class Model:
 
         Args:
             initial_conditions: Starting regime and states, one entry per
-                subject, in the same forms `simulate` accepts.
+                agent, in the same forms `simulate` accepts.
             params: User parameters, processed exactly as for `simulate`.
             use_categorical_codes: Whether discrete states, value-grid states
                 included, and the discrete levels of a `pd.Series` in `params` hold
                 integer codes, as for `simulate`.
 
         Returns:
-            Boolean array of shape `(n_subjects,)`, `True` exactly for the
-            feasible subjects, in the order of the supplied rows.
+            Boolean array of shape `(n_agents,)`, `True` exactly for the
+            feasible agents, in the order of the supplied rows.
 
         Raises:
             InvalidInitialConditionsError: If the structure is malformed or a
@@ -6382,7 +6382,7 @@ class Model:
         codes: jax.Array | np.ndarray | None,
         ages: jax.Array | np.ndarray | None,
     ) -> None:
-        """Reject subjects starting at any pair outside `initial_nodes`.
+        """Reject agents starting at any pair outside `initial_nodes`.
 
         Each age resolves to the period the simulation would start it in, so a
         grid age is admitted or refused on its (period, regime) pair whatever its
@@ -6423,44 +6423,44 @@ class Model:
                 for period, name in refused
             )
             raise InvalidInitialConditionsError(
-                "Subjects start at (age, regime) pairs that `initial_nodes` does "
+                "Agents start at (age, regime) pairs that `initial_nodes` does "
                 f"not admit as starts:\n{details}"
             )
 
     def _resolve_compile_batch_size(
         self,
         *,
-        subject_batch_size: int,
-        padded_n_subjects: int,
+        agent_batch_size: int,
+        padded_n_agents: int,
     ) -> int:
-        """Resolve an unbudgeted ExecutionConfig subject width to an outer chunk.
+        """Resolve an unbudgeted ExecutionConfig agent width to an outer chunk.
 
         - `0` ⇒ the whole padded population (single pass).
         - `> 0` ⇒ the configured width, clamped to the population. Under multi-device
           distribution the chunk is additionally rounded up to the next multiple
-          of the device count: every chunk is placed onto the subject mesh axis
-          (see `subject_array_sharding`), so its leading axis must divide evenly
+          of the device count: every chunk is placed onto the agent mesh axis
+          (see `agent_array_sharding`), so its leading axis must divide evenly
           across the devices. This alignment changes only the outer extent;
-          compiled subject tiles retain the configured inner width. Value arrays
+          compiled agent tiles retain the configured inner width. Value arrays
           retain their original solve placement, with required reads copied only
           for the current period.
 
         """
-        if subject_batch_size > 0:
-            compile_batch_size = min(subject_batch_size, padded_n_subjects)
-            if self._distributes_subjects():
+        if agent_batch_size > 0:
+            compile_batch_size = min(agent_batch_size, padded_n_agents)
+            if self._distributes_agents():
                 n_devices = len(self._execution.device_ids)
                 compile_batch_size = min(
                     -(-compile_batch_size // n_devices) * n_devices,
-                    padded_n_subjects,
+                    padded_n_agents,
                 )
         else:
-            compile_batch_size = padded_n_subjects
+            compile_batch_size = padded_n_agents
         return compile_batch_size
 
-    def _distributes_subjects(self) -> bool:
+    def _distributes_agents(self) -> bool:
         """Resolve population alignment independently of the solve-state axes."""
-        return self._execution.simulation_sharding == "subjects" or any(
+        return self._execution.simulation_sharding == "agents" or any(
             regime.solution.sharded_state_names for regime in self._regimes.values()
         )
 
@@ -6767,12 +6767,13 @@ def _fail_if_policy_lookup_unsupported(
     solver: Solver,
 ) -> None:
     """Raise when policy lookup cannot reproduce the regime's simulated decision."""
-    exit_plan = regime.simulation.exit_queries.get(period)
-    if exit_plan is not None and exit_plan.full is not None:
-        queries = exit_plan.full
+    composition_plan = regime.simulation.composition_queries.get(period)
+    if composition_plan is not None and composition_plan.full is not None:
+        queries = composition_plan.full
         if queries.definitions[queries.root].state_updates:
             raise UnsupportedOperationError(
-                "Renegotiating exits require the routed simulate decision; "
+                "PCOnWeight with a Pareto weight state requires the routed simulate "
+                "decision; "
                 "policy lookup cannot return changed states and "
                 "separation destinations."
             )
@@ -7249,7 +7250,7 @@ def _place_lookup_values[T: PytreeValue](
     allocations: SimulationEntryAllocations | None,
     call_roots: PytreeValue,
 ) -> T:
-    """Copy a lookup's values to their subject-device layout, admitted if budgeted.
+    """Copy a lookup's values to their agent-device layout, admitted if budgeted.
 
     A budgeted call admits the copies against its entry owner's inventory and
     its own arrays before the first copy is made.
@@ -7261,20 +7262,18 @@ def _place_lookup_values[T: PytreeValue](
         )
         _require_value_placement_headroom(
             values=values,
-            devices=runtime.subject_devices,
+            devices=runtime.agent_devices,
             live=live,
             budget_bytes=budget,
             budget_note=runtime.execution.device_memory_cap_note(),
         )
-    return _place_values_on_subject_devices(
-        values=values, devices=runtime.subject_devices
-    )
+    return _place_values_on_agent_devices(values=values, devices=runtime.agent_devices)
 
 
-def _place_values_on_subject_devices[T](
+def _place_values_on_agent_devices[T](
     *, values: T, devices: tuple[jax.Device, ...]
 ) -> T:
-    """Copy every value array to the replicated layout its subject devices read.
+    """Copy every value array to the replicated layout its agent devices read.
 
     A value already in that layout is returned as is, without a copy.
     """
@@ -7305,7 +7304,7 @@ def _require_value_placement_headroom(
     """Refuse value copies whose payload and transfer scratch exceed the budget.
 
     Each value not yet in its replicated read layout costs that layout's payload
-    on every subject device, plus the same amount of transfer scratch on its
+    on every agent device, plus the same amount of transfer scratch on its
     source and destination devices. `live` holds the inputs, the solution and
     the call's own arrays, which all stay owned while the copies are made.
     """
@@ -7423,7 +7422,7 @@ def _admit_trimmed_lookup_rows(
 ) -> PolicyLookup:
     """Trim a budgeted lookup's padded rows, admitting each trimmed output first.
 
-    The trimmed rows no longer split evenly over the subject devices, so a trimmed
+    The trimmed rows no longer split evenly over the agent devices, so a trimmed
     output may be held whole on every device. Each trim is admitted in that
     resulting layout against the entry owner's inventory, the call's arrays, the
     still-live padded outputs and the outputs trimmed before it, and refused
@@ -7438,8 +7437,8 @@ def _admit_trimmed_lookup_rows(
                 function=_leading_rows,
                 arguments={"array": array},
                 static_arguments={"n_rows": n_rows},
-                subject_arg_names=("array",),
-                devices=unit.runtime.subject_devices,
+                agent_arg_names=("array",),
+                devices=unit.runtime.agent_devices,
                 live_footprint=functools.partial(
                     _lookup_live_footprint,
                     allocations=allocations,

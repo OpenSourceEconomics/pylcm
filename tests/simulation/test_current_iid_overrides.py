@@ -81,7 +81,7 @@ def _model(*, budgeted: bool = False, group: ShockGroup | None = None) -> Model:
         },
         regime_id_class=_Regimes,
         execution_config=ExecutionConfig(
-            axis_widths={"subject": 2},
+            axis_widths={"agent": 2},
             device_memory_bytes=2**27 if budgeted else None,
         ),
     )
@@ -140,8 +140,8 @@ def test_public_entry_is_dated_and_path_tag_takes_precedence() -> None:
         runtime_checks=False,
     ).to_dataframe()
     for row, period in enumerate(initial["period"]):
-        # Result rows preserve caller subject identity despite late entry/chunks.
-        selected = frame.loc[(frame["subject_id"] == row) & (frame["period"] == period)]
+        # Result rows preserve caller agent identity despite late entry/chunks.
+        selected = frame.loc[(frame["agent_id"] == row) & (frame["period"] == period)]
         np.testing.assert_array_equal(selected["eps"], values[row])
     baseline = model.simulate(
         params={"discount_factor": 0.5, "risk": {"eps__sigma": 2.0}},
@@ -154,9 +154,9 @@ def test_public_entry_is_dated_and_path_tag_takes_precedence() -> None:
     ).to_dataframe()
     for row, entry in enumerate(initial["period"]):
         np.testing.assert_array_equal(
-            frame.loc[(frame["subject_id"] == row) & (frame["period"] > entry), "eps"],
+            frame.loc[(frame["agent_id"] == row) & (frame["period"] > entry), "eps"],
             baseline.loc[
-                (baseline["subject_id"] == row) & (baseline["period"] > entry), "eps"
+                (baseline["agent_id"] == row) & (baseline["period"] > entry), "eps"
             ],
         )
     overridden = model.simulate(
@@ -299,10 +299,10 @@ def test_inactive_observation_preserves_joint_draw_and_derivative(
 @pytest.mark.coverage(
     backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
 )
-def test_subject_vmap_keeps_inactive_inverse_arithmetic_and_gradients_safe(
+def test_agent_vmap_keeps_inactive_inverse_arithmetic_and_gradients_safe(
     *, uniform: bool, mixed: bool
 ) -> None:
-    """A subject mask protects unread tiny scales even after vmap batching."""
+    """An agent mask protects unread tiny scales even after vmap batching."""
     group = ShockGroup(
         shocks={
             "x": Uniform(start=0, stop=None) if uniform else Normal(mu=0, sigma=None)
@@ -471,7 +471,7 @@ def test_public_complete_correlated_frame_keeps_supplied_bits(
         runtime_checks=runtime_checks,
     )
     for period in range(3):
-        rows = frame.query("period == @period").sort_values("subject_id")
+        rows = frame.query("period == @period").sort_values("agent_id")
         np.testing.assert_array_equal(rows["eps"], eps[:, period])
         np.testing.assert_array_equal(rows["action"], eps[:, period] > 0)
 
@@ -563,7 +563,7 @@ def test_unread_path_prefix_does_not_consume_invalid_values() -> None:
     np.testing.assert_array_equal(
         frame["eps"],
         paths[
-            frame["subject_id"].to_numpy(dtype=int), frame["period"].to_numpy(dtype=int)
+            frame["agent_id"].to_numpy(dtype=int), frame["period"].to_numpy(dtype=int)
         ],
     )
 
@@ -631,7 +631,7 @@ def test_discrete_override_labels_codes_and_saved_raw_values(
         edges={"alive": {"done": Periods(values=(0,))}},
         regime_id_class=_OfferRegime,
         execution_config=ExecutionConfig(
-            axis_widths={"subject": 2}, device_memory_bytes=2**27
+            axis_widths={"agent": 2}, device_memory_bytes=2**27
         ),
     )
     assert model.reachability.visited_nodes == frozenset({(0, "alive"), (1, "done")})
@@ -662,7 +662,7 @@ def test_discrete_override_labels_codes_and_saved_raw_values(
     assert isinstance(labels["eps"].dtype, pd.CategoricalDtype)
     assert tuple(labels["eps"].cat.categories) == ("unavailable", "offered")
     assert labels["eps"].cat.ordered is ordered
-    rows = codes["subject_id"].to_numpy()
+    rows = codes["agent_id"].to_numpy()
     periods = codes["period"].to_numpy()
     np.testing.assert_array_equal(codes["eps"], expected[rows, periods])
     np.testing.assert_array_equal(codes["action"], codes["eps"])

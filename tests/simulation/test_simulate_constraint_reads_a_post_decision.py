@@ -100,7 +100,7 @@ def _initial_conditions(wealth: tuple[float, ...]) -> UserInitialConditions:
     }
 
 
-def test_simulate_runs_when_a_constraint_reads_a_post_decision(model):
+def test_simulate_runs_when_a_constraint_reads_a_post_decision(model: Model) -> None:
     """Forward simulation completes and consumption stays inside the action grid."""
     result = model.simulate(
         params=_PARAMS,
@@ -111,7 +111,7 @@ def test_simulate_runs_when_a_constraint_reads_a_post_decision(model):
     assert consumption.between(0.5, 20.0).all()
 
 
-def test_infeasible_subject_is_reported_by_constraint_name(model):
+def test_infeasible_agent_is_reported_by_constraint_name(model: Model) -> None:
     """An unaffordable starting state names the constraint that rules it out."""
     with pytest.raises(
         InvalidInitialConditionsError, match="savings_stay_above_the_floor"
@@ -123,7 +123,7 @@ def test_infeasible_subject_is_reported_by_constraint_name(model):
         )
 
 
-def test_the_constraint_is_available_as_an_additional_target(model):
+def test_the_constraint_is_available_as_an_additional_target(model: Model) -> None:
     """`to_dataframe` can compute the post-decision-reading constraint per row."""
     result = model.simulate(
         params=_PARAMS,
@@ -162,7 +162,7 @@ def model_with_a_renamed_constraint() -> Model:
 
 
 def _infeasibility_message(model: Model) -> str:
-    """Report an unaffordable subject provokes, as text."""
+    """Report an unaffordable agent provokes, as text."""
     with pytest.raises(InvalidInitialConditionsError) as excinfo:
         model.simulate(
             params=_PARAMS,
@@ -172,7 +172,9 @@ def _infeasibility_message(model: Model) -> str:
     return str(excinfo.value)
 
 
-def test_the_diagnostic_names_the_declared_key(model_with_a_renamed_constraint):
+def test_the_diagnostic_names_the_declared_key(
+    model_with_a_renamed_constraint: Model,
+) -> None:
     """The infeasibility report identifies a constraint by the name it was given.
 
     The key and the callable's `__name__` normally coincide, so a report built
@@ -183,7 +185,9 @@ def test_the_diagnostic_names_the_declared_key(model_with_a_renamed_constraint):
     assert "liquidity_floor" in _infeasibility_message(model_with_a_renamed_constraint)
 
 
-def test_the_diagnostic_does_not_name_the_callable(model_with_a_renamed_constraint):
+def test_the_diagnostic_does_not_name_the_callable(
+    model_with_a_renamed_constraint: Model,
+) -> None:
     """The report does not fall back to the predicate's own `__name__`.
 
     Without this half the report could carry both names and still satisfy the

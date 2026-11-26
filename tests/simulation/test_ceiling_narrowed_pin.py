@@ -89,7 +89,7 @@ def _run(
             seed=7,
             log_level="off",
         ).to_dataframe()
-    return panel, {w["subject"] for w in widths if "subject" in w}
+    return panel, {w["agent"] for w in widths if "agent" in w}
 
 
 @pytest.fixture(params=[None, 2**30], ids=["unbudgeted", "budgeted"])
@@ -99,15 +99,13 @@ def arms(
     budget = request.param
     control = _run(
         monkeypatch=monkeypatch,
-        execution=ExecutionConfig(
-            axis_widths={"subject": 2}, device_memory_bytes=budget
-        ),
+        execution=ExecutionConfig(axis_widths={"agent": 2}, device_memory_bytes=budget),
     )
     ceiled = _run(
         monkeypatch=monkeypatch,
         execution=ExecutionConfig(
-            axis_widths={"subject": 8},
-            axis_width_ceilings={"subject": 2},
+            axis_widths={"agent": 8},
+            axis_width_ceilings={"agent": 2},
             device_memory_bytes=budget,
         ),
     )
@@ -117,7 +115,7 @@ def arms(
 def test_simulate_ceiled_pin_plans_the_ceiling_width(
     arms: tuple[tuple[pd.DataFrame, set[int]], tuple[pd.DataFrame, set[int]]],
 ) -> None:
-    """A pin of 8 under a ceiling of 2 plans subject width 2, as a pin of 2 does."""
+    """A pin of 8 under a ceiling of 2 plans agent width 2, as a pin of 2 does."""
     (_, control_widths), (_, ceiled_widths) = arms
     assert (ceiled_widths, control_widths) == ({2}, {2})
 

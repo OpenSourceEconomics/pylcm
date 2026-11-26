@@ -1119,13 +1119,13 @@ def _compute_pension_base(
 
 @beartype(conf=SIMULATION_INPUT_CONF)
 def create_inputs(
-    *, seed: int | PRNGKey, n_simulation_subjects: int, params: StructuralParams
+    *, seed: int | PRNGKey, n_simulation_agents: int, params: StructuralParams
 ) -> tuple[dict[str, UserParamsNode], pd.DataFrame]:
     """Build model params and initial conditions.
 
     The two-valued discount-factor grid (`mean ± std`) is exposed via
     `model_params["discount_factor_by_type"]`; the `discount_type` state picks
-    the per-subject value at simulate time. Model-level parameters broadcast to
+    the per-agent value at simulate time. Model-level parameters broadcast to
     each living regime that uses them.
 
     Returns:
@@ -1207,12 +1207,12 @@ def create_inputs(
         jax.random.choice(
             type_key,
             jnp.arange(len(td)),
-            (n_simulation_subjects,),
+            (n_simulation_agents,),
             p=jnp.array(td["probability"].to_numpy()),
         )
     )
 
-    health_draw = jax.random.uniform(health_key, (n_simulation_subjects,))
+    health_draw = jax.random.uniform(health_key, (n_simulation_agents,))
     health_thresholds = np.asarray(td["health_threshold"])[type_indices]
 
     # Round the continuous initial habit to the NEAREST grid point. `searchsorted`
@@ -1236,7 +1236,7 @@ def create_inputs(
         {
             "regime_name": "working",
             "age": ages.values[0],
-            "wealth": np.zeros(n_simulation_subjects),
+            "wealth": np.zeros(n_simulation_agents),
             "health": np.where(health_draw > health_thresholds, "bad", "good"),
             "lagged_effort": EFFORT_FIELD_NAMES[effort_codes],
             "education": td["education"].to_numpy()[type_indices],
@@ -1248,13 +1248,13 @@ def create_inputs(
                     jax.random.choice(
                         shock_key,
                         jnp.arange(5),
-                        (n_simulation_subjects,),
+                        (n_simulation_agents,),
                         p=stationary_shock_dist,
                     )
                 ]
             ),
             "adjustment_cost": np.asarray(
-                jax.random.uniform(adjustment_key, (n_simulation_subjects,))
+                jax.random.uniform(adjustment_key, (n_simulation_agents,))
             ),
         }
     )

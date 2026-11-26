@@ -307,8 +307,8 @@ def test_entering_dead_lands_on_one_of_the_draws_outcomes(
         seed=0,
     )
     df = result.to_dataframe()
-    alive = df.query("regime_name == 'alive' and period == 1").set_index("subject_id")
-    dead = df.query("regime_name == 'dead' and period == 2").set_index("subject_id")
+    alive = df.query("regime_name == 'alive' and period == 1").set_index("agent_id")
+    dead = df.query("regime_name == 'dead' and period == 2").set_index("agent_id")
     common = alive.index.intersection(dead.index)
     nodes, _ = _income_nodes_and_probs(process)
     saved = (

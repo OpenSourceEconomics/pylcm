@@ -1,19 +1,20 @@
-"""A household's dissolution exit is decided at the state the household realises.
+"""The decision to stay or to separate is made at the state a couple realises.
 
-The exit keeps the best action every member accepts, so it asks whether the regime
-has such an action at the state the household lands on. A landing between two nodes
-can have none even though both nodes do, and a landing next to an empty node can have
-one, so the exit decides at the realised landing itself rather than interpolating
-from the grid nodes. A household left with no accepted action takes its own exit in
-that same period instead of aborting the simulation.
+The composition action keeps the best action every member accepts, so it asks whether
+the regime has such an action at the state the household lands on. A landing between two
+nodes can have none even though both nodes do, and a landing next to an empty node can
+have one, so the composition action decides at the realised landing itself rather than
+interpolating from the grid nodes. A household left with no accepted action takes its
+own composition action in that same period instead of aborting the simulation.
 
-The model is the smallest one with that geometry. A two-member source regime carries
-the household's wage unchanged into a two-member `pair` regime whose wage grid has
-nodes 1 and 3. Under the pair's dissolution exit rule the wife accepts an action
-only when her pair payoff strictly beats her outside option of 0.5, and her pair
-payoff is a function of the wage alone, so whether `pair` keeps the household at a
-wage is a scalar inequality that the reference below evaluates by enumerating both
-actions directly. Every simulated row is the husband, whose exit leads to `alone_m`.
+The model is the smallest one with that geometry. A two-member source regime carries the
+household's wage unchanged into a two-member `pair` regime whose wage grid has nodes 1
+and 3. Under the pair's dissolution composition action rule the wife accepts an action
+only when her pair payoff strictly beats her outside option of 0.5, and her pair payoff
+is a function of the wage alone, so whether `pair` keeps the household at a wage is a
+scalar inequality that the reference below evaluates by enumerating both actions
+directly. Every simulated row is the husband, whose composition action leads to
+`alone_m`.
 """
 
 import logging
@@ -40,8 +41,8 @@ from lcm import (
     Transition,
     categorical,
 )
+from lcm.composition_actions import CompositionAction, Destination, PCOnActions
 from lcm.exceptions import OffGridStateError
-from lcm.exits import Exit, ExitTarget, Unilateral
 from lcm.result import SimulationResult
 from lcm.solver_api import SolutionResult
 from lcm.transition import StochasticTransition
@@ -152,17 +153,17 @@ def _build_model(
                         utilities={"f": _PAIR_F[payoff_name], "m": _pair_m}
                     )
                 },
-                exit=Exit(
-                    targets={
-                        "f": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "f": Destination(
                             regime="alone_f", projection={"wage": projection_f}
                         ),
-                        "m": ExitTarget(
+                        "m": Destination(
                             regime="alone_m",
                             projection={"wage": fallback_projection},
                         ),
                     },
-                    rule=Unilateral(tie="leave"),
+                    rule=PCOnActions(tie="leave"),
                 ),
             ),
             "alone_f": Regime(
@@ -247,32 +248,28 @@ def _simulate(
 ) -> tuple[SolutionResult, pd.DataFrame]:
     model = _build_model(payoff_name=payoff_name, enable_jit=enable_jit)
     solution = model.solve(params=_PARAMS, log_level="off")
-    n_subjects = wages.shape[0]
+    n_agents = wages.shape[0]
     result = model.simulate(
         params=_PARAMS,
         initial_conditions={
             "wage": jnp.asarray(wages),
-            "age": jnp.zeros(n_subjects),
+            "age": jnp.zeros(n_agents),
             "regime_id": jnp.full(
-                n_subjects, model.regime_names_to_ids["source"], jnp.int32
+                n_agents, model.regime_names_to_ids["source"], jnp.int32
             ),
-            "own_member": jnp.full(
-                n_subjects, model.member_names_to_ids["m"], jnp.int32
-            ),
+            "own_member": jnp.full(n_agents, model.member_names_to_ids["m"], jnp.int32),
         },
         solution=solution,
         log_level="off",
         seed=0,
     )
-    return solution, result.to_dataframe().query("period == 1").sort_values(
-        "subject_id"
-    )
+    return solution, result.to_dataframe().query("period == 1").sort_values("agent_id")
 
 
 def test_simulate_routes_an_empty_landing_between_feasible_nodes_to_the_fallback() -> (
     None
 ):
-    """A household landing at wage 2 has no accepted pair action and takes its exit.
+    """A couple landing at wage 2 accepts no pair action, so its members separate.
 
     Both nodes of the cell around wage 2 keep the household, but at wage 2 the
     wife's payoff is 0 and she accepts no action.
@@ -282,7 +279,7 @@ def test_simulate_routes_an_empty_landing_between_feasible_nodes_to_the_fallback
 
 
 def test_simulate_carries_the_projected_state_into_the_fallback() -> None:
-    """The exit target's identity projection keeps the realised wage."""
+    """The composition action target's identity projection keeps the realised wage."""
     _, panel = _simulate(payoff_name="bowl", wages=np.array([2.0]))
     assert panel["wage"].tolist() == [2.0]
 
@@ -315,7 +312,7 @@ def test_generated_landings_reach_both_sides_of_the_boundary(
 
 
 def _clip_state_fallback_model() -> Model:
-    """`alone_m` clips its wage to `[1, 3]`; the exit doubles the realised wage."""
+    """`alone_m` clips wage to `[1, 3]`; the projection doubles the realised wage."""
     return _build_model(
         payoff_name="bowl",
         fallback_grid=IrregSpacedGrid(
@@ -359,8 +356,9 @@ def _plus_five(wage: ContinuousState) -> ContinuousState:
 def test_each_member_lands_under_its_own_destination_grid_rule() -> None:
     """At wage 2 the wife lands uncapped at 7 and the husband capped at 3.
 
-    Her exit adds 5 on `alone_f`'s `extrapolate` grid, his doubles the wage on
-    `alone_m`'s `clip_state` grid: each landing follows its own destination's rule.
+    Her composition action adds 5 on `alone_f`'s `extrapolate` grid, his doubles the
+    wage on `alone_m`'s `clip_state` grid: each landing follows its own destination's
+    rule.
     """
     model = _build_model(
         payoff_name="bowl",
@@ -385,7 +383,7 @@ def test_each_member_lands_under_its_own_destination_grid_rule() -> None:
         log_level="off",
         seed=0,
     )
-    panel = result.to_dataframe().query("period == 1").sort_values("subject_id")
+    panel = result.to_dataframe().query("period == 1").sort_values("agent_id")
     assert list(zip(panel["regime_name"], panel["wage"], strict=True)) == [
         ("alone_f", 7.0),
         ("alone_m", 3.0),
@@ -395,7 +393,7 @@ def test_each_member_lands_under_its_own_destination_grid_rule() -> None:
 def test_debug_transition_counts_name_the_regime_a_rerouted_household_acted_in(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The household that exits at period 1 acted in `alone_m`, then stays there."""
+    """The couple that separates at period 1 acted in `alone_m`, then stays there."""
     with caplog.at_level(logging.DEBUG, logger="lcm"):
         _simulate_at_wage_two(model=_clip_state_fallback_model(), log_level="debug")
     transition_lines = [
@@ -417,7 +415,7 @@ def _bend_middle_up(wage: ContinuousState) -> ContinuousState:
 
 
 def test_an_off_grid_rerouted_state_is_refused_at_the_period_it_acts_in() -> None:
-    """Wage 2 is empty in `pair` at period 1; its exit lands off `alone_m`'s grid."""
+    """Wage 2 is empty in `pair` at period 1; leaving lands off `alone_m`'s grid."""
     model = _build_model(
         payoff_name="bowl",
         fallback_grid=IrregSpacedGrid(
@@ -562,7 +560,7 @@ def test_a_mixed_batch_reaches_each_fallback_at_its_own_clipped_state() -> None:
         _simulate_two_sources()
         .to_dataframe()
         .query("period == 1")
-        .sort_values("subject_id")
+        .sort_values("agent_id")
     )
     assert list(zip(rows["regime_name"], rows["wage"], strict=True)) == [
         ("x", 1.0),

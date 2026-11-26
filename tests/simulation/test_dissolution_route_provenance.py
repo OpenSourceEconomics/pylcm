@@ -256,7 +256,7 @@ def test_an_open_branch_into_b_still_takes_its_own_route(*, enable_jit: bool) ->
     ]
     result = simulate_chain(model=model, wages=wages, runtime_checks=True)
     panel = result.to_dataframe(use_categorical_codes=True)
-    rows = panel.loc[panel["period"] == 1].sort_values("subject_id")
+    rows = panel.loc[panel["period"] == 1].sort_values("agent_id")
     assert (
         list(zip(rows["regime_name"], rows["wage"], rows["work"], strict=True))
         == expected

@@ -89,8 +89,8 @@ def digraph(model: Model, *, phase: Phase | None = None) -> DiGraph:
     declared edges and pruning reasons. Economic functions may differ: both
     phases remain in `graph.graph["declarations"]`, and no function is evaluated.
     Edge `law` metadata retains the complete original bound source law, including
-    any phase variants. Same-period exits and value reads remain declaration
-    metadata, not temporal edges.
+    any phase variants. Same-period composition actions and value reads remain
+    declaration metadata, not temporal edges.
 
     Graph and attribute containers are independent and editable. Declaration,
     callable and grid leaves are shared originals and obey the model's stability

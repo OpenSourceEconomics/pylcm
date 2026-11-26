@@ -1,10 +1,10 @@
-"""An exact exit choice enumerates only the nodes where its exit is available.
+"""An exact composition action enumerates only the nodes where it is available.
 
-A single's exit is available only where an offer arrives. The offer and the offered
-partner form one shock group, and the single's stay problem reads none of it. Where
-no offer arrives the single stays, whoever the partner would have been, so the solve
-enumerates the group's nodes with an offer and one more node without, which carries
-the whole mass without an offer at the value of staying. Every other shock group
+A single's composition action is available only where an offer arrives. The offer and
+the offered partner form one shock group, and the single's stay problem reads none of
+it. Where no offer arrives the single stays, whoever the partner would have been, so the
+solve enumerates the group's nodes with an offer and one more node without, which
+carries the whole mass without an offer at the value of staying. Every other shock group
 keeps its nodes. The rewrite is exact: the solved values are those of the full
 enumeration to rounding, and simulation, which realises its shocks, is untouched.
 """
@@ -19,20 +19,20 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from _lcm import exit_queries, query_information
+from _lcm import composition_queries, query_information
 from _lcm.policy_queries import PolicyAnswer, _PolicyQueryKernel
 from lcm import (
     CollectiveUtility,
+    CompositionAction,
+    Destination,
     DiscreteGrid,
     ExecutionConfig,
-    Exit,
-    ExitTarget,
     InitialNodes,
     LinSpacedGrid,
     Model,
+    PCOnActions,
     Periods,
     Regime,
-    Unilateral,
     categorical,
     fixed_transition,
 )
@@ -156,7 +156,7 @@ def _unilateral(
     partner_probs: tuple[float, float, float] = (0.2, 0.5, 0.3),
     stay_reads_partner: bool = False,
     infeasible_low_partner: bool = False,
-    exit_declared: bool = True,
+    composition_action_declared: bool = True,
     one_period: bool = False,
 ) -> Model:
     """A single may leave unilaterally for a partnered regime when an offer arrives.
@@ -169,14 +169,14 @@ def _unilateral(
     """
     experience = DiscreteGrid(values=jnp.arange(_N_EXP))
     work = DiscreteGrid(values=jnp.arange(2))
-    exit_ = Exit(
-        targets={
-            "self": ExitTarget(
+    composition_action_ = CompositionAction(
+        destinations={
+            "self": Destination(
                 regime="partnered",
                 projection={"experience": _experience, "partner": _partner},
             )
         },
-        rule=Unilateral(tie=tie),
+        rule=PCOnActions(tie=tie),
         available=available,
     )
     regimes = {
@@ -192,7 +192,9 @@ def _unilateral(
             },
             shocks=("wage", "marriage"),
             state_transitions={} if one_period else {"experience": _next_experience},
-            exit=exit_ if exit_declared else None,
+            composition_action=composition_action_
+            if composition_action_declared
+            else None,
         ),
         "partnered": Regime(
             states={
@@ -215,7 +217,7 @@ def _unilateral(
     if not one_period:
         for name, regime in tuple(regimes.items()):
             regimes[f"{name}_terminal"] = regime.replace(
-                exit=None,
+                composition_action=None,
                 state_transitions={},
                 shocks=tuple(group for group in regime.shocks if group != "marriage"),
                 functions={"utility": _single}
@@ -262,7 +264,7 @@ def _build(
 ) -> Model:
     """Build `model` with the solve enumerating available nodes only, or all."""
     with monkeypatch.context() as patch:
-        patch.setattr(exit_queries, "_COLLAPSE_UNAVAILABLE_NODES", collapse)
+        patch.setattr(composition_queries, "_COLLAPSE_UNAVAILABLE_NODES", collapse)
         return model()
 
 
@@ -289,7 +291,7 @@ def _assert_values_agree(
 
 # Each case: a model, its root, and its root rows per source cell with the switch on
 # and off. Formation: wage 2 x taste 3 x observed wage 2 x match 2 = 24 other rows,
-# times (3 offers + 1) or the marriage group's 6 nodes. Unilateral: wage 2 = other
+# times (3 offers + 1) or the marriage group's 6 nodes. PCOnActions: wage 2 = other
 # rows, times (3 offers + 1) or 6.
 _ROW_CASES = {
     "formation": (partial(_formation), "single_f", (3 + 1) * 24, 6 * 24),
@@ -319,7 +321,7 @@ _ROW_CASES = {
 
 
 @pytest.mark.parametrize("case", list(_ROW_CASES))
-def test_an_exact_exit_choice_enumerates_its_available_nodes_and_one_more(
+def test_an_exact_composition_action_choice_enumerates_its_available_nodes_and_one_more(
     case: str,
 ) -> None:
     """The root evaluates (available nodes + 1) x (other rows) where the rewrite
@@ -366,12 +368,12 @@ def test_enumerating_available_nodes_gives_the_full_enumeration_s_values(
 ) -> None:
     """Every solved value array agrees with the full enumeration to rounding.
 
-    The cases cover a consent formation and a unilateral exit, an offer whose
-    probability is zero at some cells or everywhere, a destination infeasible at
-    some available nodes, an exit available nowhere, and ties between staying and
-    leaving under either tie rule; stored outside values on and off.
+    The cases cover a consent formation and a unilateral composition action, an offer
+    whose probability is zero at some cells or everywhere, a destination infeasible at
+    some available nodes, a composition action available nowhere, and ties between
+    staying and leaving under either tie rule; stored outside values on and off.
     """
-    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
+    monkeypatch.setattr(composition_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
     model = _EQUIVALENCE_MODELS[case]
     _assert_values_agree(
         got=_solve(_build(model=model, collapse=True, monkeypatch=monkeypatch)),
@@ -386,21 +388,23 @@ def test_an_infeasible_destination_is_infeasible_at_some_available_nodes() -> No
 
 
 @pytest.mark.parametrize("stored", [False, True], ids=["point", "stored"])
-def test_an_exit_available_nowhere_gives_the_value_of_staying(
+def test_a_composition_action_available_nowhere_gives_the_value_of_staying(
     *, stored: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """With an exit available at no node, the single's value is that of a single
-    without the exit, under dyadic marriage masses that sum to exactly one.
+    """A composition action available at no node leaves the single's value unchanged.
+
+    The value is that of a single without the composition action, under dyadic
+    marriage masses that sum to exactly one.
 
     The two are different programs, so they may round apart by the code each
     compiles to; at single precision they do by one unit in the last place.
     """
-    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
+    monkeypatch.setattr(composition_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
     dyadic = partial(
         _unilateral, offer_probs=(0.5, 0.5), partner_probs=(0.25, 0.5, 0.25)
     )
     got = _solve(dyadic(available=_never))
-    expected = _solve(dyadic(exit_declared=False))
+    expected = _solve(dyadic(composition_action_declared=False))
     _assert_values_agree(
         got={"0/single": got["0/single"]}, expected={"0/single": expected["0/single"]}
     )
@@ -409,7 +413,7 @@ def test_an_exit_available_nowhere_gives_the_value_of_staying(
 def test_with_every_node_available_the_values_are_the_full_enumeration_s(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Nothing collapses when the exit is available everywhere: bit for bit."""
+    """Nothing collapses if leaving is available everywhere: bit for bit."""
     model = partial(_unilateral, available=_always)
     got = _solve(_build(model=model, collapse=True, monkeypatch=monkeypatch))
     expected = _solve(_build(model=model, collapse=False, monkeypatch=monkeypatch))
@@ -419,14 +423,14 @@ def test_with_every_node_available_the_values_are_the_full_enumeration_s(
 def _simulate(model: Model) -> pd.DataFrame:
     params = {"discount_factor": 0.9}
     solution = model.solve(params=params, log_level="off")
-    n_subjects = 12
+    n_agents = 12
     return model.simulate(
         params=params,
         solution=solution,
         initial_conditions={
-            "period": jnp.zeros(n_subjects, dtype=jnp.int32),
-            "regime_id": jnp.full(n_subjects, _Regimes.single, dtype=jnp.int32),
-            "experience": jnp.arange(n_subjects, dtype=jnp.int32) % _N_EXP,
+            "period": jnp.zeros(n_agents, dtype=jnp.int32),
+            "regime_id": jnp.full(n_agents, _Regimes.single, dtype=jnp.int32),
+            "experience": jnp.arange(n_agents, dtype=jnp.int32) % _N_EXP,
         },
         seed=11,
         log_level="off",
@@ -436,7 +440,7 @@ def _simulate(model: Model) -> pd.DataFrame:
 def test_simulation_is_the_same_with_and_without_the_rewrite(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Simulation realises each subject's shocks and enumerates no node: the panel
+    """Simulation realises each agent's shocks and enumerates no node: the panel
     with a fixed seed is identical whichever way the solve enumerated.
     """
     pd.testing.assert_frame_equal(
@@ -518,11 +522,10 @@ def _rare_pair(
     makes two nodes unavailable, and a fair draw in a group of its own, which the
     stay reads, gives the node standing for them two rows.
 
-    With `landing` the source is a household of two, and staying moves its wealth
-    past a raise-rule grid in a second period. The
-    destination is worth `leave` instead of zero. With `drawn` the exit choice
-    draws the group's nodes where the exit is available and adds one sample for
-    the others.
+    With `landing` the source is a household of two, and staying moves its wealth past a
+    raise-rule grid in a second period. The destination is worth `leave` instead of
+    zero. With `drawn` the composition action choice draws the group's nodes where the
+    composition action is available and adds one sample for the others.
     """
     wealth = LinSpacedGrid(start=0, stop=1, n_points=2)
     work = DiscreteGrid(values=jnp.arange(2))
@@ -559,14 +562,14 @@ def _rare_pair(
             constraints={"never_feasible": _never_feasible} if infeasible else {},
             shocks=tuple(shocks),
             state_transitions={"wealth": _past_the_grid} if landing else {},
-            exit=Exit(
-                targets=dict.fromkeys(
+            composition_action=CompositionAction(
+                destinations=dict.fromkeys(
                     members,
-                    ExitTarget(
+                    Destination(
                         regime="destination", projection={"wealth": _same_wealth}
                     ),
                 ),
-                rule=Unilateral(tie="stay"),
+                rule=PCOnActions(tie="stay"),
                 available=available,
                 nodes=QuasiMonteCarlo(n=4, seed=0) if drawn else None,
             ),
@@ -633,8 +636,9 @@ def _rare_probability_and_stay(kind: str) -> tuple[float, float]:
     return 2.0 ** exponents[0], -(2.0 ** exponents[1])
 
 
-# Each case: rare probability and stay value, infeasible stay and exit predicate. A
-# string names a class of `_rare_probability_and_stay`, which sets the first two.
+# Each case: rare probability and stay value, infeasible stay and composition action
+# predicate. A string names a class of `_rare_probability_and_stay`, which sets the
+# first two.
 _MASS_CASES: Mapping[
     str, tuple[tuple[float, float] | str, bool, Callable[..., BoolND]]
 ] = {
@@ -680,7 +684,7 @@ def _mass_case(case: str) -> tuple[float, float, bool, Callable[..., BoolND]]:
 def _solve_recording_support(
     *, model: Model, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[dict[str, np.ndarray], list[bool]]:
-    """Solve, and record the support of the source's exit choice at every cell."""
+    """Solve, and record the support of the source's choice to leave at every cell."""
     kernel = model._regimes["source"].solution.period_kernels[0]
     assert isinstance(kernel, _PolicyQueryKernel)
     call = query_information.InformationQueryCell.__call__
@@ -720,7 +724,7 @@ def test_the_node_standing_for_unavailable_nodes_carries_their_whole_mass(
     power of two.
     """
     p, stay, infeasible, available = _mass_case(case)
-    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
+    monkeypatch.setattr(composition_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
     model = partial(
         _rare_pair,
         p=p,
@@ -792,7 +796,7 @@ def test_the_node_standing_for_unavailable_nodes_counts_their_landings(
     mass: every action at every wealth lands once per node of positive mass.
     """
     p, stay, _, available = _mass_case(case)
-    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
+    monkeypatch.setattr(composition_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
     model = partial(
         _rare_pair, p=p, stay=stay, several=several, available=available, landing=True
     )
@@ -806,8 +810,9 @@ def test_the_node_standing_for_unavailable_nodes_counts_their_landings(
     assert expected.endswith(f"count={2 * 2 * present}")
 
 
-# Each drawn case: a class of unavailable mass, and whether the exit is available
-# only where both draws are rare, so that the available nodes carry the rare mass.
+# Each drawn case: a class of unavailable mass, and whether the composition action is
+# available only where both draws are rare, so that the available nodes carry the rare
+# mass.
 _DRAWN_CASES: Mapping[str, tuple[str, bool]] = {
     "ordinary": ("ordinary", False),
     "zero_probability": ("zero_probability", False),
@@ -825,17 +830,19 @@ _DRAWN_CASES: Mapping[str, tuple[str, bool]] = {
 
 @pytest.mark.parametrize("several", [False, True], ids=["one_row", "several_rows"])
 @pytest.mark.parametrize("case", list(_DRAWN_CASES))
-def test_a_drawn_exit_choice_carries_the_whole_mass_of_either_side(
+def test_a_drawn_composition_action_choice_carries_the_whole_mass_of_either_side(
     *, case: str, several: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Drawing the nodes where the exit is available and one sample for the others
-    gives the full enumeration's values, non-finite entries and support, whatever
-    the size of either side's mass.
+    """Available nodes plus one sample for the rest match the full enumeration.
 
-    Every draw among the available nodes leaves for a destination worth the same,
-    so the draws integrate that side exactly. Where the exit is available only if
-    both draws are rare, the destination is worth `-stay` and staying zero, so the
-    rare mass weights the leaving value: `p**2 * -stay`.
+    The draw keeps every node where the composition action is available and takes one
+    sample for the others. It gives the full enumeration's values, non-finite
+    entries and support, whatever the size of either side's mass.
+
+    Every draw among the available nodes leaves for a destination worth the same, so the
+    draws integrate that side exactly. Where the composition action is available only if
+    both draws are rare, the destination is worth `-stay` and staying zero, so the rare
+    mass weights the leaving value: `p**2 * -stay`.
     """
     mass_case, rare_available = _DRAWN_CASES[case]
     p, stay, infeasible, available = _mass_case(mass_case)

@@ -1,4 +1,4 @@
-"""Given paths reach every subject on an eight-device subject mesh.
+"""Given paths reach every agent on an eight-device agent mesh.
 
 The cases skip unless the process has eight CPU host devices before JAX starts;
 CI runs this file in its own fresh eight-device process.
@@ -23,18 +23,18 @@ from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_b
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.typing import PytreeValue
 from lcm import (
+    CompositionAction,
+    Destination,
     DiscreteGrid,
     ExecutionConfig,
-    Exit,
-    ExitTarget,
     InitialNodes,
     LinSpacedGrid,
     Model,
     Periods,
     Regime,
 )
+from lcm.composition_actions import PCOnActions
 from lcm.exceptions import ExecutionPlanningError
-from lcm.exits import Unilateral
 from lcm.shocks import (
     BaseInnovations,
     GaussHermite,
@@ -46,7 +46,7 @@ from lcm.shocks import (
 from lcm.typing import FloatND, ReferenceName, ScalarInt
 from tests.simulation._callback_types import OperandPlacement, RuntimeDispatch
 from tests.simulation.test_aot_collective_and_gated import _capture_compiled_dispatches
-from tests.simulation.test_current_exits import (
+from tests.simulation.test_current_composition_actions import (
     _adjustment,
     _Binary,
     _DatedOverrideRegimes,
@@ -63,7 +63,7 @@ pytestmark = pytest.mark.coverage(backends=("cpu",), precisions="both")
 
 
 @pytest.mark.parametrize("budget", [None, 100_000_000])
-def test_supplied_paths_on_subject_mesh(*, budget: int | None) -> None:
+def test_supplied_paths_on_agent_mesh(*, budget: int | None) -> None:
     devices = tuple(range(8))
     if len(jax.devices()) < len(devices):
         pytest.skip("Select this control in a fresh eight-device CPU process.")
@@ -77,8 +77,8 @@ def test_supplied_paths_on_subject_mesh(*, budget: int | None) -> None:
     model = _model(
         execution=ExecutionConfig(
             devices=devices,
-            simulation_sharding="subjects",
-            axis_widths={"subject": 3},
+            simulation_sharding="agents",
+            axis_widths={"agent": 3},
             device_memory_bytes=budget,
         )
     )
@@ -91,8 +91,8 @@ def test_supplied_paths_on_subject_mesh(*, budget: int | None) -> None:
     )
     summary = result.plan_summary
     assert summary is not None
-    assert (summary.route, summary.subject_device_ids, summary.subject_backend) == (
-        "subjects",
+    assert (summary.route, summary.agent_device_ids, summary.agent_backend) == (
+        "agents",
         devices,
         "cpu",
     )
@@ -101,16 +101,16 @@ def test_supplied_paths_on_subject_mesh(*, budget: int | None) -> None:
         .reset_index()
         .query("regime_name == 'alive'")
     )
-    expected = paths[rows.subject_id.to_numpy(), rows.period.to_numpy()]
+    expected = paths[rows.agent_id.to_numpy(), rows.period.to_numpy()]
     np.testing.assert_array_equal(rows.shock, expected)
     np.testing.assert_array_equal(rows.choice, expected)
 
 
 @pytest.mark.parametrize("physical", [False, True])
-def test_tagged_current_paths_keep_original_rows_on_subject_mesh(
+def test_tagged_current_paths_keep_original_rows_on_agent_mesh(
     *, physical: bool
 ) -> None:
-    """A budgeted subject mesh preserves tagged paths through late entry and padding."""
+    """A budgeted agent mesh preserves tagged paths through late entry and padding."""
     devices = tuple(range(8))
     if jax.default_backend() != "cpu" or len(jax.devices()) < len(devices):
         pytest.skip("Select this control in a fresh eight-device CPU process.")
@@ -132,8 +132,8 @@ def test_tagged_current_paths_keep_original_rows_on_subject_mesh(
             regime_id_class=CurrentIIDRegimes,
             execution_config=ExecutionConfig(
                 devices=devices if sharded else (0,),
-                simulation_sharding="subjects" if sharded else "legacy",
-                axis_widths={"subject": 3},
+                simulation_sharding="agents" if sharded else "legacy",
+                axis_widths={"agent": 3},
                 device_memory_bytes=100_000_000,
             ),
         )
@@ -154,10 +154,10 @@ def test_tagged_current_paths_keep_original_rows_on_subject_mesh(
             assert summary is not None
             assert (
                 summary.route,
-                summary.subject_device_ids,
-                summary.subject_backend,
+                summary.agent_device_ids,
+                summary.agent_backend,
             ) == (
-                "subjects",
+                "agents",
                 devices,
                 "cpu",
             )
@@ -170,7 +170,7 @@ def test_tagged_current_paths_keep_original_rows_on_subject_mesh(
             )
         frame = (
             result.to_dataframe(use_categorical_codes=True)
-            .sort_values(["subject_id", "period"])
+            .sort_values(["agent_id", "period"])
             .reset_index(drop=True)
         )
         pairs = np.asarray(
@@ -180,28 +180,30 @@ def test_tagged_current_paths_keep_original_rows_on_subject_mesh(
                 for period in range(start, 3)
             ]
         )
-        np.testing.assert_array_equal(frame[["subject_id", "period"]], pairs)
+        np.testing.assert_array_equal(frame[["agent_id", "period"]], pairs)
         expected = paths if physical else 1 + 2 * paths
-        values = expected[frame["subject_id"], frame["period"]]
+        values = expected[frame["agent_id"], frame["period"]]
         np.testing.assert_array_equal(frame["eps"], values)
         np.testing.assert_array_equal(frame["action"], values > 0)
         frames.append(frame)
     assert_frame_equal(frames[1], frames[0], check_exact=True)
 
 
-def _exit_mesh_target_flow(*, shared_signal: FloatND, choice: ScalarInt) -> FloatND:
+def _composition_mesh_target_flow(
+    *, shared_signal: FloatND, choice: ScalarInt
+) -> FloatND:
     return 20.0 + (2 * choice - 1) * shared_signal
 
 
-def _exit_mesh_source_next(*, location: FloatND) -> FloatND:
+def _composition_mesh_source_next(*, location: FloatND) -> FloatND:
     return location + 100
 
 
-def _exit_mesh_target_next(*, location: FloatND, choice: ScalarInt) -> FloatND:
+def _composition_mesh_target_next(*, location: FloatND, choice: ScalarInt) -> FloatND:
     return location + 1 + choice
 
 
-def _exit_mesh_model(*, execution: ExecutionConfig) -> Model:
+def _composition_mesh_model(*, execution: ExecutionConfig) -> Model:
     """Dated entry and a state-free shared law, with observable final transitions."""
     source_grid = LinSpacedGrid(start=0, stop=1, n_points=2)
     return Model(
@@ -214,24 +216,24 @@ def _exit_mesh_model(*, execution: ExecutionConfig) -> Model:
             "source": Regime(
                 functions={"utility": _shared_source_flow},
                 states={"location": source_grid},
-                state_transitions={"location": _exit_mesh_source_next},
+                state_transitions={"location": _composition_mesh_source_next},
                 shocks=("shared",),
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
                             regime="target",
                             projection={"location": _mapped_location},
                             utility_adjustment=_adjustment,
                         )
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                 ),
             ),
             "target": Regime(
-                functions={"utility": _exit_mesh_target_flow},
+                functions={"utility": _composition_mesh_target_flow},
                 states={"location": LinSpacedGrid(start=10, stop=11, n_points=2)},
                 actions={"choice": DiscreteGrid(category_class=_Binary)},
-                state_transitions={"location": _exit_mesh_target_next},
+                state_transitions={"location": _composition_mesh_target_next},
                 shocks=("shared",),
             ),
             "source_done": Regime(
@@ -261,7 +263,7 @@ def _exit_mesh_model(*, execution: ExecutionConfig) -> Model:
     )
 
 
-def _capture_exit_mesh_placement(
+def _capture_composition_mesh_placement(
     *, monkeypatch: pytest.MonkeyPatch, devices: tuple[int, ...]
 ) -> set[str]:
     seen: set[str] = set()
@@ -272,7 +274,7 @@ def _capture_exit_mesh_placement(
     ) -> PytreeValue:
         output = native_dispatch(self, **call)
         family = call["program"].name
-        if self.execution.simulation_sharding == "subjects" and family in {
+        if self.execution.simulation_sharding == "agents" and family in {
             "simulate_exit_full",
             "simulate_exit_participating",
         }:
@@ -283,7 +285,7 @@ def _capture_exit_mesh_placement(
                 assert leaf.ndim > 0
                 if leaf.size == 0:
                     # An empty column block holds no rows to place; XLA reports
-                    # it replicated, so only its subject extent is checked.
+                    # it replicated, so only its agent extent is checked.
                     continue
                 assert leaf.sharding.spec == jax.P("X")
                 assert {device.id for device in leaf.sharding.device_set} == set(
@@ -297,10 +299,10 @@ def _capture_exit_mesh_placement(
 
 
 @pytest.mark.parametrize("physical", [False, True])
-def test_tagged_exit_paths_keep_producing_law_on_subject_mesh(
+def test_tagged_composition_action_paths_keep_producing_law_on_agent_mesh(
     *, physical: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Exit movers keep their original innovation, final policy and sole transition."""
+    """Leavers keep their original innovation, final policy and sole transition."""
     devices = tuple(range(8))
     if jax.default_backend() != "cpu" or len(jax.devices()) < len(devices):
         pytest.skip("Select this control in a fresh eight-device CPU process.")
@@ -314,14 +316,14 @@ def test_tagged_exit_paths_keep_producing_law_on_subject_mesh(
     assert np.any(~expected_choice)
     assert starts.size % len(devices) != 0
     compiled = _capture_compiled_dispatches(monkeypatch=monkeypatch)
-    seen = _capture_exit_mesh_placement(monkeypatch=monkeypatch, devices=devices)
+    seen = _capture_composition_mesh_placement(monkeypatch=monkeypatch, devices=devices)
     frames = []
     for sharded in (False, True):
-        model = _exit_mesh_model(
+        model = _composition_mesh_model(
             execution=ExecutionConfig(
                 devices=devices if sharded else (0,),
-                simulation_sharding="subjects" if sharded else "legacy",
-                axis_widths={"subject": 3},
+                simulation_sharding="agents" if sharded else "legacy",
+                axis_widths={"agent": 3},
                 device_memory_bytes=100_000_000,
             )
         )
@@ -346,9 +348,9 @@ def test_tagged_exit_paths_keep_producing_law_on_subject_mesh(
             assert summary is not None
             assert (
                 summary.route,
-                summary.subject_device_ids,
-                summary.subject_backend,
-            ) == ("subjects", devices, "cpu")
+                summary.agent_device_ids,
+                summary.agent_backend,
+            ) == ("agents", devices, "cpu")
             assert summary.budget_mode == "budgeted"
             assert summary.effective_device_memory_bytes is not None
             assert 0 < summary.effective_device_memory_bytes <= 100_000_000
@@ -358,7 +360,7 @@ def test_tagged_exit_paths_keep_producing_law_on_subject_mesh(
             )
         frame = (
             result.to_dataframe(use_categorical_codes=True)
-            .sort_values(["subject_id", "period"])
+            .sort_values(["agent_id", "period"])
             .reset_index(drop=True)
         )
         pairs = np.asarray(
@@ -368,7 +370,7 @@ def test_tagged_exit_paths_keep_producing_law_on_subject_mesh(
                 for period in range(start, 3)
             ]
         )
-        np.testing.assert_array_equal(frame[["subject_id", "period"]], pairs)
+        np.testing.assert_array_equal(frame[["agent_id", "period"]], pairs)
         acting = frame.loc[frame["period"] == 1]
         final = frame.loc[frame["period"] == 2]
         np.testing.assert_array_equal(acting["regime_name"], "target")
@@ -394,7 +396,7 @@ def test_query_parameter_copies_keep_sources_and_completed_views(
     if jax.default_backend() != "cpu" or len(jax.devices()) < 8:
         pytest.skip("Select this control in a fresh eight-device CPU process.")
     devices = tuple(jax.devices()[:8])
-    model = _exit_mesh_model(
+    model = _composition_mesh_model(
         execution=ExecutionConfig(
             devices=tuple(range(8)), device_memory_bytes=100_000_000
         )

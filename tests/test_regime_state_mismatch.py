@@ -247,8 +247,8 @@ def test_deterministic_target_only_state() -> None:
     valid_codes = {float(HeirPresent.no), float(HeirPresent.yes)}
     assert not dead_rows.empty, "Expected some rows in the dead regime"
     assert dead_rows["heir_present"].isin(valid_codes).all()
-    # Wealthy subject (wealth=80 >= 50) should have heir
-    # Poor subject (wealth=20 < 50) should not
+    # Wealthy agent (wealth=80 >= 50) should have heir
+    # Poor agent (wealth=20 < 50) should not
     wealthy_dead = dead_rows[dead_rows["wealth"] >= 50]
     poor_dead = dead_rows[dead_rows["wealth"] < 50]
     if not wealthy_dead.empty:
@@ -405,7 +405,7 @@ def test_per_target_dict_transitions() -> None:
     params = {"discount_factor": 0.95}
     period_to_regime_to_V_arr = model.solve(log_level="debug", params=params)
 
-    n_subjects = 4
+    n_agents = 4
     # Use codes 0 (disabled) and 1 (bad) — valid in both regimes.
     # Code 2 (good) is only valid in working and fails cross-regime validation.
     initial_health = jnp.array(
@@ -421,9 +421,9 @@ def test_per_target_dict_transitions() -> None:
         log_level="debug",
         params=params,
         initial_conditions={
-            "age": jnp.zeros(n_subjects),
+            "age": jnp.zeros(n_agents),
             "health": initial_health,
-            "regime_id": jnp.array([RegimeId.working_life] * n_subjects),
+            "regime_id": jnp.array([RegimeId.working_life] * n_agents),
         },
         solution=period_to_regime_to_V_arr,
     )

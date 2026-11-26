@@ -1,39 +1,41 @@
-"""A marriage market: singles marry under mutual consent, couples dissolve unilaterally.
+"""A marriage market: singles marry by consent, couples separate by unilateral divorce.
 
 Two partners, her (`f`) and him (`m`), differ only in income, $I_f > I_m$. Every
 regime chooses a consumption share $s$ of its wealth, so consumption $c = s\\,w$ is
-affordable everywhere and a regime's value moves smoothly between wealth nodes.
+affordable everywhere and a regime's value changes smoothly between wealth nodes.
 
-Single $i$ at wealth $w$:
-
-$$
-u_i(c) = \\log c, \\qquad w' = (1 + r)(w - c) + I_i .
-$$
-
-Couple at household wealth $W$, one common choice, each partner's own value:
+Single $\\kappa$ at wealth $w$:
 
 $$
-u_{\\mathrm{couple}, i}(c) = \\log(c / 2) + \\mu, \\qquad
+u_\\kappa(c) = \\log c, \\qquad w' = (1 + r)(w - c) + I_\\kappa .
+$$
+
+Couple at joint wealth $W$, one common choice, each member's own value:
+
+$$
+u_{\\mathrm{couple}, \\kappa}(c) = \\log(c / 2) + \\mu, \\qquad
 W' = (1 + r)(W - c) + I_f + I_m .
 $$
 
-Moves within a period, each the `Exit` of the regime that decides:
+Decisions on the composition within a period, each the `CompositionAction` of the
+regime that decides:
 
-- a single meets a partner with probability $p$ (the current shock `meet_i`; no
-  meeting at the first age). Meeting, she or he moves into the couple only if both
-  consent (`Consent`): each partner's couple value, with the couple's own rule for
-  staying applied, strictly exceeds staying single. The partner met holds the same
-  savings, so the couple starts at $W = 2(w - I_i) + I_f + I_m$; the counterparty
-  compares with its own single value at $W / 2$. A refused single keeps its own
-  wealth $w$.
-- a couple dissolves if either partner prefers to leave (`Unilateral`, an exactly
-  indifferent partner leaves): partner $i$ compares the couple's value with her or
-  his single value at $W / 2$ minus the divorce cost.
+- a single meets a partner with probability $p$ (the current shock `meet_f` or
+  `meet_m`; no meeting at the first age). After a meeting, the single forms a couple
+  only if both consent (formation by consent, `Consent`): each partner's value in the
+  couple, with the couple's own rule for staying applied, strictly exceeds the value
+  of staying single. The partner met holds the same savings, so the couple starts at
+  $W = 2(w - I_\\kappa) + I_f + I_m$. The counterparty compares with its own single
+  value at $W / 2$. A refused single keeps its own wealth $w$.
+- a couple separates if, at every action, a partner prefers to leave (unilateral
+  divorce with participation constraints on the actions, `PCOnActions`; an exactly
+  indifferent partner leaves). Member $\\kappa$ compares its value in the couple
+  with its single value at $W / 2$ minus the divorce cost.
 
 Her income is the higher one, so for her the marriage premium $\\mu$ has to outweigh
-giving up part of it, and it does so only once the household is rich enough that
-income matters less than wealth: her outside option, not his, rules out the poorest
-matches.
+giving up part of it. It does so only once the couple is rich enough that income
+matters less than wealth: the value of her outside option, not his, rules out the
+poorest matches.
 
 Everything is log utility over consumption with a fixed marriage premium, so the
 model is small, has no free structure, and scales along its grid knobs —
@@ -58,7 +60,7 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.exits import Exit, ExitTarget, Unilateral
+from lcm.composition_actions import CompositionAction, Destination, PCOnActions
 from lcm.shocks import Discrete, ShockGroup
 from lcm.transition import StochasticTransition, Transition
 from lcm.typing import (
@@ -80,8 +82,8 @@ WEALTH_MIN = 1.0
 WEALTH_MAX = 20.0
 
 # Income she receives every period, single or married. Higher than his, so
-# living alone keeps all of it while the household splits the pooled income
-# evenly: hers is the outside option that rules out the poorest matches.
+# living alone keeps all of it while the couple splits the pooled income
+# evenly: the value of her outside option rules out the poorest matches.
 INCOME_F = 3.0
 
 # Income he receives every period, single or married.
@@ -93,7 +95,7 @@ MEETING_PROBABILITY = 0.4
 
 @categorical(ordered=False)
 class RegimeId:
-    """The six regimes a subject of this model can occupy."""
+    """The six regimes an agent of this model can occupy."""
 
     couple: ScalarInt
     couple_terminal: ScalarInt
@@ -146,8 +148,8 @@ def get_model(
     )
     # Consumption is chosen as a share of wealth, so every choice is affordable
     # at every wealth, on the grid or between its nodes. A choice in levels is
-    # affordable only from some wealth on, which makes a household's value
-    # jump between the nodes its outside option is interpolated across.
+    # affordable only from some wealth on, which makes a couple's value
+    # jump between the nodes the value of its outside option is interpolated across.
     consumption_share = LinSpacedGrid(
         start=1.0 / consumption_n_points, stop=1.0, n_points=consumption_n_points
     )
@@ -163,16 +165,16 @@ def get_model(
                 utilities={"f": _couple_utility_f, "m": _couple_utility_m}
             ),
         },
-        exit=Exit(
-            targets={
-                member: ExitTarget(
+        composition_action=CompositionAction(
+            destinations={
+                member: Destination(
                     regime=f"single_{member}",
                     projection={"wealth": _half_of_couple_wealth},
                     utility_adjustment=_divorce_cost,
                 )
                 for member in ("f", "m")
             },
-            rule=Unilateral(tie="leave"),
+            rule=PCOnActions(tie="leave"),
         ),
     )
     couple_terminal = Regime(
@@ -250,11 +252,12 @@ def get_params(
 
     Args:
         discount_factor: Per-period discount factor.
-        marriage_premium: Additive flow gain from being in the household, in
+        marriage_premium: Additive flow gain from being in the couple, in
             utils, identical for both partners.
         interest_rate: Return on wealth carried forward.
-        divorce_cost: Utils a partner gives up on leaving the household, which
-            also lowers the outside option the partner compares with staying.
+        divorce_cost: Utils a partner gives up on leaving the couple, which
+            also lowers the value of the outside option the partner compares
+            with staying.
 
     Returns:
         Dict of per-regime parameter mappings.
@@ -266,8 +269,8 @@ def get_params(
             "utility_f": {"marriage_premium": marriage_premium},
             "utility_m": {"marriage_premium": marriage_premium},
             "next_wealth": {"interest_rate": interest_rate},
-            "exit": {
-                "targets": {
+            "composition_action": {
+                "destinations": {
                     member: {"utility_adjustment": {"divorce_cost": divorce_cost}}
                     for member in ("f", "m")
                 }
@@ -288,26 +291,26 @@ def get_params(
 
 
 def get_initial_conditions(
-    *, n_subjects: int, model: Model
+    *, n_agents: int, model: Model
 ) -> dict[StateName | Literal["regime_id"], FloatND | IntND]:
     """Return a cohort of singles, half women and half men.
 
     Args:
-        n_subjects: Number of subjects.
+        n_agents: Number of agents.
         model: The model whose regime ids and role codes the cohort is coded
             against.
 
     Returns:
         Dict of the `wealth`, `age` and `regime_id` columns `simulate()` takes.
         No `own_member`: the whole cohort starts in a singleton regime, so
-        nobody occupies a household role yet, and each subject is given one by
-        the exit it takes into the couple.
+        nobody occupies a role in a couple yet, and each agent is given one by
+        the composition action it takes into the couple.
 
     """
-    is_woman = jnp.arange(n_subjects) % 2 == 0
+    is_woman = jnp.arange(n_agents) % 2 == 0
     return {
-        "wealth": jnp.linspace(WEALTH_MIN, WEALTH_MAX, n_subjects),
-        "age": jnp.zeros(n_subjects),
+        "wealth": jnp.linspace(WEALTH_MIN, WEALTH_MAX, n_agents),
+        "age": jnp.zeros(n_agents),
         "regime_id": jnp.where(
             is_woman,
             model.regime_names_to_ids["single_f"],
@@ -322,7 +325,7 @@ def _single(
     wealth: LinSpacedGrid,
     consumption_share: LinSpacedGrid,
 ) -> Regime:
-    """Build single `member`'s regime, with formation as a consented exit."""
+    """Build single `member`'s regime, with formation by consent."""
     spouse = "m" if member == "f" else "f"
     return Regime(
         states={"wealth": wealth},
@@ -332,9 +335,9 @@ def _single(
         actions={"consumption_share": consumption_share},
         functions={"consumption": _consumption, "utility": _single_utility},
         shocks=(f"meeting_{member}",),
-        exit=Exit(
-            targets={
-                "self": ExitTarget(
+        composition_action=CompositionAction(
+            destinations={
+                "self": Destination(
                     regime="couple",
                     role=member,
                     projection={
@@ -373,7 +376,7 @@ def _terminal_utility(consumption: FloatND) -> FloatND:
 
 
 def _couple_utility_f(*, consumption: FloatND, marriage_premium: float) -> FloatND:
-    """Her flow utility: half of the household's consumption, plus the premium."""
+    """Her flow utility: half of the couple's consumption, plus the premium."""
     return _log_utility(0.5 * consumption) + marriage_premium
 
 
@@ -411,12 +414,12 @@ def _next_couple_wealth(
 
 
 def _half_of_couple_wealth(wealth: ContinuousState) -> ContinuousState:
-    """A partner's share of household wealth, at the couple's own coordinate."""
+    """A partner's share of the joint wealth, at the couple's own coordinate."""
     return 0.5 * wealth
 
 
 def _pooled(*, wealth: ContinuousState, own_income: float) -> ContinuousState:
-    """Household wealth of a match: both partners' savings and both incomes.
+    """Joint wealth of a match: both partners' savings and both incomes.
 
     The partner met holds the same savings `wealth - own_income`. The result is
     clipped from below to the couple's lowest node, which only singles poorer

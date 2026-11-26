@@ -1,8 +1,8 @@
 """Runtime validation leaves a stateless collective regime's simulation intact.
 
 A collective regime that declares no states still simulates one row per
-subject: its recorded value array carries the subject axis in front of the
-member axis, and every subject records the household's shared optimal
+agent: its recorded value array carries the agent axis in front of the
+member axis, and every agent records the household's shared optimal
 action. That contract is a property of the model, not of the diagnostics, so
 it holds at `log_level="debug"`, which switches the value-function validation
 on, exactly as it does at every quieter level.
@@ -29,16 +29,16 @@ from tests.simulation.test_runtime_helpers import bind_eager_simulation
 
 _REGIME_NAME = "stateless_couple"
 
-_N_SUBJECTS = 3
+_N_AGENTS = 3
 
 _N_MEMBERS = 2
 
 # The regime's payoffs are `utility_f = 10 * work` and
 # `utility_m = 5 * (1 - work)`, so the household argmax takes `work` (10 + 0
-# beats 0 + 5) and each subject records `(value_f, value_m) == (10.0, 0.0)`.
+# beats 0 + 5) and each agent records `(value_f, value_m) == (10.0, 0.0)`.
 _WORK = 1
 
-_EXPECTED_V_PER_SUBJECT = (10.0, 0.0)
+_EXPECTED_V_PER_AGENT = (10.0, 0.0)
 
 
 def _simulate_stateless_collective_at_debug() -> PeriodRegimeSimulationData:
@@ -62,8 +62,8 @@ def _simulate_stateless_collective_at_debug() -> PeriodRegimeSimulationData:
     ).value_functions
     initial_conditions = MappingProxyType(
         {
-            "age": jnp.zeros(_N_SUBJECTS),
-            "regime_id": jnp.zeros(_N_SUBJECTS, dtype=jnp.int32),
+            "age": jnp.zeros(_N_AGENTS),
+            "regime_id": jnp.zeros(_N_AGENTS, dtype=jnp.int32),
         }
     )
     result = simulate(
@@ -80,28 +80,28 @@ def _simulate_stateless_collective_at_debug() -> PeriodRegimeSimulationData:
     return result.raw_results[_REGIME_NAME][0]
 
 
-def test_stateless_collective_simulated_V_has_subject_and_member_axes() -> None:
-    """The simulated value array is `(n_subjects, n_members)`."""
+def test_stateless_collective_simulated_V_has_agent_and_member_axes() -> None:
+    """The simulated value array is `(n_agents, n_members)`."""
     period_0 = _simulate_stateless_collective_at_debug()
 
-    assert period_0.V_arr.shape == (_N_SUBJECTS, _N_MEMBERS)
+    assert period_0.V_arr.shape == (_N_AGENTS, _N_MEMBERS)
 
 
 def test_stateless_collective_simulated_V_records_each_member_payoff() -> None:
-    """Every subject records `(value_f, value_m) == (10.0, 0.0)`."""
+    """Every agent records `(value_f, value_m) == (10.0, 0.0)`."""
     period_0 = _simulate_stateless_collective_at_debug()
 
     aaae(
         np.asarray(period_0.V_arr),
-        np.tile(_EXPECTED_V_PER_SUBJECT, (_N_SUBJECTS, 1)),
+        np.tile(_EXPECTED_V_PER_AGENT, (_N_AGENTS, 1)),
         decimal=DECIMAL_PRECISION,
     )
 
 
 def test_stateless_collective_simulated_action_is_the_household_argmax() -> None:
-    """Every subject takes `work`, the action maximising the household's sum."""
+    """Every agent takes `work`, the action maximising the household's sum."""
     period_0 = _simulate_stateless_collective_at_debug()
 
     np.testing.assert_array_equal(
-        np.asarray(period_0.actions["work"]), np.full(_N_SUBJECTS, _WORK)
+        np.asarray(period_0.actions["work"]), np.full(_N_AGENTS, _WORK)
     )

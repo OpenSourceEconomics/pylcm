@@ -1012,14 +1012,14 @@ def _solve_and_simulate_at_action_width(
         for regime in ("couple", "single")
     }
     solution = model.solve(params=params, log_level="off")
-    n_subjects = 8
+    n_agents = 8
     frame = model.simulate(
         params=params,
         initial_conditions={
-            "wealth": jnp.linspace(1.0, 4.0, n_subjects),
-            "age": jnp.zeros(n_subjects),
+            "wealth": jnp.linspace(1.0, 4.0, n_agents),
+            "age": jnp.zeros(n_agents),
             "regime_id": jnp.where(
-                jnp.arange(n_subjects) % 2 == 0,
+                jnp.arange(n_agents) % 2 == 0,
                 _WidthRegimeId.couple,
                 _WidthRegimeId.single,
             ).astype(jnp.int32),
@@ -1045,7 +1045,7 @@ def test_households_stream_to_the_values_and_choices_of_the_whole_product(
     action is a different compiled program, which may round the action values
     differently in the last bits, so its solved values agree within eight units
     in the last place. A simulated value is the action value at the winner,
-    evaluated at the subject's own state by a program compiled for the block's
+    evaluated at the agent's own state by a program compiled for the block's
     width, so it agrees to a few units in the last place.
     """
     model, solution, frame = _solve_and_simulate_at_action_width(width)

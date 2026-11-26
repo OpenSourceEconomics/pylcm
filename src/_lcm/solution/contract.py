@@ -150,7 +150,7 @@ def one_member_utility_name(*, members: tuple[str, ...]) -> FunctionName:
 
     A solver of one member reads its utility under this name: `utility` for a
     regime declared with a plain utility function, `utility_<member>` for a
-    household of one member.
+    regime declared with one member.
     """
     return member_name(base="utility", member=members[0])
 
@@ -464,7 +464,7 @@ class SolverBuildContext:
 
     certainty_equivalent: CertaintyEquivalent | Mapping[str, CertaintyEquivalent] | None
     """Nonlinear certainty equivalent declared by the regime, if any; a
-    household's may be keyed by member.
+    collective regime's may be keyed by member.
 
     `GridSearch` consumes it via the compiled Q-and-F closures; solvers
     that exploit the linear-expectation structure of the continuation
@@ -501,11 +501,11 @@ class SolverBuildContext:
     """The regime's members (`Regime.members`), the trailing axis of its value.
 
     The grid-search kernel reads off each member's own value at the shared
-    household argmax of the Pareto-weighted scalarization.
+    collective argmax of the Pareto-weighted scalarization.
     """
 
     pareto_weights: ParetoWeights
-    """The household's Pareto weight evaluator, one weight per member."""
+    """The regime's Pareto weight evaluator, one weight per member."""
 
     edge_target_regimes: tuple[RegimeName, ...] = ()
     """Target regimes this regime reaches through a gated edge, or empty.
@@ -876,7 +876,7 @@ def simulation_route(
     """Build the simulate-phase route a solver walks over whole candidates.
 
     Simulation is not a solver's pipeline. It walks the regime's DAG on each
-    subject's realized states and its realized action, so every name is
+    agent's realized states and its realized action, so every name is
     computable and the feasibility check sees a complete candidate — which is
     true of every solver shipped today, whatever it does when solving. One
     unrestricted site, at the simulation stage.

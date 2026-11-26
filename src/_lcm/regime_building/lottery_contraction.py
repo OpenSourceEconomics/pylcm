@@ -111,7 +111,7 @@ class LotteryContractionSource:
     """Whether a process state's current value is always one of its grid's nodes.
 
     The solve evaluates every cell at the nodes. The simulation evaluates each
-    subject at its own value, which for a process state may lie between them; a
+    agent at its own value, which for a process state may lie between them; a
     process draw whose weights read that value then keeps its axis there.
     """
 
@@ -128,7 +128,8 @@ class LotteryContractionSource:
 
     A query program builds each table before its loops, so a draw whose weights
     read one of them keeps its axis there. Set on the query sources and on the
-    ordinary source of a regime with an exit, whose root query reads that Q.
+    ordinary source of a regime with a composition action, whose root query
+    reads that Q.
     """
 
 
@@ -174,7 +175,7 @@ class ContractedLottery:
     def reads_process_value(self) -> bool:
         """Whether the weights read a process state's current value.
 
-        The table holds one row per node, so such a row is the subject's own only
+        The table holds one row per node, so such a row is the agent's own only
         where the current value is a node.
         """
         return self.reads_state and not self.is_discrete

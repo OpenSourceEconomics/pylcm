@@ -241,7 +241,7 @@ class EdgeArgProvenance:
     some order — is what makes the answer well defined:
 
     - `states` are bound from the realized candidate TARGET states (batched over
-      subjects). They mirror the solve side, where the fold is evaluated on the
+      agents). They mirror the solve side, where the fold is evaluated on the
       target regime's own state grid.
     - `params` maps each exposed argument name to the `(namespace, qname)` pair
       that resolves it, with `namespace` one of `SOURCE_PARAMS` / `TARGET_PARAMS`
@@ -384,7 +384,7 @@ class ResolvedMemberRoute:
 
     target_member: str | None = None
     """The target regime's member as named, or `None` for its member `"self"`
-    — the role a subject taking the OPEN branch carries onward."""
+    — the role an agent taking the OPEN branch carries onward."""
 
     fallback: ResolvedProjectedRegimeValue
     """The CLOSED-branch reference value the fold PRICES (regime, projection,
@@ -973,12 +973,12 @@ def get_edge_fold(
     branches — a number neither branch pays, which can rank a source action
     above the one it should have taken. Reading each operand at the landing
     point and gating there is the same order simulation routes in, so the value
-    the source maximizes and the branch a subject is sent down agree.
+    the source maximizes and the branch an agent is sent down agree.
 
     The gate's raw boolean array never leaves this module in either form.
     Handing a grid-level one to the simulate-side value router
     (`_lcm/simulation/gated_routing.py`) would invite deciding a realized
-    subject's REGIME ROUTING by INTERPOLATING that baked boolean array and
+    agent's REGIME ROUTING by INTERPOLATING that baked boolean array and
     thresholding at 0.5, which fails in exactly the way described above.
 
     **Numerics.** The target regime's OWN value components reach `surfaces` by
@@ -1177,7 +1177,7 @@ def get_edge_simulate_gate_evaluator(
 
     Returns:
         A callable returning the recomputed boolean gate at one realized
-        candidate point (scalar per subject once `vmap`-ped by the caller),
+        candidate point (scalar per agent once `vmap`-ped by the caller),
         keyed by:
 
         - the target's state names — the realized candidate point;
@@ -1284,7 +1284,7 @@ def build_fallback_state_projector(
     states plus the states it carries only in simulation
     (`Phased(solve=..., simulate=Grid)`). A carried state is no axis of the
     fallback's solved V, so the fold's reader has nothing to read on it and
-    stays on the solve states; but forward simulation carries it per subject,
+    stays on the solve states; but forward simulation carries it per agent,
     and a slot the projector skips keeps whatever the row held before the edge
     routed it there. The two consumers therefore read the same projection
     mapping over different, nested name sets, each picking its own by name.

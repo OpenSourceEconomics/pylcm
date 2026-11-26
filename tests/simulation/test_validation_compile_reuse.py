@@ -1,6 +1,8 @@
 """Budgeted simulate validation reuses its executables across calls of one Model."""
 
 import functools
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 
 import jax
 import jax.numpy as jnp
@@ -11,7 +13,9 @@ from _lcm.simulation.host_operations import ProfiledSimulationOperations, _opera
 from _lcm.simulation.initial_conditions import _PREFLIGHT_OPERATIONS
 from _lcm.solution.backward_induction import _trace_settings_key
 from benchmarks.asv._compile_counters import count_compile_requests
+from lcm import Model
 from lcm.execution import ExecutionConfig
+from lcm.typing import UserInitialConditions, UserParams
 from lcm_examples import precautionary_savings
 from tests.simulation import (
     test_joint_transition_entry_admission as joint_transition_entry,
@@ -20,10 +24,12 @@ from tests.simulation import (
     test_state_transition_entry_admission as state_transition_entry,
 )
 
-_N_SUBJECTS = 20
+_N_AGENTS = 20
+
+type _Inputs = tuple[Model, UserParams, UserInitialConditions]
 
 
-def _savings_inputs():
+def _savings_inputs() -> _Inputs:
     """Constraint feasibility and a regime transition law."""
     model = precautionary_savings.create_model(
         n_periods=3,
@@ -33,27 +39,27 @@ def _savings_inputs():
         consumption_n_points=6,
         execution_config=ExecutionConfig(
             device_memory_bytes=2 * 1024**3,
-            axis_widths={"subject": _N_SUBJECTS},
+            axis_widths={"agent": _N_AGENTS},
         ),
     )
     params = precautionary_savings.get_params(
         shock_type="rouwenhorst", sigma=0.1, rho=0.5
     )
     initial_conditions = {
-        "age": jnp.full(_N_SUBJECTS, 20.0),
-        "wealth": jnp.linspace(1.0, 9.0, _N_SUBJECTS),
-        "income": jnp.full(_N_SUBJECTS, 0.0),
-        "regime_id": jnp.zeros(_N_SUBJECTS, dtype="int32"),
+        "age": jnp.full(_N_AGENTS, 20.0),
+        "wealth": jnp.linspace(1.0, 9.0, _N_AGENTS),
+        "income": jnp.full(_N_AGENTS, 0.0),
+        "regime_id": jnp.zeros(_N_AGENTS, dtype="int32"),
     }
     return model, params, initial_conditions
 
 
-def _state_law_inputs():
+def _state_law_inputs() -> _Inputs:
     """A stochastic state transition law."""
     return state_transition_entry._inputs(budget=2**28)
 
 
-def _joint_law_inputs():
+def _joint_law_inputs() -> _Inputs:
     """A joint transition whose weights are composed per target."""
     return joint_transition_entry._inputs(
         probabilities=joint_transition_entry._joint_probabilities,
@@ -67,7 +73,9 @@ _INPUTS = pytest.mark.parametrize(
 )
 
 
-def _simulate(*, model, params, initial_conditions) -> pd.DataFrame:
+def _simulate(
+    *, model: Model, params: UserParams, initial_conditions: UserInitialConditions
+) -> pd.DataFrame:
     return model.simulate(
         params=params,
         initial_conditions=initial_conditions,
@@ -84,13 +92,18 @@ def _integer_range(*, x: jax.Array) -> jax.Array:
     return jnp.arange(3) + x.astype(int)
 
 
-def _compile(*, owner: ProfiledSimulationOperations, function, x: jax.Array):
+def _compile(
+    *,
+    owner: ProfiledSimulationOperations,
+    function: Callable[..., jax.Array],
+    x: jax.Array,
+) -> jax.stages.Compiled:
     arguments = {"x": jax.ShapeDtypeStruct(x.shape, x.dtype, sharding=x.sharding)}
     key = _operation_key(
         function=function,
         arguments=arguments,
         static_arguments={},
-        subject_outputs=False,
+        agent_outputs=False,
         devices=tuple(x.devices()),
     )
     return owner.compile_candidate(
@@ -99,7 +112,9 @@ def _compile(*, owner: ProfiledSimulationOperations, function, x: jax.Array):
 
 
 @_INPUTS
-def test_warm_budgeted_simulate_with_validation_compiles_nothing(inputs) -> None:
+def test_warm_budgeted_simulate_with_validation_compiles_nothing(
+    inputs: Callable[[], _Inputs],
+) -> None:
     model, params, initial_conditions = inputs()
     with count_compile_requests() as cold:
         _simulate(model=model, params=params, initial_conditions=initial_conditions)
@@ -109,7 +124,9 @@ def test_warm_budgeted_simulate_with_validation_compiles_nothing(inputs) -> None
 
 
 @_INPUTS
-def test_budgeted_simulate_output_is_identical_on_warm_calls(inputs) -> None:
+def test_budgeted_simulate_output_is_identical_on_warm_calls(
+    inputs: Callable[[], _Inputs],
+) -> None:
     model, params, initial_conditions = inputs()
     cold = _simulate(model=model, params=params, initial_conditions=initial_conditions)
     warm = _simulate(model=model, params=params, initial_conditions=initial_conditions)
@@ -117,7 +134,9 @@ def test_budgeted_simulate_output_is_identical_on_warm_calls(inputs) -> None:
 
 
 @_INPUTS
-def test_two_models_share_no_validation_executable(inputs) -> None:
+def test_two_models_share_no_validation_executable(
+    inputs: Callable[[], _Inputs],
+) -> None:
     first, params, initial_conditions = inputs()
     second, _, _ = inputs()
     _simulate(model=first, params=params, initial_conditions=initial_conditions)
@@ -223,7 +242,9 @@ def test_partial_keyword_order_gets_separate_executables() -> None:
     ],
     ids=["x64", "dtype_promotion", "matmul_precision", "mesh"],
 )
-def test_trace_settings_key_changes_with_each_trace_setting(setting) -> None:
+def test_trace_settings_key_changes_with_each_trace_setting(
+    setting: Callable[[], AbstractContextManager[None]],
+) -> None:
     outside = _trace_settings_key()
     with setting():
         inside = _trace_settings_key()

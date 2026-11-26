@@ -1,7 +1,7 @@
 """CPU semantic and GPU behavioral tests for the Mahler & Yum (2024) example.
 
 The CPU tests cover retirement structure, transition routing, and the public input
-factory. GPU behavioral references use 10000 subjects initialized with seed 32
+factory. GPU behavioral references use 10000 agents initialized with seed 32
 and simulated with seed 42 under the versioned pylcm.random.v1 stream contract.
 
 The references jointly depend on the example's economics, engine numerics, and
@@ -14,7 +14,7 @@ The structural invariants are the stable half: they check economic relations and
 remain unchanged when the stochastic reference panel is refreshed.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import cast
 
@@ -65,7 +65,7 @@ _GPU_X64_MARKS = (
 )
 
 
-def _gpu_x64(test):
+def _gpu_x64[F: Callable[..., None]](test: F) -> F:
     for mark in _GPU_X64_MARKS:
         test = mark(test)
     return test
@@ -82,7 +82,7 @@ _ADDITIONAL_TARGETS = [
 ]
 
 
-def test_survival_mass_moves_from_working_to_retirement_at_the_boundary():
+def test_survival_mass_moves_from_working_to_retirement_at_the_boundary() -> None:
     """Survivors enter retirement at 65 while death receives the complement."""
     survival_probs = jnp.full((retirement_period + 1, 2, 2), 0.8)
     education = jnp.asarray(1, dtype=jnp.int32)
@@ -157,7 +157,7 @@ def test_survival_mass_moves_from_working_to_retirement_at_the_boundary():
     aaae(in_retirement, [0.8, 0.2], decimal=DECIMAL_PRECISION)
 
 
-def test_retirement_split_removes_exactly_the_work_only_dimensions():
+def test_retirement_split_removes_exactly_the_work_only_dimensions() -> None:
     """Retirement drops labor supply and productivity from the choice problem."""
     working_dimensions = set(WORKING_REGIME.states) | set(WORKING_REGIME.actions)
     retirement_dimensions = set(RETIREMENT_REGIME.states) | set(
@@ -190,7 +190,7 @@ def _covered_periods(source: RegimeName) -> set[int]:
     return set(schedule.resolve(ages).law_by_period)
 
 
-def test_living_regimes_partition_ages_at_65():
+def test_living_regimes_partition_ages_at_65() -> None:
     """Every living age belongs to working life or retirement according to age 65."""
     working = _covered_periods("working")
     retirement = _covered_periods("retirement")
@@ -208,11 +208,11 @@ def test_living_regimes_partition_ages_at_65():
     np.testing.assert_array_equal(activity, expected)
 
 
-def test_create_inputs_starts_subjects_in_working_regime():
+def test_create_inputs_starts_agents_in_working_regime() -> None:
     """The input factory returns shared runtime params and starts work at 25."""
     model_params, initial_conditions = create_inputs(
         seed=0,
-        n_simulation_subjects=4,
+        n_simulation_agents=4,
         params=START_PARAMS,
     )
 
@@ -275,9 +275,7 @@ def mahler_solution(*, mahler_gpu_model: Model) -> SolutionResult:
     `create_inputs` builds the model params before it draws anything from its
     seed, so the params every simulation below passes equal the ones solved here.
     """
-    model_params, _ = create_inputs(
-        seed=32, n_simulation_subjects=4, params=START_PARAMS
-    )
+    model_params, _ = create_inputs(seed=32, n_simulation_agents=4, params=START_PARAMS)
     return mahler_gpu_model.solve(params=model_params, log_level="off")
 
 
@@ -315,7 +313,7 @@ def test_model_solves_and_simulates(
 ) -> None:
     """Smoke test: model runs end-to-end with small n."""
     model_params, ic_df = create_inputs(
-        seed=0, n_simulation_subjects=4, params=START_PARAMS
+        seed=0, n_simulation_agents=4, params=START_PARAMS
     )
     result = mahler_gpu_model.simulate(
         params=model_params,
@@ -335,9 +333,9 @@ def test_model_solves_and_simulates(
 def simulation_result(
     *, mahler_gpu_model: Model, mahler_solution: SolutionResult
 ) -> pd.DataFrame:
-    """Simulate 10000 subjects with population seed 32 and simulation seed 42."""
+    """Simulate 10000 agents with population seed 32 and simulation seed 42."""
     model_params, initial_conditions = create_inputs(
-        seed=32, n_simulation_subjects=10000, params=START_PARAMS
+        seed=32, n_simulation_agents=10000, params=START_PARAMS
     )
     result = mahler_gpu_model.simulate(
         params=model_params,
@@ -363,12 +361,12 @@ def simulation_result(
 )
 def test_labor_supply_distribution(
     *,
-    simulation_result,
-    period,
-    expected_retired,
-    expected_part_time,
-    expected_full_time,
-):
+    simulation_result: pd.DataFrame,
+    period: int,
+    expected_retired: int,
+    expected_part_time: int,
+    expected_full_time: int,
+) -> None:
     """Labor supply counts per period must match reference within tolerance."""
     p = simulation_result[simulation_result["period"] == period]
     vc = p["labor_supply"].value_counts()
@@ -390,7 +388,9 @@ def test_labor_supply_distribution(
         (30, 0.9146),
     ],
 )
-def test_mean_wealth_profile(*, simulation_result, period, expected_mean_wealth):
+def test_mean_wealth_profile(
+    *, simulation_result: pd.DataFrame, period: int, expected_mean_wealth: float
+) -> None:
     """Mean wealth at key periods must match reference."""
     p = simulation_result[simulation_result["period"] == period]
     np.testing.assert_allclose(p["wealth"].mean(), expected_mean_wealth, atol=0.01)
@@ -406,7 +406,9 @@ def test_mean_wealth_profile(*, simulation_result, period, expected_mean_wealth)
         (30, 0.6925),
     ],
 )
-def test_health_good_fraction(*, simulation_result, period, expected_good_frac):
+def test_health_good_fraction(
+    *, simulation_result: pd.DataFrame, period: int, expected_good_frac: float
+) -> None:
     """Fraction in good health must decline with age as expected."""
     p = simulation_result[simulation_result["period"] == period]
     np.testing.assert_allclose(
@@ -424,14 +426,16 @@ def test_health_good_fraction(*, simulation_result, period, expected_good_frac):
         (37, 488),
     ],
 )
-def test_survival_counts(*, simulation_result, period, expected_alive):
+def test_survival_counts(
+    *, simulation_result: pd.DataFrame, period: int, expected_alive: int
+) -> None:
     """Number of surviving agents must match reference."""
     n = len(simulation_result[simulation_result["period"] == period])
     assert abs(n - expected_alive) <= 5
 
 
 @_gpu_x64
-def test_effort_statistics(simulation_result):
+def test_effort_statistics(simulation_result: pd.DataFrame) -> None:
     """Mean and std of effort_value across all periods must match reference."""
     np.testing.assert_allclose(
         simulation_result["effort_value"].mean(), 0.8812, atol=0.005
@@ -442,7 +446,7 @@ def test_effort_statistics(simulation_result):
 
 
 @_gpu_x64
-def test_consumption_by_health(simulation_result):
+def test_consumption_by_health(simulation_result: pd.DataFrame) -> None:
     """Consumption must be higher for good health than bad health."""
     cons = simulation_result.groupby("health")["consumption"].mean()
     np.testing.assert_allclose(cons.loc["good"], 0.6861, atol=0.005)
@@ -451,7 +455,7 @@ def test_consumption_by_health(simulation_result):
 
 
 @_gpu_x64
-def test_income_by_education(simulation_result):
+def test_income_by_education(simulation_result: pd.DataFrame) -> None:
     """Mean income during working life must be higher for high education."""
     working = simulation_result[simulation_result["period"] < retirement_period]
     inc = working.groupby("education")["income"].mean()
@@ -461,7 +465,9 @@ def test_income_by_education(simulation_result):
 
 
 @_gpu_x64
-def test_retirement_regime_starts_at_retirement_period(simulation_result):
+def test_retirement_regime_starts_at_retirement_period(
+    simulation_result: pd.DataFrame,
+) -> None:
     """Living agents enter the retirement regime at the mandatory age."""
     post_ret = simulation_result[simulation_result["period"] >= retirement_period]
     assert (post_ret["regime_name"] == "retirement").all()
@@ -470,19 +476,19 @@ def test_retirement_regime_starts_at_retirement_period(simulation_result):
 
 
 @_gpu_x64
-def test_total_living_rows(simulation_result):
+def test_total_living_rows(simulation_result: pd.DataFrame) -> None:
     """Total number of living-regime rows must match reference."""
     assert abs(len(simulation_result) - 293855) <= 50
 
 
 @_gpu_x64
-def test_wealth_non_negative(simulation_result):
+def test_wealth_non_negative(simulation_result: pd.DataFrame) -> None:
     """Wealth must be non-negative (borrowing constraint)."""
     assert (simulation_result["wealth"] >= -1e-6).all()
 
 
 @_gpu_x64
-def test_consumption_positive(simulation_result):
+def test_consumption_positive(simulation_result: pd.DataFrame) -> None:
     """Consumption must be positive."""
     assert (simulation_result["consumption"] > 0).all()
 
@@ -494,8 +500,8 @@ def test_category_names_are_a_tuple_in_declaration_order() -> None:
 
 def test_create_inputs_typed_key_preserves_integer_population() -> None:
     """The initial-population factory consumes a caller's typed root directly."""
-    _, expected = create_inputs(seed=32, n_simulation_subjects=16, params=START_PARAMS)
+    _, expected = create_inputs(seed=32, n_simulation_agents=16, params=START_PARAMS)
     _, actual = create_inputs(
-        seed=jax.random.key(32), n_simulation_subjects=16, params=START_PARAMS
+        seed=jax.random.key(32), n_simulation_agents=16, params=START_PARAMS
     )
     pd.testing.assert_frame_equal(actual, expected, check_exact=True)

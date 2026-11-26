@@ -1252,15 +1252,15 @@ def test_ev1_lookup_publishes_the_acting_selfs_choice_probabilities() -> None:
 
 def test_ev1_simulated_choices_follow_the_acting_selfs_probabilities() -> None:
     """Simulated spend frequency at wealth one is within four standard errors."""
-    n_subjects = 4_000
+    n_agents = 4_000
     df = (
         _ev1_model()
         .simulate(
             params=_ev1_params(beta_tilde=1.0),
             initial_conditions={
-                "wealth": jnp.full(n_subjects, Wealth.one),
-                "regime_id": jnp.full(n_subjects, RegimeId.decide),
-                "period": jnp.zeros(n_subjects, dtype=jnp.int32),
+                "wealth": jnp.full(n_agents, Wealth.one),
+                "regime_id": jnp.full(n_agents, RegimeId.decide),
+                "period": jnp.zeros(n_agents, dtype=jnp.int32),
             },
             log_level="off",
             seed=11,
@@ -1269,7 +1269,7 @@ def test_ev1_simulated_choices_follow_the_acting_selfs_probabilities() -> None:
     )
     spend = _naive_today_probabilities()[0]
     share = (df.loc[df["period"] == 0, "choice"] == "spend").mean()
-    assert abs(share - spend) < 4 * np.sqrt(spend * (1 - spend) / n_subjects)
+    assert abs(share - spend) < 4 * np.sqrt(spend * (1 - spend) / n_agents)
 
 
 @lcm.categorical(ordered=False)
@@ -1552,7 +1552,7 @@ def test_params_template_is_one_namespace_over_all_three_aggregators() -> None:
 
 
 @lcm.categorical(ordered=False)
-class _ExitRegimeId:
+class _CompositionActionRegimeId:
     couple: ScalarInt
     single_f: ScalarInt
     single_m: ScalarInt
@@ -1611,12 +1611,12 @@ def _no_payment(*, s: ContinuousState) -> FloatND:
     return 0.0 * s
 
 
-def _rule_exit(rule: str) -> lcm.Exit:
-    """Return the exit of `rule`; a formation is declared on `single_f`."""
+def _rule_composition_action(rule: str) -> lcm.CompositionAction:
+    """Return the composition action of `rule`; `single_f` declares a formation."""
     if rule == "formation":
-        return lcm.Exit(
-            targets={
-                "self": lcm.ExitTarget(
+        return lcm.CompositionAction(
+            destinations={
+                "self": lcm.Destination(
                     regime="couple", role="f", projection={"s": _keep_s, "mu": _low_mu}
                 )
             },
@@ -1627,35 +1627,33 @@ def _rule_exit(rule: str) -> lcm.Exit:
             ),
         )
     targets = {
-        member: lcm.ExitTarget(
+        member: lcm.Destination(
             regime=f"single_{member}",
             projection={"s": _keep_s},
-            utility_adjustment=_paid
-            if rule == "settlement" and member == "f"
-            else None,
+            utility_adjustment=_paid if rule == "transfer" and member == "f" else None,
         )
         for member in ("f", "m")
     }
     rules = {
-        "unilateral": lcm.Unilateral(),
-        "renegotiation": lcm.Unilateral(renegotiate=lcm.Renegotiate(state="mu")),
-        "settlement": lcm.MutualConsent(
-            settle=lcm.Settlement(
+        "unilateral": lcm.PCOnActions(),
+        "renegotiation": lcm.PCOnWeight(state="mu"),
+        "transfer": lcm.MutualConsent(
+            transfer=lcm.Transfer(
                 name="t",
                 candidates=lcm.LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
                 default=_no_payment,
             )
         ),
     }
-    return lcm.Exit(rule=rules[rule], targets=targets)
+    return lcm.CompositionAction(rule=rules[rule], destinations=targets)
 
 
-def _exit_model(
+def _composition_action_model(
     *, rule: str, aggregator: UserFunction | lcm.Phased | lcm.Decoupled
 ) -> lcm.Model:
     """Two periods; the regime with the move of `rule` declares `aggregator`.
 
-    `couple` (f, m) exits to `single_f` and `single_m`, except under a
+    `couple` (f, m) composition actions to `single_f` and `single_m`, except under a
     formation, where `single_f` forms `couple` with `single_m`.
     """
     s = lcm.LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
@@ -1669,7 +1667,7 @@ def _exit_model(
             state_transitions={"s": _s_is_c},
             functions={"utility": _single_utility},
             koopmans_aggregator=aggregator if mover else additive,
-            exit=_rule_exit(rule) if mover else None,
+            composition_action=_rule_composition_action(rule) if mover else None,
         )
 
     return lcm.Model(
@@ -1685,7 +1683,7 @@ def _exit_model(
                     )
                 },
                 koopmans_aggregator=additive if forms else aggregator,
-                exit=None if forms else _rule_exit(rule),
+                composition_action=None if forms else _rule_composition_action(rule),
             ),
             "single_f": single(mover=forms),
             "single_m": single(mover=False),
@@ -1700,7 +1698,7 @@ def _exit_model(
             "end_f": lcm.Regime(states={"s": s}, functions={"utility": end_s}),
             "end_m": lcm.Regime(states={"s": s}, functions={"utility": end_s}),
         },
-        regime_id_class=_ExitRegimeId,
+        regime_id_class=_CompositionActionRegimeId,
         initial_nodes=lcm.InitialNodes(
             by_period={0: ("couple", "single_f", "single_m")}
         ),
@@ -1712,15 +1710,17 @@ def _exit_model(
     )
 
 
-_RULES = ("unilateral", "renegotiation", "formation", "settlement")
+_RULES = ("unilateral", "renegotiation", "formation", "transfer")
 
 
 @pytest.mark.parametrize("rule", _RULES)
-def test_a_separate_objective_is_refused_on_a_regime_with_its_own_exit(
+def test_a_separate_objective_is_refused_on_a_regime_with_its_own_composition_action(
     *, rule: str
 ) -> None:
-    """A regime with an exit, a renegotiation, a settlement or a formation of its
-    own declares no separate objective (specification 13.5, [A 20]).
+    """A regime with collective rules of its own declares no separate objective.
+
+    The rules are a composition action, a renegotiation, a transfer or a formation
+    (specification 13.5, [A 20]).
 
     The refusal comes when the model is built and names the regime, the two
     declarations and the way out.
@@ -1730,32 +1730,33 @@ def test_a_separate_objective_is_refused_on_a_regime_with_its_own_exit(
         RegimeInitializationError,
         match=(
             rf"Regime '{mover}' declares a separate objective \(`Decoupled`\) and "
-            r"its own exit or formation\. A separate objective is for regimes "
-            r"without an exit or a formation of their own: drop the separate "
-            r"objective, or let the current self choose differently by declaring "
+            r"its own composition action or formation\. A separate objective is for "
+            r"regimes without a composition action or a formation of their own: drop "
+            r"the separate objective, or let the current self choose differently by "
+            r"declaring "
             r"`koopmans_aggregator=Phased\(solve=\.\.\., simulate=\.\.\.\)`\."
         ),
     ):
-        _exit_model(
+        _composition_action_model(
             rule=rule,
             aggregator=lcm.Decoupled(objective=_half_continuation, value=additive),
         )
 
 
 @pytest.mark.parametrize("rule", _RULES)
-def test_a_current_self_solves_and_simulates_on_a_regime_with_its_own_exit(
+def test_a_current_self_solves_and_simulates_with_a_composition_action(
     *, rule: str
 ) -> None:
     """The current self (specification 13.2) is not limited to regimes without an
-    exit (specification 13.5, [A 20]).
+    composition action (specification 13.5, [A 20]).
 
     Its solve is that of the solve-phase aggregator, and the simulation runs.
     """
-    current_self = _exit_model(
+    current_self = _composition_action_model(
         rule=rule, aggregator=lcm.Phased(solve=additive, simulate=_half_continuation)
     )
     solution = current_self.solve(params={}, log_level="off")
-    plain = _exit_model(rule=rule, aggregator=additive).solve(
+    plain = _composition_action_model(rule=rule, aggregator=additive).solve(
         params={}, log_level="off"
     )
     for regime in ("couple", "single_f", "single_m"):
@@ -1763,7 +1764,11 @@ def test_a_current_self_solves_and_simulates_on_a_regime_with_its_own_exit(
             solution.value(step=0, regime=regime),
             plain.value(step=0, regime=regime),
         )
-    start = _ExitRegimeId.single_f if rule == "formation" else _ExitRegimeId.couple
+    start = (
+        _CompositionActionRegimeId.single_f
+        if rule == "formation"
+        else _CompositionActionRegimeId.couple
+    )
     frame = current_self.simulate(
         params={},
         solution=solution,
@@ -1827,9 +1832,9 @@ def _end_zero_mu(*, s: ContinuousState, mu: DiscreteState) -> FloatND:
 
 # Per read: the rule and the regime that declares the separate objective.
 _READS = {
-    "target of a unilateral exit": ("unilateral", "single_f"),
+    "target of a unilateral composition action": ("unilateral", "single_f"),
     "target of a renegotiation": ("renegotiation", "single_f"),
-    "target of a settlement": ("settlement", "single_m"),
+    "target of a transfer": ("transfer", "single_m"),
     "counterparty of a formation": ("formation", "single_m"),
     "couple a formation forms": ("formation", "couple"),
 }
@@ -1843,8 +1848,8 @@ _COUNTERPARTY_GAIN = {False: 0.4375, True: 0.75}
 def _read_model(*, rule: str, read: str, taste_shocks: bool) -> lcm.Model:
     """`read` declares a separate objective; another regime's move only reads it.
 
-    A couple that exits stays at -10, so both members leave. A formed couple
-    gives f one more than she has alone and m a constant.
+    A couple that composition actions stays at -10, so both members leave. A formed
+    couple gives f one more than she has alone and m a constant.
     """
     s = lcm.LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
     c = lcm.LinSpacedGrid(start=0.0, stop=1.0, n_points=3)
@@ -1865,7 +1870,9 @@ def _read_model(*, rule: str, read: str, taste_shocks: bool) -> lcm.Model:
             states={"s": s},
             state_transitions={"s": _s_is_c},
             functions={"utility": _tied_objective_utility},
-            exit=_rule_exit("formation") if forms and name == "single_f" else None,
+            composition_action=_rule_composition_action("formation")
+            if forms and name == "single_f"
+            else None,
             koopmans_aggregator=aggregator(name),
             taste_shocks=taste(name),
         )
@@ -1893,7 +1900,7 @@ def _read_model(*, rule: str, read: str, taste_shocks: bool) -> lcm.Model:
                         objective=lcm.ParetoObjective(weights={"f": 1.0, "m": 0.0}),
                     )
                 },
-                exit=None if forms else _read_exit(rule),
+                composition_action=None if forms else _read_composition_action(rule),
                 koopmans_aggregator=aggregator("couple"),
                 taste_shocks=taste("couple"),
             ),
@@ -1913,7 +1920,7 @@ def _read_model(*, rule: str, read: str, taste_shocks: bool) -> lcm.Model:
             "end_f": lcm.Regime(states={"s": s}, functions={"utility": end_s}),
             "end_m": lcm.Regime(states={"s": s}, functions={"utility": end_s}),
         },
-        regime_id_class=_ExitRegimeId,
+        regime_id_class=_CompositionActionRegimeId,
         initial_nodes=lcm.InitialNodes(
             by_period={0: ("couple", "single_f", "single_m")}
         ),
@@ -1925,16 +1932,16 @@ def _read_model(*, rule: str, read: str, taste_shocks: bool) -> lcm.Model:
     )
 
 
-def _read_exit(rule: str) -> lcm.Exit:
-    """The couple's exit under `rule`; under a settlement m's payoff is adjusted."""
-    exit_ = _rule_exit(rule)
-    if rule != "settlement":
-        return exit_
-    return lcm.Exit(
-        rule=exit_.rule,
-        targets={
-            "f": lcm.ExitTarget(regime="single_f", projection={"s": _keep_s}),
-            "m": lcm.ExitTarget(
+def _read_composition_action(rule: str) -> lcm.CompositionAction:
+    """The couple's composition action under `rule`; a transfer adjusts m's payoff."""
+    composition_action_ = _rule_composition_action(rule)
+    if rule != "transfer":
+        return composition_action_
+    return lcm.CompositionAction(
+        rule=composition_action_.rule,
+        destinations={
+            "f": lcm.Destination(regime="single_f", projection={"s": _keep_s}),
+            "m": lcm.Destination(
                 regime="single_m", projection={"s": _keep_s}, utility_adjustment=_paid
             ),
         },
@@ -1950,8 +1957,10 @@ def _read_params(*, read: str, taste_shocks: bool) -> UserParams:
 def test_a_read_of_a_separate_objective_takes_the_stored_values_at_its_choice(
     *, read: str, taste_shocks: bool
 ) -> None:
-    """Another regime's exit or formation reads a regime with a separate objective
-    at that regime's own selection (specification 14.4, 13.5 and 14.5).
+    """A read of a regime with a separate objective uses that regime's own selection.
+
+    The read comes from another regime's composition action or formation
+    (specification 14.4, 13.5 and 14.5).
 
     The read value is the read regime's own solution value, bitwise: the stored
     values where its objective chooses, objective ties going to the stored
@@ -2000,7 +2009,11 @@ def test_a_simulated_move_into_a_separate_objective_takes_the_solved_value(
     model = _read_model(rule=rule, read=regime, taste_shocks=False)
     solution = model.solve(params={}, log_level="off")
     forms = rule == "formation"
-    start = _ExitRegimeId.single_f if forms else _ExitRegimeId.couple
+    start = (
+        _CompositionActionRegimeId.single_f
+        if forms
+        else _CompositionActionRegimeId.couple
+    )
     frame = model.simulate(
         params={},
         solution=solution,
@@ -2016,16 +2029,16 @@ def test_a_simulated_move_into_a_separate_objective_takes_the_solved_value(
         log_level="off",
         seed=0,
     ).to_dataframe(use_categorical_codes=True)
-    first = frame.loc[frame["period"] == 0].set_index("subject_id")
+    first = frame.loc[frame["period"] == 0].set_index("agent_id")
     if forms:
         solved = np.asarray(solution.value(step=0, regime="single_f"))[0]
         assert first.loc[0, "regime_name"] == "couple"
         assert first.loc[0, "value_f"] == solved
         return
     solved = np.asarray(solution.value(step=0, regime="couple"))[0, 0]
-    for subject, member in enumerate(("f", "m")):
-        assert first.loc[subject, "regime_name"] == f"single_{member}"
-        assert first.loc[subject, "value"] == solved[subject]
+    for agent, member in enumerate(("f", "m")):
+        assert first.loc[agent, "regime_name"] == f"single_{member}"
+        assert first.loc[agent, "value"] == solved[agent]
 
 
 def _bounded_decoupled_model(*, taste_shocks: bool, invalid_income: float) -> lcm.Model:

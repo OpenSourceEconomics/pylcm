@@ -41,7 +41,7 @@ type TraceObservation = tuple[int, str, str, str | None, bool]
 
 
 class _PanelRow(TypedDict):
-    subject_id: int
+    agent_id: int
     period: int
     regime_name: RegimeName
     wealth: float
@@ -93,7 +93,7 @@ def _model() -> Model:
 
 
 def _initial_wealths(*, population: int, reverse: bool) -> list[float]:
-    wealths = [float(1 + subject % 3) for subject in range(population)]
+    wealths = [float(1 + agent % 3) for agent in range(population)]
     return wealths[::-1] if reverse else wealths
 
 
@@ -149,12 +149,12 @@ def _reference_rows(wealths: Sequence[float]) -> list[_PanelRow]:
     initial wealth in [1, 3]; next wealth then stays on the model's grid.
     """
     rows: list[_PanelRow] = []
-    for subject, value in enumerate(wealths):
+    for agent, value in enumerate(wealths):
         wealth = Fraction(value)
         utility, saving = max((wealth + action + 1, action) for action in (1, 2))
         rows.append(
             {
-                "subject_id": subject,
+                "agent_id": agent,
                 "period": 0,
                 "regime_name": "alive",
                 "wealth": float(wealth),
@@ -164,7 +164,7 @@ def _reference_rows(wealths: Sequence[float]) -> list[_PanelRow]:
         )
         rows.append(
             {
-                "subject_id": subject,
+                "agent_id": agent,
                 "period": 1,
                 "regime_name": "done",
                 "wealth": float(wealth + saving),
@@ -205,11 +205,11 @@ def test_parallel_planning_under_scoped_promotion_simulates_the_serial_panel(
 def test_parallel_planning_under_scoped_promotion_matches_the_exact_reference(
     *, workers: int, population: int, seed: int, reverse: bool
 ) -> None:
-    """Every simulated row equals the exact-arithmetic optimum of its subject."""
+    """Every simulated row equals the exact-arithmetic optimum of its agent."""
     (panel,) = _simulate_under_scoped_standard_promotion(
         workers=workers, population=population, seed=seed, reverse=reverse, repeats=1
     )
-    actual = panel.sort_values(["subject_id", "period"]).to_dict("records")
+    actual = panel.sort_values(["agent_id", "period"]).to_dict("records")
     expected = _reference_rows(_initial_wealths(population=population, reverse=reverse))
     mismatches = [
         (row, target)
@@ -359,7 +359,7 @@ class _LoweringRefusedError(Exception):
 def _refuse_forward_lowerings() -> Callable[..., jax.stages.Lowered]:
     """Return a `Traced.lower` that fails for every forward simulation program.
 
-    Forward programs are traced as the planner's subject-tiled body; host
+    Forward programs are traced as the planner's agent-tiled body; host
     operations keep their own function names and lower normally.
     """
     lower_body = jax.stages.Traced.lower
@@ -367,7 +367,7 @@ def _refuse_forward_lowerings() -> Callable[..., jax.stages.Lowered]:
     def lower_or_fail(
         self: jax.stages.Traced, *args: Never, **kwargs: Unpack[LowerOptions]
     ) -> jax.stages.Lowered:
-        if self.fun_name == "subject_tiled":
+        if self.fun_name == "agent_tiled":
             raise _LoweringRefusedError("the forward program refused to lower")
         return lower_body(self, *args, **kwargs)
 
@@ -384,17 +384,17 @@ def test_a_lowering_error_is_raised_on_the_caller_naming_the_program(
     solution = model.solve(params=_PARAMS, log_level="off", max_compilation_workers=1)
     monkeypatch.setattr(jax.stages.Traced, "lower", _refuse_forward_lowerings())
     with pytest.raises(_LoweringRefusedError) as raised:
-        _simulate_two_subjects(model=model, solution=solution, workers=workers)
+        _simulate_two_agents(model=model, solution=solution, workers=workers)
     notes = _program_notes(raised.value)
     assert list(map(_without_widths, notes)) == [
         "while lowering alive decision (period 0)"
     ]
 
 
-def _simulate_two_subjects(
+def _simulate_two_agents(
     *, model: Model, solution: SolutionResult, workers: int
 ) -> None:
-    """Simulate two alive subjects with `workers` compile threads."""
+    """Simulate two alive agents with `workers` compile threads."""
     model.simulate(
         params=_PARAMS,
         initial_conditions={
@@ -421,7 +421,7 @@ def test_a_compile_error_is_raised_on_the_caller_naming_the_program(
         jax.stages.Lowered, "compile", _raise_on_pool_threads(threading.get_ident())
     )
     with pytest.raises(_CompileFailedError) as raised:
-        _simulate_two_subjects(model=model, solution=solution, workers=workers)
+        _simulate_two_agents(model=model, solution=solution, workers=workers)
     notes = _program_notes(raised.value)
     assert [
         re.fullmatch(rf"while compiling {_PROGRAM}", _without_widths(note)) is not None

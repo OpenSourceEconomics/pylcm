@@ -356,7 +356,7 @@ def _period0_consumption(
         seed=528,
         log_level="off",
     ).to_dataframe(use_categorical_codes=True)
-    period0 = simulated.query("period == 0").sort_values("subject_id")
+    period0 = simulated.query("period == 0").sort_values("agent_id")
     return period0["consumption"].to_numpy()
 
 

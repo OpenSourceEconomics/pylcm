@@ -43,7 +43,7 @@ from _lcm.simulation import chunk_admission
 from _lcm.simulation.chunk_planning import SimulationChunkProfile
 from _lcm.simulation.operand_placement import _OperandValue
 from _lcm.simulation.residency import DeviceBufferFootprint
-from _lcm.simulation.simulate import SubjectChunkKwargs, SubjectChunkResults
+from _lcm.simulation.simulate import AgentChunkKwargs, AgentChunkResults
 from _lcm.typing import ArgumentTree, PytreeValue, ShapeDtypePytree
 from _lcm.variables import from_regime
 from lcm import (
@@ -117,7 +117,7 @@ class _DispatchArguments(TypedDict, closed=True):
     program: CoreProgram
     arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]
     period: int
-    n_subjects: int
+    n_agents: int
     residency: NotRequired[simulation_runtime.SimulationDispatchContext | None]
 
 
@@ -125,18 +125,18 @@ class _PrepareArguments(TypedDict, closed=True):
     program: CoreProgram
     arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]
     period: int
-    n_subjects: int
+    n_agents: int
     widths: Mapping[str, int]
 
 
 class _ProfileArguments(TypedDict, closed=True):
-    n_subjects: int
+    n_agents: int
     widths: Mapping[str, int]
 
 
 class _PlacementArguments(TypedDict, closed=True):
     arguments: Mapping[str, _OperandValue]
-    subject_arg_names: tuple[ReferenceName, ...]
+    agent_arg_names: tuple[ReferenceName, ...]
     value_reads: tuple[ValueRead, ...]
     devices: tuple[jax.Device, ...]
     budget_bytes: NotRequired[int | None]
@@ -383,13 +383,13 @@ def _model(
             axis_widths={
                 "action_product": widths[0],
                 "cell": widths[1],
-                "subject": 432,
+                "agent": 432,
             },
             device_memory_bytes=budget,
             invariant_block_widths=invariant_block_widths or {},
             invariant_block_schedule=schedule,
         ),
-        # The tests start subjects in both living regimes at both living ages.
+        # The tests start agents in both living regimes at both living ages.
         initial_nodes={(0, 1): ("r0", "r1")},
         edges=_EDGES,
     )
@@ -745,7 +745,7 @@ def _record_profiled_executables(
     )
 
 
-def _observe_subject_programs(*, monkeypatch: pytest.MonkeyPatch) -> list[int]:
+def _observe_agent_programs(*, monkeypatch: pytest.MonkeyPatch) -> list[int]:
     """Observe required input shards and the exact inferred output layouts."""
     runtime_class = simulation_runtime.SimulationRuntime
     place = simulation_runtime.place_simulation_arguments
@@ -760,7 +760,7 @@ def _observe_subject_programs(*, monkeypatch: pytest.MonkeyPatch) -> list[int]:
         **call: Unpack[_PlacementArguments],
     ) -> MappingProxyType[str, _OperandValue]:
         placed = place(**call)
-        for name in call["subject_arg_names"]:
+        for name in call["agent_arg_names"]:
             for value in jax.tree.leaves(placed.get(name, ())):
                 if not isinstance(value, jax.Array) or not value.ndim:
                     continue
@@ -824,15 +824,15 @@ def _assert_seventeen_rows(
     reference_solution: SolutionResult,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Inspect actual 24-row subject shards, then compare the 17 returned rows."""
+    """Inspect actual 24-row agent shards, then compare the 17 returned rows."""
 
-    run_chunk = simulation._simulate_subject_chunk
+    run_chunk = simulation._simulate_agent_chunk
     padded_calls = []
 
-    def observe_chunk(**call: Unpack[SubjectChunkKwargs]) -> SubjectChunkResults:
+    def observe_chunk(**call: Unpack[AgentChunkKwargs]) -> AgentChunkResults:
         result = run_chunk(**call)
-        assert call["original_n_subjects"] == 17
-        assert call["n_subjects"] == 24
+        assert call["original_n_agents"] == 17
+        assert call["n_agents"] == 24
         assert result["r0"][0].V_arr.shape[0] == 24
         padded_calls.append(24)
         return result
@@ -847,8 +847,8 @@ def _assert_seventeen_rows(
     params = {"discount_factor": 0.5}
     for seed in (0, 42):
         with monkeypatch.context() as probe:
-            probe.setattr(simulation, "_simulate_subject_chunk", observe_chunk)
-            placed_counts = _observe_subject_programs(monkeypatch=probe)
+            probe.setattr(simulation, "_simulate_agent_chunk", observe_chunk)
+            placed_counts = _observe_agent_programs(monkeypatch=probe)
             result = model.simulate(
                 params=params,
                 solution=solution,
@@ -864,7 +864,7 @@ def _assert_seventeen_rows(
             seed=seed,
             log_level="off",
         )
-        assert result.n_subjects == control.n_subjects == 17
+        assert result.n_agents == control.n_agents == 17
         assert jax.tree.structure(result.raw_results) == jax.tree.structure(
             control.raw_results
         )
@@ -1121,7 +1121,7 @@ def _renamed_public_model(*, original: Model) -> Model:
         execution_config=ExecutionConfig(
             devices=tuple(reversed(range(8))),
             sharded_states=("liquid",),
-            axis_widths={"action_product": 3, "cell": 9, "subject": 432},
+            axis_widths={"action_product": 3, "cell": 9, "agent": 432},
             device_memory_bytes=2**30,
         ),
         initial_nodes=initial_nodes_of(model=original),
@@ -1200,7 +1200,7 @@ def test_public_state_rename_and_reversed_device_selection_preserve_solve_and_rn
             seed=seed,
             log_level="off",
         )
-        assert result.n_subjects == renamed_result.n_subjects == 17
+        assert result.n_agents == renamed_result.n_agents == 17
         assert isinstance(result.raw_results, MappingProxyType)
         assert isinstance(renamed_result.raw_results, MappingProxyType)
         assert tuple(renamed_result.raw_results) == tuple(result.raw_results)
@@ -1503,7 +1503,7 @@ def test_type_grouped_simulation_over_assets_shards_equals_the_unblocked_panel(
 ) -> None:
     """Sharded blocked/grouped simulation keeps exact structure and eight-ULP values.
 
-    The groups are unbalanced, one is empty in period 1, and the subject axis
+    The groups are unbalanced, one is empty in period 1, and the agent axis
     divides no group evenly by the device count.
     """
     _require_eight()
@@ -1543,8 +1543,8 @@ def test_type_grouped_simulation_over_assets_shards_equals_the_unblocked_panel(
 
     assert got.plan_summary is not None
     assert want.plan_summary is not None
-    assert got.plan_summary.subject_grouping == "pref_type"
-    assert want.plan_summary.subject_grouping is None
+    assert got.plan_summary.agent_grouping == "pref_type"
+    assert want.plan_summary.agent_grouping is None
     grouped_simulation._assert_general_panels_agree(got=got, want=want)
 
 

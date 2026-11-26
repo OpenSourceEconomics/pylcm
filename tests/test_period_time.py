@@ -534,7 +534,7 @@ def test_period_component_job_roundtrip(tmp_path: Path) -> None:
         execution_config=lcm.ExecutionConfig(
             invariant_block_widths={"pref_type": 1},
             invariant_block_schedule=lcm.InvariantBlockSchedule.BLOCK_MAJOR,
-            axis_widths={"subject": 1},
+            axis_widths={"agent": 1},
         ),
     )
     initial = {
@@ -1049,31 +1049,31 @@ def test_valid_clock_support_preserves_solve_and_simulation(
         actual_value, expected_value, decimal=DECIMAL_PRECISION
     )
 
-    n_subjects = 3
+    n_agents = 3
     initial_time = (
-        jnp.full(n_subjects, source_period, dtype=jnp.int32)
+        jnp.full(n_agents, source_period, dtype=jnp.int32)
         if clock == "period"
-        else jnp.full(n_subjects, coordinate)
+        else jnp.full(n_agents, coordinate)
     )
     simulation = model.simulate(
         params={},
         initial_conditions={
             clock: initial_time,
-            "regime_id": jnp.full(n_subjects, RegimeId.work, dtype=jnp.int32),
+            "regime_id": jnp.full(n_agents, RegimeId.work, dtype=jnp.int32),
         },
         solution=solution,
         seed=123,
         log_level=log_level,
     )
     frame = simulation.to_dataframe(use_categorical_codes=True)
-    assert len(frame) == 2 * n_subjects
+    assert len(frame) == 2 * n_agents
     np.testing.assert_array_equal(
         np.sort(frame["period"].to_numpy()),
-        np.repeat([source_period, source_period + 1], n_subjects),
+        np.repeat([source_period, source_period + 1], n_agents),
     )
     assert ("age" in frame.columns) == (clock == "age")
     terminal = frame.loc[frame["period"] == source_period + 1]
-    assert len(terminal) == n_subjects
+    assert len(terminal) == n_agents
     offset = 4.0 if phased else 0.0
     expected_nodes = np.asarray(
         [10.0 + coordinate + offset, 20.0 + coordinate + offset]
@@ -1319,11 +1319,11 @@ def _wage(*, steps: bool) -> lcm.TimeVarying:
 
 
 def _staged_frame(*, model: lcm.Model, clock: str) -> pd.DataFrame:
-    n_subjects = 4
+    n_agents = 4
     initial_time = (
-        {"age": jnp.full(n_subjects, 60)}
+        {"age": jnp.full(n_agents, 60)}
         if clock == "age"
-        else {"period": jnp.zeros(n_subjects, dtype=jnp.int32)}
+        else {"period": jnp.zeros(n_agents, dtype=jnp.int32)}
     )
     params = (
         {"wage": _wage(steps=clock == "hand")}
@@ -1338,7 +1338,7 @@ def _staged_frame(*, model: lcm.Model, clock: str) -> pd.DataFrame:
         params=params,
         initial_conditions={
             **initial_time,
-            "regime_id": jnp.full(n_subjects, StagedId.working, dtype=jnp.int32),
+            "regime_id": jnp.full(n_agents, StagedId.working, dtype=jnp.int32),
             "wealth": jnp.array([1.0, 2.5, 4.0, 6.0]),
         },
         seed=7,
@@ -1364,7 +1364,7 @@ def test_stages_solve_and_simulate_as_their_hand_encoding(declared: str) -> None
     """Two decisions per period equal one period per decision, linked undiscounted.
 
     `period` reads the economic period in user functions and in the frame, a
-    time-varying parameter is indexed by economic period, and subjects start in
+    time-varying parameter is indexed by economic period, and agents start in
     the first stage. A law of the first stage moves on in the last period.
     """
     staged = _staged_model(
@@ -1390,7 +1390,7 @@ def test_stages_solve_and_simulate_as_their_hand_encoding(declared: str) -> None
         "work" if step % 2 == 0 else "spend" for step in hand_frame["period"]
     ]
     assert "stage" not in hand_frame.columns
-    for column in ("subject_id", "regime_name", "value", "wealth", "labor"):
+    for column in ("agent_id", "regime_name", "value", "wealth", "labor"):
         pd.testing.assert_series_equal(staged_frame[column], hand_frame[column])
 
 
@@ -1458,17 +1458,19 @@ def _out_of_stage_order(case: str) -> _StagedChange:
             koopmans_aggregator=lcm.LinearAggregator()
         )
     source, destination = (
-        ("spending", "working") if case == "exit" else ("working", "spending")
+        ("spending", "working")
+        if case == "composition_action"
+        else ("working", "spending")
     )
-    if case in {"exit", "observes"}:
+    if case in {"composition_action", "observes"}:
         regimes[source] = regimes[source].replace(
-            exit=lcm.Exit(
-                targets={
-                    "self": lcm.ExitTarget(
+            composition_action=lcm.CompositionAction(
+                destinations={
+                    "self": lcm.Destination(
                         regime=destination, projection={"wealth": _wealth_kept}
                     )
                 },
-                rule=lcm.Unilateral(),
+                rule=lcm.PCOnActions(),
                 observes=("eps",) if case == "observes" else (),
             )
         )
@@ -1501,7 +1503,7 @@ def _out_of_stage_order(case: str) -> _StagedChange:
         "repeated": {
             "stages": {"work": ("working", "final"), "spend": ("spending", "final")}
         },
-        "exit": {"regimes": regimes},
+        "composition_action": {"regimes": regimes},
         "observes": {
             "regimes": regimes,
             "shocks": {
@@ -1592,7 +1594,13 @@ def _out_of_stage_order(case: str) -> _StagedChange:
     [
         ("missing", r"in none: \['final'\]"),
         ("repeated", r"in several stages: \['final'\]"),
-        ("exit", r"exit of 'spending' in stage 'spend' reads 'working' of the earlier"),
+        (
+            "composition_action",
+            (
+                r"composition action of 'spending' in stage 'spend' reads 'working' "
+                r"of the earlier"
+            ),
+        ),
         ("observes", r"observes \['eps'\] of 'spending', drawn in its later stage"),
         ("aggregator", r"'working' declares a Koopmans aggregator in stage 'work'"),
         ("egm", r"'working' uses an endogenous-grid solver in stage 'work'"),
@@ -2058,14 +2066,14 @@ def _marriage(*, hand: bool, variant: str = "plain") -> lcm.Model:
                     utilities={"f": _match_quality, "m": _match_quality}
                 )
             },
-            exit=lcm.Exit(
-                targets={
-                    member: lcm.ExitTarget(
+            composition_action=lcm.CompositionAction(
+                destinations={
+                    member: lcm.Destination(
                         regime=single, projection={"wealth": _half_of_wealth}
                     )
                     for member in ("f", "m")
                 },
-                rule=lcm.Unilateral(),
+                rule=lcm.PCOnActions(),
             ),
         ),
         "couple": lcm.Regime(
@@ -2191,11 +2199,11 @@ def _marriage_frame(*, model: lcm.Model, hand: bool) -> pd.DataFrame:
 def test_an_edge_lands_at_the_next_occurrence_of_its_target() -> None:
     """A single who spends once per period equals one who waits out the parting.
 
-    The single's edge to itself skips the parting stage, the couple's exit enters
-    the single in a later stage, and singles start in their own stage; written
+    The single's edge to itself skips the parting stage, the couple's composition action
+    enters the single in a later stage, and singles start in their own stage; written
     with a hand-made waiting regime, the values and the simulated rows agree. The
-    waiting regime interpolates the single's value once more on the way, so the
-    two agree to within a few units in the last place.
+    waiting regime interpolates the single's value once more on the way, so the two
+    agree to within a few units in the last place.
     """
     params = {"couple_sep": {"love": 0.2}}
     staged = _marriage(hand=False)
@@ -2237,7 +2245,7 @@ def test_an_edge_lands_at_the_next_occurrence_of_its_target() -> None:
         )
 
 
-def test_an_exit_reads_the_destination_at_its_occurrence_later_in_the_period() -> None:
+def test_leaving_reads_the_destination_at_its_occurrence_later_in_the_period() -> None:
     """Without love every couple parts: its value is the single's value that period.
 
     A partner leaves for half the couple's wealth, a node of the single's grid, and
@@ -2498,7 +2506,7 @@ def test_a_crossing_edge_discounts_once_whatever_it_skips(
     )
 
 
-def test_an_exit_to_a_later_stage_gets_the_value_of_staying_or_leaving() -> None:
+def test_leaving_to_a_later_stage_gets_the_value_of_staying_or_leaving() -> None:
     """A couple parts where a partner prefers the single's value of that period.
 
     Oracle: a hand calculation per wealth node. Leaving gives each partner the
@@ -2530,7 +2538,7 @@ def test_an_exit_to_a_later_stage_gets_the_value_of_staying_or_leaving() -> None
         )
 
 
-def test_a_subject_has_no_row_in_a_stage_its_regime_sits_out() -> None:
+def test_an_agent_has_no_row_in_a_stage_its_regime_sits_out() -> None:
     """A saver in the second stage is simulated as the saver without stages.
 
     Its rows are those of its own stage, and its wealth and regime change only
@@ -2554,7 +2562,7 @@ def test_a_subject_has_no_row_in_a_stage_its_regime_sits_out() -> None:
         ).to_dataframe()
     assert set(frames[True]["stage"]) == {"spend"}
     assert set(frames[False]["regime_name"]) == {"single", "single_final"}
-    for column in ("subject_id", "period", "regime_name", "share"):
+    for column in ("agent_id", "period", "regime_name", "share"):
         np.testing.assert_array_equal(
             np.asarray(frames[True][column]), np.asarray(frames[False][column])
         )
@@ -2651,9 +2659,11 @@ def _formation() -> lcm.Model:
             "single": lcm.Regime(
                 actions={"labor": lcm.DiscreteGrid(Labor)},
                 functions={"utility": _forming_utility},
-                exit=lcm.Exit(
-                    targets={
-                        "self": lcm.ExitTarget(regime="couple", role="f", projection={})
+                composition_action=lcm.CompositionAction(
+                    destinations={
+                        "self": lcm.Destination(
+                            regime="couple", role="f", projection={}
+                        )
                     },
                     rule=lcm.Consent(
                         counterparty=lcm.Counterparty(
@@ -2864,7 +2874,7 @@ def _paid(*, share: FloatND) -> FloatND:
 
 
 def _settling_couple() -> lcm.Model:
-    """A couple that may separate at a settlement in the first stage of a period."""
+    """A couple that may separate at a transfer in the first stage of a period."""
     household = lcm.CollectiveUtility(
         utilities={"a": _couple_utility, "b": _couple_utility}
     )
@@ -2877,9 +2887,9 @@ def _settling_couple() -> lcm.Model:
         regimes={
             "couple": lcm.Regime(
                 functions={"utility": household},
-                exit=lcm.Exit(
+                composition_action=lcm.CompositionAction(
                     rule=lcm.MutualConsent(
-                        settle=lcm.Settlement(
+                        transfer=lcm.Transfer(
                             name="share",
                             candidates=lcm.LinSpacedGrid(
                                 start=0.0, stop=1.0, n_points=5
@@ -2887,8 +2897,8 @@ def _settling_couple() -> lcm.Model:
                             default=_half_reading_period,
                         )
                     ),
-                    targets={
-                        member: lcm.ExitTarget(
+                    destinations={
+                        member: lcm.Destination(
                             regime=f"single_{member}",
                             projection={},
                             utility_adjustment=_paid,
@@ -2941,16 +2951,16 @@ def _period_reader(kind: str) -> tuple[lcm.Model, UserParams, RegimeName, set[in
             }
         },
         "aggregator": {"koopmans_aggregator": _aggregator_reading_period},
-        "exit": {
-            "exit": lcm.Exit(
-                targets={
-                    "self": lcm.ExitTarget(
+        "composition_action": {
+            "composition_action": lcm.CompositionAction(
+                destinations={
+                    "self": lcm.Destination(
                         regime="final",
                         projection={"wealth": _wealth_kept_reading_period},
                         utility_adjustment=_no_adjustment_reading_period,
                     )
                 },
-                rule=lcm.Unilateral(),
+                rule=lcm.PCOnActions(),
                 available=_available_reading_period,
             )
         },
@@ -3019,7 +3029,7 @@ def _period_reader(kind: str) -> tuple[lcm.Model, UserParams, RegimeName, set[in
         return model, params, "working", {1, 2}
     if kind == "pareto_weight":
         return _game(mover_weight=_certain_reading_period), {}, "a_moves", {0, 1, 2}
-    if kind == "settlement":
+    if kind == "transfer":
         return _settling_couple(), {}, "couple", {0, 1}
     # A composite state's generated constraint reads the period.
     model = _staged_model(
@@ -3043,10 +3053,10 @@ def _period_reader(kind: str) -> tuple[lcm.Model, UserParams, RegimeName, set[in
         "aggregator",
         "regime_law",
         "gate",
-        "exit",
+        "composition_action",
         "shock_law",
         "pareto_weight",
-        "settlement",
+        "transfer",
         "composite_state",
     ],
 )

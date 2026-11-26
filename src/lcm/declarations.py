@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast
 
+from _lcm.composition_actions import CompositionActionFunctionDemand
 from _lcm.constraints.processed import ProcessedConstraint, normalize_constraints
-from _lcm.exits import ExitFunctionDemand
 from _lcm.model_graph import ModelGraph
 from _lcm.regime_building.age_normalization import (
     PeriodizedEconFunction,
@@ -62,18 +62,18 @@ class ModelDeclarations:
 
     Phase-invariant actions and ownership declarations remain in
     `regimes_by_step`. Phase slices carry functions, constraints, grid states,
-    state and joint laws, continuation aggregators, and same-period exits.
+    state and joint laws, continuation aggregators, and same-period composition actions.
     """
     functions: tuple[FunctionDeclaration, ...]
     """Unique callable identities and the input signatures construction accepts."""
     original_steps_by_regime: Mapping[RegimeName, tuple[int, ...]]
-    """Steps of the physical entry cohorts before same-period exits."""
+    """Steps of the physical entry cohorts before same-period composition actions."""
     value_steps_by_regime: Mapping[RegimeName, tuple[int, ...]] | None
     """Steps with stored full values, or `None` when not separately recorded."""
     query_steps_by_phase: Mapping[str, Mapping[RegimeName, tuple[int, ...]]]
-    """Query-only decisions keyed by `solution` and `simulation`, including exits."""
-    exit_function_demand: ExitFunctionDemand | None
-    """Declared callback paths demanded by same-period exits."""
+    """Query-only decisions keyed by `solution` and `simulation`, with compositions."""
+    composition_action_function_demand: CompositionActionFunctionDemand | None
+    """Declared callback paths demanded by same-period composition actions."""
     schema_version: int = 1
     """Version of this declaration-view contract."""
 
@@ -149,7 +149,7 @@ def _get_model_declarations(
         original_steps_by_regime=structure.original_periods_by_regime,
         value_steps_by_regime=structure.value_periods_by_regime,
         query_steps_by_phase=structure.query_periods_by_phase,
-        exit_function_demand=structure.exit_function_demand,
+        composition_action_function_demand=structure.composition_action_function_demand,
     )
 
 

@@ -310,7 +310,7 @@ def test_budgeted_preflight_admits_each_check_and_traces_the_law_once(
     memory = SimulationMemory(
         budget_bytes=2**20,
         devices=devices,
-        subject_devices=devices,
+        agent_devices=devices,
         operations=ProfiledSimulationOperations(),
         inputs=measure_buffer_footprint(
             tree=(

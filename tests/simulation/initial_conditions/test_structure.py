@@ -155,8 +155,8 @@ def test_missing_age_error_message(*, model: Model, flat_params: FlatParams) -> 
         )
 
 
-def test_subject_in_a_regime_not_solved_at_its_starting_age() -> None:
-    """A subject cannot start in `alive` at the last age; only `dead` is solved."""
+def test_agent_in_a_regime_not_solved_at_its_starting_age() -> None:
+    """An agent cannot start in `alive` at the last age; only `dead` is solved."""
     model = make_asymmetric_state_model()
     flat_params = process_params(
         params={"discount_factor": 0.95}, params_template=model._params_template
@@ -179,8 +179,8 @@ def test_subject_in_a_regime_not_solved_at_its_starting_age() -> None:
         )
 
 
-def test_all_subjects_in_regime_with_fewer_states() -> None:
-    """Both subjects start in dead, which only needs wealth — health is not required."""
+def test_all_agents_in_regime_with_fewer_states() -> None:
+    """Both agents start in dead, which only needs wealth — health is not required."""
     model = make_asymmetric_state_model()
     flat_params = process_params(
         params={"discount_factor": 0.95}, params_template=model._params_template
@@ -202,7 +202,7 @@ def test_all_subjects_in_regime_with_fewer_states() -> None:
 
 
 def test_mixed_regimes_all_union_states_provided() -> None:
-    """One subject in alive (needs wealth + health), one in dead (needs wealth).
+    """One agent in alive (needs wealth + health), one in dead (needs wealth).
 
     Passing the full union of states (wealth + health + age) satisfies validation.
     """

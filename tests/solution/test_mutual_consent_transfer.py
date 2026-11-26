@@ -1,4 +1,4 @@
-"""Exit rules compared at the household optimum, and a settlement before separation.
+"""Composition action rules at the joint optimum, and a transfer before separation.
 
 Every model has one period, so a stay value is the flow utility of the household's
 choice and an outside value is the destination's flow utility plus the adjustment.
@@ -17,16 +17,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from _lcm import exit_queries, policy_queries
+from _lcm import composition_queries, policy_queries
 from _lcm.solution.fingerprint import _semantic_fingerprint
 from lcm import (
     CollectiveUtility,
+    CompositionAction,
     Consent,
     Counterparty,
+    Destination,
     DiscreteGrid,
     ExecutionConfig,
-    Exit,
-    ExitTarget,
     ExtremeValueTasteShocks,
     InitialNodes,
     IrregSpacedGrid,
@@ -34,14 +34,14 @@ from lcm import (
     Model,
     MutualConsent,
     ParetoObjective,
+    PCOnActions,
+    PCOnWeight,
     Regime,
-    Renegotiate,
-    Settlement,
-    Unilateral,
+    Transfer,
     categorical,
 )
+from lcm.composition_actions import CompositionRule
 from lcm.exceptions import ExecutionPlanningError, RegimeInitializationError
-from lcm.exits import ExitRule
 from lcm.typing import BoolND, FloatND, IntND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION, assert_agrees_to_ulp
 
@@ -53,7 +53,7 @@ class _Household:
     single_m: ScalarInt
 
 
-# Each member's outside value, `(f, m)`, wherever the exit is available.
+# Each member's outside value, `(f, m)`, wherever the composition action is available.
 _OUTSIDE = (1.0, 2.0)
 
 # Stay values `(f, m)` per cell and action. Equal Pareto weights pick the action
@@ -64,12 +64,12 @@ _STAY = (
     ((0.0, 1.0), (4.0, -5.0)),  # 2: both refuse; action 1 keeps f
     ((1.0, 5.0), (2.0, 3.0)),  # 3: f is indifferent at the optimum
     ((1.0, 2.0), (0.0, 2.5)),  # 4: both indifferent; action 1 strictly keeps m
-    ((6.0, 1.0), (2.0, 3.0)),  # 5: as 1, but the exit is not available
+    ((6.0, 1.0), (2.0, 3.0)),  # 5: as 1, but the composition action is not available
     ((6.0, 1.0), (2.0, 3.0)),  # 6: no action is feasible
 )
 _UNAVAILABLE = 5
 _INFEASIBLE = 6
-# Simulation starts no subject where no action is feasible, so it covers the cells
+# Simulation starts no agent where no action is feasible, so it covers the cells
 # before the last.
 _SIMULATED = _INFEASIBLE
 
@@ -124,7 +124,7 @@ def _available(*, case: IntND) -> BoolND:
     return case != _UNAVAILABLE
 
 
-def _comparison_model(*, rule: ExitRule) -> Model:
+def _comparison_model(*, rule: CompositionRule) -> Model:
     return Model(
         regimes={
             "couple": Regime(
@@ -139,10 +139,10 @@ def _comparison_model(*, rule: ExitRule) -> Model:
                         }
                     )
                 },
-                exit=Exit(
+                composition_action=CompositionAction(
                     rule=rule,
-                    targets={
-                        member: ExitTarget(regime=f"single_{member}", projection={})
+                    destinations={
+                        member: Destination(regime=f"single_{member}", projection={})
                         for member in ("f", "m")
                     },
                     available=_available,
@@ -164,7 +164,7 @@ def _comparison_model(*, rule: ExitRule) -> Model:
 
 
 def _simulate_every_cell(*, model: Model, n_cells: int) -> pd.DataFrame:
-    """Simulate one subject per cell and member, ordered by cell, then f before m."""
+    """Simulate one agent per cell and member, ordered by cell, then f before m."""
     solution = model.solve(params={}, log_level="off")
     roles = [model.member_names_to_ids[member] for member in ("f", "m")]
     return (
@@ -183,13 +183,13 @@ def _simulate_every_cell(*, model: Model, n_cells: int) -> pd.DataFrame:
             log_level="off",
         )
         .to_dataframe(use_categorical_codes=True)
-        .sort_values("subject_id")
+        .sort_values("agent_id")
         .reset_index(drop=True)
     )
 
 
 def _own_values(frame: pd.DataFrame) -> np.ndarray:
-    """Each subject's reported value: its member's couple value, or its single value."""
+    """Each agent's reported value: its member's couple value, or its single value."""
     own = np.where(frame.index % 2 == 0, frame["value_f"], frame["value_m"])
     return np.where(frame["regime_name"] == "couple", own, frame["value"])
 
@@ -201,21 +201,12 @@ def test_comparison_point_decides_the_published_values(
     *, compares: Literal["each_action", "optimum"], tie: Literal["stay", "leave"]
 ) -> None:
     """Each cell publishes the hand-derived stay or outside values of its rule."""
-    model = _comparison_model(rule=Unilateral(tie=tie, compares=compares))
+    rule = PCOnActions if compares == "each_action" else PCOnWeight
+    model = _comparison_model(rule=rule(tie=tie))
     solution = model.solve(params={}, log_level="off")
     np.testing.assert_array_almost_equal(
         solution.values[0]["couple"],
         np.asarray(_EXPECTED[compares, tie], dtype=float),
-        decimal=DECIMAL_PRECISION,
-    )
-
-
-def test_compares_none_without_adjustment_is_each_action() -> None:
-    """An undeclared comparison point keeps the per-action rule."""
-    model = _comparison_model(rule=Unilateral())
-    np.testing.assert_array_almost_equal(
-        model.solve(params={}, log_level="off").values[0]["couple"],
-        np.asarray(_EXPECTED["each_action", "stay"], dtype=float),
         decimal=DECIMAL_PRECISION,
     )
 
@@ -225,8 +216,8 @@ def test_compares_none_without_adjustment_is_each_action() -> None:
 def test_optimum_comparison_routes_simulated_members_as_the_solve_prices_them(
     *, tie: Literal["stay", "leave"]
 ) -> None:
-    """Separating cells land in the singles; every subject reports the solve's value."""
-    model = _comparison_model(rule=Unilateral(tie=tie, compares="optimum"))
+    """Separating cells land in the singles; every agent reports the solve's value."""
+    model = _comparison_model(rule=PCOnWeight(tie=tie))
     frame = _simulate_every_cell(model=model, n_cells=_SIMULATED)
     separates = np.repeat(np.asarray(_SEPARATES[tie][:_SIMULATED]), 2)
     expected_regimes = np.where(
@@ -242,47 +233,15 @@ def test_optimum_comparison_routes_simulated_members_as_the_solve_prices_them(
 
 def test_optimum_comparison_stays_at_the_optimal_action() -> None:
     """A pair that stays acts at the household optimum, never at a passing action."""
-    model = _comparison_model(rule=Unilateral(compares="optimum"))
+    model = _comparison_model(rule=PCOnWeight())
     frame = _simulate_every_cell(model=model, n_cells=_SIMULATED)
     staying = frame["regime_name"] == "couple"
     np.testing.assert_array_equal(frame.loc[staying, "choice"], 0)
 
 
-# Semantic fingerprints of these rules as declared before `compares` and `settle`
-# existed.
-_DURABLE_FINGERPRINTS = (
-    (
-        Unilateral(),
-        "75063a53a29d490928e0bff21b58763b0623947b4371a5dc7f07507bdb587288",
-    ),
-    (
-        Unilateral(tie="leave"),
-        "7337f3697d2cd718a5629c9eb44928b47d6379adc26a6e38166c3677f6bc8ee5",
-    ),
-    (
-        Unilateral(renegotiate=Renegotiate(state="mu")),
-        "4b8cddfe7f3b1db2a56d82f0c2735d6a4328ec0e06815e8ae29f34250aad7e2e",
-    ),
-)
-
-
-@pytest.mark.parametrize(
-    ("rule", "fingerprint"),
-    _DURABLE_FINGERPRINTS,
-    ids=("unilateral", "unilateral-leave", "renegotiate"),
-)
-def test_rules_without_the_new_fields_keep_their_durable_fingerprint(
-    *, rule: ExitRule, fingerprint: str
-) -> None:
-    """A rule leaving `compares` unset hashes as before it existed."""
-    assert _semantic_fingerprint(rule) == fingerprint
-
-
-def test_explicit_comparison_point_is_part_of_the_durable_identity() -> None:
-    """Declaring where the rule compares changes the solution identity."""
-    assert _semantic_fingerprint(Unilateral()) != _semantic_fingerprint(
-        Unilateral(compares="optimum")
-    )
+def test_the_comparison_point_of_the_rule_is_part_of_the_durable_identity() -> None:
+    """The two rules of unilateral divorce have different solution identities."""
+    assert _semantic_fingerprint(PCOnActions()) != _semantic_fingerprint(PCOnWeight())
 
 
 @categorical(ordered=False)
@@ -295,16 +254,20 @@ def _choice(*, choice: IntND) -> FloatND:
     return jnp.asarray(choice, dtype=float)
 
 
-def _taste_single(*, exit_declaration: Exit | None) -> Regime:
+def _taste_single(
+    *, composition_action_declaration: CompositionAction | None
+) -> Regime:
     return Regime(
         actions={"choice": DiscreteGrid(values=jnp.asarray([0, 1]))},
         functions={"utility": _choice},
         taste_shocks=ExtremeValueTasteShocks(),
-        exit=exit_declaration,
+        composition_action=composition_action_declaration,
     )
 
 
-def _taste_couple(*, exit_declaration: Exit | None) -> Regime:
+def _taste_couple(
+    *, composition_action_declaration: CompositionAction | None
+) -> Regime:
     return Regime(
         actions={"choice": DiscreteGrid(values=jnp.asarray([0, 1]))},
         functions={
@@ -314,7 +277,7 @@ def _taste_couple(*, exit_declaration: Exit | None) -> Regime:
             )
         },
         taste_shocks=ExtremeValueTasteShocks(),
-        exit=exit_declaration,
+        composition_action=composition_action_declaration,
     )
 
 
@@ -327,15 +290,18 @@ _PLAIN_COUPLE = Regime(
     }
 )
 
-# Each case: the regime that has taste shocks and an exit, and the three regimes.
-_TASTE_SHOCKS_WITH_OWN_EXIT = {
+# Each case: the regime that has taste shocks and a composition action, and the three
+# regimes.
+_TASTE_SHOCKS_WITH_OWN_COMPOSITION_ACTION = {
     "single_dissolution": (
         "single_f",
         {
             "single_f": _taste_single(
-                exit_declaration=Exit(
-                    targets={"self": ExitTarget(regime="single_m", projection={})},
-                    rule=Unilateral(),
+                composition_action_declaration=CompositionAction(
+                    destinations={
+                        "self": Destination(regime="single_m", projection={})
+                    },
+                    rule=PCOnActions(),
                 )
             ),
             "single_m": _PLAIN_SINGLE,
@@ -346,9 +312,9 @@ _TASTE_SHOCKS_WITH_OWN_EXIT = {
         "single_f",
         {
             "single_f": _taste_single(
-                exit_declaration=Exit(
-                    targets={
-                        "self": ExitTarget(regime="couple", role="f", projection={})
+                composition_action_declaration=CompositionAction(
+                    destinations={
+                        "self": Destination(regime="couple", role="f", projection={})
                     },
                     rule=Consent(
                         counterparty=Counterparty(
@@ -365,12 +331,12 @@ _TASTE_SHOCKS_WITH_OWN_EXIT = {
         "couple",
         {
             "couple": _taste_couple(
-                exit_declaration=Exit(
-                    targets={
-                        "f": ExitTarget(regime="single_f", projection={}),
-                        "m": ExitTarget(regime="single_m", projection={}),
+                composition_action_declaration=CompositionAction(
+                    destinations={
+                        "f": Destination(regime="single_f", projection={}),
+                        "m": Destination(regime="single_m", projection={}),
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                 )
             ),
             "single_f": _PLAIN_SINGLE,
@@ -380,20 +346,23 @@ _TASTE_SHOCKS_WITH_OWN_EXIT = {
 }
 
 
-@pytest.mark.parametrize("case", list(_TASTE_SHOCKS_WITH_OWN_EXIT))
-def test_a_regime_with_taste_shocks_refuses_its_own_exit(case: str) -> None:
-    """A regime with taste shocks declares neither an exit nor a formation.
+@pytest.mark.parametrize("case", list(_TASTE_SHOCKS_WITH_OWN_COMPOSITION_ACTION))
+def test_a_regime_with_taste_shocks_refuses_its_own_composition_action(
+    case: str,
+) -> None:
+    """A regime with taste shocks declares neither a composition action nor a formation.
 
     The message names the regime and both ways out: drop its taste shocks, or
-    move the exit decision to a regime without them.
+    declare the composition action on a regime without them.
     """
-    source, regimes = _TASTE_SHOCKS_WITH_OWN_EXIT[case]
+    source, regimes = _TASTE_SHOCKS_WITH_OWN_COMPOSITION_ACTION[case]
     with pytest.raises(
         RegimeInitializationError,
         match=(
-            f"Regime '{source}' has taste shocks and an exit.*cannot have its own "
-            "exit or formation.*drop `taste_shocks` on this regime, or move the "
-            "exit decision to a regime without taste shocks"
+            f"Regime '{source}' has taste shocks and a composition action.*cannot "
+            "have its own composition action or formation.*drop `taste_shocks` on "
+            "this regime, or declare the composition action on a regime without "
+            "taste shocks"
         ),
     ):
         Model(
@@ -407,18 +376,12 @@ def test_a_regime_with_taste_shocks_refuses_its_own_exit(case: str) -> None:
         )
 
 
-def test_renegotiation_refuses_a_per_action_comparison() -> None:
-    """An adjustment before the exit is decided at the optimum only."""
-    with pytest.raises(RegimeInitializationError, match="each_action"):
-        Unilateral(compares="each_action", renegotiate=Renegotiate(state="mu"))
-
-
-# Settlement cells. The couple has no action, so its stay values are `W`. At
-# settlement `s` the outside values are `O_f(s) = A_f + 4 s` and
+# Transfer cells. The couple has no action, so its stay values are `W`. At
+# transfer `s` the outside values are `O_f(s) = A_f + 4 s` and
 # `O_m(s) = A_m - 4 s`, so increasing `s` favours f, the first member, and one
 # candidate step moves each outside value by one.
 _POINTS = (0.0, 0.25, 0.5, 0.75, 1.0)
-# Each cell is the stay values `W`, the intercepts `A` and the default settlement.
+# Each cell is the stay values `W`, the intercepts `A` and the default transfer.
 _SETTLE_CELLS = (
     ((5.0, 5.0), (0.0, 0.0), 0.5),  # 0: nobody refuses at the default
     ((0.0, 0.0), (1.0, 3.0), 0.375),  # 1: both refuse at a default between nodes
@@ -428,12 +391,16 @@ _SETTLE_CELLS = (
     ((-0.5, 3.5), (0.0, 4.0), 0.375),  # 5: f refuses; m accepts first at 0
     ((-0.5, 3.0), (0.0, 4.0), 0.375),  # 6: at 0.25 the stayer m is indifferent
     ((1.0, 2.8), (0.0, 4.0), 0.375),  # 7: at 0.25 f is indifferent
-    ((0.0, 0.0), (1.0, 3.0), 0.375),  # 8: as 1, but the exit is not available
+    (
+        (0.0, 0.0),
+        (1.0, 3.0),
+        0.375,
+    ),  # 8: as 1, but the composition action is not available
     ((-10.0, -10.0), (1.0, 3.0), 1.5),  # 9: both refuse; the default is clipped
 )
 _SETTLE_UNAVAILABLE = 8
 
-# Hand-derived settlement at which each cell separates, None where the pair stays.
+# Hand-derived transfer at which each cell separates, None where the pair stays.
 # In cell 6 the stayer m has `O_m(0.25) = 3 = W_m`: under `tie="stay"` it passes
 # that candidate over and accepts the next one, 0, where `O_m = 4 > 3` and the
 # leaver f gains, `O_f = 0 > -0.5`; under `tie="leave"` it accepts 0.25, where f
@@ -492,12 +459,12 @@ def _assets(*, assets: FloatND) -> FloatND:
     return assets
 
 
-def _settlement(
+def _transfer(
     *,
     name: str = "share",
     candidates: LinSpacedGrid | DiscreteGrid | None = None,
-) -> Settlement:
-    return Settlement(
+) -> Transfer:
+    return Transfer(
         name=name,
         candidates=LinSpacedGrid(start=0.0, stop=1.0, n_points=len(_POINTS))
         if candidates is None
@@ -506,14 +473,14 @@ def _settlement(
     )
 
 
-def _settlement_model(
+def _transfer_model(
     *,
     division: Literal["transfer", "assets"],
     tie: Literal["stay", "leave"] = "stay",
-    settlement: Settlement | None = None,
+    transfer: Transfer | None = None,
 ) -> Model:
     """Two members who settle through a transfer or through a share of assets."""
-    settle = _settlement() if settlement is None else settlement
+    transfer = _transfer() if transfer is None else transfer
     singles = {
         f"single_{member}": Regime(
             states={"assets": LinSpacedGrid(start=-16.0, stop=16.0, n_points=33)},
@@ -537,10 +504,10 @@ def _settlement_model(
                         }
                     )
                 },
-                exit=Exit(
-                    rule=MutualConsent(tie=tie, settle=settle),
-                    targets={
-                        member: ExitTarget(
+                composition_action=CompositionAction(
+                    rule=MutualConsent(tie=tie, transfer=transfer),
+                    destinations={
+                        member: Destination(
                             regime=f"single_{member}",
                             projection={"assets": _divided(index)}
                             if division == "assets"
@@ -558,7 +525,7 @@ def _settlement_model(
         },
         n_periods=1,
         edges={},
-        # The singles start subjects too, so they are solved and outside values
+        # The singles start agents too, so they are solved and outside values
         # landing on their grid are read from stored tables.
         initial_nodes=InitialNodes(by_period={0: ("couple", "single_f", "single_m")}),
         regime_id_class=_Household,
@@ -569,11 +536,11 @@ def _settlement_model(
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("tie", ["stay", "leave"])
 @pytest.mark.parametrize("division", ["transfer", "assets"])
-def test_settlement_publishes_the_hand_derived_values(
+def test_transfer_publishes_the_hand_derived_values(
     *, division: Literal["transfer", "assets"], tie: Literal["stay", "leave"]
 ) -> None:
     """Each cell publishes `W` where the pair stays and `O(s*)` where it separates."""
-    model = _settlement_model(division=division, tie=tie)
+    model = _transfer_model(division=division, tie=tie)
     np.testing.assert_array_almost_equal(
         model.solve(params={}, log_level="off").values[0]["couple"],
         _settled_values(tie=tie),
@@ -584,11 +551,11 @@ def test_settlement_publishes_the_hand_derived_values(
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("tie", ["stay", "leave"])
 @pytest.mark.parametrize("division", ["transfer", "assets"])
-def test_settlement_lands_simulated_members_at_the_selected_settlement(
+def test_transfer_lands_simulated_members_at_the_selected_transfer(
     *, division: Literal["transfer", "assets"], tie: Literal["stay", "leave"]
 ) -> None:
     """Separating members land at `s*` and report the solve's value there."""
-    model = _settlement_model(division=division, tie=tie)
+    model = _transfer_model(division=division, tie=tie)
     frame = _simulate_every_cell(model=model, n_cells=len(_SETTLE_CELLS))
     settled = np.repeat(
         np.asarray([point is not None for point in _SETTLED_AT[tie]]), 2
@@ -605,10 +572,10 @@ def test_settlement_lands_simulated_members_at_the_selected_settlement(
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_settlement_divides_the_assets_movers_land_with() -> None:
-    """A mover's assets are its projection evaluated at the selected settlement."""
+def test_transfer_divides_the_assets_movers_land_with() -> None:
+    """A mover's assets are its projection evaluated at the selected transfer."""
     frame = _simulate_every_cell(
-        model=_settlement_model(division="assets"), n_cells=len(_SETTLE_CELLS)
+        model=_transfer_model(division="assets"), n_cells=len(_SETTLE_CELLS)
     )
     moved = frame["regime_name"] != "couple"
     np.testing.assert_array_almost_equal(
@@ -623,8 +590,8 @@ def _solve_with_stored_reads(
 ) -> tuple[np.ndarray, set[str]]:
     """Solve the assets model with stored or point outside reads, and its tables."""
     with monkeypatch.context() as patch:
-        patch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
-        model = _settlement_model(division="assets")
+        patch.setattr(composition_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
+        model = _transfer_model(division="assets")
         tables = {
             name
             for regime in model._regimes.values()
@@ -638,7 +605,7 @@ def _solve_with_stored_reads(
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_settlement_values_agree_with_and_without_stored_outside_reads(
+def test_transfer_values_agree_with_and_without_stored_outside_reads(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Candidates on the singles' grid read a table; the values match point reads."""
@@ -682,16 +649,16 @@ def _with_poison(poison: _Poisoned) -> Callable[[Regime], Regime]:
     member = ("f", "m")[poison.member]
 
     def change(regime: Regime) -> Regime:
-        declaration = regime.exit
+        declaration = regime.composition_action
         assert declaration is not None
         return replace(
             regime,
-            exit=replace(
+            composition_action=replace(
                 declaration,
-                targets={
-                    **declaration.targets,
+                destinations={
+                    **declaration.destinations,
                     member: replace(
-                        declaration.targets[member], utility_adjustment=poison
+                        declaration.destinations[member], utility_adjustment=poison
                     ),
                 },
             ),
@@ -700,9 +667,9 @@ def _with_poison(poison: _Poisoned) -> Callable[[Regime], Regime]:
     return change
 
 
-# Cells in which a NaN at settlement 1.0 enters no comparison: nobody refuses (0),
-# both refuse at a default below 1.0 (1), the stayer f accepts nearer (2, 3), the
-# stayer m looks below the default (5, 6, 7), or the exit is not available (8).
+# Cells in which a NaN at transfer 1.0 enters no comparison: nobody refuses (0), both
+# refuse at a default below 1.0 (1), the stayer f accepts nearer (2, 3), the stayer m
+# looks below the default (5, 6, 7), or the composition action is not available (8).
 _UNCOMPARED_AT_ONE = (0, 1, 2, 3, 5, 6, 7, 8)
 
 
@@ -712,13 +679,13 @@ _UNCOMPARED_AT_ONE = (0, 1, 2, 3, 5, 6, 7, 8)
     [
         _Poisoned(member=0, cells=_UNCOMPARED_AT_ONE, point=1.0),
         _Poisoned(member=1, cells=_UNCOMPARED_AT_ONE, point=1.0),
-        # The leaver m's value matters at the selected settlement only.
+        # The leaver m's value matters at the selected transfer only.
         _Poisoned(member=1, cells=(2,), point=0.5),
         _Poisoned(member=1, cells=(4,), point=1.0),
     ],
     ids=("f-at-1", "m-at-1", "leaver-before-selected", "leaver-none-accepted"),
 )
-def test_settlement_ignores_a_nan_no_comparison_reads(*, poison: _Poisoned) -> None:
+def test_transfer_ignores_a_nan_no_comparison_reads(*, poison: _Poisoned) -> None:
     """A NaN outside value the selection never reads leaves every published value."""
     model = _model_with(regime_change=_with_poison(poison))
     np.testing.assert_array_almost_equal(
@@ -729,7 +696,7 @@ def test_settlement_ignores_a_nan_no_comparison_reads(*, poison: _Poisoned) -> N
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_settlement_lands_members_past_a_nan_no_comparison_reads() -> None:
+def test_transfer_lands_members_past_a_nan_no_comparison_reads() -> None:
     """Simulated members separate where the selection puts them despite the NaN."""
     poison = _Poisoned(member=0, cells=_UNCOMPARED_AT_ONE, point=1.0)
     frame = _simulate_every_cell(
@@ -760,15 +727,15 @@ def test_settlement_lands_members_past_a_nan_no_comparison_reads() -> None:
         "at-default",
     ),
 )
-def test_settlement_refuses_a_nan_the_selection_reads(*, poison: _Poisoned) -> None:
-    """A NaN at the selected settlement, or one the stayer compared, is unresolved."""
+def test_transfer_refuses_a_nan_the_selection_reads(*, poison: _Poisoned) -> None:
+    """A NaN at the selected transfer, or one the stayer compared, is unresolved."""
     model = _model_with(regime_change=_with_poison(poison))
     with pytest.raises(ExecutionPlanningError, match="unresolved numerical status"):
         model.solve(params={}, log_level="off")
 
 
 def _model_with(*, regime_change: Callable[[Regime], Regime]) -> Model:
-    base = _settlement_model(division="transfer")
+    base = _transfer_model(division="transfer")
     return Model(
         regimes={
             **base.user_regimes,
@@ -784,23 +751,23 @@ def _model_with(*, regime_change: Callable[[Regime], Regime]) -> Model:
 
 def _with_rule(rule: MutualConsent) -> Callable[[Regime], Regime]:
     def change(regime: Regime) -> Regime:
-        declaration = regime.exit
+        declaration = regime.composition_action
         assert declaration is not None
-        return replace(regime, exit=replace(declaration, rule=rule))
+        return replace(regime, composition_action=replace(declaration, rule=rule))
 
     return change
 
 
 def _without_reads(regime: Regime) -> Regime:
-    declaration = regime.exit
+    declaration = regime.composition_action
     assert declaration is not None
     return replace(
         regime,
-        exit=replace(
+        composition_action=replace(
             declaration,
-            targets={
+            destinations={
                 member: replace(target, utility_adjustment=_Constant(value=0.0))
-                for member, target in declaration.targets.items()
+                for member, target in declaration.destinations.items()
             },
         ),
     )
@@ -809,28 +776,28 @@ def _without_reads(regime: Regime) -> Regime:
 @pytest.mark.parametrize(
     ("regime_change", "match"),
     [
-        (_without_reads, "read by no exit-target"),
-        (_with_rule(MutualConsent(settle=_settlement(name="case"))), "name of a state"),
+        (_without_reads, "read by no destination projection"),
+        (_with_rule(MutualConsent(transfer=_transfer(name="case"))), "name of a state"),
         (
-            _with_rule(MutualConsent(settle=_settlement(name="utility"))),
+            _with_rule(MutualConsent(transfer=_transfer(name="utility"))),
             "name of a state",
         ),
         (
-            _with_rule(MutualConsent(settle=_settlement(name="utility_f"))),
+            _with_rule(MutualConsent(transfer=_transfer(name="utility_f"))),
             "name of a state",
         ),
     ],
     ids=("unread", "state", "function", "engine_function"),
 )
-def test_settlement_refuses_an_unread_or_taken_name(
+def test_transfer_refuses_an_unread_or_taken_name(
     *, regime_change: Callable[[Regime], Regime], match: str
 ) -> None:
-    """A settlement must be read on exit and cannot shadow the regime's own names."""
+    """A transfer must be read on leaving and cannot shadow the regime's own names."""
     with pytest.raises(RegimeInitializationError, match=match):
         _model_with(regime_change=regime_change)
 
 
-def test_settlement_refuses_a_singleton_regime() -> None:
+def test_transfer_refuses_a_singleton_regime() -> None:
     """Moving a division toward the member who stays needs two members."""
     with pytest.raises(RegimeInitializationError, match="two collective"):
         Model(
@@ -840,15 +807,15 @@ def test_settlement_refuses_a_singleton_regime() -> None:
                         "case": DiscreteGrid(values=jnp.arange(len(_SETTLE_CELLS)))
                     },
                     functions={"utility": _CellValue(values=(0.0,) * 10)},
-                    exit=Exit(
-                        targets={
-                            "self": ExitTarget(
+                    composition_action=CompositionAction(
+                        destinations={
+                            "self": Destination(
                                 regime="target",
                                 projection={},
                                 utility_adjustment=_divided(0),
                             )
                         },
-                        rule=MutualConsent(settle=_settlement()),
+                        rule=MutualConsent(transfer=_transfer()),
                     ),
                 ),
                 "target": Regime(functions={"utility": _Constant(value=0.0)}),
@@ -866,31 +833,25 @@ def test_settlement_refuses_a_singleton_regime() -> None:
     [DiscreteGrid(values=jnp.asarray([0, 1])), IrregSpacedGrid(n_points=3)],
     ids=("discrete", "runtime-points"),
 )
-def test_settlement_refuses_candidates_without_fixed_ordered_points(
+def test_transfer_refuses_candidates_without_fixed_ordered_points(
     *, candidates: DiscreteGrid | IrregSpacedGrid
 ) -> None:
-    """Candidates are an ordered continuous grid known when the exit is declared."""
-    with pytest.raises(RegimeInitializationError, match="Settlement candidates"):
-        Settlement(name="share", candidates=candidates, default=_Constant(value=0.5))
+    """Candidates are an ordered continuous grid that is known at declaration."""
+    with pytest.raises(RegimeInitializationError, match="Transfer candidates"):
+        Transfer(name="share", candidates=candidates, default=_Constant(value=0.5))
 
 
-def test_settlement_refuses_a_per_action_comparison() -> None:
-    """A settlement before the exit is decided at the optimum only."""
-    with pytest.raises(RegimeInitializationError, match="each_action"):
-        MutualConsent(compares="each_action", settle=_settlement())
-
-
-def test_mutual_consent_requires_a_settlement() -> None:
+def test_mutual_consent_requires_a_transfer() -> None:
     """Mutual consent always settles before the pair separates."""
-    with pytest.raises(TypeError, match="settle"):
+    with pytest.raises(TypeError, match="transfer"):
         MutualConsent()  # ty: ignore[missing-argument] - the refused declaration
 
 
-# Cells of the indifferent-stayer family: a name giving the signs of
-# `(W_f - O_f(d), W_m - O_m(d))`, the stay values `W`, the default `d` and whether the
-# exit is available. Outside values are `O_f(s) = 4 s` and `O_m(s) = 4 - 4 s`, so
-# every number below is dyadic and equality at the default is exact at both
-# precisions. A `0` names a member exactly indifferent at the default.
+# Cells of the indifferent-stayer family: a name giving the signs of `(W_f - O_f(d), W_m
+# - O_m(d))`, the stay values `W`, the default `d` and whether the composition action is
+# available. Outside values are `O_f(s) = 4 s` and `O_m(s) = 4 - 4 s`, so every number
+# below is dyadic and equality at the default is exact at both precisions. A `0` names a
+# member exactly indifferent at the default.
 _ROOT_INTERCEPTS = (Fraction(0), Fraction(4))
 _ROOT_SLOPES = (Fraction(4), Fraction(-4))
 _ROOT_CELLS = (
@@ -915,17 +876,17 @@ _ROOT_FRACTION_POINTS = tuple(Fraction(point) for point in _POINTS)
 type _RootCell = tuple[str, tuple[float, float], float, bool]
 
 
-def _exact_outside(settlement: Fraction) -> tuple[Fraction, Fraction]:
+def _exact_outside(transfer: Fraction) -> tuple[Fraction, Fraction]:
     return (
-        _ROOT_INTERCEPTS[0] + _ROOT_SLOPES[0] * settlement,
-        _ROOT_INTERCEPTS[1] + _ROOT_SLOPES[1] * settlement,
+        _ROOT_INTERCEPTS[0] + _ROOT_SLOPES[0] * transfer,
+        _ROOT_INTERCEPTS[1] + _ROOT_SLOPES[1] * transfer,
     )
 
 
-def _exact_settlement(
+def _exact_transfer(
     *, cell: _RootCell, tie: Literal["stay", "leave"]
 ) -> Fraction | None:
-    """The settlement at which the pair separates, None where it stays.
+    """The transfer at which the pair separates, None where it stays.
 
     The stayer's share solves its indifference equation `O_p(r) = W_p` exactly. The
     stayer accepts the first candidate beyond the root, or at the root under
@@ -954,24 +915,22 @@ def _exact_settlement(
     ]
     if not beyond:
         return None
-    settlement = min(beyond) if stayer == 0 else max(beyond)
-    gain = _exact_outside(settlement)[leaver] - inside[leaver]
-    return settlement if (gain > 0 if tie == "stay" else gain >= 0) else None
+    transfer = min(beyond) if stayer == 0 else max(beyond)
+    gain = _exact_outside(transfer)[leaver] - inside[leaver]
+    return transfer if (gain > 0 if tie == "stay" else gain >= 0) else None
 
 
 def _published(
-    *, cells: tuple[_RootCell, ...], settlements: tuple[Fraction | None, ...]
+    *, cells: tuple[_RootCell, ...], transfers: tuple[Fraction | None, ...]
 ) -> np.ndarray:
     """`O(s*)` where the pair separates at `s*`, else `W`, as `(f, m)` rows."""
     return np.asarray(
         [
             [
                 float(value)
-                for value in (
-                    cell[1] if settlement is None else _exact_outside(settlement)
-                )
+                for value in (cell[1] if transfer is None else _exact_outside(transfer))
             ]
-            for cell, settlement in zip(cells, settlements, strict=True)
+            for cell, transfer in zip(cells, transfers, strict=True)
         ]
     )
 
@@ -1032,10 +991,10 @@ def _root_model(
                         }
                     )
                 },
-                exit=Exit(
+                composition_action=CompositionAction(
                     rule=MutualConsent(
                         tie=tie,
-                        settle=Settlement(
+                        transfer=Transfer(
                             name="share",
                             candidates=LinSpacedGrid(
                                 start=0.0, stop=1.0, n_points=len(_POINTS)
@@ -1043,8 +1002,8 @@ def _root_model(
                             default=_CellValue(values=tuple(cell[2] for cell in cells)),
                         ),
                     ),
-                    targets={
-                        member: ExitTarget(
+                    destinations={
+                        member: Destination(
                             regime=f"single_{member}",
                             projection={"assets": divided[member]}
                             if division == "assets"
@@ -1068,22 +1027,20 @@ def _root_model(
     )
 
 
-def _check_simulated_settlements(
+def _check_simulated_transfers(
     *,
     model: Model,
     cells: tuple[_RootCell, ...],
-    settlements: tuple[Fraction | None, ...],
+    transfers: tuple[Fraction | None, ...],
     division: Literal["transfer", "assets"],
 ) -> None:
     """Movers land in the singles at `s*` and report `O(s*)`; stayers report `W`."""
     frame = _simulate_every_cell(model=model, n_cells=len(cells))
-    separates = np.repeat(
-        np.asarray([s is not None for s in settlements], dtype=bool), 2
-    )
+    separates = np.repeat(np.asarray([s is not None for s in transfers], dtype=bool), 2)
     assert list(frame["regime_name"]) == list(
         np.where(separates, np.tile(["single_f", "single_m"], len(cells)), "couple")
     )
-    published = _published(cells=cells, settlements=settlements).reshape(-1)
+    published = _published(cells=cells, transfers=transfers).reshape(-1)
     np.testing.assert_array_almost_equal(
         _own_values(frame), published, decimal=DECIMAL_PRECISION
     )
@@ -1098,7 +1055,7 @@ def _check_simulated_settlements(
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("tie", ["stay", "leave"])
 @pytest.mark.parametrize("division", ["transfer", "assets"])
-def test_settlement_publishes_the_exact_root_of_the_stayers_indifference(
+def test_transfer_publishes_the_exact_root_of_the_stayers_indifference(
     *, division: Literal["transfer", "assets"], tie: Literal["stay", "leave"]
 ) -> None:
     """No stayer accepts the default; one indifferent there takes the next candidate.
@@ -1108,10 +1065,10 @@ def test_settlement_publishes_the_exact_root_of_the_stayers_indifference(
     side. Under `tie="leave"` an indifferent member refuses, so both do.
     """
     model = _root_model(cells=_ROOT_CELLS, division=division, tie=tie)
-    settlements = tuple(_exact_settlement(cell=cell, tie=tie) for cell in _ROOT_CELLS)
+    transfers = tuple(_exact_transfer(cell=cell, tie=tie) for cell in _ROOT_CELLS)
     np.testing.assert_array_almost_equal(
         model.solve(params={}, log_level="off").values[0]["couple"],
-        _published(cells=_ROOT_CELLS, settlements=settlements),
+        _published(cells=_ROOT_CELLS, transfers=transfers),
         decimal=DECIMAL_PRECISION,
     )
 
@@ -1119,22 +1076,20 @@ def test_settlement_publishes_the_exact_root_of_the_stayers_indifference(
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("tie", ["stay", "leave"])
 @pytest.mark.parametrize("division", ["transfer", "assets"])
-def test_settlement_lands_members_of_an_indifferent_stayer(
+def test_transfer_lands_members_of_an_indifferent_stayer(
     *, division: Literal["transfer", "assets"], tie: Literal["stay", "leave"]
 ) -> None:
-    """Simulated members separate, land and are paid at the solve's settlement."""
-    _check_simulated_settlements(
+    """Simulated members separate, land and are paid at the solve's transfer."""
+    _check_simulated_transfers(
         model=_root_model(cells=_ROOT_CELLS, division=division, tie=tie),
         cells=_ROOT_CELLS,
-        settlements=tuple(
-            _exact_settlement(cell=cell, tie=tie) for cell in _ROOT_CELLS
-        ),
+        transfers=tuple(_exact_transfer(cell=cell, tie=tie) for cell in _ROOT_CELLS),
         division=division,
     )
 
 
-def test_exact_settlements_of_the_indifferent_stayer_cells() -> None:
-    """The rational oracle gives the hand-derived settlement of every cell.
+def test_exact_transfers_of_the_indifferent_stayer_cells() -> None:
+    """The rational oracle gives the hand-derived transfer of every cell.
 
     With `O(s) = (4 s, 4 - 4 s)`, a default of 0.375 gives `O(d) = (1.5, 2.5)`. Under
     `tie="leave"` an indifferent member refuses, so every `0-` and `-0` cell has both
@@ -1150,8 +1105,8 @@ def test_exact_settlements_of_the_indifferent_stayer_cells() -> None:
     - `-0:route`, `W = (1, 2.5)`: m accepts 0.25; f is indifferent, `1 = 1`: stay.
     - `-0:default_at_the_lower_end`, `W = (-1, 4)`, `d = 0`: no candidate below: stay.
     """
-    stay = {cell[0]: _exact_settlement(cell=cell, tie="stay") for cell in _ROOT_CELLS}
-    leave = {cell[0]: _exact_settlement(cell=cell, tie="leave") for cell in _ROOT_CELLS}
+    stay = {cell[0]: _exact_transfer(cell=cell, tie="stay") for cell in _ROOT_CELLS}
+    leave = {cell[0]: _exact_transfer(cell=cell, tie="leave") for cell in _ROOT_CELLS}
     at_default = {cell[0]: Fraction(cell[2]) for cell in _ROOT_CELLS}
     assert stay == {
         "++": None,
@@ -1202,18 +1157,18 @@ _FLOOR_SETTLED_AT = (Fraction(1, 2),)
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_settlement_searches_the_candidates_past_an_unsupported_default() -> None:
+def test_transfer_searches_the_candidates_past_an_unsupported_default() -> None:
     """The stayer's search of the candidates does not need a supported default."""
     model = _root_model(cells=_FLOOR_CELLS, division="assets", tie="stay", floor_f=True)
     np.testing.assert_array_almost_equal(
         model.solve(params={}, log_level="off").values[0]["couple"],
-        _published(cells=_FLOOR_CELLS, settlements=_FLOOR_SETTLED_AT),
+        _published(cells=_FLOOR_CELLS, transfers=_FLOOR_SETTLED_AT),
         decimal=DECIMAL_PRECISION,
     )
-    _check_simulated_settlements(
+    _check_simulated_transfers(
         model=model,
         cells=_FLOOR_CELLS,
-        settlements=_FLOOR_SETTLED_AT,
+        transfers=_FLOOR_SETTLED_AT,
         division="assets",
     )
 
@@ -1256,15 +1211,15 @@ def _no_default(*, case: IntND) -> FloatND:
 
 
 _UNDEFINED_DESTINATION_RULES = {
-    "each action": (Unilateral(tie="leave"), [[3.0, -np.inf], [-np.inf, -np.inf]]),
+    "each action": (PCOnActions(tie="leave"), [[3.0, -np.inf], [-np.inf, -np.inf]]),
     "optimum": (
-        Unilateral(compares="optimum", tie="leave"),
+        PCOnWeight(tie="leave"),
         [[3.0, -np.inf], [-np.inf, -np.inf]],
     ),
-    "settlement": (
+    "transfer": (
         MutualConsent(
             tie="leave",
-            settle=Settlement(
+            transfer=Transfer(
                 name="t",
                 candidates=LinSpacedGrid(start=0.0, stop=4.0, n_points=5),
                 default=_no_default,
@@ -1286,7 +1241,7 @@ def test_a_member_with_an_undefined_destination_accepts_staying_under_leave(
     where his stay value is `-inf`. In cell 0 f gains from staying, 3 against
     her 1, so the pair stays. In cell 1 f is at 0 against her 1: she refuses,
     and the pair cannot separate, which leaves no value under the unilateral
-    rules; under the settlement m is the stayer, accepts no candidate and the
+    rules; under the transfer m is the stayer, accepts no candidate and the
     pair stays.
     """
     declaration, expected = _UNDEFINED_DESTINATION_RULES[rule]
@@ -1302,15 +1257,15 @@ def test_a_member_with_an_undefined_destination_accepts_staying_under_leave(
                         utilities={"f": _undefined_stay_f, "m": _undefined_stay_m}
                     )
                 },
-                exit=Exit(
+                composition_action=CompositionAction(
                     rule=declaration,
-                    targets={
-                        "f": ExitTarget(
+                    destinations={
+                        "f": Destination(
                             regime="single_f",
                             projection={},
                             utility_adjustment=_paid if settles else None,
                         ),
-                        "m": ExitTarget(
+                        "m": Destination(
                             regime="single_m", projection={"assets": _below_the_grid}
                         ),
                     },

@@ -281,7 +281,7 @@ def test_a_condition_reading_a_code_is_refused(case: str) -> None:
 
 @pytest.mark.parametrize("case", list(_CASES))
 def test_code_indexed_series_simulates_the_reference_choices(case: str) -> None:
-    """Every subject works exactly where the reference policy works."""
+    """Every agent works exactly where the reference policy works."""
     model, params, wages = _CASES[case]()
     frame = (
         model.simulate(
@@ -299,7 +299,7 @@ def test_code_indexed_series_simulates_the_reference_choices(case: str) -> None:
         )
         .to_dataframe(use_categorical_codes=True)
         .query("regime_name == 'working_life'")
-        .sort_values(["subject_id", "period"])
+        .sort_values(["agent_id", "period"])
     )
     policies = _reference_solution(wages)[1]
     expected = [

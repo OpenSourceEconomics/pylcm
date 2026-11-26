@@ -2,8 +2,8 @@
 
 The source and target regimes both carry a continuous `x`, a value-grid state
 `zz` with values `10, 20` (codes `0, 1`) and a category-class state `kk`. Every
-subject's ordinary transition lands at `x = 1`. The gate's single route falls
-back into the target itself, so a closed gate lands the subject at the
+agent's ordinary transition lands at `x = 1`. The gate's single route falls
+back into the target itself, so a closed gate lands the agent at the
 projected `x` instead.
 
 - In the projection case the gate is always closed and the fallback projects
@@ -115,7 +115,7 @@ def _constant_utility(x: ContinuousState) -> FloatND:
 _PREDICATE_READING_CODE = {"zz": _open_if_zz_code_is_one, "kk": _open_if_kk_code_is_one}
 _PROJECTION_READING_CODE = {"zz": _x_from_zz_code, "kk": _x_from_kk_code}
 
-# Subject `i` starts on code `i` of both discrete states.
+# Agent `i` starts on code `i` of both discrete states.
 _EXPECTED_X = {
     # closed: `x = 0.5 * code`
     "projection": [0.0, 0.5],
@@ -207,7 +207,7 @@ def test_code_argument_of_a_target_state_is_no_edge_parameter(
 def test_code_argument_of_a_target_state_receives_the_code(
     *, state: StateName, role: str
 ) -> None:
-    """Subjects on codes `0, 1` land where the gate reading those codes sends them."""
+    """Agents on codes `0, 1` land where the gate reading those codes sends them."""
     model = _model(state=state, role=role)
     solution = model.solve(params=_PARAMS, log_level="off")
     result = model.simulate(
@@ -223,6 +223,6 @@ def test_code_argument_of_a_target_state_receives_the_code(
         log_level="off",
         seed=0,
     )
-    landed = result.to_dataframe().query("period == 1").sort_values("subject_id")
+    landed = result.to_dataframe().query("period == 1").sort_values("agent_id")
 
     aaae(landed["x"].to_numpy(), _EXPECTED_X[role], decimal=DECIMAL_PRECISION)

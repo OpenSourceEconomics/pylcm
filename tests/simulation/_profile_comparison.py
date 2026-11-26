@@ -12,7 +12,7 @@ structure:
 
 `assert_public_frames` applies both to a published `to_dataframe()` panel: only the
 named value columns of an independently compiled run receive the allowance; states,
-actions, regimes and subjects stay exact.
+actions, regimes and agents stay exact.
 """
 
 from typing import Literal

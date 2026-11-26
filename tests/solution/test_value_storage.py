@@ -203,8 +203,8 @@ _STOCHASTIC_INITIAL_CONDITIONS = MappingProxyType(
 
 @pytest.mark.parametrize(
     "widths",
-    [MappingProxyType({}), MappingProxyType({"subject": 1})],
-    ids=["one-chunk", "one-subject-per-chunk"],
+    [MappingProxyType({}), MappingProxyType({"agent": 1})],
+    ids=["one-chunk", "one-agent-per-chunk"],
 )
 def test_every_storage_publishes_and_simulates_the_stochastic_model_alike(
     *, tmp_path: Path, widths: Mapping[str, int]
@@ -735,7 +735,7 @@ def test_several_chunks_read_the_stored_policies_a_single_chunk_reads(
                 )
             ),
         )
-        for widths in (MappingProxyType({}), _ONE_SUBJECT_PER_CHUNK)
+        for widths in (MappingProxyType({}), _ONE_AGENT_PER_CHUNK)
     ]
 
     assert reads[0]
@@ -1888,8 +1888,8 @@ def test_a_disk_value_entry_carries_the_solve_budget(tmp_path: Path) -> None:
     } == {model._execution.device_memory_bytes}
 
 
-# One subject per chunk, so every population here runs in several chunks.
-_ONE_SUBJECT_PER_CHUNK = MappingProxyType({"subject": 1})
+# One agent per chunk, so every population here runs in several chunks.
+_ONE_AGENT_PER_CHUNK = MappingProxyType({"agent": 1})
 
 
 def _while_flagged[**P, R](
@@ -1995,7 +1995,7 @@ def test_several_chunks_find_each_later_period_loaded_before_it_starts(
     step_period: list[int | None] = [None]
     copied_in_a_step: list[tuple[int, int, RegimeName]] = []
     read = host_values._RecentDeviceCopies.read
-    activate = simulate_module.activate_subject_membership
+    activate = simulate_module.activate_agent_membership
 
     # keyword-only-exempt: primary-argument=self
     def _recording_read(
@@ -2034,15 +2034,13 @@ def test_several_chunks_find_each_later_period_loaded_before_it_starts(
     model = build_model(
         ExecutionConfig(
             value_storage="host",
-            axis_widths=_ONE_SUBJECT_PER_CHUNK,
+            axis_widths=_ONE_AGENT_PER_CHUNK,
             device_memory_bytes=None,
         )
     )
     solution = model.solve(params=_PARAMS, log_level="off")
     monkeypatch.setattr(host_values._RecentDeviceCopies, "read", _recording_read)
-    monkeypatch.setattr(
-        simulate_module, "activate_subject_membership", _marking_activate
-    )
+    monkeypatch.setattr(simulate_module, "activate_agent_membership", _marking_activate)
     monkeypatch.setattr(
         simulate_module,
         "_prefetch_period_reads",
@@ -2106,7 +2104,7 @@ def test_several_chunks_copy_the_stored_values_a_single_chunk_copies(
                 initial_conditions=initial_conditions(),
             )[0]
         )
-        for widths in (MappingProxyType({}), _ONE_SUBJECT_PER_CHUNK)
+        for widths in (MappingProxyType({}), _ONE_AGENT_PER_CHUNK)
     ]
 
     assert copies[0]
@@ -2127,12 +2125,10 @@ def test_several_chunks_under_host_storage_simulate_the_device_panel(
     build_model: Callable[[ExecutionConfig], Model],
     initial_conditions: Callable[[], dict[str, jax.Array]],
 ) -> None:
-    """Every subject keeps its keys and row: the panel is the chunked device one."""
+    """Every agent keeps its keys and row: the panel is the chunked device one."""
     device = (
         build_model(
-            ExecutionConfig(
-                axis_widths=_ONE_SUBJECT_PER_CHUNK, device_memory_bytes=None
-            )
+            ExecutionConfig(axis_widths=_ONE_AGENT_PER_CHUNK, device_memory_bytes=None)
         )
         .simulate(
             params=_PARAMS,
@@ -2147,7 +2143,7 @@ def test_several_chunks_under_host_storage_simulate_the_device_panel(
         model=build_model(
             ExecutionConfig(
                 value_storage="host",
-                axis_widths=_ONE_SUBJECT_PER_CHUNK,
+                axis_widths=_ONE_AGENT_PER_CHUNK,
                 device_memory_bytes=None,
             )
         ),
@@ -2162,9 +2158,7 @@ def test_several_chunks_under_disk_storage_simulate_the_device_panel(
 ) -> None:
     device = (
         _three_regime_model(
-            ExecutionConfig(
-                axis_widths=_ONE_SUBJECT_PER_CHUNK, device_memory_bytes=None
-            )
+            ExecutionConfig(axis_widths=_ONE_AGENT_PER_CHUNK, device_memory_bytes=None)
         )
         .simulate(
             params=_PARAMS,
@@ -2179,7 +2173,7 @@ def test_several_chunks_under_disk_storage_simulate_the_device_panel(
         model=_three_regime_model(
             ExecutionConfig(
                 value_storage=tmp_path,
-                axis_widths=_ONE_SUBJECT_PER_CHUNK,
+                axis_widths=_ONE_AGENT_PER_CHUNK,
                 device_memory_bytes=None,
             )
         ),
@@ -2197,7 +2191,7 @@ def test_several_chunks_report_dissolutions_in_the_device_order() -> None:
         model = _make_dissolution_model(
             ExecutionConfig(
                 value_storage=storage,
-                axis_widths=_ONE_SUBJECT_PER_CHUNK,
+                axis_widths=_ONE_AGENT_PER_CHUNK,
                 device_memory_bytes=None,
             )
         )
@@ -2228,8 +2222,8 @@ def _budgeted(*, value_storage: Literal["device", "host"]) -> ExecutionConfig:
     )
 
 
-def _one_subject_per_budgeted_chunk(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make the budgeted planner consider one subject per chunk only.
+def _one_agent_per_budgeted_chunk(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the budgeted planner consider one agent per chunk only.
 
     A budget picks the widest admitted chunk, which for these small models is
     the whole population; only the candidate list forces several chunks.
@@ -2248,7 +2242,7 @@ def test_budgeted_chunks_copy_the_stored_values_a_single_chunk_copies(
         model=_three_regime_model(_budgeted(value_storage="host")),
         initial_conditions=_three_regime_initial_conditions(),
     )
-    _one_subject_per_budgeted_chunk(monkeypatch)
+    _one_agent_per_budgeted_chunk(monkeypatch)
     several, _ = _value_copies_while_simulating(
         monkeypatch=monkeypatch,
         model=_three_regime_model(_budgeted(value_storage="host")),
@@ -2262,7 +2256,7 @@ def test_budgeted_chunks_copy_the_stored_values_a_single_chunk_copies(
 def test_budgeted_chunks_under_host_storage_simulate_the_device_panel(
     *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _one_subject_per_budgeted_chunk(monkeypatch)
+    _one_agent_per_budgeted_chunk(monkeypatch)
     device = (
         _three_regime_model(_budgeted(value_storage="device"))
         .simulate(
@@ -2282,13 +2276,13 @@ def test_budgeted_chunks_under_host_storage_simulate_the_device_panel(
     assert host.equals(device)
 
 
-def test_the_planner_reserves_every_subjects_state_for_several_chunks() -> None:
-    """The reservation covers each initial-condition column of every subject."""
+def test_the_planner_reserves_every_agents_state_for_several_chunks() -> None:
+    """The reservation covers each initial-condition column of every agent."""
     initial_conditions = _three_regime_initial_conditions()
     devices = (jax.devices()[0],)
 
     reserved = chunk_admission._population_carry_bytes(
-        initial_conditions=initial_conditions, subject_devices=devices
+        initial_conditions=initial_conditions, agent_devices=devices
     )
 
     columns = sum(int(column.nbytes) for column in initial_conditions.values())
@@ -2342,7 +2336,7 @@ def test_disk_values_loaded_early_are_read_off_the_simulation_thread(
         _three_regime_model(
             ExecutionConfig(
                 value_storage=storage,
-                axis_widths=_ONE_SUBJECT_PER_CHUNK,
+                axis_widths=_ONE_AGENT_PER_CHUNK,
                 device_memory_bytes=None,
             )
         )
@@ -2394,7 +2388,7 @@ def test_the_planner_reserves_what_one_period_copies_early(
     model = _three_regime_model(
         ExecutionConfig(
             value_storage="host",
-            axis_widths=_ONE_SUBJECT_PER_CHUNK,
+            axis_widths=_ONE_AGENT_PER_CHUNK,
             device_memory_bytes=None,
         )
     )
@@ -2424,7 +2418,7 @@ def test_the_runtime_ledger_charges_the_early_copies(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """While chunks run, the copies loaded early count as live device memory."""
-    _one_subject_per_budgeted_chunk(monkeypatch)
+    _one_agent_per_budgeted_chunk(monkeypatch)
     events: list[tuple[str, frozenset[int]]] = []
     prefetch = simulate_module._prefetch_period_reads
     set_attribute = SimulationMemory.__setattr__
@@ -2491,7 +2485,7 @@ def test_the_runtime_ledger_charges_the_early_copies(
 def test_a_budget_without_room_for_the_early_copies_is_refused(
     *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _one_subject_per_budgeted_chunk(monkeypatch)
+    _one_agent_per_budgeted_chunk(monkeypatch)
     monkeypatch.setattr(
         chunk_admission,
         "_prefetch_bytes",
@@ -2510,11 +2504,11 @@ def test_a_budget_without_room_for_the_early_copies_is_refused(
         )
 
 
-def test_a_budget_without_room_for_every_subjects_state_is_refused(
+def test_a_budget_without_room_for_every_agents_state_is_refused(
     *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The refusal names the remedies that shrink the population's state."""
-    _one_subject_per_budgeted_chunk(monkeypatch)
+    _one_agent_per_budgeted_chunk(monkeypatch)
     monkeypatch.setattr(
         chunk_admission,
         "_population_carry_bytes",
@@ -2523,7 +2517,7 @@ def test_a_budget_without_room_for_every_subjects_state_is_refused(
     model = _three_regime_model(_budgeted(value_storage="host"))
     solution = model.solve(params=_PARAMS, log_level="off")
 
-    with pytest.raises(ExecutionPlanningError, match="fewer subjects"):
+    with pytest.raises(ExecutionPlanningError, match="fewer agents"):
         model.simulate(
             params=_PARAMS,
             initial_conditions=_three_regime_initial_conditions(),
@@ -2537,7 +2531,7 @@ def test_planning_a_budgeted_call_copies_no_more_values_than_an_unbudgeted_one(
     *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Measuring and profiling read the values' metadata, not copies of them."""
-    _one_subject_per_budgeted_chunk(monkeypatch)
+    _one_agent_per_budgeted_chunk(monkeypatch)
     copies = [
         sorted(
             _value_copies_while_simulating(
@@ -2564,7 +2558,7 @@ def _life_cycle(
     """The typed life cycle, blocked by preference type when `schedule` is given."""
     model = life_cycle._model(typed_dead=True)
     config = dataclasses.replace(
-        lifetime._config(schedule=schedule, subject_width=3),
+        lifetime._config(schedule=schedule, agent_width=3),
         value_storage=value_storage,
     )
     return Model(

@@ -80,7 +80,7 @@ def export_model(model, destination, *, production_metadata, model_id=None,
         prepared = (getattr(getattr(model, '_declaration_preparation', None), 'prepared_structure', None)
                     if snapshot.get('capture_report', {}).get('status') == 'COMPLETE' else None)
         names = ('original_periods_by_regime', 'value_periods_by_regime',
-                 'query_periods_by_phase', 'exit_function_demand')
+                 'query_periods_by_phase', 'composition_action_function_demand')
         snapshot['construction_authorities'] = {
             'values': {name: normalize(getattr(prepared, name)) for name in names if hasattr(prepared, name)},
             'source': 'existing Model._declaration_preparation.prepared_structure',

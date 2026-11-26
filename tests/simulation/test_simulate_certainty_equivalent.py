@@ -20,7 +20,7 @@ from tests.test_certainty_equivalent import (
 )
 
 
-def test_simulated_period0_consumption_matches_reference_policy():
+def test_simulated_period0_consumption_matches_reference_policy() -> None:
     """Period-0 consumption equals the reference argmax at the initial states."""
     risk_aversion, discount_factor, ies = 0.5, 0.9, 2.0
     model = get_model(certainty_equivalent=PowerMean())
@@ -61,7 +61,7 @@ def test_simulated_period0_consumption_matches_reference_policy():
     np.testing.assert_allclose(period0["consumption"].to_numpy(), expected, rtol=1e-5)
 
 
-def test_bad_health_cost_drains_wealth_in_simulation():
+def test_bad_health_cost_drains_wealth_in_simulation() -> None:
     """`next_wealth = clip(w - c + income - cost·1[bad], grid bounds)` in simulation."""
     model = get_model(certainty_equivalent=PowerMean())
     params = get_params(
@@ -70,26 +70,26 @@ def test_bad_health_cost_drains_wealth_in_simulation():
         health_cost=1.5,
         bequest_scale=0.3,
     )
-    n_subjects = 40
+    n_agents = 40
     result = model.simulate(
         params=params,
         initial_conditions={
-            "age": jnp.full(n_subjects, 25.0),
-            "wealth": jnp.linspace(0.5, 12.0, n_subjects),
+            "age": jnp.full(n_agents, 25.0),
+            "wealth": jnp.linspace(0.5, 12.0, n_agents),
             "health": jnp.tile(
-                jnp.array([HealthStatus.bad, HealthStatus.good]), n_subjects // 2
+                jnp.array([HealthStatus.bad, HealthStatus.good]), n_agents // 2
             ),
-            "regime_id": jnp.full(n_subjects, EZRegimeId.alive),
+            "regime_id": jnp.full(n_agents, EZRegimeId.alive),
         },
         log_level="debug",
         seed=7,
     )
     df = result.to_dataframe(use_categorical_codes=True)
-    alive = df[df["regime_name"] == "alive"].sort_values(["subject_id", "period"])
-    curr = alive.groupby("subject_id").nth(0)
-    following = alive.groupby("subject_id").nth(1)
+    alive = df[df["regime_name"] == "alive"].sort_values(["agent_id", "period"])
+    curr = alive.groupby("agent_id").nth(0)
+    following = alive.groupby("agent_id").nth(1)
     both = curr.merge(
-        following, on="subject_id", suffixes=("", "_next"), how="inner"
+        following, on="agent_id", suffixes=("", "_next"), how="inner"
     ).query("period_next == period + 1")
     assert len(both) > 0
     expected_next_wealth = np.clip(
@@ -105,18 +105,18 @@ def test_bad_health_cost_drains_wealth_in_simulation():
     )
 
 
-def test_bequest_scale_scales_the_dead_regime_utility():
+def test_bequest_scale_scales_the_dead_regime_utility() -> None:
     """Dead-regime utility equals `bequest_scale * sqrt(wealth)`."""
     model = get_model(certainty_equivalent=PowerMean())
     params = get_params(risk_aversion=2.0, bequest_scale=0.3)
-    n_subjects = 30
+    n_agents = 30
     result = model.simulate(
         params=params,
         initial_conditions={
-            "age": jnp.full(n_subjects, 25.0),
-            "wealth": jnp.linspace(0.5, 12.0, n_subjects),
-            "health": jnp.full(n_subjects, HealthStatus.bad),
-            "regime_id": jnp.full(n_subjects, EZRegimeId.alive),
+            "age": jnp.full(n_agents, 25.0),
+            "wealth": jnp.linspace(0.5, 12.0, n_agents),
+            "health": jnp.full(n_agents, HealthStatus.bad),
+            "regime_id": jnp.full(n_agents, EZRegimeId.alive),
         },
         log_level="debug",
         seed=7,
@@ -153,7 +153,7 @@ def test_simulated_consumption_is_equivariant_to_rescaling_the_model(
     *,
     x64_enabled: None,  # noqa: ARG001
     risk_aversion: float,
-):
+) -> None:
     """Scaling a homogeneous model by `k > 0` scales its simulated choices by `k`."""
     scale = 1e-7
     np.testing.assert_allclose(
@@ -169,7 +169,7 @@ def test_simulated_consumption_is_equivariant_to_rescaling_the_model_float32(
     *,
     x64_disabled: None,  # noqa: ARG001
     risk_aversion: float,
-):
+) -> None:
     """The float32 simulation is equivariant at scales the naive route overflows."""
     scale = 1e-3
     np.testing.assert_allclose(

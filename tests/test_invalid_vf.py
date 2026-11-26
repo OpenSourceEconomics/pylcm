@@ -198,7 +198,7 @@ def test_simulate_model_with_inf_value_function_array_does_not_raise_error(
         "regime_id": jnp.array([RegimeId.non_terminal] * 2),
     }
 
-    # This should not raise an error. Subject 1 (wealth=2.0, health=1.0) triggers the
+    # This should not raise an error. Agent 1 (wealth=2.0, health=1.0) triggers the
     # +inf utility term (wealth > 1.9 AND health > 0.9), but the simulation should
     # still complete without error.
     inf_value_model.simulate(

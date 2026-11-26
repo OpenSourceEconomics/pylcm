@@ -46,19 +46,19 @@ else:
 
 
 @runtime_checkable
-class SubjectArgumentNames(Protocol):
+class AgentArgumentNames(Protocol):
     """Argument-builder metadata naming the population's dynamic operands."""
 
     @property
-    def subject_arg_names(self) -> tuple[str, ...]:
-        """Exact subject operands, independently of their array sizes."""
+    def agent_arg_names(self) -> tuple[str, ...]:
+        """Exact agent operands, independently of their array sizes."""
         ...
 
 
 def place_simulation_arguments[T: _OperandValue](
     *,
     arguments: Mapping[str, T],
-    subject_arg_names: tuple[ReferenceName, ...],
+    agent_arg_names: tuple[ReferenceName, ...],
     value_reads: tuple[ValueRead, ...],
     devices: tuple[jax.Device, ...],
     budget_bytes: int | None = None,
@@ -66,11 +66,11 @@ def place_simulation_arguments[T: _OperandValue](
     argument_footprint: DeviceBufferFootprint | None = None,
     budget_devices: tuple[jax.Device, ...] = (),
 ) -> MappingProxyType[str, T]:
-    """Share scalars/grids/params and shard subjects on the declared device order.
+    """Share scalars/grids/params and shard agents on the declared device order.
 
     Addressed value leaves are already supplied by the period's value owner and
     pass through unchanged. Placement is call-local; this module caches no arrays.
-    An already-correct array passes through by identity, including subject states.
+    An already-correct array passes through by identity, including agent states.
 
     Each argument comes back with its own container structure; only its numeric
     leaves are replaced by device arrays, so a tree of device arrays keeps its
@@ -83,9 +83,9 @@ def place_simulation_arguments[T: _OperandValue](
     same, and one `unsafe_buffer_pointer` barrier over the operand tree is not
     repeated in the same dispatch.
     """
-    subject_sharding = subject_operand_sharding(devices=devices)
+    agent_sharding = agent_operand_sharding(devices=devices)
     shared_sharding = simulation_value_sharding(
-        stored_sharding=subject_sharding, devices=devices
+        stored_sharding=agent_sharding, devices=devices
     )
     protected = frozenset(
         (read.source.argument or read.source.channel.value, *read.source.path)
@@ -98,8 +98,8 @@ def place_simulation_arguments[T: _OperandValue](
             )
         _require_operand_headroom(
             arguments=arguments,
-            subject_arg_names=subject_arg_names,
-            subject_sharding=subject_sharding,
+            agent_arg_names=agent_arg_names,
+            agent_sharding=agent_sharding,
             shared_sharding=shared_sharding,
             protected=protected,
             budget_bytes=budget_bytes,
@@ -121,7 +121,7 @@ def place_simulation_arguments[T: _OperandValue](
             name: _place_operand_tree(
                 tree=value,
                 sharding=(
-                    subject_sharding if name in subject_arg_names else shared_sharding
+                    agent_sharding if name in agent_arg_names else shared_sharding
                 ),
                 protected=_paths_below(paths=protected, segment=name),
             )
@@ -140,8 +140,8 @@ def place_simulation_arguments[T: _OperandValue](
 def _require_operand_headroom(
     *,
     arguments: Mapping[str, _Operand],
-    subject_arg_names: tuple[ReferenceName, ...],
-    subject_sharding: jax.sharding.Sharding,
+    agent_arg_names: tuple[ReferenceName, ...],
+    agent_sharding: jax.sharding.Sharding,
     shared_sharding: jax.sharding.Sharding,
     protected: frozenset[tuple[str | int, ...]],
     budget_bytes: int,
@@ -159,7 +159,7 @@ def _require_operand_headroom(
     destination_bytes: dict[jax.Device, int] = {}
     scratch_bytes: dict[jax.Device, int] = {}
     for name, tree in arguments.items():
-        sharding = subject_sharding if name in subject_arg_names else shared_sharding
+        sharding = agent_sharding if name in agent_arg_names else shared_sharding
         for leaf in _operand_leaves(
             tree=tree, protected=_paths_below(paths=protected, segment=name)
         ):
@@ -188,12 +188,10 @@ def _require_operand_headroom(
     )
 
 
-def subject_operand_sharding(
-    *, devices: tuple[jax.Device, ...]
-) -> jax.sharding.Sharding:
-    """Use one ordered leading-axis placement for subject inputs and outputs."""
+def agent_operand_sharding(*, devices: tuple[jax.Device, ...]) -> jax.sharding.Sharding:
+    """Use one ordered leading-axis placement for agent inputs and outputs."""
     if not devices:
-        raise ValueError("Simulation operands require explicit subject devices.")
+        raise ValueError("Simulation operands require explicit agent devices.")
     if len(devices) == 1:
         return jax.sharding.make_single_device_sharding(devices[0])
     mesh = jax.make_mesh(

@@ -20,7 +20,7 @@ from tests.execution.test_axis_widths_per_regime import (
     assert_agrees_to_ulp as value_checker,
 )
 from tests.simulation._profile_comparison import assert_public_frames, assert_same_bytes
-from tests.simulation.test_subject_batching import (
+from tests.simulation.test_agent_batching import (
     _assert_columns_invariant as frame_checker,
 )
 
@@ -80,7 +80,7 @@ def test_value_gate_rejects_changed_dtype() -> None:
 def test_panel_rejects_one_step_in_a_state_or_action_column(*, column: str) -> None:
     """A float64 state or action column moved by one step fails the panel."""
     reference = pd.DataFrame(
-        {"subject_id": [0], "period": [0], column: np.asarray([1.0], dtype=np.float64)}
+        {"agent_id": [0], "period": [0], column: np.asarray([1.0], dtype=np.float64)}
     )
     actual = reference.copy()
     actual.loc[0, column] = np.nextafter(np.float64(1.0), np.float64(2.0))
@@ -92,7 +92,7 @@ def test_panel_rejects_a_non_value_dtype_change() -> None:
     """A float32 column delivered as float64 fails the panel."""
     reference = pd.DataFrame(
         {
-            "subject_id": [0],
+            "agent_id": [0],
             "period": [0],
             "consumption": np.asarray([1.0], dtype=np.float32),
         }
@@ -218,12 +218,12 @@ def test_axis_width_gate_bounds_the_cancellation_entry_by_its_operands(
 def test_panel_accepts_two_steps_in_a_derived_target_column() -> None:
     """A float32 `utility` target recomputed in another chunk may move a few steps.
 
-    Subject chunks of 1, 2 and 4 rows evaluate `log(consumption)` in a differently
+    Agent chunks of 1, 2 and 4 rows evaluate `log(consumption)` in a differently
     vectorized kernel, which moves `utility` by up to two representable steps on
     rows whose consumption is identical.
     """
     reference = pd.DataFrame(
-        {"subject_id": [0, 1], "utility": np.asarray([1.0, -0.21710844], np.float32)}
+        {"agent_id": [0, 1], "utility": np.asarray([1.0, -0.21710844], np.float32)}
     )
     actual = reference.copy()
     actual.loc[1, "utility"] = np.float32(-0.21710841)
@@ -233,7 +233,7 @@ def test_panel_accepts_two_steps_in_a_derived_target_column() -> None:
 def test_panel_rejects_a_float_action_one_step_from_one() -> None:
     """An action `1.0` delivered as `1.0000000000000002` fails the panel."""
     reference = pd.DataFrame(
-        {"subject_id": [0], "utility": [0.5], "consumption": [1.0], "value": [2.0]}
+        {"agent_id": [0], "utility": [0.5], "consumption": [1.0], "value": [2.0]}
     )
     actual = reference.copy()
     actual.loc[0, "consumption"] = 1.0000000000000002
@@ -244,7 +244,7 @@ def test_panel_rejects_a_float_action_one_step_from_one() -> None:
 def test_panel_accepts_eight_steps_in_the_value_column() -> None:
     """The published `value` column receives the eight-step allowance."""
     reference = pd.DataFrame(
-        {"subject_id": [0], "value": _steps_below_one(dtype=np.float64, steps=8)[None]}
+        {"agent_id": [0], "value": _steps_below_one(dtype=np.float64, steps=8)[None]}
     )
     actual = reference.copy()
     actual.loc[0, "value"] = 1.0
@@ -276,7 +276,7 @@ def test_derived_utility_keeps_the_eight_step_boundary_and_same_program_bytes(
 ) -> None:
     """A named derived value never grants tolerance to same-program replay."""
     reference = pd.DataFrame(
-        {"subject_id": [0], "utility": np.asarray([1.0], dtype=dtype)}
+        {"agent_id": [0], "utility": np.asarray([1.0], dtype=dtype)}
     )
     for steps in (8, 9):
         actual = reference.copy()

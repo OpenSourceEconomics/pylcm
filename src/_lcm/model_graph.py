@@ -9,7 +9,11 @@ from typing import Literal, cast
 
 import jax.numpy as jnp
 
-from _lcm.exits import ExitFunctionDemand, exit_for_phase, exit_functions
+from _lcm.composition_actions import (
+    CompositionActionFunctionDemand,
+    composition_action_for_phase,
+    composition_action_functions,
+)
 from _lcm.gated_edge import GatedEdge, gated_edge_from_gate
 from _lcm.reachability import ModelReachability, PhaseReachability
 from _lcm.regime_building.fixed_regime_support import prune_fixed_regime_support
@@ -48,12 +52,12 @@ from _lcm.user_regime_validation import (
     validate_regimes,
 )
 from lcm.collective import Gate, MemberRoute, ProjectedRegimeValue
+from lcm.composition_actions import CompositionAction, Consent
 from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
     ModelInitializationError,
     RegimeInitializationError,
 )
-from lcm.exits import Consent, Exit
 from lcm.phased import Phased
 from lcm.regime import Regime
 from lcm.transition import (
@@ -264,20 +268,20 @@ def prepare_graph(
         ages=ages,
         source_ages_by_phase=source_ages,
     )
-    policy_reads, exit_targets = _exit_policy_demand(
+    policy_reads, composition_action_targets = _composition_policy_demand(
         regimes=fixed_support.user_regimes,
         schedules=after,
         ages=ages,
     )
     schedules = resolve_demand(
         policy_reads_by_phase=policy_reads,
-        exit_targets_by_period=exit_targets,
+        composition_targets_by_period=composition_action_targets,
         schedules=after,
         initial_nodes=initial_nodes,
         terminal_regimes=frozenset(name for name, law in laws.items() if law.terminal),
         ages=ages,
     )
-    _validate_exit_availability(
+    _validate_composition_action_availability(
         regimes=fixed_support.user_regimes,
         demanded=schedules,
         available=after,
@@ -297,7 +301,7 @@ def prepare_graph(
     )
 
 
-def _exit_policy_demand(
+def _composition_policy_demand(
     *,
     regimes: Mapping[RegimeName, Regime],
     schedules: RegimeSchedules,
@@ -311,14 +315,16 @@ def _exit_policy_demand(
     """Declare typed reads without pretending a policy query is a Full value."""
     reads = {"solution": {}, "simulation": {}}
     actors = {}
-    if all(regime.exit is None for regime in regimes.values()):
+    if all(regime.composition_action is None for regime in regimes.values()):
         return reads, actors
     for phase, side in (("solution", "solve"), ("simulation", "simulate")):
         for source, regime in regimes.items():
-            declaration = exit_for_phase(declaration=regime.exit, phase=side)
+            declaration = composition_action_for_phase(
+                declaration=regime.composition_action, phase=side
+            )
             for period in schedules.coverage_by_regime[source]:
                 for kind in ("Raw", "Participating", "Full"):
-                    required, final = _exit_reads(
+                    required, final = _composition_action_reads(
                         declaration=declaration,
                         source=source,
                         kind=kind,
@@ -331,9 +337,9 @@ def _exit_policy_demand(
     return reads, actors
 
 
-def _exit_reads(
+def _composition_action_reads(
     *,
-    declaration: Exit | None,
+    declaration: CompositionAction | None,
     source: RegimeName,
     kind: str,
     period: int,
@@ -344,24 +350,24 @@ def _exit_reads(
         declaration is None
         or kind == "Raw"
         or (kind == "Participating" and isinstance(declaration.rule, Consent))
-        or _exit_is_statically_unavailable(
+        or _composition_action_is_statically_unavailable(
             predicate=declaration.available, period=period, ages=ages
         )
     ):
         return (), ()
-    landings = tuple(dict.fromkeys(t.regime for t in declaration.targets.values()))
+    landings = tuple(dict.fromkeys(t.regime for t in declaration.destinations.values()))
     required = tuple((regime, "Participating") for regime in landings)
     if isinstance(declaration.rule, Consent):
         required += ((source, "Raw"), (declaration.rule.counterparty.regime, "Raw"))
     return tuple(dict.fromkeys(required)), landings if kind == "Full" else ()
 
 
-def demanded_exit_function_paths(
+def demanded_composition_action_function_paths(
     *,
     regimes: Mapping[RegimeName, Regime],
     schedules: RegimeSchedules,
     ages: TimeAxis,
-) -> ExitFunctionDemand:
+) -> CompositionActionFunctionDemand:
     """Keep callback namespaces only where an actual typed policy reads them."""
     result = {name: {} for name in regimes}
     for phase, side in (("solution", "solve"), ("simulation", "simulate")):
@@ -372,24 +378,26 @@ def demanded_exit_function_paths(
         contexts.update((p, n, "Full") for p, n in full)
         if phase == "simulation":
             contexts.update(
-                (p, n, "Participating") for p, n in schedules.exit_acting_nodes
+                (p, n, "Participating") for p, n in schedules.composition_acting_nodes
             )
         for owner, regime in regimes.items():
             paths = set()
             for period, name, kind in contexts:
                 if name != owner or kind == "Raw":
                     continue
-                declaration = regime.exit
+                declaration = regime.composition_action
                 if declaration is None or (
                     kind == "Participating" and isinstance(declaration.rule, Consent)
                 ):
                     continue
-                inactive = _exit_is_statically_unavailable(
+                inactive = _composition_action_is_statically_unavailable(
                     predicate=declaration.available, period=period, ages=ages
                 )
                 paths.update(
                     path
-                    for path in exit_functions(declaration=declaration, phase=side)
+                    for path in composition_action_functions(
+                        declaration=declaration, phase=side
+                    )
                     if not inactive or path[-1] == "available"
                 )
             result[owner][side] = frozenset(paths)
@@ -398,7 +406,7 @@ def demanded_exit_function_paths(
     )
 
 
-def _validate_exit_availability(
+def _validate_composition_action_availability(
     *,
     regimes: Mapping[RegimeName, Regime],
     demanded: RegimeSchedules,
@@ -411,12 +419,12 @@ def _validate_exit_availability(
             ("solution", demanded.coverage_by_regime[source]),
             ("simulation", demanded.visited_periods_by_regime[source]),
         ):
-            declaration = regime.exit
+            declaration = regime.composition_action
             if declaration is None:
                 continue
             contexts = [
                 ("destination", target.regime)
-                for target in declaration.targets.values()
+                for target in declaration.destinations.values()
             ]
             if isinstance(declaration.rule, Consent):
                 contexts.append(("counterparty", declaration.rule.counterparty.regime))
@@ -426,19 +434,20 @@ def _validate_exit_availability(
                         target in available.support_by_phase[phase]
                         and not available.support_by_phase[phase][target].get(period)
                     ):
-                        if _exit_is_statically_unavailable(
+                        if _composition_action_is_statically_unavailable(
                             predicate=declaration.available,
                             period=period,
                             ages=ages,
                         ):
                             continue
                         raise RegimeInitializationError(
-                            f"Exit of {source}: {kind} {target!r} is inactive "
+                            f"Composition action of {source}: {kind} {target!r} is "
+                            "inactive "
                             f"at {ages.exact_values[period]} in {phase}."
                         )
 
 
-def _exit_is_statically_unavailable(
+def _composition_action_is_statically_unavailable(
     *,
     predicate: UserFunction | None,
     period: int,
@@ -846,7 +855,7 @@ def _declared_gated_edges(
         if reached_in_both and solve.get(target) != simulate.get(target):
             raise ModelInitializationError(
                 f"The transition of '{source}' into {target!r} is gated differently "
-                "in the two phases. A gate is what the household consents to, so a "
+                "in the two phases. A gate is what the members consent to, so a "
                 "target reached in both phases carries one and the same `Gate` in "
                 "both, or none. A difference the model needs goes in a route's "
                 "`fallback`, which is `Phased` in its own right."

@@ -84,7 +84,7 @@ REPRESENTATIVE_MODELS = (
 )
 PROVENANCE = "__provenance__"
 SIMULATION_SEED = 12345
-_N_SUBJECTS = 4
+_N_AGENTS = 4
 
 
 def representative_outputs(name: str) -> dict[str, np.ndarray]:
@@ -270,14 +270,14 @@ def _git(source_root: Path, *args: str) -> str:
 
 def _representative_case(name: str) -> tuple[Model, UserParams, UserInitialConditions]:
     """Build one representative model with its params and initial conditions."""
-    starting_wealth = jnp.linspace(5.0, 40.0, _N_SUBJECTS)
-    regime_ids = jnp.zeros(_N_SUBJECTS, dtype=jnp.int32)
+    starting_wealth = jnp.linspace(5.0, 40.0, _N_AGENTS)
+    regime_ids = jnp.zeros(_N_AGENTS, dtype=jnp.int32)
     if name == "tiny":
         return (
             tiny.get_model(n_periods=3),
             tiny.get_params(n_periods=3),
             {
-                "age": jnp.full(_N_SUBJECTS, 25.0),
+                "age": jnp.full(_N_AGENTS, 25.0),
                 "wealth": starting_wealth,
                 "regime_id": regime_ids,
             },
@@ -287,9 +287,9 @@ def _representative_case(name: str) -> tuple[Model, UserParams, UserInitialCondi
             precautionary_savings_health.get_model(retirement_age=20),
             precautionary_savings_health.get_params(retirement_age=20),
             {
-                "age": jnp.full(_N_SUBJECTS, 18.0),
+                "age": jnp.full(_N_AGENTS, 18.0),
                 "wealth": starting_wealth,
-                "health": jnp.linspace(0.2, 0.8, _N_SUBJECTS),
+                "health": jnp.linspace(0.2, 0.8, _N_AGENTS),
                 "regime_id": regime_ids,
             },
         )
@@ -298,8 +298,8 @@ def _representative_case(name: str) -> tuple[Model, UserParams, UserInitialCondi
             iskhakov_et_al_2017.get_model(n_periods=4),
             iskhakov_et_al_2017.get_params(n_periods=4),
             {
-                "age": jnp.full(_N_SUBJECTS, 40.0),
-                "wealth": jnp.linspace(20.0, 200.0, _N_SUBJECTS),
+                "age": jnp.full(_N_AGENTS, 40.0),
+                "wealth": jnp.linspace(20.0, 200.0, _N_AGENTS),
                 "regime_id": regime_ids,
             },
         )
@@ -309,9 +309,7 @@ def _representative_case(name: str) -> tuple[Model, UserParams, UserInitialCondi
     return (
         model,
         collective_household.get_params(),
-        collective_household.get_initial_conditions(
-            n_subjects=_N_SUBJECTS, model=model
-        ),
+        collective_household.get_initial_conditions(n_agents=_N_AGENTS, model=model),
     )
 
 

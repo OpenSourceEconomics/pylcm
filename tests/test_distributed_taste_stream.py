@@ -1,4 +1,4 @@
-"""Addressed taste keys retain the actual ordered subject-device layout.
+"""Addressed taste keys retain the actual ordered agent-device layout.
 
 Run this module alone in a fresh four-CPU-device process.
 """
@@ -59,7 +59,7 @@ def _record_output(
 
 
 @pytest.mark.parametrize("device_ids", [(3,), (3, 1, 2), (2, 3, 1), (0, 1, 2, 3)])
-def test_addressed_key_profile_dispatches_directly_on_ordered_subject_devices(
+def test_addressed_key_profile_dispatches_directly_on_ordered_agent_devices(
     *, device_ids: tuple[int, ...], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """No excluded default device or post-dispatch reshard changes the output bank."""
@@ -68,7 +68,7 @@ def test_addressed_key_profile_dispatches_directly_on_ordered_subject_devices(
     memory = SimulationMemory(
         budget_bytes=2**24,
         devices=all_devices,
-        subject_devices=devices,
+        agent_devices=devices,
         operations=ProfiledSimulationOperations(),
         inputs=measure_buffer_footprint(tree=()),
     )
@@ -87,8 +87,8 @@ def test_addressed_key_profile_dispatches_directly_on_ordered_subject_devices(
     result = generate_taste_shock_keys(
         key=key,
         address_words=tuple(range(8)),
-        subject_slice=slice(start, start + 12),
-        original_n_subjects=start + 7,
+        agent_slice=slice(start, start + 12),
+        original_n_agents=start + 7,
         memory=memory,
     )
     assert len(calls) == 2
@@ -124,7 +124,7 @@ def test_ordered_taste_layouts_have_distinct_cache_entries() -> None:
         memory = SimulationMemory(
             budget_bytes=2**24,
             devices=all_devices,
-            subject_devices=devices,
+            agent_devices=devices,
             operations=operations,
             inputs=measure_buffer_footprint(tree=()),
         )
@@ -133,8 +133,8 @@ def test_ordered_taste_layouts_have_distinct_cache_entries() -> None:
         result = generate_taste_shock_keys(
             key=key,
             address_words=tuple(range(8)),
-            subject_slice=slice(0, 6),
-            original_n_subjects=5,
+            agent_slice=slice(0, 6),
+            original_n_agents=5,
             memory=memory,
         )
         outputs.append(np.array(jax.random.key_data(result), copy=True))

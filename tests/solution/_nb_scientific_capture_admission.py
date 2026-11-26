@@ -380,8 +380,8 @@ def _require_components(
             "declared_floor",
         },
         "initial": {"age", "regime_id", "liquid", "income"},
-        "simulation": {"period", "subject_id", "regime_name", "consumption"},
-        "period0": {"period", "subject_id", "regime_name", "consumption"},
+        "simulation": {"period", "agent_id", "regime_name", "consumption"},
+        "period0": {"period", "agent_id", "regime_name", "consumption"},
     }
     for suffix, fields in required.items():
         if not fields.issubset(files.get(f"{solver}-{suffix}.npz", {})):

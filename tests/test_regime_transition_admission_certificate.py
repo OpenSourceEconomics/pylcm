@@ -142,10 +142,10 @@ def _regime_transition_admission_errors(  # noqa: C901, PLR0912, PLR0915
         "transition producer external residency must be measured": (
             "resident_bytes_by_device("
         ),
-        "transition output must use first selected subject device": (
+        "transition output must use first selected agent device": (
             "output_sharding = simulation_value_sharding("
             "stored_sharding=jax.sharding.make_single_device_sharding("
-            "memory.subject_devices[0]), devices=(memory.subject_devices[0],))"
+            "memory.agent_devices[0]), devices=(memory.agent_devices[0],))"
         ),
         "transition compiler reservation must govern admission": (
             "memory.producers.admit_producer("
@@ -333,9 +333,9 @@ def test_regime_transition_admission_contract_is_complete() -> None:
         ),
         (
             "_evaluate_admitted_transition_producer",
-            "        devices=(memory.subject_devices[0],),\n    )\n    executable = memory.producers.admit_producer(\n        function=function,",
+            "        devices=(memory.agent_devices[0],),\n    )\n    executable = memory.producers.admit_producer(\n        function=function,",
             "        devices=(jax.devices()[0],),\n    )\n    executable = memory.producers.admit_producer(\n        function=function,",
-            "transition output must use first selected subject device",
+            "transition output must use first selected agent device",
         ),
         (
             "_evaluate_admitted_transition_producer",

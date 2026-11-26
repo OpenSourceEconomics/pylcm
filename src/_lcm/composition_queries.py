@@ -1,4 +1,4 @@
-"""Bind a regime's exit to the canonical scalar policy-query decision."""
+"""Bind a regime's composition action to the canonical scalar policy-query decision."""
 
 import hashlib
 import inspect
@@ -16,9 +16,13 @@ from dags import concatenate_functions, with_signature
 from dags.signature import rename_arguments
 from dags.tree import qname_from_tree_path
 
+from _lcm.composition_actions import (
+    compares_at_optimum,
+    composition_action_for_phase,
+    composition_action_functions,
+)
 from _lcm.current_iid import CurrentIIDPlan
 from _lcm.engine import Regime
-from _lcm.exits import compares_at_optimum, exit_for_phase, exit_functions
 from _lcm.off_grid import clip_projection, projected_grid_rules
 from _lcm.outside_values import UnalignedOutsideRead, align_outside_read
 from _lcm.policy_queries import (
@@ -38,9 +42,9 @@ from _lcm.regime_building.collective import landing_member_index
 from _lcm.renegotiation import (
     ClippedDefault,
     FixedNode,
-    FixedSettlement,
+    FixedTransfer,
     RenegotiationQueries,
-    SettlementQueries,
+    TransferQueries,
 )
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.solution.grid_search import GridSearch
@@ -53,15 +57,16 @@ from _lcm.utils.functools import (
 from _lcm.utils.functools import (
     call_with_declared_arguments as _call,
 )
-from lcm.exceptions import RegimeInitializationError, UnsupportedOperationError
-from lcm.exits import (
+from lcm.composition_actions import (
+    CompositionAction,
     Consent,
-    Exit,
-    ExitRole,
+    MemberName,
     MutualConsent,
-    Settlement,
-    Unilateral,
+    PCOnActions,
+    PCOnWeight,
+    Transfer,
 )
+from lcm.exceptions import RegimeInitializationError, UnsupportedOperationError
 from lcm.shocks import Discrete, ShockGroupName, ShockName, _fingerprint
 from lcm.typing import (
     BoolND,
@@ -74,15 +79,15 @@ from lcm.typing import (
     UserFunction,
 )
 
-# Whether the solve's exit graphs mark the outside reads proved aligned. Read once per
-# lowering when the model is built; simulation and participation graphs never mark
-# them.
+# Whether the solve's composition action graphs mark the outside reads proved aligned.
+# Read once per lowering when the model is built; simulation and participation graphs
+# never mark them.
 _READ_STORED_OUTSIDE_VALUES: bool = True
 
-# Whether the solve's enumerated exit choices evaluate the nodes where the exit is
-# available and one node for all the others (`_bind_available_nodes`), instead of
-# every node. Read once per lowering when the model is built; simulation and
-# participation graphs always enumerate every node.
+# Whether the solve's enumerated composition action choices evaluate the nodes where the
+# composition action is available and one node for all the others
+# (`_bind_available_nodes`), instead of every node. Read once per lowering when the
+# model is built; simulation and participation graphs always enumerate every node.
 _COLLAPSE_UNAVAILABLE_NODES: bool = True
 
 
@@ -94,13 +99,13 @@ def _predicate(
     """Return a scalar Boolean, without reducing undeclared axes."""
     value = jnp.asarray(_call(function=function, operands=operands))
     if value.shape != ():
-        raise ValueError("Exit availability must be a scalar Boolean.")
+        raise ValueError("Composition action availability must be a scalar Boolean.")
     return value
 
 
 @dataclass(frozen=True, kw_only=True)
-class _ExitReducer:
-    """One scalar rule shared by solve and actual subject replay.
+class _CompositionReducer:
+    """One scalar rule shared by solve and actual agent replay.
 
     Target values are already evaluated at one common action: of the target's Raw
     problem, or of the formed couple's Participating policy under consent. This
@@ -109,13 +114,13 @@ class _ExitReducer:
 
     kind: QueryKind
     """The source policy problem being answered."""
-    members: tuple[ExitRole, ...]
+    members: tuple[MemberName, ...]
     """Canonical source tuple order, or self for a singleton."""
-    declaration: Exit | None
-    """The regime's one exit in the current phase, or None if the query reads none."""
-    targets: Mapping[ExitRole, tuple[str, int]]
+    declaration: CompositionAction | None
+    """The regime's composition action in the current phase, or None."""
+    targets: Mapping[MemberName, tuple[str, int]]
     """Member to producer operand and destination member index."""
-    adjustments: Mapping[ExitRole, Callable[..., PytreeValue]]
+    adjustments: Mapping[MemberName, Callable[..., PytreeValue]]
     """Source-context utility adjustments, evaluated once in each payoff."""
     available: Callable[..., PytreeValue] | None
     """Source-context predicate; None means available."""
@@ -125,67 +130,67 @@ class _ExitReducer:
     Then the member index of the own and of the counterparty Raw value.
     """
     n_actions: int
-    """Flattened canonical stay product; the exit takes the next ID."""
+    """Flattened canonical stay product; the composition action takes the next ID."""
     renegotiation: RenegotiationQueries | None = None
     """Raw policies across a declared discrete state, before applying participation."""
-    settlement: SettlementQueries | None = None
-    """Outside reads at each candidate settlement of a mutual-consent exit."""
+    transfer: TransferQueries | None = None
+    """Outside reads at each candidate transfer under mutual consent divorce."""
 
     def __post_init__(self) -> None:
         """Keep declaration containers immutable and IDs inside their native width."""
         if not 0 < self.n_actions < jnp.iinfo(jnp.int32).max:
             raise RegimeInitializationError(
-                "Exit alternatives must fit stable int32 IDs."
+                "Composition action alternatives must fit stable int32 IDs."
             )
         for name in ("targets", "adjustments"):
             object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
 
-    def exits(
+    def composition_actions(
         self,
     ) -> dict[
         int,
         tuple[
-            Mapping[ExitRole, tuple[str, int]],
-            Mapping[ExitRole, Callable[..., PytreeValue]],
+            Mapping[MemberName, tuple[str, int]],
+            Mapping[MemberName, Callable[..., PytreeValue]],
         ],
     ]:
-        """Each exit ID with its members' reads and adjustments.
+        """Each composition action ID with its members' reads and adjustments.
 
-        The exit at the default takes the ID after the stay actions; a separation
-        at candidate settlement `k` takes the `k`-th ID after that.
+        The composition action at the default takes the ID after the stay actions; a
+        separation at candidate transfer `k` takes the `k`-th ID after that.
         """
-        exits = {self.n_actions: (self.targets, self.adjustments)}
-        if self.settlement is not None:
-            exits.update(
+        composition_actions = {self.n_actions: (self.targets, self.adjustments)}
+        if self.transfer is not None:
+            composition_actions.update(
                 {
                     self.n_actions + 1 + index: pair
                     for index, pair in enumerate(
                         zip(
-                            self.settlement.targets,
-                            self.settlement.adjustments,
+                            self.transfer.targets,
+                            self.transfer.adjustments,
                             strict=True,
                         )
                     )
                 }
             )
-        return exits
+        return composition_actions
 
     def _payoffs(
         self,
         *,
         operands: Mapping[ReferenceName, PytreeValue],
-        targets: Mapping[ExitRole, tuple[str, int]] | None = None,
-        adjustments: Mapping[ExitRole, Callable[..., PytreeValue]] | None = None,
+        targets: Mapping[MemberName, tuple[str, int]] | None = None,
+        adjustments: Mapping[MemberName, Callable[..., PytreeValue]] | None = None,
     ) -> tuple[dict[str, FloatND], BoolND, dict[str, BoolND]]:
-        """Each member's outside payoff, by default at the exit's own reads.
+        """Each member's outside payoff, by default at the composition action's reads.
 
-        Also returns whether each member's payoff is resolved: true where the exit
-        is not available or the member has no read, else the read's status and a
-        payoff that is not NaN.
+        Also returns whether each member's payoff is resolved: true where the
+        composition action is not available or the member has no read, else the read's
+        status and a payoff that is not NaN.
         """
         targets = self.targets if targets is None else targets
         adjustments = self.adjustments if adjustments is None else adjustments
-        declaration = cast("Exit", self.declaration)
+        declaration = cast("CompositionAction", self.declaration)
         active = (
             jnp.asarray(a=True)
             if self.available is None
@@ -193,7 +198,7 @@ class _ExitReducer:
         )
         resolved = {}
         payoffs = {}
-        for member in declaration.targets:
+        for member in declaration.destinations:
             if member not in targets:
                 payoffs[member] = jnp.asarray(-jnp.inf)
                 resolved[member] = jnp.asarray(a=True)
@@ -211,7 +216,9 @@ class _ExitReducer:
                     0.0,
                 )
                 if adjustment.shape != ():
-                    raise ValueError("Exit utility adjustment must be scalar.")
+                    raise ValueError(
+                        "Composition action utility adjustment must be scalar."
+                    )
                 value = value + adjustment
             payoffs[member] = value
             resolved[member] = ~active | (answer[3] & ~jnp.isnan(value))
@@ -220,12 +227,12 @@ class _ExitReducer:
     def keep(self, **operands: PytreeValue) -> BoolND:
         """Apply built-in dissolution thresholds before the common stay argmax.
 
-        A member is willing to stay when its stay value is above its exit payoff,
-        or equal to it when the rule's `tie` is `"stay"`, and always where its
+        A member is willing to stay when its stay value is above its composition action
+        payoff, or equal to it when the rule's `tie` is `"stay"`, and always where its
         destination has no feasible action (`_undefined`).
         """
         rule = None if self.declaration is None else self.declaration.rule
-        if compares_at_optimum(rule) or not isinstance(rule, Unilateral):
+        if not isinstance(rule, PCOnActions):
             return jnp.asarray(a=True)
         q = cast("FloatND", operands["q"])
         payoffs, active, _ = self._payoffs(operands=operands)
@@ -236,8 +243,8 @@ class _ExitReducer:
     def _undefined(self, *, operands: Mapping[ReferenceName, PytreeValue]) -> BoolND:
         """Mark each member whose destination has no feasible action.
 
-        Such a member's outside value is `-inf`, and it accepts every feasible
-        stay action whatever the rule's `tie`.
+        Such a member's value of the outside option is `-inf`. It accepts every
+        feasible stay action, whatever the rule's `tie`.
         """
         return jnp.stack(
             tuple(
@@ -256,7 +263,7 @@ class _ExitReducer:
             return self._renegotiated(
                 operands=operands, payoffs=payoffs, active=active, valid=valid
             )
-        if compares_at_optimum(cast("Exit", self.declaration).rule):
+        if compares_at_optimum(cast("CompositionAction", self.declaration).rule):
             return self._at_optimum(
                 operands=operands, payoffs=payoffs, active=active, valid=valid
             )
@@ -264,7 +271,7 @@ class _ExitReducer:
             operands=operands, payoffs=payoffs, active=active
         )
         move = eligible & (self.kind is QueryKind.FULL)
-        if not isinstance(cast("Exit", self.declaration).rule, Consent):
+        if not isinstance(cast("CompositionAction", self.declaration).rule, Consent):
             move &= ~stay[2]
         value = jnp.stack(tuple(payoffs[member] for member in self.members))
         return (
@@ -318,39 +325,45 @@ class _ExitReducer:
         active: BoolND,
         valid: BoolND,
     ) -> PolicyAnswer:
-        """Compare each member's value at the unconstrained optimum with its exit.
+        """Compare each member's value at the optimum with its outside option.
 
-        The stay answer is the household optimum, since `keep` masks no action. A
-        member is willing to stay when that value is above its exit payoff, or
-        equal to it when the rule's `tie` is `"stay"`; no feasible action leaves
-        every member unwilling. Under a settlement the outside values are those at
-        the default, and a pair in which exactly one member refuses separates at
-        the candidate the settlement selects, under that candidate's exit ID. A
-        candidate's outside value must be resolved only where the selection reads it.
+        The stay answer is the optimum of the Pareto-weighted objective, since `keep`
+        masks no action. A member is willing to stay when that value is above the
+        value of its outside option, or equal to it when the rule's `tie` is `"stay"`.
+        No feasible action leaves every member unwilling. Under a transfer, the values
+        of the outside options are those at the default transfer. A pair in which
+        exactly one member refuses separates at the candidate the transfer selects,
+        under that candidate's composition action ID. The value of the outside option
+        at a candidate must be resolved only where the selection reads it.
         """
         stay = cast("PolicyAnswer", operands["answer"])
-        rule = cast("Unilateral | MutualConsent", cast("Exit", self.declaration).rule)
+        rule = cast(
+            "PCOnActions | PCOnWeight | MutualConsent",
+            cast("CompositionAction", self.declaration).rule,
+        )
         inside = stay[0]
         outside = jnp.stack(tuple(payoffs[member] for member in self.members))
         willing = (
             (inside >= outside if rule.tie == "stay" else inside > outside)
             | self._undefined(operands=operands)
         ) & stay[2]
-        stays = jnp.all(willing) if isinstance(rule, Unilateral) else jnp.any(willing)
+        stays = (
+            jnp.any(willing) if isinstance(rule, MutualConsent) else jnp.all(willing)
+        )
         identifier = jnp.asarray(self.n_actions)
         settles = jnp.asarray(a=False)
         eligible, integrity = self._eligible(
             operands=operands, payoffs=payoffs, active=active
         )
-        if self.settlement is not None:
+        if self.transfer is not None:
             candidates = tuple(
                 self._payoffs(operands=operands, targets=targets, adjustments=paid)
                 for targets, paid in zip(
-                    self.settlement.targets, self.settlement.adjustments, strict=True
+                    self.transfer.targets, self.transfer.adjustments, strict=True
                 )
             )
-            # Row 0 is the default and row `1 + k` candidate `k`, so a row's exit ID
-            # is `n_actions` plus its index.
+            # Row 0 is the default and row `1 + k` candidate `k`, so a row's composition
+            # action ID is `n_actions` plus its index.
             settled = jnp.stack(
                 (
                     outside,
@@ -360,7 +373,7 @@ class _ExitReducer:
                     ),
                 )
             )
-            nearest, settles, decided = self.settlement.select(
+            nearest, settles, decided = self.transfer.select(
                 inside=inside,
                 willing=willing,
                 outside=settled,
@@ -382,13 +395,13 @@ class _ExitReducer:
                                     )
                                 )
                             )
-                            for targets in self.settlement.targets
+                            for targets in self.transfer.targets
                         ),
                     )
                 ),
                 default=cast(
                     "FloatND",
-                    _call(function=self.settlement.default, operands=operands),
+                    _call(function=self.transfer.default, operands=operands),
                 ),
             )
             settles &= active
@@ -425,8 +438,8 @@ class _ExitReducer:
         payoffs: Mapping[str, FloatND],
         active: BoolND,
     ) -> tuple[BoolND, BoolND]:
-        """Share exit support and strict common-policy consent."""
-        if isinstance(cast("Exit", self.declaration).rule, Consent):
+        """Share composition action support and strict common-policy consent."""
+        if isinstance(cast("CompositionAction", self.declaration).rule, Consent):
             if self.consent_read is None:
                 return jnp.asarray(a=False), jnp.asarray(a=True)
             own_key, other_key, couple_key, other_index, own_raw, other_raw = (
@@ -457,9 +470,9 @@ class _ExitReducer:
         return active & support, jnp.asarray(a=True)
 
 
-def bind_exit_reducer(
+def bind_composition_reducer(
     *,
-    reducer: _ExitReducer,
+    reducer: _CompositionReducer,
     operand_names: tuple[str, ...],
 ) -> tuple[Callable[..., BoolND], Callable[..., PolicyAnswer]]:
     """Expose explicit native signatures instead of free parameter inference."""
@@ -568,11 +581,11 @@ class _QueryGraphBuilder:
     keys: list[str] = field(default_factory=list)
     """Construction-local identities reserved before recursive descent."""
     outside_reads: dict[str, tuple[RegimeName, str]] = field(default_factory=dict)
-    """Reads of a destination's problem: the exit's source and the member priced.
+    """Reads of a destination's problem: the deciding source and the member priced.
 
-    The targets of every exit that needs no consent, at any depth, and a consent
-    exit's counterparty. A consent target and the reads of the source's own
-    problem are not outside reads.
+    The destinations of every composition action that needs no consent, at any
+    depth, and the counterparty of a formation by consent. A consent destination and
+    the reads of the source's own problem are not outside reads.
     """
 
     def bound(
@@ -597,11 +610,11 @@ class _QueryGraphBuilder:
         combined = renamed
         if not inspect.isfunction(renamed) or (
             inspect.signature(renamed).parameters.keys()
-            & (context.functions.keys() | {"_lcm_exit_result"})
+            & (context.functions.keys() | {"_lcm_composition_result"})
         ):
             combined = concatenate_functions(
-                functions={**context.functions, "_lcm_exit_result": renamed},
-                targets="_lcm_exit_result",
+                functions={**context.functions, "_lcm_composition_result": renamed},
+                targets="_lcm_composition_result",
                 enforce_signature=False,
                 set_annotations=True,
             )
@@ -624,15 +637,15 @@ class _QueryGraphBuilder:
         ancestors: tuple[str, ...] = (),
         price_information: frozenset[str] = frozenset(),
         source_projection: Mapping[StateName, Callable[..., PytreeValue]] | None = None,
-        exit_source: RegimeName | None = None,
+        composition_action_source: RegimeName | None = None,
     ) -> str:
         """Bind a demanded typed read and reject genuine recursive policy cycles.
 
-        With `exit_source`, the read is the landing of that regime's exit, and each
-        projected state follows its destination grid's `off_grid` rule in this
-        period (`ProjectedGridRule`).
+        With `composition_action_source`, the read is the landing of that regime's
+        composition action, and each projected state follows its destination grid's
+        `off_grid` rule in this period (`ProjectedGridRule`).
         """
-        from _lcm.model_graph import _exit_is_statically_unavailable  # noqa: PLC0415
+        from _lcm.model_graph import _composition_action_is_statically_unavailable  # noqa: PLC0415
 
         if kind not in {QueryKind.RAW, QueryKind.PARTICIPATING, QueryKind.FULL}:
             raise ValueError(
@@ -645,7 +658,7 @@ class _QueryGraphBuilder:
         occurrence = landing_step(ages=context.ages, step=self.period - 1, target=owner)
         if occurrence == self.period and self.period not in context.Q_and_F_functions:
             raise ValueError(
-                f"Exit target {owner!r} has no active policy at period "
+                f"Destination {owner!r} has no active policy at period "
                 f"{period_of_step(ages=context.ages, step=self.period)}."
             )
         key = f"query_{len(self.keys)}"
@@ -653,9 +666,9 @@ class _QueryGraphBuilder:
         axes = self.canonical_regimes[owner].solution.period_state_axes
         grid_rules = (
             ()
-            if exit_source is None
+            if composition_action_source is None
             else projected_grid_rules(
-                source=exit_source,
+                source=composition_action_source,
                 target=owner,
                 states=tuple(projection),
                 grids=context.grids,
@@ -699,8 +712,10 @@ class _QueryGraphBuilder:
                 landing=occurrence,
             )
             return key
-        declaration = exit_for_phase(
-            declaration=context.user_regimes_at(period=self.period)[owner].exit,
+        declaration = composition_action_for_phase(
+            declaration=context.user_regimes_at(period=self.period)[
+                owner
+            ].composition_action,
             phase=self.phase,
         )
         if kind is QueryKind.RAW or (
@@ -709,8 +724,11 @@ class _QueryGraphBuilder:
             and isinstance(declaration.rule, Consent)
         ):
             declaration = None
-        inactive = declaration is not None and _exit_is_statically_unavailable(
-            predicate=declaration.available, period=self.period, ages=context.ages
+        inactive = (
+            declaration is not None
+            and _composition_action_is_statically_unavailable(
+                predicate=declaration.available, period=self.period, ages=context.ages
+            )
         )
         # Only the solved occupant draws; simulation realises its shocks.
         rule = (
@@ -724,7 +742,7 @@ class _QueryGraphBuilder:
         )
         functions = {
             path: self.bound(owner=owner, path=path, function=function)
-            for path, function in exit_functions(
+            for path, function in composition_action_functions(
                 declaration=declaration, phase=self.phase
             ).items()
             if not inactive or path[-1] == "available"
@@ -775,7 +793,7 @@ class _QueryGraphBuilder:
             context = replace(
                 context, current_iid_plans=MappingProxyType({self.period: plan})
             )
-        inputs, reducer = self._expand_exit(
+        inputs, reducer = self._expand_composition_action(
             kind=kind,
             owner=owner,
             projection=projection,
@@ -812,7 +830,7 @@ class _QueryGraphBuilder:
                 )
             )
         )
-        keep, decide = bind_exit_reducer(reducer=reducer, operand_names=names)
+        keep, decide = bind_composition_reducer(reducer=reducer, operand_names=names)
         self.nodes[key] = QueryNode(
             read=QueryRead(
                 kind=kind,
@@ -866,27 +884,30 @@ class _QueryGraphBuilder:
                 "Mapping[StateName, UserFunction]",
                 projection if source_projection is None else source_projection,
             ),
-            exit_targets={}
+            composition_action_targets={}
             if declaration is None
             else {
                 identifier: {
                     member: inputs[operand] for member, (operand, _) in targets.items()
                 }
-                for identifier, (targets, _) in reducer.exits().items()
+                for identifier, (targets, _) in reducer.composition_actions().items()
             },
-            exit_adjustments={}
+            composition_action_adjustments={}
             if declaration is None
             else {
                 identifier: adjustments
-                for identifier, (_, adjustments) in reducer.exits().items()
+                for identifier, (
+                    _,
+                    adjustments,
+                ) in reducer.composition_actions().items()
             },
             sample=None if rule is None else (rule, ()),
-            exit_availability=reducer.available,
+            composition_action_availability=reducer.available,
             grid_rules=grid_rules,
         )
         return key
 
-    def _expand_exit(
+    def _expand_composition_action(
         self,
         *,
         kind: QueryKind,
@@ -894,14 +915,14 @@ class _QueryGraphBuilder:
         projection: Mapping[StateName, Callable[..., PytreeValue]],
         guards: tuple[Callable[..., PytreeValue], ...],
         ancestry: tuple[tuple[QueryKind, str], ...],
-        declaration: Exit | None,
+        declaration: CompositionAction | None,
         functions: Mapping[tuple[str, ...], Callable[..., PytreeValue]],
         source_key: str,
         ancestors: tuple[str, ...],
         policy_information: frozenset[str],
-    ) -> tuple[dict[str, str], _ExitReducer]:
+    ) -> tuple[dict[str, str], _CompositionReducer]:
         """Expand only declared benchmarks and consent Raw reads."""
-        from _lcm.model_graph import _exit_is_statically_unavailable  # noqa: PLC0415
+        from _lcm.model_graph import _composition_action_is_statically_unavailable  # noqa: PLC0415
 
         context = self.contexts[owner]
         current_plan = context.current_iid_plans.get(self.period)
@@ -914,9 +935,9 @@ class _QueryGraphBuilder:
         consent_read = None
         predicate = None
         renegotiation = None
-        settlement = None
+        transfer_queries = None
         if declaration is not None:
-            predicate = functions.get(("exit", "available"))
+            predicate = functions.get(("composition_action", "available"))
             child_guards = guards + (
                 ()
                 if predicate is None
@@ -929,48 +950,50 @@ class _QueryGraphBuilder:
                     ),
                 )
             )
-            if not _exit_is_statically_unavailable(
+            if not _composition_action_is_statically_unavailable(
                 predicate=declaration.available,
                 period=self.period,
                 ages=context.ages,
             ):
-                settle = (
-                    declaration.rule.settle
+                transfer = (
+                    declaration.rule.transfer
                     if isinstance(declaration.rule, MutualConsent)
                     else None
                 )
                 default = (
                     None
-                    if settle is None
-                    else self._settlement_default(
-                        settle=settle, declaration=declaration, functions=functions
+                    if transfer is None
+                    else self._transfer_default(
+                        transfer=transfer, declaration=declaration, functions=functions
                     )
                 )
-                inputs, targets, adjustments, consent_read = self._exit_reads(
-                    owner=owner,
-                    declaration=declaration,
-                    projection=projection
-                    if settle is None or default is None
-                    else {
-                        **projection,
-                        settle.name: _compose(
-                            projection=projection,
-                            function=default,
-                            source=source_key,
-                            physical_names=physical_names,
-                        ),
-                    },
-                    guards=child_guards,
-                    ancestry=ancestry,
-                    functions=functions,
-                    source_key=source_key,
-                    ancestors=ancestors,
-                    policy_information=policy_information,
-                    physical_names=physical_names,
+                inputs, targets, adjustments, consent_read = (
+                    self._composition_action_reads(
+                        owner=owner,
+                        declaration=declaration,
+                        projection=projection
+                        if transfer is None or default is None
+                        else {
+                            **projection,
+                            transfer.name: _compose(
+                                projection=projection,
+                                function=default,
+                                source=source_key,
+                                physical_names=physical_names,
+                            ),
+                        },
+                        guards=child_guards,
+                        ancestry=ancestry,
+                        functions=functions,
+                        source_key=source_key,
+                        ancestors=ancestors,
+                        policy_information=policy_information,
+                        physical_names=physical_names,
+                    )
                 )
-                if settle is not None and default is not None:
-                    settled, adjustments, settlement = self._settlement_reads(
-                        settle=settle,
+                if transfer is not None and default is not None:
+                    settled, adjustments, transfer_queries = self._transfer_reads(
+                        transfer=transfer,
                         default=default,
                         targets=targets,
                         adjustments=adjustments,
@@ -987,10 +1010,10 @@ class _QueryGraphBuilder:
                     )
                     inputs.update(settled)
                 if (
-                    isinstance(declaration.rule, Unilateral)
-                    and declaration.rule.renegotiate is not None
+                    isinstance(declaration.rule, PCOnWeight)
+                    and declaration.rule.state is not None
                 ):
-                    state = declaration.rule.renegotiate.state
+                    state = declaration.rule.state
                     nodes = context.state_action_space.states[state]
                     names = []
                     for index in range(nodes.size):
@@ -1015,7 +1038,7 @@ class _QueryGraphBuilder:
                         tie=declaration.rule.tie,
                     )
         members = context.members
-        reducer = _ExitReducer(
+        reducer = _CompositionReducer(
             kind=kind,
             members=members,
             declaration=declaration,
@@ -1024,18 +1047,18 @@ class _QueryGraphBuilder:
             available=predicate,
             consent_read=consent_read,
             renegotiation=renegotiation,
-            settlement=settlement,
+            transfer=transfer_queries,
             n_actions=math.prod(
                 value.size for value in context.state_action_space.actions.values()
             ),
         )
         return inputs, reducer
 
-    def _exit_reads(
+    def _composition_action_reads(
         self,
         *,
         owner: RegimeName,
-        declaration: Exit,
+        declaration: CompositionAction,
         projection: Mapping[StateName, Callable[..., PytreeValue]],
         guards: tuple[Callable[..., PytreeValue], ...],
         ancestry: tuple[tuple[QueryKind, str], ...],
@@ -1046,33 +1069,38 @@ class _QueryGraphBuilder:
         physical_names: frozenset[str],
     ) -> tuple[
         dict[str, str],
-        dict[ExitRole, tuple[str, int]],
-        dict[ExitRole, Callable[..., PytreeValue]],
+        dict[MemberName, tuple[str, int]],
+        dict[MemberName, Callable[..., PytreeValue]],
         tuple[str, str, str, int, int, int] | None,
     ]:
-        """Expand an available exit's benchmarks and, for consent, its Raw reads."""
+        """Expand an available decision's benchmarks and, for consent, its Raw reads."""
         context = self.contexts[owner]
-        prefix = ("exit",)
+        prefix = ("composition_action",)
         inputs = {}
         targets = {}
         adjustments = {}
         consent_read = None
-        for member, target in declaration.targets.items():
+        for member, target in declaration.destinations.items():
             if not isinstance(target.projection, Mapping):
-                raise TypeError("Exit query requires phase-resolved projections.")
+                raise TypeError(
+                    "Composition action query requires phase-resolved projections."
+                )
             target_projection = {
                 state: _compose(
                     projection=projection,
-                    function=functions[*prefix, "targets", member, "projection", state],
+                    function=functions[
+                        *prefix, "destinations", member, "projection", state
+                    ],
                     source=source_key,
                     physical_names=physical_names,
                 )
                 for state in target.projection
             }
-            operand = f"exit_{member}"
-            # A subject moves at most once per period, so a target is read as its
-            # problem, without its own exit. A formed couple keeps its rule for
-            # staying, whose outside values are again problems.
+            operand = f"composition_action_{member}"
+            # An agent changes its composition at most once per period, so a target
+            # is read as its problem, without its own composition action. A formed
+            # couple keeps its rule for staying. The values of its outside options
+            # are again problems.
             producer = self.make(
                 kind=QueryKind.PARTICIPATING
                 if isinstance(declaration.rule, Consent)
@@ -1085,10 +1113,12 @@ class _QueryGraphBuilder:
                 ancestors=ancestors,
                 price_information=policy_information | frozenset(declaration.observes),
                 source_projection={
-                    state: functions[*prefix, "targets", member, "projection", state]
+                    state: functions[
+                        *prefix, "destinations", member, "projection", state
+                    ]
                     for state in target.projection
                 },
-                exit_source=owner,
+                composition_action_source=owner,
             )
             inputs[operand] = producer
             if (
@@ -1103,7 +1133,7 @@ class _QueryGraphBuilder:
                 ),
             )
             adjustment = functions.get(
-                (*prefix, "targets", member, "utility_adjustment")
+                (*prefix, "destinations", member, "utility_adjustment")
             )
             if adjustment is not None:
                 adjustments[member] = adjustment
@@ -1111,7 +1141,7 @@ class _QueryGraphBuilder:
             _validate_consent_context(
                 contexts=self.contexts, source=owner, declaration=declaration
             )
-            target = declaration.targets["self"]
+            target = declaration.destinations["self"]
             counterparty = declaration.rule.counterparty
             if not isinstance(counterparty.projection, Mapping):
                 raise TypeError(
@@ -1156,7 +1186,7 @@ class _QueryGraphBuilder:
                     state: functions[*prefix, "counterparty", "projection", state]
                     for state in counterparty.projection
                 },
-                exit_source=owner,
+                composition_action_source=owner,
             )
             self.outside_reads[inputs["counterparty_raw"]] = (owner, "the counterparty")
             couple_operand = targets["self"][0]
@@ -1166,7 +1196,7 @@ class _QueryGraphBuilder:
             )
             if hidden:
                 raise RegimeInitializationError(
-                    f"The consent exit of {owner} cannot form a target policy "
+                    f"The formation by consent of {owner} cannot form a target policy "
                     f"requiring unobserved decision information {sorted(hidden)!r}."
                 )
             consent_read = (
@@ -1184,11 +1214,11 @@ class _QueryGraphBuilder:
             )
         return inputs, targets, adjustments, consent_read
 
-    def _settlement_default(
+    def _transfer_default(
         self,
         *,
-        settle: Settlement,
-        declaration: Exit,
+        transfer: Transfer,
+        declaration: CompositionAction,
         functions: Mapping[tuple[str, ...], Callable[..., PytreeValue]],
     ) -> Callable[..., PytreeValue]:
         """Bind the source-context default, clipped to the candidates' range."""
@@ -1199,27 +1229,27 @@ class _QueryGraphBuilder:
             if plan is not None
             for shock in plan.physical_names
         } | set(declaration.observes)
-        if settle.name in shocks:
+        if transfer.name in shocks:
             raise RegimeInitializationError(
-                f"Settlement {settle.name!r} has the name of a shock."
+                f"Transfer {transfer.name!r} has the name of a shock."
             )
-        points = _settlement_points(settle)
-        function = functions["exit", "settle", "default"]
+        points = _transfer_points(transfer)
+        function = functions["composition_action", "transfer", "default"]
         return with_signature(
             ClippedDefault(function=function, low=points[0], high=points[-1]),
             args=list(inspect.signature(function).parameters),
             enforce=False,
         )
 
-    def _settlement_reads(
+    def _transfer_reads(
         self,
         *,
-        settle: Settlement,
+        transfer: Transfer,
         default: Callable[..., PytreeValue],
-        targets: Mapping[ExitRole, tuple[str, int]],
-        adjustments: Mapping[ExitRole, Callable[..., PytreeValue]],
+        targets: Mapping[MemberName, tuple[str, int]],
+        adjustments: Mapping[MemberName, Callable[..., PytreeValue]],
         owner: RegimeName,
-        declaration: Exit,
+        declaration: CompositionAction,
         projection: Mapping[StateName, Callable[..., PytreeValue]],
         guards: tuple[Callable[..., PytreeValue], ...],
         ancestry: tuple[tuple[QueryKind, str], ...],
@@ -1229,21 +1259,27 @@ class _QueryGraphBuilder:
         policy_information: frozenset[str],
         physical_names: frozenset[str],
     ) -> tuple[
-        dict[str, str], dict[ExitRole, Callable[..., PytreeValue]], SettlementQueries
+        dict[str, str], dict[MemberName, Callable[..., PytreeValue]], TransferQueries
     ]:
-        """Read each member's outside value at every candidate settlement.
+        """Read each member's value of the outside option at every candidate transfer.
 
-        A member whose projection does not read the settlement keeps its read at
+        A member whose projection does not read the transfer keeps its read at
         the default; only its adjustment changes with the candidate. Returns the
         candidate reads, the adjustments at the default and the candidates' rule.
         """
         moving = {
             member: target
-            for member, target in declaration.targets.items()
+            for member, target in declaration.destinations.items()
             if any(
                 _reads(
-                    function=functions["exit", "targets", member, "projection", state],
-                    name=settle.name,
+                    function=functions[
+                        "composition_action",
+                        "destinations",
+                        member,
+                        "projection",
+                        state,
+                    ],
+                    name=transfer.name,
                 )
                 for state in cast("Mapping[StateName, UserFunction]", target.projection)
             )
@@ -1251,15 +1287,15 @@ class _QueryGraphBuilder:
         inputs = {}
         node_targets = []
         node_adjustments = []
-        points = _settlement_points(settle)
+        points = _transfer_points(transfer)
         for index, point in enumerate(points):
-            fixed = with_signature(FixedSettlement(value=point), args=[], enforce=False)
+            fixed = with_signature(FixedTransfer(value=point), args=[], enforce=False)
             node = dict(targets)
             if moving:
-                reads, moved, _, _ = self._exit_reads(
+                reads, moved, _, _ = self._composition_action_reads(
                     owner=owner,
-                    declaration=replace(declaration, targets=moving),
-                    projection={**projection, settle.name: fixed},
+                    declaration=replace(declaration, destinations=moving),
+                    projection={**projection, transfer.name: fixed},
                     guards=guards,
                     ancestry=ancestry,
                     functions=functions,
@@ -1269,16 +1305,16 @@ class _QueryGraphBuilder:
                     physical_names=physical_names,
                 )
                 for member, (operand, slot) in moved.items():
-                    key = f"_lcm_settle_{index}_{member}"
+                    key = f"_lcm_transfer_{index}_{member}"
                     inputs[key] = reads[operand]
                     node[member] = (key, slot)
             node_targets.append(MappingProxyType(node))
             node_adjustments.append(
                 MappingProxyType(
                     {
-                        member: _bind_settlement(
+                        member: _bind_transfer(
                             function=adjustment,
-                            name=settle.name,
+                            name=transfer.name,
                             helper=fixed,
                             source=source_key,
                         )
@@ -1289,15 +1325,15 @@ class _QueryGraphBuilder:
         return (
             inputs,
             {
-                member: _bind_settlement(
+                member: _bind_transfer(
                     function=adjustment,
-                    name=settle.name,
+                    name=transfer.name,
                     helper=default,
                     source=source_key,
                 )
                 for member, adjustment in adjustments.items()
             },
-            SettlementQueries(
+            TransferQueries(
                 points=points,
                 default=default,
                 targets=tuple(node_targets),
@@ -1307,29 +1343,29 @@ class _QueryGraphBuilder:
         )
 
 
-def _settlement_points(settle: Settlement) -> tuple[float, ...]:
-    """The candidate settlements in the working float format, as host scalars."""
-    return tuple(float(point) for point in np.asarray(settle.candidates.to_jax()))
+def _transfer_points(transfer: Transfer) -> tuple[float, ...]:
+    """The candidate transfers in the working float format, as host scalars."""
+    return tuple(float(point) for point in np.asarray(transfer.candidates.to_jax()))
 
 
 def _reads(*, function: Callable[..., PytreeValue], name: ReferenceName) -> bool:
     return name in inspect.signature(function).parameters
 
 
-def _bind_settlement(
+def _bind_transfer(
     *,
     function: Callable[..., PytreeValue],
     name: ReferenceName,
     helper: Callable[..., PytreeValue],
     source: ReferenceName,
 ) -> Callable[..., PytreeValue]:
-    """Evaluate a source-context callback at the settlement `helper` gives."""
+    """Evaluate a source-context callback at the transfer `helper` gives."""
     if not _reads(function=function, name=name):
         return function
     return _compose(projection={name: helper}, function=function, source=source)
 
 
-def bind_exit_query_graph(
+def bind_composition_query_graph(
     *,
     contexts: Mapping[RegimeName, SolverBuildContext],
     canonical_regimes: Mapping[RegimeName, Regime],
@@ -1344,14 +1380,14 @@ def bind_exit_query_graph(
     """Bind demanded public reads after every actual canonical context exists.
 
     With `stored_outside_reads`, each outside read proved aligned carries its
-    `OutsideValueRead`, and an outside read of a problem solved without grid search
-    is refused. `value_periods_by_regime` names the periods each regime is solved
-    in; without it, a regime is solved in each of its active periods. With
-    `collapse_unavailable_nodes`, the root enumerates only the nodes where its exit
-    is available, and one more (`_bind_available_nodes`).
+    `OutsideValueRead`, and an outside read of a problem solved without grid search is
+    refused. `value_periods_by_regime` names the periods each regime is solved in;
+    without it, a regime is solved in each of its active periods. With
+    `collapse_unavailable_nodes`, the root enumerates only the nodes where its
+    composition action is available, and one more (`_bind_available_nodes`).
     """
     aliases = {
-        (owner, name): f"_lcm_exit_operand_{index}"
+        (owner, name): f"_lcm_composition_operand_{index}"
         for index, (owner, name) in enumerate(
             (owner, name)
             for owner, context in contexts.items()
@@ -1436,7 +1472,10 @@ def _fail_if_endogenous_grid_read(
     name = next(
         cls.__name__ for cls in type(solver).__mro__ if not cls.__name__.startswith("_")
     )
-    read = f"The outside value of {member} in the exit of {source!r} reads {target!r}"
+    read = (
+        f"The value of the outside option of {member} in the composition action of "
+        f"{source!r} reads {target!r}"
+    )
     if isinstance(alignment, UnalignedOutsideRead):
         raise UnsupportedOperationError(
             f"{read}, whose {name} solver cannot be evaluated at a point, at a "
@@ -1444,7 +1483,8 @@ def _fail_if_endogenous_grid_read(
             f"Put the projected states on the grid of {target!r}."
         )
     raise UnsupportedOperationError(
-        "Stored outside values of an endogenous-grid problem are not produced yet. "
+        "Stored values of the outside option of an endogenous-grid problem are not "
+        "produced yet. "
         f"{read}, solved with the {name} solver, at points of its grid."
     )
 
@@ -1454,18 +1494,19 @@ def acting_kinds(
     contexts: Mapping[RegimeName, SolverBuildContext],
     readers: tuple[tuple[RegimeName, Mapping[str, QueryNode], str, int], ...],
 ) -> Mapping[tuple[RegimeName, int], QueryKind]:
-    """Return the problem each mover acts in: the one its move was priced at.
+    """Return the problem each deciding member acts in: its decision's price.
 
-    Each reader is a moving source, its simulated query graph, the graph's root and
-    its period. A destination entered in one period both by moves priced at its
-    Participating policy and by moves priced at its Raw problem is refused, unless
-    the two coincide because a Participating read drops the destination's exit.
+    Each reader is a source with a composition action, its simulated query graph, the
+    graph's root and its period. A destination can be entered in one period both by
+    decisions priced at its Participating policy and by decisions priced at its Raw
+    problem. Such a destination is refused, unless the two coincide because a
+    Participating read drops the destination's composition action.
     """
     moves: dict[tuple[RegimeName, int], dict[QueryKind, set[RegimeName]]] = {}
     for source, definitions, root, period in readers:
-        for targets in definitions[root].exit_targets.values():
+        for targets in definitions[root].composition_action_targets.values():
             for query in targets.values():
-                # A mover into a later stage is a subject there, not an actor here.
+                # A member entering a later stage is an agent there, not an actor here.
                 if definitions[query].landing is not None:
                     continue
                 read = definitions[query].read
@@ -1473,7 +1514,7 @@ def acting_kinds(
                     read.kind, set()
                 ).add(source)
     for (owner, period), kinds in moves.items():
-        if len(kinds) > 1 and _participating_read_keeps_exit(
+        if len(kinds) > 1 and _participating_read_keeps_composition_action(
             context=contexts[owner], owner=owner, period=period
         ):
             readings = "; ".join(
@@ -1482,11 +1523,12 @@ def acting_kinds(
             )
             economic = period_of_step(ages=contexts[owner].ages, step=period)
             raise RegimeInitializationError(
-                f"Regime {owner!r} is entered in period {economic} by moves priced at "
-                f"different problems ({readings}). A regime with an available exit "
-                "that needs no consent cannot be entered in one period both by "
-                "consent, which reads it with its exit, and by another exit, which "
-                "reads it without."
+                f"Regime {owner!r} is entered in period {economic} by decisions "
+                f"on the composition priced at different problems ({readings}). A "
+                "regime with an available composition action that needs no consent "
+                "cannot be entered in one period both by consent, which reads it with "
+                "its composition action, and by another decision on the composition, "
+                "which reads it without."
             )
     return MappingProxyType(
         {
@@ -1498,24 +1540,25 @@ def acting_kinds(
     )
 
 
-def _participating_read_keeps_exit(
+def _participating_read_keeps_composition_action(
     *, context: SolverBuildContext, owner: RegimeName, period: int
 ) -> bool:
     """Whether a simulated Participating read of a regime differs from its Raw one.
 
-    A Participating read applies the regime's exit, unless that exit needs consent or
-    is unavailable at every state of the period; a Raw read never applies it.
+    A Participating read applies the regime's composition action, unless that
+    composition action needs consent or is unavailable at every state of the period; a
+    Raw read never applies it.
     """
-    from _lcm.model_graph import _exit_is_statically_unavailable  # noqa: PLC0415
+    from _lcm.model_graph import _composition_action_is_statically_unavailable  # noqa: PLC0415
 
-    declaration = exit_for_phase(
-        declaration=context.user_regimes_at(period=period)[owner].exit,
+    declaration = composition_action_for_phase(
+        declaration=context.user_regimes_at(period=period)[owner].composition_action,
         phase="simulate",
     )
     return (
         declaration is not None
         and not isinstance(declaration.rule, Consent)
-        and not _exit_is_statically_unavailable(
+        and not _composition_action_is_statically_unavailable(
             predicate=declaration.available, period=period, ages=context.ages
         )
     )
@@ -1524,10 +1567,10 @@ def _participating_read_keeps_exit(
 def _bind_sample(*, nodes: dict[str, QueryNode], root: str) -> None:
     """Keep the root's stay-read groups as a product; every other axis is drawn.
 
-    A stay problem whose shock reads are not attributable keeps every own group.
-    A root with nothing left to draw integrates over its full product. When the
-    root's exit is available only on some nodes of one drawn group, that group
-    is drawn among those nodes (`QueryNode.draw_condition`).
+    A stay problem whose shock reads are not attributable keeps every own group. A root
+    with nothing left to draw integrates over its full product. When the root's
+    composition action is available only on some nodes of one drawn group, that group is
+    drawn among those nodes (`QueryNode.draw_condition`).
     """
     from _lcm.query_information import _frame_shocks, stay_read_shocks  # noqa: PLC0415
 
@@ -1569,7 +1612,7 @@ def _bind_sample(*, nodes: dict[str, QueryNode], root: str) -> None:
         context=context,
         sample=(node.sample[0], kept),
         draw_condition=_draw_condition(
-            predicate=node.exit_availability,
+            predicate=node.composition_action_availability,
             frame_shocks=_frame_shocks(key=root, definitions=nodes),
             groups=tuple(
                 frozenset(binding.group.shocks) if position not in kept else None
@@ -1585,10 +1628,10 @@ def _draw_condition(
     frame_shocks: frozenset[ShockName],
     groups: tuple[frozenset[ShockName] | None, ...],
 ) -> int | None:
-    """The drawn plan position whose shocks alone decide the exit's availability.
+    """The drawn plan position whose shocks alone decide if the decision is available.
 
-    `groups` holds each drawn position's shocks and `None` for a kept one. None
-    when the exit is always available, when its predicate reads no shock, or when
+    `groups` holds each drawn position's shocks and `None` for a kept one. None when the
+    composition action is always available, when its predicate reads no shock, or when
     the shocks it reads are not all in one drawn group.
     """
     reads = (
@@ -1605,24 +1648,24 @@ def _draw_condition(
 
 
 def _bind_available_nodes(*, nodes: dict[str, QueryNode], root: str) -> None:
-    """Enumerate the root's exit choice at the nodes where its exit is available.
+    """Enumerate the root's decision at the nodes where its decision is available.
 
-    It applies when the root enumerates its rows, renegotiates nothing, and its
-    exit's predicate reads only discrete shocks of one group that its stay problem
-    ignores (`_draw_condition`). The group's nodes then carry fixed codes, so where
-    the exit is available is known now. Where it is not, the row's value is the
-    stay value whatever the node, so the plan keeps the available nodes and the
-    first unavailable one, which stands for all of them
-    (`QueryNode.available_nodes`). A predicate true at every node changes nothing.
+    It applies when the root enumerates its rows, updates no state (no Pareto weight
+    moves), and its composition action's predicate reads only discrete shocks of one
+    group that its stay problem ignores (`_draw_condition`). The group's nodes then
+    carry fixed codes, so where the composition action is available is known now.
+    Where it is not, the row's value is the stay value whatever the node, so the plan
+    keeps the available nodes and the first unavailable one, which stands for all of
+    them (`QueryNode.available_nodes`). A predicate true at every node changes nothing.
     """
     from _lcm.query_information import (  # noqa: PLC0415
-        _exit_available,
+        _composition_action_available,
         _frame_shocks,
         stay_read_shocks,
     )
 
     node = nodes[root]
-    predicate = node.exit_availability
+    predicate = node.composition_action_availability
     plan = node.context.current_iid_plans.get(node.read.period)
     shocks = stay_read_shocks(name=root, definitions=nodes)
     if (
@@ -1650,7 +1693,7 @@ def _bind_available_nodes(*, nodes: dict[str, QueryNode], root: str) -> None:
     if not all(isinstance(binding.group.shocks.get(name), Discrete) for name in names):
         return
     available = np.asarray(
-        _exit_available(
+        _composition_action_available(
             predicate=predicate,
             arguments={},
             physical={name: support.discrete_codes[name] for name in names},
@@ -1870,7 +1913,7 @@ def _validate_query_projection_bindings(
             )
 
 
-def lower_exit_queries(
+def lower_composition_queries(
     *,
     contexts: Mapping[RegimeName, SolverBuildContext],
     canonical_regimes: Mapping[RegimeName, Regime],
@@ -1883,7 +1926,7 @@ def lower_exit_queries(
     Each destination a stored outside read takes is bound once more, as the root
     of its own Raw graph, which the kernel tabulates.
     """
-    nodes, root_key = bind_exit_query_graph(
+    nodes, root_key = bind_composition_query_graph(
         contexts=contexts,
         canonical_regimes=canonical_regimes,
         root=root,
@@ -1896,7 +1939,7 @@ def lower_exit_queries(
     for node in nodes.values():
         read = node.outside_value
         if read is not None and read.label not in tables:
-            tables[read.label] = bind_exit_query_graph(
+            tables[read.label] = bind_composition_query_graph(
                 contexts=contexts,
                 canonical_regimes=canonical_regimes,
                 root=node.read.target,
@@ -1924,13 +1967,13 @@ def lower_exit_queries(
     )
 
 
-def install_exit_policy_queries(
+def install_composition_policy_queries(
     *,
     canonical_regimes: Mapping[RegimeName, Regime],
     contexts: Mapping[RegimeName, SolverBuildContext],
     value_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> MappingProxyType[RegimeName, Regime]:
-    """Install Full roots for the periods of regimes that declare an exit.
+    """Install Full roots for the periods of regimes that declare a composition action.
 
     Periods of one regime whose query graphs trace the same programs run the
     functions of the first such period and publish its period in their
@@ -1954,8 +1997,11 @@ def install_exit_policy_queries(
                 and period not in value_periods_by_regime.get(owner, ())
             ):
                 continue
-            if context.user_regimes_at(period=period)[owner].exit is not None:
-                kernel = lower_exit_queries(
+            if (
+                context.user_regimes_at(period=period)[owner].composition_action
+                is not None
+            ):
+                kernel = lower_composition_queries(
                     contexts=contexts,
                     canonical_regimes=canonical_regimes,
                     root=owner,
@@ -1999,6 +2045,8 @@ def install_exit_policy_queries(
                         {
                             period: (
                                 signature,
+                                # Frozen identity: the tag names compiled
+                                # programs and keeps its spelling.
                                 "typed-exit-query",
                                 traced_at.get(period, period),
                             )
@@ -2051,12 +2099,12 @@ def _node_structure(*, node: QueryNode) -> _Structure:
     - The read drops its period and keeps the names its projection writes.
     - The context becomes `_context_structure`.
     - A closure bound per period keeps only its presence: it is built from the
-      declaration, the closed exit and the child queries, which the context and
-      the remaining fields hold.
-    - An exit adjustment keeps its exit and member: it is bound per period from
-      the declaration and the regime's functions, which the context holds.
-    - The exit's availability predicate keeps only its presence, for the same
-      reason as an exit adjustment.
+      declaration, the closed composition action and the child queries, which the
+      context and the remaining fields hold.
+    - A utility adjustment keeps its composition action and member: it is bound per
+      period from the declaration and the regime's functions, which the context holds.
+    - The availability predicate of the composition action keeps only its presence, for
+      the same reason as a utility adjustment.
     """
     parts: _Structure = ()
     for item in fields(node):
@@ -2075,16 +2123,17 @@ def _node_structure(*, node: QueryNode) -> _Structure:
             "participation",
             "decision",
             "available",
-            "exit_availability",
+            "composition_action_availability",
         }:
             value = value is not None
         elif item.name == "source_projection":
             value = tuple(value)
         elif item.name == "landing" and value is not None:
             value -= node.read.period
-        elif item.name == "exit_adjustments":
+        elif item.name == "composition_action_adjustments":
             value = tuple(
-                (exit_id, tuple(members)) for exit_id, members in value.items()
+                (composition_action_id, tuple(members))
+                for composition_action_id, members in value.items()
             )
         parts = (*parts, value)
     return parts
@@ -2097,7 +2146,7 @@ def _context_structure(*, node: QueryNode) -> _Structure:
     its bindings and the content of its node arrays, because every period holds
     a plan of its own.
     """
-    from _lcm.model_graph import _exit_is_statically_unavailable  # noqa: PLC0415
+    from _lcm.model_graph import _composition_action_is_statically_unavailable  # noqa: PLC0415
 
     context, period = node.context, node.read.period
     shared = tuple(
@@ -2115,9 +2164,11 @@ def _context_structure(*, node: QueryNode) -> _Structure:
         shared,
         id(context.Q_and_F_functions[period]),
         id(declaration),
-        declaration.exit is not None
-        and _exit_is_statically_unavailable(
-            predicate=declaration.exit.available, period=period, ages=context.ages
+        declaration.composition_action is not None
+        and _composition_action_is_statically_unavailable(
+            predicate=declaration.composition_action.available,
+            period=period,
+            ages=context.ages,
         ),
         None
         if plan is None
@@ -2145,7 +2196,7 @@ def _validate_consent_context(
     *,
     contexts: Mapping[RegimeName, SolverBuildContext],
     source: RegimeName,
-    declaration: Exit,
+    declaration: CompositionAction,
 ) -> None:
     """Do not omit a member or invent an ambiguous counterparty Raw channel."""
     from lcm.exceptions import RegimeInitializationError  # noqa: PLC0415
@@ -2158,7 +2209,7 @@ def _validate_consent_context(
             "Consent requires unambiguous singleton source "
             "and counterparty Raw channels."
         )
-    target = declaration.targets["self"]
+    target = declaration.destinations["self"]
     if set(contexts[target.regime].members) != {
         target.role,
         counterparty.role,

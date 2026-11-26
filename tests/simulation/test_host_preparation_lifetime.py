@@ -37,14 +37,18 @@ from _lcm.simulation import (
 from _lcm.typing import PytreeValue
 from _lcm.utils.logging import LogLevel, get_logger
 from benchmarks.asv._compile_counters import count_compile_requests
+from lcm import Model, SimulationResult
 from lcm.execution import ExecutionConfig
+from lcm.typing import UserInitialConditions, UserParams
 from lcm_examples import precautionary_savings
 
-_N_SUBJECTS = 2_000
+_N_AGENTS = 2_000
 _LOG_LEVELS: tuple[LogLevel, ...] = ("off", "warning", "progress", "debug")
 
 
-def _model(*, execution_config: ExecutionConfig | None = None):
+def _model(
+    *, execution_config: ExecutionConfig | None = None
+) -> tuple[Model, UserParams]:
     model = precautionary_savings.create_model(
         n_periods=3,
         shock_type="rouwenhorst",
@@ -59,12 +63,12 @@ def _model(*, execution_config: ExecutionConfig | None = None):
     return model, params
 
 
-def _initial_conditions(*, n_subjects: int = _N_SUBJECTS):
+def _initial_conditions(*, n_agents: int = _N_AGENTS) -> UserInitialConditions:
     return {
-        "age": jnp.full(n_subjects, 20.0),
-        "wealth": jnp.full(n_subjects, 5.0),
-        "income": jnp.full(n_subjects, 0.0),
-        "regime_id": jnp.zeros(n_subjects, dtype="int32"),
+        "age": jnp.full(n_agents, 20.0),
+        "wealth": jnp.full(n_agents, 5.0),
+        "income": jnp.full(n_agents, 0.0),
+        "regime_id": jnp.zeros(n_agents, dtype="int32"),
     }
 
 
@@ -119,7 +123,13 @@ def _count_new_wrapper_objects() -> Generator[dict[str, int]]:
         builtins.compile = original_compile
 
 
-def _run_simulate(*, model, params, initial_conditions, log_level: LogLevel):
+def _run_simulate(
+    *,
+    model: Model,
+    params: UserParams,
+    initial_conditions: UserInitialConditions,
+    log_level: LogLevel,
+) -> SimulationResult:
     return model.simulate(
         params=params,
         initial_conditions=initial_conditions,
@@ -135,12 +145,14 @@ def _run_simulate(*, model, params, initial_conditions, log_level: LogLevel):
         ExecutionConfig(device_memory_bytes=None),
         ExecutionConfig(
             device_memory_bytes=2 * 1024**3,
-            axis_widths={"subject": _N_SUBJECTS},
+            axis_widths={"agent": _N_AGENTS},
         ),
     ],
     ids=["unbudgeted", "budgeted"],
 )
-def test_warm_simulate_creates_no_new_migrated_wrappers(execution_config) -> None:
+def test_warm_simulate_creates_no_new_migrated_wrappers(
+    execution_config: ExecutionConfig,
+) -> None:
     model, params = _model(execution_config=execution_config)
     initial_conditions = _initial_conditions()
 
@@ -188,12 +200,14 @@ def test_warm_simulate_creates_no_new_migrated_wrappers(execution_config) -> Non
         ExecutionConfig(device_memory_bytes=None),
         ExecutionConfig(
             device_memory_bytes=2 * 1024**3,
-            axis_widths={"subject": _N_SUBJECTS},
+            axis_widths={"agent": _N_AGENTS},
         ),
     ],
     ids=["unbudgeted", "budgeted"],
 )
-def test_warm_simulate_hits_zero_backend_compiles(execution_config) -> None:
+def test_warm_simulate_hits_zero_backend_compiles(
+    execution_config: ExecutionConfig,
+) -> None:
     model, params = _model(execution_config=execution_config)
     initial_conditions = _initial_conditions()
 
@@ -249,7 +263,7 @@ def test_value_dependent_operation_checks_still_raise(log_level: LogLevel) -> No
             function=_pure_operation,
             arguments={"value": 0},
             static_arguments={"value": 1},
-            subject_outputs=False,
+            agent_outputs=False,
         )
 
 

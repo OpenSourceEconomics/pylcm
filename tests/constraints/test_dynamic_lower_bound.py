@@ -484,9 +484,7 @@ def test_floor_marker_keeps_its_clock_kind(
 
 
 @pytest.mark.parametrize("handwritten", [False, True])
-def test_grid_search_simulation_checks_actual_subject_floor(
-    *, handwritten: bool
-) -> None:
+def test_grid_search_simulation_checks_actual_agent_floor(*, handwritten: bool) -> None:
     """Simulation chooses the largest grid action satisfying the actual floor."""
     declaration = (
         ref("savings") >= ref("floor")

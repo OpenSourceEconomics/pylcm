@@ -1,4 +1,4 @@
-"""Canonical runtime-bound transport survives actual solver and subject evaluations."""
+"""Canonical runtime-bound transport survives actual solver and agent evaluations."""
 
 from collections.abc import Callable, Mapping
 from functools import partial
@@ -23,8 +23,8 @@ from _lcm.regime_building.Q_and_F import (
     BoundedQAndF,
     get_Q_and_F_terminal_collective,
 )
-from _lcm.simulation.program_types import SUBJECT_WIDTH_KEYWORD
-from _lcm.simulation.programs import _SubjectTiled
+from _lcm.simulation.program_types import AGENT_WIDTH_KEYWORD
+from _lcm.simulation.programs import _AgentTiled
 from _lcm.simulation.simulate import _canonical_Q_at_actions, _read_external_replay
 from _lcm.simulation.transitions import create_regime_state_action_space
 from _lcm.solution.action_streaming import (
@@ -128,7 +128,7 @@ def test_public_policy_lookup_keeps_integrity_with_retained_action_parts(
         lower_function=floor,
         execution_config=ExecutionConfig(
             device_memory_bytes=(1 << 28) if budgeted else None,
-            axis_widths={"subject": 1} if budgeted else {},
+            axis_widths={"agent": 1} if budgeted else {},
         ),
     )
     params = {"discount_factor": 1.0}
@@ -538,7 +538,7 @@ def test_action_partitions_keep_empty_owners_neutral_to_floor_integrity(
 def test_decorated_floor_cohorts_never_use_wrong_period_evaluator(
     *, handwritten: bool, clock: str, entry: int, runtime_checks: bool
 ) -> None:
-    """Decorated floors reject nonfinite values at actual subject decision periods."""
+    """Decorated floors reject nonfinite values at actual agent decision periods."""
 
     def build(coordinate: float) -> UserFunction:
         def floor(*, income: FloatND) -> FloatND:
@@ -743,7 +743,7 @@ def test_action_free_owner_preserves_mandatory_integrity(*, streamed: bool) -> N
 
 
 @pytest.mark.parametrize("handwritten", [False, True])
-def test_supplied_actual_actions_cannot_drop_invalid_subject_floor(
+def test_supplied_actual_actions_cannot_drop_invalid_agent_floor(
     *, handwritten: bool
 ) -> None:
     """
@@ -782,10 +782,10 @@ def test_supplied_actual_actions_cannot_drop_invalid_subject_floor(
 
 @pytest.mark.parametrize("handwritten", [False, True])
 @pytest.mark.parametrize("runtime_checks", [False, True])
-def test_simulation_rejects_invalid_floor_only_at_actual_subject(
+def test_simulation_rejects_invalid_floor_only_at_actual_agent(
     *, handwritten: bool, runtime_checks: bool
 ) -> None:
-    """A valid solve grid cannot authorize a nonfinite floor at an actual subject."""
+    """A valid solve grid cannot authorize a nonfinite floor at an actual agent."""
 
     def floor(*, income: FloatND) -> FloatND:
         return jnp.where(income == 0.5, jnp.nan, 0.0)
@@ -818,10 +818,10 @@ def test_simulation_rejects_invalid_floor_only_at_actual_subject(
 
 @pytest.mark.parametrize("handwritten", [False, True])
 @pytest.mark.parametrize("runtime_checks", [False, True])
-def test_later_subject_decision_rejects_invalid_floor_before_empty_actions(
+def test_later_agent_decision_rejects_invalid_floor_before_empty_actions(
     *, handwritten: bool, runtime_checks: bool
 ) -> None:
-    """A floor valid at entry remains mandatory at the subject's later decision."""
+    """A floor valid at entry remains mandatory at the agent's later decision."""
 
     def floor(*, income: FloatND, period: ScalarInt) -> FloatND:
         return jnp.where((period == 1) & (income == 0.5), jnp.nan, 0.0)
@@ -848,12 +848,12 @@ def test_later_subject_decision_rejects_invalid_floor_before_empty_actions(
 
 
 @pytest.mark.parametrize("width", [1, 2, 8])
-def test_subject_tiles_fold_flags_before_concatenating_ordinary_rows(
+def test_agent_tiles_fold_flags_before_concatenating_ordinary_rows(
     *, width: int
 ) -> None:
-    """A partial subject tile keeps ordinary rows and two scalar Boolean flags."""
-    assert "n_bound_records" in _SubjectTiled.__dataclass_fields__, (
-        "Subject tile owners need explicit mandatory-summary declarations."
+    """A partial agent tile keeps ordinary rows and two scalar Boolean flags."""
+    assert "n_bound_records" in _AgentTiled.__dataclass_fields__, (
+        "Agent tile owners need explicit mandatory-summary declarations."
     )
 
     def floor(*, income: FloatND) -> FloatND:
@@ -879,9 +879,9 @@ def test_subject_tiles_fold_flags_before_concatenating_ordinary_rows(
         ),
         bound_specs=(_bound(),),
     )
-    tiled = _SubjectTiled(
+    tiled = _AgentTiled(
         func=BoundedQAndF(function=kernel),
-        subject_arg_names=("income", "consumption"),
+        agent_arg_names=("income", "consumption"),
         n_bound_records=1,
     )
     result = jax.jit(
@@ -891,7 +891,7 @@ def test_subject_tiles_fold_flags_before_concatenating_ordinary_rows(
             period=jnp.int32(0),
             income=jnp.asarray([-1.0, jnp.nan, 0.0]),
             consumption=jnp.asarray([1.0, 1.0, 1.0]),
-            **{SUBJECT_WIDTH_KEYWORD: width},
+            **{AGENT_WIDTH_KEYWORD: width},
         )
     )()
     np.testing.assert_array_equal(result[0], [[1.0], [1.0], [1.0]])
@@ -1309,7 +1309,7 @@ def test_external_replay_scores_integrity_only_for_actual_regime_holders(
             next_regime_to_V_arr=MappingProxyType({}),
             flat_params=flat_params,
             referenced_value_kwargs={},
-            subject_ids_in_regime=holders,
+            agent_ids_in_regime=holders,
         )
 
     if invalid_holder:

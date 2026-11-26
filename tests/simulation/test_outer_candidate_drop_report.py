@@ -3,7 +3,7 @@
 N-NB-EGM replay recovers the outer action from the target the solve retained. At
 a realized state that action can reach a stock outside the outer state's declared
 domain, where no value function exists; the candidate is then dropped from the
-affected subjects' choice sets rather than published.
+affected agents' choice sets rather than published.
 """
 
 import jax.numpy as jnp

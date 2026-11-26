@@ -27,16 +27,16 @@ from _lcm.solution.kernel_output import consume_kernel_output
 from _lcm.solution.landing_counts import LandingCountedGridSearch
 from lcm import (
     AgeGrid,
+    CompositionAction,
+    Destination,
     ExecutionConfig,
-    Exit,
-    ExitTarget,
     LinSpacedGrid,
     Model,
     Regime,
     fixed_transition,
 )
+from lcm.composition_actions import PCOnActions
 from lcm.exceptions import ExecutionPlanningError
-from lcm.exits import Unilateral
 from lcm.typing import BoolND, FloatND
 from tests.simulation.test_no_feasible_action import (
     DecisionId,
@@ -329,9 +329,9 @@ def _query_counter_domain_model(
                     "ability": fixed_transition("ability"),
                 },
                 functions={"utility": _two_state_utility},
-                exit=Exit(
-                    targets={"self": ExitTarget(regime="dead", projection={})},
-                    rule=Unilateral(),
+                composition_action=CompositionAction(
+                    destinations={"self": Destination(regime="dead", projection={})},
+                    rule=PCOnActions(),
                 ),
             ),
             "dead": Regime(functions={"utility": _zero}),

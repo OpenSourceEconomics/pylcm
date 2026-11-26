@@ -13,25 +13,25 @@ from collections.abc import Callable, Mapping
 import jax.numpy as jnp
 import pytest
 
-from _lcm import exit_queries, policy_queries
+from _lcm import composition_queries, policy_queries
 from _lcm.policy_queries import QueryKind, QueryNode
 from lcm import (
     AgeGrid,
     CollectiveUtility,
+    CompositionAction,
     Consent,
     Counterparty,
+    Destination,
     DeterministicTransition,
     DiscreteGrid,
     ExecutionConfig,
-    Exit,
-    ExitTarget,
     InitialNodes,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
+    PCOnActions,
     Regime,
     Transition,
-    Unilateral,
     categorical,
     fixed_transition,
 )
@@ -209,14 +209,14 @@ def _pair_model(
                 states={source[0]: source[1]},
                 functions={"utility": source_utility},
                 shocks=tuple(groups),
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
                             regime="destination",
                             projection={destination[0]: projection},
                         )
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                     observes=observes,
                 ),
             ),
@@ -505,9 +505,9 @@ def _marriage_model() -> Model:
                 states={"experience": knots},
                 functions={"utility": _experience_utility},
                 shocks=("marriage",),
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
                             regime="couple",
                             role="f",
                             projection={
@@ -537,18 +537,18 @@ def _marriage_model() -> Model:
                 functions={
                     "utility": CollectiveUtility(utilities={"f": _wife, "m": _husband})
                 },
-                exit=Exit(
-                    targets={
-                        "f": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "f": Destination(
                             regime="single_f",
                             projection={"experience": _experience_f_state},
                         ),
-                        "m": ExitTarget(
+                        "m": Destination(
                             regime="single_m",
                             projection={"experience": _experience_m_state},
                         ),
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                 ),
             ),
         },
@@ -604,7 +604,7 @@ def test_point_reads_switch_leaves_every_read_unaligned(
         return any(node.outside_value is not None for node in definitions.values())
 
     stored = aligned()
-    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", False)
+    monkeypatch.setattr(composition_queries, "_READ_STORED_OUTSIDE_VALUES", False)
     assert (stored, aligned()) == (True, False)
 
 
@@ -629,13 +629,13 @@ def _retirement_model(*, projection: Callable[..., FloatND]) -> Model:
                 states={"wealth": WEALTH_GRID},
                 functions={"utility": _log_wealth},
                 state_transitions={"wealth": fixed_transition("wealth")},
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
                             regime="retirement", projection={"wealth": projection}
                         )
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                 ),
             ),
             "retirement": dcegm_retirement,

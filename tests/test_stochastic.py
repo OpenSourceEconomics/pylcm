@@ -83,14 +83,14 @@ def test_model_simulate_with_stochastic_model() -> None:
     df = result.to_dataframe().query('regime_name == "working_life"')
 
     # Verify expected columns
-    required_cols = {"period", "subject_id", "partner", "labor_supply"}
+    required_cols = {"period", "agent_id", "partner", "labor_supply"}
     assert required_cols <= set(df.columns)
     assert len(df) > 0
 
     # Check partner transition follows expected pattern:
     # Partner becomes single if working and partnered, otherwise stays partnered
-    period_0 = df.query("period == 0").set_index("subject_id")
-    period_1 = df.query("period == 1").set_index("subject_id")
+    period_0 = df.query("period == 0").set_index("agent_id")
+    period_1 = df.query("period == 1").set_index("agent_id")
     common = period_0.index.intersection(period_1.index)
 
     if len(common) > 0:
@@ -183,7 +183,7 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
         initial_nodes={ages.exact_values[0]: "working_life"},
     )
 
-    # Use survival_probs=1.0 for all but the last period so no subject dies early.
+    # Use survival_probs=1.0 for all but the last period so no agent dies early.
     # This test focuses on health transition equivalence, not mortality.
     params = get_params(n_periods=n_periods)
     params["survival_probs"] = jnp.concatenate(

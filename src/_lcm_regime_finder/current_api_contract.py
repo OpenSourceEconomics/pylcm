@@ -35,7 +35,7 @@ _TRANSITION_FILE = 'b5df310c09bf097a40818e50a3df1032da90b3aa5b415f31a7f9df0719b2
 _SCHEDULES_FILES = (
     'b9b26eacf800b5be94f84ba493e4f4686b9ac5b81610303a2ac38b8a1bee8d27',
     '4e7ccbe7dbacb185351281459b8175715e8e2c1408cf53442fae77ae35a55501',
-    '6f4d37d05bc9deb60c107b09912892fffb5b46ab532124cfafa8318766afa2f7',
+    'bec4b11ec23e10c44a82e475762f985fb49933b21ff71946afdcfa07fb2140b6',
 )
 _AUTHORITIES = {
     '_lcm.regime_building.schedules._PeriodDispatch': (
@@ -66,7 +66,7 @@ _AUTHORITIES = {
     ),
     '_lcm.regime_building.value_adapter.ValueAdapter': (
         ('a48b54b7ba830047d6aa6f669e82775d80d687dc6576ea9e4d2d3e9104e5860d',
-         ('6fdfe50b26fb43458074b802526d3810818a31fdfe8142892e2e278ae0f6a45f',)),
+         ('9cbc7092263d5d39998fe546120e9313b83a81d63e1f31181c0cfe7ecc8ee32b',)),
         ('46d796380a1afe65bf0c94fe9264db510394599c4a34f2adcfd949e94849c5b5',
          ('030fdfaf3842033b43ba4544c9f245c14e44ad24633f352b746100751f0f8e32',)),
     ),
@@ -92,7 +92,7 @@ _AUTHORITIES = {
 
 _NATIVE_CALL_SOURCES = MappingProxyType({
     '_lcm.regime_building.value_adapter.ValueAdapter': frozenset({
-        ('6fdfe50b26fb43458074b802526d3810818a31fdfe8142892e2e278ae0f6a45f',
+        ('9cbc7092263d5d39998fe546120e9313b83a81d63e1f31181c0cfe7ecc8ee32b',
          'e2e8d9e1f6f034ed3564ec474f2ac1520eff6284683a44382824bc2738b42b1d'),
         ('030fdfaf3842033b43ba4544c9f245c14e44ad24633f352b746100751f0f8e32',
          '991053e32d97e7ea21bf0cb93648389d63d2cb6133e858de90074786457ed618'),

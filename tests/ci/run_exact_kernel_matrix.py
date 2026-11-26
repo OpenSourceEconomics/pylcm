@@ -15,7 +15,7 @@ _SMOKE_NODE = (
     "test_exact_kernel_answers_in_the_active_precision"
 )
 _CONTRACT_FILE = "tests/test_dcegm_validation.py"
-# A file whose subject is the certified kernel itself. The contract file above
+# A file whose agent is the certified kernel itself. The contract file above
 # selects portable envelopes deliberately, so on its own the absent arm proves
 # only that one smoke node skips: every other collected node is indifferent to
 # the kernel. This file is where absence has to show up as declared skips.

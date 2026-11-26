@@ -93,7 +93,7 @@ from tests.solution.test_covered_axis_parity import (
 
 _N_PERIODS = 3
 _FINAL_AGE_ALIVE = _N_PERIODS - 2
-_N_SUBJECTS = 200
+_N_AGENTS = 200
 _SIMULATION_SEED = 1
 _N_HEALTH = 2
 _N_WEALTH = 12
@@ -331,14 +331,14 @@ def _run(
 
 
 def _initial_conditions() -> dict[str, jax.Array]:
-    """Subjects spread over wealth, both health states and both first habits."""
-    codes = jnp.arange(_N_SUBJECTS, dtype=jnp.int32)
+    """Agents spread over wealth, both health states and both first habits."""
+    codes = jnp.arange(_N_AGENTS, dtype=jnp.int32)
     return {
-        "wealth": jnp.linspace(1.0, 60.0, _N_SUBJECTS),
+        "wealth": jnp.linspace(1.0, 60.0, _N_AGENTS),
         "health": codes % 2,
         "habit": (codes // 2) % 2,
-        "age": jnp.zeros(_N_SUBJECTS),
-        "regime_id": jnp.zeros(_N_SUBJECTS, dtype=jnp.int32),
+        "age": jnp.zeros(_N_AGENTS),
+        "regime_id": jnp.zeros(_N_AGENTS, dtype=jnp.int32),
     }
 
 
@@ -480,8 +480,8 @@ def test_broadcast_keeps_simulated_discrete_choices_identical(
     *, case: tuple[int, str]
 ) -> None:
     """Simulating from either solve, with the same initial conditions and seed,
-    yields the same work choice, habit, health and regime for every subject in
-    every period, and the work choice varies across subjects."""
+    yields the same work choice, habit, health and regime for every agent in
+    every period, and the work choice varies across agents."""
     n_habits, arm = case
     on = _run(n_habits=n_habits, arm=arm, broadcast=True)[1]
     off = _run(n_habits=n_habits, arm=arm, broadcast=False)[1]

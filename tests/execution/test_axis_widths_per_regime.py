@@ -334,5 +334,5 @@ def test_model_rejects_a_per_regime_width_for_an_unknown_axis() -> None:
 
 def test_model_rejects_a_per_regime_width_for_a_simulation_only_axis() -> None:
     """Simulation plans without a regime in hand, so it takes the broadcast form."""
-    with pytest.raises(ExecutionPlanningError, match="subject"):
-        _model_with(ExecutionConfig(axis_widths={"subject": {"retire": 2}}))
+    with pytest.raises(ExecutionPlanningError, match="agent"):
+        _model_with(ExecutionConfig(axis_widths={"agent": {"retire": 2}}))

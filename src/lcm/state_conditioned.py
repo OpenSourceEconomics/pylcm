@@ -15,7 +15,7 @@ class StateConditioned:
 
     Write it in place of the parameter it conditions: the intercept, persistence or
     innovation scale of a process, or a mixture parameter. Use it when the law depends
-    on where the subject currently is — the variance of the earnings innovation
+    on where the agent currently is — the variance of the earnings innovation
     differing by employment status, with
     $\sigma_\text{employed} < \sigma_\text{unemployed}$:
 
@@ -46,7 +46,7 @@ class StateConditioned:
     to give that parameter twice.
 
     The conditioning value is dated $t$, so the law of the innovation realized
-    between $t$ and $t+1$ is set by where the subject is at $t$. The mapping it is read
+    between $t$ and $t+1$ is set by where the agent is at $t$. The mapping it is read
     against is the *target* regime's declaration, so a process declared with different
     values in the source and target regimes takes the target's.
 

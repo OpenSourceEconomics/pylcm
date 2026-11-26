@@ -17,21 +17,21 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 
 from _lcm.coarse_transition import _CoarseTransitionCell
+from _lcm.composition_actions import composition_action_for_phase
 from _lcm.constraints.processed import (
     ConstraintLike,
     ProcessedConstraintsMapping,
     normalize_constraints,
 )
-from _lcm.exits import exit_for_phase
 from _lcm.grids import Grid
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.typing import FunctionName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.collective import CollectiveUtility
+from lcm.composition_actions import Consent
 from lcm.decoupled import Decoupled, KoopmansDeclaration
 from lcm.exceptions import RegimeInitializationError
-from lcm.exits import Consent
 from lcm.phased import Phased
 from lcm.transition import (
     AgeSpecializedGrid,
@@ -446,7 +446,7 @@ def phase_variation_paths(
             ):
                 varied.append(f"joint_transitions[{target_name!r}][{kernel_name!r}]")
 
-    varied.extend(_exit_phase_variation_paths(user_regime=user_regime))
+    varied.extend(_composition_action_phase_variation_paths(user_regime=user_regime))
 
     transition = law.transition
     if isinstance(transition, Phased) and transition.solve is not transition.simulate:
@@ -471,17 +471,19 @@ def phase_variation_paths(
     return tuple(varied)
 
 
-def _exit_phase_variation_paths(*, user_regime: Regime) -> tuple[str, ...]:
-    """Track phase-specific exit and counterparty settlements for replay."""
-    declaration = user_regime.exit
+def _composition_action_phase_variation_paths(
+    *, user_regime: Regime
+) -> tuple[str, ...]:
+    """Track phase-specific composition action and counterparty transfers for replay."""
+    declaration = user_regime.composition_action
     if declaration is None:
         return ()
     projections = {
-        f"exit.targets[{role!r}].projection": target.projection
-        for role, target in declaration.targets.items()
+        f"composition_action.destinations[{role!r}].projection": target.projection
+        for role, target in declaration.destinations.items()
     }
     if isinstance(declaration.rule, Consent):
-        projections["exit.counterparty.projection"] = (
+        projections["composition_action.counterparty.projection"] = (
             declaration.rule.counterparty.projection
         )
     return tuple(
@@ -513,7 +515,9 @@ def project_onto_solve_phase(user_regime: Regime) -> Regime:
         if isinstance(spec, Phased) and callable(spec.solve)
     }
     return user_regime.replace(
-        exit=exit_for_phase(declaration=user_regime.exit, phase="solve"),
+        composition_action=composition_action_for_phase(
+            declaration=user_regime.composition_action, phase="solve"
+        ),
         functions={
             **{
                 name: _solve_variant(value)

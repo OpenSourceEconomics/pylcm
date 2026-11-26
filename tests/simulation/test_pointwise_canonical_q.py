@@ -3,7 +3,7 @@
 The grid route decides discrete branches by maximizing the canonical
 state-action value `Q`. On the action grid that maximization is
 `argmax_and_max_Q_over_a`; off the grid a candidate continuous action needs the
-*same* `Q` evaluated at one action value per subject.
+*same* `Q` evaluated at one action value per agent.
 `regime.simulation.Q_and_F[period]` is that pointwise evaluator: it shares the
 model DAG, transitions, constraints, aggregators, params, and next-period value
 arrays with the grid maximization, so a value it reports is comparable with the
@@ -111,7 +111,7 @@ def _bonus_model() -> Model:
     )
 
 
-def test_pointwise_canonical_q_at_the_grid_argmax_action_reproduces_its_value():
+def test_pointwise_canonical_q_at_the_grid_argmax_action_reproduces_its_value() -> None:
     """`Q_and_F` at the grid-argmax action returns that action's grid value.
 
     The pointwise evaluator and the grid maximization must agree on the value of
@@ -149,12 +149,12 @@ def test_pointwise_canonical_q_at_the_grid_argmax_action_reproduces_its_value():
     executor = SimulationRuntime(
         execution=model._execution,
         enable_jit=model.enable_jit,
-        subject_devices=(jax.devices()[0],),
+        agent_devices=(jax.devices()[0],),
     )
     dispatched = executor.dispatch(
         program=regime.simulation.programs.decision[period],
         period=period,
-        n_subjects=len(wealth),
+        n_agents=len(wealth),
         arguments={
             "wealth": wealth,
             **action_grids,

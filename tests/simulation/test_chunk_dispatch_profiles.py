@@ -11,7 +11,7 @@ import pytest
 import _lcm.simulation.simulate as simulation
 from _lcm.params.edges import regime_kernel_params
 from _lcm.simulation.runtime import SimulationRuntime
-from _lcm.simulation.transitions import _advance_states_for_subjects
+from _lcm.simulation.transitions import _advance_states_for_agents
 from _lcm.solution.artifacts import OwnedSolutionView
 from lcm import (
     DiscreteGrid,
@@ -70,7 +70,7 @@ def test_profile_preserves_same_kind_categorical_storage_dtype(
     params = {"discount_factor": 0.0}
     solution = model.solve(params=params, log_level="off")
     start_counts: list[tuple[SimulationRuntime, int]] = []
-    run_chunk = simulation._simulate_subject_chunk
+    run_chunk = simulation._simulate_agent_chunk
 
     def observe_chunk(**call: Unpack[SimulationChunkInputs]) -> ChunkResults:
         runtime = next(iter(call["regimes"].values())).simulation.programs.executor
@@ -78,7 +78,7 @@ def test_profile_preserves_same_kind_categorical_storage_dtype(
         start_counts.append((runtime, len(runtime.cache)))
         return run_chunk(**call)
 
-    monkeypatch.setattr(simulation, "_simulate_subject_chunk", observe_chunk)
+    monkeypatch.setattr(simulation, "_simulate_agent_chunk", observe_chunk)
     result = model.simulate(
         params=params,
         solution=solution,
@@ -106,7 +106,7 @@ def test_unit_profile_uses_real_merged_carrier_descriptors() -> None:
     regimes = model._runtime_regimes_for_shape(compile_batch_size=2)
     runtime = next(iter(regimes.values())).simulation.programs.executor
     assert isinstance(runtime, SimulationRuntime)
-    layout = jax.sharding.make_single_device_sharding(runtime.subject_devices[0])
+    layout = jax.sharding.make_single_device_sharding(runtime.agent_devices[0])
     before = MappingProxyType(
         {
             name: MappingProxyType(
@@ -124,18 +124,18 @@ def test_unit_profile_uses_real_merged_carrier_descriptors() -> None:
         }
     )
     merge = runtime.operations.prepare_abstract(
-        function=_advance_states_for_subjects,
+        function=_advance_states_for_agents,
         arguments={
             "states_per_regime": before,
             "next_states_per_regime": updates,
-            "subject_indices": jax.ShapeDtypeStruct((2,), jnp.bool_, sharding=layout),
+            "agent_indices": jax.ShapeDtypeStruct((2,), jnp.bool_, sharding=layout),
         },
-        subject_arg_names=(
+        agent_arg_names=(
             "states_per_regime",
             "next_states_per_regime",
-            "subject_indices",
+            "agent_indices",
         ),
-        devices=runtime.subject_devices,
+        devices=runtime.agent_devices,
     )
     columns = merge.executable.out_info["alive"]
     assert columns["wealth"].dtype == jnp.float32
@@ -168,8 +168,8 @@ def test_unit_profile_uses_real_merged_carrier_descriptors() -> None:
         base_spaces=base_spaces,
         values=engine_view.values,
         ages=model.ages,
-        n_subjects=2,
-        widths={"subject": 2},
+        n_agents=2,
+        widths={"agent": 2},
         columns=columns,
         ordinary_key=jax.ShapeDtypeStruct((), jax.random.key(0).dtype, sharding=layout),
         taste_key=None,
@@ -190,14 +190,14 @@ def test_profiled_public_chunks_need_no_additional_core_compilation(
         ages=base.ages,
         regime_id_class=_LifecycleRegimeId,
         execution_config=ExecutionConfig(
-            axis_widths={"subject": 2}, device_memory_bytes=2**32
+            axis_widths={"agent": 2}, device_memory_bytes=2**32
         ),
         initial_nodes=initial_nodes_of(model=base),
     )
     params = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
     solution = model.solve(params=params, log_level="off")
     before: list[tuple[SimulationRuntime, int]] = []
-    actual_chunk = simulation._simulate_subject_chunk
+    actual_chunk = simulation._simulate_agent_chunk
 
     def observe_chunk(**call: Unpack[SimulationChunkInputs]) -> ChunkResults:
         runtime = next(iter(call["regimes"].values())).simulation.programs.executor
@@ -205,7 +205,7 @@ def test_profiled_public_chunks_need_no_additional_core_compilation(
         before.append((runtime, len(runtime.cache)))
         return actual_chunk(**call)
 
-    monkeypatch.setattr(simulation, "_simulate_subject_chunk", observe_chunk)
+    monkeypatch.setattr(simulation, "_simulate_agent_chunk", observe_chunk)
     result = model.simulate(
         params=params,
         solution=solution,
@@ -217,7 +217,7 @@ def test_profiled_public_chunks_need_no_additional_core_compilation(
         seed=17,
         log_level="debug",
     )
-    assert result.n_subjects == 5
+    assert result.n_agents == 5
     assert len(before) == 1
     assert all(count == len(runtime.cache) for runtime, count in before)
 
@@ -228,7 +228,7 @@ def test_nongated_chunk_does_not_allocate_an_unused_edge_age(
     model = _stateful_target_model()
     params = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
     solution = model.solve(params=params, log_level="off")
-    actual_chunk = simulation._simulate_subject_chunk
+    actual_chunk = simulation._simulate_agent_chunk
     active = [False]
     get_age = AgeGrid.period_to_age
 
@@ -247,7 +247,7 @@ def test_nongated_chunk_does_not_allocate_an_unused_edge_age(
             active[0] = False
 
     monkeypatch.setattr(AgeGrid, "period_to_age", guarded_age)
-    monkeypatch.setattr(simulation, "_simulate_subject_chunk", observe_chunk)
+    monkeypatch.setattr(simulation, "_simulate_agent_chunk", observe_chunk)
     result = model.simulate(
         params=params,
         solution=solution,
@@ -259,4 +259,4 @@ def test_nongated_chunk_does_not_allocate_an_unused_edge_age(
         seed=17,
         log_level="off",
     )
-    assert result.n_subjects == 2
+    assert result.n_agents == 2

@@ -9,7 +9,7 @@ on-grid interpolation corner, a zero Pareto weight). Whenever such a weight
 multiplies such a value, naive floating-point arithmetic computes
 `0.0 * -inf = nan` (or `+inf`), which then poisons whatever sum it feeds —
 a continuation expectation, an interpolated reference value,
-or a household scalarization — even though the zero-weight term should
+or the Pareto-weighted sum over the members — even though the zero-weight term should
 contribute exactly nothing.
 
 This module holds `zero_safe_average`, and performs no multiply of its own:

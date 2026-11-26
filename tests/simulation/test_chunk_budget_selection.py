@@ -29,7 +29,7 @@ def test_budgeted_public_chunks_prepare_without_real_prewarm_templates(
         ages=base.ages,
         regime_id_class=_LifecycleRegimeId,
         execution_config=ExecutionConfig(
-            axis_widths={"subject": 2}, device_memory_bytes=2**32
+            axis_widths={"agent": 2}, device_memory_bytes=2**32
         ),
         initial_nodes=initial_nodes_of(model=base),
     )
@@ -38,12 +38,12 @@ def test_budgeted_public_chunks_prepare_without_real_prewarm_templates(
     abstract_preparations: list[int] = []
     chunk_sizes: list[int] = []
     prepare = SimulationRuntime.prepare_abstract
-    run_chunk = simulation._simulate_subject_chunk
+    run_chunk = simulation._simulate_agent_chunk
 
     def observe_abstract(
         self: SimulationRuntime, **call: Unpack[RuntimePreparation]
     ) -> CompiledSimulationProgram:
-        abstract_preparations.append(call["n_subjects"])
+        abstract_preparations.append(call["n_agents"])
         return prepare(self, **call)
 
     def observe_chunk(
@@ -60,7 +60,7 @@ def test_budgeted_public_chunks_prepare_without_real_prewarm_templates(
 
     monkeypatch.setattr(SimulationRuntime, "prepare_abstract", observe_abstract)
     monkeypatch.setattr(SimulationRuntime, "prepare", forbid_real_templates)
-    monkeypatch.setattr(simulation, "_simulate_subject_chunk", observe_chunk)
+    monkeypatch.setattr(simulation, "_simulate_agent_chunk", observe_chunk)
     result = model.simulate(
         params=params,
         solution=solution,
@@ -72,6 +72,6 @@ def test_budgeted_public_chunks_prepare_without_real_prewarm_templates(
         seed=17,
         log_level="off",
     )
-    assert result.n_subjects == count
+    assert result.n_agents == count
     assert chunk_sizes == [count]
     assert set(abstract_preparations) == {count}

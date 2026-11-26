@@ -1,6 +1,6 @@
 """Period-local ownership of the solved values read by simulation dispatches.
 
-NumPy replay originals are uploaded directly to the ordered subject layout and
+NumPy replay originals are uploaded directly to the ordered agent layout and
 kept unchanged. Their independent device copies share the normal output-alias
 guards and last-unit release barrier. Host uploads are explicitly unsupported
 when the owner has only a device-transfer budget callback.
@@ -31,7 +31,7 @@ from _lcm.execution.value_transfer import (
     apply_value_transfer,
     transfer_result_key,
 )
-from _lcm.simulation.subject_groups import SubjectGroupingRoute, type_local_transfer
+from _lcm.simulation.agent_groups import AgentGroupingRoute, type_local_transfer
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.typing import RegimeName
 from lcm.exceptions import ExecutionPlanningError
@@ -66,16 +66,16 @@ class PeriodSimulationReads:
         reads_by_unit: Mapping[RegimeName, tuple[ValueRead, ...]],
         release_enabled: bool,
         before_transfer: BeforeValueTransfer | None = None,
-        grouping: SubjectGroupingRoute | None = None,
+        grouping: AgentGroupingRoute | None = None,
         code: int | None = None,
         stored_codes: tuple[int, ...] | None = None,
     ) -> None:
         """Keep exact reader occurrences and count distinct pending regime units.
 
-        With a `grouping` route, every subject of the period holds `code`, and a
+        With a `grouping` route, every agent of the period holds `code`, and a
         stored regime value carrying the grouping state is read through that
         code's block: the block is selected on the stored layout and only it is
-        copied onto the subject devices. `stored_codes` are the codes a stored
+        copied onto the agent devices. `stored_codes` are the codes a stored
         value holds along the state's axis; `None` means every code.
         """
         self._devices = devices
@@ -117,7 +117,7 @@ class PeriodSimulationReads:
     def read(
         self, *, unit: RegimeName, read: ValueRead, value: jax.Array | np.ndarray
     ) -> jax.Array:
-        """Place a declared JAX value or NumPy replay leaf on the subject devices.
+        """Place a declared JAX value or NumPy replay leaf on the agent devices.
 
         A NumPy original must remain unchanged while its period is open. Its
         identity is retained without first materializing a default-device array.
@@ -319,7 +319,7 @@ class PeriodSimulationReads:
 
 
 def _host_replay_sharding(*, devices: tuple[jax.Device, ...]) -> jax.sharding.Sharding:
-    """Replicate a host artifact directly on the ordered subject destination."""
+    """Replicate a host artifact directly on the ordered agent destination."""
     if not devices:
         raise ValueError("Simulation value placement requires at least one device.")
     if len(devices) == 1:

@@ -75,7 +75,7 @@ _NESTED_CORRIDOR_SOURCES = (
     "src/_lcm/egm/carry.py",
     "src/_lcm/egm/query_data.py",
     "src/_lcm/regime_building/Q_and_F.py",
-    "src/_lcm/simulation/subject_parallel.py",
+    "src/_lcm/simulation/agent_parallel.py",
     "src/_lcm/solution/egm.py",
     "src/_lcm/solution/kernel_output.py",
     "src/_lcm/constraints/dynamic_bound.py",
@@ -182,7 +182,7 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
         "simulation_adapter:initial_physical_mean_operand_changed",
         "simulation_adapter:initial_physical_output_hold_omitted",
         "simulation_adapter:initial_physical_prefix_changed",
-        "simulation_adapter:initial_physical_subject_order_changed",
+        "simulation_adapter:initial_physical_agent_order_changed",
         "simulation_adapter:initial_physical_table_column_changed",
         "simulation_adapter:initial_physical_transform_changed",
     }

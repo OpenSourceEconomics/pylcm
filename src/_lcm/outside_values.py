@@ -1,7 +1,8 @@
 """Prove that an outside read lands on stored nodes, and tabulate those nodes.
 
-An exit's outside value is the value of the destination's problem at the member's
-projected state. A read is aligned when the build proves all of:
+The value of a member's outside option is the destination's value without the
+composition action, at the member's projected state. A read is aligned when the
+build proves all of:
 
 - the destination is solved in the read's period, on a grid that is not
   age-specialized there, and observes no shock through another query;
@@ -323,7 +324,9 @@ def read_outside_value(
 
 @dataclass(frozen=True, kw_only=True, eq=False)
 class OutsideValueTable:
-    """Tabulate a destination's problem value at every grid cell and kept node.
+    """Tabulate a destination's value without the composition action at every node.
+
+    The table covers every grid cell and every kept shock node.
 
     At each cell of the destination's grid the destination's action problem is
     evaluated as an outside read evaluates it at a point: each member's value at

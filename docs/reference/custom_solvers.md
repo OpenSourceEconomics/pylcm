@@ -575,7 +575,7 @@ Every regime declares exactly one replay route, reachable as
 `regime.simulation.replay_route`, and simulation dispatches on it rather than on the
 class of whatever payload a solve happened to retain. A route names its `replay_mode`:
 
-- `EXACT_REPLAY` — the decision comes from a retained payload, read at the subject's
+- `EXACT_REPLAY` — the decision comes from a retained payload, read at the agent's
   realized state. The route's `payload_type` is the exact class the solve must retain,
   and the pre-simulation check refuses any other.
 - `VALID_RECOMPUTATION` — nothing is retained and the decision is recomputed on the
@@ -590,7 +590,7 @@ a model whose external solver leaves it unset is refused when the model is built
 declarations need no code of their own:
 
 - `DeclaredReplay.GRID_RECOMPUTATION` — the solver's decision is exactly the argmax over
-  the regime's declared action grids at the subject's realized state, so simulation
+  the regime's declared action grids at the agent's realized state, so simulation
   recomputes it there. This is what the example above declares: it retains no payload,
   and the regime's own utility and continuation define its decision.
 - `DeclaredReplay.UNSUPPORTED` — the decision cannot be reproduced. The solve stays
@@ -631,7 +631,7 @@ dataclass records from that plan without calling either plugin callback.
 PyTree-represented static metadata is validated; callback-injected instance state is
 canonicalized to the declared plan. The resulting owned snapshots all pass the route's
 `validate` before any forward execution. Simulation then places each period's payload
-and coordinate arrays on its actual subject devices and calls `validate` again with that
+and coordinate arrays on its actual agent devices and calls `validate` again with that
 exact rebuilt snapshot and context immediately before `build_reader`. Both calls receive
 the same objects; their authority and descriptive metadata are preserved from preflight.
 A validator must leave its immutable inputs unchanged and tolerate repeated validation
@@ -643,9 +643,9 @@ result.
 `ReplayModelContext` and `SimulationBuildContext` expose the same period-specific
 solve-grid view: `state_names` and `action_names` are the canonical solution axes, and
 their node mappings contain exactly those named grids. A state declared with
-`Phased(solve=callable, simulate=Grid)` is carried per subject only during simulation;
-it is therefore not an artifact axis and does not appear in either build context. The
-reader still receives that carried state in its per-subject `states` mapping at runtime.
+`Phased(solve=callable, simulate=Grid)` is carried per agent only during simulation; it
+is therefore not an artifact axis and does not appear in either build context. The
+reader still receives that carried state in its per-agent `states` mapping at runtime.
 
 The reader receives only this public `SimulationBuildContext` and the validated
 `ReplayRouteSnapshot`. Its call has this shape:
@@ -656,7 +656,7 @@ reader(states={...}, fallback_actions={...})
 ```
 
 It must be pure and JAX-transformable. Every declared action is returned by name as a
-scalar or an array broadcastable to one entry per subject; it must not invoke Python I/O
+scalar or an array broadcastable to one entry per agent; it must not invoke Python I/O
 or inspect an engine-private object.
 
 ## Persistence

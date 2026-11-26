@@ -153,10 +153,10 @@ def _state_transition_admission_errors(  # noqa: C901, PLR0912
         "only the admitted program may dispatch": (
             "executable(**placed).block_until_ready()"
         ),
-        "state law output must use the first selected subject device": (
+        "state law output must use the first selected agent device": (
             "output_sharding = simulation_value_sharding("
             "stored_sharding=jax.sharding.make_single_device_sharding("
-            "memory.subject_devices[0]), devices=(memory.subject_devices[0],))"
+            "memory.agent_devices[0]), devices=(memory.agent_devices[0],))"
         ),
         "selected output placement must enter compiler admission": (
             "output_sharding=output_sharding"
@@ -313,7 +313,7 @@ def test_state_transition_admission_contract_is_complete() -> None:
         (
             _TRANSITION_CHECKS,
             (
-                "        devices=(memory.subject_devices[0],),\n    )\n"
+                "        devices=(memory.agent_devices[0],),\n    )\n"
                 "    executable = memory.producers.admit_producer(\n"
                 "        function=partial(\n            _state_probability_law,"
             ),
@@ -322,7 +322,7 @@ def test_state_transition_admission_contract_is_complete() -> None:
                 "    executable = memory.producers.admit_producer(\n"
                 "        function=partial(\n            _state_probability_law,"
             ),
-            "state law output must use the first selected subject device",
+            "state law output must use the first selected agent device",
         ),
         (
             _TRANSITION_CHECKS,

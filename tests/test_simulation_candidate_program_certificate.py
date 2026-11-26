@@ -26,7 +26,7 @@ _PROGRAM_MUTATIONS = (
     "streamed_q_and_f_filtered",
     "streamed_index_shifted",
     "streamed_value_filtered",
-    "subject_tiles_reversed",
+    "agent_tiles_reversed",
     "argument_mapping_filtered",
     "decision_mapping_dropped",
     "streamed_guard_bypassed",
@@ -114,24 +114,24 @@ _PROFILED_HELPER_MUTATIONS = {
             "                    flat_params=flat_params,"
         ),
     ),
-    "simulation_index:scalar_profile_subject_sharding": (
+    "simulation_index:scalar_profile_agent_sharding": (
         "src/_lcm/simulation/forward_program_profiles.py",
-        "sharding=subject if indices.ndim else shared",
-        "sharding=subject",
+        "sharding=agent if indices.ndim else shared",
+        "sharding=agent",
     ),
-    "simulation_index:scalar_profile_subject_role": (
+    "simulation_index:scalar_profile_agent_role": (
         "src/_lcm/simulation/forward_program_profiles.py",
-        'subject_arg_names = ("flat_indices",) if indices.ndim else ()',
-        'subject_arg_names = ("flat_indices",)',
+        'agent_arg_names = ("flat_indices",) if indices.ndim else ()',
+        'agent_arg_names = ("flat_indices",)',
     ),
-    "simulation_index:scalar_runtime_subject_role": (
+    "simulation_index:scalar_runtime_agent_role": (
         "src/_lcm/simulation/simulate.py",
         (
-            'subject_arg_names=("flat_indices",)\n'
+            'agent_arg_names=("flat_indices",)\n'
             "                if indices_optimal_actions.ndim\n"
             "                else (),"
         ),
-        'subject_arg_names=("flat_indices",),',
+        'agent_arg_names=("flat_indices",),',
     ),
     "simulation_pandas:dataframe_writer_omitted": (
         "src/lcm/model.py",
@@ -412,13 +412,13 @@ _PROFILED_HELPER_MUTATIONS = {
     ),
     "simulation_taste_stream:chunk_start_ignored": (
         "src/_lcm/simulation/taste_stream.py",
-        '"subject_start": encode_subject_row(row=start),',
-        '"subject_start": encode_subject_row(row=0),',
+        '"agent_start": encode_agent_row(row=start),',
+        '"agent_start": encode_agent_row(row=0),',
     ),
-    "simulation_taste_stream:subject_output_layout_omitted": (
+    "simulation_taste_stream:agent_output_layout_omitted": (
         "src/_lcm/simulation/taste_stream.py",
-        "subject_outputs=True,",
-        "subject_outputs=False,",
+        "agent_outputs=True,",
+        "agent_outputs=False,",
     ),
     "simulation_taste_stream:root_caller_owners_omitted": (
         "src/_lcm/simulation/taste_stream.py",
@@ -514,14 +514,14 @@ _PROFILED_HELPER_MUTATIONS = {
         "if key not in copies and device in footprint.device_ids",
         "if False and key not in copies and device in footprint.device_ids",
     ),
-    "simulation_host:subject_output_layout_omitted": (
+    "simulation_host:agent_output_layout_omitted": (
         "src/_lcm/simulation/host_operations.py",
         "else jax.jit(bound, keep_unused=True, out_shardings=output_sharding)",
         "else jax.jit(bound, keep_unused=True)",
     ),
-    "simulation_host:subject_output_cache_identity_omitted": (
+    "simulation_host:agent_output_cache_identity_omitted": (
         "src/_lcm/simulation/host_operations.py",
-        'layout_key=("simulation_host_operation", subject_outputs, output_sharding),',
+        'layout_key=("simulation_host_operation", agent_outputs, output_sharding),',
         'layout_key=("simulation_host_operation", False, output_sharding),',
     ),
     "simulation_caller:initialized_state_ownership_omitted": (
@@ -807,8 +807,8 @@ _COMBINED_INPUT_MUTATIONS = {
         "src/_lcm/simulation/simulate.py",
         (
             "                states,\n"
-            "                subject_regime_ids,\n"
-            "                new_subject_regime_ids,\n"
+            "                agent_regime_ids,\n"
+            "                new_agent_regime_ids,\n"
             "                own_member,"
         ),
         (
@@ -1160,10 +1160,10 @@ _FINITE_POLICY_MUTATIONS = {
         "read.inner_action_name,\n                            read.outer_action_name,",
         "read.outer_action_name,\n                            read.inner_action_name,",
     ),
-    "finite_policy:subject_bank_not_tiled": (
+    "finite_policy:agent_bank_not_tiled": (
         "src/_lcm/simulation/policy_programs.py",
-        'subject_names=("bank", "canonical_states"),',
-        'subject_names=("canonical_states",),',
+        'agent_names=("bank", "canonical_states"),',
+        'agent_names=("canonical_states",),',
     ),
     "finite_policy:prepared_candidate_order_reversed": (
         "src/_lcm/simulation/policy_programs.py",
@@ -1482,8 +1482,8 @@ def test_supplemental_sources_complete_the_pinned_registry_coverage() -> None:
         "s02_status:kernel_status_channel_omitted",
         "s02_status:mandatory_host_gate_omitted",
         "s02_status:scan_history_retained",
-        "s02_status:subject_collective_or_omitted",
-        "s02_status:subject_scalar_roles_ignored",
+        "s02_status:agent_collective_or_omitted",
+        "s02_status:agent_scalar_roles_ignored",
         "s02_status:bounded_aux_executable",
         "s02_status:bounded_keyed_leaf_swapped",
         "s02_status:bounded_reconstruction_status_swapped",

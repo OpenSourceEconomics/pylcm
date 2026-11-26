@@ -199,7 +199,7 @@ class EGM(OneMarginSolver):
     savings_grid: ContinuousGrid
     """Exogenous post-decision savings grid; its lower bound is the borrowing limit.
 
-    Zero for a household that cannot borrow, minus the limit for one that can.
+    Zero for an agent that cannot borrow, minus the limit for one that can.
     The corner is read off this bound rather than assumed to be zero savings.
     """
 
@@ -460,7 +460,7 @@ class EGM(OneMarginSolver):
         discharge is refused rather than quietly dropped.
 
         Simulation is a different pipeline with a different answer. There the
-        subject's own realized action is in hand, so the feasibility check runs
+        agent's own realized action is in hand, so the feasibility check runs
         over a whole candidate, including the budget constraint the phase
         synthesizes for an endogenous-grid regime.
         """

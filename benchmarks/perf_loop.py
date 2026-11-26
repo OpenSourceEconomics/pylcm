@@ -259,7 +259,7 @@ def _builder(model_name: str) -> Callable[[float], tuple[Model, _Params]]:
             )
             params = get_benchmark_params(model=model)[2]
             initial_conditions = get_benchmark_initial_conditions(
-                model=model, n_subjects=1000, seed=0
+                model=model, n_agents=1000, seed=0
             )
             return model, {
                 **params,

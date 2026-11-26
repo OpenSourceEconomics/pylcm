@@ -143,7 +143,7 @@ class ActionResolutionInputs(TypedDict):
 
 class FeasibilityInputs(TypedDict):
     feasibility_func: preflight.Callable[..., preflight.BoolND]
-    subject_states: preflight.Mapping[str, preflight.FloatND | preflight.IntND]
+    agent_states: preflight.Mapping[str, preflight.FloatND | preflight.IntND]
     action_kwargs: preflight.Mapping[str, preflight.FloatND | preflight.IntND]
     filtered_params: preflight.Mapping[preflight.ReferenceName, preflight.ParamsLeaf]
     flat_actions: preflight.Mapping[
@@ -363,7 +363,7 @@ def test_invalid_initial_conditions_reuse_admitted_products_during_diagnostics(
         partial(_guard_action_mesh, original=jnp.meshgrid, observations=observations),
     )
     with pytest.raises(
-        InvalidInitialConditionsError, match="All actions are infeasible for 1 subject"
+        InvalidInitialConditionsError, match="All actions are infeasible for 1 agent"
     ):
         model.simulate(
             params=params,

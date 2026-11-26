@@ -16,7 +16,7 @@ from lcm_examples.stochastic_volatility import (
 )
 
 
-def test_state_conditioned_is_public():
+def test_state_conditioned_is_public() -> None:
     assert lcm.StateConditioned is not None
     assert lcm.processes.StateConditioned is lcm.StateConditioned
 
@@ -33,7 +33,7 @@ def test_example_rejects_invalid_income_sigmas(
         get_model(sigma_low=sigma_low, sigma_high=sigma_high)
 
 
-def test_example_solves_and_uncertainty_matters():
+def test_example_solves_and_uncertainty_matters() -> None:
     model = get_model(n_periods=6)
     solution = model.solve(params=get_params(), log_level="debug")
     V = solution.values
@@ -106,10 +106,10 @@ def test_example_replays_known_income_and_source_dated_switching_scales() -> Non
         seed=17,
         log_level="off",
     ).to_dataframe(use_categorical_codes=True)
-    entry = entry_frame.loc[entry_frame["period"] == 0].sort_values("subject_id")
-    following = entry_frame.loc[entry_frame["period"] == 1].sort_values("subject_id")
-    np.testing.assert_array_equal(entry["subject_id"], [0, 1])
-    np.testing.assert_array_equal(following["subject_id"], [0, 1])
+    entry = entry_frame.loc[entry_frame["period"] == 0].sort_values("agent_id")
+    following = entry_frame.loc[entry_frame["period"] == 1].sort_values("agent_id")
+    np.testing.assert_array_equal(entry["agent_id"], [0, 1])
+    np.testing.assert_array_equal(following["agent_id"], [0, 1])
     np.testing.assert_array_equal(entry["age"], [20.0, 20.0])
     np.testing.assert_array_equal(following["age"], [30.0, 30.0])
     np.testing.assert_allclose(entry["income"], [0.37, -0.29], rtol=1e-6)
@@ -139,13 +139,13 @@ def test_example_replays_known_income_and_source_dated_switching_scales() -> Non
     )
     for period, expected_income in enumerate(([0.3, 0.1], [0.1, 0.3])):
         current = switched_frame.loc[switched_frame["period"] == period].sort_values(
-            "subject_id"
+            "agent_id"
         )
         following = switched_frame.loc[
             switched_frame["period"] == period + 1
-        ].sort_values("subject_id")
-        np.testing.assert_array_equal(current["subject_id"], [0, 1])
-        np.testing.assert_array_equal(following["subject_id"], [0, 1])
+        ].sort_values("agent_id")
+        np.testing.assert_array_equal(current["agent_id"], [0, 1])
+        np.testing.assert_array_equal(following["agent_id"], [0, 1])
         np.testing.assert_array_equal(current["age"], [20.0 + 10 * period] * 2)
         np.testing.assert_array_equal(
             current["uncertainty"], expected_uncertainty[period]

@@ -25,10 +25,10 @@ METRICS = ("work", "storage", "clarity")
 PAGE_NODES = 12
 MAX_PNG_PAGES = 100
 COLORS = {"transition": "#147d86", "joint": "#7c3aed", "imputation": "#087f9b",
-          "value_read": "#2563eb", "gate": "#a16207", "exit": "#c2410c",
+          "value_read": "#2563eb", "gate": "#a16207", "composition_action": "#c2410c",
           "fallback": "#64748b", "reporting": "#be185d"}
 KIND_NAMES = {"transition": "Transition", "joint": "Joint lottery", "imputation": "Imputation",
-              "value_read": "Value read", "gate": "Gate", "exit": "Exit",
+              "value_read": "Value read", "gate": "Gate", "composition_action": "Composition action",
               "fallback": "Fallback", "reporting": "Reporting association"}
 STATUS_NAMES = {"RESTRICTED": "Upper bound: some statuses kept as ordinary coordinates",
                 "COMPLETE": "Complete within the stated family", "INCOMPLETE": "Incomplete",

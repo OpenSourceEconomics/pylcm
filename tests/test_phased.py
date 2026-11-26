@@ -476,7 +476,7 @@ def test_phased_law_simulation_evolves_state_under_simulate_law() -> None:
     sim = (
         result.to_dataframe()
         .query('regime_name == "working"')
-        .set_index(["subject_id", "period"])
+        .set_index(["agent_id", "period"])
         .sort_index()
     )
     wealth_0 = float(cast("float", sim.loc[(0, 0), "wealth"]))
@@ -594,7 +594,7 @@ def _simulate_income_panel(
         log_level="debug",
     )
     df = result.to_dataframe().query("regime_name == 'working'")
-    return df.sort_values(["subject_id", "period"])["income"].to_numpy()
+    return df.sort_values(["agent_id", "period"])["income"].to_numpy()
 
 
 def _wrong_beliefs_params(*, rho_belief: float, rho_true: float) -> UserParams:
@@ -673,7 +673,7 @@ def test_persisted_solution_binds_beliefs_but_accepts_new_transition_truth(
     income = (
         realized.to_dataframe()
         .query("regime_name == 'working'")
-        .sort_values(["subject_id", "period"])["income"]
+        .sort_values(["agent_id", "period"])["income"]
         .to_numpy()
     )
     np.testing.assert_array_equal(income, np.asarray([2.0, 1.0]))
@@ -846,7 +846,7 @@ def test_phased_regime_transition_realized_draw_follows_simulate_variant() -> No
             "regime_id": jnp.asarray([_RegimeId.working]),
         },
     )
-    sim = result.to_dataframe().set_index(["subject_id", "period"]).sort_index()
+    sim = result.to_dataframe().set_index(["agent_id", "period"]).sort_index()
     assert sim.loc[(0, 0), "regime_name"] == "working"
     assert sim.loc[(0, 1), "regime_name"] == "dead"
 
@@ -887,7 +887,7 @@ def _retire_when_pension_rich(*, pension_wealth: float, age: float) -> ScalarInt
 def test_regime_draw_reads_carried_value() -> None:
     """The realized regime draw reads carried values, not solve imputations.
 
-    Two subjects with equal AIME (equal imputation) but different carried
+    Two agents with equal AIME (equal imputation) but different carried
     pension wealth get different realized regime draws when the transition
     reads the carried state; the decision itself still follows the policy
     solved on the imputation.
@@ -926,18 +926,18 @@ def test_regime_draw_reads_carried_value() -> None:
         params=params,
         initial_conditions={
             "wealth": jnp.full(2, 50.0),
-            "aime": jnp.full(2, 20.0),  # imputation = 2.0 for both subjects
+            "aime": jnp.full(2, 20.0),  # imputation = 2.0 for both agents
             "pension_wealth": jnp.asarray([5.0, 15.0]),
             "age": jnp.full(2, 60.0),
             "regime_id": jnp.asarray([_RegimeId.working] * 2),
         },
     )
-    sim = result.to_dataframe().set_index(["subject_id", "period"]).sort_index()
+    sim = result.to_dataframe().set_index(["agent_id", "period"]).sort_index()
     assert sim.loc[(0, 1), "regime_name"] == "working"
     assert sim.loc[(1, 1), "regime_name"] == "dead"
 
 
-def test_model_builds_when_a_transition_reads_a_phased_function():
+def test_model_builds_when_a_transition_reads_a_phased_function() -> None:
     """A model whose state transition reads a `Phased` function builds.
 
     Both slots accept `Phased`, so a law reaching a phased function through the

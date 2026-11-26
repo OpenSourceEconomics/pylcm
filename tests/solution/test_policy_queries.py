@@ -1,7 +1,7 @@
 """Typed current-period reads use mapped canonical action problems.
 
-The private adapter installed below is a stage fixture. Public Exit declarations
-are qualified by their own later stages.
+The private adapter installed below is a stage fixture. Public Composition action
+declarations are qualified by their own later stages.
 """
 
 import logging
@@ -1311,7 +1311,7 @@ def test_participation_callback_reads_mapped_state_and_current_params() -> None:
 
 
 def test_mapped_query_accepts_a_python_scalar_constant() -> None:
-    """A constant settlement has no undeclared numerical axis."""
+    """A constant transfer has no undeclared numerical axis."""
     model = _native_model(enable_jit=True)
     original = model._regimes["root"]
     kernel = original.solution.period_kernels[0]
@@ -1365,7 +1365,7 @@ def _information_mesh_inputs(
         jax.debug.callback(lambda value: events["law"].append(float(value)), wealth)
         return mean(wealth)
 
-    def settlement(wealth: FloatND) -> FloatND:
+    def transfer(wealth: FloatND) -> FloatND:
         jax.debug.callback(
             lambda value: events["projection"].append(float(value)), wealth
         )
@@ -1422,7 +1422,7 @@ def _information_mesh_inputs(
     node = QueryNode(
         read=replace(
             _read(kind=QueryKind.PARTICIPATING, target="target"),
-            projection={"wealth": settlement},
+            projection={"wealth": transfer},
             operand_paths={},
         ),
         context=context,

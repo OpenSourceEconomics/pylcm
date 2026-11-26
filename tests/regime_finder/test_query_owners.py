@@ -19,16 +19,16 @@ from tests.regime_finder.test_declaration_ingestion import (
 from tests.regime_finder.test_model_adapter import snapshot, function, grid
 
 
-def exit_reading(**targets: JSONValue) -> dict[str, JSONValue]:
-    """An exit declaration whose targets the regime reads as policy queries."""
+def composition_action_reading(**targets: JSONValue) -> dict[str, JSONValue]:
+    """A composition action declaration whose targets the regime reads as policy queries."""
     return {
         "kind": "dataclass",
-        "type": "lcm.Exit",
+        "type": "lcm.CompositionAction",
         "fields": {
             "available": None,
             "observes": [],
-            "targets": targets,
-            "rule": {"kind": "dataclass", "type": "lcm.Unilateral", "fields": {}},
+            "destinations": targets,
+            "rule": {"kind": "dataclass", "type": "lcm.PCOnActions", "fields": {}},
         },
     }
 
@@ -57,22 +57,24 @@ def policy_snapshot() -> dict[str, JSONValue]:
         },
     }
     raw["user_regimes"]["unused_owner"] = deepcopy(raw["user_regimes"]["query_partner"])
-    raw["user_regimes"]["original"]["fields"]["exit"] = exit_reading(
-        partner_price={
-            "kind": "dataclass",
-            "type": "lcm.ProjectedRegimeValue",
-            "fields": {
-                "regime": "query_partner",
-                "kind": "Raw",
-                "field": "value",
-                "observes": ["history"],
-                "projection": {
-                    "partner_history": function(
-                        "def project(history):\n    return history\n", ["history"]
-                    )
+    raw["user_regimes"]["original"]["fields"]["composition_action"] = (
+        composition_action_reading(
+            partner_price={
+                "kind": "dataclass",
+                "type": "lcm.ProjectedRegimeValue",
+                "fields": {
+                    "regime": "query_partner",
+                    "kind": "Raw",
+                    "field": "value",
+                    "observes": ["history"],
+                    "projection": {
+                        "partner_history": function(
+                            "def project(history):\n    return history\n", ["history"]
+                        )
+                    },
                 },
-            },
-        }
+            }
+        )
     )
     return raw
 
@@ -255,14 +257,14 @@ def test_nested_query_owners_and_phases_are_separate() -> None:
             "user_regimes",
             "original",
             "fields",
-            "exit",
+            "composition_action",
             "fields",
-            "targets",
+            "destinations",
             "partner_price",
         )
     )
     json_member(nested, "fields")["regime"] = "unused_owner"
-    partner["exit"] = exit_reading(nested=nested)
+    partner["composition_action"] = composition_action_reading(nested=nested)
     normalized, analysis, checked = _check_analysis(raw)
     assert ({q["regime"] for q in json_entries(normalized, "query_owners")}) == (
         {"query_partner", "unused_owner"}

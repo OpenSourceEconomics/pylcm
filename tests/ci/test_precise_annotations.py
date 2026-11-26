@@ -485,9 +485,9 @@ DOMAIN_NAMES = (
         id="targets",
     ),
     pytest.param(
-        "subject_arg_names",
+        "agent_arg_names",
         "tuple[str, ...]",
-        "annotate the elements of `subject_arg_names` with a domain alias, not `str`",
+        "annotate the elements of `agent_arg_names` with a domain alias, not `str`",
         id="arg-names",
     ),
     pytest.param(

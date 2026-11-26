@@ -7,9 +7,15 @@ following the spirit of Fella, Gallipoli & Pan (2019).
 
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
-from tests.test_models.precautionary_savings import RegimeId, get_model, get_params
+from tests.test_models.precautionary_savings import (
+    RegimeId,
+    ShockType,
+    get_model,
+    get_params,
+)
 
 # FGP reference parameters (Section 4, p. 191)
 SIGMA_EPS = 0.1269  # sqrt(0.0161)
@@ -18,11 +24,11 @@ R = 0.04
 BETA = 0.96
 N_PERIODS = 10
 
-_N_SUBJECTS = 100
+_N_AGENTS = 100
 _SEED = 42
 
 
-def _simulate(shock_type):
+def _simulate(shock_type: ShockType) -> pd.DataFrame:
     model = get_model(
         n_periods=N_PERIODS,
         shock_type=shock_type,
@@ -43,10 +49,10 @@ def _simulate(shock_type):
         log_level="debug",
         params=params,
         initial_conditions={
-            "wealth": jnp.full(_N_SUBJECTS, 5.0),
-            "income": jnp.zeros(_N_SUBJECTS),
-            "age": jnp.full(_N_SUBJECTS, 20.0),
-            "regime_id": jnp.array([RegimeId.alive] * _N_SUBJECTS),
+            "wealth": jnp.full(_N_AGENTS, 5.0),
+            "income": jnp.zeros(_N_AGENTS),
+            "age": jnp.full(_N_AGENTS, 20.0),
+            "regime_id": jnp.array([RegimeId.alive] * _N_AGENTS),
         },
         seed=_SEED,
     )
@@ -54,7 +60,7 @@ def _simulate(shock_type):
 
 
 @pytest.mark.parametrize("shock_type", ["rouwenhorst", "tauchen"])
-def test_model_solves(shock_type):
+def test_model_solves(shock_type: ShockType) -> None:
     """Model solves without error."""
     model = get_model(
         n_periods=N_PERIODS,
@@ -79,7 +85,7 @@ def test_model_solves(shock_type):
 
 
 @pytest.mark.parametrize("shock_type", ["rouwenhorst", "tauchen"])
-def test_model_simulates(shock_type):
+def test_model_simulates(shock_type: ShockType) -> None:
     """Model simulates without error."""
     df = _simulate(shock_type)
     assert len(df) > 0
@@ -89,7 +95,7 @@ def test_model_simulates(shock_type):
 
 
 @pytest.mark.parametrize("shock_type", ["rouwenhorst", "tauchen"])
-def test_simulated_income_moments(shock_type):
+def test_simulated_income_moments(shock_type: ShockType) -> None:
     """Simulated income moments are in the right ballpark."""
     df = _simulate(shock_type)
     alive_df = df[df["regime_name"] == "alive"]
@@ -102,7 +108,7 @@ def test_simulated_income_moments(shock_type):
     assert np.std(income_vals) < 2 * expected_std
 
 
-def test_rouwenhorst_income_moments_closer_to_theory():
+def test_rouwenhorst_income_moments_closer_to_theory() -> None:
     """Rouwenhorst income moments are at least as close to theory as Tauchen's."""
     expected_var = SIGMA_EPS**2 / (1 - RHO**2)
 

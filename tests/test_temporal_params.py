@@ -918,10 +918,10 @@ def _ceiling(*, option: DiscreteAction, ceiling: FloatND) -> BoolND:
     return option <= ceiling
 
 
-@pytest.mark.parametrize("n_subjects", [1, 3])
+@pytest.mark.parametrize("n_agents", [1, 3])
 @pytest.mark.parametrize("budget", [None, 100_000_000])
 def test_temporal_constraint_changes_the_feasible_action(
-    *, n_subjects: int, budget: int | None
+    *, n_agents: int, budget: int | None
 ) -> None:
     model = lcm.Model(
         n_periods=3,
@@ -942,7 +942,7 @@ def test_temporal_constraint_changes_the_feasible_action(
         },
         fixed_params={"discount_factor": 0.5},
         execution_config=lcm.ExecutionConfig(
-            device_memory_bytes=budget, axis_widths={"subject": 2}
+            device_memory_bytes=budget, axis_widths={"agent": 2}
         ),
     )
     result = model.simulate(
@@ -950,8 +950,8 @@ def test_temporal_constraint_changes_the_feasible_action(
             "ceiling": lcm.TimeVarying(values=jnp.array([0.0, 1.0]), periods=(0, 1))
         },
         initial_conditions={
-            "period": jnp.zeros(n_subjects, dtype=jnp.int32),
-            "regime_id": jnp.full(n_subjects, RegimeId.work),
+            "period": jnp.zeros(n_agents, dtype=jnp.int32),
+            "regime_id": jnp.full(n_agents, RegimeId.work),
         },
         seed=5,
         log_level="off",
@@ -959,8 +959,8 @@ def test_temporal_constraint_changes_the_feasible_action(
     frame = result.to_dataframe(use_categorical_codes=True)
     for period, action, value in ((0, 0, 2.5), (1, 1, 5.0)):
         rows = frame.loc[frame["period"] == period]
-        assert len(rows) == n_subjects
-        np.testing.assert_array_equal(rows["option"], jnp.full(n_subjects, action))
+        assert len(rows) == n_agents
+        np.testing.assert_array_equal(rows["option"], jnp.full(n_agents, action))
         np.testing.assert_allclose(rows["value"], value)
 
 

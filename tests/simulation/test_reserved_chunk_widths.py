@@ -15,8 +15,8 @@ from _lcm.execution.core_program import (
     TiledOutputAxis,
 )
 from _lcm.execution.execution_plan import ResolvedExecution
-from _lcm.simulation.program_types import SUBJECT_WIDTH_KEYWORD
-from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
+from _lcm.simulation.program_types import AGENT_WIDTH_KEYWORD
+from _lcm.simulation.programs import _AgentTiled, _ArgumentsBoundAtDispatch
 from _lcm.simulation.residency import measure_buffer_footprint
 from _lcm.simulation.runtime import (
     CompiledSimulationProgram,
@@ -28,7 +28,7 @@ from lcm.exceptions import ExecutionPlanningError
 
 class _MaterializedPreparation(TypedDict):
     program: MaterializedCoreProgram
-    n_subjects: int
+    n_agents: int
     residency: NotRequired[SimulationDispatchContext | None]
 
 
@@ -42,18 +42,18 @@ def _fixture(
     device = jax.devices()[0]
     source = jax.device_put(np.arange(8, dtype=np.int32), device)
     program = CoreProgram(
-        name="reserved_subjects",
-        function=_SubjectTiled(func=_increment, subject_arg_names=("x",)),
+        name="reserved_agents",
+        function=_AgentTiled(func=_increment, agent_arg_names=("x",)),
         argument_builder=_ArgumentsBoundAtDispatch(
-            program_name="reserved_subjects", subject_arg_names=("x",)
+            program_name="reserved_agents", agent_arg_names=("x",)
         ),
         requirements=CoreExecutionRequirements(
             tiled_axes=(
                 TiledOutputAxis(
-                    name="subject",
+                    name="agent",
                     state_names=("x",),
                     extent=8,
-                    width_keyword=SUBJECT_WIDTH_KEYWORD,
+                    width_keyword=AGENT_WIDTH_KEYWORD,
                 ),
             )
         ),
@@ -65,11 +65,11 @@ def _fixture(
         execution=ResolvedExecution(
             device_ids=(device.id,),
             sharded_states=frozenset(),
-            axis_widths=MappingProxyType({} if fixed is None else {"subject": fixed}),
+            axis_widths=MappingProxyType({} if fixed is None else {"agent": fixed}),
             device_memory_bytes=2**20,
         ),
         enable_jit=True,
-        subject_devices=(device,),
+        agent_devices=(device,),
     )
     return runtime, program, source
 
@@ -85,25 +85,25 @@ def test_actual_dispatch_preserves_the_outer_reserved_width(
         self: SimulationRuntime, **call: Unpack[_MaterializedPreparation]
     ) -> CompiledSimulationProgram:
         compiled = prepare(self, **call)
-        selected.append(compiled.widths["subject"])
+        selected.append(compiled.widths["agent"])
         return compiled
 
     monkeypatch.setattr(SimulationRuntime, "_prepare_materialized", observe)
     context = SimulationDispatchContext(
         live_footprint=lambda: measure_buffer_footprint(tree=source),
-        budget_devices=runtime.subject_devices,
+        budget_devices=runtime.agent_devices,
     )
     expected = runtime.dispatch(
         program=program,
         arguments={"x": source},
         period=0,
-        n_subjects=8,
+        n_agents=8,
         residency=context,
     )
     assert selected == [8], (
         "The current-residency counterfactual must choose wider code"
     )
-    reserved_widths = MappingProxyType({"subject": 2})
+    reserved_widths = MappingProxyType({"agent": 2})
     reserved = SimulationDispatchContext(
         live_footprint=context.live_footprint,
         budget_devices=context.budget_devices,
@@ -113,7 +113,7 @@ def test_actual_dispatch_preserves_the_outer_reserved_width(
         program=program,
         arguments={"x": source},
         period=0,
-        n_subjects=8,
+        n_agents=8,
         residency=reserved,
     )
     assert selected == [8, 2]
@@ -131,11 +131,11 @@ def test_reserved_width_conflicting_with_explicit_configuration_is_refused() -> 
             program=program,
             arguments={"x": source},
             period=0,
-            n_subjects=8,
+            n_agents=8,
             residency=SimulationDispatchContext(
                 live_footprint=lambda: measure_buffer_footprint(tree=source),
-                budget_devices=runtime.subject_devices,
-                axis_widths=MappingProxyType({"subject": 2}),
+                budget_devices=runtime.agent_devices,
+                axis_widths=MappingProxyType({"agent": 2}),
             ),
         )
     assert not runtime.cache

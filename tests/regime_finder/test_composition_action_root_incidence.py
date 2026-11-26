@@ -1,10 +1,10 @@
-"""The independent source check binds the incidence of an exit's root relation.
+"""The independent source check binds the incidence of a composition action's root relation.
 
-An exit's availability and settlement default reach the dependency graph through the
-exit's root relation, the exit relation without targets. Its callbacks, its phase and
-its support are what make the states the exit reads live. A report whose root lost its
+A composition action's availability and transfer default reach the dependency graph through the
+composition action's root relation, the composition action relation without targets. Its callbacks, its phase and
+its support are what make the states the composition action reads live. A report whose root lost its
 callback, claims zero support, holds in one phase only or lists its callback twice
-fails the source check, even when every callback record, the exit's payload and its
+fails the source check, even when every callback record, the composition action's payload and its
 observed shocks are authentic and every price is recomputed from the altered
 declarations.
 """
@@ -24,12 +24,12 @@ from _lcm_regime_finder.semantic_check import check_semantics
 from lcm import (
     CollectiveUtility,
     DiscreteGrid,
-    Exit,
-    ExitTarget,
+    CompositionAction,
+    Destination,
     InitialNodes,
     Model,
     Regime,
-    Unilateral,
+    PCOnActions,
     categorical,
 )
 from lcm.typing import BoolND, DiscreteState, FloatND, ScalarInt
@@ -40,7 +40,7 @@ type Mutation = Literal[
     "erase_callbacks", "zero_support", "simulation_phase", "duplicate_callback"
 ]
 
-# The two alterations that drop the exit's live state `z` from the dependency closure.
+# The two alterations that drop the composition action's live state `z` from the dependency closure.
 DROPPING: tuple[Mutation, ...] = ("erase_callbacks", "zero_support")
 
 
@@ -76,12 +76,12 @@ def _zero_x() -> int:
     return 0
 
 
-def _exit_available(z: DiscreteState) -> BoolND:
+def _composition_action_available(z: DiscreteState) -> BoolND:
     return z == 1
 
 
 def _model(*, three_codes: bool) -> Model:
-    """A couple whose exit is available only at `z == 1`; no other calculation reads `z`."""
+    """A couple whose composition action is available only at `z == 1`; no other calculation reads `z`."""
     return Model(
         regimes={
             "couple": Regime(
@@ -91,13 +91,13 @@ def _model(*, three_codes: bool) -> Model:
                         utilities={"f": _stay_value, "m": _stay_value}
                     )
                 },
-                exit=Exit(
-                    targets={
-                        "f": ExitTarget(regime="single_f", projection={"x": _zero_x}),
-                        "m": ExitTarget(regime="single_m", projection={"x": _zero_x}),
+                composition_action=CompositionAction(
+                    destinations={
+                        "f": Destination(regime="single_f", projection={"x": _zero_x}),
+                        "m": Destination(regime="single_m", projection={"x": _zero_x}),
                     },
-                    rule=Unilateral(),
-                    available=_exit_available,
+                    rule=PCOnActions(),
+                    available=_composition_action_available,
                 ),
             ),
             "single_f": Regime(
@@ -128,7 +128,7 @@ def _couple_id(report: Record) -> str:
 def _altered_report(
     *, backend: FactsBackendName, mutation: Mutation, three_codes: bool
 ) -> tuple[Record, Record]:
-    """Return the capture and a finder report whose exit root alone is altered.
+    """Return the capture and a finder report whose composition action root alone is altered.
 
     Only the root relation changes. The altered report's dependency closure, layouts,
     costs, recommendation and its own check records are rebuilt from the altered
@@ -141,7 +141,9 @@ def _altered_report(
     (root,) = [
         r
         for r in declarations["relations"]
-        if r["kind"] == "exit" and r["source"] == couple and r["targets"] == []
+        if r["kind"] == "composition_action"
+        and r["source"] == couple
+        and r["targets"] == []
     ]
     match mutation:
         case "erase_callbacks":
@@ -184,10 +186,10 @@ def _altered_report(
 
 @pytest.mark.parametrize("backend", BACKENDS)
 @pytest.mark.parametrize("three_codes", [False, True])
-def test_genuine_exit_root_passes(
+def test_genuine_composition_action_root_passes(
     *, backend: FactsBackendName, three_codes: bool
 ) -> None:
-    """The finder's own report keeps `z` live through the exit and passes both checks."""
+    """The finder's own report keeps `z` live through the composition action and passes both checks."""
     captured = read_model(_model(three_codes=three_codes))
     report = find_regimes(captured, facts_backend=backend)
     verified = verify_certificate(captured, report)
@@ -203,7 +205,7 @@ def test_genuine_exit_root_passes(
 @pytest.mark.parametrize("backend", BACKENDS)
 @pytest.mark.parametrize("mutation", DROPPING)
 @pytest.mark.parametrize("three_codes", [False, True])
-def test_exit_root_that_drops_the_exit_state_fails_the_source_check(
+def test_composition_action_root_that_drops_the_composition_action_state_fails_the_source_check(
     *, backend: FactsBackendName, mutation: Mutation, three_codes: bool
 ) -> None:
     """Erased callbacks or a false zero support drop `z`, and the source check says so."""
@@ -221,13 +223,13 @@ def test_exit_root_that_drops_the_exit_state_fails_the_source_check(
         "z" in closure[_couple_id(altered)],
         verified["status"],
         verified["source_semantics"]["status"],
-        "original exit root incidence changed" in kinds,
+        "original composition action root incidence changed" in kinds,
     ) == (False, "FAIL", "FAIL", True)
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
 @pytest.mark.parametrize("mutation", ["simulation_phase", "duplicate_callback"])
-def test_exit_root_with_changed_phase_or_callback_list_fails_the_source_check(
+def test_composition_action_root_with_changed_phase_or_callback_list_fails_the_source_check(
     *, backend: FactsBackendName, mutation: Mutation
 ) -> None:
     """A root that holds in one phase only, or lists its callback twice, is rejected."""
@@ -239,5 +241,5 @@ def test_exit_root_with_changed_phase_or_callback_list_fails_the_source_check(
     assert (
         verified["status"],
         verified["source_semantics"]["status"],
-        "original exit root incidence changed" in kinds,
+        "original composition action root incidence changed" in kinds,
     ) == ("FAIL", "FAIL", True)

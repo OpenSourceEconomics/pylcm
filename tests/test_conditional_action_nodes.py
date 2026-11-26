@@ -286,7 +286,7 @@ def test_boundary_node_solves_looks_up_and_simulates_like_the_hand_pin(
         ).to_dataframe()
         frames[conditional] = frame.loc[
             frame["regime_name"] == "working",
-            ["subject_id", "period", "labor", "hours"],
+            ["agent_id", "period", "labor", "hours"],
         ].reset_index(drop=True)
     assert len(frames[False]) == len(WEALTH)
     pd.testing.assert_frame_equal(frames[True], frames[False])

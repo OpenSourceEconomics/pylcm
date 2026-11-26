@@ -1058,8 +1058,8 @@ def test_the_regime_beside_a_sharded_one_stays_on_the_configured_devices() -> No
 
 
 @_skip_pytest_parallel
-def test_seeded_subject_states_of_a_restricted_model_stay_on_its_devices() -> None:
-    """Per-subject simulate arrays are seeded on a device the configuration named."""
+def test_seeded_agent_states_of_a_restricted_model_stay_on_its_devices() -> None:
+    """Per-agent simulate arrays are seeded on a device the configuration named."""
     model = _make_three_type_model(distributed=False, devices=(2, 3))
     states_per_regime = build_initial_states(
         initial_states={
@@ -1197,8 +1197,8 @@ def test_a_model_with_one_regime_per_period_is_placed_on_device_zero() -> None:
 
 
 @_skip_pytest_parallel
-def test_simulating_a_submesh_placed_solution_uses_the_subject_devices() -> None:
-    """Subjects span four devices while the original three-device value survives."""
+def test_simulating_a_submesh_placed_solution_uses_the_agent_devices() -> None:
+    """Agents span four devices while the original three-device value survives."""
     model = _make_three_type_model(distributed=True)
     solution = model.solve(params=_PARAMS, log_level="off")
     view = solution._engine_view
@@ -1219,7 +1219,7 @@ def test_simulating_a_submesh_placed_solution_uses_the_subject_devices() -> None
         log_level="off",
         seed=42,
     )
-    assert result.n_subjects == 4
+    assert result.n_agents == 4
     assert result.raw_results["working"][0].V_arr.sharding.device_set == (
         set(jax.devices())
     )
@@ -1783,7 +1783,7 @@ def test_the_nbegm_toy_publishes_the_same_values_under_both_placements(
 
 
 @_skip_pytest_parallel
-def test_simulation_topology_reads_a_proper_submesh_on_all_subject_devices() -> None:
+def test_simulation_topology_reads_a_proper_submesh_on_all_agent_devices() -> None:
     """The three-type value keeps its shape in a four-device replicated read."""
     model = _make_three_type_model(distributed=True)
     topologies = {
@@ -2193,10 +2193,10 @@ def _stateless_placement_terminal(*, bequest: ScalarFloat) -> ScalarFloat:
 @pytest.mark.parametrize("selected", [(2,), (1, 3)])
 @pytest.mark.parametrize("log_level", ["off", "debug"])
 @pytest.mark.parametrize("supplied", [False, True])
-def test_stateless_terminal_decision_preserves_scalar_profile_and_subject_rows(
+def test_stateless_terminal_decision_preserves_scalar_profile_and_agent_rows(
     *, selected: tuple[int, ...], log_level: LogLevel, supplied: bool
 ) -> None:
-    """A shared terminal payoff retains one published value per actual subject."""
+    """A shared terminal payoff retains one published value per actual agent."""
     model = _uniform_placement_model(
         selected=selected, sharded=len(selected) > 1, stateless_terminal=True
     )

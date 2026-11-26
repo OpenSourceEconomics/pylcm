@@ -90,11 +90,11 @@ class JointOperationInputs[T: PytreeValue](TypedDict):
     arguments: operation_module.Mapping[
         operation_module.ReferenceName, operation_module.PytreeValue
     ]
-    subject_arg_names: NotRequired[tuple[operation_module.ReferenceName, ...]]
+    agent_arg_names: NotRequired[tuple[operation_module.ReferenceName, ...]]
     static_arguments: NotRequired[
         operation_module.Mapping[str, operation_module.StaticArgument]
     ]
-    subject_outputs: NotRequired[bool]
+    agent_outputs: NotRequired[bool]
 
 
 _FLOAT_DTYPE = canonical_float_dtype()

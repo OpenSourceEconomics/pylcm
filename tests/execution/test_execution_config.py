@@ -144,7 +144,7 @@ def test_execution_config_does_not_change_the_structure_fingerprint() -> None:
         fixed_params=dict(base.fixed_params),
         execution_config=ExecutionConfig(
             device_memory_bytes=1 << 30,
-            axis_widths={"action_product": 2, "subject": 2},
+            axis_widths={"action_product": 2, "agent": 2},
         ),
         initial_nodes=initial_nodes_of(model=base),
     )
@@ -162,7 +162,7 @@ def test_execution_devices_defaults_to_every_visible_device() -> None:
 
 
 def test_a_budget_alone_is_a_complete_configuration() -> None:
-    """The single budgeted outer-cohort planner needs no explicit subject pin."""
+    """The single budgeted outer-cohort planner needs no explicit agent pin."""
     config = ExecutionConfig(device_memory_bytes=40 * 1024**3)
     assert config.device_memory_bytes == 40 * 1024**3
     assert dict(config.axis_widths) == {}
@@ -171,26 +171,26 @@ def test_a_budget_alone_is_a_complete_configuration() -> None:
 def test_budgeted_config_resolves_and_roundtrips() -> None:
     config = ExecutionConfig(
         device_memory_bytes=1024,
-        axis_widths={"subject": 2, "action_product": 3},
+        axis_widths={"agent": 2, "action_product": 3},
     )
     restored = cloudpickle.loads(cloudpickle.dumps(config))
     assert restored == config
     resolved = resolve_execution_config(
         config=restored, visible_device_ids=(0,), state_names=frozenset()
     )
-    assert resolved.axis_widths == {"subject": 2, "action_product": 3}
+    assert resolved.axis_widths == {"agent": 2, "action_product": 3}
     assert resolved.device_memory_bytes == 1024
 
 
 def test_simulation_sharding_is_an_explicit_legacy_preserving_opt_in() -> None:
     assert ExecutionConfig().simulation_sharding == "legacy"
-    config = ExecutionConfig(devices=(0, 1), simulation_sharding="subjects")
+    config = ExecutionConfig(devices=(0, 1), simulation_sharding="agents")
     restored = cloudpickle.loads(cloudpickle.dumps(config))
     assert restored == config
     resolved = resolve_execution_config(
         config=restored, visible_device_ids=(0, 1), state_names=frozenset()
     )
-    assert resolved.simulation_sharding == "subjects"
+    assert resolved.simulation_sharding == "agents"
     assert resolved.sharded_states == frozenset()
     assert resolved.axis_widths == {}
 

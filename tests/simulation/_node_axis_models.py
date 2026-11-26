@@ -138,7 +138,7 @@ def _path_model(*, width: int = 2, budgeted: bool = False) -> Model:
         regime_id_class=_ChildIds,
         shocks={"income": _income(nodes=(0.0, 1.0), weights=(0.5, 0.5))},
         execution_config=ExecutionConfig(
-            axis_widths={"subject": width},
+            axis_widths={"agent": width},
             device_memory_bytes=2**27 if budgeted else None,
         ),
     )
@@ -268,7 +268,7 @@ def _transition_model(*, budgeted: bool = False, dependent: bool = False) -> Mod
         regime_id_class=_EntryIds,
         shocks={"income": _income(nodes=(0.0, 1.0), weights=(0.5, 0.5))},
         execution_config=ExecutionConfig(
-            axis_widths={"subject": 1},
+            axis_widths={"agent": 1},
             device_memory_bytes=2**27 if budgeted else None,
         ),
     )

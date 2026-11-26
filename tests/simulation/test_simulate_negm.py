@@ -50,31 +50,31 @@ def _alive_dataframe(*, initial_conditions: dict[str, jnp.ndarray]) -> pd.DataFr
     return result.to_dataframe().query("regime_name == 'alive'")
 
 
-def test_negm_simulate_enforces_inner_budget_constraint():
+def test_negm_simulate_enforces_inner_budget_constraint() -> None:
     """Simulated consumption never exceeds inner resources minus the borrowing limit.
 
-    Low-wealth subjects face a consumption grid reaching far above their liquid
+    Low-wealth agents face a consumption grid reaching far above their liquid
     resources, so an unmasked argmax would pick infeasible consumption. The
     synthesized inner mask `consumption <= resources - borrowing_limit` (the
     borrowing limit being the inner savings grid's lowest node) must clip the
     simulated path exactly as a declared borrowing constraint would, with the
     outer durable move already folded into `resources`.
     """
-    n_subjects = 3
+    n_agents = 3
     initial_conditions = {
         "wealth": jnp.array([1.0, 5.0, 25.0]),
-        "illiquid": jnp.full(n_subjects, 10.0),
-        "age": jnp.full(n_subjects, 20.0),
-        "regime_id": jnp.full(n_subjects, RegimeId.alive, dtype=jnp.int32),
+        "illiquid": jnp.full(n_agents, 10.0),
+        "age": jnp.full(n_agents, 20.0),
+        "regime_id": jnp.full(n_agents, RegimeId.alive, dtype=jnp.int32),
     }
-    # Every subject starts on the tabulated wealth grid, so what is asserted
+    # Every agent starts on the tabulated wealth grid, so what is asserted
     # below is the mask rather than the model's behaviour off the end of its
     # own state space.
     assert float(jnp.max(initial_conditions["wealth"])) <= float(
         negm_kinked_toy.WEALTH_GRID.to_jax()[-1]
     )
     # The infeasible region exists by construction: the consumption grid
-    # reaches above the poorest subject's liquid resources, so an unmasked
+    # reaches above the poorest agent's liquid resources, so an unmasked
     # argmax has an infeasible choice available to pick.
     assert float(negm_kinked_toy.CONSUMPTION_GRID.to_jax()[-1]) > float(
         jnp.min(initial_conditions["wealth"])
@@ -98,7 +98,7 @@ def test_negm_simulate_enforces_inner_budget_constraint():
     assert (df["consumption"].to_numpy() <= budget + 1e-9).all()
 
 
-def test_negm_simulated_consumption_is_positive_and_within_inner_budget():
+def test_negm_simulated_consumption_is_positive_and_within_inner_budget() -> None:
     """Simulated consumption is strictly positive and inside the inner budget.
 
     The CRRA flow is defined only for positive consumption, and the synthesized
@@ -106,12 +106,12 @@ def test_negm_simulated_consumption_is_positive_and_within_inner_budget():
     borrowing limit; a non-positive choice or one above that bound would signal
     the budget mask failed to apply.
     """
-    n_subjects = 4
+    n_agents = 4
     initial_conditions = {
         "wealth": jnp.array([2.0, 8.0, 15.0, 28.0]),
         "illiquid": jnp.array([0.0, 5.0, 12.0, 20.0]),
-        "age": jnp.full(n_subjects, 20.0),
-        "regime_id": jnp.full(n_subjects, RegimeId.alive, dtype=jnp.int32),
+        "age": jnp.full(n_agents, 20.0),
+        "regime_id": jnp.full(n_agents, RegimeId.alive, dtype=jnp.int32),
     }
     # Both states start inside their own grids, so a violation of the budget
     # assertion below is the mask failing rather than extrapolation.

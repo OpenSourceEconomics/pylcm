@@ -35,7 +35,7 @@ from tests.params._process_params import process_params
 from tests.simulation.initial_conditions._models import make_asymmetric_state_model
 
 
-def _case(*, n_subjects: int = 1) -> tuple[Model, FlatParams, InitialConditions]:
+def _case(*, n_agents: int = 1) -> tuple[Model, FlatParams, InitialConditions]:
     """Build tiny real canonical inputs without a solve or replay payload."""
     model = make_asymmetric_state_model()
     params = process_params(
@@ -43,10 +43,10 @@ def _case(*, n_subjects: int = 1) -> tuple[Model, FlatParams, InitialConditions]
     )
     initial = MappingProxyType(
         {
-            "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
-            "age": jnp.zeros(n_subjects, dtype=canonical_float_dtype()),
-            "wealth": jnp.ones(n_subjects, dtype=canonical_float_dtype()),
-            "health": jnp.zeros(n_subjects, dtype=jnp.int32),
+            "regime_id": jnp.zeros(n_agents, dtype=jnp.int32),
+            "age": jnp.zeros(n_agents, dtype=canonical_float_dtype()),
+            "wealth": jnp.ones(n_agents, dtype=canonical_float_dtype()),
+            "health": jnp.zeros(n_agents, dtype=jnp.int32),
         }
     )
     return model, params, initial
@@ -121,7 +121,7 @@ def test_metadata_words_preserve_exact_ages_and_filter_codes_by_cohort(
     ages = np.array(
         [0.0, -0.0, np.nextafter(dtype.type(1), dtype.type(2))], dtype=dtype
     )
-    # Canonical mapping order is deliberately different from subject order.
+    # Canonical mapping order is deliberately different from agent order.
     ids = np.array([7, 2, 7], dtype=np.int32)
     codes = np.array([1, 999, -1 if relevant_bad_code else 0], dtype=np.int32)
     actual = _pack_initial_summary(
@@ -145,7 +145,7 @@ def test_metadata_words_preserve_exact_ages_and_filter_codes_by_cohort(
 
 
 def _read_fractional_age_cohorts(*, age: float) -> _InitialCohorts:
-    """Read cohorts for one subject at `age` on a grid with a fractional age."""
+    """Read cohorts for one agent at `age` on a grid with a fractional age."""
     model, _, initial = _case()
     return _read_initial_cohorts(
         initial_conditions={
@@ -210,7 +210,7 @@ def test_summary_allocation_is_refused_before_dispatch_and_inputs_survive(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Real admission refuses an unfunded summary and accepts generous headroom."""
-    model, params, initial = _case(n_subjects=1024)
+    model, params, initial = _case(n_agents=1024)
     generous = dataclasses.replace(model._execution, device_memory_bytes=2**25)
     empty = DeviceBufferFootprint(spans=MappingProxyType({}))
     assert model.ages is not None

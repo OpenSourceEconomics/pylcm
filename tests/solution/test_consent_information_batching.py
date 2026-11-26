@@ -1,9 +1,9 @@
 """Consent pricing evaluates observed couple rows once and runs its cells in lanes.
 
-A formation exit that observes every couple shock fixes the couple target's rows
-to one physical point, so one representative row prices all of them. The cells of
-a query chunk and the rows of an information support run as batched lanes; a lane
-whose guard is false reads stand-in inputs and its answer is discarded.
+A formation composition action that observes every couple shock fixes the couple
+target's rows to one physical point, so one representative row prices all of them. The
+cells of a query chunk and the rows of an information support run as batched lanes; a
+lane whose guard is false reads stand-in inputs and its answer is discarded.
 """
 
 import re
@@ -20,17 +20,17 @@ from _lcm import policy_queries, query_information
 from _lcm.typing import PytreeValue
 from lcm import (
     CollectiveUtility,
+    CompositionAction,
     Consent,
     Counterparty,
+    Destination,
     DiscreteGrid,
     ExecutionConfig,
-    Exit,
-    ExitTarget,
     InitialNodes,
     Model,
+    PCOnActions,
     Periods,
     Regime,
-    Unilateral,
     categorical,
 )
 from lcm.shocks import Discrete, GaussHermite, Law, Normal, Product, ShockGroup
@@ -116,7 +116,7 @@ def _experience(experience: IntND) -> IntND:
 
 
 def _sentinel_experience(experience: IntND) -> IntND:
-    """The couple state only where the formation exit is available."""
+    """The couple state only where the formation composition action is available."""
     return jnp.where(experience > 0, experience, -1)
 
 
@@ -171,9 +171,9 @@ def _model(
             functions={"utility": _single_f if member == "f" else _single_m},
             shocks=("wage_f",) if member == "f" else ("wage_m",),
             state_transitions={"experience": _next_experience},
-            exit=Exit(
-                targets={
-                    "self": ExitTarget(
+            composition_action=CompositionAction(
+                destinations={
+                    "self": Destination(
                         regime="couple",
                         role=member,
                         projection={
@@ -211,7 +211,7 @@ def _model(
                 "experience_m": _next_m,
             },
             shocks=("wage_f", "wage_m", "match"),
-            exit=_dissolve() if dissolution else None,
+            composition_action=_dissolve() if dissolution else None,
         ),
         **(_alone(experience=experience, work=work) if dissolution else {}),
     }
@@ -219,21 +219,22 @@ def _model(
         regimes[f"{name}_terminal"] = replace(
             regime,
             state_transitions={},
-            exit=replace(
-                regime.exit,
-                targets={
+            composition_action=replace(
+                regime.composition_action,
+                destinations={
                     member: replace(target, regime=f"{target.regime}_terminal")
-                    for member, target in regime.exit.targets.items()
+                    for member, target in regime.composition_action.destinations.items()
                 },
                 rule=replace(
-                    regime.exit.rule,
+                    regime.composition_action.rule,
                     counterparty=replace(
-                        regime.exit.rule.counterparty,
-                        regime=f"{regime.exit.rule.counterparty.regime}_terminal",
+                        regime.composition_action.rule.counterparty,
+                        regime=f"{regime.composition_action.rule.counterparty.regime}_terminal",
                     ),
                 ),
             )
-            if regime.exit is not None and isinstance(regime.exit.rule, Consent)
+            if regime.composition_action is not None
+            and isinstance(regime.composition_action.rule, Consent)
             else None,
         )
     law = Normal(mu=0.0, sigma=0.3) if match_law is None else match_law
@@ -280,10 +281,10 @@ def _experience_m(experience_m: IntND) -> IntND:
     return experience_m
 
 
-def _dissolve() -> Exit:
-    return Exit(
-        targets={
-            member: ExitTarget(
+def _dissolve() -> CompositionAction:
+    return CompositionAction(
+        destinations={
+            member: Destination(
                 regime=f"alone_{member}",
                 projection={
                     "experience": _experience_f if member == "f" else _experience_m
@@ -291,12 +292,12 @@ def _dissolve() -> Exit:
             )
             for member in ("f", "m")
         },
-        rule=Unilateral(tie="leave"),
+        rule=PCOnActions(tie="leave"),
     )
 
 
 def _alone(*, experience: DiscreteGrid, work: DiscreteGrid) -> dict[str, Regime]:
-    """Singles without a formation exit, so dissolving cannot re-marry."""
+    """Singles without a formation composition action, so dissolving cannot re-marry."""
     return {
         f"alone_{member}": Regime(
             states={"experience": experience},
@@ -375,7 +376,7 @@ def test_halving_the_chunk_doubles_the_support_rows_per_step(
 def _narrowed_step(
     *, halvings: int, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[tuple[int, int, int], dict[str, np.ndarray]]:
-    """Solve with every exit kernel narrowed `halvings` times.
+    """Solve with every composition action kernel narrowed `halvings` times.
 
     Returns single_f's period-0 chunk, support rows per step and compiled step
     workspace in bytes, and every value.
@@ -491,8 +492,11 @@ def _assert_same_values(
 def test_unavailable_lanes_never_reach_their_used_neighbours(
     *, couple_f: Callable[..., FloatND], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A lane whose exit is unavailable maps to -1, where the couple utility is
-    -inf or never stops; batched lanes finish and match the scalar branches."""
+    """A lane with no available composition action maps to -1; batched lanes finish.
+
+    There the couple utility is -inf or never stops. The batched lanes match the
+    scalar branches.
+    """
 
     def poisoned() -> Model:
         return _model(

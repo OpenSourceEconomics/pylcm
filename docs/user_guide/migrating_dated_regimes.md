@@ -74,12 +74,12 @@ law was `None` simply has no outgoing edges.
 
 Code that read a regime's law back reads it from the model:
 
-| Removed                                 | Read instead                                   |
-| --------------------------------------- | ---------------------------------------------- |
-| `Regime.terminal`                       | `model.graph.laws[name].terminal`              |
-| value-reading `Regime.gated_edges`      | an `Exit` of the regime that decides           |
-| `Regime.decomposed_transition`          | `model.graph.laws[name].decomposed_transition` |
-| the law passed as `regime_transitions=` | `model.declared_transitions[phase][name].law`  |
+| Removed                                 | Read instead                                     |
+| --------------------------------------- | ------------------------------------------------ |
+| `Regime.terminal`                       | `model.graph.laws[name].terminal`                |
+| value-reading `Regime.gated_edges`      | a `CompositionAction` of the regime that decides |
+| `Regime.decomposed_transition`          | `model.graph.laws[name].decomposed_transition`   |
+| the law passed as `regime_transitions=` | `model.declared_transitions[phase][name].law`    |
 
 `model.declared_transitions["solve"][name]` and
 `model.declared_transitions["simulate"][name]` are the `Transition` a source declared,
@@ -198,7 +198,7 @@ state transitions separate from this current-shock declaration.
 
 For tagged simulation inputs, use `BaseInnovations(values=...)` for innovations to
 transform through the current law, or `PhysicalValues(values=...)` for supplied physical
-realizations. A history is indexed by original subject row and computational period.
+realizations. A history is indexed by original agent row and computational period.
 Supplying a value does not declare it observed by another decision.
 
 Partial observation of a correlated group and partial correlated physical overrides are
@@ -227,13 +227,13 @@ of these.
 
 ### Simulated panels change once
 
-Every simulation draw is addressed by the seed, the subject's original row in the
-initial conditions, the period, and the shock's name and component. Draws no longer
-depend on the regime path, on other shocks, on group membership or on taste-shock
-toggles, and one seed gives the same base draws across parameter values. A panel
-simulated with an earlier version therefore differs once, for the same seed; regenerate
-stored panels and seeded comparisons. Reordering initial-condition rows changes which
-draws a subject receives, so keep each person in the same row across runs.
+Every simulation draw is addressed by the seed, the agent's original row in the initial
+conditions, the period, and the shock's name and component. Draws no longer depend on
+the regime path, on other shocks, on group membership or on taste-shock toggles, and one
+seed gives the same base draws across parameter values. A panel simulated with an
+earlier version therefore differs once, for the same seed; regenerate stored panels and
+seeded comparisons. Reordering initial-condition rows changes which draws an agent
+receives, so keep each person in the same row across runs.
 
 ### Shock timing is inferred
 
@@ -260,58 +260,69 @@ out. See
 
 (migrating-gates)=
 
-## Declare a value-dependent decision as an exit
+## Declare a value-dependent decision as a composition action
 
-Use `Regime(exit=...)` when a subject chooses whether to leave **in the current
-period**, before its final action. The payoff of leaving is the destination's problem
-value at the declared projection, without the destination's own exit. This singleton
-fragment prices a target without observing its offer:
+Use `Regime(composition_action=...)` when an agent decides whether to leave **in the
+current period**, before its final action. The payoff of leaving is the destination's
+value without the composition action at the declared projection. This fragment for a
+regime with one member prices a destination without observing its offer:
 
 ```python
-from lcm import Exit, ExitTarget, Unilateral
+from lcm import CompositionAction, Destination, PCOnActions
 
-exit = Exit(
-    targets={
-        "self": ExitTarget(
+composition_action = CompositionAction(
+    destinations={
+        "self": Destination(
             regime="target",
             projection={},
             utility_adjustment=adjustment,
         )
     },
-    rule=Unilateral(),
+    rule=PCOnActions(),
 )
 ```
 
-Declare the target's group on its own `Regime(shocks=...)`. Add `observes=("offer",)` to
-the `Exit` only when that physical target offer is visible at the exit choice. Otherwise
-pricing integrates the hidden offer; after the irrevocable move the target acts with its
-actual realization. An exit's utility adjustment affects its benchmark and is paid once
-on settlement. It reads the exit source query's state, helper and observed-information
-context; `ExitTarget.projection` does not remap its inputs. When that source is itself a
-projected household query, its mapped household state is available to the adjustment. A
-lagged marital-status indicator there can make the adjustment zero for newlyweds.
+Declare the destination's group on its own `Regime(shocks=...)`. Add
+`observes=("offer",)` to the `CompositionAction` only when that physical offer is
+visible at the decision on the composition. Otherwise the value of the outside option
+integrates over the hidden offer. An agent cannot undo leaving; after it leaves, the
+destination acts on the actual realization of the offer. A destination's utility
+adjustment enters the value of the outside option and is paid once on leaving. It reads
+the states, functions and observed information of the regime that decides;
+`Destination.projection` does not remap its inputs. When the deciding regime is itself
+read at projected states, the adjustment reads those projected states. A lagged
+marital-status indicator there can make the adjustment zero for newlyweds.
 
-An old edge decision that compared values after a scheduled transition is an `Exit` of
-the regime that decides, made in the current period before its final action:
+A decision that compares values after a scheduled transition becomes the
+`CompositionAction` of the regime that decides. The members make it in the current
+period, before their final action:
 
-- a household that forms only if both partners want it is an `Exit` of the single's
-  regime toward the household, with `rule=Consent(counterparty=Counterparty(...))`; see
-  [Marrying: a consented exit](collective_regimes.md#marrying-a-consented-exit);
-- a household that dissolves is the household's own `Exit`, with `Unilateral` or
-  `MutualConsent`;
-- a move that reads only the landing state, or nothing, stays a `Gate`.
+- a couple that forms only if both partners want it is a `CompositionAction` of the
+  single's regime toward the couple, with
+  `rule=Consent(counterparty=Counterparty(...))`; see
+  [Forming a couple: formation by consent](collective_regimes.md#forming-a-couple-formation-by-consent);
+- a couple that separates declares its own `CompositionAction`, with `PCOnActions`,
+  `PCOnWeight` or `MutualConsent`;
+- a change of regime that reads only the landing state, or nothing, stays a `Gate`.
 
-The exit compares values at the current choice, so the decision moves from after the
-landing to the period the source acts in.
+The composition action compares values at the current choice. The decision therefore
+takes place in the period the source acts in, not after the landing.
 
-A current exit declares one of the built-in rules, `Unilateral` or `MutualConsent`, or
-`Consent` for formation. The rule decides which members are willing to stay; the
-household then takes its Pareto-weighted argmax among the kept actions.
+A composition action declares one of four rules:
 
-A regime declares at most one exit, as `Regime(exit=Exit(...))`; the mapping
-`Regime(exits={name: Exit(...)})` is removed. The rule string `"unilateral"` is
-`Unilateral()`; `"mutual"` is `MutualConsent(settle=...)`, which needs a settlement.
-Custom rule callables and `RuleResult` are removed, with no replacement.
+- `PCOnActions`: unilateral divorce with participation constraints on actions;
+- `PCOnWeight`: unilateral divorce with participation constraints on the Pareto weight;
+- `MutualConsent`: mutual consent divorce;
+- `Consent`: formation by consent.
+
+The rule decides which members are willing to stay. The members then take their
+Pareto-weighted argmax among the actions the rule keeps.
+
+A regime declares at most one composition action, as
+`Regime(composition_action=CompositionAction(...))`. The rule string `"unilateral"`
+becomes `PCOnActions()`. The rule string `"mutual"` becomes
+`MutualConsent(transfer=...)`, which needs a `Transfer`. Custom rule callables and
+`RuleResult` are removed, with no replacement.
 
 ### Gates route on states only
 
@@ -320,15 +331,16 @@ State-only gate routing keeps its behavior.
 
 - A `Gate` predicate that names `V_target`, `V_target_<s>` or `D_target` raises
   `GateReadsValueError` when the gate is declared, and `Gate(references=...)` raises
-  `TypeError`. Declare the comparison as an `Exit` of the regime that decides, as above.
+  `TypeError`. Declare the comparison as a `CompositionAction` of the regime that
+  decides, as above.
 - `solve()` publishes no dissolution flag under any `ResultRetention`, and the
   `DISSOLUTION_FLAG` artifact key is removed from `lcm.solver_api` and `lcm.solvers`. A
-  household that lands in a gated target where no action is feasible takes its route's
+  row that lands in a gated target where no action is feasible takes its route's
   fallback in simulation; `SimulationResult.dissolution_fallbacks` records those rows
   when runtime checks are on.
 
 See the executable declaration examples in `lcm_examples.collective_regimes` and
-`tests/simulation/test_current_exits.py`, the
+`tests/simulation/test_current_composition_actions.py`, the
 [IID shock reference](../reference/shocks.md), and the
 [stochastic-process guide](continuous_stochastic_processes.md) for declarations and
 simulation draw settings.
@@ -340,18 +352,18 @@ simulation draw settings.
 `ArrivalDecision`, `ArrivalRead`, `ParticipationCheck`, `ParticipationRead`,
 `Transition(arrivals=...)` and `Transition(participation=...)` are removed; the old
 names raise `ImportError`, `AttributeError` or `TypeError`, and there is no alias.
-Declare each decision as the exit of the regime that makes it:
+Declare each decision as the composition action of the regime that makes it:
 
-| Decision on landing                                       | Declare instead                                                 |
-| --------------------------------------------------------- | --------------------------------------------------------------- |
-| a couple forms where both partners prefer it              | an `Exit` of each single's regime with a `Consent` rule         |
-| a continuing couple dissolves where a member walks out    | the couple's own `Exit` with `Unilateral` or `MutualConsent`    |
-| the move depends only on the landing state, or on nothing | a `Gate` in `Transition(gates=...)`, or `Transition(roles=...)` |
+| Decision on landing                                                   | Declare instead                                                                          |
+| --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| a couple forms where both partners prefer it                          | a `CompositionAction` of each single's regime with a `Consent` rule                      |
+| a continuing couple separates where a member leaves                   | the couple's own `CompositionAction` with `PCOnActions`, `PCOnWeight` or `MutualConsent` |
+| the change of regime depends only on the landing state, or on nothing | a `Gate` in `Transition(gates=...)`, or `Transition(roles=...)`                          |
 
 These decisions have no replacement:
 
 - a value compared with a threshold, a parameter or a third regime's value;
-- a comparison between the members of one household;
+- a comparison between the members of one regime;
 - a read of next period's integrated value.
 
 ```text
@@ -379,9 +391,9 @@ source regime and keep their paths, `params[source][target]["next_<state>"]`.
 | `[source][target]["simulate_leg_fallback_<regime>_<state>"][arg]` | `[source][target]["routes"][route]["fallback"]["simulate"][state][arg]` |
 | `[source][arg]`, where the law reads it                           | `[source][arg]`, or the model level                                     |
 
-Use `get_params_template()` for the exact predicate and route paths of gates. Current
-`Exit` declarations belong to the regime, so their parameters stay in that regime's
-parameter branch.
+Use `get_params_template()` for the exact predicate and route paths of gates. A
+`CompositionAction` belongs to its regime, so its parameters stay in that regime's
+parameter branch, under the `composition_action` key.
 
 A law over all targets is a plain function, `DeterministicTransition`, a full-vector
 `StochasticTransition`, or `ByAge` / `Phased` around one; it has no `law` segment
@@ -488,7 +500,7 @@ initial_nodes = ((60, "working"), (62, "retired"))
 ```
 
 Selector mappings such as `{60: "working", 62: "retired"}` remain accepted convenience.
-There is no default. These declarations govern admissible starts; subject weights and
+There is no default. These declarations govern admissible starts; agent weights and
 initial states still belong to `Population` and `InitialConditions`.
 
 ## Migrate phase differences and inspection
@@ -502,22 +514,22 @@ ALIVE_AGES = AgeRange(start=60, exclusive_stop=75)
 edges = {
     "alive": Transition(
         targets={"alive": ALIVE_AGES, "dead": ALIVE_AGES},
-        law=Phased(solve=perceived_survival, simulate=realized_survival),
+        law=Phased(solve=perceived_survival, simulate=actual_survival),
     ),
 }
 ```
 
-Only perceived versus realized connectivity, destinations that differ between the
-phases, wraps the whole mapping: `Model(edges=Phased(solve={...}, simulate={...}))`,
-each phase's mapping declaring its own `Transition`. A source mapped to
+Only perceived versus actual connectivity, destinations that differ between the phases,
+wraps the whole mapping: `Model(edges=Phased(solve={...}, simulate={...}))`, each
+phase's mapping declaring its own `Transition`. A source mapped to
 `Phased(solve=Transition(...), simulate=Transition(...))` is refused with the supported
 form. State handoffs stay phase-specific on the source regime. Physically visited nodes
 require solve values plus their perceived dependencies; extra valued nodes do not imply
-realized visits.
+actual visits.
 
 Inspect `model.graph.edges.solve` and `.simulate` for declared exact source ages,
 `.solution` and `.simulation` for effective period-indexed graphs, `.nodes` for valued
-pairs and `.visited_nodes` for realized pairs. `.pruned_edges["solve"]` and
+pairs and `.visited_nodes` for the pairs simulation visits. `.pruned_edges["solve"]` and
 `["simulate"]` map `(source_age, source, target)` to `"fixed_zero_probability"`.
 Construction-fixed scalar zero proofs can prune effective edges; runtime probability
 zeros cannot. Declared edges remain inspectable and probability mass is never

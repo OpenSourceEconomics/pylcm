@@ -16,18 +16,18 @@ from _lcm.policy_queries import _PolicyQueryKernel
 from _lcm.simulation.random_address import (
     RandomAddress,
     draw_window_keys,
-    encode_subject_row,
+    encode_agent_row,
 )
 from _lcm.solution import backward_induction as backward
 from _lcm.solution.grid_search import _GridSearchPeriodKernel
 from lcm import (
     CollectiveUtility,
+    CompositionAction,
     Consent,
     Counterparty,
+    Destination,
     DiscreteGrid,
     ExecutionConfig,
-    Exit,
-    ExitTarget,
     InitialNodes,
     LinSpacedGrid,
     Model,
@@ -36,14 +36,14 @@ from lcm import (
     Regime,
     categorical,
 )
+from lcm.composition_actions import PCOnActions
 from lcm.exceptions import ExecutionPlanningError, RegimeInitializationError
-from lcm.exits import Unilateral
 from lcm.shocks import Discrete, Normal, ShockGroup, UserNodes
 from lcm.solver_api import SolutionResult
 from lcm.typing import BoolND, FloatND, IntND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION, assert_agrees_to_ulp
-from tests.solution import test_exit_reference_household as reference
-from tests.solution import test_public_exit_queries as public
+from tests.solution import test_composition_action_reference_household as reference
+from tests.solution import test_public_composition_action_queries as public
 
 pytestmark = pytest.mark.coverage(
     backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
@@ -122,12 +122,12 @@ def _model(
                 )
             },
             shocks=("innovation",),
-            exit=Exit(
-                targets={
-                    "f": ExitTarget(regime="single_f", projection={}),
-                    "m": ExitTarget(regime="single_m", projection={}),
+            composition_action=CompositionAction(
+                destinations={
+                    "f": Destination(regime="single_f", projection={}),
+                    "m": Destination(regime="single_m", projection={}),
                 },
-                rule=Unilateral(),
+                rule=PCOnActions(),
                 available=None if available else _unavailable,
             ),
             constraints={"ordinary": _empty} if empty else {},
@@ -168,7 +168,10 @@ def test_common_policy_is_routed_before_current_node_integration(
     outside: dict[str, Fraction | float] = {"f": Fraction(4), "m": Fraction(4)}
     assert (
         reference.unilateral(
-            q=q, feasible=reference._all(2), v_exit=outside, weight=reference.HALF
+            q=q,
+            feasible=reference._all(2),
+            v_composition_action=outside,
+            weight=reference.HALF,
         )
         == 2
     )
@@ -176,7 +179,7 @@ def test_common_policy_is_routed_before_current_node_integration(
         reference.unilateral(
             q=reference._q(f=[Fraction(5), Fraction(6)], m=[Fraction(5), Fraction(2)]),
             feasible=reference._all(2),
-            v_exit=outside,
+            v_composition_action=outside,
             weight=reference.HALF,
         )
         == 0
@@ -257,9 +260,9 @@ def _household_model() -> Model:
             },
             shocks=("wage",),
             state_transitions={"experience": _next_experience},
-            exit=Exit(
-                targets={
-                    "self": ExitTarget(
+            composition_action=CompositionAction(
+                destinations={
+                    "self": Destination(
                         regime="couple",
                         role=member,
                         projection={
@@ -293,18 +296,18 @@ def _household_model() -> Model:
             },
             state_transitions={"experience_f": _next_f, "experience_m": _next_m},
             shocks=("wage",),
-            exit=Exit(
-                targets={
-                    "f": ExitTarget(
+            composition_action=CompositionAction(
+                destinations={
+                    "f": Destination(
                         regime="single_f",
                         projection={"experience": _experience_f},
                     ),
-                    "m": ExitTarget(
+                    "m": Destination(
                         regime="single_m",
                         projection={"experience": _experience_m},
                     ),
                 },
-                rule=Unilateral(),
+                rule=PCOnActions(),
             ),
         ),
     }
@@ -312,23 +315,23 @@ def _household_model() -> Model:
         regimes[f"{name}_terminal"] = replace(
             regime,
             state_transitions={},
-            exit=None
-            if regime.exit is None
+            composition_action=None
+            if regime.composition_action is None
             else replace(
-                regime.exit,
-                targets={
+                regime.composition_action,
+                destinations={
                     member: replace(target, regime=f"{target.regime}_terminal")
-                    for member, target in regime.exit.targets.items()
+                    for member, target in regime.composition_action.destinations.items()
                 },
                 rule=replace(
-                    regime.exit.rule,
+                    regime.composition_action.rule,
                     counterparty=replace(
-                        regime.exit.rule.counterparty,
-                        regime=f"{regime.exit.rule.counterparty.regime}_terminal",
+                        regime.composition_action.rule.counterparty,
+                        regime=f"{regime.composition_action.rule.counterparty.regime}_terminal",
                     ),
                 )
-                if isinstance(regime.exit.rule, Consent)
-                else regime.exit.rule,
+                if isinstance(regime.composition_action.rule, Consent)
+                else regime.composition_action.rule,
             ),
         )
     return Model(
@@ -416,7 +419,7 @@ def _check_household_replay(
         log_level="off",
         runtime_checks=False,
     ).to_dataframe(use_categorical_codes=True)
-    subjects = [("single", "f", 0, 0), ("couple", "m", 2, 1)] * 8
+    agents = [("single", "f", 0, 0), ("couple", "m", 2, 1)] * 8
     moves = set()
     for period in range(2):
         keys = draw_window_keys(
@@ -424,18 +427,18 @@ def _check_household_replay(
             address_words=np.asarray(
                 RandomAddress(kind="shock", name="wage_node").words(), np.uint32
             ),
-            subject_start=encode_subject_row(row=0),
-            last_real_subject=encode_subject_row(row=size - 1),
-            subject_count=size,
+            agent_start=encode_agent_row(row=0),
+            last_real_agent=encode_agent_row(row=size - 1),
+            agent_count=size,
             period=period,
         )
         shocks = np.where(np.asarray(jax.vmap(jax.random.uniform)(keys)) >= 0.5, 1, -1)
-        for subject in range(size):
-            regime, sex, own, partner = subjects[subject]
+        for agent in range(size):
+            regime, sex, own, partner = agents[agent]
             node = replace(
                 reference.Params(),
                 n_periods=2,
-                wage_shock_nodes=(Fraction(float(shocks[subject])),),
+                wage_shock_nodes=(Fraction(float(shocks[agent])),),
             )
             ef, em = (own, partner) if sex == "f" else (partner, own)
             if regime == "single":
@@ -462,16 +465,16 @@ def _check_household_replay(
                     regime = "single"
                     moves.add("divorce")
             row = frame.loc[
-                (frame["period"] == period) & (frame["subject_id"] == subject)
+                (frame["period"] == period) & (frame["agent_id"] == agent)
             ].iloc[0]
             acting = "couple" if regime == "couple" else f"single_{sex}"
             assert row["regime_name"] == (f"{acting}_terminal" if period else acting), (
                 period,
-                subject,
-                subjects[subject],
-                int(shocks[subject]),
+                agent,
+                agents[agent],
+                int(shocks[agent]),
             )
-            assert row["wage_node"] == (shocks[subject] + 1) // 2
+            assert row["wage_node"] == (shocks[agent] + 1) // 2
             if regime == "couple":
                 policy = reference.couple_participating(
                     p=node, V=expected.V, t=period, ef=ef, em=em, z=0, theta=0
@@ -502,7 +505,7 @@ def _check_household_replay(
                     row["value"], float(policy.values[sex]), decimal=DECIMAL_PRECISION
                 )
                 own = min(own + policy.choice, 2)
-            subjects[subject] = regime, sex, own, partner
+            agents[agent] = regime, sex, own, partner
     assert moves == {"marry", "divorce"}
 
 
@@ -543,12 +546,12 @@ def test_collective_prices_hidden_target_policy_with_original_joint_law(
                     )
                 },
                 shocks=("innovation", "joint") if observed else ("innovation",),
-                exit=Exit(
-                    targets={
-                        member: ExitTarget(regime=f"single_{member}", projection={})
+                composition_action=CompositionAction(
+                    destinations={
+                        member: Destination(regime=f"single_{member}", projection={})
                         for member in ("f", "m")
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                 ),
             ),
             **{
@@ -591,7 +594,7 @@ def test_collective_prices_hidden_target_policy_with_original_joint_law(
 
 @pytest.mark.parametrize("available", [False, True])
 @pytest.mark.parametrize("empty", [False, True])
-def test_zero_weight_member_keeps_its_veto_and_empty_stay_can_exit(
+def test_zero_weight_member_keeps_its_veto_and_an_empty_stay_set_can_separate(
     *, available: bool, empty: bool
 ) -> None:
     """Zero objective weight never removes a member's participation threshold."""
@@ -617,7 +620,7 @@ def test_zero_weight_member_keeps_its_veto_and_empty_stay_can_exit(
     )
 
 
-def test_collective_current_shocks_replay_same_original_subject_and_role() -> None:
+def test_collective_current_shocks_replay_same_original_agent_and_role() -> None:
     """Fresh continuous draws route members to their own singleton destinations."""
     model = _model(enable_jit=True, width=1)
     solution = model.solve(params={}, log_level="off", runtime_checks=False)
@@ -638,16 +641,16 @@ def test_collective_current_shocks_replay_same_original_subject_and_role() -> No
             runtime_checks=False,
         )
         .to_dataframe(use_categorical_codes=True)
-        .sort_values("subject_id")
+        .sort_values("agent_id")
     )
     keys = draw_window_keys(
         key=jax.random.key(17),
         address_words=np.asarray(
             RandomAddress(kind="shock", name="eps").words(), dtype=np.uint32
         ),
-        subject_start=encode_subject_row(row=0),
-        last_real_subject=encode_subject_row(row=7),
-        subject_count=8,
+        agent_start=encode_agent_row(row=0),
+        last_real_agent=encode_agent_row(row=7),
+        agent_count=8,
         period=0,
     )
     eps = np.asarray(jax.vmap(jax.random.normal)(keys))
@@ -655,7 +658,7 @@ def test_collective_current_shocks_replay_same_original_subject_and_role() -> No
     assert move.any()
     expected_regime = np.where(move, np.asarray(["single_f", "single_m"] * 4), "couple")
     np.testing.assert_array_equal(frame["regime_name"], expected_regime)
-    np.testing.assert_array_equal(frame["subject_id"], np.arange(8))
+    np.testing.assert_array_equal(frame["agent_id"], np.arange(8))
     assert_array_almost_equal(frame.loc[move, "value"], 4.0, decimal=DECIMAL_PRECISION)
     assert_array_almost_equal(
         frame.loc[~move, "value_f"], 5 + 5 * eps[~move], decimal=DECIMAL_PRECISION
@@ -727,8 +730,8 @@ def test_formation_shares_both_current_offers_at_mapped_marital_history(
         **base.user_regimes,
         "single_f": replace(
             source,
-            exit=replace(
-                cast("Exit", source.exit),
+            composition_action=replace(
+                cast("CompositionAction", source.composition_action),
                 observes=("offer_f", "offer_m") if observed else (),
             ),
         ),
@@ -817,11 +820,12 @@ def _iid_next_wealth(
     return wealth + income - consumption
 
 
-def _iid_household(*, unavailable_exit: bool) -> Model:
+def _iid_household(*, unavailable_composition_action: bool) -> Model:
     """A two-member household observing a current-period shock, over two periods.
 
-    With `unavailable_exit` the household declares an exit it can never take, so
-    its values are those of the household without an exit.
+    With `unavailable_composition_action` the household declares a composition action it
+    can never take, so its values are those of the household without a composition
+    action.
     """
     wealth = LinSpacedGrid(start=0.5, stop=4.0, n_points=5)
 
@@ -843,15 +847,17 @@ def _iid_household(*, unavailable_exit: bool) -> Model:
             constraints={"budget": _iid_budget},
             state_transitions={} if terminal else {"wealth": _iid_next_wealth},
             shocks=("innovation",),
-            exit=Exit(
-                targets={
-                    member: ExitTarget(regime=f"single_{member}{suffix}", projection={})
+            composition_action=CompositionAction(
+                destinations={
+                    member: Destination(
+                        regime=f"single_{member}{suffix}", projection={}
+                    )
                     for member in ("f", "m")
                 },
-                rule=Unilateral(),
+                rule=PCOnActions(),
                 available=_unavailable,
             )
-            if unavailable_exit
+            if unavailable_composition_action
             else None,
         )
 
@@ -860,7 +866,7 @@ def _iid_household(*, unavailable_exit: bool) -> Model:
         "couple_terminal": couple(terminal=True),
     }
     edges = {"couple": {"couple_terminal": Periods(values=(0,))}}
-    if unavailable_exit:
+    if unavailable_composition_action:
         regimes |= {
             f"single_{member}{suffix}": Regime(functions={"utility": _outside})
             for member in ("f", "m")
@@ -882,23 +888,23 @@ def _iid_household(*, unavailable_exit: bool) -> Model:
             )
         },
         n_periods=2,
-        regime_id_class=_HouseholdRegimes if unavailable_exit else _CoupleRegimes,
+        regime_id_class=_HouseholdRegimes
+        if unavailable_composition_action
+        else _CoupleRegimes,
         initial_nodes=InitialNodes(by_period={0: ("couple",)}),
         edges=edges,
         execution_config=ExecutionConfig(device_memory_bytes=None),
     )
 
 
-def test_household_with_current_shocks_and_no_exit_runs_the_grid_search_kernel() -> (
-    None
-):
-    """Without an exit the household runs grid search and keeps the query values.
+def test_current_shocks_and_no_composition_action_run_the_grid_search_kernel() -> None:
+    """With no composition action, grid search gives the policy-query values.
 
-    The reference declares an exit that is never available, which routes it
+    The reference declares a composition action that is never available, which routes it
     through the policy-query kernels; both name the same values and choices.
     """
-    model = _iid_household(unavailable_exit=False)
-    reference = _iid_household(unavailable_exit=True)
+    model = _iid_household(unavailable_composition_action=False)
+    reference = _iid_household(unavailable_composition_action=True)
     assert isinstance(
         reference._regimes["couple"].solution.period_kernels[0], _PolicyQueryKernel
     )
@@ -943,7 +949,7 @@ def test_household_with_current_shocks_and_no_exit_runs_the_grid_search_kernel()
                 log_level="off",
             )
             .to_dataframe()
-            .sort_values(["subject_id", "period"])
+            .sort_values(["agent_id", "period"])
             .reset_index(drop=True)
         )
 
@@ -990,16 +996,16 @@ def test_collective_current_policy_preserves_names_under_reversed_declarations()
             runtime_checks=False,
         )
         .to_dataframe(use_categorical_codes=True)
-        .sort_values("subject_id")
+        .sort_values("agent_id")
     )
     keys = draw_window_keys(
         key=jax.random.key(17),
         address_words=np.asarray(
             RandomAddress(kind="shock", name="eps").words(), np.uint32
         ),
-        subject_start=encode_subject_row(row=0),
-        last_real_subject=encode_subject_row(row=7),
-        subject_count=8,
+        agent_start=encode_agent_row(row=0),
+        last_real_agent=encode_agent_row(row=7),
+        agent_count=8,
         period=0,
     )
     eps = np.asarray(jax.vmap(jax.random.normal)(keys))

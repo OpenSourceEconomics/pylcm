@@ -400,19 +400,19 @@ def test_entry_draws_come_from_the_process_law_not_from_its_solver_nodes() -> No
         },
         "target": {"utility": {}},
     }
-    n_subjects = 20_000
+    n_agents = 20_000
     result = model.simulate(
         params=params,
         initial_conditions={
-            "regime_id": jnp.full(n_subjects, RegimeId.source, dtype=jnp.int32),
-            "age": jnp.full(n_subjects, 20.0),
+            "regime_id": jnp.full(n_agents, RegimeId.source, dtype=jnp.int32),
+            "age": jnp.full(n_agents, 20.0),
         },
         log_level="debug",
     )
     df = result.to_dataframe()
     entered = df.query("regime_name == 'target'")["shock"].to_numpy()
 
-    assert len(entered) == n_subjects
+    assert len(entered) == n_agents
     np.testing.assert_allclose(float(np.mean(entered**2)), 3.0, atol=0.1)
 
 
@@ -539,28 +539,28 @@ def test_explicit_entry_beats_the_processs_own_law() -> None:
 
 
 @pytest.mark.parametrize("entry_value", [2.0, 1.5], ids=["on_node", "off_node"])
-def test_explicit_entry_puts_every_subject_at_the_declared_value(
+def test_explicit_entry_puts_every_agent_at_the_declared_value(
     entry_value: float,
 ) -> None:
-    """Every subject enters the target at exactly the value the law names.
+    """Every agent enters the target at exactly the value the law names.
 
     A simulated process state holds a physical value, not a node index, so the
     declared entry value is what the state takes — on the support or between
     two of its points. The solve phase reads the same value as a coordinate on
     the target's nodes, so the two phases price and realize one entry law.
     """
-    n_subjects = 2_000
+    n_agents = 2_000
     result = _build_explicit_entry_model(
         entry_value=entry_value, enable_jit=False
     ).simulate(
         params=_EXPLICIT_ENTRY_PARAMS,
         initial_conditions={
-            "regime_id": jnp.full(n_subjects, RegimeId.source, dtype=jnp.int32),
-            "age": jnp.full(n_subjects, 20.0),
+            "regime_id": jnp.full(n_agents, RegimeId.source, dtype=jnp.int32),
+            "age": jnp.full(n_agents, 20.0),
         },
         log_level="debug",
     )
     entered = result.to_dataframe().query("regime_name == 'target'")["shock"]
 
-    assert len(entered) == n_subjects
+    assert len(entered) == n_agents
     np.testing.assert_allclose(entered.to_numpy(), entry_value, atol=1e-6)

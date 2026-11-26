@@ -1,4 +1,4 @@
-"""Exact blockwise collective choice under one global household identity."""
+"""Exact blockwise collective choice under one global action identity."""
 
 from dataclasses import dataclass
 from typing import Literal, NamedTuple
@@ -15,7 +15,7 @@ from lcm.typing import BoolND, FloatND, IntND
 
 
 class CollectiveHardMaxAccumulator(NamedTuple):
-    """Mergeable household maximum and member values at one shared winner."""
+    """Mergeable collective maximum and member values at one shared winner."""
 
     best_objective: FloatND
     best_member_values: FloatND
@@ -26,7 +26,7 @@ class CollectiveHardMaxAccumulator(NamedTuple):
 
 
 class CollectiveHardMaxResult(NamedTuple):
-    """Household winner, own-value readout, identity, and feasibility state."""
+    """Collective winner, own-value readout, identity, and feasibility state."""
 
     best_objective: FloatND
     best_member_values: FloatND
@@ -36,19 +36,19 @@ class CollectiveHardMaxResult(NamedTuple):
 
 @dataclass(frozen=True, kw_only=True)
 class CollectiveHardMaxReduction:
-    """Merge collective action blocks without changing the household choice.
+    """Merge collective action blocks without changing the collective choice.
 
     ``objectives`` and ``feasible`` carry the action block on their final axis;
     ``member_values`` carries the same block on its penultimate axis and a
-    trailing member axis. The winner maximizes the household objective; ties go
+    trailing member axis. The winner maximizes the collective objective; ties go
     to the members in declared order, then to the smallest global identity, as
     on the dense route. Every member value is read at that one winner.
 
-    A feasible NaN objective has no household value: the objective and every
+    A feasible NaN objective has no collective value: the objective and every
     member value publish NaN and the identity is global action zero, as on the
     dense route.
 
-    A household of one member ranks its actions on that member's value alone,
+    A regime with one member ranks its actions on that member's value alone,
     which is its objective (`ties_go_to_members` false).
 
     Where nothing reads the winner's identity, it keeps none
@@ -136,7 +136,7 @@ class CollectiveHardMaxReduction:
         left: CollectiveHardMaxAccumulator,
         right: CollectiveHardMaxAccumulator,
     ) -> CollectiveHardMaxAccumulator:
-        """Merge partial household choices independently of block schedule."""
+        """Merge partial collective choices independently of block schedule."""
         # A selection that never fires gives both partials the placement an
         # elementwise operation on them takes, so they can be stacked.
         never = jnp.zeros_like(left.any_feasible) & jnp.zeros_like(right.any_feasible)
@@ -167,7 +167,7 @@ class CollectiveHardMaxReduction:
     def finalize(
         self, *, accumulator: CollectiveHardMaxAccumulator
     ) -> CollectiveHardMaxResult:
-        """Publish the household winner and every member's value there."""
+        """Publish the collective winner and every member's value there."""
         undefined = accumulator.any_feasible_nan
         dissolved = ~accumulator.any_feasible
         return CollectiveHardMaxResult(
@@ -223,7 +223,7 @@ def _winner(
     ties_go_to_members: bool,
     keeps_identity: bool,
 ) -> CollectiveHardMaxAccumulator:
-    """Take the household winner among the candidates on the last block axis.
+    """Take the collective winner among the candidates on the last block axis.
 
     One reduction gives the winner, whether any candidate is inside `where`
     and whether one inside it has a NaN objective.
@@ -268,9 +268,9 @@ COLLECTIVE_HARD_MAX_REDUCTION = CollectiveHardMaxReduction()
 def household_hard_max_reduction(
     *, members: tuple[str, ...], publishes_identity: bool
 ) -> CollectiveHardMaxReduction:
-    """Return the hard-max reduction of a household with `members`.
+    """Return the hard-max reduction of a regime with `members`.
 
-    The objective of a household of one member is that member's value, and no
+    The objective of a regime with one member is that member's value, and no
     tie key can change its winner: its ties go to the smallest identity alone,
     and where the caller does not publish the identity it is not kept.
     """

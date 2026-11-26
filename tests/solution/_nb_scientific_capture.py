@@ -512,10 +512,10 @@ def _create_model_observers(
             filename=f"{solver}-simulation.npz",
             arrays={str(name): frame[name].to_numpy() for name in frame},
         )
-        period0 = frame.query("period == 0").sort_values("subject_id")
-        panels[solver] = period0["subject_id"].to_list()
+        period0 = frame.query("period == 0").sort_values("agent_id")
+        panels[solver] = period0["agent_id"].to_list()
         assert len(period0) == 60
-        np.testing.assert_array_equal(period0["subject_id"].to_numpy(), np.arange(60))
+        np.testing.assert_array_equal(period0["agent_id"].to_numpy(), np.arange(60))
         save(
             filename=f"{solver}-period0.npz",
             arrays={str(name): period0[name].to_numpy() for name in period0},

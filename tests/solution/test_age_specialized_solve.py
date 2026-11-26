@@ -7,7 +7,7 @@ a bonus to `age` at build time must therefore produce the exact same value funct
 as the age-invariant baseline that reads pylcm's runtime `age` argument directly.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 import jax.numpy as jnp
 import numpy as np
@@ -23,6 +23,7 @@ from lcm import (
     DiscreteGrid,
     LinSpacedGrid,
     Model,
+    SimulationResult,
     Transition,
     categorical,
     fixed_transition,
@@ -39,6 +40,7 @@ from lcm.typing import (
     FloatND,
     IntND,
     Period,
+    RegimeName,
     ScalarInt,
     UserFunction,
 )
@@ -102,7 +104,7 @@ def _make_model(policy_bonus: UserFunction) -> Model:
 def _bonus_of_age(age: float) -> Callable[[], float]:
     """Return the age's concrete policy-bonus function (an additive constant)."""
 
-    def policy_bonus():
+    def policy_bonus() -> float:
         return float(age)
 
     return policy_bonus
@@ -137,7 +139,7 @@ def _make_next_state_model(policy_bonus: UserFunction) -> Model:
     )
 
 
-def test_age_specialized_next_state_matches_runtime_age_baseline():
+def test_age_specialized_next_state_matches_runtime_age_baseline() -> None:
     """A specialized function feeding `next_wealth` matches the runtime-`age` baseline.
 
     `next_wealth = wealth + policy_bonus` and `policy_bonus == age` both ways, so the
@@ -166,7 +168,7 @@ def test_age_specialized_next_state_matches_runtime_age_baseline():
     np.testing.assert_allclose(specialized, baseline, atol=1e-6)
 
 
-def test_age_specialized_bonus_matches_runtime_age_baseline():
+def test_age_specialized_bonus_matches_runtime_age_baseline() -> None:
     """An `AgeSpecializedFunction` bonus bound to `age` equals the runtime baseline.
 
     Both regimes give `policy_bonus == age`: the baseline reads pylcm's runtime
@@ -195,7 +197,7 @@ def test_age_specialized_bonus_matches_runtime_age_baseline():
             )
 
 
-def test_additional_target_depending_on_age_specialized_function_is_rejected():
+def test_additional_target_depending_on_age_specialized_function_is_rejected() -> None:
     """`to_dataframe(additional_targets=[...])` rejects policy-specialized targets.
 
     Published simulation functions hold one representative-age closure, so a
@@ -251,7 +253,7 @@ def _f1_boost_runtime(age: float) -> IntND:
     return jnp.where(age < 30.0, 0, 1)
 
 
-def _f1_boost_of_age(age: float):
+def _f1_boost_of_age(age: float) -> Callable[[], IntND]:
     value = 0 if age < 30.0 else 1
 
     def boost() -> IntND:
@@ -284,7 +286,7 @@ def _f1_make_model(boost: UserFunction) -> Model:
     )
 
 
-def test_simulation_continuation_resolves_age_specialized_helper_per_age():
+def test_simulation_continuation_resolves_age_specialized_helper_per_age() -> None:
     """The simulation continuation resolves an age-specialized helper at each
     period's own age, not at the regime's first active age.
 
@@ -373,7 +375,7 @@ def _make_specialized_constraint_model(wealth_cap: UserFunction) -> Model:
     )
 
 
-def _simulate_specialized_constraint_model():
+def _simulate_specialized_constraint_model() -> SimulationResult:
     model = _make_specialized_constraint_model(
         AgeSpecializedFunction(build=_cap_of_age, signature=lambda age: age)
     )
@@ -388,7 +390,7 @@ def _simulate_specialized_constraint_model():
     )
 
 
-def test_additional_target_of_age_specialized_constraint_is_rejected():
+def test_additional_target_of_age_specialized_constraint_is_rejected() -> None:
     """A specialized *constraint* requested as a target is rejected.
 
     A constraint carries its own namespace: `_process_regime_core` excludes
@@ -403,7 +405,7 @@ def test_additional_target_of_age_specialized_constraint_is_rejected():
         result.to_dataframe(additional_targets=["wealth_cap"])
 
 
-def test_additional_targets_all_rejects_age_specialized_constraint():
+def test_additional_targets_all_rejects_age_specialized_constraint() -> None:
     """`additional_targets='all'` rejects a specialized constraint.
 
     `'all'` expands to every advertised target, which includes the specialized
@@ -419,7 +421,7 @@ def _cap_falling_with_age(age: float) -> Callable[..., bool]:
     """Return the age's consumption cap, one unit of wealth tighter per year past 25.
 
     At 25 it coincides with `consumption <= wealth`; at 45 it demands twenty units
-    of wealth beyond the consumption, so a subject's verdict depends on which
+    of wealth beyond the consumption, so an agent's verdict depends on which
     age's closure judges it.
     """
 
@@ -431,7 +433,7 @@ def _cap_falling_with_age(age: float) -> Callable[..., bool]:
 
 def _simulate_with_falling_cap(
     *, ages: list[float], wealth: list[float], log_level: LogLevel
-):
+) -> SimulationResult:
     model = _make_specialized_constraint_model(
         AgeSpecializedFunction(build=_cap_falling_with_age, signature=lambda age: age)
     )
@@ -447,31 +449,31 @@ def _simulate_with_falling_cap(
 
 
 @pytest.mark.parametrize("log_level", ["warning", "debug"])
-def test_initial_feasibility_admits_subjects_under_their_own_start_ages_constraint(
+def test_initial_feasibility_admits_agents_under_their_own_start_ages_constraint(
     log_level: LogLevel,
-):
-    """Subjects starting at different ages simulate from their own start ages.
+) -> None:
+    """Agents starting at different ages simulate from their own start ages.
 
     Wealth 100 leaves every action feasible under each age's cap along the whole
-    working life, so both subjects pass the feasibility check of their start
+    working life, so both agents pass the feasibility check of their start
     period and are simulated from there.
     """
     result = _simulate_with_falling_cap(
         ages=[25.0, 45.0], wealth=[100.0, 100.0], log_level=log_level
     )
-    first_ages = result.to_dataframe().groupby("subject_id")["age"].min()
+    first_ages = result.to_dataframe().groupby("agent_id")["age"].min()
     assert first_ages.tolist() == [25.0, 45.0]
 
 
 @pytest.mark.parametrize("log_level", ["warning", "debug"])
 def test_initial_feasibility_judges_a_late_starter_by_its_start_ages_constraint(
     log_level: LogLevel,
-):
-    """A subject at 45 with wealth 10 fails the initial feasibility check.
+) -> None:
+    """An agent at 45 with wealth 10 fails the initial feasibility check.
 
     The age-45 cap demands consumption at most -10, below every action node,
     while the age-25 cap would admit consumption up to 10. Rejection therefore
-    shows the subject was judged by the constraint of its own start age.
+    shows the agent was judged by the constraint of its own start age.
     """
     with pytest.raises(
         InvalidInitialConditionsError, match="satisfies all constraints jointly"
@@ -494,18 +496,20 @@ def _cap_binding_at_age(age: float) -> Callable[..., bool]:
     return wealth_cap
 
 
-def _solve_with_cap(wealth_cap: UserFunction):
+def _solve_with_cap(
+    wealth_cap: UserFunction,
+) -> Mapping[int, Mapping[RegimeName, FloatND]]:
     model = _make_specialized_constraint_model(wealth_cap)
     return model.solve(params={"discount_factor": 0.95}, log_level="off").values
 
 
-def _solve_specialized():
+def _solve_specialized() -> Mapping[int, Mapping[RegimeName, FloatND]]:
     return _solve_with_cap(
         AgeSpecializedFunction(build=_cap_binding_at_age, signature=lambda age: age)
     )
 
 
-def _last_active_period(solution) -> int:
+def _last_active_period(solution: Mapping[int, Mapping[RegimeName, FloatND]]) -> int:
     """The last period in which the working-life regime is solved."""
     return max(
         period
@@ -518,7 +522,9 @@ def _age_of_period(period: int) -> float:
     return 25.0 + 10.0 * period
 
 
-def _last_period_value(solution):
+def _last_period_value(
+    solution: Mapping[int, Mapping[RegimeName, FloatND]],
+) -> FloatND:
     period = _last_active_period(solution)
     return solution[period]["working_life"]
 
@@ -576,9 +582,9 @@ def test_another_ages_constraint_would_have_given_that_period_a_different_value(
 
 
 def _start_pool_partition(*, cohorts_route: bool) -> list[tuple[int, list[int]]]:
-    """Return each start-pool group as (index of its period's pool, subjects).
+    """Return each start-pool group as (index of its period's pool, agents).
 
-    Subjects 7 and 9 start at 45, 2 and 5 at 25, and 4 at 35. Every start age
+    Agents 7 and 9 start at 45, 2 and 5 at 25, and 4 at 35. Every start age
     resolves its own cap, so each start period has a pool of its own.
     """
     model = _make_specialized_constraint_model(
@@ -588,10 +594,10 @@ def _start_pool_partition(*, cohorts_route: bool) -> list[tuple[int, list[int]]]
     ages = np.full(10, 25.0)
     ages[[7, 9]] = 45.0
     ages[4] = 35.0
-    subject_indices = [7, 2, 9, 4, 5]
+    agent_indices = [7, 2, 9, 4, 5]
     cohorts = (
         initial_conditions._InitialCohorts(
-            indices={"working_life": tuple(subject_indices)},
+            indices={"working_life": tuple(agent_indices)},
             periods=tuple(int((age - 25.0) // 10.0) for age in ages),
         )
         if cohorts_route
@@ -600,7 +606,7 @@ def _start_pool_partition(*, cohorts_route: bool) -> list[tuple[int, list[int]]]
     views = initial_conditions._regime_views_by_start_pool(
         regime=regime,
         initial_states={"age": jnp.asarray(ages)},
-        subject_indices=subject_indices,
+        agent_indices=agent_indices,
         ages=model._time,
         cohorts=cohorts,
     )
@@ -623,9 +629,9 @@ def _start_pool_partition(*, cohorts_route: bool) -> list[tuple[int, list[int]]]
 def test_regime_views_by_start_pool_groups_in_first_appearance_order(
     *,
     cohorts_route: bool,
-):
-    """Groups follow the first appearance of their start period among the subjects,
-    keep the subjects' order within each group, and carry that period's pools."""
+) -> None:
+    """Groups follow the first appearance of their start period among the agents,
+    keep the agents' order within each group, and carry that period's pools."""
     assert _start_pool_partition(cohorts_route=cohorts_route) == [
         (2, [7, 9]),
         (0, [2, 5]),

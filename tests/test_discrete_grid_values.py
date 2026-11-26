@@ -225,11 +225,11 @@ def _simulated_codes(model: Model) -> pd.DataFrame:
         log_level="off",
         use_categorical_codes=True,
     ).to_dataframe(use_categorical_codes=True)
-    return frame.sort_values(["subject_id", "period"]).reset_index(drop=True)
+    return frame.sort_values(["agent_id", "period"]).reset_index(drop=True)
 
 
 def test_value_grid_model_simulates_the_reference_choices() -> None:
-    """Both models simulate the same codes for every subject and period."""
+    """Both models simulate the same codes for every agent and period."""
     assert_frame_equal(
         _simulated_codes(_value_grid_model(enable_jit=True)),
         _simulated_codes(_reference_model(enable_jit=True)),
@@ -2191,7 +2191,7 @@ def test_ordinarily_excluded_off_grid_action_behind_a_gate_solves(
 def test_simulation_only_off_grid_law_behind_a_gate_is_refused(
     *, enable_jit: bool
 ) -> None:
-    """The simulate phase's law is checked before any subject is rerouted."""
+    """The simulate phase's law is checked before any agent is rerouted."""
     model = _gated_model(
         gate=_open_on_grid,
         law=Phased(solve=_kind_stays, simulate=_invalid_when_working(2)),
@@ -2235,14 +2235,14 @@ def test_on_grid_phased_law_behind_a_gate_simulates_to_the_target(
         log_level="off",
         runtime_checks=True,
     ).to_dataframe(use_categorical_codes=True)
-    later = panel.loc[panel["period"] == 1].sort_values("subject_id")
+    later = panel.loc[panel["period"] == 1].sort_values("agent_id")
     assert later["regime_name"].tolist() == ["target", "target"]
     np.testing.assert_array_equal(later["kind"].to_numpy(), [0, 1])
 
 
 # A continuous source state between grid nodes can make a simulated law emit a code
-# the preflight never sees. Simulation checks the raw code of every subject drawn
-# to a target before a gate reads it or reroutes the subject.
+# the preflight never sees. Simulation checks the raw code of every agent drawn
+# to a target before a gate reads it or reroutes the agent.
 
 
 def _flow_with_wealth(
@@ -2373,8 +2373,8 @@ def test_between_node_window_and_code_mutations_fail_simulation(
 
 
 def _assert_reaches_target(*, panel: pd.DataFrame, action: int) -> None:
-    first = panel.loc[panel["period"] == 0].sort_values("subject_id")
-    later = panel.loc[panel["period"] == 1].sort_values("subject_id")
+    first = panel.loc[panel["period"] == 0].sort_values("agent_id")
+    later = panel.loc[panel["period"] == 1].sort_values("agent_id")
     np.testing.assert_array_equal(first["a"].to_numpy(), [action, action])
     assert later["regime_name"].tolist() == ["target", "target"]
     np.testing.assert_array_equal(later["kind"].to_numpy(), [0, 1])
@@ -2452,7 +2452,7 @@ def _kind_off_grid_between_nodes(
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
-def test_off_grid_code_to_a_target_no_subject_is_drawn_to_passes(
+def test_off_grid_code_to_a_target_no_agent_is_drawn_to_passes(
     *, enable_jit: bool
 ) -> None:
     """Working moves the subject to `fallback`; its code toward `target` is unread."""
@@ -2497,7 +2497,7 @@ def test_off_grid_code_to_a_target_no_subject_is_drawn_to_passes(
     )
     solution = model.solve(params=_PARAMS_ONE, log_level="off", runtime_checks=True)
     panel = _simulate_between_nodes(model=model, wealth=(0.5, 0.5), solution=solution)
-    later = panel.loc[panel["period"] == 1].sort_values("subject_id")
+    later = panel.loc[panel["period"] == 1].sort_values("agent_id")
     assert later["regime_name"].tolist() == ["fallback", "fallback"]
 
 
@@ -2516,7 +2516,7 @@ def test_drawn_code_count_is_exact_at_any_signed_width(*, width: str) -> None:
         codes=codes,
         n_codes=(jnp.int32(3),),
         target_ids=(jnp.int32(1),),
-        subjects=jnp.ones(5, dtype=bool),
+        agents=jnp.ones(5, dtype=bool),
         new_regime_ids=jnp.ones(5, dtype=jnp.int32),
     )
     assert counts.tolist() == [3]
@@ -2684,7 +2684,7 @@ def _assert_identical_solutions_and_simulations(
             use_categorical_codes=True,
         )
         .to_dataframe(use_categorical_codes=True)
-        .sort_values(["subject_id", "period"])
+        .sort_values(["agent_id", "period"])
         .reset_index(drop=True)
         for model, solution in ((got, got_solution), (expected, expected_solution))
     ]

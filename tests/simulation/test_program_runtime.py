@@ -23,11 +23,11 @@ from _lcm.execution.core_program import (
 from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.execution.workspace_planning import WorkspacePlan
 from _lcm.simulation.program_types import (
-    SUBJECT_WIDTH_KEYWORD,
+    AGENT_WIDTH_KEYWORD,
     SimulationBuildContext,
-    subject_axis,
+    agent_axis,
 )
-from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
+from _lcm.simulation.programs import _AgentTiled, _ArgumentsBoundAtDispatch
 from _lcm.simulation.runtime import CompiledSimulationProgram, SimulationRuntime
 from _lcm.typing import PytreeValue, ShapeDtypePytree
 from benchmarks.asv._simulation_witnesses import WITNESSES
@@ -81,7 +81,7 @@ def _fixed_cost_terminal(
 
 
 @pytest.mark.parametrize(
-    ("enable_jit", "subject_sharding"), [(False, False), (True, False), (True, True)]
+    ("enable_jit", "agent_sharding"), [(False, False), (True, False), (True, True)]
 )
 @pytest.mark.parametrize("combined", [False, True])
 @pytest.mark.parametrize(
@@ -91,13 +91,13 @@ def _fixed_cost_terminal(
 def test_simulation_preserves_nested_fixed_parameters(
     *,
     enable_jit: bool,
-    subject_sharding: bool,
+    agent_sharding: bool,
     combined: bool,
     schedule: InvariantBlockSchedule | None,
 ) -> None:
     """A nested fixed work cost reaches the chosen action and published value."""
-    if subject_sharding and jax.local_device_count() < 2:
-        pytest.skip("requires two actual devices for subject sharding")
+    if agent_sharding and jax.local_device_count() < 2:
+        pytest.skip("requires two actual devices for agent sharding")
     grid = LinSpacedGrid(start=0, stop=2, n_points=3)
     model = Model(
         regimes={
@@ -137,14 +137,14 @@ def test_simulation_preserves_nested_fixed_parameters(
         execution_config=ExecutionConfig(
             devices=tuple(
                 device.id
-                for device in jax.local_devices()[: 2 if subject_sharding else 1]
+                for device in jax.local_devices()[: 2 if agent_sharding else 1]
             ),
-            simulation_sharding="subjects" if subject_sharding else "legacy",
+            simulation_sharding="agents" if agent_sharding else "legacy",
             invariant_block_widths={} if schedule is None else {"pref_type": 1},
             invariant_block_schedule=(
                 InvariantBlockSchedule.PERIOD_MAJOR if schedule is None else schedule
             ),
-            axis_widths={"subject": 2, "action_product": 2},
+            axis_widths={"agent": 2, "action_product": 2},
         ),
         edges={"working": {"terminal": 0}},
     )
@@ -163,7 +163,7 @@ def test_simulation_preserves_nested_fixed_parameters(
         log_level="off",
     )
     frame = result.to_dataframe(use_categorical_codes=True).sort_values(
-        ["period", "subject_id"]
+        ["period", "agent_id"]
     )
     np.testing.assert_array_equal(
         np.column_stack(
@@ -194,10 +194,10 @@ class _WidthCollisionRegimeId:
 
 
 def _width_collision_utility(
-    *, lcm_subject_width: ContinuousAction, wealth: ContinuousState
+    *, lcm_agent_width: ContinuousAction, wealth: ContinuousState
 ) -> FloatND:
     """Read a legal user action whose spelling resembles an execution keyword."""
-    return lcm_subject_width + wealth
+    return lcm_agent_width + wealth
 
 
 def _width_collision_terminal_utility(*, wealth: ContinuousState) -> FloatND:
@@ -205,15 +205,13 @@ def _width_collision_terminal_utility(*, wealth: ContinuousState) -> FloatND:
     return wealth
 
 
-def test_user_subject_width_name_remains_an_economic_action() -> None:
+def test_user_agent_width_name_remains_an_economic_action() -> None:
     """A legal user action cannot be consumed as an internal static tile width."""
     model = Model(
         regimes={
             "alive": UserRegime(
                 functions={"utility": _width_collision_utility},
-                actions={
-                    "lcm_subject_width": LinSpacedGrid(start=1, stop=2, n_points=2)
-                },
+                actions={"lcm_agent_width": LinSpacedGrid(start=1, stop=2, n_points=2)},
             ),
             "done": UserRegime(
                 functions={"utility": _width_collision_terminal_utility},
@@ -223,7 +221,7 @@ def test_user_subject_width_name_remains_an_economic_action() -> None:
         regime_id_class=_WidthCollisionRegimeId,
         states={"wealth": LinSpacedGrid(start=1, stop=2, n_points=2)},
         state_transitions={"wealth": fixed_transition("wealth")},
-        execution_config=ExecutionConfig(axis_widths={"subject": 1}),
+        execution_config=ExecutionConfig(axis_widths={"agent": 1}),
         initial_nodes={0: "alive"},
         edges={"alive": {"done": 0}},
     )
@@ -238,7 +236,7 @@ def test_user_subject_width_name_remains_an_economic_action() -> None:
         log_level="off",
     ).to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(
-        frame.query("period == 0")["lcm_subject_width"], np.asarray([2.0, 2.0])
+        frame.query("period == 0")["lcm_agent_width"], np.asarray([2.0, 2.0])
     )
 
 
@@ -246,7 +244,7 @@ def test_user_subject_width_name_remains_an_economic_action() -> None:
 def test_simulate_dispatches_the_declared_program_body(
     *, monkeypatch: pytest.MonkeyPatch, family: str
 ) -> None:
-    """Runtime dispatch executes each declared family on real subjects."""
+    """Runtime dispatch executes each declared family on real agents."""
     model, params, initial = WITNESSES["multi_regime"]()
     model = Model(
         edges=model.edges,
@@ -267,14 +265,14 @@ def test_simulate_dispatches_the_declared_program_body(
         for program in getattr(regime.simulation.programs, family).values()
     }
     reached = []
-    original = _SubjectTiled.__call__
+    original = _AgentTiled.__call__
 
-    def record(self: _SubjectTiled, **kwargs: PytreeValue) -> PytreeValue:
+    def record(self: _AgentTiled, **kwargs: PytreeValue) -> PytreeValue:
         if id(self) in body_ids:
             reached.append(id(self))
         return original(self, **kwargs)
 
-    monkeypatch.setattr(_SubjectTiled, "__call__", record)
+    monkeypatch.setattr(_AgentTiled, "__call__", record)
     model.simulate(
         params=params,
         initial_conditions=initial,
@@ -285,13 +283,13 @@ def test_simulate_dispatches_the_declared_program_body(
 
 
 @pytest.mark.parametrize("width", [1, 3, 7])
-def test_public_widths_reach_the_live_subject_and_action_loops(
+def test_public_widths_reach_the_live_agent_and_action_loops(
     *, monkeypatch: pytest.MonkeyPatch, width: int
 ) -> None:
     """The public request binds the static widths of the actual decision body."""
     model, params, initial = WITNESSES["multi_regime"](
         execution_config=ExecutionConfig(
-            axis_widths={"subject": width, "action_product": width}
+            axis_widths={"agent": width, "action_product": width}
         ),
     )
     solution = model.solve(params=params, log_level="off")
@@ -302,43 +300,43 @@ def test_public_widths_reach_the_live_subject_and_action_loops(
             if isinstance(body, partial):
                 body = body.func
             body_widths[id(body)] = {
-                SUBJECT_WIDTH_KEYWORD: width,
+                AGENT_WIDTH_KEYWORD: width,
                 **{
                     axis.width_keyword: min(width, axis.extent)
                     for axis in program.requirements.reduced_axes
                 },
             }
     observed = []
-    original = _SubjectTiled.__call__
+    original = _AgentTiled.__call__
 
-    def record(self: _SubjectTiled, **kwargs: PytreeValue) -> PytreeValue:
+    def record(self: _AgentTiled, **kwargs: PytreeValue) -> PytreeValue:
         if id(self) in body_widths:
             expected = body_widths[id(self)]
             observed.append({name: kwargs[name] for name in expected} == expected)
         return original(self, **kwargs)
 
-    monkeypatch.setattr(_SubjectTiled, "__call__", record)
+    monkeypatch.setattr(_AgentTiled, "__call__", record)
     model.simulate(
         params=params, initial_conditions=initial, solution=solution, log_level="off"
     )
     assert (bool(observed), all(observed)) == (True, True)
 
 
-def _increment_subject(*, state: FloatND) -> FloatND:
+def _increment_agent(*, state: FloatND) -> FloatND:
     """Advance the independently observed state by one unit."""
     return state + 1
 
 
 def _program() -> CoreProgram:
-    """Declare a single subject-valued program with a transparent scalar body."""
+    """Declare a single agent-valued program with a transparent scalar body."""
     return CoreProgram(
         name="simulate_transition",
-        function=_SubjectTiled(func=_increment_subject, subject_arg_names=("state",)),
+        function=_AgentTiled(func=_increment_agent, agent_arg_names=("state",)),
         argument_builder=_ArgumentsBoundAtDispatch(
-            program_name="simulate_transition", subject_arg_names=("state",)
+            program_name="simulate_transition", agent_arg_names=("state",)
         ),
         requirements=CoreExecutionRequirements(
-            tiled_axes=(subject_axis(state_names=("state",)),)
+            tiled_axes=(agent_axis(state_names=("state",)),)
         ),
         output_roles="next_state",
         disposition=CoreExecutionDisposition.PLANNED,
@@ -349,48 +347,48 @@ def _program() -> CoreProgram:
 def _runtime(
     *, width: int | None = 3, enable_jit: bool = True, budget: int | None = None
 ) -> SimulationRuntime:
-    """Build an executor with an optional subject tile and budget policy."""
+    """Build an executor with an optional agent tile and budget policy."""
     return SimulationRuntime(
         execution=ResolvedExecution(
             device_ids=(0,),
             sharded_states=frozenset(),
-            axis_widths=MappingProxyType({} if width is None else {"subject": width}),
+            axis_widths=MappingProxyType({} if width is None else {"agent": width}),
             device_memory_bytes=budget,
         ),
         enable_jit=enable_jit,
-        subject_devices=(jax.devices()[0],),
+        agent_devices=(jax.devices()[0],),
     )
 
 
-@pytest.mark.parametrize("n_subjects", [1, 7])
+@pytest.mark.parametrize("n_agents", [1, 7])
 @pytest.mark.parametrize("width", [1, 3, 7])
 @pytest.mark.parametrize("enable_jit", [False, True])
-def test_subject_tiles_preserve_every_output(
-    *, n_subjects: int, width: int, enable_jit: bool
+def test_agent_tiles_preserve_every_output(
+    *, n_agents: int, width: int, enable_jit: bool
 ) -> None:
-    """Singletons and incomplete final tiles return every subject in original order."""
-    state = jnp.arange(n_subjects, dtype=float)
+    """Singletons and incomplete final tiles return every agent in original order."""
+    state = jnp.arange(n_agents, dtype=float)
     output = _runtime(width=width, enable_jit=enable_jit).dispatch(
         program=_program(),
         arguments={"state": state},
         period=0,
-        n_subjects=n_subjects,
+        n_agents=n_agents,
     )
-    np.testing.assert_array_equal(output, np.arange(n_subjects) + 1)
+    np.testing.assert_array_equal(output, np.arange(n_agents) + 1)
 
 
-@pytest.mark.parametrize(("n_subjects", "expected_width"), [(7, 7), (4097, 4097)])
-def test_unbudgeted_simulation_uses_the_subject_specific_inner_width(
+@pytest.mark.parametrize(("n_agents", "expected_width"), [(7, 7), (4097, 4097)])
+def test_unbudgeted_simulation_uses_the_agent_specific_inner_width(
     *,
     monkeypatch: pytest.MonkeyPatch,
-    n_subjects: int,
+    n_agents: int,
     expected_width: int,
 ) -> None:
     """The inner tile is the widest the byte cap admits, the population complete.
 
-    A scalar-per-subject program is far lighter than the standing per-subject
+    A scalar-per-agent program is far lighter than the standing per-agent
     weight, so both populations here fit one tile; the derived rule and its
-    bounds are pinned in `test_unbudgeted_subject_width.py`.
+    bounds are pinned in `test_unbudgeted_agent_width.py`.
     """
     selected: list[tuple[dict[str, int], int]] = []
     original = runtime_module.plan_workspace
@@ -405,23 +403,23 @@ def test_unbudgeted_simulation_uses_the_subject_specific_inner_width(
     monkeypatch.setattr(runtime_module, "plan_workspace", observe)
     output = _runtime(width=None).dispatch(
         program=_program(),
-        arguments={"state": jnp.arange(n_subjects, dtype=float)},
+        arguments={"state": jnp.arange(n_agents, dtype=float)},
         period=0,
-        n_subjects=n_subjects,
+        n_agents=n_agents,
     )
 
     assert (selected, np.asarray(output).tolist()) == (
-        [({"subject": expected_width}, n_subjects)],
-        (np.arange(n_subjects) + 1).tolist(),
+        [({"agent": expected_width}, n_agents)],
+        (np.arange(n_agents) + 1).tolist(),
     )
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class _RecordingArguments:
-    """Record materializations while declaring the exact subject operand."""
+    """Record materializations while declaring the exact agent operand."""
 
     calls: list[int]
-    subject_arg_names: tuple[ReferenceName, ...] = ("state",)
+    agent_arg_names: tuple[ReferenceName, ...] = ("state",)
 
     def __call__(
         self, context: CoreBuildContext
@@ -442,7 +440,7 @@ def test_dispatch_invokes_the_argument_builder_once() -> None:
         ),
         arguments={"state": jnp.arange(7.0)},
         period=0,
-        n_subjects=7,
+        n_agents=7,
     )
     assert calls == [0]
 
@@ -455,13 +453,13 @@ def test_prepared_program_dispatch_uses_the_cached_executable() -> None:
         program=program,
         arguments={"state": jnp.arange(7.0)},
         period=0,
-        n_subjects=7,
+        n_agents=7,
     )
     second = runtime.prepare(
         program=program,
         arguments={"state": jnp.arange(7.0) + 10},
         period=1,
-        n_subjects=7,
+        n_agents=7,
     )
     assert second is first
 
@@ -470,7 +468,7 @@ def test_prepared_program_dispatch_uses_the_cached_executable() -> None:
 def test_dispatch_executes_the_exact_planner_selection(
     *, monkeypatch: pytest.MonkeyPatch, enable_jit: bool
 ) -> None:
-    """A selected executable wrapper is consumed with the live subject arrays."""
+    """A selected executable wrapper is consumed with the live agent arrays."""
     selections = []
     calls = []
     original = runtime_module.plan_workspace
@@ -498,7 +496,7 @@ def test_dispatch_executes_the_exact_planner_selection(
         program=_program(),
         arguments={"state": jnp.arange(7.0)},
         period=0,
-        n_subjects=7,
+        n_agents=7,
     )
     assert (bool(selections), calls == selections, np.asarray(output).tolist()) == (
         True,
@@ -518,7 +516,7 @@ def test_compiler_specialization_metadata_separates_cache_entries() -> None:
             ),
             arguments={"state": jnp.arange(7.0)},
             period=0,
-            n_subjects=7,
+            n_agents=7,
         )
     assert len(runtime.cache) == 2
 
@@ -551,7 +549,7 @@ def test_independent_program_keys_compile_concurrently(
                 ),
                 arguments={"state": jnp.arange(7.0)},
                 period=0,
-                n_subjects=7,
+                n_agents=7,
             )
             for option in (1, 2)
         ]
@@ -582,7 +580,7 @@ def test_concurrent_duplicate_program_keys_compile_once(
             program=program,
             arguments={"state": jnp.arange(7.0)},
             period=0,
-            n_subjects=7,
+            n_agents=7,
         )
 
     monkeypatch.setattr(
@@ -620,10 +618,10 @@ def test_a_failed_candidate_can_be_retried(
             program=program,
             arguments={"state": jnp.arange(7.0)},
             period=0,
-            n_subjects=7,
+            n_agents=7,
         )
     output = runtime.dispatch(
-        program=program, arguments={"state": jnp.arange(7.0)}, period=0, n_subjects=7
+        program=program, arguments={"state": jnp.arange(7.0)}, period=0, n_agents=7
     )
     assert (runtime.in_flight, np.asarray(output).tolist()) == ({}, list(range(1, 8)))
 
@@ -637,5 +635,5 @@ def test_simulation_budget_refuses_unaccounted_forward_residency() -> None:
             program=_program(),
             arguments={"state": jnp.arange(7.0)},
             period=0,
-            n_subjects=7,
+            n_agents=7,
         )

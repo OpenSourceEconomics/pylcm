@@ -31,6 +31,7 @@ from _lcm.regime_building.collective import NO_ROLE, role_code
 from _lcm.simulation import (
     population_operations,
 )
+from _lcm.simulation.agent_groups import grouped_rows, type_local_transfer
 from _lcm.simulation.assembly import (
     _concatenate_arrays,
     _slice_array,
@@ -57,11 +58,11 @@ from _lcm.simulation.chunk_profile_inventory import (
     maximum_bytes,
     payload_bytes,
 )
+from _lcm.simulation.composition_profiles import profile_composition_period
 from _lcm.simulation.current_iid_overrides import CurrentIIDOverrideSchema
 from _lcm.simulation.diagnostic_operations import diagnostic_bindings
 from _lcm.simulation.dissolution_route import empty_gated_entries, record_open_entries
 from _lcm.simulation.entry_allocations import _pad_initial_leaf
-from _lcm.simulation.exit_profiles import profile_exit_period
 from _lcm.simulation.forward_program_profiles import (
     ForwardProgramProfile,
     _profile_program,
@@ -79,10 +80,10 @@ from _lcm.simulation.initial_conditions import (
     _fill_carrier,
 )
 from _lcm.simulation.membership import (
-    _activate_subject_membership,
-    _empty_subject_membership,
+    _activate_agent_membership,
+    _empty_agent_membership,
 )
-from _lcm.simulation.operand_placement import subject_operand_sharding
+from _lcm.simulation.operand_placement import agent_operand_sharding
 from _lcm.simulation.program_arguments import gate_route_arguments
 from _lcm.simulation.programs import forward_regimes_by_period
 from _lcm.simulation.random import (
@@ -93,12 +94,11 @@ from _lcm.simulation.random import (
 from _lcm.simulation.random_address import RandomAddress, draw_window_keys
 from _lcm.simulation.replay_inputs import replay_payload_reads
 from _lcm.simulation.runtime import SimulationRuntime
-from _lcm.simulation.subject_groups import grouped_rows, type_local_transfer
 from _lcm.simulation.taste_stream import (
     draw_taste_shock_keys,
 )
 from _lcm.simulation.transitions import (
-    _advance_states_for_subjects,
+    _advance_states_for_agents,
     _clip_next_states,
     _count_drawn_off_grid_codes,
     _count_realized_grid_state,
@@ -151,7 +151,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     ages: TimeAxis,
     initial_conditions: Mapping[str, jax.Array],
     regime_names_to_ids: RegimeNamesToIds,
-    n_subjects: int,
+    n_agents: int,
     population: int,
     original_population: int,
     widths: Mapping[str, int],
@@ -171,13 +171,13 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     host gated or other replay adapters. Diagnostics, retained storage and outer
     assembly profiles feed the selector before any candidate chunk is allocated.
 
-    Ordinary forward units are first lowered from the entry carrier on the
-    calling thread into a compilation wave. Exit units use two ready frontiers
-    per period: original and incoming decisions, then revealed decisions after
-    routing. Each wave compiles on the worker pool; the ordered walk adopts
-    actual compiled layouts and memory reports from the shared exact-key cache.
+    Ordinary forward units are first lowered from the entry carrier on the calling
+    thread into a compilation wave. Composition action units use two ready frontiers per
+    period: original and incoming decisions, then revealed decisions after routing. Each
+    wave compiles on the worker pool; the ordered walk adopts actual compiled layouts
+    and memory reports from the shared exact-key cache.
 
-    With `group_sizes`, the subjects of each code of the grouping state form
+    With `group_sizes`, the agents of each code of the grouping state form
     chunks of their own: the population is not padded to a chunk multiple, each
     chunk gathers its original rows and their keys, reads every value carrying
     the state through one code's block, and the outputs are gathered back into
@@ -185,33 +185,31 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     """
     # `simulate` reaches this module through chunk admission, so import lazily.
     from _lcm.simulation.simulate import (  # noqa: PLC0415
-        _active_subjects,
+        _active_agents,
         _current_iid_invalid,
         _first_empty_action_row,
     )
 
-    if population < original_population or original_population <= 0 or n_subjects <= 0:
+    if population < original_population or original_population <= 0 or n_agents <= 0:
         raise ExecutionPlanningError("Chunk profiles need a valid positive population.")
     padded = (
-        -(-population // n_subjects) * n_subjects if group_sizes is None else population
+        -(-population // n_agents) * n_agents if group_sizes is None else population
     )
     inventory = ChunkProfileInventory(runtime=runtime)
-    devices = runtime.subject_devices
-    subject = subject_operand_sharding(devices=devices)
-    shared = simulation_value_sharding(stored_sharding=subject, devices=devices)
+    devices = runtime.agent_devices
+    agent = agent_operand_sharding(devices=devices)
+    shared = simulation_value_sharding(stored_sharding=agent, devices=devices)
     scalar_int = jax.ShapeDtypeStruct((), np.dtype(np.int32), sharding=shared)
-    subject_int = jax.ShapeDtypeStruct(
-        (n_subjects,), np.dtype(np.int32), sharding=subject
-    )
-    full_int = jax.ShapeDtypeStruct((padded,), np.dtype(np.int32), sharding=subject)
+    agent_int = jax.ShapeDtypeStruct((n_agents,), np.dtype(np.int32), sharding=agent)
+    full_int = jax.ShapeDtypeStruct((padded,), np.dtype(np.int32), sharding=agent)
     rows = (
         None
         if group_sizes is None
-        else jax.ShapeDtypeStruct((n_subjects,), np.dtype(np.int32), sharding=shared)
+        else jax.ShapeDtypeStruct((n_agents,), np.dtype(np.int32), sharding=shared)
     )
     initial = {
         name: jax.ShapeDtypeStruct(
-            (n_subjects, *array.shape[1:]), array.dtype, sharding=subject
+            (n_agents, *array.shape[1:]), array.dtype, sharding=agent
         )
         for name, array in initial_conditions.items()
         if name not in {"regime_id", "own_member"}
@@ -235,7 +233,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 ),
                 "age_values": ages.values,
             },
-            subject_arg_names=("initial_ages",),
+            agent_arg_names=("initial_ages",),
         ),
     )
     permanent = payload_bytes(tree=(roles, entry_periods))
@@ -268,7 +266,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     ) as wave:
         for step in range(step_count(ages)):
             for name, regime in forward_regimes[step].items():
-                if step in regime.simulation.exit_queries:
+                if step in regime.simulation.composition_queries:
                     continue
                 profile_forward_unit(
                     runtime=runtime,
@@ -281,7 +279,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     base_spaces=base_spaces,
                     values=values,
                     ages=ages,
-                    n_subjects=n_subjects,
+                    n_agents=n_agents,
                     widths=widths,
                     columns=carrier[name],
                     ordinary_key=key,
@@ -293,18 +291,18 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     regime_ids, own_roles = cast(
         "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]",
         inventory.operation(
-            function=_empty_subject_membership,
+            function=_empty_agent_membership,
             arguments={
-                "initial_regime_ids": subject_int,
-                "initial_own_member": subject_int,
+                "initial_regime_ids": agent_int,
+                "initial_own_member": agent_int,
             },
-            subject_arg_names=("initial_regime_ids", "initial_own_member"),
-            subject_outputs=True,
+            agent_arg_names=("initial_regime_ids", "initial_own_member"),
+            agent_outputs=True,
         ),
     )
     add_bytes(
         target=permanent,
-        source=payload_bytes(tree=(initial, subject_int, subject_int, subject_int)),
+        source=payload_bytes(tree=(initial, agent_int, agent_int, agent_int)),
     )
     inventory.close_unit()
     published: dict[jax.Device, int] = {}
@@ -320,49 +318,51 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
         regime_ids, own_roles = cast(
             "tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct]",
             inventory.operation(
-                function=_activate_subject_membership,
+                function=_activate_agent_membership,
                 arguments={
                     "period": scalar_int,
-                    "starting_periods": subject_int,
-                    "initial_regime_ids": subject_int,
-                    "initial_own_member": subject_int,
+                    "starting_periods": agent_int,
+                    "initial_regime_ids": agent_int,
+                    "initial_own_member": agent_int,
                     "regime_ids": regime_ids,
                     "own_member": own_roles,
                 },
-                subject_arg_names=(
+                agent_arg_names=(
                     "starting_periods",
                     "initial_regime_ids",
                     "initial_own_member",
                     "regime_ids",
                     "own_member",
                 ),
-                subject_outputs=True,
+                agent_outputs=True,
             ),
         )
         entries = inventory.operation(
             function=empty_gated_entries,
             arguments={"regime_ids": regime_ids},
-            subject_arg_names=("regime_ids",),
-            subject_outputs=True,
+            agent_arg_names=("regime_ids",),
+            agent_outputs=True,
         )
-        carrier, regime_ids, own_roles, prepared_exits = profile_exit_period(
-            inventory=inventory,
-            regimes=regimes,
-            period=step,
-            states=carrier,
-            regime_ids=regime_ids,
-            roles=own_roles,
-            regime_names_to_ids=regime_names_to_ids,
-            flat_params=flat_params,
-            values=values,
-            ages=ages,
-            key=key,
-            taste_key=taste_key,
-            n_subjects=n_subjects,
-            widths=widths,
-            current_iid_override_schema=current_iid_override_schema,
-            max_compilation_workers=max_compilation_workers,
-            logger=logger,
+        carrier, regime_ids, own_roles, prepared_composition_actions = (
+            profile_composition_period(
+                inventory=inventory,
+                regimes=regimes,
+                period=step,
+                states=carrier,
+                regime_ids=regime_ids,
+                roles=own_roles,
+                regime_names_to_ids=regime_names_to_ids,
+                flat_params=flat_params,
+                values=values,
+                ages=ages,
+                key=key,
+                taste_key=taste_key,
+                n_agents=n_agents,
+                widths=widths,
+                current_iid_override_schema=current_iid_override_schema,
+                max_compilation_workers=max_compilation_workers,
+                logger=logger,
+            )
         )
         pending = payload_bytes(
             tree=(
@@ -372,7 +372,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 entries,
                 key,
                 taste_key,
-                prepared_exits,
+                prepared_composition_actions,
             )
         )
         inventory.close_unit()
@@ -389,31 +389,31 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 base_spaces=base_spaces,
                 values=values,
                 ages=ages,
-                n_subjects=n_subjects,
+                n_agents=n_agents,
                 widths=widths,
                 columns=carrier[name],
                 ordinary_key=key,
                 taste_key=taste_key,
                 policy=(policies or {}).get(step, {}).get(name),
                 current_iid_override_schema=current_iid_override_schema,
-                prepared_decision=prepared_exits.get(name),
+                prepared_decision=prepared_composition_actions.get(name),
             )
             mask = inventory.operation(
                 function=_regime_mask,
                 arguments={"regime_ids": regime_ids, "regime_id": scalar_int},
-                subject_arg_names=("regime_ids",),
-                subject_outputs=True,
+                agent_arg_names=("regime_ids",),
+                agent_outputs=True,
             )
-            if name not in prepared_exits and regime.has_taste_shocks:
+            if name not in prepared_composition_actions and regime.has_taste_shocks:
                 _profile_taste(
                     inventory=inventory,
                     key=key,
                     taste_key=taste_key,
-                    width=n_subjects,
+                    width=n_agents,
                     scalar_int=scalar_int,
                 )
             if (
-                name not in prepared_exits
+                name not in prepared_composition_actions
                 and regime.simulation.current_iid_draw_plan is not None
             ):
                 for _ in regime.simulation.current_iid_draw_plan.physical_names:
@@ -424,26 +424,26 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                             "address_words": jax.ShapeDtypeStruct(
                                 (8,), np.uint32, sharding=shared
                             ),
-                            "subject_start": jax.ShapeDtypeStruct(
+                            "agent_start": jax.ShapeDtypeStruct(
                                 (2,), np.uint32, sharding=shared
                             ),
-                            "last_real_subject": jax.ShapeDtypeStruct(
+                            "last_real_agent": jax.ShapeDtypeStruct(
                                 (2,), np.uint32, sharding=shared
                             ),
                             "period": jax.ShapeDtypeStruct(
                                 (), np.uint32, sharding=shared
                             ),
                         },
-                        static_arguments={"subject_count": n_subjects},
-                        subject_outputs=True,
+                        static_arguments={"agent_count": n_agents},
+                        agent_outputs=True,
                     )
             physical = {}
-            if name in prepared_exits:
-                indices, value, _, physical = prepared_exits[name]
+            if name in prepared_composition_actions:
+                indices, value, _, physical = prepared_composition_actions[name]
                 inventory.operation(
                     function=_first_empty_action_row,
                     arguments={"indices": indices, "in_regime": mask},
-                    subject_arg_names=("indices", "in_regime"),
+                    agent_arg_names=("indices", "in_regime"),
                 )
                 decoder = cores["action_decode"]
                 actions = inventory.compiled(
@@ -455,8 +455,8 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 fallback = inventory.operation(
                     function=_empty_fallback,
                     arguments={"mask": mask},
-                    subject_arg_names=("mask",),
-                    subject_outputs=True,
+                    agent_arg_names=("mask",),
+                    agent_outputs=True,
                 )
             elif regime.simulation.replay_route.consumer_route == "nnbegm_finite":
                 _record_core(
@@ -476,10 +476,10 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
             else:
                 if "policy_first" in cores:
                     inventory.operation(
-                        function=_active_subjects,
+                        function=_active_agents,
                         arguments={"in_regime": mask, "genuine": mask},
-                        subject_arg_names=("in_regime", "genuine"),
-                        subject_outputs=True,
+                        agent_arg_names=("in_regime", "genuine"),
+                        agent_outputs=True,
                     )
                     _record_core(
                         inventory=inventory,
@@ -502,7 +502,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     inventory.operation(
                         function=_current_iid_invalid,
                         arguments={"invalid": decision_outputs[3], "in_regime": mask},
-                        subject_arg_names=("invalid", "in_regime"),
+                        agent_arg_names=("invalid", "in_regime"),
                     )
                 if not base_spaces[name].states and indices.ndim == 0:
                     indices, value = cast(
@@ -510,14 +510,14 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                         inventory.operation(
                             function=_broadcast_collective,
                             arguments={"indices": indices, "value": value},
-                            static_arguments={"n_subjects": n_subjects},
-                            subject_outputs=True,
+                            static_arguments={"n_agents": n_agents},
+                            agent_outputs=True,
                         ),
                     )
                 inventory.operation(
                     function=_first_empty_action_row,
                     arguments={"indices": indices, "in_regime": mask},
-                    subject_arg_names=("indices", "in_regime"),
+                    agent_arg_names=("indices", "in_regime"),
                 )
                 decoder = decision.action_decoder
                 if decoder is None:
@@ -536,15 +536,15 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                         inventory.operation(
                             function=_broadcast_value,
                             arguments={"value": value},
-                            static_arguments={"n_subjects": n_subjects},
-                            subject_outputs=True,
+                            static_arguments={"n_agents": n_agents},
+                            agent_outputs=True,
                         ),
                     )
                 fallback = inventory.operation(
                     function=_empty_fallback,
                     arguments={"mask": mask},
-                    subject_arg_names=("mask",),
-                    subject_outputs=True,
+                    agent_arg_names=("mask",),
+                    agent_outputs=True,
                 )
             record = (
                 value,
@@ -560,7 +560,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
             period_masks.append(cast("jax.ShapeDtypeStruct", mask))
             add_bytes(target=published, source=payload_bytes(tree=record))
             if not regime.terminal:
-                carrier, key, new_ids, own_roles = _profile_next_subjects(
+                carrier, key, new_ids, own_roles = _profile_next_agents(
                     inventory=inventory,
                     regime=regime,
                     name=name,
@@ -579,8 +579,8 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     regime_names_to_ids=regime_names_to_ids,
                     population=padded,
                     original_population=original_population,
-                    width=n_subjects,
-                    subject_rows=rows,
+                    width=n_agents,
+                    agent_rows=rows,
                     runtime_checks=runtime_checks,
                     regimes=regimes,
                     base_spaces=base_spaces,
@@ -605,9 +605,9 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
             inventory.operation(
                 function=binding.function,
                 arguments=binding.arguments,
-                subject_arg_names=binding.subject_arg_names,
+                agent_arg_names=binding.agent_arg_names,
                 static_arguments=binding.static_arguments,
-                subject_outputs=binding.subject_outputs,
+                agent_outputs=binding.agent_outputs,
             )
         inventory.close_unit()
         add_bytes(
@@ -630,7 +630,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
         published=published,
         population=padded,
         original_population=original_population,
-        width=n_subjects,
+        width=n_agents,
         roles=roles,
         entry_periods=entry_periods,
         group_sizes=group_sizes,
@@ -639,11 +639,11 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     add_bytes(target=setup, source=padded_inputs)
     add_bytes(target=permanent, source=inventory.maximum_unit)
     return SimulationChunkProfile(
-        n_subjects=n_subjects,
+        n_agents=n_agents,
         padded_population=(
             padded
             if group_sizes is None
-            else grouped_rows(sizes=group_sizes, width=n_subjects)
+            else grouped_rows(sizes=group_sizes, width=n_agents)
         ),
         stages=tuple(inventory.stages),
         fixed_reservation=MappingProxyType(permanent),
@@ -654,7 +654,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     )
 
 
-def _profile_next_subjects(
+def _profile_next_agents(
     *,
     inventory: ChunkProfileInventory,
     regime: Regime,
@@ -675,7 +675,7 @@ def _profile_next_subjects(
     population: int,
     original_population: int,
     width: int,
-    subject_rows: jax.ShapeDtypeStruct | None = None,
+    agent_rows: jax.ShapeDtypeStruct | None = None,
     runtime_checks: bool = True,
     regimes: Mapping[str, Regime] = MappingProxyType({}),
     base_spaces: Mapping[str, StateActionSpace] = MappingProxyType({}),
@@ -698,7 +698,7 @@ def _profile_next_subjects(
         original_population=original_population,
         width=width,
         scalar_int=scalar_int,
-        rows=subject_rows,
+        rows=agent_rows,
         addresses=transition_random_addresses(
             regime=regime, regimes=regimes, names=stochastic_names
         ),
@@ -719,16 +719,16 @@ def _profile_next_subjects(
         ).items()
     }
     advanced = inventory.operation(
-        function=_advance_states_for_subjects,
+        function=_advance_states_for_agents,
         arguments={
             "states_per_regime": carrier,
             "next_states_per_regime": next_states,
-            "subject_indices": mask,
+            "agent_indices": mask,
         },
-        subject_arg_names=(
+        agent_arg_names=(
             "states_per_regime",
             "next_states_per_regime",
-            "subject_indices",
+            "agent_indices",
         ),
     )
     route = cast(
@@ -762,7 +762,7 @@ def _profile_next_subjects(
         original_population=original_population,
         width=width,
         scalar_int=scalar_int,
-        rows=subject_rows,
+        rows=agent_rows,
         addresses={"regime_transition": RandomAddress(kind="regime", name="regime")},
     )
     rows = tuple(route[target] for target in names)
@@ -773,21 +773,21 @@ def _profile_next_subjects(
             "prob_rows": rows,
             "regime_id_scalars": tuple(scalar_int for _ in names),
         },
-        subject_arg_names=("keys", "prob_rows") if rows[0].shape else ("keys",),
+        agent_arg_names=("keys", "prob_rows") if rows[0].shape else ("keys",),
     )
     new_ids = cast(
         "jax.ShapeDtypeStruct",
         inventory.operation(
             function=_update_regime_ids,
             arguments={
-                "subjects_in_regime": mask,
+                "agents_in_regime": mask,
                 "next_regime_ids": drawn,
-                "new_subject_regime_ids": new_ids,
+                "new_agent_regime_ids": new_ids,
             },
-            subject_arg_names=(
-                "subjects_in_regime",
+            agent_arg_names=(
+                "agents_in_regime",
                 "next_regime_ids",
-                "new_subject_regime_ids",
+                "new_agent_regime_ids",
             ),
         ),
     )
@@ -808,16 +808,16 @@ def _profile_next_subjects(
                     ),
                     "n_codes": tuple(scalar_int for _ in checks),
                     "target_ids": tuple(scalar_int for _ in checks),
-                    "subjects": mask,
+                    "agents": mask,
                     "new_regime_ids": new_ids,
                 },
-                subject_arg_names=("codes", "subjects", "new_regime_ids"),
+                agent_arg_names=("codes", "agents", "new_regime_ids"),
             )
     carrier = cast("Mapping[str, Mapping[str, jax.ShapeDtypeStruct]]", advanced)
     if period in regime.simulation.programs.gate_route:
         shared = simulation_value_sharding(
             stored_sharding=mask.sharding,
-            devices=inventory.runtime.subject_devices,
+            devices=inventory.runtime.agent_devices,
         )
         edge_values = MappingProxyType(
             {
@@ -843,15 +843,15 @@ def _profile_next_subjects(
                     tree=cast("ShapeDtypePytree", edge_values), sharding=shared
                 ),
                 next_states=gated_route_candidates(regime=regime, next_states=carrier),
-                new_subject_regime_ids=new_ids,
-                subjects_in_regime=mask,
+                new_agent_regime_ids=new_ids,
+                agents_in_regime=mask,
                 flat_params=abstract_tree(tree=flat_params, sharding=shared),
                 own_member=own_roles,
                 new_own_member=own_roles,
                 fold_age=age,
             ),
             period=period,
-            n_subjects=mask.shape[0],
+            n_agents=mask.shape[0],
             widths=widths,
         )
         route_delta, new_ids, own_roles = cast(
@@ -867,8 +867,8 @@ def _profile_next_subjects(
             inventory.operation(
                 function=commit_gated_route_delta,
                 arguments={"delta": route_delta, "next_states": carrier},
-                subject_arg_names=("delta", "next_states"),
-                subject_outputs=True,
+                agent_arg_names=("delta", "next_states"),
+                agent_outputs=True,
             ),
         )
         inventory.operation(
@@ -879,13 +879,13 @@ def _profile_next_subjects(
                     for edge_delta in route_delta.values()
                 ),
                 "routed_ids": new_ids,
-                "subjects_in_regime": mask,
+                "agents_in_regime": mask,
                 "new_entered_through": new_ids,
             },
-            subject_arg_names=(
+            agent_arg_names=(
                 "closed_masks",
                 "routed_ids",
-                "subjects_in_regime",
+                "agents_in_regime",
                 "new_entered_through",
             ),
             static_arguments={
@@ -894,7 +894,7 @@ def _profile_next_subjects(
                     int(regime_names_to_ids[target]) for target in route_delta
                 ),
             },
-            subject_outputs=True,
+            agent_outputs=True,
         )
     carrier = _profile_clip_next_states(
         inventory=inventory,
@@ -935,7 +935,7 @@ def _profile_clip_next_states(
     ask for one, and the clip where any grid declares `off_grid="clip_state"`.
     """
     shared = simulation_value_sharding(
-        stored_sharding=mask.sharding, devices=inventory.runtime.subject_devices
+        stored_sharding=mask.sharding, devices=inventory.runtime.agent_devices
     )
     points: dict[str, dict[str, ShapeDtypePytree]] = {}
     for target in dict.fromkeys(
@@ -978,11 +978,11 @@ def _profile_clip_next_states(
                     arguments={
                         "values": values,
                         "points": nodes,
-                        "subjects": mask,
+                        "agents": mask,
                         "new_regime_ids": new_ids,
                         "target_id": scalar_int,
                     },
-                    subject_arg_names=("values", "subjects", "new_regime_ids"),
+                    agent_arg_names=("values", "agents", "new_regime_ids"),
                 )
             if grid.off_grid == "clip_state":
                 points.setdefault(target, {})[state] = nodes
@@ -995,12 +995,12 @@ def _profile_clip_next_states(
             arguments={
                 "states": carrier,
                 "points": points,
-                "subjects": mask,
+                "agents": mask,
                 "new_regime_ids": new_ids,
                 "regime_ids": regime_names_to_ids,
             },
-            subject_arg_names=("states", "subjects", "new_regime_ids"),
-            subject_outputs=True,
+            agent_arg_names=("states", "agents", "new_regime_ids"),
+            agent_outputs=True,
         ),
     )
 
@@ -1020,8 +1020,8 @@ def _profile_population_roles(
             inventory.operation(
                 function=population_operations.default_roles,
                 arguments={"regime_ids": full_int},
-                subject_arg_names=("regime_ids",),
-                subject_outputs=True,
+                agent_arg_names=("regime_ids",),
+                agent_outputs=True,
             ),
         )
     role_ids = next(iter(regimes.values())).member_names_to_ids
@@ -1033,7 +1033,7 @@ def _profile_population_roles(
                 "declared": full_int,
                 "known_role_ids": tuple(scalar_int for _ in role_ids),
             },
-            subject_arg_names=("declared",),
+            agent_arg_names=("declared",),
         ),
     )
     # The same regimes `_initial_own_member` checks: those with no member
@@ -1051,7 +1051,7 @@ def _profile_population_roles(
                     "regime_id": scalar_int,
                     "role_ids": tuple(scalar_int for _ in codes),
                 },
-                subject_arg_names=("roles", "regime_ids"),
+                agent_arg_names=("roles", "regime_ids"),
             )
     return roles
 
@@ -1082,7 +1082,7 @@ def _profile_outer_storage(  # noqa: C901, PLR0912
     and explicitly outside its compute-device ceiling. Neither route assumes future
     output aliases from abstract descriptor identity.
     """
-    devices = inventory.runtime.subject_devices
+    devices = inventory.runtime.agent_devices
     scalar = jax.ShapeDtypeStruct(
         (),
         np.dtype(np.int32),
@@ -1127,8 +1127,8 @@ def _profile_outer_storage(  # noqa: C901, PLR0912
                     }
                 ),
                 static_arguments={"width": width} if group_sizes is None else {},
-                subject_arg_names=("array",) if len(source_devices) > 1 else (),
-                subject_outputs=len(source_devices) > 1,
+                agent_arg_names=("array",) if len(source_devices) > 1 else (),
+                agent_outputs=len(source_devices) > 1,
                 devices=source_devices,
             )
     inventory.close_unit()
@@ -1138,7 +1138,7 @@ def _profile_outer_storage(  # noqa: C901, PLR0912
         else grouped_rows(sizes=group_sizes, width=width) // width
     )
     multiple = chunks > 1
-    host = chunk_host_device(subject_devices=devices)
+    host = chunk_host_device(agent_devices=devices)
     gpu_offload = multiple and all(device.platform == "gpu" for device in devices)
     final_inventory = (
         ChunkProfileInventory(runtime=inventory.runtime) if gpu_offload else inventory
@@ -1174,7 +1174,7 @@ def _profile_outer_storage(  # noqa: C901, PLR0912
                 leaf = final_inventory.operation(
                     function=_concatenate_arrays,
                     arguments={"arrays": tuple(local for _ in range(chunks))},
-                    subject_arg_names=("arrays",),
+                    agent_arg_names=("arrays",),
                     devices=(host,),
                 )
             if group_sizes is not None:
@@ -1191,7 +1191,7 @@ def _profile_outer_storage(  # noqa: C901, PLR0912
                             ),
                         ),
                     },
-                    subject_arg_names=("array",),
+                    agent_arg_names=("array",),
                     devices=executing,
                 )
             elif original_population < population:
@@ -1199,7 +1199,7 @@ def _profile_outer_storage(  # noqa: C901, PLR0912
                 final_inventory.operation(
                     function=_slice_array,
                     arguments={"array": leaf},
-                    subject_arg_names=("array",),
+                    agent_arg_names=("array",),
                     static_arguments={"start": 0, "stop": original_population},
                     devices=executing,
                 )
@@ -1241,20 +1241,20 @@ def _profile_initial_carrier(
                 column = inventory.operation(
                     function=_fill_carrier,
                     arguments={"template": template},
-                    subject_arg_names=("template",),
+                    agent_arg_names=("template",),
                     static_arguments={
                         "dtype": dtype.str,
                         "fill_value": MISSING_CAT_CODE if discrete else float("nan"),
                     },
-                    subject_outputs=True,
+                    agent_outputs=True,
                 )
             else:
                 column = inventory.operation(
                     function=_cast_carrier,
                     arguments={"value": initial[state]},
-                    subject_arg_names=("value",),
+                    agent_arg_names=("value",),
                     static_arguments={"dtype": dtype.str},
-                    subject_outputs=True,
+                    agent_outputs=True,
                 )
             columns[state] = cast("jax.ShapeDtypeStruct", column)
         result[name] = MappingProxyType(columns)
@@ -1277,7 +1277,7 @@ def _profile_keys(
     static_arguments: dict[str, StaticArgument] = {
         "names": names,
         "n_initial_states": population,
-        "original_n_subjects": original_population,
+        "original_n_agents": original_population,
         "partitionable": jax.config.jax_threefry_partitionable,
         "addresses": tuple(
             addresses.get(name, RandomAddress(kind="state", name=name)).words()
@@ -1298,7 +1298,7 @@ def _profile_keys(
     else:
         function = _generate_rowed_simulation_keys
         static_arguments.pop("n_initial_states")
-        static_arguments.pop("original_n_subjects")
+        static_arguments.pop("original_n_agents")
         arguments = {
             "key": key,
             "rows": jax.ShapeDtypeStruct((width, 2), np.uint32, sharding=rows.sharding),
@@ -1310,8 +1310,8 @@ def _profile_keys(
             function=function,
             arguments=arguments,
             static_arguments=static_arguments,
-            subject_arg_names=() if rows is None else ("rows",),
-            subject_outputs=True,
+            agent_arg_names=() if rows is None else ("rows",),
+            agent_outputs=True,
         ),
     )
 
@@ -1333,16 +1333,16 @@ def _profile_taste(
             "address_words": jax.ShapeDtypeStruct(
                 (8,), np.dtype(np.uint32), sharding=shared
             ),
-            "subject_start": jax.ShapeDtypeStruct(
+            "agent_start": jax.ShapeDtypeStruct(
                 (2,), np.dtype(np.uint32), sharding=shared
             ),
-            "last_real_subject": jax.ShapeDtypeStruct(
+            "last_real_agent": jax.ShapeDtypeStruct(
                 (2,), np.dtype(np.uint32), sharding=shared
             ),
             "period": jax.ShapeDtypeStruct((), np.uint32, sharding=shared),
         },
-        static_arguments={"subject_count": width},
-        subject_outputs=True,
+        static_arguments={"agent_count": width},
+        agent_outputs=True,
     )
 
 
@@ -1441,7 +1441,7 @@ def _host_outside_device_ceiling(
     stages its copy scratch outside it. A CPU chunk budgets its own host: `None`.
     """
     if all(device.platform == "gpu" for device in devices):
-        return chunk_host_device(subject_devices=devices)
+        return chunk_host_device(agent_devices=devices)
     return None
 
 

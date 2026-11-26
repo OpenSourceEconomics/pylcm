@@ -148,9 +148,9 @@ def test_specialized_authoring_examples_solve_and_simulate() -> None:
             solution=solution,
             log_level="debug",
         )
-        frame = result.to_dataframe().sort_values(["subject_id", "period"])
+        frame = result.to_dataframe().sort_values(["agent_id", "period"])
 
-        assert result.n_subjects == 2
+        assert result.n_agents == 2
         assert frame["regime_name"].tolist() == [
             "working",
             "dead",

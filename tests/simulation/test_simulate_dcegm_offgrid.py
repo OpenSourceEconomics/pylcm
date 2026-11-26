@@ -4,11 +4,11 @@ Standard EGM (Carroll 2006; Iskhakov-Jørgensen-Rust-Schjerning 2017; Druedahl
 2021) simulates the continuous choice by interpolating the refined consumption
 function at the simulated state, not by an argmax over the action grid. The
 solve publishes that function (`EGMSimPolicy`); simulation interpolates it at
-each subject's resources.
+each agent's resources.
 
 The spec below is the closed-form two-period retirement model with log utility,
 zero interest, and an age-50 bequest `(age/50) log(wealth)`: optimal consumption
-is `c* = wealth / (1 + beta)` at every resources level. Seeding subjects at
+is `c* = wealth / (1 + beta)` at every resources level. Seeding agents at
 wealth strictly between consumption-grid nodes, the simulated consumption must
 hit `c*` — which a grid-restricted argmax cannot.
 """
@@ -63,7 +63,7 @@ def _closed_form_model() -> Model:
     )
 
 
-def test_dcegm_simulated_consumption_is_off_grid_closed_form():
+def test_dcegm_simulated_consumption_is_off_grid_closed_form() -> None:
     """Simulated consumption equals `wealth / (1 + beta)` at off-grid wealth.
 
     A grid-restricted argmax snaps consumption to the action grid and cannot hit
@@ -75,7 +75,7 @@ def test_dcegm_simulated_consumption_is_off_grid_closed_form():
         n_periods=2, discount_factor=_DISCOUNT_FACTOR
     )
 
-    # Seed subjects at wealth strictly between consumption-grid nodes (the
+    # Seed agents at wealth strictly between consumption-grid nodes (the
     # consumption grid shares spacing with the wealth grid in this example).
     wealth_nodes = np.asarray(WEALTH_GRID.to_jax())
     off_grid_wealth = 0.5 * (wealth_nodes[3:-1] + wealth_nodes[4:])
@@ -100,12 +100,12 @@ def test_dcegm_simulated_consumption_is_off_grid_closed_form():
     np.testing.assert_allclose(consumption, expected, rtol=2e-2)
 
 
-def test_discrete_action_regime_consumption_can_leave_the_action_grid():
+def test_discrete_action_regime_consumption_can_leave_the_action_grid() -> None:
     """With a discrete work choice, simulated consumption can be read off-grid.
 
-    The discrete branch is re-decided at the subject's state from the published
+    The discrete branch is re-decided at the agent's state from the published
     conditional values, and the winning branch's policy row is interpolated at
-    the subject's resources — so consumption need not sit on an action-grid
+    the agent's resources — so consumption need not sit on an action-grid
     node. (The closed-form re-decision tests pin the values; this pins that the
     off-grid path engages for a discrete-action regime.)
     """
@@ -117,11 +117,11 @@ def test_discrete_action_regime_consumption_can_leave_the_action_grid():
 
     wealth_nodes = np.asarray(WEALTH_GRID.to_jax())
     off_grid_wealth = 0.5 * (wealth_nodes[5:9] + wealth_nodes[6:10])
-    n_subjects = off_grid_wealth.shape[0]
+    n_agents = off_grid_wealth.shape[0]
     initial_conditions = {
         "wealth": jnp.asarray(off_grid_wealth),
-        "age": jnp.full(n_subjects, 40.0),
-        "regime_id": jnp.full(n_subjects, base.RegimeId.working_life),
+        "age": jnp.full(n_agents, 40.0),
+        "regime_id": jnp.full(n_agents, base.RegimeId.working_life),
     }
 
     result = model.simulate(
@@ -132,7 +132,7 @@ def test_discrete_action_regime_consumption_can_leave_the_action_grid():
     period_0 = (
         result.to_dataframe(use_categorical_codes=True)
         .query("period == 0 and regime_name == 'working_life'")
-        .sort_values("subject_id")
+        .sort_values("agent_id")
     )
     consumption = period_0["consumption"].to_numpy()
 
@@ -195,7 +195,7 @@ def _skill_model() -> Model:
 
 
 @pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
-def test_passive_state_regime_keeps_the_grid_consumption_path():
+def test_passive_state_regime_keeps_the_grid_consumption_path() -> None:
     """With a passive continuous state, simulated consumption stays on the grid.
 
     Each published policy row is the upper-envelope consumption conditional on
@@ -212,13 +212,13 @@ def test_passive_state_regime_keeps_the_grid_consumption_path():
     wealth_nodes = np.asarray(WEALTH_GRID.to_jax())
     off_grid_wealth = 0.5 * (wealth_nodes[5:9] + wealth_nodes[6:10])
     off_grid_skill = np.array([0.625, 0.875, 1.125, 1.375])
-    n_subjects = off_grid_wealth.shape[0]
+    n_agents = off_grid_wealth.shape[0]
     initial_conditions = {
         "wealth": jnp.asarray(off_grid_wealth),
         "skill": jnp.asarray(off_grid_skill),
-        "age": jnp.full(n_subjects, 40.0),
+        "age": jnp.full(n_agents, 40.0),
         "regime_id": jnp.full(
-            n_subjects, retirement_only.RetirementOnlyRegimeId.retirement
+            n_agents, retirement_only.RetirementOnlyRegimeId.retirement
         ),
     }
 
@@ -246,7 +246,7 @@ def _phased_alive_utility_simulate(consumption: ContinuousState) -> FloatND:
 
 
 @pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
-def test_phase_variant_utility_keeps_the_grid_consumption_path():
+def test_phase_variant_utility_keeps_the_grid_consumption_path() -> None:
     """A phase-variant utility disables the solve-policy replay.
 
     The stored policy solves the solve-phase first-order condition; a

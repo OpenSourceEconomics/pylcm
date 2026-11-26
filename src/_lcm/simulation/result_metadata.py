@@ -41,8 +41,8 @@ class ResultMetadata:
     n_periods: int
     """Number of periods in the simulation."""
 
-    n_subjects: int
-    """Number of subjects simulated."""
+    n_agents: int
+    """Number of agents simulated."""
 
     regime_to_states: MappingProxyType[RegimeName, tuple[StateName, ...]]
     """Immutable mapping of regime names to their state variable names."""
@@ -180,7 +180,7 @@ def _compute_metadata(
 
     `nested_policy_regimes` names the regimes whose solve published a
     `NestedEGMSimPolicy`. It is a property of the solved MODEL, not of the
-    simulated subjects, so the dataframe schema it gates stays data-independent.
+    simulated agents, so the dataframe schema it gates stays data-independent.
     """
     regime_names = tuple(regimes.keys())
 
@@ -238,14 +238,14 @@ def _compute_metadata(
         MappingProxyType({}),
     )
 
-    n_subjects = _get_n_subjects(raw_results)
+    n_agents = _get_n_agents(raw_results)
 
     return ResultMetadata(
         regime_names=regime_names,
         state_names=tuple(sorted(all_states)),
         action_names=tuple(sorted(all_actions)),
         n_periods=step_count(ages) // stages_per_period(ages),
-        n_subjects=n_subjects,
+        n_agents=n_agents,
         regime_to_states=MappingProxyType(regime_to_states),
         regime_to_actions=MappingProxyType(regime_to_actions),
         regime_to_publishes_nested_policy=MappingProxyType(
@@ -283,12 +283,12 @@ def _output_joint_laws(
     return MappingProxyType(laws)
 
 
-def _get_n_subjects(
+def _get_n_agents(
     raw_results: MappingProxyType[
         RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
     ],
 ) -> int:
-    """Extract number of subjects from raw results."""
+    """Extract number of agents from raw results."""
     for regime_results in raw_results.values():
         if regime_results:
             first_result = next(iter(regime_results.values()))

@@ -1,4 +1,4 @@
-"""A public three-device solve feeds eight-device subject simulation.
+"""A public three-device solve feeds eight-device agent simulation.
 
 Run this file alone with JAX_NUM_CPU_DEVICES=8 and
 XLA_FLAGS=--xla_force_host_platform_device_count=8. It never changes topology at
@@ -61,7 +61,7 @@ def _model(*, devices: tuple[int, ...]) -> Model:
         execution_config=ExecutionConfig(
             devices=devices,
             sharded_states=("kind",),
-            axis_widths={"subject": 16},
+            axis_widths={"agent": 16},
         ),
         initial_nodes={0: "working"},
         edges={
@@ -73,7 +73,7 @@ def _model(*, devices: tuple[int, ...]) -> Model:
     )
 
 
-def _assert_subject_partition(*, value: jax.Array) -> None:
+def _assert_agent_partition(*, value: jax.Array) -> None:
     """Check actual local shard indices, not just the named device set."""
     assert value.shape[0] == 16
     shards = value.addressable_shards
@@ -91,7 +91,7 @@ def _assert_subject_partition(*, value: jax.Array) -> None:
 def test_three_device_solve_simulates_on_eight_devices(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Eight subject shards consume addressed copies without deleting solve values."""
+    """Eight agent shards consume addressed copies without deleting solve values."""
     model = _model(devices=tuple(range(8)))
     reference = _model(devices=(0,))
     params = {"discount_factor": 0.5}
@@ -172,8 +172,8 @@ def test_three_device_solve_simulates_on_eight_devices(
     assert len(copy_addresses) == len(set(copy_addresses))
     for period in (0, 1):
         data = result.raw_results["working"][period]
-        _assert_subject_partition(value=data.V_arr)
-        _assert_subject_partition(value=data.actions["consumption"])
+        _assert_agent_partition(value=data.V_arr)
+        _assert_agent_partition(value=data.actions["consumption"])
         np.testing.assert_array_equal(
             np.asarray(data.in_regime), np.ones(16, dtype=bool)
         )

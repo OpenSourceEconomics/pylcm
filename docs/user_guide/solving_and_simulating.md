@@ -7,8 +7,8 @@ title: Solving and Simulating
 Once you have defined a `Model` and prepared your parameters, pylcm solves via backward
 induction and simulates forward.
 
-This page covers the common workflow. Solver-specific return artifacts and collective
-dissolution routing are specified exactly in
+This page covers the common workflow. Solver-specific return artifacts and the routing
+of members who separate are specified exactly in
 [Runtime, results, and persistence](../reference/runtime_and_results.md) and
 [Collective regimes](../reference/collective_regimes.md).
 
@@ -33,11 +33,11 @@ one named dimension per state and a last dimension `member`, so
 regime declared with a plain utility function has the one member `"self"`. Discrete
 states carry categorical labels by default, and a state declared with
 [values](grids.md#discrete-grids-with-numeric-values) carries those numbers; pass
-`use_categorical_codes=True` for integer codes. A household's members are the
-coordinates of `member`. `solution.value_frame(...)` returns the same values as a long
-DataFrame with state columns, `member` and `V`; it explicitly materializes the whole
-grid. Use `model.lookup_policy` for values between grid nodes, with the same
-interpolation as simulation.
+`use_categorical_codes=True` for integer codes. In a regime with several members, the
+members are the coordinates of `member`. `solution.value_frame(...)` returns the same
+values as a long DataFrame with state columns, `member` and `V`; it explicitly
+materializes the whole grid. Use `model.lookup_policy` for values between grid nodes,
+with the same interpolation as simulation.
 
 ### Retention and replay
 
@@ -74,7 +74,8 @@ every required replay artifact before forward execution. An in-memory result als
 come from the originating model instance. A restored result may come from another
 process: compatibility rests on the durable model fingerprint and exact declared
 versions instead. The checks remain active at `log_level="off"`. Omit `solution` to
-solve automatically; there are no separate value, policy, or dissolution inputs. See
+solve automatically; there are no separate inputs for values, policies or decisions on
+the composition. See
 [Runtime, results, and persistence](../reference/runtime_and_results.md#api-solution-result)
 for the artifact stores and compatibility rules.
 
@@ -162,7 +163,7 @@ permit missing required time labels, selected duplicate keys or a wrong coordina
 The manual-array warning in age mode is also independent of this logging policy.
 
 `simulate()` adds one further record to the console output: the resolved execution plan
-it dispatched --- the forward route, the subject devices and their backend, the resolved
+it dispatched --- the forward route, the agent devices and their backend, the resolved
 planner axis widths by regime, the chunk count and admitted widths, and the budget mode
 with its effective device-memory bytes. A one-line summary appears at `"progress"` and
 `"debug"`, the complete record at `"debug"` only, and neither at `"warning"` or `"off"`.
@@ -184,7 +185,7 @@ result = model.simulate(
 ```
 
 Forward simulation using solved value functions. Each agent starts from the given
-initial conditions and makes optimal decisions at each period. Every subject's starting
+initial conditions and makes optimal decisions at each period. Every agent's starting
 time coordinate and regime must be an admissible root in `model.graph.initial_nodes`; a
 start elsewhere is rejected even where that problem's value is solved. Returns a
 `SimulationResult` object. The complete `SolutionResult` is supplied through
@@ -262,12 +263,12 @@ initial_conditions = {
 - All arrays must have the same length (= number of agents).
 - Shock states are drawn automatically.
 
-### Household roles
+### Member roles
 
 In a model with a collective regime, every simulated row carries a *role*: which member
-of the household that row is. The role belongs to the row, not to the run — one cohort
-holds both partners at once — and it decides which regime the row moves to when the
-household dissolves. Seed it with an `"own_member"` entry alongside the states:
+of the regime that row is. The role belongs to the row, not to the run — one cohort
+holds both partners at once. The role decides which regime the row enters when the
+members separate. Seed it with an `"own_member"` entry alongside the states:
 
 ```python
 initial_conditions = {
@@ -303,19 +304,20 @@ df = pd.DataFrame(
 - Codes come from `model.member_names_to_ids` — one vocabulary for the whole model, so a
   role means the same thing in every regime. It is empty for a model with no collective
   regime.
-- The entry is required for subjects who **start** in a collective regime that can reach
-  a regime routing by member: one declaring a gated transition with more than one route,
-  or an `Exit` with targets for more than one member, such as a dissolution that sends
-  each partner to a different regime. That regime may be the starting regime itself or
-  one further along, since a row keeps its role across an ordinary regime transition.
-  Omitting the entry there raises `InvalidInitialConditionsError` rather than defaulting
-  to whichever partner was declared first, and a code that is valid model-wide but names
-  no member of that regime is rejected too. A collective start that can never arrive at
-  such a transition or exit needs no entry.
-- A subject starting in a singleton regime occupies no role and needs no entry. It is
-  given one on entering a collective regime, from the role its move names (a
-  `MemberRoute`'s `target_member`, a `Transition(roles=...)` entry or an exit target's
-  `role`), and loses it again on landing in a singleton regime.
+- The entry is required for agents who **start** in a collective regime that can reach a
+  regime routing by member: one declaring a gated transition with more than one route,
+  or a `CompositionAction` with destinations for more than one member, such as a
+  separation that sends each member to a different regime. That regime may be the
+  starting regime itself or one further along, since a row keeps its role across an
+  ordinary regime transition. Omitting the entry there raises
+  `InvalidInitialConditionsError` rather than defaulting to whichever partner was
+  declared first, and a code that is valid model-wide but names no member of that regime
+  is rejected too. A collective start that can never arrive at such a transition or
+  composition action needs no entry.
+- An agent starting in a singleton regime occupies no role and needs no entry. On
+  entering a collective regime, it takes the role that the transition or the composition
+  action names: a `MemberRoute`'s `target_member`, a `Transition(roles=...)` entry or a
+  `Destination`'s `role`. It loses the role again on landing in a singleton regime.
 
 See [Collective regimes](../reference/collective_regimes.md#roles-are-carried-per-row)
 for the full rules.
@@ -335,18 +337,17 @@ model.validate_initial_conditions(initial_conditions=feasible_rows, params=param
 `initial_conditions_feasibility` returns a boolean array with one entry per row, `True`
 where at least one combination of the regime's action-grid points satisfies every
 constraint jointly (or, in a regime without actions, where every state-only constraint
-holds). A row starting where its regime's current-period exit decides counts as
-feasible: only the solution says whether the exit moves it, and `simulate` raises
-`NoFeasibleActionError` if it then neither has a feasible action nor moves.
+holds). A row that starts where its regime's composition action decides counts as
+feasible. Only the solution says whether the row stays in its regime. `simulate` raises
+`NoFeasibleActionError` if the row then neither has a feasible action nor leaves.
 `validate_initial_conditions` raises `InvalidInitialConditionsError` exactly when that
 mask contains a `False`, with the diagnostics `simulate(log_level="debug")` would print.
 A malformed structure — unknown regime, missing or extra state, unequal lengths,
 off-grid age, inactive regime, unknown categorical label, a collective start without its
 `own_member` — raises from both methods rather than being counted as infeasible, so a
 population they accept is one `simulate` accepts. Neither method takes a `log_level`:
-they always raise. A constraint that depends on an age-specialized function while
-subjects start at different ages cannot be evaluated and raises
-`UnsupportedOperationError`.
+they always raise. A constraint that depends on an age-specialized function while agents
+start at different ages cannot be evaluated and raises `UnsupportedOperationError`.
 
 ### Further arguments
 
@@ -357,9 +358,9 @@ subjects start at different ages cannot be evaluated and raises
 - `seed=None`: Integer random seed or scalar typed Threefry key
   (`jax.random.key(..., impl="threefry2x32")`, the JAX default). An integer becomes a
   Threefry key whatever `jax_default_prng_impl` says; other key implementations are
-  refused, because their draws would change with the subject chunk width. Each draw is
-  addressed by the subject's original row position in `initial_conditions`, so
-  reordering those rows changes which draws a subject receives.
+  refused, because their draws would change with the agent chunk width. Each draw is
+  addressed by the agent's original row position in `initial_conditions`, so reordering
+  those rows changes which draws an agent receives.
 - `taste_shock_seed=None`: Optional independent integer seed or scalar typed key for
   common taste shocks across counterfactual models. Omit it to keep the ordinary `seed`
   behavior.
@@ -408,12 +409,12 @@ counterfactual = counterfactual_model.simulate(
 )
 ```
 
-A taste key identifies a computational period, the destination regime's name and a
-subject's original row position in the initial conditions. Age labels, policy
-parameters, horizon endpoints, subject chunks and padding do not identify the key. Keep
-people in corresponding input rows; DataFrame index labels do not provide subject
-identity. Renaming the destination changes its taste stream. Changing the policy can
-change choices and state paths even with common shocks.
+A taste key identifies a computational period, the destination regime's name and an
+agent's original row position in the initial conditions. Age labels, policy parameters,
+horizon endpoints, agent chunks and padding do not identify the key. Keep people in
+corresponding input rows; DataFrame index labels do not provide agent identity. Renaming
+the destination changes its taste stream. Changing the policy can change choices and
+state paths even with common shocks.
 
 Action grids do not enter the key address. Comparing individual standardized taste
 shocks still requires the same ordered discrete-action domain and draw shape: category
@@ -422,8 +423,8 @@ multiplies the same standardized draw, so equal scaled shocks additionally requi
 scales.
 
 The independent stream uses Threefry for integer seeds. A supplied typed root retains
-its PRNG implementation; with an RBG or unsafe-RBG root, each subject's draw comes from
-its own addressed key under every subject width and padding. Exact comparisons require
+its PRNG implementation; with an RBG or unsafe-RBG root, each agent's draw comes from
+its own addressed key under every agent width and padding. Exact comparisons require
 matching numerical precision, backend and JAX random configuration. Ordinary and taste
 innovations use distinct versioned address domains, and their roots remain unchanged.
 `taste_shock_seed=None` uses the ordinary root with the taste address domain. Simulation
@@ -440,11 +441,11 @@ fractional values and out-of-range starts are invalid. The two initial-condition
 checking methods apply the same coordinate rules.
 
 `"age"` must always be provided in `initial_conditions`. Each value must be a valid
-point on the model's `AgeGrid`, and each subject's `(age, regime)` pair must be a
-declared start in `model.graph.initial_nodes`. The most common case is that all subjects
-start at the initial age — just pass a constant array.
+point on the model's `AgeGrid`, and each agent's `(age, regime)` pair must be a declared
+start in `model.graph.initial_nodes`. The most common case is that all agents start at
+the initial age — just pass a constant array.
 
-Subjects can start at different ages:
+Agents can start at different ages:
 
 ```python
 initial_conditions = {
@@ -459,7 +460,7 @@ initial_conditions = {
 }
 ```
 
-In the resulting DataFrame, each subject appears only from their starting age onward —
+In the resulting DataFrame, each agent appears only from their starting age onward —
 earlier periods are omitted, not filled with placeholders.
 
 ## Working with SimulationResult
@@ -470,7 +471,7 @@ earlier periods are omitted, not filled with placeholders.
 df = result.to_dataframe()
 ```
 
-Returns a pandas DataFrame with columns: `subject_id`, `period`, `regime_name`, `value`,
+Returns a pandas DataFrame with columns: `agent_id`, `period`, `regime_name`, `value`,
 plus all states and actions. An age model also supplies `age`; a period model has no age
 column, including after saving and loading. An NNBEGM regime adds
 `nested_policy_fallback`: `True` on a row means the off-grid nested policy read was
@@ -479,18 +480,19 @@ chosen by the canonical Q, not by the action grid alone — the grid-argmax pair
 published replay branch are scored, the higher score is emitted, and the grid pair takes
 an exact tie. Inference must refuse whenever any entry is `True`. Discrete variables are
 pandas Categorical with string labels. In an EGM-family regime, `value` is the solved
-value representation read at the subject's realized resources, not the utility plus
+value representation read at the agent's realized resources, not the utility plus
 continuation along the replayed path; on a coarse savings grid the two can differ
 slightly in either direction.
 
 A model with a collective regime publishes two further things. An `own_member` column
 names the role each row occupies — in every regime, not only the collective ones,
-because a row that has left a household still has to say that it now occupies none. It
-is a Categorical over the declared member names, and a row in a singleton regime carries
-a missing entry. A collective regime also publishes one `value_<member>` column per
-member, since the household stores every partner's own value at the shared maximizing
-action. Those columns sit alongside `value`, which is dropped only when no regime in the
-model publishes a scalar value — that is, when every regime is collective.
+because a row that has left a regime with several members still has to say that it
+occupies none. It is a Categorical over the declared member names, and a row in a
+singleton regime carries a missing entry. A collective regime also publishes one
+`value_<member>` column per member, since the regime stores every member's own value at
+the shared maximizing action. Those columns sit alongside `value`, which is dropped only
+when no regime in the model publishes a scalar value — that is, when every regime is
+collective.
 
 ### Additional targets
 
@@ -532,20 +534,20 @@ result.regime_names  # ('retirement', 'working_life')
 result.state_names  # ('health', 'wealth')
 result.action_names  # ('consumption', 'work')
 result.n_periods  # 50
-result.n_subjects  # 1000
+result.n_agents  # 1000
 ```
 
 ### Persistence
 
 `SimulationResult.save(directory=...)` writes five sibling artifacts:
 
-- `arrays/` — orbax checkpoint of the per-subject `raw_results` tree and `flat_params`.
+- `arrays/` — orbax checkpoint of the per-agent `raw_results` tree and `flat_params`.
 - `V_arr/` — orbax checkpoint of the solution value-function arrays; orbax streams
   sharded leaves shard by shard rather than gathering them onto one device.
 - `metadata.pkl` — `cloudpickle` of regimes, the age or period clock, and the parameter
   scaffold.
 - `simulated_data.arrow` — a `feather` dump of `to_dataframe`, ready for downstream
-  consumers that want the flat per-subject view without re-instantiating a
+  consumers that want the flat per-agent view without re-instantiating a
   `SimulationResult`.
 - `format_version` --- the version of this layout, written last. `SimulationResult.load`
   and `SimulationResult.load_solution` refuse a directory without it or with another
@@ -670,11 +672,11 @@ result = model.simulate(
 )
 ```
 
-Each path is a real array shaped `(steps,)` for a common history or `(subjects, steps)`
+Each path is a real array shaped `(steps,)` for a common history or `(agents, steps)`
 for individual histories in the original initial-condition row order. Columns are steps,
 one per period in a model without `stages`, beginning at the model's first age or
-period; a subject entering later reads its entry column. The given value overrides that
-subject's initial shock and each subsequent realised draw. Continuous processes accept
+period; an agent entering later reads its entry column. The given value overrides that
+agent's initial shock and each subsequent realised draw. Continuous processes accept
 finite values in their distribution's support, including off-node values; lognormal
 levels must be positive and uniform draws must lie inside the declared interval.
 Discrete shocks require exact category codes, also for a state declared with
@@ -683,16 +685,16 @@ values: a code replays the path exactly and losslessly. `grid.values[code]` maps
 to its value. Persistent processes consume the supplied realised level directly, rather
 than treating it as an innovation and recursing again.
 
-Each value is checked against the support of every regime that may read it: the
-subject's starting regime in its entry period, and afterwards every regime the
-simulation can reach from there, since later regime membership is itself drawn. A
-subject's entry value is replaced only when its starting regime draws the shock. Cells
-no regime can read, such as those before a subject enters, are ignored and may hold
-`NaN`. Draws taken inside a transition are supported, including shocks a regime reads
-only as `next_<shock>`: a draw affecting the transition into period `p` comes from
-column `p`. A deterministic law reading `next_<shock>` sees the supplied draw before
-computing its own next state. Shocks omitted from the mapping retain the ordinary seeded
-stream, and solve expectations remain stochastic.
+Each value is checked against the support of every regime that may read it: the agent's
+starting regime in its entry period, and afterwards every regime the simulation can
+reach from there, since later regime membership is itself drawn. An agent's entry value
+is replaced only when its starting regime draws the shock. Cells no regime can read,
+such as those before an agent enters, are ignored and may hold `NaN`. Draws taken inside
+a transition are supported, including shocks a regime reads only as `next_<shock>`: a
+draw affecting the transition into period `p` comes from column `p`. A deterministic law
+reading `next_<shock>` sees the supplied draw before computing its own next state.
+Shocks omitted from the mapping retain the ordinary seeded stream, and solve
+expectations remain stochastic.
 
 A named current shock declared in a `ShockGroup` takes a tagged record instead of a bare
 array: `BaseInnovations(values=...)` for independent base coordinates, mapped through

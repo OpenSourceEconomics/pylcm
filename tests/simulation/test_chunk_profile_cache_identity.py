@@ -175,7 +175,7 @@ def test_population_shape_change_misses(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def _budgeted_runtime(*, model: Model) -> SimulationRuntime:
-    """Return the one budgeted runtime this model builds for a three-subject batch."""
+    """Return the one budgeted runtime this model builds for a three-agent batch."""
     regimes = model._runtime_regimes_for_shape(compile_batch_size=3)
     runtime = next(iter(regimes.values())).simulation.programs.executor
     assert isinstance(runtime, SimulationRuntime)
@@ -197,7 +197,7 @@ def _key_for_initial_conditions(
         runtime=runtime,
         regimes=regimes,
         call_inputs=SimulationCallInputs(
-            devices=runtime.subject_devices,
+            devices=runtime.agent_devices,
             flat_params=MappingProxyType({}),
             base_state_action_spaces=MappingProxyType({}),
         ),
@@ -206,10 +206,10 @@ def _key_for_initial_conditions(
         ages=model.ages,
         initial_conditions=initial,
         regime_names_to_ids=model.regime_names_to_ids,
-        n_subjects=3,
+        n_agents=3,
         population=3,
         original_population=3,
-        widths={"subject": 3},
+        widths={"agent": 3},
         independent_taste=False,
         log_level="off",
         runtime_checks=runtime_checks,
@@ -338,10 +338,10 @@ def test_key_is_stable_and_versioned() -> None:
         "ages": model.ages,
         "initial_conditions": _initial(n=3),
         "regime_names_to_ids": model.regime_names_to_ids,
-        "n_subjects": 3,
+        "n_agents": 3,
         "population": 3,
         "original_population": 3,
-        "widths": {"subject": 3},
+        "widths": {"agent": 3},
         "independent_taste": False,
         "log_level": "off",
         "runtime_checks": True,

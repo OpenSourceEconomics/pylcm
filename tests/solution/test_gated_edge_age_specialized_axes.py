@@ -105,7 +105,7 @@ def test_simulated_gated_continuation_reads_the_target_at_its_own_period_axes() 
     )
     result = model.simulate(
         params={"discount_factor": _DISCOUNT_FACTOR},
-        initial_conditions=_initial_conditions(n_subjects=2),
+        initial_conditions=_initial_conditions(n_agents=2),
         solution=solution,
         log_level="debug",
     )
@@ -218,11 +218,11 @@ def _build_model() -> Model:
     )
 
 
-def _initial_conditions(*, n_subjects: int) -> dict[str, FloatND]:
-    """Seed every subject as a saver at age 0; `saver` carries no state."""
+def _initial_conditions(*, n_agents: int) -> dict[str, FloatND]:
+    """Seed every agent as a saver at age 0; `saver` carries no state."""
     return {
-        "age": jnp.zeros(n_subjects),
-        "regime_id": jnp.full(n_subjects, _RegimeId.saver, dtype=jnp.int32),
+        "age": jnp.zeros(n_agents),
+        "regime_id": jnp.full(n_agents, _RegimeId.saver, dtype=jnp.int32),
     }
 
 

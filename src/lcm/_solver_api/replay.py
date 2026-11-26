@@ -45,7 +45,7 @@ class ReplayRouteSnapshot:
     """One immutable cell passed unchanged from validation to reader construction.
 
     Whole-result preflight validates stored-layout cells before forward execution.
-    Simulation places a cell's arrays on its subject devices, then validates that
+    Simulation places a cell's arrays on its agent devices, then validates that
     exact placed snapshot and context again immediately before building its reader.
     """
 
@@ -146,7 +146,7 @@ class ActionOutput:
     actions: Mapping[
         ActionName, ValueND | npt.NDArray[np.generic] | np.generic | float | int | bool
     ]
-    """Immutable mapping of action names to their scalar or per-subject values."""
+    """Immutable mapping of action names to their scalar or per-agent values."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "actions", MappingProxyType(dict(self.actions)))
@@ -162,9 +162,9 @@ class ReplayReader(Protocol):
         states: Mapping[StateName, FloatND | IntND],
         fallback_actions: Mapping[ActionName, ValueND],
     ) -> ActionOutput:
-        """Return each named action as a scalar or per-subject-broadcastable array.
+        """Return each named action as a scalar or per-agent-broadcastable array.
 
-        ``states`` contains the regime's full per-subject simulation state, including
+        ``states`` contains the regime's full per-agent simulation state, including
         any carried-only states omitted from ``SimulationBuildContext``.
         """
         ...

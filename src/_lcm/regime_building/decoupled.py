@@ -12,12 +12,12 @@ in `max_Q_over_a` for that pair:
 - `get_decoupled_max_Q_over_a` maps it over the state product, with the
   same tiling `get_max_Q_over_a` takes, as the solve runs it.
 
-The profiles carry a trailing member axis. Under the hard maximum the household
-chooses on the Pareto-weighted sum of its members' objectives and publishes each
-member's stored value at that choice. Under EV1
-taste shocks its one decider chooses on its own objective, and every other
-member's value is the mean of its stored profile under the decider's choice
-probabilities, as in `decider_smoothed_readout`.
+The profiles carry a trailing member axis. Under the hard maximum the members
+choose on the Pareto-weighted sum of their objectives, and each member's stored
+value at that choice is published. Under EV1 taste shocks the one deciding member
+chooses on its own objective. Every other member's value is the mean of its
+stored profile under the deciding member's choice probabilities, as in
+`decider_smoothed_readout`.
 """
 
 import math
@@ -88,14 +88,14 @@ def household_argmax_and_readout(
     `selection` and `readout` carry a trailing member axis that `where` does
     not; the action axes are reduced:
 
-    - the household chooses on the weighted sum of `selection`; ties go to the
-      members' stored values in member order, the sole member with a positive
-      weight last (`member_tie_keys`), and then to the smallest flat index, so
-      the published values do not depend on the order in which the actions are
-      declared;
+    - the members choose on the Pareto-weighted sum of `selection`; ties go to
+      the members' stored values in member order, the sole member with a
+      positive Pareto weight last (`member_tie_keys`), and then to the
+      smallest flat index, so the published values do not depend on the order
+      in which the actions are declared;
     - each member's value is its `readout` at that index;
     - no feasible element gives index `-1` and value `-inf`;
-    - a NaN household objective at a feasible element makes every value NaN and
+    - a NaN Pareto-weighted objective at a feasible element makes every value NaN and
       the index zero, and a NaN in a member's own profiles at a feasible element
       makes its value NaN.
 
@@ -156,8 +156,8 @@ def get_decoupled_Q_over_a(
         n_discrete_action_axes: Number of leading discrete-action axes, which
             taste shocks smooth over.
         has_taste_shocks: Whether the regime declares EV1 taste shocks.
-        members: Ordered member names of the household.
-        pareto_weights: The household's Pareto weight evaluator.
+        members: Ordered member names of the regime.
+        pareto_weights: The regime's Pareto weight evaluator.
 
     Returns:
         The reduction, taking the kernel's arguments.
@@ -269,10 +269,10 @@ class _DecoupledQOverA:
     for the hard maximum."""
 
     members: tuple[str, ...]
-    """Ordered member names of the household."""
+    """Ordered member names of the regime."""
 
     pareto_weights: ParetoWeights
-    """The household's Pareto weight evaluator."""
+    """The regime's Pareto weight evaluator."""
 
     def __call__(
         self,
@@ -328,9 +328,9 @@ class _DecoupledQOverA:
         flat_index = (
             discrete * n_continuous + jnp.ravel(conditional.continuous_index)[discrete]
         )
-        # Without an alternative worth more than `-inf` to the decider there is
-        # nothing to draw: the cell publishes no action, as one without a
-        # feasible action does.
+        # Without an alternative worth more than `-inf` to the deciding member,
+        # there is nothing to draw: the cell publishes no action, as one
+        # without a feasible action does.
         worthless = jnp.all(jnp.isneginf(conditional.objective))
         return _with_bound_summary(
             evaluated=evaluated,
@@ -361,28 +361,28 @@ class SmoothedProfiles(NamedTuple):
     """The profiles EV1 shocks smooth, per discrete-action combination."""
 
     conditional: ConditionalProfiles
-    """The household decider's conditional profiles."""
+    """The deciding member's conditional profiles."""
 
     stored: FloatND
     """The stored value at each combination's choice, with the trailing member
     axis, `-inf` where a combination has no feasible action."""
 
     parts: QAndFParts
-    """The decider's own kernel parts."""
+    """The deciding member's own kernel parts."""
 
     decider: IntND
-    """Member index of the household's decider, the member with the positive
+    """Member index of the deciding member, the member with the positive Pareto
     weight."""
 
 
 def smoothed_profiles(
     *, parts: QAndFParts, weights: FloatND, n_discrete_action_axes: int
 ) -> SmoothedProfiles:
-    """Choose the continuous actions on the decider's objective, per combination.
+    """Choose the continuous actions on the deciding member's objective.
 
-    The household's decider chooses on its own objective, ties going to the
-    members' stored values (`decider_choice`), and every member's stored value
-    is read at that choice.
+    The choice is made per discrete-action combination. The deciding member
+    chooses on its own objective, and ties go to the members' stored values
+    (`decider_choice`). Every member's stored value is read at that choice.
     """
     shape = parts.F.shape[:n_discrete_action_axes]
     n_members = parts.Q.shape[-1]
@@ -413,10 +413,11 @@ def smoothed_logsum(
 ) -> tuple[FloatND, FloatND]:
     """Return the expected stored value under EV1 shocks and the probabilities.
 
-    The decider's value is `decoupled_logsum` of its own profiles. Every other
-    member gets the mean of its stored value under the decider's choice
-    probabilities, which a combination of probability zero leaves out. Where
-    the decider's objective is `-inf` at every combination there are no
+    The deciding member's value is `decoupled_logsum` of its own profiles.
+    Every other member gets the mean of its stored value under the deciding
+    member's choice probabilities, which a combination of probability zero
+    leaves out. Where the deciding member's objective is `-inf` at every
+    combination there are no
     probabilities, and every member's value is `-inf`.
     """
     value, probabilities = decoupled_logsum(
@@ -517,10 +518,10 @@ class DecoupledWithActionParts:
     """The kernel's parts, mapped over the action product."""
 
     members: tuple[str, ...]
-    """Ordered member names of the household."""
+    """Ordered member names of the regime."""
 
     pareto_weights: ParetoWeights
-    """The household's Pareto weight evaluator."""
+    """The regime's Pareto weight evaluator."""
 
     def __call__(
         self, **kwargs: QAndFArg
@@ -573,10 +574,10 @@ class DecoupledTasteShockLookup:
     """Number of leading discrete-action axes of the action product."""
 
     members: tuple[str, ...]
-    """Ordered member names of the household."""
+    """Ordered member names of the regime."""
 
     pareto_weights: ParetoWeights
-    """The household's Pareto weight evaluator."""
+    """The regime's Pareto weight evaluator."""
 
     def __call__(self, **kwargs: QAndFArg) -> tuple[FloatND | IntND | BoolND, ...]:
         """Return the value, `Qc`, the probabilities, the index and the parts.

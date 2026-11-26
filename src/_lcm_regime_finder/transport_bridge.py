@@ -383,7 +383,7 @@ def validate_generated_transport(problem, report, max_cells=20000):
                     'certificate': {'kind': 'quotient', 'support': {'original': list(old_cells), 'reduced': list(new_cells)},
                                     'state_map': projection, 'action_embedding': embeddings,
                                     'fixed_action_attributes': fixed, 'taste_group_map': tastes},
-                    'subjects': {'original': {}, 'reduced': {}}}], 'obligations': []}
+                    'agents': {'original': {}, 'reduced': {}}}], 'obligations': []}
         for side, cells in [('original', old_cells), ('reduced', new_cells)]:
             generated[side + '_cells'] = len(cells)
             generated[side + '_feasible_action_rows'] = sum(len(c['actions']) for c in cells.values())

@@ -135,10 +135,10 @@ _FLAT_OPERAND_PATH_LENGTH = 2
 class QueryKind(StrEnum):
     """The action problem a query reads.
 
-    - `RAW` ⇒ the target's problem without its exit
-    - `PARTICIPATING` ⇒ that problem with the target's exit applied as a rule for
-      staying, without the move
-    - `FULL` ⇒ the target's problem with its exit
+    - `RAW` ⇒ the target's problem without its composition action
+    - `PARTICIPATING` ⇒ that problem with the target's composition action applied as a
+      rule for staying, without leaving
+    - `FULL` ⇒ the target's problem with its composition action
     """
 
     RAW = "Raw"
@@ -220,8 +220,8 @@ def demanded_query_order(
     """Expand demanded roots and reject typed cycles and reads deeper than one step.
 
     A query never reads a Full publication. A Participating query, a rule for staying
-    applied within one step, reads Raw queries only: problem values, never another
-    rule for staying.
+    applied within one step, reads Raw queries only: values without the composition
+    action, never another rule for staying.
     """
     graph: dict[str, tuple[str, ...]] = {}
     pending = list(reversed(roots))
@@ -242,9 +242,9 @@ def demanded_query_order(
             ):
                 raise ValueError(
                     f"Participating query {name!r} cannot read Participating query "
-                    f"{upstream!r}: a rule for staying reads the problem values of "
-                    "its targets only, so two such rules cannot chain within one "
-                    "step."
+                    f"{upstream!r}: a rule for staying reads only the values of "
+                    "its targets without the composition action, so two such "
+                    "rules cannot chain within one step."
                 )
         graph[name] = dependencies[name]
         pending.extend(reversed(dependencies[name]))
@@ -279,8 +279,9 @@ class QueryNode:
     read: QueryRead
     """Mapped context and kind of this action problem.
 
-    An exit target is read as Raw, the destination's problem without its own exit,
-    because a subject moves at most once per period. A consent target is read as
+    A destination is read as Raw, the destination's problem without its own
+    composition action, because an agent decides on its composition at most once per
+    period. A consent target is read as
     Participating: the formed couple applies its own rule for staying, and the
     targets of that rule are read as Raw.
     """
@@ -300,11 +301,11 @@ class QueryNode:
     """Open-branch value components, stacked inside the admitted query core."""
     available: Callable[..., BoolND] | None = None
     """Caller-context guard evaluated before a demanded benchmark."""
-    exit_targets: Mapping[int, Mapping[str, str]] = MappingProxyType({})
-    """Stable exit ID to source member and its exact destination query key."""
-    exit_adjustments: Mapping[int, Mapping[str, Callable[..., PytreeValue]]] = (
-        MappingProxyType({})
-    )
+    composition_action_targets: Mapping[int, Mapping[str, str]] = MappingProxyType({})
+    """Stable decision ID to source member and its exact destination query key."""
+    composition_action_adjustments: Mapping[
+        int, Mapping[str, Callable[..., PytreeValue]]
+    ] = MappingProxyType({})
     """The same bound once-paid source adjustments used by the decision."""
     ancestors: tuple[str, ...] = ()
     """Exact producing contexts along the mapped source path."""
@@ -324,17 +325,18 @@ class QueryNode:
     The context's plan indices then span the kept groups alone; every other
     group and every observation axis is drawn once per sample.
     """
-    exit_availability: Callable[..., PytreeValue] | None = None
-    """Availability predicate of the occupant's exit, if it declares one."""
+    composition_action_availability: Callable[..., PytreeValue] | None = None
+    """Availability predicate of the occupant's composition action, if it has one."""
     draw_condition: int | None = None
-    """Drawn plan position whose draws fall only where an exit is available.
+    """Drawn plan position whose draws fall only where the decision is available.
 
-    The mass where no exit is available then enters once, through one more row
-    per kept row, at the value of staying.
+    The mass where no decision is available then enters once, through one more row per
+    kept row, at the value of staying.
     """
     available_nodes: tuple[int, tuple[bool, ...]] | None = None
-    """Enumerated plan position whose nodes alone decide whether the exit is
-    available, and whether it is at each of them.
+    """Enumerated plan position whose nodes alone decide if the decision is available.
+
+    It also holds whether it is available at each of them.
 
     The plan's rows then cross that group's available nodes and its first
     unavailable one with every node of the other groups. A row of that one node
@@ -345,10 +347,10 @@ class QueryNode:
     """Proof that this outside read lands on the destination's stored nodes.
 
     None when the build cannot prove it; the read keeps its Raw identity either
-    way, since it is the same problem value.
+    way, since it is the same value without the composition action.
     """
     grid_rules: tuple[ProjectedGridRule, ...] = ()
-    """Destination-grid rules of the states an exit projects into this read.
+    """Destination-grid rules of the states that the decision projects into this read.
 
     The projection already caps each `clip_state` state; each `raise` state adds
     one reached-landing check to the read's own.
@@ -357,7 +359,8 @@ class QueryNode:
     """The target's occurrence later in the period, whose stored value this read
     takes; `None` for a read of the target's problem at the read's step.
 
-    An exit enters a regime of a later stage of its period, which decides there:
+    A decision on the composition enters a regime of a later stage of its period, which
+    decides there:
     its value at its occurrence is interpolated at the projected states.
     """
 
@@ -393,21 +396,23 @@ class QueryNode:
         object.__setattr__(self, "observation_aliases", MappingProxyType(aliases))
         object.__setattr__(
             self,
-            "exit_targets",
+            "composition_action_targets",
             MappingProxyType(
                 {
                     identifier: MappingProxyType(dict(targets))
-                    for identifier, targets in self.exit_targets.items()
+                    for identifier, targets in self.composition_action_targets.items()
                 }
             ),
         )
         object.__setattr__(
             self,
-            "exit_adjustments",
+            "composition_action_adjustments",
             MappingProxyType(
                 {
                     identifier: MappingProxyType(dict(adjustments))
-                    for identifier, adjustments in self.exit_adjustments.items()
+                    for identifier, adjustments in (
+                        self.composition_action_adjustments.items()
+                    )
                 }
             ),
         )
@@ -559,8 +564,8 @@ type StayTable = tuple[FloatND, BoolND, BoolND, IntND, FloatND | None]
 def _query_landing_checks(*, node: QueryNode) -> tuple[LandingCheck, ...]:
     """The read's reached-landing checks: its problem's, then its projected states'.
 
-    A projected state checks against its destination grid on behalf of the exit
-    that projects it.
+    A projected state checks against its destination grid on behalf of the composition
+    action that projects it.
     """
     return (
         *_problem_landing_checks(node=node),
@@ -603,7 +608,7 @@ def _query_landing_totals(*, counts: IntND) -> IntND:
 
 @dataclass(frozen=True, kw_only=True, eq=False)
 class ScalarPolicyQueries:
-    """The same bound decision at one original subject or mapped destination.
+    """The same bound decision at one original agent or mapped destination.
 
     Simulation owns native argument placement, inventory and row custody. Every
     query's current parameters and canonical continuation enter explicitly.
@@ -615,8 +620,9 @@ class ScalarPolicyQueries:
     """The node that acts.
 
     - Full for an original occupant's choice.
-    - For a mover's once-only action, the kind its move was priced at: Participating
-      after a consent move, Raw after any other exit.
+    - For a deciding member's once-only action, the kind its decision was priced
+      at: Participating after formation by consent, Raw after any other
+      composition action.
     """
     period: int
     """Exact computational period of the phase-specific Q/F declarations."""
@@ -629,7 +635,7 @@ class ScalarPolicyQueries:
         arguments: Mapping[str, Mapping[str, PytreeValue]],
         frame: CurrentIIDDrawFrame | None = None,
     ) -> Mapping[str, FloatND | IntND]:
-        """Use the same canonical settlement at the immutable original source."""
+        """Use the same canonical transfer at the immutable original source."""
         fixed = arguments[query]
         physical = {} if frame is None else frame.physical
         return _mapped_query_states(
@@ -766,7 +772,7 @@ class ScalarPolicyQueries:
         ages: TimeAxis,
         fixed_flat_params: FlatParams = MappingProxyType({}),
     ) -> Mapping[str, Mapping[str, PytreeValue]]:
-        """Bind only clock and settlement operands, without policy value inputs."""
+        """Bind only clock and transfer operands, without policy value inputs."""
         params = _query_flat_params(
             flat_params=flat_params, fixed_flat_params=fixed_flat_params
         )
@@ -1724,7 +1730,7 @@ def _query_node_parameter_namespaces(
 def _query_projection_operands(
     *, node: QueryNode, context: CoreBuildContext
 ) -> Mapping[str, PytreeValue]:
-    """Bind each producing context's exact current-call settlement parameters."""
+    """Bind each producing context's exact current-call transfer parameters."""
     return _projection_operands(
         node=node,
         source_state_names=frozenset(
@@ -1758,7 +1764,7 @@ def _projection_operands(
     source_state_names: frozenset[StateName],
     flat_params: FlatParams,
 ) -> Mapping[str, PytreeValue]:
-    """Read the same canonical settlement paths for policies and entry frames."""
+    """Read the same canonical transfer paths for policies and entry frames."""
     operands = {}
     for name, path in node.read.operand_paths.items():
         if name in source_state_names or name in {"period", "age"}:
@@ -2140,7 +2146,7 @@ def _observation_available(
     arguments: Mapping[str, Mapping[str, PytreeValue]],
     available: Mapping[str, PytreeValue],
 ) -> BoolND:
-    """Short-circuit equivalent aliases without evaluating their settlements."""
+    """Short-circuit equivalent aliases without evaluating their transfers."""
     active = jnp.asarray(a=False)
     for producer in node.observation_aliases[group]:
         fixed = arguments[producer]
@@ -2175,7 +2181,7 @@ def _observation_inputs(
     available: Mapping[str, PytreeValue],
     guard: BoolND | None = None,
 ) -> Mapping[str, FloatND | IntND]:
-    """Use proved equal law-input maps, excluding unrelated target settlements."""
+    """Use proved equal law-input maps, excluding unrelated target transfers."""
     producer = node.observation_sources[group]
     target = definitions[producer]
     plan = target.context.current_iid_plans[period]
@@ -2590,7 +2596,7 @@ def _scale_is_valid(scale: FloatND) -> BoolND:
 
 
 def _taste_weights(*, node: QueryNode, arguments: Mapping[str, PytreeValue]) -> FloatND:
-    """The household's Pareto weights in member order."""
+    """The members' Pareto weights in member order."""
     context = node.context
     return _stacked_pareto_weights(
         pareto_weights=context.pareto_weights,
@@ -2607,19 +2613,19 @@ def taste_choice(
     scale: FloatND,
     key: jax.Array | None,
 ) -> tuple[jax.Array, FloatND]:
-    """Choose among the decider's taste alternatives and publish their value.
+    """Choose among the deciding member's taste alternatives and publish their value.
 
-    With `key`, the decider draws: it takes the alternative maximizing `values`
-    plus one mean-zero EV1 term each, and publishes `at_choice` there. Without
-    it, the choice is the noise-free argmax, and the value is the decider's
-    log-sum, with every other member at its mean of `at_choice` under the
-    decider's choice probabilities (`decider_expected_values`).
+    With `key`, the deciding member draws: it takes the alternative maximizing
+    `values` plus one mean-zero EV1 term each, and publishes `at_choice` there.
+    Without it, the choice is the noise-free argmax, and the value is the deciding
+    member's log-sum, with every other member at its mean of `at_choice` under the
+    deciding member's choice probabilities (`decider_expected_values`).
 
     Args:
-        values: The decider's value of each alternative.
+        values: The deciding member's value of each alternative.
         at_choice: Each alternative's published value, every member's value in
             a trailing member axis.
-        decider: The household decider's member index.
+        decider: The deciding member's index.
         scale: The taste-shock scale.
         key: The acting draw's key, or `None` to price the alternatives.
 
@@ -2646,9 +2652,9 @@ def _taste_stay_roster(
 ) -> tuple[FloatND, IntND, FloatND, IntND]:
     """Optimize continuous actions before assigning one taste per discrete cell.
 
-    Returns the decider's value of each discrete cell, the stable action ID
-    attaining it, the published value there (`taste_choice`) and the decider,
-    the member with the positive weight (`decider_choice`).
+    Returns the deciding member's value of each discrete cell, the stable action
+    ID attaining it, the published value there (`taste_choice`) and the deciding
+    member, the one with the positive Pareto weight (`decider_choice`).
     """
     decider, values, continuous, at_choice = decider_choice(
         Q=q,
@@ -2670,7 +2676,7 @@ def _mapped_query_states(
     names: frozenset[str] | None = None,
     guard: BoolND | None = None,
 ) -> Mapping[str, FloatND | IntND]:
-    """Canonical scalar settlement boundary shared by solve and actual routing.
+    """Canonical scalar transfer boundary shared by solve and actual routing.
 
     Under a false `guard` a cell runs only as a discarded lane of a batch, and the
     target reads its first grid point instead: a point its own solve evaluates.

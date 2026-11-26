@@ -11,9 +11,9 @@ from _lcm.regime_building.schedules import RegimeTransitionLaw
 from _lcm.regime_law import RegimeLaws
 from _lcm.time import ModelTime, TimeAxis, coordinate_kind, format_age
 from _lcm.utils.functools import is_user_function
+from lcm.composition_actions import CompositionAction, Consent
 from lcm.consumption_savings_regime import _EGMFamilyRegime
 from lcm.exceptions import ModelInitializationError
-from lcm.exits import Consent, Exit
 from lcm.phased import Phased
 from lcm.regime import (
     ActionEntry,
@@ -110,7 +110,7 @@ def validate_time_declarations(
                     )
 
 
-def validate_stages(  # noqa: C901, PLR0912 - one pass over the regimes' edges and exits
+def validate_stages(  # noqa: C901, PLR0912 - one pass over the regimes' edges and composition actions
     *,
     regimes: Mapping[RegimeName, Regime],
     laws: RegimeLaws,
@@ -120,15 +120,14 @@ def validate_stages(  # noqa: C901, PLR0912 - one pass over the regimes' edges a
 ) -> MappingProxyType[RegimeName, frozenset[int]]:
     """Refuse declarations that break the order of the stages within a period.
 
-    An edge lands at its target's next occurrence: in a later stage of the
-    source's period without discounting, else in the next period with one
-    discount. At each age, a source's edges all land in its period or all cross
-    into the next one; one whose edges stay in its period at some age declares
-    no Koopmans aggregator and uses no endogenous-grid solver. A gated edge and
-    its fallbacks land in the next stage, and an edge skips no stage of a target
-    with continuous stochastic processes. An exit enters a regime of its own
-    stage or of a later stage of its period, and observes no shock that such a
-    regime draws.
+    An edge lands at its target's next occurrence: in a later stage of the source's
+    period without discounting, else in the next period with one discount. At each age,
+    a source's edges all land in its period or all cross into the next one; one whose
+    edges stay in its period at some age declares no Koopmans aggregator and uses no
+    endogenous-grid solver. A gated edge and its fallbacks land in the next stage, and
+    an edge skips no stage of a target with continuous stochastic processes. A
+    composition action enters a regime of its own stage or of a later stage of its
+    period, and observes no shock that such a regime draws.
 
     Returns:
         The regimes whose edges land in their own period at some age, each with
@@ -217,15 +216,18 @@ def validate_stages(  # noqa: C901, PLR0912 - one pass over the regimes' edges a
                     f"{processes} are not drawn there"
                     + _pass_through(regime=target, stages=sat_out)
                 )
-        exit_ = regime.exit
+        composition_action_ = regime.composition_action
         destinations = (
             ()
-            if exit_ is None
+            if composition_action_ is None
             else (
-                *(target.regime for target in exit_.targets.values()),
                 *(
-                    (exit_.rule.counterparty.regime,)
-                    if isinstance(exit_.rule, Consent)
+                    target.regime
+                    for target in composition_action_.destinations.values()
+                ),
+                *(
+                    (composition_action_.rule.counterparty.regime,)
+                    if isinstance(composition_action_.rule, Consent)
                     else ()
                 ),
             )
@@ -233,12 +235,13 @@ def validate_stages(  # noqa: C901, PLR0912 - one pass over the regimes' edges a
         for destination in destinations:
             if stage_of[destination] < stage:
                 problems.append(
-                    f"the exit of '{name}' in stage '{names[stage]}' reads "
+                    f"the composition action of '{name}' in stage '{names[stage]}' "
+                    "reads "
                     f"'{destination}' of the earlier stage "
                     f"'{names[stage_of[destination]]}'"
                 )
             drawn = sorted(
-                set(cast("Exit", exit_).observes)
+                set(cast("CompositionAction", composition_action_).observes)
                 & {
                     shock
                     for group in regimes[destination].shocks
@@ -248,7 +251,8 @@ def validate_stages(  # noqa: C901, PLR0912 - one pass over the regimes' edges a
             )
             if stage_of[destination] > stage and drawn:
                 problems.append(
-                    f"the exit of '{name}' in stage '{names[stage]}' observes "
+                    f"the composition action of '{name}' in stage '{names[stage]}' "
+                    "observes "
                     f"{drawn} of '{destination}', drawn in its later stage "
                     f"'{names[stage_of[destination]]}'; draw the shock in stage "
                     f"'{names[stage]}' and carry it as a state"

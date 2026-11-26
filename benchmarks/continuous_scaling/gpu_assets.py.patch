@@ -45,10 +45,10 @@
 +                assert sorted(rows) == list(range(PADDED_ROWS))
 +                placed_counts.append(PADDED_ROWS)
 @@ -504,3 +512,3 @@
--        assert call["n_subjects"] == 24
+-        assert call["n_agents"] == 24
 -        assert result["r0"][0].V_arr.shape[0] == 24
 -        padded_calls.append(24)
-+        assert call["n_subjects"] == PADDED_ROWS
++        assert call["n_agents"] == PADDED_ROWS
 +        assert result["r0"][0].V_arr.shape[0] == PADDED_ROWS
 +        padded_calls.append(PADDED_ROWS)
 @@ -549 +557 @@

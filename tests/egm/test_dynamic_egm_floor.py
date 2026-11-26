@@ -1283,7 +1283,7 @@ def test_dynamic_egm_floor_value_changes_reuse_compiled_programs() -> None:
     )
 
 
-def test_dynamic_egm_simulation_uses_actual_subject_floor() -> None:
+def test_dynamic_egm_simulation_uses_actual_agent_floor() -> None:
     """A finite illegal action loses to the best legal grid action at actual wealth."""
     model = build_dynamic_egm_model()
     params = dynamic_egm_params(floor=0.5)
@@ -1302,7 +1302,7 @@ def test_dynamic_egm_simulation_uses_actual_subject_floor() -> None:
 
 
 @pytest.mark.parametrize("runtime_checks", [True, False])
-def test_dynamic_egm_simulation_rejects_empty_actual_subject(
+def test_dynamic_egm_simulation_rejects_empty_actual_agent(
     *, runtime_checks: bool
 ) -> None:
     """No declared positive action is feasible at actual wealth equal to the floor."""

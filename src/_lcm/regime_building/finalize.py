@@ -49,6 +49,7 @@ from _lcm.user_regime_validation import _validate_completeness
 from _lcm.utils.error_messages import format_messages
 from lcm.case_piece import CaseBoundary
 from lcm.collective import CollectiveUtility
+from lcm.composition_actions import CompositionAction, Consent, MutualConsent
 from lcm.condition import Condition
 from lcm.consumption_savings_regime import (
     NetOfAdjustmentCost,
@@ -57,7 +58,6 @@ from lcm.consumption_savings_regime import (
 )
 from lcm.decoupled import KoopmansDeclaration
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.exits import Consent, Exit, MutualConsent
 from lcm.grids import DiscreteGrid
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.phased import Phased
@@ -304,8 +304,8 @@ def finalize_regimes(
                 ),
             ),
             certainty_equivalent=regime_certainty_equivalent,
-            exit=_adapt_exit(
-                declaration=user_regime.exit,
+            composition_action=_adapt_composition_action(
+                declaration=user_regime.composition_action,
                 source_grids=value_grids,
                 grids_by_regime=value_grids_by_regime,
                 adapters=adapters,
@@ -325,13 +325,13 @@ def finalize_regimes(
     return MappingProxyType(result)
 
 
-def _adapt_exit(
+def _adapt_composition_action(
     *,
-    declaration: Exit | None,
+    declaration: CompositionAction | None,
     source_grids: Mapping[str, AdapterGrid],
     grids_by_regime: Mapping[RegimeName, Mapping[str, AdapterGrid]],
     adapters: AdapterMemo,
-) -> Exit | None:
+) -> CompositionAction | None:
     """Decode source reads and encode only projected destination-state outputs."""
     if declaration is None:
         return None
@@ -385,13 +385,13 @@ def _adapt_exit(
         )
     clock = source_grids.get("period")
     if isinstance(rule, MutualConsent) and isinstance(clock, StageClock):
-        # The settlement default reads codes, and the period through the clock.
+        # The transfer default reads codes, and the period through the clock.
         rule = replace(
             rule,
-            settle=replace(
-                rule.settle,
+            transfer=replace(
+                rule.transfer,
                 default=adapt_user_function(
-                    func=rule.settle.default,
+                    func=rule.transfer.default,
                     value_grids={"period": clock},
                     encode=None,
                     adapters=adapters,
@@ -402,7 +402,7 @@ def _adapt_exit(
         declaration,
         rule=rule,
         available=adapted(declaration.available),
-        targets={
+        destinations={
             role: replace(
                 target,
                 projection=projection(
@@ -410,7 +410,7 @@ def _adapt_exit(
                 ),
                 utility_adjustment=adapted(target.utility_adjustment),
             )
-            for role, target in declaration.targets.items()
+            for role, target in declaration.destinations.items()
         },
     )
 
@@ -422,7 +422,7 @@ def _with_adapted_household(
     value_grids: Mapping[str, AdapterGrid],
     adapters: AdapterMemo,
 ) -> UserRegime:
-    """Return the regime whose household declares the bodies the engine runs.
+    """Return the regime whose collective utility declares the engine's bodies.
 
     A member's adapted utility is then one object in the declaration and in
     the engine's functions, and the Pareto weights read values.

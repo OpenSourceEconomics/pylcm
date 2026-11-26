@@ -52,7 +52,7 @@ class _Profiler:
         self.foreign = available[devices] if needs_foreign else None
         self.population = population
         self.original_population = population
-        pins = {"subject": width}
+        pins = {"agent": width}
         if pinned_action is not None:
             pins["action_product"] = pinned_action
         self.runtime = SimpleNamespace(
@@ -70,10 +70,10 @@ class _Profiler:
         self.calls: list[tuple[int, int]] = []
 
     def profile_widths(
-        self, *, n_subjects: int, widths: Mapping[str, int]
+        self, *, n_agents: int, widths: Mapping[str, int]
     ) -> SimulationChunkProfile:
-        self.calls.append((n_subjects, widths["action_product"]))
-        fixed = self.cost(n_subjects, widths["action_product"])
+        self.calls.append((n_agents, widths["action_product"]))
+        fixed = self.cost(n_agents, widths["action_product"])
         costs = (
             dict.fromkeys(self.devices, fixed)
             if isinstance(fixed, int)
@@ -94,8 +94,8 @@ class _Profiler:
             assert self.foreign is not None
             host_stages = (_stage(devices=(self.foreign,)),)
         return SimulationChunkProfile(
-            n_subjects=n_subjects + int(self.malformed == "extent"),
-            padded_population=-(-self.population // n_subjects) * n_subjects,
+            n_agents=n_agents + int(self.malformed == "extent"),
+            padded_population=-(-self.population // n_agents) * n_agents,
             axis_widths=MappingProxyType(actual_widths),
             fixed_reservation=MappingProxyType(costs),
             output_reservation=MappingProxyType(dict.fromkeys(self.devices, 5)),
@@ -124,11 +124,11 @@ def _axis(*, name: str, extent: int) -> TiledOutputAxis:
 
 
 def _axes(
-    *, regimes: Mapping[str, Regime], n_subjects: int
+    *, regimes: Mapping[str, Regime], n_agents: int
 ) -> tuple[TiledOutputAxis, ...]:
     del regimes
     return (
-        _axis(name="subject", extent=n_subjects),
+        _axis(name="agent", extent=n_agents),
         _axis(name="action_product", extent=8),
     )
 
@@ -182,11 +182,11 @@ def _check_receipt(*, plan: SimulationChunkPlan, profiler: _Profiler) -> None:
     assert len(receipt.attempts) == len(profiler.calls)
     assert len(profiler.calls) == len(set(profiler.calls))
     assert receipt.candidates == tuple(sorted(set(receipt.candidates)))
-    assert receipt.selected_subjects == plan.profile.n_subjects
+    assert receipt.selected_agents == plan.profile.n_agents
     assert dict(receipt.axis_widths) == dict(plan.profile.axis_widths)
     assert all(value <= 100 for value in plan.required_bytes.values())
     selected = [a for a in receipt.attempts if a.admitted][-1]
-    assert selected.n_subjects == plan.profile.n_subjects
+    assert selected.n_agents == plan.profile.n_agents
     assert receipt.planning_seconds >= 0
     assert receipt.unique_backend_compile_requests is None
 
@@ -202,7 +202,7 @@ def test_full_population_needs_only_one_complete_profile(
     plan = _select(profiler=profiler)
     assert profiler.calls == [(largest, 8)]
     assert plan.profile.padded_population // largest == 1
-    assert dict(plan.profile.axis_widths)["subject"] == min(width, largest)
+    assert dict(plan.profile.axis_widths)["agent"] == min(width, largest)
     _check_receipt(plan=plan, profiler=profiler)
 
 
@@ -220,7 +220,7 @@ def test_refusal_descends_with_the_admitted_anchor_map(
     profiler = _Profiler(cost=lambda n, _a: 30 if n <= last_fit else 90)
     plan = _select(profiler=profiler)
     assert profiler.calls == expected
-    assert plan.profile.n_subjects == last_fit
+    assert plan.profile.n_agents == last_fit
     _check_receipt(plan=plan, profiler=profiler)
 
 
@@ -231,7 +231,7 @@ def test_bootstrap_map_is_selected_once_then_frozen(*, last_fit: int) -> None:
     assert profiler.calls[:3] == [(12, 8), (2, 8), (2, 4)]
     assert profiler.calls[3] == (12, 4)  # Same extent, genuinely different map.
     assert all(a == 4 for _n, a in profiler.calls[2:])
-    assert plan.profile.n_subjects == last_fit
+    assert plan.profile.n_agents == last_fit
     _check_receipt(plan=plan, profiler=profiler)
 
 
@@ -242,7 +242,7 @@ def test_duplicate_width_maps_are_not_profiled_twice(*, top_fits: bool) -> None:
     )
     plan = _select(profiler=profiler)
     assert all(a == 3 for _n, a in profiler.calls)
-    assert plan.profile.n_subjects == (12 if top_fits else 2)
+    assert plan.profile.n_agents == (12 if top_fits else 2)
     _check_receipt(plan=plan, profiler=profiler)
 
 
@@ -258,7 +258,7 @@ def test_collapsed_frontier_profiles_each_map_at_most_once(
     )
     if bootstrap_fits:
         plan = _select(profiler=profiler)
-        assert plan.profile.n_subjects == 4
+        assert plan.profile.n_agents == 4
         _check_receipt(plan=plan, profiler=profiler)
     else:
         with pytest.raises(ExecutionPlanningError, match="no anchor map fits"):
@@ -270,7 +270,7 @@ def test_top_fit_does_not_depend_on_unmeasured_smaller_shapes() -> None:
     profiler = _Profiler(cost=lambda n, _a: 30 if n == 12 else 90)
     plan = _select(profiler=profiler)
     assert profiler.calls == [(12, 8)]
-    assert plan.profile.n_subjects == 12
+    assert plan.profile.n_agents == 12
     _check_receipt(plan=plan, profiler=profiler)
 
 
@@ -278,7 +278,7 @@ def test_nonmonotone_refusals_do_not_skip_an_admissible_descending_candidate() -
     profiler = _Profiler(cost=lambda n, _a: 30 if n in {2, 8} else 90)
     plan = _select(profiler=profiler)
     assert profiler.calls == [(12, 8), (2, 8), (8, 8)]
-    assert plan.profile.n_subjects == 8
+    assert plan.profile.n_agents == 8
     _check_receipt(plan=plan, profiler=profiler)
 
 
@@ -298,10 +298,10 @@ def test_exact_budget_boundary_is_checked_on_every_device(*, fixed: int) -> None
         cost=lambda n, _a: {0: 30, 1: fixed if n == 12 else 30, 2: 30},
     )
     plan = _select(profiler=profiler)
-    # The two-subject pin aligns to three devices before the frontier doubles.
+    # The two-agent pin aligns to three devices before the frontier doubles.
     assert plan.receipt is not None
     assert plan.receipt.candidates == (3, 6, 12)
-    assert plan.profile.n_subjects == (12 if fixed == 80 else 6)
+    assert plan.profile.n_agents == (12 if fixed == 80 else 6)
     receipt = plan.receipt.attempts[0].devices[1]
     assert receipt.required_bytes == 5 + fixed + 5 + 10
     assert plan.receipt.attempts[0].admitted is (fixed == 80)
@@ -343,25 +343,25 @@ def test_missing_budget_refuses_before_any_profile() -> None:
 
 def test_admission_is_rechecked_when_current_residency_changes() -> None:
     profiler = _Profiler()
-    assert _select(profiler=profiler).profile.n_subjects == 12
+    assert _select(profiler=profiler).profile.n_agents == 12
     profiler.resident = dict.fromkeys(profiler.devices, 90)
     with pytest.raises(ExecutionPlanningError, match="no anchor map fits"):
         _select(profiler=profiler)
     assert profiler.calls == [(12, 8), (12, 8), (2, 8), (2, 4)]
 
 
-def test_pin_is_retained_when_scalar_anchor_omits_the_subject_axis(
+def test_pin_is_retained_when_scalar_anchor_omits_the_agent_axis(
     *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def scalar_axes(
-        *, regimes: Mapping[str, Regime], n_subjects: int
+        *, regimes: Mapping[str, Regime], n_agents: int
     ) -> tuple[TiledOutputAxis, ...]:
         del regimes
-        assert n_subjects == 1
+        assert n_agents == 1
         return (_axis(name="action_product", extent=8),)
 
     monkeypatch.setattr(admission, "_common_axes", scalar_axes)
     profiler = _Profiler(population=5, width=1)
     plan = _select(profiler=profiler)
-    assert dict(plan.profile.axis_widths) == {"subject": 1, "action_product": 8}
+    assert dict(plan.profile.axis_widths) == {"agent": 1, "action_product": 8}
     assert profiler.calls == [(5, 8)]

@@ -170,8 +170,8 @@ class _ReducedIntermediates:
 def _nan_at_cell(*, values: FloatND, mask: FloatND) -> FloatND:
     """Return 1.0 where a cell's value is NaN, at the shape of the cell mask.
 
-    A household's values carry a trailing member axis the mask does not; such a
-    cell counts as NaN where any member's value is.
+    In a regime with several members, the values carry a trailing member axis
+    the mask does not. Such a cell counts as NaN where any member's value is.
     """
     return jnp.any(jnp.isnan(values).reshape(*mask.shape, -1), axis=-1).astype(float)
 

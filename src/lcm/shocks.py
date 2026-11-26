@@ -72,7 +72,7 @@ class BaseInnovations:
     """
 
     values: FloatND | IntND | HostArray
-    """Scalar cell, entry vector, or common/subject-specific dated input array."""
+    """Scalar cell, entry vector, or common/agent-specific dated input array."""
 
     def __post_init__(self) -> None:
         _validate_override_array(values=self.values)
@@ -101,7 +101,7 @@ class PhysicalValues:
 def _validate_override_array(*, values: FloatND | IntND | HostArray) -> None:
     """Reject narrowing before pytree tracing can erase the caller's dtype."""
     dtype = values.dtype
-    if values.ndim > 2 or dtype.kind not in "fiu":  # noqa: PLR2004 - common paths or subject-by-period paths
+    if values.ndim > 2 or dtype.kind not in "fiu":  # noqa: PLR2004 - common paths or agent-by-period paths
         raise ShockDeclarationError(
             "Shock inputs require real scalar, vector, or matrix arrays."
         )

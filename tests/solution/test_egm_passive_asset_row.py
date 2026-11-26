@@ -20,6 +20,7 @@ from collections.abc import Mapping
 
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 from typing_extensions import TypedDict
 
@@ -291,7 +292,7 @@ def _params() -> _Params:
     }
 
 
-def test_passive_aime_through_asset_row_matches_brute_force():
+def test_passive_aime_through_asset_row_matches_brute_force() -> None:
     """A passive AIME state carried through asset-row mode matches brute force.
 
     The regime solves per exogenous asset node (the survival probability reads
@@ -330,7 +331,7 @@ def test_passive_aime_through_asset_row_matches_brute_force():
         )
 
 
-def test_asset_row_carry_rows_are_the_euler_grid_not_the_envelope_workspace():
+def test_asset_row_carry_rows_are_the_euler_grid_not_the_envelope_workspace() -> None:
     """The persisted asset-row carry holds one row per Euler node, unpadded.
 
     In asset-row mode each carry row is the value/marginal published at the
@@ -508,7 +509,7 @@ def _means_test_params(*, rate_is_fixed: bool) -> _Params:
 @pytest.mark.parametrize("rate_is_fixed", [False, True])
 def test_means_tested_prob_through_param_intermediate_matches_brute_force(
     rate_is_fixed: bool,  # noqa: FBT001
-):
+) -> None:
     """A means-tested survival prob `share <- capital_income(wealth, r)` matches.
 
     The stay probability reads the Euler state `wealth` through a param-dependent
@@ -595,21 +596,21 @@ def _invariance_tolerances(reference: np.ndarray) -> tuple[float, float]:
     return rtol, rtol * float(np.max(np.abs(reference[np.isfinite(reference)])))
 
 
-def _simulated_choices(*, model: Model, solution: SolutionResult):
-    """Simulate a fixed subject panel and return it keyed by subject and period.
+def _simulated_choices(*, model: Model, solution: SolutionResult) -> pd.DataFrame:
+    """Simulate a fixed agent panel and return it keyed by agent and period.
 
     The seed is pinned so the regime lottery draws the same shocks on both
-    sides; without that, subjects cross the survival threshold differently and
+    sides; without that, agents cross the survival threshold differently and
     the comparison measures the draw rather than the schedule.
     """
     rng = np.random.default_rng(seed=925)
-    n_subjects = 400
+    n_agents = 400
     initial_conditions = {
-        "age": jnp.full(n_subjects, float(_ages().period_to_age(0))),
-        "wealth": jnp.asarray(rng.uniform(2.0, 95.0, size=n_subjects)),
-        "aime": jnp.asarray(rng.uniform(0.0, AIME_MAX, size=n_subjects)),
-        "income": jnp.asarray(rng.uniform(-0.4, 0.4, size=n_subjects)),
-        "regime_id": jnp.full(n_subjects, PassiveAssetRowRegimeId.working_life),
+        "age": jnp.full(n_agents, float(_ages().period_to_age(0))),
+        "wealth": jnp.asarray(rng.uniform(2.0, 95.0, size=n_agents)),
+        "aime": jnp.asarray(rng.uniform(0.0, AIME_MAX, size=n_agents)),
+        "income": jnp.asarray(rng.uniform(-0.4, 0.4, size=n_agents)),
+        "regime_id": jnp.full(n_agents, PassiveAssetRowRegimeId.working_life),
     }
     simulated = model.simulate(
         params=_params(),
@@ -618,11 +619,13 @@ def _simulated_choices(*, model: Model, solution: SolutionResult):
         seed=20260806,
         log_level="debug",
     ).to_dataframe(use_categorical_codes=True)
-    return simulated.set_index(["subject_id", "period"]).sort_index()
+    return simulated.set_index(["agent_id", "period"]).sort_index()
 
 
 @pytest.mark.parametrize("cell_width", [1, 2, 4])
-def test_passive_aime_cell_width_leaves_value_function_unchanged(cell_width: int):
+def test_passive_aime_cell_width_leaves_value_function_unchanged(
+    cell_width: int,
+) -> None:
     """Tiling the cell axis moves the values by at most a few ULP.
 
     A width on the `cell` axis only changes how the output state cells — the
@@ -659,14 +662,14 @@ def test_passive_aime_cell_width_leaves_value_function_unchanged(cell_width: int
 @pytest.mark.parametrize("cell_width", [1, 2, 4])
 def test_passive_aime_cell_width_leaves_the_discrete_choices_unchanged(
     cell_width: int,
-):
+) -> None:
     """Tiling the cell axis does not move a single discrete choice.
 
     A tile width partitions a computation whose result does not depend on the
     partition, so the discrete objects are owed exact equality rather than a
     tolerance: a labor-supply choice or a regime that flips is a defect, not
-    rounding. Simulating the same subject panel under both schedules with the
-    same seed reproduces the same choice for every subject in every period.
+    rounding. Simulating the same agent panel under both schedules with the
+    same seed reproduces the same choice for every agent in every period.
     """
     model = _model(solver="dcegm")
     reference = _simulated_choices(
@@ -680,7 +683,7 @@ def test_passive_aime_cell_width_leaves_the_discrete_choices_unchanged(
     )
 
     assert list(tiled.index) == list(reference.index), (
-        f"subject/period panel differs, width={cell_width}"
+        f"agent/period panel differs, width={cell_width}"
     )
     for column in ("labor_supply", "regime_name"):
         np.testing.assert_array_equal(

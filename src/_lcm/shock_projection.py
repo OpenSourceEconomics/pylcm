@@ -76,7 +76,7 @@ def validate_observed_laws(
             )
             context = (
                 f"Regime {source!r} observes shock {shock!r} of group {group!r} at "
-                f"its exit to {target!r}"
+                f"its composition action into {target!r}"
             )
             if record != _law_record(
                 shock=shock,
@@ -98,10 +98,11 @@ def validate_observed_laws(
                 ):
                     raise ShockDeclarationError(
                         f"{context}, and its law reads state {state!r}, which the "
-                        "exit's projection changes or is not proven to keep. The "
-                        "law of an observed shock must be the same at the source's "
-                        "state and at the landing state, so it may read only "
-                        "parameters and states the projection returns unchanged. "
+                        "composition action's projection changes or is not proven "
+                        "to keep. The law of an observed shock must be the same at "
+                        "the source's state and at the landing state, so it may "
+                        "read only parameters and states the projection returns "
+                        "unchanged. "
                         f"Draw {shock!r} in {source!r} and carry it to {target!r} "
                         "as a state instead."
                     )

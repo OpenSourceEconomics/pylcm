@@ -34,7 +34,7 @@ def _model() -> Model:
         execution_config=ExecutionConfig(
             devices=tuple(device.id for device in jax.devices()[:2]),
             sharded_states=(),
-            simulation_sharding="subjects",
+            simulation_sharding="agents",
         ),
     )
 

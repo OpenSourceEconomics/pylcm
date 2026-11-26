@@ -13,7 +13,7 @@ from jax import config as jax_config
 
 from lcm import LinSpacedGrid
 from lcm.solvers import AdaptiveOuterMesh
-from lcm.typing import ContinuousState, FloatND
+from lcm.typing import ContinuousState, FloatND, UserInitialConditions
 from tests.simulation.test_nnbegm_candidate_ranking import _record_canonical_q_batching
 from tests.test_models import n_nbegm_toy as toy
 
@@ -32,8 +32,8 @@ _MESH = AdaptiveOuterMesh(
     value_rtol=1e-4,
     golden_iterations=40,
 )
-# Subjects strictly between grid nodes on both asset axes, plus two exactly
-# on-grid corners: the off-grid subjects are the case the grid argmax cannot
+# Agents strictly between grid nodes on both asset axes, plus two exactly
+# on-grid corners: the off-grid agents are the case the grid argmax cannot
 # represent.
 _INITIAL = {
     "wealth": jnp.array([4.3, 11.7, 19.9, 27.2727272727272727, 8.1]),
@@ -55,7 +55,7 @@ _MIXED_INITIAL = {
 def _simulate(
     *,
     seed: int,
-    initial_conditions=_INITIAL,
+    initial_conditions: UserInitialConditions = _INITIAL,
 ) -> pd.DataFrame:
     model = toy.build_model(
         variant="n_nbegm",
@@ -82,7 +82,7 @@ def test_outer_actions_leave_the_finite_action_grid(simulated: pd.DataFrame) -> 
 
     The legacy finite path can only record nodes of the investment action
     grid; the continuous read must produce interior refined actions for
-    off-grid subjects.
+    off-grid agents.
     """
     alive = simulated[simulated["regime_name"] == "alive"]
     actions = np.asarray(alive["illiquid_investment"], dtype=float)
@@ -123,7 +123,7 @@ def test_nested_policy_fallback_column_is_published(simulated: pd.DataFrame) -> 
     """The refused-nested-read flag is observable in the simulated frame.
 
     A regime that can take the nested continuous-outer policy read must publish
-    the per-subject flag saying whether that read was refused and the grid
+    the per-agent flag saying whether that read was refused and the grid
     argmax kept, otherwise inference on this path cannot refuse the fallback
     rows. The complementary half -- that models without a nested read do NOT
     get the column -- is asserted in `test_simulate.py`.
@@ -138,14 +138,14 @@ def test_nested_policy_fallback_column_is_published(simulated: pd.DataFrame) -> 
 
 
 def test_mixed_regime_placeholders_do_not_abort_nested_replay() -> None:
-    """Only the subjects currently alive govern nested-policy replay safety."""
+    """Only the agents currently alive govern nested-policy replay safety."""
     mixed = _simulate(
         seed=42,
         initial_conditions=_MIXED_INITIAL,
     )
-    period0 = mixed[mixed["period"] == 0].sort_values("subject_id")
+    period0 = mixed[mixed["period"] == 0].sort_values("agent_id")
 
-    assert list(zip(period0["subject_id"], period0["regime_name"], strict=True)) == [
+    assert list(zip(period0["agent_id"], period0["regime_name"], strict=True)) == [
         (0, "alive"),
         (1, "dead"),
     ]
@@ -217,7 +217,7 @@ def test_a_legal_narrow_adjuster_mesh_preserves_the_exact_keeper() -> None:
 
 
 def test_nested_replay_scores_canonical_q_once_on_the_read_winner(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The nested read's winner is emitted; canonical Q scores only that pair.
 

@@ -5,23 +5,23 @@ dispatch. The same call-local path covers summary validation, ordered serial rep
 cohort-constant predicates, and individual constraints. Diagnostic state gathers use the
 existing profiled operation owner. Runtime parameters and arrays are explicit dynamic
 operands; user-DAG executables stay local to the current call. Preflight cohorts are
-replicated because their lengths may be smaller than the subject mesh. Earlier action
+replicated because their lengths may be smaller than the agent mesh. Earlier action
 products remain owned by `PreflightActionGrids`.
 
 This change is relative to `32549408bbbfb39b906ad0df99a5128ada6df1b9`.
 `tests/simulation/initial_conditions/test_admission_feasibility.py` exercises the public
 simulation boundary and observes actual JAX memory profiles and dispatch boundaries. Its
-principal low-budget example has two subjects, 1,024 actions, and a constraint that
-sorts 4,096 sine samples before comparing the median with a parameter. At 12 KiB in
-float64 the baseline executes feasibility and raises `InvalidInitialConditionsError`;
-the admitted implementation raises `ExecutionPlanningError` before executing the
-declined feasibility program. The original red and first green runs contained one test
-each, respectively zero and one passing tests.
+principal low-budget example has two agents, 1,024 actions, and a constraint that sorts
+4,096 sine samples before comparing the median with a parameter. At 12 KiB in float64
+the baseline executes feasibility and raises `InvalidInitialConditionsError`; the
+admitted implementation raises `ExecutionPlanningError` before executing the declined
+feasibility program. The original red and first green runs contained one test each,
+respectively zero and one passing tests.
 
 The CPU checks pass all 45 new cases in both float64 and float32. These include
 automatic and supplied solutions, enabled log levels, forced serial validation, natural
 per-constraint replay, parameter freshness with a structured leaf, and a cohort shorter
-than its subject mesh. Another 84 existing simulation checks pass in float64. The
+than its agent mesh. Another 84 existing simulation checks pass in float64. The
 low-budget thresholds are declared CPU-specific; their numerical values come from the
 observed compiler profiles. The 11 feasibility mutation controls form a separate
 population alongside the existing 406, 50, 37, and 10 controls.

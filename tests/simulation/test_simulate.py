@@ -52,7 +52,7 @@ from tests.test_models.deterministic.regression import (
 
 
 class _SimulateInputs(TypedDict):
-    """The kernel-level inputs `simulate` takes besides params, values and subjects."""
+    """The kernel-level inputs `simulate` takes besides params, values and agents."""
 
     regimes: MappingProxyType[RegimeName, Regime]
     regime_names_to_ids: RegimeNamesToIds
@@ -246,7 +246,7 @@ def test_simulate_using_model_methods(
         "wealth",
         "utility",
         "borrowing_constraint",
-        "subject_id",
+        "agent_id",
         "regime_name",
     }
     assert expected_cols == set(df.columns)
@@ -255,7 +255,7 @@ def test_simulate_using_model_methods(
     assert (df.loc[df["period"] == n_periods - 1, "labor_supply"] == "retire").all()
 
     # Higher wealth leads to higher consumption and value in each period
-    # (data is sorted by subject_id which corresponds to increasing initial wealth)
+    # (data is sorted by agent_id which corresponds to increasing initial wealth)
     for col in ["consumption", "value"]:
         is_monotonic = df.groupby("period")[col].apply(
             lambda x: x.is_monotonic_increasing
@@ -268,7 +268,7 @@ def test_simulate_using_model_methods(
 def test_grid_search_simulation_with_supplied_values_dispatches_its_decision_program(
     iskhakov_et_al_2017_stripped_down_model_solution: _SolveStrippedDown,
 ) -> None:
-    """Supplying solved values still computes the subject's own decision."""
+    """Supplying solved values still computes the agent's own decision."""
     period_to_regime_to_V_arr, params, model = (
         iskhakov_et_al_2017_stripped_down_model_solution(n_periods=2)
     )
@@ -288,7 +288,7 @@ def test_grid_search_simulation_with_supplied_values_dispatches_its_decision_pro
         },
     )
 
-    assert result.n_subjects == 1
+    assert result.n_agents == 1
 
 
 def test_simulate_with_only_discrete_actions() -> None:
@@ -314,12 +314,12 @@ def test_simulate_with_only_discrete_actions() -> None:
     )
     got = result.to_dataframe().query('regime_name == "working_life"')
 
-    # Expected: sorted by (subject_id, period)
-    # Subject 0: wealth=low -> works, low consumption; wealth=high -> retires, high
-    # Subject 1: wealth=high -> retires, high; wealth=medium -> retires, high
+    # Expected: sorted by (agent_id, period)
+    # Agent 0: wealth=low -> works, low consumption; wealth=high -> retires, high
+    # Agent 1: wealth=high -> retires, high; wealth=medium -> retires, high
     expected = pd.DataFrame(
         {
-            "subject_id": [0, 0, 1, 1],
+            "agent_id": [0, 0, 1, 1],
             "period": [0, 1, 0, 1],
             "wealth": ["low", "high", "high", "medium"],
             "labor_supply": ["work", "retire", "retire", "retire"],
@@ -329,7 +329,7 @@ def test_simulate_with_only_discrete_actions() -> None:
 
     assert_frame_equal(
         got[
-            ["subject_id", "period", "wealth", "labor_supply", "consumption"]
+            ["agent_id", "period", "wealth", "labor_supply", "consumption"]
         ].reset_index(drop=True),
         expected,
         check_dtype=False,
@@ -394,7 +394,7 @@ def test_effect_of_discount_factor_on_last_period() -> None:
 
     # Higher beta (more patient) should lead to higher value in later periods
     merged = df_low.merge(
-        df_high, on=["subject_id", "period"], suffixes=("_low", "_high")
+        df_high, on=["agent_id", "period"], suffixes=("_low", "_high")
     )
     period_4 = merged.query("period == 4")
     assert (period_4["value_low"] <= period_4["value_high"]).all()
@@ -457,7 +457,7 @@ def test_effect_of_disutility_of_work() -> None:
 
     # Merge results for easy comparison
     merged = df_low.merge(
-        df_high, on=["subject_id", "period"], suffixes=("_low", "_high")
+        df_high, on=["agent_id", "period"], suffixes=("_low", "_high")
     )
 
     # Lower disutility of work -> work more -> consume more
@@ -692,7 +692,7 @@ def test_simulation_result_save_load_roundtrip(tmp_path: Path) -> None:
 
     A round-trip through the on-disk format must produce a result whose
     `to_dataframe()` output matches the original, including all metadata
-    (regime / state / action names, available targets, period and subject
+    (regime / state / action names, available targets, period and agent
     counts).
     """
     model = get_model(n_periods=3)
@@ -716,7 +716,7 @@ def test_simulation_result_save_load_roundtrip(tmp_path: Path) -> None:
     loaded = SimulationResult.load(directory=save_dir)
 
     assert loaded.n_periods == result.n_periods
-    assert loaded.n_subjects == result.n_subjects
+    assert loaded.n_agents == result.n_agents
     assert loaded.regime_names == result.regime_names
     assert loaded.state_names == result.state_names
     assert loaded.action_names == result.action_names
@@ -725,13 +725,13 @@ def test_simulation_result_save_load_roundtrip(tmp_path: Path) -> None:
     assert_frame_equal(loaded.to_dataframe(), expected_df)
 
 
-def test_load_solution_reads_value_arrays_without_the_per_subject_artifacts(
+def test_load_solution_reads_value_arrays_without_the_per_agent_artifacts(
     tmp_path: Path,
 ) -> None:
     """`SimulationResult.load_solution` returns the saved value arrays alone.
 
     A consumer that only compares or reuses value functions reads `V_arr/` and
-    nothing else, so the per-subject checkpoint and the metadata pickle are not
+    nothing else, so the per-agent checkpoint and the metadata pickle are not
     needed — and neither is the device placement their leaves were saved under.
     """
     model = get_model(n_periods=3)

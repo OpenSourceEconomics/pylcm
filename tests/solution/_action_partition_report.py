@@ -426,7 +426,7 @@ def _block_major_report(
             execution_config=ExecutionConfig(
                 devices=tuple(range(8 if sharded_states else 4)),
                 device_memory_bytes=None,
-                axis_widths={"action_product": _FIXED_WIDTH, "cell": 8, "subject": 3},
+                axis_widths={"action_product": _FIXED_WIDTH, "cell": 8, "agent": 3},
                 invariant_block_widths={"pref_type": 1},
                 invariant_block_schedule=schedule,
                 action_partitions={"working": 4},

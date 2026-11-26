@@ -33,7 +33,7 @@ def _program() -> CoreProgram:
         function=_increment_used,
         argument_builder=_ArgumentsBoundAtDispatch(
             program_name="alias_sensitive_transition",
-            subject_arg_names=("used", "dead"),
+            agent_arg_names=("used", "dead"),
         ),
         requirements=CoreExecutionRequirements(),
         output_roles="next_state",
@@ -51,7 +51,7 @@ def _runtime(*, budget: int, device: jax.Device) -> SimulationRuntime:
             device_memory_bytes=budget,
         ),
         enable_jit=True,
-        subject_devices=(device,),
+        agent_devices=(device,),
     )
 
 
@@ -65,10 +65,10 @@ def _dispatch(
         program=program,
         arguments=arguments,
         period=0,
-        n_subjects=arguments["used"].size,
+        n_agents=arguments["used"].size,
         residency=SimulationDispatchContext(
             live_footprint=lambda: measure_buffer_footprint(tree=arguments),
-            budget_devices=runtime.subject_devices,
+            budget_devices=runtime.agent_devices,
         ),
     )
     assert isinstance(result, jax.Array)

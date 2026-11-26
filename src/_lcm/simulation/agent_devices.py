@@ -12,16 +12,16 @@ from lcm.exceptions import ExecutionPlanningError
 
 
 @runtime_checkable
-class _SubjectDeviceExecutor(Protocol):
+class _AgentDeviceExecutor(Protocol):
     """A bound forward runtime supplies the authoritative ordered devices."""
 
     @property
-    def subject_devices(self) -> tuple[jax.Device, ...]:
+    def agent_devices(self) -> tuple[jax.Device, ...]:
         """Return the execution devices used by its compiler and live admission."""
         ...
 
 
-def simulation_subject_devices(
+def simulation_agent_devices(
     *,
     regimes: Mapping[RegimeName, Regime],
     device_ids: tuple[int, ...],
@@ -37,14 +37,14 @@ def simulation_subject_devices(
         submesh_device_ids=(), visible_device_ids=device_ids
     )
     if execution is not None:
-        if execution.simulation_sharding == "subjects":
+        if execution.simulation_sharding == "agents":
             return devices
     else:
         executors = tuple(
             regime.simulation.programs.executor for regime in regimes.values()
         )
         bound = tuple(
-            item for item in executors if isinstance(item, _SubjectDeviceExecutor)
+            item for item in executors if isinstance(item, _AgentDeviceExecutor)
         )
         if bound:
             executor = bound[0]
@@ -52,16 +52,16 @@ def simulation_subject_devices(
                 item is not executor for item in bound
             ):
                 raise ExecutionPlanningError(
-                    "Forward regimes must share one subject runtime."
+                    "Forward regimes must share one agent runtime."
                 )
-            selected = executor.subject_devices
+            selected = executor.agent_devices
             if (
                 not selected
                 or len(set(selected)) != len(selected)
                 or not set(selected).issubset(devices)
             ):
                 raise ExecutionPlanningError(
-                    "Subject runtime devices escape model selection."
+                    "Agent runtime devices escape model selection."
                 )
             return selected
     return (

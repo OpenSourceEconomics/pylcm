@@ -576,13 +576,13 @@ def consume_runtime_bound_outputs(
     regime_name: RegimeName,
     period: int,
 ) -> tuple[QAndFArg, ...]:
-    """Accept declared subject summaries before ordinary decision interpretation."""
+    """Accept declared agent summaries before ordinary decision interpretation."""
     runtime_bounds = tuple(bound for bound in bound_specs if bound.kind == "dag")
     n_flags = 2 * len(runtime_bounds)
     if not n_flags:
         return outputs
     if len(outputs) <= n_flags:
-        raise TypeError("A runtime-bound subject output is missing mandatory records.")
+        raise TypeError("A runtime-bound agent output is missing mandatory records.")
     flags = outputs[-n_flags:]
     statuses = tuple(
         BoundInputStatus(
@@ -731,7 +731,7 @@ class CountedGridSearch:
     def __call__(
         self, **kwargs: QAndFArg
     ) -> CountedGridSearchOutput | BoundedResult[CountedGridSearchOutput]:
-        """Count state cells, treating a household as one decision."""
+        """Count state cells; a collective regime's members make one decision."""
         evaluated = self.function(**kwargs)
         bounded = evaluated if type(evaluated) is BoundedResult else None
         if bounded is not None:

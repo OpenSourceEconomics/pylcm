@@ -43,9 +43,14 @@ from _lcm.typing import (
 from _lcm.utils.error_messages import format_messages, path_segment_name_errors
 from _lcm.utils.functools import is_user_function
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
+from lcm.composition_actions import (
+    CompositionAction,
+    Consent,
+    MutualConsent,
+    PCOnWeight,
+)
 from lcm.decoupled import Decoupled
 from lcm.exceptions import RegimeInitializationError
-from lcm.exits import Consent, Exit, MutualConsent, Unilateral
 from lcm.grids import DiscreteGrid
 from lcm.koopmans_aggregation import CESAggregator, LinearAggregator
 from lcm.phased import Phased
@@ -149,16 +154,20 @@ def validate_regimes(*, regimes: Mapping[RegimeName, Regime], laws: RegimeLaws) 
         validate_regime_law(regime, law=laws[name])
 
 
-def validate_exit_targets(
+def validate_composition_action_targets(
     *, regimes: Mapping[RegimeName, Regime], laws: RegimeLaws
 ) -> None:
     """Bind declared destinations to real policy roles and complete phase states."""
-    from _lcm.exits import exit_for_phase  # noqa: PLC0415 - phase validator cycle
+    from _lcm.composition_actions import composition_action_for_phase  # noqa: PLC0415 - phase validator cycle
 
     for source, regime in regimes.items():
-        _validate_exit_is_common_to_both_phases(source=source, regime=regime)
+        _validate_composition_action_is_common_to_both_phases(
+            source=source, regime=regime
+        )
         for phase in ("solve", "simulate"):
-            declaration = exit_for_phase(declaration=regime.exit, phase=phase)
+            declaration = composition_action_for_phase(
+                declaration=regime.composition_action, phase=phase
+            )
             if declaration is None:
                 continue
             _validate_renegotiation(
@@ -166,9 +175,9 @@ def validate_exit_targets(
             )
             _validate_no_taste_shocks(source=source, regime=regime)
             _validate_no_separate_objective(source=source, regime=regime)
-            _validate_settlement(declaration=declaration, regime=regime)
-            for target in declaration.targets.values():
-                context = f"Exit of {source}"
+            _validate_transfer(declaration=declaration, regime=regime)
+            for target in declaration.destinations.values():
+                context = f"Composition action of {source}"
                 if target.regime not in regimes:
                     raise RegimeInitializationError(
                         f"{context} names unknown destination {target.regime!r}."
@@ -178,7 +187,7 @@ def validate_exit_targets(
                     raise RegimeInitializationError(
                         f"{context} has invalid destination role {target.role!r}."
                     )
-                _validate_exit_projection(
+                _validate_composition_action_projection(
                     context=context,
                     projection=target.projection,
                     destination=destination,
@@ -187,31 +196,32 @@ def validate_exit_targets(
                 )
             _validate_counterparty(
                 declaration=declaration,
-                context=f"Exit of {source}, counterparty",
+                context=f"Composition action of {source}, counterparty",
                 regimes=regimes,
                 laws=laws,
                 phase=phase,
             )
 
 
-def _validate_exit_is_common_to_both_phases(
+def _validate_composition_action_is_common_to_both_phases(
     *, source: RegimeName, regime: Regime
 ) -> None:
-    """Refuse an exit payment or condition that differs between solve and simulation.
+    """Refuse a payment or condition of leaving that differs by phase.
 
-    The payment at an exit, the settlement's default and the availability condition
-    are common to the model the solve prices and the one the simulation realizes.
-    Each may read the regime's functions, directly or through other functions. A
+    The payment at a composition action, the transfer's default and the availability
+    condition are common to the model the solve prices and the one the simulation
+    realizes. Each may read the regime's functions, directly or through other functions.
+    A
     name whose solve and simulate declarations differ is one of:
 
     - a function declared `Phased`;
     - a carried state, which the solve imputes and the simulation tracks;
     - a `next_<state>` whose law of motion is declared `Phased`.
 
-    A projection that carries a settlement to a member is common in the same way,
-    so a `Phased` projection reads no settlement.
+    A projection that carries a transfer to a member is common in the same way,
+    so a `Phased` projection reads no transfer.
     """
-    declaration = regime.exit
+    declaration = regime.composition_action
     if declaration is None:
         return
     pool: dict[str, _TransitionValue] = {
@@ -232,15 +242,18 @@ def _validate_exit_is_common_to_both_phases(
     }
     callbacks = [
         (
-            f"payment of the exit from regime {source!r} to target {target.regime!r}",
+            (
+                f"payment of the composition action from regime {source!r} to "
+                f"destination {target.regime!r}"
+            ),
             "A payment",
             target.utility_adjustment,
         )
-        for target in declaration.targets.values()
+        for target in declaration.destinations.values()
     ]
     callbacks.append(
         (
-            f"availability condition of the exit from regime {source!r}",
+            f"availability condition of the composition action from regime {source!r}",
             "An availability condition",
             declaration.available,
         )
@@ -248,14 +261,14 @@ def _validate_exit_is_common_to_both_phases(
     if isinstance(declaration.rule, MutualConsent):
         callbacks.append(
             (
-                f"settlement default of the exit from regime {source!r}",
-                "A settlement default",
-                declaration.rule.settle.default,
+                f"transfer default of the composition action from regime {source!r}",
+                "A transfer default",
+                declaration.rule.transfer.default,
             )
         )
     if isinstance(declaration.rule, MutualConsent):
-        settlement = declaration.rule.settle.name
-        for target in declaration.targets.values():
+        transfer = declaration.rule.transfer.name
+        for target in declaration.destinations.values():
             projection = target.projection
             if (
                 isinstance(projection, Phased)
@@ -263,13 +276,14 @@ def _validate_exit_is_common_to_both_phases(
                 and _first_reached(
                     start=_transition_node_arg_names(projection),
                     pool=pool,
-                    wanted={settlement},
+                    wanted={transfer},
                 )
             ):
                 raise RegimeInitializationError(
-                    f"The projection of the exit from regime {source!r} to target "
-                    f"{target.regime!r} is declared `Phased` and reads the settlement "
-                    f"{settlement!r}. What carries a settlement to the members must "
+                    "The projection of the composition action from regime "
+                    f"{source!r} to destination "
+                    f"{target.regime!r} is declared `Phased` and reads the transfer "
+                    f"{transfer!r}. What carries a transfer to the members must "
                     "be the same in solve and simulation: declare this projection "
                     "without `Phased`."
                 )
@@ -283,34 +297,34 @@ def _validate_exit_is_common_to_both_phases(
             raise RegimeInitializationError(
                 f"The {what} reads "
                 f"{'state' if name in regime.states else 'function'} {name!r}, which "
-                f"differs between solve and simulation. {kind} at an exit must be the "
+                f"differs between solve and simulation. {kind} of a composition "
+                "action must be the "
                 f"same in both: declare {name!r} without `Phased`, or read a name "
                 "that is the same in both."
             )
 
 
 def _validate_renegotiation(
-    *, declaration: Exit, regime: Regime, law: RegimeLaw, phase: Phase
+    *, declaration: CompositionAction, regime: Regime, law: RegimeLaw, phase: Phase
 ) -> None:
     """Require the ordered two-member domain before native queries are built."""
-    if (
-        not isinstance(declaration.rule, Unilateral)
-        or declaration.rule.renegotiate is None
-    ):
+    if not isinstance(declaration.rule, PCOnWeight) or declaration.rule.state is None:
         return
     if len(regime.members) != 2:  # noqa: PLR2004 - directional two-member rule
-        raise RegimeInitializationError("Renegotiate requires two collective members.")
+        raise RegimeInitializationError(
+            "PCOnWeight with a Pareto weight state requires two members."
+        )
     spec = normalize_regime_phases(regime, law=law)
     grid = getattr(
         spec, "solution" if phase == "solve" else "simulation"
-    ).grid_states.get(declaration.rule.renegotiate.state)
+    ).grid_states.get(declaration.rule.state)
     if not isinstance(grid, DiscreteGrid):
         raise RegimeInitializationError(
-            "Renegotiate must name a declared discrete grid state."
+            "PCOnWeight must name a declared discrete grid state."
         )
     if not grid.ordered:
-        raise RegimeInitializationError("Renegotiate needs an ordered discrete state.")
-    state = declaration.rule.renegotiate.state
+        raise RegimeInitializationError("PCOnWeight needs an ordered discrete state.")
+    state = declaration.rule.state
     phase_spec = getattr(spec, "solution" if phase == "solve" else "simulation")
     transition = phase_spec.state_transitions.get(state)
     laws = transition.values() if isinstance(transition, Mapping) else (transition,)
@@ -319,7 +333,7 @@ def _validate_renegotiation(
         for value in laws
     ):
         raise RegimeInitializationError(
-            "Renegotiate carries its selected node: declare "
+            "PCOnWeight carries its selected node: declare "
             f"fixed_transition('{state}') for its state law."
         )
     if any(
@@ -328,44 +342,45 @@ def _validate_renegotiation(
         for kernel in kernels.values()
     ):
         raise RegimeInitializationError(
-            "Renegotiate carries its selected node through fixed_transition, "
+            "PCOnWeight carries its selected node through fixed_transition, "
             "not through a joint state update."
         )
 
 
 def _validate_no_taste_shocks(*, source: RegimeName, regime: Regime) -> None:
-    """Refuse an exit or a formation declared on a regime with taste shocks."""
+    """Refuse a composition action declared on a regime with taste shocks."""
     if regime.taste_shocks is not None:
         raise RegimeInitializationError(
-            f"Regime {source!r} has taste shocks and an exit. A regime with taste "
-            "shocks cannot have its own exit or formation: drop `taste_shocks` on "
-            "this regime, or move the exit decision to a regime without taste "
-            "shocks."
+            f"Regime {source!r} has taste shocks and a composition action. A regime "
+            "with taste shocks cannot have its own composition action or formation: "
+            "drop `taste_shocks` on this regime, or declare the composition action on "
+            "a regime without taste shocks."
         )
 
 
 def _validate_no_separate_objective(*, source: RegimeName, regime: Regime) -> None:
-    """Refuse an exit or a formation declared on a regime with a separate objective."""
+    """Refuse a composition action declared on a regime with a separate objective."""
     if isinstance(regime.koopmans_aggregator, Decoupled):
         raise RegimeInitializationError(
             f"Regime {source!r} declares a separate objective (`Decoupled`) and its "
-            "own exit or formation. A separate objective is for regimes without an "
-            "exit or a formation of their own: drop the separate objective, or let "
+            "own composition action or formation. A separate objective is for regimes "
+            "without a composition action or a formation of their own: drop the "
+            "separate objective, or let "
             "the current self choose differently by declaring "
             "`koopmans_aggregator=Phased(solve=..., simulate=...)`."
         )
 
 
-def _validate_settlement(*, declaration: Exit, regime: Regime) -> None:
-    """Require two members, a target that reads the settlement and a free name."""
+def _validate_transfer(*, declaration: CompositionAction, regime: Regime) -> None:
+    """Require two members, a target that reads the transfer and a free name."""
     rule = declaration.rule
     if not isinstance(rule, MutualConsent):
         return
-    name = rule.settle.name
+    name = rule.transfer.name
     if len(regime.members) != 2:  # noqa: PLR2004 - directional two-member rule
-        raise RegimeInitializationError("Settlement requires two collective members.")
-    # The author's names and the engine's: a household's `utility` is bound as
-    # `utility_<s>` per member, and a settlement may shadow neither.
+        raise RegimeInitializationError("Transfer requires two collective members.")
+    # The author's names and the engine's: the `utility` of a regime with several
+    # members is bound as `utility_<s>` per member, and a transfer may shadow neither.
     taken = {
         *regime.states,
         *regime.actions,
@@ -374,12 +389,12 @@ def _validate_settlement(*, declaration: Exit, regime: Regime) -> None:
     }
     if name in taken:
         raise RegimeInitializationError(
-            f"Settlement {name!r} has the name of a state, action or function of the "
+            f"Transfer {name!r} has the name of a state, action or function of the "
             "regime."
         )
     callbacks = [
         function
-        for target in declaration.targets.values()
+        for target in declaration.destinations.values()
         for function in (
             *cast("Mapping[str, UserFunction]", target.projection).values(),
             *(
@@ -393,7 +408,7 @@ def _validate_settlement(*, declaration: Exit, regime: Regime) -> None:
         name in inspect.signature(function).parameters for function in callbacks
     ):
         raise RegimeInitializationError(
-            f"Settlement {name!r} is read by no exit-target projection or utility "
+            f"Transfer {name!r} is read by no destination projection or utility "
             "adjustment."
         )
 
@@ -401,7 +416,7 @@ def _validate_settlement(*, declaration: Exit, regime: Regime) -> None:
 def _declarable_roles(regime: Regime) -> tuple[str | None, ...]:
     """Return the roles a declaration may name for a member of `regime`.
 
-    A household's members by name. The member `"self"` is no role, so a
+    Each member by name. The member `"self"` is no role, so a
     declaration names it by naming none.
     """
     return tuple(None if member == "self" else member for member in regime.members)
@@ -409,7 +424,7 @@ def _declarable_roles(regime: Regime) -> tuple[str | None, ...]:
 
 def _validate_counterparty(
     *,
-    declaration: Exit,
+    declaration: CompositionAction,
     context: str,
     regimes: Mapping[RegimeName, Regime],
     laws: RegimeLaws,
@@ -424,7 +439,7 @@ def _validate_counterparty(
             f"{context} names unknown regime {counterparty.regime!r}."
         )
     # The role belongs to the formation destination, rather than its singleton Raw.
-    for target in declaration.targets.values():
+    for target in declaration.destinations.values():
         destination = regimes[target.regime]
         if (
             counterparty.role not in _declarable_roles(destination)
@@ -433,7 +448,7 @@ def _validate_counterparty(
             raise RegimeInitializationError(
                 f"{context} has invalid destination role {counterparty.role!r}."
             )
-    _validate_exit_projection(
+    _validate_composition_action_projection(
         context=context,
         projection=counterparty.projection,
         destination=regimes[counterparty.regime],
@@ -442,7 +457,7 @@ def _validate_counterparty(
     )
 
 
-def _validate_exit_projection(
+def _validate_composition_action_projection(
     *,
     context: str,
     projection: Mapping[StateName, UserFunction] | Phased,
@@ -482,7 +497,7 @@ def validate_regime(regime: Regime) -> None:
         raise RegimeInitializationError(format_messages(member_mapping_errors))
 
     _validate_mapping_contents(regime)
-    _validate_exits(regime)
+    _validate_composition_actions(regime)
     _validate_logical_consistency(regime)
     validate_law_free_phase_grammar(regime)
 
@@ -490,8 +505,9 @@ def validate_regime(regime: Regime) -> None:
 def _member_mapping_errors(regime: Regime) -> tuple[str, ...]:
     """Collect errors for a Koopmans aggregator or certainty equivalent per member.
 
-    A slot keyed by member names every member of a household, and a `Decoupled`
-    aggregator chooses for the household as a whole, so no member declares one.
+    A slot keyed by member names every member of a regime with several members,
+    and a `Decoupled` aggregator chooses for the members as a whole, so no member
+    declares one.
     """
     error_messages: list[str] = []
     for slot in ("koopmans_aggregator", "certainty_equivalent"):
@@ -500,8 +516,8 @@ def _member_mapping_errors(regime: Regime) -> tuple[str, ...]:
             continue
         if not _declares_a_household(regime):
             error_messages.append(
-                f"`{slot}` is keyed by member, which only a household declared "
-                f"with a `CollectiveUtility` has. Declare one `{slot}` for this "
+                f"`{slot}` is keyed by member, which only a regime declared with a "
+                f"`CollectiveUtility` has. Declare one `{slot}` for this "
                 "regime."
             )
         elif set(declared) != set(regime.members):
@@ -514,9 +530,8 @@ def _member_mapping_errors(regime: Regime) -> tuple[str, ...]:
     ):
         error_messages.append(
             "A `Decoupled` aggregator cannot be declared per member: the "
-            "household chooses on the Pareto-weighted sum of its members' "
-            "objectives. Declare `koopmans_aggregator=Decoupled(...)` for the "
-            "household."
+            "members choose on the Pareto-weighted sum of their objectives. "
+            "Declare `koopmans_aggregator=Decoupled(...)` for the whole regime."
         )
     return tuple(error_messages)
 
@@ -555,13 +570,15 @@ def _fail_if_solver_cannot_solve_the_members(regime: Regime) -> None:
             )
 
 
-def _validate_exits(regime: Regime) -> None:
+def _validate_composition_actions(regime: Regime) -> None:
     """Require a destination for each of the source's members."""
-    if regime.exit is None:
+    if regime.composition_action is None:
         return
     expected = set(regime.members)
-    if set(regime.exit.targets) != expected:
-        raise RegimeInitializationError(f"Exit targets must name {sorted(expected)!r}.")
+    if set(regime.composition_action.destinations) != expected:
+        raise RegimeInitializationError(
+            f"Composition action destinations must name {sorted(expected)!r}."
+        )
 
 
 # keyword-only-exempt: primary-argument=regime
@@ -626,7 +643,7 @@ def _declares_a_household(regime: Regime) -> bool:
 
 
 def _validate_members(regime: Regime) -> None:
-    """Validate a regime's members and how its household trades them off.
+    """Validate a regime's members and how its Pareto objective trades them off.
 
     Checked here are the properties a bare `Regime` already
     determines on its own: a non-empty, duplicate-free `members` tuple, and — if
@@ -635,16 +652,16 @@ def _validate_members(regime: Regime) -> None:
     zero-safe scalarization in `collective._weighted_sum` treats an exact-zero
     weight as a deliberate exclusion, so a non-finite or negative weight, or an
     all-zero declaration, would silently produce a meaningless or undefined
-    household objective rather than erroring).
+    Pareto-weighted objective rather than erroring).
 
     What a collective regime needs but a model-level slot may supply — the
     per-member `utility_<s>` functions — is completeness, so
     `_validate_completeness` checks it once the regimes are finalized at model
-    build. The household argmax runs over whatever action product the regime
-    declares, which may be continuous or empty.
+    build. The argmax of the Pareto-weighted objective runs over whatever action
+    product the regime declares, which may be continuous or empty.
 
     EV1 taste shocks raise `NotImplementedError` unless exactly one member can
-    carry a positive weight (`_fail_if_taste_shocks_lack_one_decider`). Whether
+    carry a positive Pareto weight (`_fail_if_taste_shocks_lack_one_decider`). Whether
     the solver handles the member count is checked for every regime, by
     `_fail_if_solver_cannot_solve_the_members`.
 
@@ -665,13 +682,13 @@ def _validate_members(regime: Regime) -> None:
 def _fail_if_taste_shocks_lack_one_decider(
     *, regime: Regime, members: tuple[str, ...]
 ) -> None:
-    """Admit EV1 taste shocks in a household only where one member decides.
+    """Admit EV1 taste shocks with several members only where one member decides.
 
-    The member with the positive Pareto weight decides, and the household's
-    smoothed choice is that member's. What the declaration settles is checked
-    here:
+    The member with the positive Pareto weight decides, and the members' smoothed
+    choice is that member's. What the declaration determines is checked here:
 
-    - undeclared weights are equal, so only a household of one has one decider;
+    - undeclared weights are equal, so only a regime with one member has one
+      deciding member;
     - constant weights must have exactly one positive entry;
     - a weight declared as a function is admitted, and the solve checks at
       every cell that exactly one member's weight is positive.
@@ -692,8 +709,8 @@ def _fail_if_taste_shocks_lack_one_decider(
     n_positive = sum(weight > 0 for weight in constants)
     if n_positive > 1 or (len(constants) == len(weights) and n_positive != 1):
         raise NotImplementedError(
-            "EV1 taste shocks in a household need exactly one member with a "
-            "positive Pareto weight, the member who decides; got weights "
+            "EV1 taste shocks in a regime with several members need exactly one "
+            "member with a positive Pareto weight, the member who decides; got weights "
             f"{dict(weights)!r}. Give every other member weight 0, or drop "
             "`taste_shocks` on this regime."
         )
@@ -725,9 +742,10 @@ def _collective_weights_errors(
     must be finite, non-negative, and — across the constants — leave a positive
     total. The zero-safe scalarization treats an exact-zero weight as a
     deliberate exclusion, so a non-finite or negative weight, or an all-zero
-    declaration, would silently produce a meaningless or undefined household
-    objective rather than erroring. A weight declared as a function is checked
-    against the parameters it is solved with, where its values exist.
+    declaration, would silently produce a meaningless or undefined
+    Pareto-weighted objective rather than erroring. A weight declared as a
+    function is checked against the parameters it is solved with, where its
+    values exist.
     """
     objective = regime.pareto_objective
     if objective is None:
@@ -766,7 +784,7 @@ def _collective_weights_errors(
         return (
             (
                 "`pareto_objective.weights` must leave a positive total; an "
-                "all-zero declaration leaves the household scalarization "
+                "all-zero declaration leaves the Pareto-weighted objective "
                 "identically zero for every action, so the argmax is undefined."
             ),
         )

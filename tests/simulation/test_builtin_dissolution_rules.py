@@ -8,18 +8,18 @@ import pytest
 
 from lcm import (
     CollectiveUtility,
-    Exit,
-    ExitTarget,
+    CompositionAction,
+    Destination,
     InitialNodes,
     LinSpacedGrid,
     Model,
     ParetoObjective,
+    PCOnActions,
     Regime,
-    Unilateral,
     categorical,
     fixed_transition,
 )
-from lcm.exits import ExitRule
+from lcm.composition_actions import CompositionRule
 from lcm.solver_api import ResultRetention
 from lcm.typing import ContinuousState, FloatND, ScalarInt
 
@@ -45,7 +45,7 @@ def _outside(wealth: ContinuousState) -> FloatND:
 
 def _model(
     *,
-    rule: ExitRule,
+    rule: CompositionRule,
     wife: Callable[..., FloatND] = _wife,
     husband: Callable[..., FloatND] = _husband,
     objective: ParetoObjective | None = None,
@@ -60,10 +60,10 @@ def _model(
                         utilities={"f": wife, "m": husband}, objective=objective
                     )
                 },
-                exit=Exit(
+                composition_action=CompositionAction(
                     rule=rule,
-                    targets={
-                        member: ExitTarget(
+                    destinations={
+                        member: Destination(
                             regime=f"single_{member}",
                             projection={"wealth": fixed_transition("wealth")},
                         )
@@ -99,18 +99,18 @@ def _simulated_regimes(*, model: Model) -> list[str]:
         seed=0,
         log_level="off",
     ).to_dataframe(use_categorical_codes=True)
-    return list(frame.sort_values("subject_id")["regime_name"])
+    return list(frame.sort_values("agent_id")["regime_name"])
 
 
 @pytest.mark.parametrize(
     ("rule", "expected"),
     [
-        (Unilateral(), ["couple", "couple"]),
-        (Unilateral(tie="leave"), ["single_f", "single_f"]),
+        (PCOnActions(), ["couple", "couple"]),
+        (PCOnActions(tie="leave"), ["single_f", "single_f"]),
     ],
 )
 def test_tie_setting_decides_a_member_indifferent_to_leaving(
-    *, rule: ExitRule, expected: list[str]
+    *, rule: CompositionRule, expected: list[str]
 ) -> None:
     """With every member exactly indifferent, `tie` alone decides whether they stay."""
     model = _model(rule=rule, wife=_outside, husband=_outside)
@@ -120,7 +120,7 @@ def test_tie_setting_decides_a_member_indifferent_to_leaving(
 def test_a_member_with_zero_pareto_weight_keeps_the_veto() -> None:
     """The wife has no weight in the household choice, yet her leaving ends it."""
     model = _model(
-        rule=Unilateral(),
+        rule=PCOnActions(),
         wife=_husband,
         husband=_wife,
         objective=ParetoObjective(weights={"f": 0.0, "m": 1.0}),
@@ -130,7 +130,7 @@ def test_a_member_with_zero_pareto_weight_keeps_the_veto() -> None:
 
 def test_builtin_dissolution_rule_prices_and_settles_original_members() -> None:
     """The husband can leave alone, and each member lands in its own single regime."""
-    model = _model(rule=Unilateral())
+    model = _model(rule=PCOnActions())
     solution = model.solve(params={}, retention=ResultRetention.VALUES, log_level="off")
     np.testing.assert_array_equal(
         solution.values[0]["couple"], [[2.0, 2.0], [4.0, 4.0]]
@@ -150,9 +150,9 @@ def test_builtin_dissolution_rule_prices_and_settles_original_members() -> None:
             log_level="off",
         )
         .to_dataframe(use_categorical_codes=True)
-        .sort_values("subject_id")
+        .sort_values("agent_id")
     )
-    np.testing.assert_array_equal(frame["subject_id"], [0, 1, 2, 3])
+    np.testing.assert_array_equal(frame["agent_id"], [0, 1, 2, 3])
     np.testing.assert_array_equal(frame["period"], [0, 0, 0, 0])
     np.testing.assert_array_equal(frame["wealth"], [1.0, 1.0, 2.0, 2.0])
     np.testing.assert_array_equal(

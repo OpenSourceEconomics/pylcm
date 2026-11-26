@@ -833,7 +833,7 @@ def _representative_function(
     or the value unchanged. Periods that share a signature share one callable:
     the one built at the earliest period of that signature group, the same rule
     `PeriodizedEconFunction` resolves by. A marker only the simulate slice reads
-    is resolved only at the periods a subject can occupy; elsewhere no solve
+    is resolved only at the periods an agent can occupy; elsewhere no solve
     reads it, and it keeps its representative.
     """
     if isinstance(value, AgeSpecializedFunction):
@@ -1141,7 +1141,7 @@ def normalize_age_specialization(
     - record all concrete period grids in an `AgeGridSchedule`.
 
     A marker the solve slice reads is required at every active period. A
-    marker only the simulate slice reads is required where a subject can be:
+    marker only the simulate slice reads is required where an agent can be:
     `visited_periods_by_regime`, which defaults to the active periods.
 
     Regimes with no markers pass through unchanged (byte-identical), so an

@@ -9,6 +9,7 @@ it still cannot evaluate a lottery, `log_level="debug"` refuses to run it rather
 than continuing on an unvalidated law.
 """
 
+from collections.abc import Callable
 from types import MappingProxyType
 
 import jax.numpy as jnp
@@ -75,7 +76,7 @@ def _next_wealth_from_match(match: dict[str, FloatND]) -> FloatND:
     return match["value"]
 
 
-def _kernel(probabilities) -> JointTransition:
+def _kernel(probabilities: Callable[..., FloatND]) -> JointTransition:
     return JointTransition(
         support_size=2,
         support={"value": _SUPPORT},
@@ -96,7 +97,7 @@ def _params() -> dict[str, dict[str, dict[str, float]]]:
     }
 
 
-def _build_model(*, simulate_probabilities) -> Model:
+def _build_model(*, simulate_probabilities: Callable[[float], FloatND]) -> Model:
     working = Regime(
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3),
@@ -184,7 +185,7 @@ def test_a_carried_state_dependent_simulate_law_that_is_a_distribution_runs() ->
         log_level="debug",
     )
 
-    assert result.n_subjects == 2
+    assert result.n_agents == 2
 
 
 def test_an_unresolvable_joint_argument_is_refused_in_debug() -> None:

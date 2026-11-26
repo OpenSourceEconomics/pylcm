@@ -1,4 +1,4 @@
-"""Exit frames retain the parameter slots of their actual producing phase."""
+"""Composition action frames retain the parameter slots of their producing phase."""
 
 import jax.numpy as jnp
 import numpy as np
@@ -7,17 +7,17 @@ import pytest
 from _lcm.dtypes import canonical_float_dtype
 from lcm import (
     CollectiveUtility,
+    CompositionAction,
     Consent,
     Counterparty,
-    Exit,
-    ExitTarget,
+    Destination,
     InitialNodes,
     Model,
     Phased,
     Regime,
     categorical,
 )
-from lcm.exits import Unilateral
+from lcm.composition_actions import PCOnActions
 from lcm.shocks import GaussHermite, Normal, PhysicalValues, Product, ShockGroup
 from lcm.typing import FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
@@ -63,9 +63,9 @@ def test_phase_specific_shared_offer_frame_reaches_participating_final_actor(
         regimes={
             "source": Regime(
                 functions={"utility": _single_flow},
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(regime="couple", role="f", projection={})
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(regime="couple", role="f", projection={})
                     },
                     rule=Consent(
                         counterparty=Counterparty(
@@ -83,12 +83,12 @@ def test_phase_specific_shared_offer_frame_reaches_participating_final_actor(
                     "offer_mean": Phased(solve=_solve_mean, simulate=_simulate_mean),
                 },
                 shocks=("offers",),
-                exit=Exit(
-                    targets={
-                        "f": ExitTarget(regime="source", projection={}),
-                        "m": ExitTarget(regime="source", projection={}),
+                composition_action=CompositionAction(
+                    destinations={
+                        "f": Destination(regime="source", projection={}),
+                        "m": Destination(regime="source", projection={}),
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                     observes=("offer",),
                 ),
             ),

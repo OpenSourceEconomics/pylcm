@@ -7,19 +7,19 @@ import pytest
 from _lcm.policy_queries import QueryKind
 from lcm import (
     CollectiveUtility,
+    CompositionAction,
     Consent,
     Counterparty,
+    Destination,
     DiscreteGrid,
     ExecutionConfig,
-    Exit,
-    ExitTarget,
     InitialNodes,
     Model,
     Periods,
     Regime,
     categorical,
 )
-from lcm.exits import Unilateral
+from lcm.composition_actions import PCOnActions
 from lcm.typing import FloatND, IntND, ScalarInt
 
 
@@ -69,9 +69,9 @@ def test_query_only_nonterminal_raw_reads_keep_continuation() -> None:
         regimes={
             "source": Regime(
                 functions={"utility": _source_flow},
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(regime="formation", role="f", projection={})
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(regime="formation", role="f", projection={})
                     },
                     rule=Consent(
                         counterparty=Counterparty(
@@ -86,12 +86,12 @@ def test_query_only_nonterminal_raw_reads_keep_continuation() -> None:
                         utilities={"f": _female_flow, "m": _male_flow}
                     )
                 },
-                exit=Exit(
-                    targets={
-                        "f": ExitTarget(regime="incoming_f", projection={}),
-                        "m": ExitTarget(regime="incoming_m", projection={}),
+                composition_action=CompositionAction(
+                    destinations={
+                        "f": Destination(regime="incoming_f", projection={}),
+                        "m": Destination(regime="incoming_m", projection={}),
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                 ),
             ),
             "incoming_f": Regime(
@@ -132,7 +132,7 @@ def test_query_only_nonterminal_raw_reads_keep_continuation() -> None:
         assert not regime.simulation.programs.route
         assert not regime.simulation.programs.exit_full
         assert regime.simulation.current_iid_draw_plan is None
-    full = model._regimes["source"].simulation.exit_queries[0].full
+    full = model._regimes["source"].simulation.composition_queries[0].full
     assert full is not None
     requested = {
         (node.read.kind, node.read.target) for node in full.definitions.values()

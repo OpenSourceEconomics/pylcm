@@ -17,13 +17,13 @@ import pytest
 from _lcm.regime_building import Q_and_F
 from _lcm.regime_building.collective import NO_ROLE
 from lcm import Model
-from lcm.exits import Unilateral
+from lcm.composition_actions import PCOnActions
 from lcm.solver_api import ResultRetention, SolutionResult
 from lcm.typing import FloatND, RegimeName, UserParamsNode
 from lcm_examples import collective_household as household
 
 _N_PERIODS = 3
-_N_SUBJECTS = 200
+_N_AGENTS = 200
 
 type _Solved = tuple[Model, dict[str, UserParamsNode], SolutionResult]
 
@@ -46,9 +46,9 @@ def simulated(solved: _Solved) -> pd.DataFrame:
     Within each half, women and men alternate.
     """
     model, params, period_to_regime_to_V_arr = solved
-    n_single = _N_SUBJECTS // 2
-    is_single = jnp.arange(_N_SUBJECTS) < n_single
-    is_woman = jnp.arange(_N_SUBJECTS) % 2 == 0
+    n_single = _N_AGENTS // 2
+    is_single = jnp.arange(_N_AGENTS) < n_single
+    is_woman = jnp.arange(_N_AGENTS) % 2 == 0
     regime_ids = model.regime_names_to_ids
     role_ids = model.member_names_to_ids
     initial_conditions = {
@@ -58,11 +58,11 @@ def simulated(solved: _Solved) -> pd.DataFrame:
                 jnp.linspace(
                     2 * household.WEALTH_MIN,
                     2 * household.WEALTH_MAX,
-                    _N_SUBJECTS - n_single,
+                    _N_AGENTS - n_single,
                 ),
             ]
         ),
-        "age": jnp.zeros(_N_SUBJECTS),
+        "age": jnp.zeros(_N_AGENTS),
         "regime_id": jnp.where(
             is_single,
             jnp.where(is_woman, regime_ids["single_f"], regime_ids["single_m"]),
@@ -121,7 +121,7 @@ def test_households_too_poor_to_outweigh_her_income_alone_dissolve() -> None:
         seed=0,
         log_level="off",
     ).to_dataframe()
-    initial = frame.loc[frame["period"] == 0].sort_values("subject_id")
+    initial = frame.loc[frame["period"] == 0].sort_values("agent_id")
     for i, role in enumerate(("f", "m")):
         rows = initial.iloc[i * n_wealth : (i + 1) * n_wealth]
         leaves = rows["regime_name"].to_numpy() == f"single_{role}"
@@ -130,12 +130,11 @@ def test_households_too_poor_to_outweigh_her_income_alone_dissolve() -> None:
 
 
 def test_some_simulated_couples_dissolve(simulated: pd.DataFrame) -> None:
-    """A household whose own exit is taken sends both partners back single."""
-    by_subject = simulated.sort_values(["subject_id", "period"])
-    previous = by_subject.groupby("subject_id")["regime_name"].shift()
-    dissolved = by_subject.loc[
-        (previous == "couple")
-        & by_subject["regime_name"].isin(["single_f", "single_m"])
+    """A couple that separates sends both members back to their single regimes."""
+    by_agent = simulated.sort_values(["agent_id", "period"])
+    previous = by_agent.groupby("agent_id")["regime_name"].shift()
+    dissolved = by_agent.loc[
+        (previous == "couple") & by_agent["regime_name"].isin(["single_f", "single_m"])
     ]
 
     assert set(zip(dissolved["period"], dissolved["regime_name"], strict=True)) == {
@@ -151,10 +150,10 @@ def test_singles_of_both_sexes_reach_the_household(
     starts_single = simulated.loc[
         (simulated["period"] == 0)
         & simulated["regime_name"].isin(["single_f", "single_m"]),
-        "subject_id",
+        "agent_id",
     ]
     entered = simulated.loc[
-        simulated["subject_id"].isin(starts_single)
+        simulated["agent_id"].isin(starts_single)
         & (simulated["regime_name"] == "couple"),
         "own_member",
     ]
@@ -173,18 +172,18 @@ def test_a_row_in_a_singleton_regime_carries_no_role(
     assert single_rows.isna().all()
 
 
-def test_every_subject_ends_in_a_terminal_regime(
+def test_every_agent_ends_in_a_terminal_regime(
     simulated: pd.DataFrame,
 ) -> None:
-    """Nobody is lost on the way: the last period accounts for every subject."""
+    """Nobody is lost on the way: the last period accounts for every agent."""
     last = simulated.loc[simulated["period"] == _N_PERIODS - 1]
 
-    assert len(last) == _N_SUBJECTS
+    assert len(last) == _N_AGENTS
     assert last["regime_name"].str.endswith("terminal").all()
 
 
-def test_exits_replay_from_values_without_dissolution_artifacts() -> None:
-    """Consent and the couple's own exit do not require retained dissolution flags."""
+def test_composition_actions_replay_from_values_without_dissolution_artifacts() -> None:
+    """Consent and separation replay without retained dissolution flags."""
     model = household.get_model(n_periods=3, wealth_n_points=6, consumption_n_points=6)
     params = household.get_params()
     solution = model.solve(
@@ -193,20 +192,20 @@ def test_exits_replay_from_values_without_dissolution_artifacts() -> None:
     frame = model.simulate(
         params=params,
         solution=solution,
-        initial_conditions=household.get_initial_conditions(n_subjects=64, model=model),
+        initial_conditions=household.get_initial_conditions(n_agents=64, model=model),
         seed=0,
         log_level="off",
     ).to_dataframe()
     terminal = frame.loc[frame["period"] == 2]
-    np.testing.assert_array_equal(np.sort(terminal["subject_id"]), np.arange(64))
+    np.testing.assert_array_equal(np.sort(terminal["agent_id"]), np.arange(64))
     assert terminal["regime_name"].str.endswith("terminal").all()
 
 
 def test_couple_dissolves_under_the_eckstein_keane_lifshitz_rule() -> None:
     """Either partner can leave, and a partner exactly indifferent leaves."""
     model = household.get_model(n_periods=2, wealth_n_points=2, consumption_n_points=2)
-    declaration = model.user_regimes["couple"].exit
-    assert getattr(declaration, "rule", None) == Unilateral(tie="leave")
+    declaration = model.user_regimes["couple"].composition_action
+    assert getattr(declaration, "rule", None) == PCOnActions(tie="leave")
 
 
 def test_each_query_action_problem_is_traced_once_per_solve(
@@ -215,7 +214,7 @@ def test_each_query_action_problem_is_traced_once_per_solve(
 ) -> None:
     """A query read inside another query's continuation reuses the target's trace.
 
-    An exit reads the destination's problem, and a consent counterparty its
+    A composition action reads the destination's problem, and a consent counterparty its
     regime's problem, so the reads nest. Re-tracing a problem at every read
     multiplies the traces by the fan-out of every read.
     """

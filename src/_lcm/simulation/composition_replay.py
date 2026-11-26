@@ -1,4 +1,4 @@
-"""Once-only current exits for an immutable chunk of original subject rows."""
+"""Once-only decisions on the composition for a fixed chunk of original agent rows."""
 
 from collections.abc import Mapping
 from dataclasses import replace
@@ -15,24 +15,24 @@ from _lcm.execution.core_program import CoreBuildContext
 from _lcm.execution.value_transfer import ValueArtifactKind
 from _lcm.regime_building.collective import role_code
 from _lcm.shock_registry import ShockBinding
+from _lcm.simulation.agent_groups import AgentRows
 from _lcm.simulation.chunk_operations import regime_mask
+from _lcm.simulation.composition_actions import (
+    CompositionRoute,
+    CompositionSimulationPlan,
+    OriginalCompositionOutput,
+    ParticipatingCompositionOutput,
+    PreparedCompositionDecision,
+    apply_retained_state_updates,
+    route_original_agents,
+)
 from _lcm.simulation.current_iid import prepare_current_iid_keys
 from _lcm.simulation.current_iid_overrides import (
     CurrentIIDOverrides,
     gather_current_iid_overrides,
 )
-from _lcm.simulation.exits import (
-    ExitRoute,
-    ExitSimulationPlan,
-    OriginalExitOutput,
-    ParticipatingExitOutput,
-    PreparedExitDecision,
-    apply_retained_state_updates,
-    route_original_subjects,
-)
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
 from _lcm.simulation.runtime import SimulationRuntime, execute_simulation_program
-from _lcm.simulation.subject_groups import SubjectRows
 from _lcm.simulation.taste_stream import prepare_decision_taste_keys
 from _lcm.simulation.unit_executor import SimulationUnitExecutor
 from _lcm.simulation.value_reads import PeriodSimulationReads
@@ -69,7 +69,7 @@ type _FinalDecisionOutput = tuple[
 ]
 
 
-def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner walk
+def prepare_composition_period(  # noqa: C901, PLR0915 - retain replay's ordered owner walk
     *,
     regimes: Mapping[RegimeName, Regime],
     period: int,
@@ -82,42 +82,44 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
     values: Mapping[int, Mapping[RegimeName, FloatND]],
     owner: PeriodSimulationReads,
     key: PRNGKeyND,
-    subject_slice: slice | SubjectRows,
-    original_n_subjects: int,
+    agent_slice: slice | AgentRows,
+    original_n_agents: int,
     memory: SimulationMemory | None,
     current_iid_overrides: CurrentIIDOverrides | None = None,
     taste_key: PRNGKeyND | None = None,
     taste_addresses: Mapping[
         tuple[int, RegimeName], tuple[int, ...]
     ] = MappingProxyType({}),
-) -> tuple[StatesPerRegime, IntND, IntND, Mapping[RegimeName, PreparedExitDecision]]:
+) -> tuple[
+    StatesPerRegime, IntND, IntND, Mapping[RegimeName, PreparedCompositionDecision]
+]:
     """Choose at entry, route simultaneously, reveal, then prepare final actions."""
     actors = {
         name: regime
         for name, regime in regimes.items()
-        if period in regime.simulation.exit_queries
+        if period in regime.simulation.composition_queries
     }
     if not actors:
         return states, regime_ids, roles, MappingProxyType({})
     # The union permission binding is used only to enumerate named key sites.
     # Physical laws are evaluated solely by their actual source/target producer.
-    bindings = exit_bindings(actors=actors, period=period)
-    if isinstance(subject_slice, SubjectRows) and (
+    bindings = composition_action_bindings(actors=actors, period=period)
+    if isinstance(agent_slice, AgentRows) and (
         bindings or any(regime.has_taste_shocks for regime in actors.values())
     ):
         raise ExecutionPlanningError(
-            "Current exit innovations do not cover grouped subject rows."
+            "Current composition action innovations do not cover grouped agent rows."
         )
     keys = (
         prepare_current_iid_keys(
             plan=CurrentIIDDrawPlan(bindings=bindings),
             key=key,
             period=period,
-            subject_slice=subject_slice,
-            original_n_subjects=original_n_subjects,
+            agent_slice=agent_slice,
+            original_n_agents=original_n_agents,
             memory=memory,
         )
-        if isinstance(subject_slice, slice)
+        if isinstance(agent_slice, slice)
         else MappingProxyType({})
     )
     taste_banks = {}
@@ -127,17 +129,17 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
             shock for binding in bindings.values() for shock in binding.group.shocks
         ),
         period=period,
-        subject_slice=subject_slice,
+        agent_slice=agent_slice,
     )
     for name, regime in actors.items():
-        if regime.has_taste_shocks and isinstance(subject_slice, slice):
+        if regime.has_taste_shocks and isinstance(agent_slice, slice):
             _, taste_banks[name] = prepare_decision_taste_keys(
                 key=key,
                 taste_key=taste_key,
                 taste_address=taste_addresses.get((period, name)),
-                n_subjects=original_n_subjects,
-                subject_slice=subject_slice,
-                original_n_subjects=original_n_subjects,
+                n_agents=original_n_agents,
+                agent_slice=agent_slice,
+                original_n_agents=original_n_agents,
                 memory=memory,
                 period=period,
             )
@@ -147,7 +149,7 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
     routes = []
     state_updates = []
     for name, regime in actors.items():
-        plan = regime.simulation.exit_queries[period]
+        plan = regime.simulation.composition_queries[period]
         if plan.full is None:
             continue
         holders = regime_mask(
@@ -180,7 +182,7 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                     group: dict(flat_params.get(group, {})) for group in bindings
                 },
             },
-            n_subjects=regime_ids.size,
+            n_agents=regime_ids.size,
             memory=memory,
             roots=(
                 states,
@@ -195,7 +197,7 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
             ),
         )
         answer, frame_payload, source_projections, source_adjustments = cast(
-            "OriginalExitOutput", output
+            "OriginalCompositionOutput", output
         )
         frame = CurrentIIDDrawFrame(*frame_payload)
         originals[name] = (answer, frame)
@@ -215,7 +217,7 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
             address = f"{name}:{plan.full.root}"
             projected[address] = source_projections[plan.full.root]
             state_updates.append((name, address))
-        for identifier, members in root.exit_targets.items():
+        for identifier, members in root.composition_action_targets.items():
             for member, query in members.items():
                 target = plan.full.definitions[query].read
                 address = f"{name}:{query}"
@@ -223,7 +225,7 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                 adjustments[address] = source_adjustments[query]
                 destination = regimes[target.target]
                 routes.append(
-                    ExitRoute(
+                    CompositionRoute(
                         source=name,
                         target=target.target,
                         identifier=identifier,
@@ -240,7 +242,7 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
     decisions = {name: record[0][1] for name, record in originals.items()}
     final_ids, final_roles, final_states, moved, paid = run_simulation_operation(
         memory=memory,
-        function=route_original_subjects,
+        function=route_original_agents,
         arguments={
             "original_regime_ids": regime_ids,
             "original_roles": roles,
@@ -264,7 +266,7 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                 for route in routes
             ),
         },
-        subject_arg_names=(
+        agent_arg_names=(
             "original_regime_ids",
             "original_roles",
             "original_states",
@@ -272,7 +274,7 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
             "projections",
             "adjustments",
         ),
-        subject_outputs=True,
+        agent_outputs=True,
     )
     final_states = dict(final_states)
     bases = _merge_bases(
@@ -297,15 +299,15 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                 (name, tuple(frame.physical)) for name, (_, frame) in originals.items()
             ),
         },
-        subject_arg_names=("regime_ids", "availability"),
-        subject_outputs=True,
+        agent_arg_names=("regime_ids", "availability"),
+        agent_outputs=True,
     )
     prepared = {}
     for name, regime in actors.items():
-        plan = regime.simulation.exit_queries[period]
+        plan = regime.simulation.composition_queries[period]
         queries = plan.participating[name]
-        # The source Full draw chose the exit or the exact stay action once.
-        # Only movers reveal and act, in the problem their move was priced at.
+        # The source Full draw chose the composition action or the exact stay action
+        # once. Only movers reveal and act, in the problem their move was priced at.
         holders = run_simulation_operation(
             memory=memory,
             function=_moving_actor_rows,
@@ -314,8 +316,8 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                 "regime_ids": final_ids,
                 "regime_id": regime_names_to_ids[name],
             },
-            subject_arg_names=("moved", "regime_ids"),
-            subject_outputs=True,
+            agent_arg_names=("moved", "regime_ids"),
+            agent_outputs=True,
         )
         arguments = _query_arguments(
             plan=plan,
@@ -350,7 +352,7 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                     group: dict(flat_params.get(group, {})) for group in bindings
                 },
             },
-            n_subjects=regime_ids.size,
+            n_agents=regime_ids.size,
             memory=memory,
             roots=(
                 states,
@@ -372,7 +374,9 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                 produced,
             ),
         )
-        answer, frame_payload, selected_states = cast("ParticipatingExitOutput", output)
+        answer, frame_payload, selected_states = cast(
+            "ParticipatingCompositionOutput", output
+        )
         frame = CurrentIIDDrawFrame(*frame_payload)
         _check_answer(
             queries=queries,
@@ -394,8 +398,8 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                     "updates": selected_states,
                     "holders": holders,
                 },
-                subject_arg_names=("states", "updates", "holders"),
-                subject_outputs=True,
+                agent_arg_names=("states", "updates", "holders"),
+                agent_outputs=True,
             )
         source_answer, source_frame = originals.get(name, (answer, frame))
         physical_names = plan.physical_names
@@ -445,7 +449,7 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                     if source in reporting_sources
                 },
             },
-            subject_arg_names=(
+            agent_arg_names=(
                 "moved",
                 "roles",
                 "paid",
@@ -459,9 +463,9 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
                 "original_physical",
                 "original_available",
             ),
-            subject_outputs=True,
+            agent_outputs=True,
         )
-        prepared[name] = PreparedExitDecision(*selected)
+        prepared[name] = PreparedCompositionDecision(*selected)
     # The operations above may hand back their mappings with sorted keys, as a
     # compiled or mesh-placed call does, so the carrier keeps its incoming order.
     return (
@@ -479,7 +483,7 @@ def prepare_exit_period(  # noqa: C901, PLR0915 - retain replay's ordered owner 
     )
 
 
-def exit_bindings(
+def composition_action_bindings(
     *, actors: Mapping[RegimeName, Regime], period: int
 ) -> Mapping[str, ShockBinding]:
     """Enumerate only demanded named base sites, retaining each joint group."""
@@ -487,8 +491,8 @@ def exit_bindings(
         group: binding
         for regime in actors.values()
         for queries in (
-            regime.simulation.exit_queries[period].full,
-            *regime.simulation.exit_queries[period].participating.values(),
+            regime.simulation.composition_queries[period].full,
+            *regime.simulation.composition_queries[period].participating.values(),
         )
         if queries is not None
         for node in queries.definitions.values()
@@ -500,7 +504,7 @@ def exit_bindings(
 
 def _query_arguments(
     *,
-    plan: ExitSimulationPlan,
+    plan: CompositionSimulationPlan,
     queries: ScalarPolicyQueries,
     states: Mapping[str, FloatND | IntND],
     flat_params: FlatParams,
@@ -541,7 +545,7 @@ def _query_arguments(
             stored = values[read.target.period][read.target.regime]
         else:
             raise ExecutionPlanningError(
-                "Exit replay needs canonical regime-value query operands."
+                "Composition action replay needs canonical regime-value query operands."
             )
         array = owner.read(unit=unit, read=read, value=stored)
         _set_read(arguments=arguments, path=read.source.path, array=array)
@@ -581,7 +585,7 @@ def _dispatch(
     family: str,
     period: int,
     arguments: Mapping[str, PytreeValue],
-    n_subjects: int,
+    n_agents: int,
     memory: SimulationMemory | None,
     roots: PytreeValue,
 ) -> PytreeValue:
@@ -592,7 +596,7 @@ def _dispatch(
             family=family,
             period=period,
             arguments=arguments,
-            n_subjects=n_subjects,
+            n_agents=n_agents,
         )
     # Native query outputs have array leaves, including resolved law operands.
     memory.unit_inputs = cast("ArrayTree", roots)
@@ -609,7 +613,7 @@ def _dispatch(
             family=family,
             period=period,
             arguments=arguments,
-            n_subjects=n_subjects,
+            n_agents=n_agents,
         )
     finally:
         executor.close()
@@ -657,7 +661,8 @@ def _check_answer(
     )
     if bool(invalid):
         raise ShockDeclarationError(
-            "Current exit law or query is invalid or unresolved during replay."
+            "A current composition action's law or query is invalid or unresolved "
+            "during replay."
         )
     if bool(empty):
         row = int(np.flatnonzero(np.asarray(holders & ~answer[2]))[0])
@@ -691,8 +696,8 @@ def _merge_bases(
             "bases": {name: frame.held_bases for name, (_, frame) in originals.items()},
             "regime_names_to_ids": regime_names_to_ids,
         },
-        subject_arg_names=("regime_ids", "bases"),
-        subject_outputs=True,
+        agent_arg_names=("regime_ids", "bases"),
+        agent_outputs=True,
     )
 
 
@@ -720,7 +725,7 @@ def _original_produced(
     regime_names_to_ids: RegimeNamesToIds,
     physical_names: tuple[tuple[RegimeName, tuple[ShockName, ...]], ...],
 ) -> dict[ShockName, BoolND]:
-    """Retain actual producing contexts in immutable original subject order."""
+    """Retain actual producing contexts in immutable original agent order."""
     produced = {
         shock: jnp.zeros_like(regime_ids, dtype=jnp.bool_)
         for _, names in physical_names

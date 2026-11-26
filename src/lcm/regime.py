@@ -31,12 +31,12 @@ from _lcm.utils.containers import ensure_containers_are_immutable
 from _lcm.utils.error_messages import path_segment_name_errors
 from lcm.certainty_equivalent import CertaintyEquivalent
 from lcm.collective import CollectiveUtility, ParetoObjective
+from lcm.composition_actions import CompositionAction
 from lcm.decoupled import (
     Decoupled,
     resolve_koopmans_aggregator,
 )
 from lcm.exceptions import RegimeInitializationError
-from lcm.exits import Exit
 from lcm.grids import DiscreteGrid
 from lcm.phased import Phased
 from lcm.processes import JointNormalIIDProcess
@@ -100,7 +100,7 @@ class _SlotsBesideFunctions(TypedDict, total=False):
     solver: _solvers.Solver
     taste_shocks: ExtremeValueTasteShocks | None
     shocks: tuple[ShockGroupName, ...]
-    exit: Exit | None
+    composition_action: CompositionAction | None
     koopmans_aggregator: (
         UserFunction | Phased | Decoupled | Mapping[str, UserFunction | Phased] | None
     )
@@ -271,7 +271,7 @@ class Regime:
     discrete-action combination, then replaces the hard maximum across those
     combinations by `scale * logsumexp(Q / scale)`. Simulation adds one
     mean-zero `scale * (Gumbel(0, 1) - EULER_GAMMA)` draw per discrete
-    combination and subject before choosing the realized argmax. For a fixed
+    combination and agent before choosing the realized argmax. For a fixed
     candidate-value array, centering makes the expected latent perturbed
     maximum equal its log-sum. The shock affects the choice; simulation
     publishes the selected unshocked value. DCEGM simulation is
@@ -281,13 +281,13 @@ class Regime:
     The shock scale is the runtime param
     `{"taste_shocks": {"scale": ...}}` and must be strictly positive; omit
     `taste_shocks` for a hard maximum. At least one discrete action is required.
-    Taste shocks are currently supported by `GridSearch` and `DCEGM`. A household
-    (a `CollectiveUtility`) admits them when exactly one member has a positive
-    Pareto weight: that member decides, its value is its own smoothed maximum,
-    and every other member's value is its mean action value under the
-    decider's choice. They are rejected on a household with more than one
-    positive weight, on the source of a `Gate`, with a nonlinear certainty
-    equivalent, and with `NEGM`, `NBEGM`, or `NNBEGM`.
+    Taste shocks are currently supported by `GridSearch` and `DCEGM`. A regime
+    with several members (a `CollectiveUtility`) admits them when exactly one
+    member has a positive Pareto weight: that member decides, its value is its
+    own smoothed maximum, and every other member's value is its mean action value
+    under the deciding member's choice. They are rejected on a regime with more
+    than one positive Pareto weight, on the source of a `Gate`, with a nonlinear
+    certainty equivalent, and with `NEGM`, `NBEGM`, or `NNBEGM`.
     """
 
     koopmans_aggregator: (
@@ -300,14 +300,14 @@ class Regime:
     regime functions of the same name. `Phased(solve=..., simulate=...)`
     gives the two phases different aggregators. `Decoupled(objective=...,
     value=...)` chooses actions with one aggregator and stores the value of
-    another (time-inconsistent agents); in a household, the household chooses
-    on the Pareto-weighted sum of its members' objectives and stores each
+    another (time-inconsistent agents); in a regime with several members, the
+    members choose on the Pareto-weighted sum of its members' objectives and stores each
     member's value. `None` means the regime takes the model-level aggregator
     (`lcm.LinearAggregator` unless the `Model` says otherwise). Terminal regimes
     have no continuation and take none.
 
-    A household (a `CollectiveUtility`) may instead give each member its own
-    aggregator, as a mapping from every member name to an aggregator or a
+    A regime with several members (a `CollectiveUtility`) may instead give each
+    member its own aggregator, as a mapping from every member name to an aggregator or a
     `Phased` one; member `m`'s params live under `koopmans_aggregator_<m>`. A
     bare aggregator is the same function, with the same params, for every
     member. A `Decoupled` aggregator cannot be given per member.
@@ -330,9 +330,10 @@ class Regime:
     rejected. Other EGM-family solvers reject a nonlinear certainty
     equivalent. Terminal regimes have no continuation and cannot declare one.
 
-    A household may instead give each member its own certainty equivalent, as
-    a mapping from every member name to one; member `m`'s params live under
-    `certainty_equivalent_<m>`, and linear and nonlinear members may be mixed.
+    A regime with several members may instead give each member its own
+    certainty equivalent, as a mapping from every member name to one; member
+    `m`'s params live under `certainty_equivalent_<m>`, and linear and nonlinear
+    members may be mixed.
     A bare certainty equivalent is the same one, with the same params, for every
     member.
     """
@@ -348,8 +349,11 @@ class Regime:
     groups carry an axis and which are integrated out.
     """
 
-    exit: Exit | None = None
-    """Current-period move to mapped destination policies, before the action."""
+    composition_action: CompositionAction | None = None
+    """The members' decision on the composition in the current period.
+
+    It is taken before the action and leads to the destinations' policies.
+    """
 
     description: str = ""
     """Description of the regime."""
@@ -359,37 +363,38 @@ class Regime:
 
     Every regime has at least one member, and its value array carries a
     trailing axis over them. A regime declared with a plain utility function
-    has the one member `"self"`. A household, such as a couple, is declared
-    with a `CollectiveUtility`, whose `utilities` keys are its members in the
-    order they are written. The household solves one argmax of the
-    Pareto-weighted sum of its members' values and reads off each member's own
-    value there; its exits compare each member's value (consent, dissolution).
+    has the one member `"self"`. A regime with several members, such as a
+    couple, is declared with a `CollectiveUtility`, whose `utilities` keys are
+    its members in the order they are written. The members solve one argmax of
+    the Pareto-weighted sum of their values and read off each member's own value
+    there; the regime's composition action compares each member's value
+    (consent, divorce).
 
-    A household's `decomposed_functions` view carries a per-member
-    `utility_<s>` for each member `<s>`, together with a `pareto_objective`,
-    and a non-terminal one aggregates each member's continuation
-    `Q^s = W^s(u^s, CE^s)`. A non-terminal household's transition targets must
-    all have the identical `members` tuple — per-member current outside options
-    are declared by an `Exit`. EV1 taste shocks with more than one member
-    carrying a positive weight raise `NotImplementedError`, as does a solver
-    that does not declare `supports_several_members` on a regime with more
-    than one member.
+    The `decomposed_functions` view of a regime with several members carries a
+    per-member `utility_<s>` for each member `<s>`, together with a
+    `pareto_objective`, and a non-terminal one aggregates each member's
+    continuation `Q^s = W^s(u^s, CE^s)`. The transition targets of such a
+    non-terminal regime must all have the identical `members` tuple. A
+    `CompositionAction` declares each member's outside option in the current
+    period. EV1 taste shocks with more than one member carrying a positive
+    Pareto weight raise `NotImplementedError`, as does a solver that does not
+    declare `supports_several_members` on a regime with more than one member.
 
-    Two things to know before simulating a household:
+    Two things to know before simulating a regime with several members:
 
     - The population is one fixed-size cohort of independent rows. A
       dissolution does not split a row into two independently tracked
-      households; each row records where every member would land and then
+      agents; each row records where every member would land and then
       continues as one of them.
     - Every row carries its own role. `simulate` reads it from
       `initial_conditions["own_member"]`, so one cohort may hold both partners.
     """
 
     pareto_objective: ParetoObjective | None = field(init=False, default=None)
-    """How this regime's household trades its members off.
+    """How this regime trades its members off.
 
     Derived from `CollectiveUtility.objective`. The solve maximizes the
-    household scalarization `O = Σ_s λ_s Q^s` over the feasible action set.
+    Pareto-weighted scalarization `O = Σ_s λ_s Q^s` over the feasible action set.
     When omitted (the default), equal weights `1/len(members)` are used —
     the symmetric-couple case, `λ = 0.5` on each partner. Declare a
     `ParetoObjective` to weigh one member more, to let the weights depend
@@ -478,15 +483,16 @@ class Regime:
         """`functions` with any `CollectiveUtility` taken apart.
 
         A `CollectiveUtility` under `"utility"` is replaced by one
-        `utility_<s>` entry per member, in the order the household
-        declares them — so the mapping an engine stage reads never holds a
+        `utility_<s>` entry per member, in the order the declaration
+        names them — so the mapping an engine stage reads never holds a
         declaration object, whatever order the entries reached the regime in. A
         member whose body is delegated keeps an entry the regime already
         carries and is otherwise omitted. Model finalization merges any
         model-level body and then validates that every member is complete.
 
-        Deterministic and idempotent: a regime that declares no household is
-        returned unchanged, and reading the view never changes the regime.
+        Deterministic and idempotent: a regime that declares no
+        `CollectiveUtility` is returned unchanged, and reading the view never
+        changes the regime.
         """
         from _lcm.constraints.dynamic_bound import get_floor_node  # noqa: PLC0415
         from _lcm.constraints.processed import normalize_constraints  # noqa: PLC0415
@@ -800,8 +806,8 @@ class Regime:
         Regime building reads a regime's functions through
         `decomposed_functions`, composes more of them, and hands the result
         back. Writing that result straight into `functions` would put the
-        decomposition where the declaration was, and the household would be
-        gone. This writes back by provenance instead: an entry the declaration
+        decomposition where the declaration was, and the `CollectiveUtility`
+        would be gone. This writes back by provenance instead: an entry the declaration
         produced is the declaration's, and is left to it; everything else is
         the engine's, and is overlaid on the slot the author wrote.
 
@@ -858,7 +864,7 @@ class Regime:
                 raise RegimeInitializationError(
                     "The engine mapping supplies a plain 'utility' for a regime "
                     "whose utility is a `CollectiveUtility`. Writing it back "
-                    "would replace the household by a single utility."
+                    "would replace the members' utilities by a single utility."
                 )
             if name in declared_bodies:
                 if func is not declared_bodies[name]:
@@ -925,10 +931,10 @@ def decompose_functions(
     Returns:
         The same mapping with any `CollectiveUtility` under `"utility"`
         replaced by one `utility_<s>` entry per member, emitted in the
-        order the household declares them so that the result does not depend on
+        order the declaration names them so that the result does not depend on
         the order the entries reached the regime in. A member whose body
         is delegated keeps the entry the mapping already carries. A mapping
-        declaring no household is returned unchanged, which makes the
+        declaring no `CollectiveUtility` is returned unchanged, which makes the
         transformation idempotent.
     """
     declaration = functions.get("utility")

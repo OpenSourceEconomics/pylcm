@@ -1,9 +1,9 @@
 """A budgeted simulation routes through a gate into a fallback with unsorted states.
 
-The fallback regime declares its states as `hc` before `assets`, which is not
-their sorted order, and the source regime offers a current-period exit in the
-period its gate routes. The budgeted simulation profiles the gate route against
-the fallback's declared states after the exit has run, so it must run and
+The fallback regime declares its states as `hc` before `assets`, which is not their
+sorted order, and the source regime offers a current-period composition action in the
+period its gate routes. The budgeted simulation profiles the gate route against the
+fallback's declared states after the composition action has run, so it must run and
 reproduce the unbudgeted panel.
 """
 
@@ -25,7 +25,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.exits import Exit, ExitTarget, Unilateral
+from lcm.composition_actions import CompositionAction, Destination, PCOnActions
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 
 
@@ -73,12 +73,12 @@ def _regime(*, terminal: bool) -> Regime:
             else {"hc": fixed_transition("hc"), "assets": fixed_transition("assets")}
         ),
         functions={"utility": _utility},
-        exit=(
+        composition_action=(
             None
             if terminal
-            else Exit(
-                targets={"self": ExitTarget(regime="quit", projection={})},
-                rule=Unilateral(),
+            else CompositionAction(
+                destinations={"self": Destination(regime="quit", projection={})},
+                rule=PCOnActions(),
             )
         ),
     )
@@ -98,7 +98,7 @@ def _model(*, budgeted: bool) -> Model:
         enable_jit=True,
         execution_config=(
             ExecutionConfig(
-                devices=(0,), axis_widths={"subject": 2}, device_memory_bytes=2**30
+                devices=(0,), axis_widths={"agent": 2}, device_memory_bytes=2**30
             )
             if budgeted
             else ExecutionConfig()

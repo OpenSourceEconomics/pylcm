@@ -135,7 +135,7 @@ def _consumption_values(*, wealth: FloatND, kind: IntND, age: int) -> FloatND:
 def test_every_kind_has_one_best_consumption_at_every_reached_wealth(
     *, kind: int, age: int
 ) -> None:
-    """No working subject is indifferent between two consumption nodes."""
+    """No working agent is indifferent between two consumption nodes."""
     for wealth in range(17, 39):
         second, best = np.sort(
             _consumption_values(
@@ -166,7 +166,7 @@ def _model(*, devices: tuple[int, ...], width: int | None) -> Model:
         execution_config=ExecutionConfig(
             devices=devices,
             sharded_states=("kind",),
-            axis_widths={} if width is None else {"subject": width},
+            axis_widths={} if width is None else {"agent": width},
             device_memory_bytes=2**30,
         ),
         initial_nodes={0: "working"},
@@ -244,7 +244,7 @@ def _install_profile_observers(
                 id(self),
                 id(call["program"].function),
                 call["period"],
-                call["n_subjects"],
+                call["n_agents"],
             ),
             "executable": id(executable),
             "shapes": _shape_tree(executable.out_info),
@@ -286,17 +286,17 @@ def _install_profile_observers(
 def _observe_execution(
     *, monkeypatch: pytest.MonkeyPatch, device_count: int
 ) -> tuple[list[dict[str, int]], list[tuple[slice, int, int]]]:
-    """Check required subject inputs and compiler-profiled output layouts."""
+    """Check required agent inputs and compiler-profiled output layouts."""
     profile_shapes: dict[int, ProfileShapes] = {}
     profiled_programs = set()
     profile_layouts = {}
     profile_widths = []
     chunks = []
-    placed_subjects = []
+    placed_agents = []
     dispatch = SimulationRuntime.dispatch
     compiled_call = simulation_runtime.CompiledSimulationProgram.__call__
     place = simulation_runtime.place_simulation_arguments
-    run_chunk = simulation._simulate_subject_chunk
+    run_chunk = simulation._simulate_agent_chunk
     _install_profile_observers(
         monkeypatch=monkeypatch,
         profiled_programs=profiled_programs,
@@ -312,7 +312,7 @@ def _observe_execution(
             id(self),
             id(call["program"].function),
             call["period"],
-            call["n_subjects"],
+            call["n_agents"],
         )
         assert declaration in profiled_programs, (
             "Dispatch preceded its declared-body profile"
@@ -336,32 +336,32 @@ def _observe_execution(
         **call: Unpack[OperandPlacement[Operand]],
     ) -> MappingProxyType[str, Operand]:
         placed = place(**call)
-        for name in call["subject_arg_names"]:
+        for name in call["agent_arg_names"]:
             for value in jax.tree.leaves(placed.get(name, ())):
                 if isinstance(value, jax.Array) and value.ndim:
-                    _assert_subject_rows(value=value, device_count=device_count)
-                    placed_subjects.append(value.shape[0])
+                    _assert_agent_rows(value=value, device_count=device_count)
+                    placed_agents.append(value.shape[0])
         return placed
 
     def record_chunk(
         **call: Unpack[SimulationChunkInputs],
     ) -> dict[RegimeName, dict[int, simulation.PeriodRegimeSimulationData]]:
-        assert isinstance(call["subject_slice"], slice)
-        assert call["original_n_subjects"] is not None
+        assert isinstance(call["agent_slice"], slice)
+        assert call["original_n_agents"] is not None
         chunks.append(
-            (call["subject_slice"], call["n_subjects"], call["original_n_subjects"])
+            (call["agent_slice"], call["n_agents"], call["original_n_agents"])
         )
         assert (
             len(call["initial_regime_ids"])
-            == call["subject_slice"].stop - call["subject_slice"].start
+            == call["agent_slice"].stop - call["agent_slice"].start
         )
-        before = len(placed_subjects)
+        before = len(placed_agents)
         result = run_chunk(**call)
-        assert len(placed_subjects) > before
-        if call["subject_slice"].stop - call["subject_slice"].start >= 2048:
+        assert len(placed_agents) > before
+        if call["agent_slice"].stop - call["agent_slice"].start >= 2048:
             # Preserve the observed real-alignment witness separately from the
             # general contract, which does not prescribe every V output layout.
-            _assert_subject_rows(
+            _assert_agent_rows(
                 value=result["working"][0].V_arr, device_count=device_count
             )
         return result
@@ -373,7 +373,7 @@ def _observe_execution(
     monkeypatch.setattr(
         simulation_runtime, "place_simulation_arguments", record_placement
     )
-    monkeypatch.setattr(simulation, "_simulate_subject_chunk", record_chunk)
+    monkeypatch.setattr(simulation, "_simulate_agent_chunk", record_chunk)
     return profile_widths, chunks
 
 
@@ -385,7 +385,7 @@ def _assert_output_shardings(
         assert value.sharding.is_equivalent_to(sharding, value.ndim)
 
 
-def _assert_subject_rows(*, value: jax.Array, device_count: int) -> None:
+def _assert_agent_rows(*, value: jax.Array, device_count: int) -> None:
     """Require actual nonempty, disjoint shards covering every global row."""
     assert len(value.addressable_shards) == device_count
     assert {shard.device.id for shard in value.addressable_shards} == set(
@@ -437,13 +437,13 @@ def test_independent_outer_cohorts_preserve_profiled_shapes_and_real_rows(
         profile_widths.clear()
 
         def force_candidate(
-            *, index: int = arm, population: int, alignment: int, subject_width: int
+            *, index: int = arm, population: int, alignment: int, agent_width: int
         ) -> tuple[int, ...]:
             return (
                 frontier(
                     population=population,
                     alignment=alignment,
-                    subject_width=subject_width,
+                    agent_width=agent_width,
                 )[index],
             )
 
@@ -471,11 +471,11 @@ def test_independent_outer_cohorts_preserve_profiled_shapes_and_real_rows(
         ]
         assert profile_widths
         assert all(
-            item.get("subject", min(width, extent)) == min(width, extent)
+            item.get("agent", min(width, extent)) == min(width, extent)
             for item in profile_widths
         )
         maps.append({tuple(sorted(item.items())) for item in profile_widths})
-        assert result.n_subjects == count
+        assert result.n_agents == count
         np.testing.assert_array_equal(
             np.asarray(result.raw_results["working"][0].states["wealth"]),
             initial["wealth"],
@@ -496,7 +496,7 @@ def test_independent_outer_cohorts_preserve_profiled_shapes_and_real_rows(
         pd.testing.assert_frame_equal(left, right, rtol=eps, atol=eps)
 
 
-def test_scalar_anchor_preserves_subject_pin_for_larger_outer_candidate(
+def test_scalar_anchor_preserves_agent_pin_for_larger_outer_candidate(
     *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A scalar anchor must retain the pin needed by the largest candidate."""
@@ -532,17 +532,15 @@ def test_scalar_anchor_preserves_subject_pin_for_larger_outer_candidate(
     assert len(receipts) == 1
     receipt = receipts[0]
     assert receipt.candidates == (1, 2, 3)
-    assert receipt.selected_subjects == 3
-    assert dict(receipt.axis_widths)["subject"] == 1
-    assert [attempt.n_subjects for attempt in receipt.attempts] == [3]
-    assert all(
-        dict(attempt.axis_widths)["subject"] == 1 for attempt in receipt.attempts
-    )
+    assert receipt.selected_agents == 3
+    assert dict(receipt.axis_widths)["agent"] == 1
+    assert [attempt.n_agents for attempt in receipt.attempts] == [3]
+    assert all(dict(attempt.axis_widths)["agent"] == 1 for attempt in receipt.attempts)
     assert profiles
-    assert any("subject" in widths for widths in profiles)
-    assert all(widths["subject"] == 1 for widths in profiles if "subject" in widths)
+    assert any("agent" in widths for widths in profiles)
+    assert all(widths["agent"] == 1 for widths in profiles if "agent" in widths)
     assert chunks == [(slice(0, 3), 3, 3)]
-    assert result.n_subjects == 3
+    assert result.n_agents == 3
     np.testing.assert_array_equal(
         result.raw_results["working"][0].states["wealth"], [20.0, 21.0, 22.0]
     )
@@ -550,7 +548,7 @@ def test_scalar_anchor_preserves_subject_pin_for_larger_outer_candidate(
 
 def test_independent_frontier_preserves_2048_inner_width_on_three_devices() -> None:
     assert chunk_admission._independent_outer_candidates(
-        population=226848, alignment=3, subject_width=2048
+        population=226848, alignment=3, agent_width=2048
     ) == (2049, 4098, 8193, 16386, 32769, 65538, 131073, 226848)
 
 
@@ -568,7 +566,7 @@ def test_changed_padded_population_preserves_actual_stochastic_and_taste_keys(
         static_argnames=(
             "names",
             "n_initial_states",
-            "original_n_subjects",
+            "original_n_agents",
             "partitionable",
             "width",
         ),
@@ -593,7 +591,7 @@ def test_changed_padded_population_preserves_actual_stochastic_and_taste_keys(
                     start=np.asarray([0, start], dtype=np.uint32),
                     names=("state", "next_regime"),
                     n_initial_states=padded,
-                    original_n_subjects=original_count,
+                    original_n_agents=original_count,
                     partitionable=partitionable,
                     width=extent,
                 )
@@ -609,9 +607,9 @@ def test_changed_padded_population_preserves_actual_stochastic_and_taste_keys(
                         key=carry,
                         taste_key=root,
                         taste_address=tuple(range(8)),
-                        n_subjects=padded,
-                        subject_slice=slice(start, start + extent),
-                        original_n_subjects=original_count,
+                        n_agents=padded,
+                        agent_slice=slice(start, start + extent),
+                        original_n_agents=original_count,
                         memory=None,
                     )
                     rows[label].append(np.asarray(jax.random.key_data(taste)))
@@ -644,7 +642,7 @@ def test_finite_replay_outer_extent_matches_profile_without_changing_candidates(
         n_periods=2,
         execution_config=ExecutionConfig(
             devices=(0,),
-            axis_widths={"subject": 1},
+            axis_widths={"agent": 1},
             device_memory_bytes=2**30,
         ),
     )
@@ -666,7 +664,7 @@ def test_finite_replay_outer_extent_matches_profile_without_changing_candidates(
     ) -> simulation_runtime.CompiledSimulationProgram:
         result = prepare(self, **call)
         assert isinstance(result.executable, jax.stages.Compiled)
-        profiles[(id(call["program"].function), call["period"], call["n_subjects"])] = (
+        profiles[(id(call["program"].function), call["period"], call["n_agents"])] = (
             _shape_tree(result.executable.out_info)
         )
         return result
@@ -678,14 +676,14 @@ def test_finite_replay_outer_extent_matches_profile_without_changing_candidates(
         name = call["program"].name
         if name in {"simulate_policy_prepare", "simulate_policy_rank"}:
             assert call["residency"] is not None
-            assert call["residency"].axis_widths["subject"] == 1
+            assert call["residency"].axis_widths["agent"] == 1
             assert (
                 _shape_tree(result)
                 == profiles[
-                    (id(call["program"].function), call["period"], call["n_subjects"])
+                    (id(call["program"].function), call["period"], call["n_agents"])
                 ]
             )
-            observed.add((name, call["n_subjects"]))
+            observed.add((name, call["n_agents"]))
         return result
 
     monkeypatch.setattr(SimulationRuntime, "prepare_abstract", record_profile)
@@ -695,13 +693,13 @@ def test_finite_replay_outer_extent_matches_profile_without_changing_candidates(
     for arm in (0, -1):
 
         def force_candidate(
-            *, index: int = arm, population: int, alignment: int, subject_width: int
+            *, index: int = arm, population: int, alignment: int, agent_width: int
         ) -> tuple[int, ...]:
             return (
                 frontier(
                     population=population,
                     alignment=alignment,
-                    subject_width=subject_width,
+                    agent_width=agent_width,
                 )[index],
             )
 
@@ -726,7 +724,7 @@ def test_finite_replay_outer_extent_matches_profile_without_changing_candidates(
     _assert_raw_equal(actual=results[1], expected=results[0])
 
 
-def test_auto_anchor_admits_a_budgeted_call_without_an_explicit_subject_pin(
+def test_auto_anchor_admits_a_budgeted_call_without_an_explicit_agent_pin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A budget alone admits an outer cohort; no `simulation_chunk_policy` exists."""
@@ -758,9 +756,9 @@ def test_auto_anchor_admits_a_budgeted_call_without_an_explicit_subject_pin(
     )
     assert len(receipts) == 1
     receipt = receipts[0]
-    assert receipt.selected_subjects > 0
-    assert receipt.selected_subjects % receipt.alignment == 0 or (
-        receipt.selected_subjects == 3
+    assert receipt.selected_agents > 0
+    assert receipt.selected_agents % receipt.alignment == 0 or (
+        receipt.selected_agents == 3
     )
-    assert dict(receipt.axis_widths)["subject"] > 0
-    assert result.n_subjects == 3
+    assert dict(receipt.axis_widths)["agent"] > 0
+    assert result.n_agents == 3

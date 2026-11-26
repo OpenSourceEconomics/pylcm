@@ -191,15 +191,15 @@ def initial_conditions_from_dataframe(  # noqa: C901, PLR0912
         initial_regimes=df["regime_name"].tolist(),
     )
 
-    n_subjects = len(df)
+    n_agents = len(df)
     state_cols = [col for col in df.columns if col not in {"regime_name", "own_member"}]
 
     # Pre-allocate result arrays (NaN default surfaces bugs for missing states)
     result_arrays: dict[str, np.ndarray] = {
         col: (
-            np.zeros(n_subjects, dtype=np.int32)
+            np.zeros(n_agents, dtype=np.int32)
             if col == "age" and ages is not None and coordinate_kind(ages) == "period"
-            else np.full(n_subjects, np.nan)
+            else np.full(n_agents, np.nan)
         )
         for col in state_cols
     }
@@ -1798,7 +1798,7 @@ def _validate_state_columns(
 
 def _format_missing_state_detail(*, name: str, required_by: list[str]) -> str:
     if name in PSEUDO_STATE_NAMES:
-        return f"'{name}' (required for every subject)"
+        return f"'{name}' (required for every agent)"
     if required_by:
         return f"'{name}' (required by {sorted(required_by)})"
     return f"'{name}' (required by an initial regime)"

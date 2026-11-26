@@ -273,8 +273,8 @@ def make_shocked_singleton_model() -> tuple[Model, ParamsDict]:
 def wage_shock_nodes() -> FloatND:
     """Return `WAGE_SHOCK`'s quadrature nodes at the ambient float precision.
 
-    `make_shocked_singleton_initial_conditions` seeds subject `i` at node
-    `i % 5`, so a test computing that subject's expected utility reads the node
+    `make_shocked_singleton_initial_conditions` seeds agent `i` at node
+    `i % 5`, so a test computing that agent's expected utility reads the node
     from here rather than hardcoding a value only one precision can represent.
 
     Returns:
@@ -334,54 +334,54 @@ def make_tied_shares_model(
     )
 
 
-def make_couple_initial_conditions(*, n_subjects: int = 2) -> InitialConditions:
+def make_couple_initial_conditions(*, n_agents: int = 2) -> InitialConditions:
     """Build initial conditions for the collective models in this module.
 
-    Every subject starts at age 0 in `couple`, with wages cycling through
-    `WAGE_GRID_POINTS` so that consecutive subjects sit on different nodes.
+    Every agent starts at age 0 in `couple`, with wages cycling through
+    `WAGE_GRID_POINTS` so that consecutive agents sit on different nodes.
 
     Args:
-        n_subjects: Number of subjects to simulate.
+        n_agents: Number of agents to simulate.
 
     Returns:
         Dict of `wage`, `age` and `regime_id` columns, each of length
-        `n_subjects`.
+        `n_agents`.
 
     """
     wages = [
-        WAGE_GRID_POINTS[index % len(WAGE_GRID_POINTS)] for index in range(n_subjects)
+        WAGE_GRID_POINTS[index % len(WAGE_GRID_POINTS)] for index in range(n_agents)
     ]
     return {
         "wage": jnp.asarray(wages),
-        "age": jnp.zeros(n_subjects),
-        "regime_id": jnp.full(n_subjects, CoupleRegimeId.couple, dtype=jnp.int32),
+        "age": jnp.zeros(n_agents),
+        "regime_id": jnp.full(n_agents, CoupleRegimeId.couple, dtype=jnp.int32),
     }
 
 
 def make_shocked_singleton_initial_conditions(
-    *, n_subjects: int = 2
+    *, n_agents: int = 2
 ) -> InitialConditions:
     """Build initial conditions for `make_shocked_singleton_model`.
 
-    Every subject starts at age 0 in `shocked`, seeded at a node of
-    `WAGE_SHOCK` — subject `i` at `wage_shock_nodes()[i % 5]` — so a test
-    can state each subject's realized utility from the node it was given.
+    Every agent starts at age 0 in `shocked`, seeded at a node of
+    `WAGE_SHOCK` — agent `i` at `wage_shock_nodes()[i % 5]` — so a test
+    can state each agent's realized utility from the node it was given.
 
     Args:
-        n_subjects: Number of subjects to simulate.
+        n_agents: Number of agents to simulate.
 
     Returns:
         Dict of `wage_shock`, `age` and `regime_id` columns, each of length
-        `n_subjects`.
+        `n_agents`.
 
     """
     nodes = wage_shock_nodes()
     return {
         "wage_shock": jnp.asarray(
-            [nodes[index % len(nodes)] for index in range(n_subjects)]
+            [nodes[index % len(nodes)] for index in range(n_agents)]
         ),
-        "age": jnp.zeros(n_subjects),
-        "regime_id": jnp.full(n_subjects, ShockRegimeId.shocked, dtype=jnp.int32),
+        "age": jnp.zeros(n_agents),
+        "regime_id": jnp.full(n_agents, ShockRegimeId.shocked, dtype=jnp.int32),
     }
 
 

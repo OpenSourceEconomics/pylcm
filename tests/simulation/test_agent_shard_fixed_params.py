@@ -1,9 +1,9 @@
-"""Subject sharding sees a regime's capability through its fixed-param binding.
+"""Agent sharding sees a regime's capability through its fixed-param binding.
 
 A regime with reachable fixed params reaches the runtime with every simulation
 program's body wrapped in a `functools.partial` that binds them. A partial
 proxies no attribute of the callable it wraps, so a structural read of the
-subject-sharding declaration taken off the wrapper reports the model as
+agent-sharding declaration taken off the wrapper reports the model as
 incapable and refuses the run. The declaration is a property of the body, and
 binding a shared scalar into it partitions nothing, so the same model must
 simulate identically on one, two and four devices.
@@ -24,7 +24,7 @@ from typing import cast
 
 import pytest
 
-from _lcm.simulation.subject_parallel import declared_subject_shard_arg_names
+from _lcm.simulation.agent_parallel import declared_agent_shard_arg_names
 from _lcm.typing import PytreeValue
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -50,7 +50,7 @@ _SCRIPT = textwrap.dedent(
     assert jax.device_count() == n_devices, jax.devices()
 
     N_PERIODS = 2
-    N_SUBJECTS = 4
+    N_AGENTS = 4
     final_age_alive = START_AGE + N_PERIODS - 2
     # A regime-level fixed param makes `_partial_fixed_params_into_regimes`
     # rebuild every decision, transition and route program of this regime.
@@ -85,9 +85,9 @@ _SCRIPT = textwrap.dedent(
     }
     ids = tuple(device.id for device in jax.devices()[:n_devices])
     initial = {
-        "wealth": jnp.linspace(1.0, 3.0, N_SUBJECTS),
-        "age": jnp.full(N_SUBJECTS, float(START_AGE)),
-        "regime_id": jnp.full(N_SUBJECTS, RegimeId.working_life, dtype=jnp.int32),
+        "wealth": jnp.linspace(1.0, 3.0, N_AGENTS),
+        "age": jnp.full(N_AGENTS, float(START_AGE)),
+        "regime_id": jnp.full(N_AGENTS, RegimeId.working_life, dtype=jnp.int32),
     }
 
 
@@ -115,7 +115,7 @@ _SCRIPT = textwrap.dedent(
             execution_config=ExecutionConfig(
                 devices=ids,
                 sharded_states=(),
-                simulation_sharding="subjects",
+                simulation_sharding="agents",
             ),
             fixed_params=FIXED,
         )
@@ -123,16 +123,16 @@ _SCRIPT = textwrap.dedent(
     pd.testing.assert_frame_equal(
         actual, reference, check_exact=False, rtol=2e-6, atol=2e-6
     )
-    print("SUBJECT-SHARD-FIXED-PARAMS-OK")
+    print("AGENT-SHARD-FIXED-PARAMS-OK")
     """
 )
 
 
 @pytest.mark.parametrize("n_devices", [1, 2, 4])
-def test_subject_sharding_accepts_a_regime_with_fixed_params(*, n_devices: int) -> None:
-    """A fixed-param regime simulates under subject sharding, matching the
+def test_agent_sharding_accepts_a_regime_with_fixed_params(*, n_devices: int) -> None:
+    """A fixed-param regime simulates under agent sharding, matching the
     unsharded rows, instead of being refused as not declaring independent
-    leading-axis subject outputs."""
+    leading-axis agent outputs."""
     env = {
         **os.environ,
         "XLA_FLAGS": f"--xla_force_host_platform_device_count={n_devices}",
@@ -148,17 +148,17 @@ def test_subject_sharding_accepts_a_regime_with_fixed_params(*, n_devices: int) 
         timeout=900,
     )
     assert result.returncode == 0, result.stderr[-4000:]
-    assert "SUBJECT-SHARD-FIXED-PARAMS-OK" in result.stdout
+    assert "AGENT-SHARD-FIXED-PARAMS-OK" in result.stdout
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class _Declared:
-    """A minimal body declaring the subject-shardable capability."""
+    """A minimal body declaring the agent-shardable capability."""
 
     names: tuple[str, ...]
 
     @property
-    def subject_shard_arg_names(self) -> tuple[str, ...]:
+    def agent_shard_arg_names(self) -> tuple[str, ...]:
         return self.names
 
     def __call__(self, **kwargs: PytreeValue) -> PytreeValue:
@@ -170,15 +170,15 @@ def test_a_keyword_binding_does_not_hide_the_declaration() -> None:
     body = _Declared(names=("states", "keys"))
     once = functools.partial(body, interest_rate=0.05)
     twice = functools.partial(once, disutility_of_work=0.5)
-    assert declared_subject_shard_arg_names(function=body) == ("states", "keys")
-    assert declared_subject_shard_arg_names(function=once) == ("states", "keys")
-    assert declared_subject_shard_arg_names(function=twice) == ("states", "keys")
+    assert declared_agent_shard_arg_names(function=body) == ("states", "keys")
+    assert declared_agent_shard_arg_names(function=once) == ("states", "keys")
+    assert declared_agent_shard_arg_names(function=twice) == ("states", "keys")
 
 
-def test_a_bound_subject_argument_is_no_longer_offered_for_partitioning() -> None:
+def test_a_bound_agent_argument_is_no_longer_offered_for_partitioning() -> None:
     """A name a binding already supplies is not a per-dispatch operand."""
     bound = functools.partial(_Declared(names=("states", "keys")), keys=None)
-    assert declared_subject_shard_arg_names(function=bound) == ("states",)
+    assert declared_agent_shard_arg_names(function=bound) == ("states",)
 
 
 def test_an_undeclared_body_and_a_positional_binding_are_both_refused() -> None:
@@ -189,5 +189,5 @@ def test_an_undeclared_body_and_a_positional_binding_are_both_refused() -> None:
 
     declared = cast("Callable[..., PytreeValue]", _Declared(names=("states",)))
     positional = functools.partial(declared, object())
-    assert declared_subject_shard_arg_names(function=plain) is None
-    assert declared_subject_shard_arg_names(function=positional) is None
+    assert declared_agent_shard_arg_names(function=plain) is None
+    assert declared_agent_shard_arg_names(function=positional) is None

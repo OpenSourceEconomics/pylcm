@@ -218,13 +218,13 @@ def test_joint_transition_rejects_invalid_probability_values(
 def test_simulation_shares_one_realization_and_hides_the_joint_node() -> None:
     """All outputs use one sampled node, which never appears in the result schema."""
     model = _build_model(enable_jit=False)
-    n_subjects = 200
+    n_agents = 200
 
     result = model.simulate(
         params=_params(),
         initial_conditions={
-            "age": jnp.full(n_subjects, 20.0),
-            "regime_id": jnp.full(n_subjects, RegimeId.source),
+            "age": jnp.full(n_agents, 20.0),
+            "regime_id": jnp.full(n_agents, RegimeId.source),
         },
         log_level="debug",
     )
@@ -527,14 +527,14 @@ def test_bdy_simulation_samples_one_shared_match_and_agrees_with_solve() -> None
     """BDY simulation samples one row whose outputs reproduce the folded value."""
     model = _bdy_model(enable_jit=False)
     solution = model.solve(params=_bdy_params(), log_level="debug")
-    n_subjects = 10_000
+    n_agents = 10_000
 
     result = model.simulate(
         params=_bdy_params(),
         initial_conditions={
-            "age": jnp.zeros(n_subjects),
-            "wealth": jnp.full(n_subjects, 2.0),
-            "regime_id": jnp.full(n_subjects, BDYRegimeId.single),
+            "age": jnp.zeros(n_agents),
+            "wealth": jnp.full(n_agents, 2.0),
+            "regime_id": jnp.full(n_agents, BDYRegimeId.single),
         },
         solution=solution,
         log_level="debug",

@@ -64,10 +64,10 @@ def test_finite_bank_keeps_the_full_outer_extent_without_allocating(
 
     # keyword-only-exempt: library-callback=_ChunkProfiler.profile_widths
     def inspect_profile(
-        self: admission._ChunkProfiler, *, n_subjects: int, widths: Mapping[str, int]
+        self: admission._ChunkProfiler, *, n_agents: int, widths: Mapping[str, int]
     ) -> Never:
         del widths
-        assert n_subjects == 7
+        assert n_agents == 7
         with monkeypatch.context() as guard:
             guard.setattr(jax, "device_put", _forbid_concrete)
             guard.setattr(
@@ -85,10 +85,10 @@ def test_finite_bank_keeps_the_full_outer_extent_without_allocating(
                 ages=self.ages,
                 initial_conditions=self.initial_conditions,
                 regime_names_to_ids=self.regime_names_to_ids,
-                n_subjects=n_subjects,
+                n_agents=n_agents,
                 population=self.population,
                 original_population=self.original_population,
-                widths={"subject": inner_width},
+                widths={"agent": inner_width},
                 independent_taste=False,
                 log_level="off",
             )
@@ -131,11 +131,11 @@ def test_public_finite_bank_floor_refuses_before_any_chunk_allocation(
     original = admission.profile_simulation_chunk
 
     def observe_profile(**call: Unpack[ChunkProfileInputs]) -> SimulationChunkProfile:
-        inspected.append(call["n_subjects"])
+        inspected.append(call["n_agents"])
         return original(**call)
 
     monkeypatch.setattr(admission, "profile_simulation_chunk", observe_profile)
-    monkeypatch.setattr(simulation, "_simulate_subject_chunk", _forbid_concrete)
+    monkeypatch.setattr(simulation, "_simulate_agent_chunk", _forbid_concrete)
     # Numerical preflight can exhaust this budget before bank profiling begins.
     refusal = (
         "No workspace-width candidate fits" if runtime_checks else "no anchor map fits"

@@ -11,6 +11,8 @@ A constraint on next-period assets is therefore written on this period's variabl
 `assets - consumption >= 0` — and a law reading a sibling law's output is unaffected.
 """
 
+from collections.abc import Mapping
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -28,7 +30,8 @@ from lcm import (
 )
 from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
-from lcm.typing import ScalarFloat, ScalarInt
+from lcm.regime import FunctionEntry, StateEntry, StateTransitionEntry
+from lcm.typing import FunctionName, ScalarFloat, ScalarInt, StateName, UserFunction
 
 _WEALTH = LinSpacedGrid(start=0.0, stop=4.0, n_points=5)
 _SHOCK = NormalIIDProcess(n_points=3, gauss_hermite=False, mu=1.0, sigma=0.5, n_std=2.0)
@@ -50,10 +53,10 @@ def _wealth_and_shock(*, wealth: ScalarFloat, shock: ScalarFloat) -> ScalarFloat
 
 def _build(
     *,
-    functions,
-    koopmans_aggregator=None,
-    states=None,
-    state_transitions=None,
+    functions: Mapping[FunctionName, FunctionEntry],
+    koopmans_aggregator: UserFunction | Phased | None = None,
+    states: Mapping[StateName, StateEntry] | None = None,
+    state_transitions: Mapping[StateName, StateTransitionEntry] | None = None,
 ) -> Model:
     """Two-regime model whose source is configurable, target always terminal."""
     return Model(
@@ -118,7 +121,7 @@ def _plain_utility(wealth: ScalarFloat) -> ScalarFloat:
     ids=["directly", "through_a_helper"],
 )
 def test_a_value_belonging_to_a_target_may_not_be_read_outside_a_transition(
-    *, functions, offender
+    *, functions: Mapping[FunctionName, FunctionEntry], offender: FunctionName
 ) -> None:
     """The offending consumer is named, and the message says where the value lives."""
     with pytest.raises(InvalidNameError, match=offender):
@@ -179,7 +182,9 @@ def _aggregator_reading_a_next_name(
     ],
     ids=["plain", "phased"],
 )
-def test_a_koopmans_aggregator_may_not_read_a_next_name(aggregator) -> None:
+def test_a_koopmans_aggregator_may_not_read_a_next_name(
+    aggregator: UserFunction | Phased,
+) -> None:
     """The aggregator combines this period's utility with an already-formed CE."""
     with pytest.raises(InvalidNameError, match="koopmans_aggregator"):
         _build(functions={"utility": _plain_utility}, koopmans_aggregator=aggregator)
@@ -317,10 +322,10 @@ def _probability_reading_a_next_name(next_wealth: ScalarFloat) -> ScalarFloat:
 class _TwoTargetRegimeId:
     source: ScalarInt
     target: ScalarInt
-    exit: ScalarInt
+    composition_action: ScalarInt
 
 
-def _never_exits() -> ScalarFloat:
+def _never_separates() -> ScalarFloat:
     return jnp.float32(0)
 
 
@@ -339,12 +344,14 @@ def test_a_regime_probability_may_not_read_a_next_name() -> None:
         Model(
             edges={
                 "source": Transition(
-                    targets={"target": (20, 21), "exit": (20, 21)},
+                    targets={"target": (20, 21), "composition_action": (20, 21)},
                     law={
                         "target": StochasticTransition(
                             func=_probability_reading_a_next_name
                         ),
-                        "exit": StochasticTransition(func=_never_exits),
+                        "composition_action": StochasticTransition(
+                            func=_never_separates
+                        ),
                     },
                 )
             },
@@ -358,7 +365,7 @@ def test_a_regime_probability_may_not_read_a_next_name() -> None:
                     states={"wealth": _WEALTH, "shock": _SHOCK},
                     functions={"utility": _wealth_and_shock},
                 ),
-                "exit": Regime(functions={"utility": _no_utility}),
+                "composition_action": Regime(functions={"utility": _no_utility}),
             },
             ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
             regime_id_class=_TwoTargetRegimeId,

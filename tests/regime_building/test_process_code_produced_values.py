@@ -312,11 +312,11 @@ def _source_params(model: Model) -> dict[str, dict[str, dict[str, float]]]:
 
 def _simulate_from_source(*, model: Model, roles: tuple[str, ...] = ()) -> pd.DataFrame:
     params = _source_params(model)
-    n_subjects = max(len(roles), 1)
+    n_agents = max(len(roles), 1)
     initial = {
-        "age": jnp.zeros(n_subjects),
+        "age": jnp.zeros(n_agents),
         "regime_id": jnp.full(
-            n_subjects, model.regime_names_to_ids["source"], dtype=jnp.int32
+            n_agents, model.regime_names_to_ids["source"], dtype=jnp.int32
         ),
     }
     if roles:

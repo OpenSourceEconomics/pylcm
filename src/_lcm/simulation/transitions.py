@@ -1,6 +1,6 @@
 """Simulation-phase state and regime transitions.
 
-These functions apply pre-compiled transition functions to subject arrays during
+These functions apply pre-compiled transition functions to agent arrays during
 forward simulation. They are distinct from `_lcm.regime_building`, which compiles
 transition functions from user-defined regimes; this module executes them.
 
@@ -26,12 +26,12 @@ from _lcm.off_grid import count_off_grid, off_grid_message, report_off_grid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.processes.iid import _IIDProcess
 from _lcm.processes.joint_normal_lowering import _JointNormalCoordinate
+from _lcm.simulation.agent_groups import AgentRows
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
 from _lcm.simulation.program_arguments import transition_arguments
 from _lcm.simulation.random import generate_simulation_keys
 from _lcm.simulation.random_address import RandomAddress, draw_categorical_index
 from _lcm.simulation.runtime import execute_simulation_program
-from _lcm.simulation.subject_groups import SubjectRows
 from _lcm.state_action_space import _validate_all_states_present
 from _lcm.time import TimeAxis, describe_step, period_of_step, stage_of_step
 from _lcm.transition_checks import validate_realized_regime_transition_probs
@@ -76,7 +76,7 @@ def clip_next_states(
     new_regime_ids: Int1D,
     regime_ids: RegimeNamesToIds,
     logger: logging.Logger,
-    subjects: Bool1D,
+    agents: Bool1D,
     genuine: np.ndarray,
     memory: SimulationMemory | None,
     ages: TimeAxis,
@@ -84,8 +84,8 @@ def clip_next_states(
 ) -> StatesPerRegime:
     """Check raw realized states before applying explicit economic state clipping.
 
-    `subjects` selects the rows this source advances; `genuine` additionally marks
-    the rows that stand for a distinct real subject, so alignment and grouping
+    `agents` selects the rows this source advances; `genuine` additionally marks
+    the rows that stand for a distinct real agent, so alignment and grouping
     duplicates are advanced and clipped but never counted. Off-grid reports name
     the period and stage of the source's `step`.
     """
@@ -120,11 +120,11 @@ def clip_next_states(
                         arguments={
                             "values": states[target][name],
                             "points": nodes,
-                            "subjects": subjects & genuine,
+                            "agents": agents & genuine,
                             "new_regime_ids": new_regime_ids,
                             "target_id": regime_ids[target],
                         },
-                        subject_arg_names=("values", "subjects", "new_regime_ids"),
+                        agent_arg_names=("values", "agents", "new_regime_ids"),
                     )
                     if grid.off_grid == "raise" and int(counts[1]):
                         raise OffGridStateError(
@@ -159,12 +159,12 @@ def clip_next_states(
         arguments={
             "states": states,
             "points": points,
-            "subjects": subjects,
+            "agents": agents,
             "new_regime_ids": new_regime_ids,
             "regime_ids": regime_ids,
         },
-        subject_arg_names=("states", "subjects", "new_regime_ids"),
-        subject_outputs=True,
+        agent_arg_names=("states", "agents", "new_regime_ids"),
+        agent_outputs=True,
     )
 
 
@@ -197,18 +197,18 @@ def fail_if_drawn_codes_leave_their_grids(
     when: str,
     new_regime_ids: Int1D,
     regime_ids: RegimeNamesToIds,
-    subjects: Bool1D,
+    agents: Bool1D,
     memory: SimulationMemory | None,
 ) -> None:
-    """Raise if a subject drawn to a target realizes a code off a discrete grid.
+    """Raise if an agent drawn to a target realizes a code off a discrete grid.
 
     The check runs on the raw codes and the regime draw, before a gate reads a
-    target's value at those codes or reroutes the subject. A continuous source
+    target's value at those codes or reroutes the agent. A continuous source
     state between its grid nodes can produce a code the transition preflight,
     which sees the nodes only, never evaluates.
 
     Raises:
-        InvalidStateTransitionError: A selected, genuine subject drawn to a
+        InvalidStateTransitionError: A selected, genuine agent drawn to a
             target carries a code outside `0..n-1` of one of its discrete grids.
 
     """
@@ -228,17 +228,17 @@ def fail_if_drawn_codes_leave_their_grids(
             "codes": tuple(next_states[target][name] for target, name, _ in checks),
             "n_codes": tuple(jnp.int32(size) for _, _, size in checks),
             "target_ids": tuple(regime_ids[target] for target, _, _ in checks),
-            "subjects": subjects,
+            "agents": agents,
             "new_regime_ids": new_regime_ids,
         },
-        subject_arg_names=("codes", "subjects", "new_regime_ids"),
+        agent_arg_names=("codes", "agents", "new_regime_ids"),
     )
     for (target, name, _), count in zip(checks, jax.device_get(counts), strict=True):
         if int(count):
             msg = (
                 f"In regime {source!r} ({when}), the simulated law of "
                 f"{name!r} to regime {target!r} returns a code outside its grid "
-                "for a subject drawn there. A continuous state between its grid "
+                "for an agent drawn there. A continuous state between its grid "
                 "nodes can produce such a code; keep the law on its grid."
             )
             raise InvalidStateTransitionError(msg)
@@ -249,17 +249,17 @@ def _count_drawn_off_grid_codes(
     codes: tuple[_SignedCodes, ...],
     n_codes: tuple[ScalarInt, ...],
     target_ids: tuple[ScalarInt, ...],
-    subjects: Bool1D,
+    agents: Bool1D,
     new_regime_ids: Int1D,
 ) -> Int1D:
-    """Count, per check, the subjects drawn to its target with a code off its grid.
+    """Count, per check, the agents drawn to its target with a code off its grid.
 
     A code is off its grid when it lies outside `0..n-1`.
     """
     return jnp.stack(
         [
             sum_counts(
-                counts=subjects
+                counts=agents
                 & (new_regime_ids == target_id)
                 & ((code < 0) | (code >= size))
             )
@@ -272,12 +272,12 @@ def _count_realized_grid_state(
     *,
     values: FloatND,
     points: Float1D,
-    subjects: Bool1D,
+    agents: Bool1D,
     new_regime_ids: Int1D,
     target_id: ScalarInt,
 ) -> Int1D:
-    """Only selected, genuine subjects contribute to a raw realized-state count."""
-    owned = subjects & (new_regime_ids == target_id)
+    """Only selected, genuine agents contribute to a raw realized-state count."""
+    owned = agents & (new_regime_ids == target_id)
     return jnp.stack(
         [
             count_off_grid(values=values, points=points, feasible=owned),
@@ -290,7 +290,7 @@ def _clip_next_states(
     *,
     states: StatesPerRegime,
     points: Mapping[RegimeName, Mapping[StateName, Float1D]],
-    subjects: Bool1D,
+    agents: Bool1D,
     new_regime_ids: Int1D,
     regime_ids: RegimeNamesToIds,
 ) -> StatesPerRegime:
@@ -300,7 +300,7 @@ def _clip_next_states(
         for name, nodes in state_points.items():
             raw = states[target][name]
             result[target][name] = jnp.where(
-                subjects & (new_regime_ids == regime_ids[target]),
+                agents & (new_regime_ids == regime_ids[target]),
                 _clip_grid_value(value=raw, points=nodes),
                 raw,
             )
@@ -315,12 +315,12 @@ def create_regime_state_action_space(
     regime_states: RegimeStates,
     base: StateActionSpace,
 ) -> StateActionSpace:
-    """Create the state-action space containing only the relevant subjects in a regime.
+    """Create the state-action space containing only the relevant agents in a regime.
 
     `base` is the params-completed space
     (`regime.solution.state_action_space(regime_params=...)`); params are
     fixed within one simulate call, so the caller builds it once per regime
-    and this function only swaps in the current period's subject states.
+    and this function only swaps in the current period's agent states.
 
     Args:
         regime: The internal regime instance.
@@ -328,7 +328,7 @@ def create_regime_state_action_space(
         base: The params-completed state-action space for the regime.
 
     Returns:
-        The state-action space for the subjects in the regime.
+        The state-action space for the agents in the regime.
 
     """
     states_for_state_action_space = {
@@ -354,15 +354,15 @@ def calculate_next_states(
     states_per_regime: StatesPerRegime,
     state_action_space: StateActionSpace,
     key: PRNGKeyND,
-    subjects_in_regime: Bool1D,
-    n_subjects: int,
-    subject_slice: slice | SubjectRows,
-    original_n_subjects: int | None = None,
+    agents_in_regime: Bool1D,
+    n_agents: int,
+    agent_slice: slice | AgentRows,
+    original_n_agents: int | None = None,
     process_nodes: Mapping[str, PytreeValue] | None = None,
     memory: SimulationMemory | None = None,
     supplied_shocks: Mapping[str, FloatND | np.ndarray] = MappingProxyType({}),
 ) -> StatesPerRegime:
-    """Calculate next period states for subjects in a regime.
+    """Calculate next period states for agents in a regime.
 
     Draw addresses use destination period `period + 1`, matching current-period
     IID and entry innovations at that date. The law still reads source-period
@@ -370,27 +370,27 @@ def calculate_next_states(
 
     Args:
         regime: The internal regime instance.
-        subjects_in_regime: Boolean array indicating if subject is in regime.
-        optimal_actions: Optimal actions computed for these subjects.
+        agents_in_regime: Boolean array indicating if agent is in regime.
+        optimal_actions: Optimal actions computed for these agents.
         period: Current period.
         age: Age corresponding to current period.
         regime_params: Flat regime parameters.
         states_per_regime: Carrier of current-period state arrays for
             every regime and state, indexed by regime name then state name.
-        state_action_space: State-action space for subjects in this regime.
+        state_action_space: State-action space for agents in this regime.
         key: JAX random key.
-        n_subjects: Total number of subjects the dispatch sees (the full
+        n_agents: Total number of agents the dispatch sees (the full
             population, possibly padded for sharding). Keys are generated for
-            the full population so each subject's draw is independent of how
-            subjects are chunked.
-        subject_slice: Global-index slice, or original rows, of the subjects in
+            the full population so each agent's draw is independent of how
+            agents are chunked.
+        agent_slice: Global-index slice, or original rows, of the agents in
             this chunk.
-        original_n_subjects: Subject count before per-device padding; threaded to
-            keep real subjects' draws device-count-invariant.
+        original_n_agents: Agent count before per-device padding; threaded to
+            keep real agents' draws device-count-invariant.
 
     Returns:
-        Updated carrier with next-period state values for subjects in this regime;
-        entries for other subjects are left untouched.
+        Updated carrier with next-period state values for agents in this regime;
+        entries for other agents are left untouched.
 
     """
     transition_plans = regime.simulation.transition_plans
@@ -406,9 +406,9 @@ def calculate_next_states(
     key, stochastic_variables_keys = generate_simulation_keys(
         key=key,
         names=stochastic_next_function_names,
-        n_initial_states=n_subjects,
-        subject_slice=subject_slice,
-        original_n_subjects=original_n_subjects,
+        n_initial_states=n_agents,
+        agent_slice=agent_slice,
+        original_n_agents=original_n_agents,
         memory=memory,
         period=period + 1,
         addresses=transition_random_addresses(
@@ -432,7 +432,7 @@ def calculate_next_states(
                 programs=regime.simulation.programs,
                 family="transition",
                 period=period,
-                n_subjects=len(subjects_in_regime),
+                n_agents=len(agents_in_regime),
                 arguments=transition_arguments(
                     current_shocks=current_shocks,
                     states=state_action_space.states,
@@ -452,7 +452,7 @@ def calculate_next_states(
 
     # Transition functions are DAG-named `next_<state>` to distinguish them from
     # the current-period state values they consume. Strip the prefix here so
-    # `_advance_states_for_subjects` sees keys that line up with the carrier's
+    # `_advance_states_for_agents` sees keys that line up with the carrier's
     # `StateName` keys directly.
     next_states_per_regime = MappingProxyType(
         {
@@ -471,16 +471,16 @@ def calculate_next_states(
 
     return run_simulation_operation(
         memory=memory,
-        function=_advance_states_for_subjects,
+        function=_advance_states_for_agents,
         arguments={
             "states_per_regime": states_per_regime,
             "next_states_per_regime": next_states_per_regime,
-            "subject_indices": subjects_in_regime,
+            "agent_indices": agents_in_regime,
         },
-        subject_arg_names=(
+        agent_arg_names=(
             "states_per_regime",
             "next_states_per_regime",
-            "subject_indices",
+            "agent_indices",
         ),
     )
 
@@ -497,25 +497,25 @@ def calculate_next_regime_membership(
     regime_params: FlatRegimeParams,
     regime_names_to_ids: RegimeNamesToIds,
     states_per_regime: StatesPerRegime,
-    new_subject_regime_ids: Int1D,
+    new_agent_regime_ids: Int1D,
     active_regimes_next_period: tuple[RegimeName, ...],
     key: PRNGKeyND,
-    subjects_in_regime: Bool1D,
-    n_subjects: int,
-    subject_slice: slice | SubjectRows,
-    original_n_subjects: int | None = None,
+    agents_in_regime: Bool1D,
+    n_agents: int,
+    agent_slice: slice | AgentRows,
+    original_n_agents: int | None = None,
     memory: SimulationMemory | None = None,
     runtime_checks: bool = True,
 ) -> Int1D:
-    """Calculate next period regime membership for subjects in a regime.
+    """Calculate next period regime membership for agents in a regime.
 
     Computes the probability distribution over regimes for the next period based on
-    current states and actions, then draws random regime assignments for each subject.
+    current states and actions, then draws random regime assignments for each agent.
 
     Args:
         regime: The internal regime instance.
-        state_action_space: State-action space for subjects in this regime.
-        optimal_actions: Optimal actions computed for these subjects.
+        state_action_space: State-action space for agents in this regime.
+        optimal_actions: Optimal actions computed for these agents.
         period: Current step.
         ages: The model clock, which names the period of the step.
         age: Age corresponding to current period.
@@ -524,28 +524,28 @@ def calculate_next_regime_membership(
         states_per_regime: Carrier of current-period state arrays for every
             regime and state; supplies the carried values the realized draw
             reads.
-        new_subject_regime_ids: Array to update with next regime assignments.
+        new_agent_regime_ids: Array to update with next regime assignments.
         active_regimes_next_period: Tuple of active regime names in the next period.
         key: JAX random key.
-        subjects_in_regime: Boolean array indicating if subject is in regime.
-        n_subjects: Total number of subjects the dispatch sees (the full
+        agents_in_regime: Boolean array indicating if agent is in regime.
+        n_agents: Total number of agents the dispatch sees (the full
             population, possibly padded for sharding). Keys are generated for
-            the full population so each subject's draw is independent of how
-            subjects are chunked.
-        subject_slice: Global-index slice, or original rows, of the subjects in
+            the full population so each agent's draw is independent of how
+            agents are chunked.
+        agent_slice: Global-index slice, or original rows, of the agents in
             this chunk.
-        original_n_subjects: Subject count before per-device padding; threaded to
-            keep real subjects' draws device-count-invariant.
+        original_n_agents: Agent count before per-device padding; threaded to
+            keep real agents' draws device-count-invariant.
 
 
     Returns:
-        Updated array of regime IDs with next period assignments for subjects in this
-        regime. The returned array contains regime IDs for all subjects, with updates
+        Updated array of regime IDs with next period assignments for agents in this
+        regime. The returned array contains regime IDs for all agents, with updates
         only for those in the current regime.
 
     """
     # The realized draw is built against the published pair-free pool, so it
-    # reads each carried state as the subject's true carried value — feed
+    # reads each carried state as the agent's true carried value — feed
     # those values like `calculate_next_states` does.
     simulate_only_states = {
         name: states_per_regime[regime.name][name]
@@ -557,7 +557,7 @@ def calculate_next_regime_membership(
             programs=regime.simulation.programs,
             family="route",
             period=period,
-            n_subjects=len(subjects_in_regime),
+            n_agents=len(agents_in_regime),
             arguments=transition_arguments(
                 current_shocks=current_shocks,
                 states=state_action_space.states,
@@ -576,7 +576,7 @@ def calculate_next_regime_membership(
     if runtime_checks:
         validate_realized_regime_transition_probs(
             regime_transition_probs=regime_transition_probs,
-            rows=subjects_in_regime,
+            rows=agents_in_regime,
             active_regimes_next_period=active_regimes_next_period,
             regime_name=regime.name,
             age=age,
@@ -597,7 +597,7 @@ def calculate_next_regime_membership(
         # legal — the edge retains no period and owes no state handoff. Standing
         # in such a regime at a period it cannot leave is not: the draw has no
         # candidate to return. Refused here rather than at model build, because
-        # the topology alone does not say whether any subject reaches it, and
+        # the topology alone does not say whether any agent reaches it, and
         # unconditionally rather than under `log_level`, because an empty
         # candidate set makes the draw impossible rather than merely suspect.
         msg = (
@@ -607,7 +607,7 @@ def calculate_next_regime_membership(
             f"({', '.join(repr(name) for name in sorted(regime_transition_probs))}) "
             f"is solved there, and the regimes that are "
             f"({', '.join(repr(name) for name in sorted(active_regimes_next_period))}) "
-            f"are not among them. Subjects simulated in '{regime.name}' at "
+            f"are not among them. Agents simulated in '{regime.name}' at "
             f"{describe_step(ages=ages, step=period)} (age {age}) have nowhere to "
             "go. Either extend a "
             f"target's schedule to cover that period, or keep '{regime.name}' "
@@ -618,9 +618,9 @@ def calculate_next_regime_membership(
     key, regime_transition_key = generate_simulation_keys(
         key=key,
         names=["regime_transition"],
-        n_initial_states=n_subjects,
-        subject_slice=subject_slice,
-        original_n_subjects=original_n_subjects,
+        n_initial_states=n_agents,
+        agent_slice=agent_slice,
+        original_n_agents=original_n_agents,
         memory=memory,
         period=period + 1,
         addresses={"regime_transition": RandomAddress(kind="regime", name="regime")},
@@ -637,14 +637,14 @@ def calculate_next_regime_membership(
         memory=memory,
         function=_update_regime_ids,
         arguments={
-            "subjects_in_regime": subjects_in_regime,
+            "agents_in_regime": agents_in_regime,
             "next_regime_ids": next_regime_ids,
-            "new_subject_regime_ids": new_subject_regime_ids,
+            "new_agent_regime_ids": new_agent_regime_ids,
         },
-        subject_arg_names=(
-            "subjects_in_regime",
+        agent_arg_names=(
+            "agents_in_regime",
             "next_regime_ids",
-            "new_subject_regime_ids",
+            "new_agent_regime_ids",
         ),
     )
 
@@ -686,9 +686,7 @@ def draw_key_from_dict(
             "prob_rows": prob_rows,
             "regime_id_scalars": regime_id_scalars,
         },
-        subject_arg_names=(
-            ("keys", "prob_rows") if prob_rows[0].ndim > 0 else ("keys",)
-        ),
+        agent_arg_names=(("keys", "prob_rows") if prob_rows[0].ndim > 0 else ("keys",)),
     )
 
 
@@ -709,30 +707,30 @@ def _draw_random_regime_ids_from_scalars(
 
 def _update_regime_ids(
     *,
-    subjects_in_regime: Bool1D,
+    agents_in_regime: Bool1D,
     next_regime_ids: Int1D,
-    new_subject_regime_ids: Int1D,
+    new_agent_regime_ids: Int1D,
 ) -> Int1D:
-    """Replace assignments only for subjects currently in this source regime."""
-    return jnp.where(subjects_in_regime, next_regime_ids, new_subject_regime_ids)
+    """Replace assignments only for agents currently in this source regime."""
+    return jnp.where(agents_in_regime, next_regime_ids, new_agent_regime_ids)
 
 
 @jax.jit
 def _draw_random_regime_ids(
     *, keys: PRNGKeyND, prob_rows: tuple[FloatND, ...], regime_ids: Int1D
 ) -> Int1D:
-    """Draw one regime id per subject from per-target probability rows.
+    """Draw one regime id per agent from per-target probability rows.
 
-    Jitted at module level so the per-subject vmap is traced once per
-    (subject-count, target-count) shape instead of on every period-regime
+    Jitted at module level so the per-agent vmap is traced once per
+    (agent-count, target-count) shape instead of on every period-regime
     call — the draw sits in the simulation's inner loop, where re-tracing
     would dominate host time.
     """
     regime_transition_probs = jnp.array(prob_rows).T
-    # A regime whose transition reads no per-subject state or action (e.g. it
+    # A regime whose transition reads no per-agent state or action (e.g. it
     # depends only on `age`) yields one unbatched distribution shared by
-    # every subject. Broadcast it across the subjects' keys so the
-    # per-subject draw below sees a probability vector per key.
+    # every agent. Broadcast it across the agents' keys so the
+    # per-agent draw below sees a probability vector per key.
     if regime_transition_probs.ndim == 1:
         regime_transition_probs = jnp.broadcast_to(
             regime_transition_probs,
@@ -779,17 +777,17 @@ def transition_random_addresses(
     return addresses
 
 
-def _advance_states_for_subjects(
+def _advance_states_for_agents(
     *,
     states_per_regime: StatesPerRegime,
     next_states_per_regime: StatesPerRegime,
-    subject_indices: Bool1D,
+    agent_indices: Bool1D,
 ) -> StatesPerRegime:
-    """Merge next-period state values into the carrier for selected subjects.
+    """Merge next-period state values into the carrier for selected agents.
 
     The carrier and the per-regime update share the `StatesPerRegime` shape: an
     outer mapping by regime name, an inner mapping by state name. Where
-    `subject_indices` is true, the corresponding slot is replaced with the
+    `agent_indices` is true, the corresponding slot is replaced with the
     matching entry from `next_states_per_regime`; otherwise the carrier value
     is left untouched. Regimes that don't appear in `next_states_per_regime`
     are passed through unchanged.
@@ -800,11 +798,11 @@ def _advance_states_for_subjects(
         next_states_per_regime: Per-regime next-period state values to merge in,
             indexed by regime name then state name (no `next_` prefix — the
             caller in `calculate_next_states` strips it before invoking).
-        subject_indices: Boolean mask selecting which subjects' values are
+        agent_indices: Boolean mask selecting which agents' values are
             overwritten by the next-period entries.
 
     Returns:
-        Updated carrier with next-period values written in for selected subjects.
+        Updated carrier with next-period values written in for selected agents.
 
     """
     updated: dict[RegimeName, dict[StateName, Float1D | Int1D]] = {
@@ -826,7 +824,7 @@ def _advance_states_for_subjects(
                 else next_state_values
             )
             updated[target_regime_name][state_name] = jnp.where(
-                subject_indices,
+                agent_indices,
                 new_values,
                 current_arr,
             )

@@ -22,7 +22,7 @@ A useful first inventory is:
 | Outer candidates     | Complete inner solves in a nested method                  |
 | Refinement budget    | Adaptive outer search, where node count is data-dependent |
 | Period/regime shapes | Number of distinct programs JAX may compile               |
-| Subjects             | Simulation batch size and compiled shape                  |
+| Agents               | Simulation batch size and compiled shape                  |
 
 A discrete branch inside `NBEGM` costs a candidate surface and its share of the
 envelope, but not necessarily a continuation read: branches that agree on every action
@@ -95,10 +95,9 @@ without a complete plan remain protected. See
 for the eligibility rules and the limits of the memory accounting.
 
 A large GPU should not be treated as a faster small GPU automatically. Independent
-tests, regimes, branches, subjects, or candidate chunks can improve occupancy, but only
-if scheduling keeps aggregate device memory bounded. pylcm's current public controls
-mainly stream individual numerical axes; cross-test concurrency remains a workflow
-decision.
+tests, regimes, branches, agents, or candidate chunks can improve occupancy, but only if
+scheduling keeps aggregate device memory bounded. pylcm's current public controls mainly
+stream individual numerical axes; cross-test concurrency remains a workflow decision.
 
 ## Compilation and execution are different costs
 

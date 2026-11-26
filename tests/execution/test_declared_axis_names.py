@@ -18,7 +18,7 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.workspace_planning import workspace_width_candidates
 from _lcm.simulation.program_types import SimulationPrograms
-from _lcm.simulation.programs import SUBJECT_AXIS
+from _lcm.simulation.programs import AGENT_AXIS
 from lcm import ExecutionConfig, Model
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solvers import (
@@ -53,14 +53,14 @@ _DECLARED_AXIS_NAMES = {
 }
 _HOST_AXIS_NAMES = {"nnbegm": (OUTER_CANDIDATE_AXIS,)}
 
-# Every fixture tiles the subject population. The finite NNBEGM replay route
+# Every fixture tiles the agent population. The finite NNBEGM replay route
 # ranks its published candidate bank, so it declares no generic action product.
 # The other fixtures retain their streamed decision programs.
 _DECLARED_SIMULATION_AXIS_NAMES = {
-    "grid_search": (ACTION_PRODUCT_AXIS, SUBJECT_AXIS),
-    "dcegm": (ACTION_PRODUCT_AXIS, SUBJECT_AXIS),
-    "negm": (ACTION_PRODUCT_AXIS, SUBJECT_AXIS),
-    "nnbegm": (SUBJECT_AXIS,),
+    "grid_search": (ACTION_PRODUCT_AXIS, AGENT_AXIS),
+    "dcegm": (ACTION_PRODUCT_AXIS, AGENT_AXIS),
+    "negm": (ACTION_PRODUCT_AXIS, AGENT_AXIS),
+    "nnbegm": (AGENT_AXIS,),
 }
 
 
@@ -190,16 +190,16 @@ def test_the_simulation_names_are_what_the_simulation_programs_declare(
 
 @pytest.mark.parametrize("family", sorted(_DECLARED_AXIS_NAMES))
 @pytest.mark.parametrize("width", [1, 3])
-def test_a_subject_width_is_an_accepted_execution_axis(
+def test_an_agent_width_is_an_accepted_execution_axis(
     *, family: str, width: int
 ) -> None:
-    """A model accepts a width for the subject axis its simulation declares."""
+    """A model accepts a width for the agent axis its simulation declares."""
     model = _build(
         family=family,
-        execution_config=ExecutionConfig(axis_widths={SUBJECT_AXIS: width}),
+        execution_config=ExecutionConfig(axis_widths={AGENT_AXIS: width}),
     )
 
-    assert model._execution.axis_widths[SUBJECT_AXIS] == width
+    assert model._execution.axis_widths[AGENT_AXIS] == width
 
 
 @pytest.mark.parametrize("family", sorted(_DECLARED_AXIS_NAMES))
@@ -217,14 +217,12 @@ def test_a_name_no_program_declares_is_refused(*, family: str) -> None:
 
 
 @pytest.mark.parametrize("family", sorted(_DECLARED_AXIS_NAMES))
-def test_a_refusal_names_the_subject_axis_among_the_declared_ones(
-    *, family: str
-) -> None:
-    """A near-miss on the subject axis is told the name the programs do declare."""
-    with pytest.raises(ExecutionPlanningError, match=f"'{SUBJECT_AXIS}'"):
+def test_a_refusal_names_the_agent_axis_among_the_declared_ones(*, family: str) -> None:
+    """A near-miss on the agent axis is told the name the programs do declare."""
+    with pytest.raises(ExecutionPlanningError, match=f"'{AGENT_AXIS}'"):
         _build(
             family=family,
-            execution_config=ExecutionConfig(axis_widths={"subjects": 4}),
+            execution_config=ExecutionConfig(axis_widths={"agents": 4}),
         )
 
 

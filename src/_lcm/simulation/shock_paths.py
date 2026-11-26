@@ -17,12 +17,12 @@ from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.processes.iid import _IIDProcess
 from _lcm.regime_building.age_normalization import group_periods_by_key
 from _lcm.regime_building.processing import _build_next_state_vmapped
+from _lcm.simulation.agent_groups import AgentRows
 from _lcm.simulation.initial_conditions import resolve_initial_periods
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
-from _lcm.simulation.operand_placement import SubjectArgumentNames
-from _lcm.simulation.program_types import _PerSubjectFunction
-from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
-from _lcm.simulation.subject_groups import SubjectRows
+from _lcm.simulation.operand_placement import AgentArgumentNames
+from _lcm.simulation.program_types import _PerAgentFunction
+from _lcm.simulation.programs import _AgentTiled, _ArgumentsBoundAtDispatch
 from _lcm.time import TimeAxis, describe_step, step_count
 from _lcm.typing import (
     FlatParams,
@@ -56,14 +56,14 @@ def resolve_shock_paths(  # noqa: C901, PLR0912
         RegimeName, Mapping[StateName, _ContinuousStochasticProcess]
     ] = MappingProxyType({}),
 ) -> tuple[MappingProxyType[StateName, np.ndarray], UserInitialConditions]:
-    """Check given realisations where a subject may read them; seed entry values.
+    """Check given realisations where an agent may read them; seed entry values.
 
-    A cell `(subject, period)` is checked against a regime's support only when the
-    subject may occupy the reading regime then: its starting regime at its starting
+    A cell `(agent, period)` is checked against a regime's support only when the
+    agent may occupy the reading regime then: its starting regime at its starting
     period, and afterwards every regime the simulation graph reaches from there.
     Regime membership after entry is drawn during simulation, so a value is checked
-    against every regime the subject can reach in that period; a cell no regime
-    can read, such as one before the subject enters, is not checked.
+    against every regime the agent can reach in that period; a cell no regime
+    can read, such as one before the agent enters, is not checked.
 
     Continuous processes accept values in their continuous distribution's support,
     including values outside the solve nodes, except in a regime that reads the
@@ -71,7 +71,7 @@ def resolve_shock_paths(  # noqa: C901, PLR0912
     regime's nodes. Discrete shocks accept exact codes.
     Transition-local draws are dated at the destination period, like carried draws.
 
-    A subject's entry value is replaced by its starting period's column only when
+    An agent's entry value is replaced by its starting period's column only when
     its starting regime draws the state.
 
     Returns:
@@ -84,7 +84,7 @@ def resolve_shock_paths(  # noqa: C901, PLR0912
         # Nothing can be read without them; the entry validator reports the gap.
         return MappingProxyType({}), initial
     regime_ids = np.asarray(initial["regime_id"])
-    occupancy = _subject_occupancy(
+    occupancy = _agent_occupancy(
         initial_ages=initial["age"],
         regime_ids=regime_ids,
         ages=ages,
@@ -107,11 +107,11 @@ def resolve_shock_paths(  # noqa: C901, PLR0912
         if values.ndim not in (1, 2) or values.dtype.kind not in "fiu":
             raise InvalidSimulationInputError(
                 f"shock_paths '{name}' requires a real array of shape (steps,) "
-                "or (subjects, steps)."
+                "or (agents, steps)."
             )
         if values.ndim != 1 and values.shape[0] != len(regime_ids):
             raise InvalidSimulationInputError(
-                f"shock_paths '{name}' has {values.shape[0]} subjects; "
+                f"shock_paths '{name}' has {values.shape[0]} agents; "
                 f"expected {len(regime_ids)}."
             )
         discrete = all(isinstance(grid, DiscreteGrid) for _, grid, _, _ in declarations)
@@ -208,11 +208,11 @@ def fail_if_an_initial_process_code_is_off_node(
     """Refuse an initial process value off the nodes its starting regime reads.
 
     A regime that reads `<name>_code` reads the position of the node the
-    household holds, which exists only where the value is one of the regime's
+    agent holds, which exists only where the value is one of the regime's
     nodes.
 
     Raises:
-        InvalidInitialConditionsError: If a subject starts in such a regime with a
+        InvalidInitialConditionsError: If an agent starts in such a regime with a
             value on none of its nodes.
 
     """
@@ -246,7 +246,7 @@ def fail_if_a_held_process_code_is_off_node(
 
     Whatever produced the value (an entry law, a joint transition, a gate's
     fallback projection or a dissolution route), the regime reading
-    `<name>_code` takes the position of the node the household holds, which
+    `<name>_code` takes the position of the node the agent holds, which
     exists only at a node. The off-node holders are counted on the device, so
     only one count per process reaches the host; the columns are copied only to
     name the offending values.
@@ -274,7 +274,7 @@ def fail_if_a_held_process_code_is_off_node(
                 "nodes": tuple(_process_nodes(processes[name]) for name in read),
                 "holders": holders,
             },
-            subject_arg_names=("values", "holders"),
+            agent_arg_names=("values", "holders"),
         )
     )
     for name, count in zip(read, counts, strict=True):
@@ -341,10 +341,10 @@ def _seed_entry_values(
     draws_at_entry: np.ndarray,
     starts: np.ndarray,
 ) -> dict[StateName, np.ndarray]:
-    """Take a drawing subject's entry value from its starting period's column.
+    """Take a drawing agent's entry value from its starting period's column.
 
-    Other subjects keep their supplied entry value. When none is supplied and
-    some subject's starting regime does not draw the state, nothing is seeded,
+    Other agents keep their supplied entry value. When none is supplied and
+    some agent's starting regime does not draw the state, nothing is seeded,
     so the entry validator reports the missing state.
     """
     if not draws_at_entry.any():
@@ -447,7 +447,7 @@ def _admissible(
     return valid
 
 
-def _subject_occupancy(
+def _agent_occupancy(
     *,
     initial_ages: jax.Array | np.ndarray,
     regime_ids: np.ndarray,
@@ -455,10 +455,10 @@ def _subject_occupancy(
     regimes: Mapping[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
 ) -> dict[RegimeName, np.ndarray]:
-    """Mark, per regime, the `(subject, period)` cells the subject may occupy it in.
+    """Mark, per regime, the `(agent, period)` cells the agent may occupy it in.
 
-    A subject occupies its starting regime in its starting period and may occupy
-    every regime the simulation graph reaches from there. Subjects with an
+    An agent occupies its starting regime in its starting period and may occupy
+    every regime the simulation graph reaches from there. Agents with an
     off-grid age or an unknown regime id occupy nothing; the entry validator
     rejects them.
     """
@@ -481,7 +481,9 @@ def _subject_occupancy(
                 actors = current | {
                     target
                     for source in current
-                    if (plan := regimes[source].simulation.exit_queries.get(step))
+                    if (
+                        plan := regimes[source].simulation.composition_queries.get(step)
+                    )
                     is not None
                     for target in plan.final_actors
                 }
@@ -538,7 +540,7 @@ def bind_shock_path_programs(
             active_periods=tuple(pools),
             key=lambda period: id(pools[period][0]),
         )
-        built_by_period: dict[int, _PerSubjectFunction] = {}
+        built_by_period: dict[int, _PerAgentFunction] = {}
         for periods in groups.values():
             built = _build_next_state_vmapped(
                 active_periods=tuple(periods),
@@ -552,20 +554,20 @@ def bind_shock_path_programs(
                 enable_jit=False,
                 supplied_states=supplied,
             )
-            built_by_period.update(built.per_subject_by_period)
+            built_by_period.update(built.per_agent_by_period)
         transitions = {
             period: dataclasses.replace(
                 program,
                 function=functools.partial(
-                    _SubjectTiled(
+                    _AgentTiled(
                         func=built_by_period[period].function,
-                        subject_arg_names=built_by_period[period].subject_arg_names,
+                        agent_arg_names=built_by_period[period].agent_arg_names,
                     ),
                     **regime.resolved_fixed_params,
                 ),
                 argument_builder=_ArgumentsBoundAtDispatch(
                     program_name=program.name,
-                    subject_arg_names=built_by_period[period].subject_arg_names,
+                    agent_arg_names=built_by_period[period].agent_arg_names,
                 ),
             )
             for period, program in regime.simulation.programs.transition.items()
@@ -587,14 +589,14 @@ def shock_path_values(
     paths: Mapping[StateName, np.ndarray],
     argument_names: tuple[ReferenceName, ...],
     period: int,
-    subject_slice: slice | SubjectRows,
-    n_subjects: int,
+    agent_slice: slice | AgentRows,
+    n_agents: int,
 ) -> dict[ReferenceName, np.ndarray]:
     """Gather original rows, repeating the last real row for inert padding.
 
     A period beyond the history yields zeros: `resolve_shock_paths` requires every
-    column a subject may read, so only a regime no subject occupies can be
-    dispatched there, and its subject-masked work needs an operand, not a value.
+    column an agent may read, so only a regime no agent occupies can be
+    dispatched there, and its agent-masked work needs an operand, not a value.
     """
     result = {}
     for argument in argument_names:
@@ -602,15 +604,15 @@ def shock_path_values(
             continue
         path = paths[argument.removeprefix("supplied_shock__")]
         if period >= path.shape[-1]:
-            result[argument] = np.zeros(n_subjects, dtype=path.dtype)
+            result[argument] = np.zeros(n_agents, dtype=path.dtype)
             continue
         if path.ndim == 1:
-            result[argument] = np.full(n_subjects, path[period], dtype=path.dtype)
+            result[argument] = np.full(n_agents, path[period], dtype=path.dtype)
         else:
             rows = (
-                subject_slice.rows
-                if isinstance(subject_slice, SubjectRows)
-                else np.arange(subject_slice.start or 0, subject_slice.stop)
+                agent_slice.rows
+                if isinstance(agent_slice, AgentRows)
+                else np.arange(agent_slice.start or 0, agent_slice.stop)
             )
             result[argument] = path[np.minimum(rows, path.shape[0] - 1), period]
     return result
@@ -619,11 +621,11 @@ def shock_path_values(
 def supplied_shock_argument_names(
     *, regime: Regime, period: int
 ) -> tuple[ReferenceName, ...]:
-    """Read the exact bound transition's subject argument declaration."""
+    """Read the exact bound transition's agent argument declaration."""
     program = regime.simulation.programs.transition.get(period)
     if program is None:
         return ()
     builder = program.argument_builder
-    if not isinstance(builder, SubjectArgumentNames):
+    if not isinstance(builder, AgentArgumentNames):
         return ()
-    return builder.subject_arg_names
+    return builder.agent_arg_names

@@ -21,17 +21,17 @@ from tests.simulation.test_population_allocation_budget import (
 )
 from tests.test_models.deterministic.regression import RegimeId, get_model, get_params
 
-_N_SUBJECTS = 7
+_N_AGENTS = 7
 
 
-@pytest.mark.parametrize("subject_width", [1, 3, 7])
+@pytest.mark.parametrize("agent_width", [1, 3, 7])
 @pytest.mark.parametrize("runtime_checks", [False, True])
-def test_complete_spaces_are_call_local_across_subject_chunks(
-    *, monkeypatch: pytest.MonkeyPatch, subject_width: int, runtime_checks: bool
+def test_complete_spaces_are_call_local_across_agent_chunks(
+    *, monkeypatch: pytest.MonkeyPatch, agent_width: int, runtime_checks: bool
 ) -> None:
     """Each regime's space is completed a fixed number of times per simulate call.
 
-    The count does not depend on the subject-chunk width: each regime is
+    The count does not depend on the agent-chunk width: each regime is
     completed once to key the call's generation by its concrete support and once
     for the simulation inputs. Enabled numerical preflight also completes the
     nonterminal regime's space once, independently of chunks.
@@ -40,7 +40,7 @@ def test_complete_spaces_are_call_local_across_subject_chunks(
         n_periods=2,
         wealth_grid=LinSpacedGrid(start=1, stop=3, n_points=3),
         consumption_grid=LinSpacedGrid(start=1, stop=3, n_points=3),
-        execution_config=ExecutionConfig(axis_widths={"subject": subject_width}),
+        execution_config=ExecutionConfig(axis_widths={"agent": agent_width}),
     )
     params = get_params(n_periods=2)
     solution = model.solve(params=params, log_level="off")
@@ -68,18 +68,18 @@ def test_complete_spaces_are_call_local_across_subject_chunks(
             params=params,
             solution=solution,
             initial_conditions={
-                "wealth": jnp.linspace(1, 3, _N_SUBJECTS),
-                "age": jnp.full(_N_SUBJECTS, 18.0),
+                "wealth": jnp.linspace(1, 3, _N_AGENTS),
+                "age": jnp.full(_N_AGENTS, 18.0),
                 "regime_id": jnp.full(
-                    _N_SUBJECTS, RegimeId.working_life, dtype=jnp.int32
+                    _N_AGENTS, RegimeId.working_life, dtype=jnp.int32
                 ),
             },
             seed=17,
             log_level="off",
             runtime_checks=runtime_checks,
         )
-    assert (result.n_subjects, counts) == (
-        _N_SUBJECTS,
+    assert (result.n_agents, counts) == (
+        _N_AGENTS,
         {"working_life": 3 if runtime_checks else 2, "dead": 2},
     )
 

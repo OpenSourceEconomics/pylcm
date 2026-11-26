@@ -119,8 +119,8 @@ def valid_manifest() -> _Manifest:
             "declared_floor",
         ],
         "initial": ["age", "regime_id", "liquid", "income"],
-        "simulation": ["period", "subject_id", "regime_name", "consumption"],
-        "period0": ["period", "subject_id", "regime_name", "consumption"],
+        "simulation": ["period", "agent_id", "regime_name", "consumption"],
+        "period0": ["period", "agent_id", "regime_name", "consumption"],
     }
     saved: list[_SavedRecord] = [
         {

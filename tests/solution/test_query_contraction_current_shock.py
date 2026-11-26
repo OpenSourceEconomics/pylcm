@@ -1,11 +1,11 @@
 """Lottery contraction of a draw whose probabilities read a current shock.
 
-A query builds its contracted tables before its loops and binds each information
-row's current shocks inside them, so a draw whose weights read one, directly, through a
-helper or alone, stays enumerated in a query, and in the regime's own kernel, which its
-exit's query reads. The ordinary solve of a regime without an exit binds the shock per
-cell, so it still contracts such a draw. Weights that read only the drawn state or the
-period are contracted in the query too.
+A query builds its contracted tables before its loops and binds each information row's
+current shocks inside them, so a draw whose weights read one, directly, through a helper
+or alone, stays enumerated in a query, and in the regime's own kernel, which its
+composition action's query reads. The ordinary solve of a regime without a composition
+action binds the shock per cell, so it still contracts such a draw. Weights that read
+only the drawn state or the period are contracted in the query too.
 
 The oracle is the uncontracted solve and the exact values of the two-period model: the
 single never works, its outside option is worse everywhere, and its terminal value is
@@ -18,20 +18,20 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm import exit_queries
+from _lcm import composition_queries
 from _lcm.execution.core_program import CoreProgramGraphAware
 from _lcm.regime_building.Q_and_F import _ComputeCE
 from lcm import (
+    CompositionAction,
+    Destination,
     DiscreteGrid,
     ExecutionConfig,
-    Exit,
-    ExitTarget,
     InitialNodes,
     Model,
+    PCOnActions,
     Periods,
     Regime,
     StochasticTransition,
-    Unilateral,
     categorical,
 )
 from lcm.shocks import Discrete, ShockGroup
@@ -137,11 +137,11 @@ def _model(*, weights: str, contract: bool) -> Model:
         shocks=("signal",),
         state_transitions={"health": StochasticTransition(func=_WEIGHTS[weights])},
         solver=GridSearch(lottery_contraction=contract),
-        exit=Exit(
-            targets={
-                "self": ExitTarget(regime="outside", projection={"health": _health})
+        composition_action=CompositionAction(
+            destinations={
+                "self": Destination(regime="outside", projection={"health": _health})
             },
-            rule=Unilateral(),
+            rule=PCOnActions(),
         ),
     )
     outside = Regime(
@@ -157,7 +157,7 @@ def _model(*, weights: str, contract: bool) -> Model:
             "single": single,
             "outside": outside,
             "single_terminal": single.replace(
-                exit=None,
+                composition_action=None,
                 shocks=(),
                 state_transitions={},
                 functions={"utility": _terminal},
@@ -216,7 +216,7 @@ def test_a_query_keeps_a_draw_whose_weights_read_a_current_shock(
     *, monkeypatch: pytest.MonkeyPatch, stored: bool, weights: str
 ) -> None:
     """Values agree with enumeration and the exact values; only shock readers stay."""
-    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
+    monkeypatch.setattr(composition_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
     off = _values(_model(weights=weights, contract=False))
     exact = np.asarray([float(value) for value in _EXACT[weights]])
     assert_agrees_to_ulp(
@@ -246,9 +246,7 @@ def test_a_query_keeps_a_draw_whose_weights_read_a_current_shock(
     assert set(contractions) == {expected_states}
 
 
-def test_the_ordinary_solve_of_a_regime_without_an_exit_contracts_a_shock_reader() -> (
-    None
-):
+def test_a_regime_without_composition_action_contracts_a_shock_reader() -> None:
     """The outside's draw reads the shock; its solve binds it per cell and sums it."""
     model = _model(weights="direct", contract=True)
     kernel = model._regimes["outside"].solution.period_kernels[0]

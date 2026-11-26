@@ -38,7 +38,10 @@ from typing import Literal, TypedDict, cast, no_type_check
 
 from dags import get_ancestors
 
-from _lcm.exits import exit_functions, exit_without_pruned_states
+from _lcm.composition_actions import (
+    composition_action_functions,
+    composition_action_without_pruned_states,
+)
 from _lcm.processes import _ContinuousStochasticProcess, _IIDProcess
 from _lcm.reachability import PhaseName, candidate_targets_from_transition
 from _lcm.regime_building.age_specialization import resolve_node
@@ -157,9 +160,10 @@ def merge_model_slots(
             slot_name="functions",
             regime_name=regime_name,
             regime_slot=user_regime.functions,
-            # A household names its own utilities. A model-level entry under
-            # one of those names is there for the regimes that declare no
-            # household, so it does not reach this one.
+            # A collective utility names its own member utilities. A
+            # model-level entry under one of those names is there for the
+            # regimes without a collective utility, so it does not reach this
+            # one.
             model_slot={
                 name: value
                 for name, value in model_slots.get("functions", {}).items()
@@ -291,16 +295,15 @@ def prune_broadcast_variables(
 ]:
     """Weed broadcast states and actions per regime by DAG reachability.
 
-    A broadcast variable is pruned from a regime when no root computation of
-    either phase slice transitively reads it — in that regime or through a
-    law of motion toward a candidate target that keeps it. A read of a random
-    state's next-period draw `next_<state>` is a read of the state, because the
-    draw is taken from it. Pruning drops the
-    variable's grid, and for states the part of the regime's law entry that
-    the pruned state took with it — an entry law toward a target that retains
-    the state stays, so which entry laws a model has does not depend on
-    whether the state is declared at model or at regime level. For the same
-    reason an exit's projection onto a state its destination prunes is dropped.
+    A broadcast variable is pruned from a regime when no root computation of either
+    phase slice transitively reads it — in that regime or through a law of motion toward
+    a candidate target that keeps it. A read of a random state's next-period draw
+    `next_<state>` is a read of the state, because the draw is taken from it. Pruning
+    drops the variable's grid, and for states the part of the regime's law entry that
+    the pruned state took with it — an entry law toward a target that retains the state
+    stays, so which entry laws a model has does not depend on whether the state is
+    declared at model or at regime level. For the same reason a composition action's
+    projection onto a state its destination prunes is dropped.
 
     Args:
         user_regimes: Mapping of regime names to merged `Regime` instances.
@@ -318,7 +321,7 @@ def prune_broadcast_variables(
             `AgeSpecializedFunction` markers to a representative age so a
             broadcast variable read only through a marker is not misread as
             unused. `None` skips resolution (no marker can appear then).
-        visited_periods_by_regime: The periods subjects can be in each regime,
+        visited_periods_by_regime: The periods agents can be in each regime,
             where conditional-action pins build their simulation readers. `None`
             builds them at the first solved period.
         discrete_names: Every discrete variable of the model, declared in a
@@ -357,13 +360,15 @@ def prune_broadcast_variables(
     }
     for regime_name, declared_regime in user_regimes.items():
         pruned = pruned_variables[regime_name]
-        exit_declaration = exit_without_pruned_states(
-            declaration=declared_regime.exit, pruned=pruned_variables
+        composition_action_declaration = composition_action_without_pruned_states(
+            declaration=declared_regime.composition_action, pruned=pruned_variables
         )
         user_regime = (
             declared_regime
-            if exit_declaration is declared_regime.exit
-            else declared_regime.replace(exit=exit_declaration)
+            if composition_action_declaration is declared_regime.composition_action
+            else declared_regime.replace(
+                composition_action=composition_action_declaration
+            )
         )
         if not pruned:
             pruned_regimes[regime_name] = user_regime
@@ -439,9 +444,9 @@ def compute_kept_variables(
             markers at a representative age. `None` skips resolution.
         active_periods_by_regime: The per-regime coverage, whose first period
             is the representative one. `None` skips resolution.
-        visited_periods_by_regime: Per regime, the periods a subject can be in
+        visited_periods_by_regime: Per regime, the periods an agent can be in
             it. The simulation slice is resolved at the first of them, since it
-            runs only where subjects are; a regime without any falls back to its
+            runs only where agents are; a regime without any falls back to its
             coverage. `None` resolves both slices on the coverage.
         targets_by_phase: Per phase slice and regime, the targets the model
             graph reaches from it at the demanded periods. A law of motion of
@@ -690,8 +695,8 @@ def root_functions(
         | _incoming_edge_roots(regime_name=regime_name, laws=laws)
         | {
             "__".join(path): function
-            for path, function in exit_functions(
-                declaration=regime.exit, phase=phase
+            for path, function in composition_action_functions(
+                declaration=regime.composition_action, phase=phase
             ).items()
         }
     )
@@ -820,7 +825,7 @@ def _incoming_edge_roots(
             continue
         roots[f"__incoming_gate__{source_name}"] = edge.gate
         # Both phases of a `Phased` fallback are rooted: a state read only by
-        # the settlement projection is still read, and pruning it would leave
+        # the transfer projection is still read, and pruning it would leave
         # the simulate leg with a coordinate it cannot form.
         roots |= {
             f"__incoming_fallback__{source_name}__{leg_name}__{phase}__{state_name}": (
@@ -1021,7 +1026,7 @@ def _representative_periods(
     """Return the periods whose first one a phase slice is resolved at.
 
     The solution slice runs at every solved period. The simulation slice runs
-    only where a subject can be, so it takes the visited periods when there are
+    only where an agent can be, so it takes the visited periods when there are
     any, and the solved periods otherwise.
     """
     if active_periods_by_regime is None:
@@ -1483,13 +1488,13 @@ def _merge_one_slot(
 
 
 def _names_the_household_writes(*, user_regime: UserRegime) -> frozenset[str]:
-    """Return the function names this regime's household supplies for itself.
+    """Return the function names this regime's collective utility supplies.
 
-    A collective regime declares `utility` as a household, and with it a body
-    for every member it does not delegate. Those names are the household's
-    and a model-level entry under one of them belongs to the other regimes. A
-    member the household *does* delegate is left out, which is exactly how
-    a model-level body reaches her.
+    A collective regime declares `utility` as a `CollectiveUtility`, and with
+    it a body for every member it does not delegate. Those names belong to the
+    regime. A model-level entry under one of them belongs to the other regimes.
+    A member the declaration *does* delegate is left out. This is how a
+    model-level body reaches her.
     """
     declaration = user_regime.functions.get("utility")
     if not isinstance(declaration, CollectiveUtility):

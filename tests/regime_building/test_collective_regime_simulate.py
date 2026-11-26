@@ -1,12 +1,12 @@
 """Canonical collective policy, formation, dissolution and own-role simulation fixtures.
 
-The joint policy chooses one common action and publishes both member values.
-A single forms the household through its own `Exit` under `Consent`; a household
-dissolves through its own `Exit`, which retains threshold-only slack and pays each
-member's single payoff net of the cost when no stay action is kept.
+The joint policy chooses one common action and publishes both member values. A single
+forms the household through its own `CompositionAction` under `Consent`; a household
+dissolves through its own `CompositionAction`, which retains threshold-only slack and
+pays each member's single payoff net of the cost when no stay action is kept.
 
-A fixed population keeps each original subject and its own current role;
-settling a household does not create another subject for its other member.
+A fixed population keeps each original agent and its own current role;
+settling a household does not create another agent for its other member.
 """
 
 from types import MappingProxyType
@@ -46,7 +46,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.ages import AgeGrid
-from lcm.exits import Exit, ExitTarget, Unilateral
+from lcm.composition_actions import CompositionAction, Destination, PCOnActions
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.result import SimulationResult
 from lcm.solver_api import (
@@ -283,9 +283,9 @@ def test_couple_simulate_with_runtime_validation_enabled() -> None:
     """The trailing member axis on `V_arr` broadcasts against `in_regime`.
 
     The `validate_V` / NaN-diagnostic code paths compare `V_arr` against
-    `in_regime`/`subject_ids_in_regime`, which for a collective regime's
-    `(n_subjects, n_members)` V needs an explicit broadcast (a singleton
-    regime's `V_arr` is already `(n_subjects,)`). Pinned at `log_level="debug"`,
+    `in_regime`/`agent_ids_in_regime`, which for a collective regime's
+    `(n_agents, n_members)` V needs an explicit broadcast (a singleton
+    regime's `V_arr` is already `(n_agents,)`). Pinned at `log_level="debug"`,
     the strictest level, which raises on any validation failure.
     """
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
@@ -383,7 +383,7 @@ def _consent_laws() -> dict[RegimeName, RegimeLawDeclaration | Transition]:
 
 
 def _single_f_law() -> ByAge:
-    """`single_f` lands in `single_f_terminal`, whose own exit decides the marriage."""
+    """`single_f` lands in `single_f_terminal`, where she decides on the marriage."""
     return ByAge(
         cases={
             AgeRange(exclusive_stop=1): {
@@ -393,15 +393,15 @@ def _single_f_law() -> ByAge:
     )
 
 
-def _formation_exit(
+def _formation_composition_action(
     *,
     target_projection: dict[str, UserFunction],
     counterparty_projection: dict[str, UserFunction],
-) -> Exit:
+) -> CompositionAction:
     """She marries only if both her and his married values beat their single ones."""
-    return Exit(
-        targets={
-            "self": ExitTarget(
+    return CompositionAction(
+        destinations={
+            "self": Destination(
                 regime="married_terminal", role="f", projection=target_projection
             )
         },
@@ -425,7 +425,7 @@ def _make_consent_regimes() -> dict[str, Regime]:
     single_f_terminal = Regime(
         states={"wage": _WAGE_2},
         functions={"utility": _u_single_f_terminal},
-        exit=_formation_exit(
+        composition_action=_formation_composition_action(
             target_projection={"wage": _identity_wage},
             counterparty_projection={"wage": _identity_wage},
         ),
@@ -594,8 +594,8 @@ def _u_effort_collective(*, wage: ContinuousState, work: DiscreteAction) -> Floa
     return -0.25 * work + 0.0 * wage
 
 
-_COST_F = "exit__targets__f__utility_adjustment__delta_f"
-_COST_M = "exit__targets__m__utility_adjustment__delta_m"
+_COST_F = "composition_action__destinations__f__utility_adjustment__delta_f"
+_COST_M = "composition_action__destinations__m__utility_adjustment__delta_m"
 
 
 def _dissolution_cost_f(delta_f: FloatND) -> FloatND:
@@ -609,8 +609,8 @@ def _dissolution_cost_m(delta_m: FloatND) -> FloatND:
 def _married_dissolution_transition() -> Transition:
     """Return `married`'s move into `married_ir` after age 0.
 
-    Whether the household stays is decided by `married_ir`'s own `Exit`, whose
-    member targets are `single_f` / `single_m`.
+    Whether the household stays is decided by `married_ir`'s own `CompositionAction`,
+    whose member targets are `single_f` / `single_m`.
     """
     return Transition(
         law=ByAge(
@@ -677,20 +677,20 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
                 utilities={"f": _u_married_ir_f, "m": _u_married_ir_m}
             )
         },
-        exit=Exit(
-            targets={
-                "f": ExitTarget(
+        composition_action=CompositionAction(
+            destinations={
+                "f": Destination(
                     regime="single_f",
                     projection={"wage": _identity_wage},
                     utility_adjustment=_dissolution_cost_f,
                 ),
-                "m": ExitTarget(
+                "m": Destination(
                     regime="single_m",
                     projection={"wage": _identity_wage},
                     utility_adjustment=_dissolution_cost_m,
                 ),
             },
-            rule=Unilateral(),
+            rule=PCOnActions(),
         ),
     )
     married_terminal = Regime(
@@ -791,7 +791,7 @@ def _solve_dissolution() -> _Solved:
 
 
 def test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime() -> None:
-    """The household's own exit dissolves it at wage=2, where no stay action is kept.
+    """The members separate at wage=2, where no stay action is kept.
 
     The cohort declares itself the wives, so the dissolving household's row is
     routed to that role's target ("f" -> `single_f`) instead of `married_ir` — a
@@ -838,7 +838,7 @@ def test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime() -> Non
     np.testing.assert_array_equal(np.asarray(single_m.in_regime), [False, False, False])
 
     # The dissolved household's (wage=2) wife reports her single value net of
-    # the exit's cost: V_single_f(wage=2) - delta_f = 5.5 - 0.5 = 5.
+    # the composition action's cost: V_single_f(wage=2) - delta_f = 5.5 - 0.5 = 5.
     np.testing.assert_allclose(np.asarray(single_f.V_arr)[1], 5.0, rtol=1e-6)
     # The still-married households keep their married_ir value.
     np.testing.assert_allclose(np.asarray(married_ir.V_arr)[0], [2.0, 1.0], rtol=1e-6)
@@ -853,20 +853,20 @@ def test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime() -> Non
 def _simulate_directly_in_married_ir(*, wages: list[float]) -> SimulationResult:
     """Simulate households placed directly IN married_ir at period 1.
 
-    Initializing subjects directly into `married_ir` bypasses the `married`
+    Initializing agents directly into `married_ir` bypasses the `married`
     source, so the value router's routing does not preempt the masked cell.
     """
     ages, regimes, regime_names_to_ids, flat_params, solution = _solve_dissolution()
-    n_subjects = len(wages)
+    n_agents = len(wages)
     initial_conditions = MappingProxyType(
         {
             "wage": jnp.array(wages),
-            "age": jnp.ones(n_subjects),
+            "age": jnp.ones(n_agents),
             "regime_id": jnp.full(
-                n_subjects, regime_names_to_ids["married_ir"], dtype=jnp.int32
+                n_agents, regime_names_to_ids["married_ir"], dtype=jnp.int32
             ),
             "own_member": jnp.full(
-                n_subjects,
+                n_agents,
                 regimes["married_ir"].member_names_to_ids["f"],
                 dtype=jnp.int32,
             ),
@@ -885,14 +885,16 @@ def _simulate_directly_in_married_ir(*, wages: list[float]) -> SimulationResult:
     )
 
 
-def test_an_empty_stay_set_publishes_the_exit_payoffs_net_of_costs() -> None:
+def test_an_empty_stay_set_publishes_the_composition_action_payoffs_net_of_costs() -> (
+    None
+):
     """Without a kept stay action each member gets the outside value minus the cost."""
     _, _, _, _, values = _solve_dissolution()
     np.testing.assert_allclose(values[1]["married_ir"][1], [5.0, 0.8], rtol=1e-6)
 
 
-def test_initial_households_with_no_kept_stay_action_take_their_own_exit() -> None:
-    """An initial wife exits the empty wage cell under her current policy."""
+def test_initial_households_with_no_kept_stay_action_separate() -> None:
+    """An initial wife leaves the empty wage cell under her current policy."""
     result = _simulate_directly_in_married_ir(wages=[1.0, 2.0, 3.0])
     np.testing.assert_array_equal(
         result.raw_results["single_f"][1].in_regime, [False, True, False]
@@ -913,15 +915,15 @@ def test_value_masked_simulate_reports_the_solved_values_off_the_empty_cell() ->
 
 # Test 6: regression — a gated edge's TARGET has a discrete state axis (in
 # addition to a continuous one). `route_gated_edges` interpolates the fold's
-# `gate` array at each subject's candidate target-state draw
+# `gate` array at each agent's candidate target-state draw
 # (`_lcm.simulation.gated_routing._call_vmapped_with_accepted_kwargs`), one
-# subject at a time under `vmap`. Interpolating for the whole population at once
+# agent at a time under `vmap`. Interpolating for the whole population at once
 # instead would break `jax.scipy.ndimage.map_coordinates`'s
 # `len(coordinates) == input.ndim` invariant on a discrete target axis (advanced
-# indexing on whole-population `(n_subjects,)` discrete indices collapses the
+# indexing on whole-population `(n_agents,)` discrete indices collapses the
 # discrete axes into a leading batch dimension while leaving the continuous axis
 # trailing) — every OTHER gated-edge simulate test above uses a continuous-only
-# target, where a `(n_subjects,)` coordinate array happens to broadcast correctly
+# target, where a `(n_agents,)` coordinate array happens to broadcast correctly
 # through `map_coordinates` by coincidence, so this is the fixture that covers
 # the discrete case. Adapted from
 # `_make_consent_regimes` (Test 2 above) by adding a discrete `educ` state,
@@ -1082,11 +1084,11 @@ def _solve_consent_discrete_axis() -> _Solved:
 def test_consent_routing_simulate_with_discrete_target_axis_routes_correctly() -> None:
     """Regression pin for the discrete-target-axis gate-interpolation crash.
 
-    Four subjects cross wage in {1, 2} with educ in {low, high}, so the
+    Four agents cross wage in {1, 2} with educ in {low, high}, so the
     `vmap`-ped gate interpolator (`gated_routing._call_vmapped_with_accepted_kwargs`)
     is exercised at BOTH discrete indices, not just one — a discrete-axis
-    lookup that silently read the wrong subject's index would flip a
-    subject's routing here. Wage=1 opens the gate (marries) regardless of
+    lookup that silently read the wrong agent's index would flip a
+    agent's routing here. Wage=1 opens the gate (marries) regardless of
     educ; wage=2 closes it (stays single) regardless of educ —
     `educ` contributes 0.0 to every utility, so its exact numeric routing and
     values are identical to `test_consent_routing_simulate_matches_gate_exactly`.
@@ -1119,8 +1121,8 @@ def test_consent_routing_simulate_with_discrete_target_axis_routes_correctly() -
         seed=0,
     )
 
-    # wage=1 (subjects 0, 1) -> married_terminal (gate open), regardless of
-    # educ; wage=2 (subjects 2, 3) -> single_f_terminal (gate closed).
+    # wage=1 (agents 0, 1) -> married_terminal (gate open), regardless of
+    # educ; wage=2 (agents 2, 3) -> single_f_terminal (gate closed).
     married = result.raw_results["married_terminal"][1]
     single_f_term = result.raw_results["single_f_terminal"][1]
     np.testing.assert_array_equal(
@@ -1194,8 +1196,8 @@ _DISSOLUTION_PARAMS = {
 }
 
 
-def test_public_model_prices_the_households_own_exit() -> None:
-    """`married` discounts the kept policy or the exit payoffs net of costs once."""
+def test_public_model_prices_the_households_own_composition_action() -> None:
+    """`married` discounts the kept policy or the net separation payoffs once."""
     result = _make_dissolution_model().solve(
         params=_DISSOLUTION_PARAMS, log_level="off"
     )
@@ -1219,7 +1221,7 @@ def test_public_model_solve_returns_labelled_values_for_every_demanded_period() 
 
 
 def test_public_model_simulate_routes_dissolution_edge_when_flags_supplied() -> None:
-    """End-to-end: the household's own exit dissolves it after landing.
+    """End-to-end: the household's own composition action dissolves it after landing.
 
     Reproduces `test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime`
     through the public `Model` API: wage=2 (no kept stay action) is routed to
@@ -1260,8 +1262,10 @@ def test_public_model_simulate_routes_dissolution_edge_when_flags_supplied() -> 
     assert np.all(np.isfinite(np.asarray(married_ir.V_arr)[[0, 2]]))
 
 
-def test_public_model_replays_the_households_exit_from_values_only() -> None:
-    """The household's exit replays from values, without a dissolution artifact."""
+def test_public_model_replays_the_households_composition_action_from_values_only() -> (
+    None
+):
+    """The couple's separation replays from values, without a dissolution artifact."""
     model = _make_dissolution_model()
     solution = model.solve(
         params=_DISSOLUTION_PARAMS,
@@ -1333,10 +1337,10 @@ def test_to_dataframe_splits_collective_value_into_per_member_columns() -> None:
     df = result.to_dataframe()
 
     assert {"value", "value_f", "value_m"} <= set(df.columns)
-    # 2 subjects x 2 periods; single_m_terminal never routed to (0 rows).
+    # 2 agents x 2 periods; single_m_terminal never routed to (0 rows).
     assert len(df) == 4
 
-    period0 = df[df["period"] == 0].sort_values("subject_id")
+    period0 = df[df["period"] == 0].sort_values("agent_id")
     np.testing.assert_allclose(
         period0["value"].to_numpy(dtype=float), [2.9, 4.85], rtol=1e-6
     )
@@ -1466,6 +1470,6 @@ def test_to_dataframe_singleton_only_value_column_is_unchanged() -> None:
 
     assert "value" in df.columns
     assert not any(col.startswith("value_") for col in df.columns)
-    assert len(df) == 4  # 2 subjects x 2 periods, no routing/dissolution.
+    assert len(df) == 4  # 2 agents x 2 periods, no routing/dissolution.
     assert df["value"].notna().all()
     assert pd.api.types.is_float_dtype(df["value"])

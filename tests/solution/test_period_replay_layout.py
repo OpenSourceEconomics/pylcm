@@ -552,12 +552,12 @@ from lcm import DiscreteGrid, ExecutionConfig, IrregSpacedGrid, Model
 from tests.test_models.initial_nodes import initial_nodes_of
 from tests.test_models.nbegm_common import RegimeId
 
-# Under a memory budget, `simulate` commits the parameters to the subject mesh
+# Under a memory budget, `simulate` commits the parameters to the agent mesh
 # before it solves, while the regime keeps its own mesh named after its
 # distributed state (`kind`). The captured period's inputs therefore span two
 # meshes over the same devices under different axis names. The consumption grid
 # takes its points at runtime, so the state-action space carries a parameter
-# array on the subject mesh.
+# array on the agent mesh.
 two_mesh = root / "two_mesh"
 os.environ["LCM_CAPTURE_DIR"] = str(two_mesh)
 template = toy.build_model(

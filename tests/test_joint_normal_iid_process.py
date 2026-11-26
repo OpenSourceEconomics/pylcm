@@ -454,7 +454,7 @@ def test_joint_normal_budgeted_runtime_lookup_and_simulation() -> None:
     model = _model(
         lcm.Regime(states={"wages": process}, functions={"utility": _utility}),
         execution_config=lcm.ExecutionConfig(
-            device_memory_bytes=2**30, axis_widths={"subject": 1}
+            device_memory_bytes=2**30, axis_widths={"agent": 1}
         ),
     )
     params = {
@@ -705,7 +705,7 @@ def test_joint_normal_budgeted_runtime_typed_seed_preserves_physical_frame() -> 
     model = _model(
         lcm.Regime(states={"wages": process}, functions={"utility": _utility}),
         execution_config=lcm.ExecutionConfig(
-            device_memory_bytes=2**30, axis_widths={"subject": 1}
+            device_memory_bytes=2**30, axis_widths={"agent": 1}
         ),
     )
     params = {
@@ -863,7 +863,7 @@ def test_joint_normal_keeps_an_ordinary_state_carried_to_reader() -> None:
             log_level="off",
         )
         .to_dataframe(use_categorical_codes=True)
-        .sort_values(["subject_id", "period"])
+        .sort_values(["agent_id", "period"])
     )
     aaae(frame.loc[frame["period"] == 0, "value"], expected, decimal=DECIMAL_PRECISION)
     for period in (0, 1):

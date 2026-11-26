@@ -176,7 +176,7 @@ class _GivenNextState:
     """Publish a supplied realisation before laws consuming that draw run."""
 
     argument: ReferenceName
-    """The call-local, subject-varying input of the realisation."""
+    """The call-local, agent-varying input of the realisation."""
     annotation: str
     """Scalar annotation of the declared shock state."""
 

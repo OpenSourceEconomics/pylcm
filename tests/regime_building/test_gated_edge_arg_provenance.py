@@ -120,7 +120,7 @@ from tests.conftest import bind_laws, build_prepared_structure
 _BETA = 0.95
 _AGES = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
-# The realized, OFF-GRID candidate `x` every subject lands on.
+# The realized, OFF-GRID candidate `x` every agent lands on.
 _REALIZED_X = 0.6
 
 
@@ -561,10 +561,10 @@ def test_router_writes_the_fold_consistent_fallback_state() -> None:
         same_period_mappings=mappings,
         next_states=next_states,
         regime_names_to_ids=regime_names_to_ids,
-        new_subject_regime_ids=jnp.array(
+        new_agent_regime_ids=jnp.array(
             [regime_names_to_ids["target"]], dtype=jnp.int32
         ),
-        subjects_in_regime=jnp.array([True]),
+        agents_in_regime=jnp.array([True]),
         flat_params=flat_params,
         own_member=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),
         new_own_member=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),

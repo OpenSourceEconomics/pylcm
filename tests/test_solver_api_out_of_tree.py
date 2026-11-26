@@ -266,7 +266,7 @@ class TerminalPublisher(Solver):
 
 def _two_regime_model(*, solver: Solver, self_looping: bool = False) -> Model:
     # A regime that dies into the terminal one leaves the last period to it, so
-    # a simulated subject always has somewhere to go. A self-looping regime is
+    # a simulated agent always has somewhere to go. A self-looping regime is
     # its own target at every one of `_N_PERIODS` acting ages, which takes one
     # more age for it to die into the terminal regime at the end, which then
     # publishes the continuation the self-looping solver reads.

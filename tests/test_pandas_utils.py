@@ -63,27 +63,27 @@ class Occupation:
     white_collar: ScalarInt
 
 
-def test_to_categorical_dtype_returns_correct_type():
+def test_to_categorical_dtype_returns_correct_type() -> None:
     result = Health.to_categorical_dtype()  # ty: ignore[unresolved-attribute]
     assert isinstance(result, CategoricalDtype)
 
 
-def test_to_categorical_dtype_has_correct_categories():
+def test_to_categorical_dtype_has_correct_categories() -> None:
     result = Health.to_categorical_dtype()  # ty: ignore[unresolved-attribute]
     assert list(result.categories) == ["bad", "good"]
 
 
-def test_to_categorical_dtype_preserves_order():
+def test_to_categorical_dtype_preserves_order() -> None:
     result = Occupation.to_categorical_dtype()  # ty: ignore[unresolved-attribute]
     assert list(result.categories) == ["blue_collar", "white_collar"]
 
 
-def test_to_categorical_dtype_is_not_ordered():
+def test_to_categorical_dtype_is_not_ordered() -> None:
     result = Occupation.to_categorical_dtype()  # ty: ignore[unresolved-attribute]
     assert result.ordered is False
 
 
-def test_to_categorical_dtype_ordered():
+def test_to_categorical_dtype_ordered() -> None:
     @categorical(ordered=True)
     class Severity:
         mild: ScalarInt
@@ -95,7 +95,7 @@ def test_to_categorical_dtype_ordered():
     assert list(result.categories) == ["mild", "moderate", "severe"]
 
 
-def test_build_discrete_grid_lookup_basic():
+def test_build_discrete_grid_lookup_basic() -> None:
     regimes = {
         "a": UserRegime(
             states={"health": DiscreteGrid(category_class=Health)},
@@ -107,7 +107,7 @@ def test_build_discrete_grid_lookup_basic():
     assert lookup["health"].categories == ("bad", "good")
 
 
-def test_build_discrete_grid_lookup_ignores_continuous():
+def test_build_discrete_grid_lookup_ignores_continuous() -> None:
     regimes = {
         "a": UserRegime(
             states={
@@ -122,7 +122,7 @@ def test_build_discrete_grid_lookup_ignores_continuous():
     assert "health" in lookup
 
 
-def test_build_discrete_grid_lookup_inconsistent_raises():
+def test_build_discrete_grid_lookup_inconsistent_raises() -> None:
     @categorical(ordered=False)
     class HealthAlt:
         sick: ScalarInt
@@ -240,13 +240,13 @@ def test_heterogeneous_health_solve_simulate() -> None:
     assert list(out["health"].cat.categories) == ["disabled", "bad", "good"]
     assert out["health"].cat.ordered
 
-    # Period 0: pre65 subjects have correct health labels
-    period_0 = out.query("period == 0").sort_values("subject_id")
+    # Period 0: pre65 agents have correct health labels
+    period_0 = out.query("period == 0").sort_values("agent_id")
     assert list(period_0["health"]) == ["disabled", "good"]
 
-    # Period 2: post65 subjects have correct health labels
+    # Period 2: post65 agents have correct health labels
     period_2 = out.query("period == 2 and regime_name == 'post65'").sort_values(
-        "subject_id"
+        "agent_id"
     )
     assert list(period_2["health"]) == ["bad", "good"]
 
@@ -278,7 +278,7 @@ def test_heterogeneous_health_simulate_with_categorical_codes() -> None:
     assert not isinstance(out["health"].dtype, CategoricalDtype)
 
 
-def _make_partner_probs_array():
+def _make_partner_probs_array() -> FloatND:
     """Build a (n_periods=3, n_work=2, n_partner=2, n_next_partner=2) array."""
     return jnp.array(
         [
@@ -289,10 +289,11 @@ def _make_partner_probs_array():
     )
 
 
-def _array_to_series(*, arr, model):
+def _array_to_series(*, arr: FloatND, model: Model) -> pd.Series:
     """Convert a probs array to a labeled Series with named MultiIndex using ages."""
     partner_labels = ("single", "partnered")
     work_labels = ("work", "retire")
+    assert model.ages is not None
     ages = model.ages.values
 
     records = []
@@ -314,7 +315,7 @@ def _array_to_series(*, arr, model):
     return pd.Series([r[1] for r in records], index=index)
 
 
-def test_array_from_series_transition_basic_round_trip():
+def test_array_from_series_transition_basic_round_trip() -> None:
     """4D transition probs via array_from_series."""
     model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
@@ -334,13 +335,13 @@ def test_array_from_series_transition_basic_round_trip():
     np.testing.assert_allclose(result, arr, atol=1e-7)
 
 
-def test_array_from_series_transition_reordered_levels():
+def test_array_from_series_transition_reordered_levels() -> None:
     """Reordered MultiIndex levels still produce correct output."""
     model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
     series = _array_to_series(arr=arr, model=model)
     # Reorder levels: put next_partner first, then partner, work, age
-    series = series.reorder_levels(["next_partner", "partner", "labor_supply", "age"])
+    series = series.reorder_levels(["next_partner", "partner", "labor_supply", "age"])  # ty: ignore[invalid-argument-type]
     func = model.user_regimes["working_life"].get_all_functions()["next_partner"]
     assert model.ages is not None
     result = array_from_series(
@@ -356,7 +357,7 @@ def test_array_from_series_transition_reordered_levels():
     np.testing.assert_allclose(result, arr, atol=1e-7)
 
 
-def test_array_from_series_transition_wrong_level_names_raises():
+def test_array_from_series_transition_wrong_level_names_raises() -> None:
     """Wrong MultiIndex level names raise ValueError."""
     model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
@@ -380,13 +381,13 @@ def test_array_from_series_transition_wrong_level_names_raises():
         )
 
 
-def test_array_from_series_transition_invalid_label_raises():
+def test_array_from_series_transition_invalid_label_raises() -> None:
     """Invalid categorical label in transition probs raises ValueError."""
     model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
     series = _array_to_series(arr=arr, model=model)
     # Replace one label with an invalid one
-    new_index = series.index.set_levels(["single", "INVALID"], level="partner")
+    new_index = series.index.set_levels(["single", "INVALID"], level="partner")  # ty: ignore[unresolved-attribute]
     series.index = new_index
     func = model.user_regimes["working_life"].get_all_functions()["next_partner"]
     assert model.ages is not None
@@ -403,7 +404,7 @@ def test_array_from_series_transition_invalid_label_raises():
         )
 
 
-def test_array_from_series_transition_period_level_raises():
+def test_array_from_series_transition_period_level_raises() -> None:
     """Using 'period' instead of 'age' should raise a clear error."""
     model = get_stochastic_model(3)
     index = pd.MultiIndex.from_tuples(
@@ -426,7 +427,7 @@ def test_array_from_series_transition_period_level_raises():
         )
 
 
-def test_array_from_series_transition_duplicate_level_names_raises():
+def test_array_from_series_transition_duplicate_level_names_raises() -> None:
     """Duplicate MultiIndex level names should raise."""
     model = get_stochastic_model(3)
     index = pd.MultiIndex.from_tuples(
@@ -449,13 +450,13 @@ def test_array_from_series_transition_duplicate_level_names_raises():
         )
 
 
-def test_array_from_series_surplus_ages_do_not_supply_missing_rows():
+def test_array_from_series_surplus_ages_do_not_supply_missing_rows() -> None:
     """Discarding surplus rows still leaves required coordinates missing."""
     model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
     series = _array_to_series(arr=arr, model=model)
     # Replace age level with invalid values
-    series.index = series.index.set_codes([0] * len(series), level="age").set_levels(
+    series.index = series.index.set_codes([0] * len(series), level="age").set_levels(  # ty: ignore[unresolved-attribute]
         [999.0], level="age"
     )
     func = model.user_regimes["working_life"].get_all_functions()["next_partner"]
@@ -473,7 +474,7 @@ def test_array_from_series_surplus_ages_do_not_supply_missing_rows():
         )
 
 
-def test_array_from_series_transition_sparse_input_is_rejected():
+def test_array_from_series_transition_sparse_input_is_rejected() -> None:
     """Missing required time-category cells cannot become numerical placeholders."""
     model = get_stochastic_model(3)
     # Provide only two of the required time-category cells.
@@ -500,7 +501,7 @@ def test_array_from_series_transition_sparse_input_is_rejected():
         )
 
 
-def _make_regime_probs_array():
+def _make_regime_probs_array() -> FloatND:
     """Build a (n_periods=3, n_health=2, n_regimes=2) array."""
     return jnp.array(
         [
@@ -511,10 +512,11 @@ def _make_regime_probs_array():
     )
 
 
-def _regime_array_to_series(*, arr, model):
+def _regime_array_to_series(*, arr: FloatND, model: Model) -> pd.Series:
     """Convert a regime probs array to a labeled Series using ages."""
     health_labels = ("bad", "good")
     regime_labels = ("alive", "dead")
+    assert model.ages is not None
     ages = model.ages.values
 
     records = []
@@ -571,7 +573,7 @@ def test_convert_series_regime_transition_under_a_schedule() -> None:
     )
 
 
-def test_array_from_series_regime_transition_basic_round_trip():
+def test_array_from_series_regime_transition_basic_round_trip() -> None:
     """Regime transition probs via array_from_series."""
     model = get_regime_markov_model()
     arr = _make_regime_probs_array()
@@ -591,12 +593,12 @@ def test_array_from_series_regime_transition_basic_round_trip():
     np.testing.assert_allclose(result, arr, atol=1e-7)
 
 
-def test_array_from_series_regime_transition_reordered_levels():
+def test_array_from_series_regime_transition_reordered_levels() -> None:
     """Reordered MultiIndex levels for regime transitions."""
     model = get_regime_markov_model()
     arr = _make_regime_probs_array()
     series = _regime_array_to_series(arr=arr, model=model)
-    series = series.reorder_levels(["next_regime", "health", "age"])
+    series = series.reorder_levels(["next_regime", "health", "age"])  # ty: ignore[invalid-argument-type]
     func = _alive_regime_law()
     assert model.ages is not None
     result = array_from_series(
@@ -612,7 +614,7 @@ def test_array_from_series_regime_transition_reordered_levels():
     np.testing.assert_allclose(result, arr, atol=1e-7)
 
 
-def test_array_from_series_regime_transition_wrong_level_names_raises():
+def test_array_from_series_regime_transition_wrong_level_names_raises() -> None:
     """Wrong MultiIndex level names for regime transition raise ValueError."""
     model = get_regime_markov_model()
     arr = _make_regime_probs_array()
@@ -633,12 +635,12 @@ def test_array_from_series_regime_transition_wrong_level_names_raises():
         )
 
 
-def test_array_from_series_regime_transition_invalid_label_raises():
+def test_array_from_series_regime_transition_invalid_label_raises() -> None:
     """Invalid regime label in transition probs raises ValueError."""
     model = get_regime_markov_model()
     arr = _make_regime_probs_array()
     series = _regime_array_to_series(arr=arr, model=model)
-    new_index = series.index.set_levels(["alive", "INVALID"], level="next_regime")
+    new_index = series.index.set_levels(["alive", "INVALID"], level="next_regime")  # ty: ignore[unresolved-attribute]
     series.index = new_index
     func = _alive_regime_law()
     assert model.ages is not None
@@ -659,6 +661,7 @@ def _build_partner_probs_series(model: Model) -> pd.Series:
     """Build a 4D Series with age x labor_supply x partner x next_partner MultiIndex."""
     partner_labels = ("single", "partnered")
     work_labels = ("work", "retire")
+    assert model.ages is not None
     assert model.ages is not None
     ages = model.ages.values
 
@@ -1096,6 +1099,7 @@ def test_convert_series_with_derived_categoricals() -> None:
     labor_grid = DiscreteGrid(category_class=LaborSupply)
 
     # Build a Series indexed by age x labor_supply x partner x next_partner
+    assert model.ages is not None
     assert model.ages is not None
     ages = model.ages.values
     records = []
@@ -1594,7 +1598,7 @@ def _occupation_pair_regime() -> UserRegime:
     )
 
 
-def test_build_discrete_grid_lookup_unwraps_carried_state():
+def test_build_discrete_grid_lookup_unwraps_carried_state() -> None:
     """A carried state's discrete grid appears in the lookup.
 
     The carried value is a categorical state in simulation output, so its
@@ -1605,7 +1609,7 @@ def test_build_discrete_grid_lookup_unwraps_carried_state():
     assert lookup["occupation"].categories == ("blue_collar", "white_collar")
 
 
-def test_initial_conditions_map_discrete_pair_labels_to_codes():
+def test_initial_conditions_map_discrete_pair_labels_to_codes() -> None:
     """String labels seed a discrete carried state as integer codes."""
     df = pd.DataFrame(
         {

@@ -65,7 +65,7 @@ class CurrentIIDOverride:
     kind: Literal["base", "physical"]
     """Scientific interpretation of the supplied numeric coordinate."""
     values: FloatND | IntND | HostArray | jax.ShapeDtypeStruct
-    """One subject-axis leaf, or its exact native prototype."""
+    """One agent-axis leaf, or its exact native prototype."""
     # Jaxtyping consumes the string as an array shape, not a forward reference.
     active: BoolND | Bool[np.ndarray, "..."] | jax.ShapeDtypeStruct  # noqa: UP037
     """Whether this row consumes the input at this computational period."""

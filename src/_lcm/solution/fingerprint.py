@@ -232,7 +232,7 @@ _TRUSTED_TERMINAL_OBJECT_TYPES = (
 )
 # A fingerprint hashes the names of declaration types and fields. These keep the
 # literal `stakeholder` names they are hashed under until the single-member and
-# household engine paths merge, so a model's durable fingerprint does not move
+# collective engine paths merge, so a model's durable fingerprint does not move
 # with the vocabulary.
 _DURABLE_TYPE_NAMES = MappingProxyType(
     {"lcm.collective.MemberRoute": "lcm.collective.StakeholderRoute"}

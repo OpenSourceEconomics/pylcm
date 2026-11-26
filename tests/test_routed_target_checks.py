@@ -190,5 +190,5 @@ def test_simulate_accepts_valid_probabilities_from_a_phased_helper() -> None:
         runtime_checks=True,
     )
 
-    assert result.n_subjects == 2
+    assert result.n_agents == 2
     assert result.n_periods == 2

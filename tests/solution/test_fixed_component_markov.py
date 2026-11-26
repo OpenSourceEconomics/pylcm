@@ -756,7 +756,7 @@ def test_two_fixed_components_cross_adjacent_carriers_and_terminal(
         .to_dataframe(additional_targets=["kind_health", "other"])
         .reset_index()
     )
-    initial = panel.loc[panel["period"] == 0].sort_values("subject_id")
+    initial = panel.loc[panel["period"] == 0].sort_values("agent_id")
     # Two literal Bernoulli steps give P²(stay)=5/8, P²(switch)=3/8.
     expected_first = 1.53125 * first + 0.21875 * (first ^ 2)
     expected_other = 1.53125 * other + 0.21875 * (other ^ 2)
@@ -919,7 +919,7 @@ def test_fixed_component_eager_sharding_with_a_state_absent_terminal() -> None:
         .to_dataframe()
         .reset_index()
     )
-    initial = panel.loc[panel["period"] == 0].sort_values("subject_id")
+    initial = panel.loc[panel["period"] == 0].sort_values("agent_id")
     np.testing.assert_array_equal(initial["value"], [0.0, 1.0, 2.0, 3.0])
 
 
@@ -987,7 +987,7 @@ def test_fixed_component_simulation_preserves_original_sampling_support(
         )
         frame = result.to_dataframe()
         frame = frame.loc[frame["regime_name"] == "alive"].sort_values(
-            ["period", "subject_id"]
+            ["period", "agent_id"]
         )
         if annotation is None:
             codes = frame["kind_health"].cat.codes.to_numpy()
@@ -1103,10 +1103,10 @@ def test_fixed_component_preserves_a_transition_reading_its_next_code(
     ).to_dataframe(use_categorical_codes=True)
     if "period" not in panel.columns:
         panel = panel.reset_index()
-    first = panel.loc[panel["period"] == 0].sort_values("subject_id")
+    first = panel.loc[panel["period"] == 0].sort_values("agent_id")
     expected = np.repeat([0.5, 1.5, 4.5, 5.5], 4) + np.tile(np.arange(4), 4)
     np.testing.assert_array_equal(first["value"].to_numpy(), expected)
-    last = panel.loc[panel["period"] == 1].sort_values("subject_id")
+    last = panel.loc[panel["period"] == 1].sort_values("agent_id")
     next_s = last["s_rest"] + 2 * last["s_fixed"] if annotated else last["s"]
     np.testing.assert_array_equal(last["y"].to_numpy(), next_s.to_numpy())
 
@@ -1233,8 +1233,8 @@ def test_fixed_component_preserves_next_code_probability_and_joint_consumers(
         ).to_dataframe(use_categorical_codes=True)
         if "period" not in panel.columns:
             panel = panel.reset_index()
-        first = panel.loc[panel["period"] == 0].sort_values("subject_id")
-        following = panel.loc[panel["period"] == 1].sort_values("subject_id")
+        first = panel.loc[panel["period"] == 0].sort_values("agent_id")
+        following = panel.loc[panel["period"] == 1].sort_values("agent_id")
         next_s = (
             following["s_rest"] + 2 * following["s_fixed"]
             if annotated
@@ -1250,7 +1250,7 @@ def test_fixed_component_preserves_next_code_probability_and_joint_consumers(
                 else following["t"]
             )
             np.testing.assert_array_equal(next_t, expected_t)
-            terminal = panel.loc[panel["period"] == 2].sort_values("subject_id")
+            terminal = panel.loc[panel["period"] == 2].sort_values("agent_id")
             terminal_s = (
                 terminal["s_rest"] + 2 * terminal["s_fixed"]
                 if annotated

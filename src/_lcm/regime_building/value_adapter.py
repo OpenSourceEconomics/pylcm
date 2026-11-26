@@ -689,7 +689,7 @@ def adapt_collective_utility(
     value_grids: Mapping[StateOrActionName, AdapterGrid],
     adapters: AdapterMemo,
 ) -> CollectiveUtility:
-    """Return the household declaration with the bodies the engine runs.
+    """Return the collective utility declaration with the bodies the engine runs.
 
     Each member's body is the adapted `utility_<s>` the engine holds, so the
     declaration and the engine name one object, and each Pareto weight reads
@@ -811,8 +811,8 @@ def adapt_entry(  # noqa: PLR0911
     # condition is a tree of names, not a function; the model refuses one that
     # reads a value or a code, and one that reads the period of a staged model
     # reads it through the clock as a function does, offering a solver no
-    # structure. A household's member bodies
-    # are adapted as the regime's `utility_<s>` functions. An identity law maps
+    # structure. In a regime with several members, the member bodies are
+    # adapted as the regime's `utility_<s>` functions. An identity law maps
     # codes to codes exactly as it maps values to values.
     clock = value_grids.get("period")
     if (

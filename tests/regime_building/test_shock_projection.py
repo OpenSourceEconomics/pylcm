@@ -13,18 +13,18 @@ from _lcm.grids import Grid
 from _lcm.shock_registry import ShockBinding, create_shock_registry
 from lcm import (
     CollectiveUtility,
+    CompositionAction,
     Consent,
     Counterparty,
+    Destination,
     DiscreteGrid,
-    Exit,
-    ExitTarget,
     InitialNodes,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
+    PCOnActions,
+    PCOnWeight,
     Regime,
-    Renegotiate,
-    Unilateral,
     categorical,
 )
 from lcm.exceptions import ShockDeclarationError
@@ -191,7 +191,7 @@ def test_continuous_identity_is_not_a_grid_node_comparison(
 
 
 def test_effective_helper_composition_preserves_direct_return() -> None:
-    """The complete effective projection, including helpers, is the proof subject."""
+    """The complete effective projection, including helpers, is the proof agent."""
     binding = _binding()
     _validator()(
         source="home",
@@ -510,15 +510,14 @@ def _dissolving_pair(*, law: Law, rule: str = "unilateral") -> Model:
                         }
                     )
                 },
-                exit=Exit(
-                    targets={
-                        "f": ExitTarget(regime="alone_f", projection=projection),
-                        "m": ExitTarget(regime="alone_m", projection=projection),
+                composition_action=CompositionAction(
+                    destinations={
+                        "f": Destination(regime="alone_f", projection=projection),
+                        "m": Destination(regime="alone_m", projection=projection),
                     },
-                    rule=Unilateral(
-                        tie="leave",
-                        renegotiate=Renegotiate(state="theta") if bargained else None,
-                    ),
+                    rule=PCOnWeight(state="theta", tie="leave")
+                    if bargained
+                    else PCOnActions(tie="leave"),
                     available=_bonus_seen if rule == "available" else None,
                 ),
                 shocks=("bonuses",),
@@ -571,9 +570,9 @@ def _formation(*, law: Law) -> Model:
                 states={"assets": assets, "skill": skill},
                 functions={"utility": _single_seeing_bonus},
                 shocks=("bonuses",),
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
                             regime="couple",
                             role="m",
                             projection={"assets": _half, "skill": _keep_skill},
@@ -643,7 +642,7 @@ _MEAN_FROM_ASSETS = Normal(mu=_mean_from_assets, sigma=1.0)
         "shared-consent",
     ],
 )
-def test_observed_law_reading_a_state_the_exit_changes_is_refused(
+def test_observed_law_reading_a_state_the_composition_action_changes_is_refused(
     *, law: Law, rule: str
 ) -> None:
     """The source's decision and the landing would read the draw under two laws."""
@@ -659,9 +658,11 @@ def test_observed_law_reading_a_state_the_exit_changes_is_refused(
 
 
 def test_observed_law_reading_only_kept_states_has_one_law() -> None:
-    """Mean and spread read skill, which the exit keeps, so the pair's draw has one
-    law: the husband's value is sum_k w_k max(5 + b_k / 2, a / 2 + b_k) with
-    b_k = 2 s + s z_k."""
+    """Mean and spread read skill, which separation keeps, so the draw has one law.
+
+    The husband's value is sum_k w_k max(5 + b_k / 2, a / 2 + b_k) with
+    b_k = 2 s + s z_k.
+    """
     model = _dissolving_pair(law=Normal(mu=_mean_from_skill, sigma=_spread_from_skill))
     values = np.asarray(model.solve(params={}, log_level="off").values[0]["pair"])
     bonus = 2 * _SKILL[:, None] + _SKILL[:, None] * _Z
@@ -745,9 +746,9 @@ def _destination_law_formation(*, shock: str) -> Model:
                 states={"edu_f": binary},
                 functions={"utility": stay},
                 shocks=("marriage",),
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
                             regime="couple",
                             role="f",
                             projection={

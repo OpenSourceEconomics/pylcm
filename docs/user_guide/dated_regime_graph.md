@@ -121,8 +121,8 @@ starts. Use `model.graph.initial_nodes` when you need expanded `(age, regime)` p
 Legacy pair collections and bare selector mappings remain accepted as inputs.
 
 Starts are admissibility declarations, not population weights. Simulation still receives
-subjects and their states through `InitialConditions` or `Population`. There is no
-default start and no automatic inference of roots from a graph.
+agents and their states through `InitialConditions` or `Population`. There is no default
+start and no automatic inference of roots from a graph.
 
 ## Declare a law where a source has several destinations
 
@@ -208,20 +208,20 @@ categories to two retired categories, while death may receive a separate assets 
 omit health entirely. Per-target state laws and entry declarations remain on `Regime`;
 the graph owns their structural destination and age restrictions.
 
-## Perceived and realized edges
+## Perceived and actual edges
 
-Use `Phased` on `edges` when beliefs and realized transitions differ. Each phase's
+Use `Phased` on `edges` when beliefs and the actual transitions differ. Each phase's
 mapping declares that phase's edges, and a `Transition` in it carries that phase's law:
 
 ```python
-# Fragment: perceived and realized survival probabilities differ.
+# Fragment: perceived and actual survival probabilities differ.
 edges = Phased(
     solve={
         "working": Transition(targets=targets, law=perceived_survival),
         "retired": {"dead": (63, 64)},
     },
     simulate={
-        "working": Transition(targets=targets, law=realized_survival),
+        "working": Transition(targets=targets, law=actual_survival),
         "retired": {"dead": (63, 64)},
     },
 )
@@ -229,14 +229,14 @@ edges = Phased(
 
 A law-free source follows its single edge in each phase, so
 `Phased(solve={"working": {"working": 60}}, simulate={"working": {"retired": 60}})`
-believes in staying while realizing retirement. Where one phase has a single edge at a
-source age and the other phase's `Transition` law is a per-target probability mapping
-there, the lone edge counts as a probability-one cell for its destination, so both
-phases carry the same form.
+believes in staying while the agent actually retires. Where one phase has a single edge
+at a source age and the other phase's `Transition` law is a per-target probability
+mapping there, the lone edge counts as a probability-one cell for its destination, so
+both phases carry the same form.
 
-Every realized visit needs a local solve value and its recursive perceived continuation
-values. Additional nodes needed only for valuation do not create realized visits. Graph
-support, numerical laws, and state handoffs are validated together at construction.
+Every visited node needs a local solve value and its recursive perceived continuation
+values. Additional nodes needed only for valuation are not visited. Graph support,
+numerical laws, and state handoffs are validated together at construction.
 
 ## Inspect declared and effective graphs
 
@@ -247,7 +247,7 @@ separate public graph constructor:
 declared_solve = model.graph.edges.solve
 declared_simulate = model.graph.edges.simulate
 perceived = model.graph.solution
-realized = model.graph.simulation
+actual = model.graph.simulation
 valued_nodes = model.graph.nodes
 visited_nodes = model.graph.visited_nodes
 removed_solve_edges = model.graph.pruned_edges["solve"]

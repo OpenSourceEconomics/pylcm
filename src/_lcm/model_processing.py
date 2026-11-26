@@ -452,7 +452,7 @@ def validate_model_inputs(
     `ages` lets the used-variable check resolve `AgeSpecializedFunction` functions at
     each regime's representative age, so a state read only by a policy-specialized
     function still counts as used. A marker only the simulate phase reads is
-    resolved at the first of `visited_periods_by_regime`, where a subject can be;
+    resolved at the first of `visited_periods_by_regime`, where an agent can be;
     they default to the active periods.
 
     `targets_by_phase` names, per phase and regime, the targets the model graph
@@ -864,7 +864,7 @@ def _validate_all_variables_used(
         active_periods_by_regime: The per-regime coverage.
         targets_by_phase: Per phase and regime, the targets the model graph
             reaches at the demanded periods.
-        visited_periods_by_regime: Per regime, the periods a subject can be in
+        visited_periods_by_regime: Per regime, the periods an agent can be in
             it, where a simulate-only marker is resolved.
         removed_edge_reads: Per regime, each state or action read by a
             declaration removed with its fixed-zero edge, and the targets of
@@ -1382,10 +1382,10 @@ def _partial_fixed_params_into_regimes(
                 for period, kernel in regime.solution.period_kernels.items()
             }
         )
-        bound_exit_queries = MappingProxyType(
+        bound_composition_queries = MappingProxyType(
             {
                 period: plan.with_fixed_params(fixed_flat_params=fixed_flat_params)
-                for period, plan in regime.simulation.exit_queries.items()
+                for period, plan in regime.simulation.composition_queries.items()
             }
         )
         if not reachable_fixed:
@@ -1395,7 +1395,7 @@ def _partial_fixed_params_into_regimes(
                     regime.solution, period_kernels=bound_kernels
                 ),
                 simulation=dataclasses.replace(
-                    regime.simulation, exit_queries=bound_exit_queries
+                    regime.simulation, composition_queries=bound_composition_queries
                 ),
             )
             continue
@@ -1445,7 +1445,7 @@ def _partial_fixed_params_into_regimes(
         simulation = regime.simulation
         new_simulate = dataclasses.replace(
             simulation,
-            exit_queries=bound_exit_queries,
+            composition_queries=bound_composition_queries,
             programs=dataclasses.replace(
                 simulation.programs,
                 **{

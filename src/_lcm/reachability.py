@@ -140,7 +140,7 @@ class ModelReachability:
     declared starts can visit, and each pair whose value a solved problem reads."""
 
     visited_nodes: frozenset[tuple[UserAge, RegimeName]] = frozenset()
-    """Exact `(age, regime)` pairs a subject starting at a declared start can
+    """Exact `(age, regime)` pairs an agent starting at a declared start can
     physically visit; a subset of `nodes`."""
 
     def for_phase(self, phase: PhaseName) -> PhaseReachability:
@@ -283,7 +283,7 @@ def build_model_reachability(
 
     `active_periods_by_regime` must be the single canonical coverage mapping
     computed once at model preparation from the declarations. The simulate
-    graph is active only where a subject can be: `visited_periods_by_regime`,
+    graph is active only where an agent can be: `visited_periods_by_regime`,
     which defaults to the coverage.
     """
     return ModelReachability(

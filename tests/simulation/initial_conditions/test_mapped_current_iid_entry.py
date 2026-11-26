@@ -16,24 +16,24 @@ from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.typing import FlatParams, PytreeValue, ShapeDtypePytree
 from lcm import (
     AgeGrid,
+    CompositionAction,
+    Destination,
     ExecutionConfig,
-    Exit,
-    ExitTarget,
     InitialNodes,
     LinSpacedGrid,
     Model,
     Regime,
     categorical,
 )
+from lcm.composition_actions import PCOnActions
 from lcm.exceptions import (
     ExecutionPlanningError,
     ShockDeclarationError,
     UnsupportedOperationError,
 )
-from lcm.exits import Unilateral
 from lcm.shocks import PhysicalValues, ShockGroup, Uniform, UserNodes
 from lcm.typing import BoolND, FloatND, IntND, ScalarInt
-from tests.simulation.test_current_exits import _hidden_offer_model
+from tests.simulation.test_current_composition_actions import _hidden_offer_model
 
 
 @categorical(ordered=False)
@@ -78,11 +78,13 @@ def _model(
             "source": Regime(
                 functions={"utility": _stay},
                 states={"x": LinSpacedGrid(start=10, stop=11, n_points=3)},
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(regime="target", projection={"y": _mapped_y})
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
+                            regime="target", projection={"y": _mapped_y}
+                        )
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                     observes=("signal",),
                     available=_available,
                 ),
@@ -115,7 +117,7 @@ def _model(
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_observed_mapped_entry_uses_current_params_rows_and_canonical_clock() -> None:
-    """Both helpers and checked replay validate the target law after settlement."""
+    """Both helpers and checked replay validate the target law after transfer."""
     model = _model()
     initial = {
         "age": jnp.asarray([20.5 - 1e-4, 20.5 - 1e-4]),
@@ -138,7 +140,7 @@ def test_observed_mapped_entry_uses_current_params_rows_and_canonical_clock() ->
             log_level="off",
         )
         .to_dataframe(use_categorical_codes=True)
-        .sort_values("subject_id")
+        .sort_values("agent_id")
     )
     np.testing.assert_array_equal(frame["regime_name"], "target")
     np.testing.assert_array_equal(frame["age"], [20.5, 20.5])
@@ -161,7 +163,7 @@ def test_observed_mapped_entry_uses_current_params_rows_and_canonical_clock() ->
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 def test_inactive_mapped_entry_does_not_evaluate_its_numerical_law() -> None:
-    """An unavailable exit leaves its invalid physical cell unread."""
+    """An unavailable composition action leaves its invalid physical cell unread."""
     model = _model()
     initial = {
         "age": jnp.asarray([20.5]),
@@ -190,7 +192,7 @@ def test_inactive_mapped_entry_does_not_evaluate_its_numerical_law() -> None:
 def test_seedless_helper_refuses_a_hidden_first_producer_without_selecting_policy() -> (
     None
 ):
-    """A helper does not solve a hidden exit to guess a supplied value's law."""
+    """A helper solves no hidden composition action to guess a supplied value's law."""
     model = _hidden_offer_model(observed=False, enable_jit=True)
     initial = {
         "period": jnp.zeros(1, dtype=jnp.int32),
@@ -367,7 +369,7 @@ def test_dated_mapped_path_overrides_entry_in_original_row_order(
     *,
     runtime_checks: bool,
 ) -> None:
-    """A subject-by-period physical path wins at each mapped entry date."""
+    """An agent-by-period physical path wins at each mapped entry date."""
     model = _model(
         ages=AgeGrid(exact_values=(Fraction(41, 2), Fraction(95, 4))),
         initial_nodes=InitialNodes(by_age={20.5: "source", 23.75: "source"}),
@@ -392,15 +394,13 @@ def test_dated_mapped_path_overrides_entry_in_original_row_order(
         runtime_checks=runtime_checks,
         log_level="off",
     ).to_dataframe(use_categorical_codes=True)
-    for subject, period, mapped_y, signal in (
+    for agent, period, mapped_y, signal in (
         (0, 1, 10.25, 35.25),
         (1, 0, 11.0, 31.75),
         (2, 1, 10.75, 35.75),
         (3, 0, 10.5, 31.25),
     ):
-        selected = frame.loc[
-            (frame["subject_id"] == subject) & (frame["period"] == period)
-        ]
+        selected = frame.loc[(frame["agent_id"] == agent) & (frame["period"] == period)]
         np.testing.assert_array_equal(selected["regime_name"], "target")
         np.testing.assert_array_equal(selected["y"], mapped_y)
         np.testing.assert_array_equal(selected["signal"], signal)

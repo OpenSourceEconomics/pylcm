@@ -1545,7 +1545,7 @@ def _late_entry_model(*, bad_period: int) -> Model:
 
     The solve phase reaches `late` from `source` at ages 0 and 1, so `late` is
     solved at ages 1 and 2. The simulate phase reaches `late` only at age 1, so
-    simulated subjects occupy it at age 2 alone. The shared health law of `late`
+    simulated agents occupy it at age 2 alone. The shared health law of `late`
     reads `probability_row`, whose simulate variant is invalid at `bad_period`.
     """
     health = DiscreteGrid(category_class=_Health)
@@ -1598,8 +1598,8 @@ def _late_entry_model(*, bad_period: int) -> Model:
     return model
 
 
-def test_shared_state_law_is_not_simulate_checked_where_no_subject_is() -> None:
-    """A simulate variant invalid only where no simulated subject is passes.
+def test_shared_state_law_is_not_simulate_checked_where_no_agent_is() -> None:
+    """A simulate variant invalid only where no simulated agent is passes.
 
     `late` is solved at age 1, but the simulation first reaches it at age 2,
     so the simulate evaluation of its shared law has no demand at age 1.

@@ -53,7 +53,7 @@ Eight CPU threads and64GiB are a conservative serial-process setup allowance, no
 measured minimum. The two-hour ceiling is not an expected runtime: no B1 timing exists.
 
 Bounded contents:4semantic processes (300s each),8timing processes (450s each), up to
-one normal native rebuild per source only on probe exit2 (600s each),60s provenance/
+one normal native rebuild per source only on probe composition_action2 (600s each),60s provenance/
 probe/summary steps. These nominal bounds total under6900s before minor overhead;
 the global watchdog always wins and partial results remain incomplete. Planned totals
 are4semantic cases,8timing processes,32timed solves plus8untimed semantic solves.
@@ -83,7 +83,7 @@ PYLCM_SCALING_EXPECTED_HEAD set to its exact base/head pin. Review installation 
 generated version, actual package versions, build inputs and native/JAX hashes.
 Both source environments must match the locked dependencies; normal source version
 and target-native build differences are recorded, not hidden. Driver/topology/native
-registration are rechecked inside the approved allocation. Only a native probe exit2
+registration are rechecked inside the approved allocation. Only a native probe composition_action2
 allows one ordinary same-source Pixi reinstall; other failures stop immediately.
 
 Author release must name this packet/tooling hash, owner and the proposed resources.
@@ -112,10 +112,10 @@ pixi run --manifest-path "$B1_CONTROLLER_MANIFEST" --frozen --no-install -e defa
   benchmarks/discrete_control/tools/task_discrete_control.py --slurm
 ```
 
-Exact underlying numerical commands and timeout/exit logging are in tools/run.py.
+Exact underlying numerical commands and timeout/composition_action logging are in tools/run.py.
 Tests use-v and absolute JUnit paths; the delegated verifier must reconcile all four
 XMLs, exact counts/failing nodeids and all8timing records. Pytask controller/task exits,
-generated batchscript/jobID and every phase's command/exit stay on disk. Do not restart
+generated batchscript/jobID and every phase's command/composition_action stay on disk. Do not restart
 the controller to harvest a terminal failure: that can resubmit the task.
 
 Stop first source/precision/topology/value/coverage/admission failure, skipped/empty

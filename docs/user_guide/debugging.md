@@ -59,13 +59,13 @@ whole value function NaN. The error then names the regime's capacity; raise it w
 `ExactEnvelope(max_runs=...)` (see [Envelopes](../reference/envelopes.md)).
 
 GridSearch simulation always raises `lcm.exceptions.NoFeasibleActionError` when an owned
-subject reaches a state with no feasible action, including with output and runtime
-checks disabled. The error names the regime, period and realized state. Solve may retain
-such states because they can be unreachable; warning output counts them per regime and
+agent reaches a state with no feasible action, including with output and runtime checks
+disabled. The error names the regime, period and realized state. Solve may retain such
+states because they can be unreachable; warning output counts them per regime and
 period, separately from other infinite values. A feasible action whose value is negative
-infinity is not an empty action set. Collective counts refer to household decisions, and
-valid dissolution routes retain their fallback behavior. GridSearch state domains must
-fit its native int32 counters.
+infinity is not an empty action set. In a collective regime, the counts refer to the
+decisions the members take together. Valid routes for members who separate keep their
+fallback behavior. GridSearch state domains must fit its native int32 counters.
 
 ### Check transition laws without a solve
 
@@ -460,7 +460,7 @@ from lcm.exceptions import ExecutionPlanningError, PyLCMError
 
 - **`UnrepresentableOuterCandidateError`**: Replay cannot reconstruct an outer candidate
   the solve kept, because the recovered action reaches a stock outside the outer state's
-  declared domain. Such candidates are dropped from that subject's choice set, and the
+  declared domain. Such candidates are dropped from that agent's choice set, and the
   message reports how many.
 
 - **`ExactAffineKernelUnavailableError`**: A certified exact-affine operation
@@ -486,8 +486,8 @@ from lcm.exceptions import ExecutionPlanningError, PyLCMError
 ## Inspect the resolved execution plan
 
 `model.simulate(...)` reports the execution plan it actually dispatched: the forward
-route, the ordered subject devices and their backend, the resolved planner axis widths
-by regime, the outer chunk count and admitted chunk widths, and the budget mode with its
+route, the ordered agent devices and their backend, the resolved planner axis widths by
+regime, the outer chunk count and admitted chunk widths, and the budget mode with its
 effective device-memory bytes. A one-line summary logs at `log_level="progress"` and
 `"debug"`, and the complete record at `"debug"` only.
 

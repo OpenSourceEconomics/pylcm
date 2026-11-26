@@ -3,7 +3,7 @@
 import jax.numpy as jnp
 import numpy as np
 
-from lcm import AgeGrid, Exit, ExitTarget, Model, Unilateral
+from lcm import AgeGrid, CompositionAction, Destination, Model, PCOnActions
 from lcm.solver_api import ResultRetention
 from lcm.typing import FloatND
 from tests.regime_building.test_collective_regime_simulate import (
@@ -20,24 +20,24 @@ def _male_wage(wage: FloatND) -> FloatND:
     return 0.0 * wage + 3.0
 
 
-def test_public_current_exit_keeps_the_nonprimary_members_own_projection() -> None:
+def test_public_composition_keeps_the_nonprimary_members_own_projection() -> None:
     """The male row lands at wage three while the female row keeps wage two."""
     regimes = _make_dissolution_regimes()
     regimes["married_ir"] = regimes["married_ir"].replace(
-        exit=Exit(
-            targets={
-                "f": ExitTarget(
+        composition_action=CompositionAction(
+            destinations={
+                "f": Destination(
                     regime="single_f",
                     projection={"wage": _identity_wage},
                     utility_adjustment=_dissolution_cost_f,
                 ),
-                "m": ExitTarget(
+                "m": Destination(
                     regime="single_m",
                     projection={"wage": _male_wage},
                     utility_adjustment=_dissolution_cost_m,
                 ),
             },
-            rule=Unilateral(),
+            rule=PCOnActions(),
         )
     )
     model = Model(
@@ -74,12 +74,12 @@ def test_public_current_exit_keeps_the_nonprimary_members_own_projection() -> No
         log_level="off",
         seed=0,
     ).to_dataframe()
-    acting = result.loc[result["period"] == 1].sort_values("subject_id")
-    np.testing.assert_array_equal(acting["subject_id"], [0, 1])
+    acting = result.loc[result["period"] == 1].sort_values("agent_id")
+    np.testing.assert_array_equal(acting["agent_id"], [0, 1])
     np.testing.assert_array_equal(
         acting["regime_name"].to_numpy(), ["single_f", "single_m"]
     )
     np.testing.assert_array_equal(acting["wage"], [2.0, 3.0])
     # The actual male utility is 1 * work + 0 * wage, with zero terminal value.
-    # Each member's exit cost is subtracted from the outside payment.
+    # Each member's composition action cost is subtracted from the outside payment.
     np.testing.assert_allclose(acting["value"], [5.0, 0.8], rtol=1e-6)

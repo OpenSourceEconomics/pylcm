@@ -23,7 +23,7 @@ class CompositeState:
     """The member states, in tuple order."""
 
     start_codes: Mapping[StateName, tuple[int, ...]]
-    """Per member, the codes a subject can start with."""
+    """Per member, the codes an agent can start with."""
 
     def __post_init__(self) -> None:
         if len(self.members) < 2 or len(set(self.members)) != len(self.members):  # noqa: PLR2004

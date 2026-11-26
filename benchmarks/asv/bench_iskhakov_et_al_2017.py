@@ -30,7 +30,7 @@ _WARM_SAMPLES = 3
 
 _N_PERIODS = 10
 _TASTE_SHOCK_SCALE = 0.1
-_N_SUBJECTS = 100_000
+_N_AGENTS = 100_000
 
 _SOLVE_WEALTH_N_POINTS = 1_000
 _SOLVE_CONSUMPTION_N_POINTS = 5_000
@@ -260,15 +260,15 @@ def _make_model_and_params(
     return model, params
 
 
-def _make_initial_conditions(n_subjects: int):
+def _make_initial_conditions(n_agents: int):
     import jax.numpy as jnp
 
     # Spread initial wealth so simulated paths cover early and late retirement
     # and the simulate benchmark exercises every regime's kernel.
     return {
-        "age": jnp.full(n_subjects, 40.0),
-        "wealth": jnp.linspace(1.0, 150.0, n_subjects),
-        "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
+        "age": jnp.full(n_agents, 40.0),
+        "wealth": jnp.linspace(1.0, 150.0, n_agents),
+        "regime_id": jnp.zeros(n_agents, dtype=jnp.int32),
     }
 
 
@@ -426,7 +426,7 @@ class IskhakovEtAl2017Simulate:
         self.period_to_regime_to_V_arr = self.model.solve(
             params=self.model_params, log_level="off", runtime_checks=False
         )
-        self.initial_conditions = _make_initial_conditions(_N_SUBJECTS)
+        self.initial_conditions = _make_initial_conditions(_N_AGENTS)
 
     def setup_for_gpu_measurement(self) -> None:
         self._build()
@@ -484,7 +484,7 @@ class IskhakovEtAl2017SimulateGpuPeakMem(_gpu_mem.GpuPeakMem):
 class IskhakovEtAl2017DCEGMSimulate:
     """Simulate the DC-EGM variant from a pre-solved model.
 
-    The simulate path is the standard per-subject grid argmax in both solver
+    The simulate path is the standard per-agent grid argmax in both solver
     variants; the DC-EGM variant additionally synthesizes the intrinsic
     budget mask, so this benchmark measures the simulate-side overhead of a
     DC-EGM regime against `IskhakovEtAl2017Simulate`.
@@ -504,7 +504,7 @@ class IskhakovEtAl2017DCEGMSimulate:
         self.period_to_regime_to_V_arr = self.model.solve(
             params=self.model_params, log_level="off", runtime_checks=False
         )
-        self.initial_conditions = _make_initial_conditions(_N_SUBJECTS)
+        self.initial_conditions = _make_initial_conditions(_N_AGENTS)
 
     def setup_for_gpu_measurement(self) -> None:
         self._build()

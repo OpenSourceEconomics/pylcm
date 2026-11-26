@@ -649,7 +649,7 @@ def _terminal_model(
     )
 
 
-def _active_subject() -> dict[str, Int1D]:
+def _active_agent() -> dict[str, Int1D]:
     return {
         "period": jnp.array([0], dtype=jnp.int32),
         "regime_id": jnp.full(1, _ActiveOnlyId.active, dtype=jnp.int32),
@@ -666,7 +666,7 @@ def _float_dtype() -> np.dtype:
 def test_unreachable_regime_with_runtime_rho_needs_no_parameters(
     *, grid_kind: _Ar1Kind, enable_jit: bool, entry: str
 ) -> None:
-    """A regime no subject can enter imposes no runtime-rho parameter.
+    """A regime no agent can enter imposes no runtime-rho parameter.
 
     The active terminal cell has constant utility 1, so its value and its single
     simulated row are known exactly, independent of any model machinery.
@@ -690,7 +690,7 @@ def test_unreachable_regime_with_runtime_rho_needs_no_parameters(
     else:
         frame = model.simulate(
             params={},
-            initial_conditions=_active_subject(),
+            initial_conditions=_active_agent(),
             solution=(
                 model.solve(params={}, log_level="off")
                 if entry == "simulate-with-solution"
@@ -752,7 +752,7 @@ def _call_entry(
     else:
         model.simulate(
             params=params,
-            initial_conditions={**_active_subject(), "income": jnp.array([0.25])},
+            initial_conditions={**_active_agent(), "income": jnp.array([0.25])},
             solution=solution,
             log_level="off",
             seed=0,
@@ -2789,7 +2789,7 @@ def test_rouwenhorst_simulation_extrapolates_beyond_the_edge_nodes() -> None:
         seed=42,
         log_level="off",
     )
-    first = result.to_dataframe().query("period == 0").sort_values("subject_id")
+    first = result.to_dataframe().query("period == 0").sort_values("agent_id")
 
     assert np.isfinite(first["value"]).all()
     assert first["consumption"].iloc[1] == first["consumption"].iloc[0]

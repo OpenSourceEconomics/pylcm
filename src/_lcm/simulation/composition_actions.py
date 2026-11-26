@@ -1,4 +1,4 @@
-"""Bound current-period query metadata for immutable original-subject replay."""
+"""Bound current-period query metadata for immutable original-agent replay."""
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
@@ -27,7 +27,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.workspace_planning import BOOTSTRAP_TILE_WIDTH_CAP
 from _lcm.shock_overrides import CurrentIIDOverride, supplied_group_values
 from _lcm.shock_registry import ShockBinding, law_input_validity
-from _lcm.simulation.program_types import subject_axis
+from _lcm.simulation.program_types import agent_axis
 from _lcm.typing import FlatParams, PytreeValue
 from _lcm.utils.dispatchers import vary_carry_like_body
 from lcm.shocks import (
@@ -51,7 +51,7 @@ else:
     type Regime = object
     type SolverBuildContext = object
 
-type ExitFramePayload = tuple[
+type CompositionFramePayload = tuple[
     Mapping[str, FloatND | IntND],
     Mapping[str, FloatND],
     Mapping[str, FloatND],
@@ -61,21 +61,21 @@ type ExitFramePayload = tuple[
     BoolND,
     Mapping[str, BoolND],
 ]
-type OriginalExitOutput = tuple[
+type OriginalCompositionOutput = tuple[
     tuple[FloatND, IntND, BoolND, BoolND, IntND],
-    ExitFramePayload,
+    CompositionFramePayload,
     Mapping[str, Mapping[str, FloatND | IntND]],
     Mapping[str, FloatND],
 ]
-type ParticipatingExitOutput = tuple[
+type ParticipatingCompositionOutput = tuple[
     tuple[FloatND, IntND, BoolND, BoolND, IntND],
-    ExitFramePayload,
+    CompositionFramePayload,
     Mapping[str, FloatND | IntND],
 ]
 
 
 @dataclass(frozen=True, kw_only=True)
-class ExitSimulationPlan:
+class CompositionSimulationPlan:
     """Original Full choice and revealed destination acting policies."""
 
     full: ScalarPolicyQueries | None
@@ -84,7 +84,7 @@ class ExitSimulationPlan:
     """Final-regime policies after revelation; no second Full decision.
 
     Each acts in the problem its movers were priced at: Raw after an ordinary
-    exit, Participating after consent.
+    composition action, Participating after consent.
     """
     physical_names: tuple[str, ...] = ()
     """Own physical columns consumed by this actor's acting policy."""
@@ -93,13 +93,13 @@ class ExitSimulationPlan:
 
     @property
     def final_actors(self) -> tuple[RegimeName, ...]:
-        """Direct move destinations of the original Full choice."""
+        """Direct composition-action destinations of the original Full choice."""
         return tuple(
             dict.fromkeys(
                 queries.definitions[query].read.target
                 for queries in ((self.full,) if self.full is not None else ())
                 for root in (queries.definitions[queries.root],)
-                for targets in root.exit_targets.values()
+                for targets in root.composition_action_targets.values()
                 for query in targets.values()
             )
         )
@@ -123,22 +123,22 @@ class ExitSimulationPlan:
         )
 
 
-def install_exit_simulation_queries(
+def install_composition_simulation_queries(
     *,
     canonical_regimes: Mapping[RegimeName, Regime],
     contexts: Mapping[RegimeName, SolverBuildContext],
     original_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
 ) -> MappingProxyType[RegimeName, Regime]:
-    """Bind phase-correct subject queries after every canonical context exists.
+    """Bind phase-correct agent queries after every canonical context exists.
 
     This builds genuine forward programs beside the ordinary actor programs. A
     query-only counterparty remains a transient reader, not a simulated occupant.
     """
-    from _lcm.current_iid import CurrentIIDPlan  # noqa: PLC0415
-    from _lcm.exit_queries import (  # noqa: PLC0415
+    from _lcm.composition_queries import (  # noqa: PLC0415
         acting_kinds,
-        bind_exit_query_graph,
+        bind_composition_query_graph,
     )
+    from _lcm.current_iid import CurrentIIDPlan  # noqa: PLC0415
     from _lcm.policy_queries import QueryKind, ScalarPolicyQueries  # noqa: PLC0415
     from _lcm.time import coordinate_kind  # noqa: PLC0415
 
@@ -170,12 +170,13 @@ def install_exit_simulation_queries(
     roots = {
         (owner, period)
         for owner, period in original_actors
-        if contexts[owner].user_regimes_at(period=period)[owner].exit is not None
+        if contexts[owner].user_regimes_at(period=period)[owner].composition_action
+        is not None
     }
     full_queries = {}
     actors = set(roots)
     for owner, period in sorted(roots):
-        definitions, root = bind_exit_query_graph(
+        definitions, root = bind_composition_query_graph(
             contexts=contexts,
             canonical_regimes=canonical_regimes,
             root=owner,
@@ -185,15 +186,15 @@ def install_exit_simulation_queries(
         full_queries[owner, period] = ScalarPolicyQueries(
             definitions=definitions, root=root, period=period
         )
-        # A mover into a later stage acts at its occurrence there, not here.
+        # A deciding member bound for a later stage acts there, not here.
         actors.update(
             (definitions[query].read.target, period)
-            for targets in definitions[root].exit_targets.values()
+            for targets in definitions[root].composition_action_targets.values()
             for query in targets.values()
             if definitions[query].landing is None
         )
     for owner, period in sorted((actors & original_actors) - full_queries.keys()):
-        definitions, root = bind_exit_query_graph(
+        definitions, root = bind_composition_query_graph(
             contexts=contexts,
             canonical_regimes=canonical_regimes,
             root=owner,
@@ -212,7 +213,7 @@ def install_exit_simulation_queries(
     )
     participating = {}
     for owner, period in sorted(actors):
-        definitions, root = bind_exit_query_graph(
+        definitions, root = bind_composition_query_graph(
             contexts=contexts,
             canonical_regimes=canonical_regimes,
             root=owner,
@@ -242,7 +243,7 @@ def install_exit_simulation_queries(
         }
         regime = updated[owner]
         programs = regime.simulation.programs
-        plan = ExitSimulationPlan(
+        plan = CompositionSimulationPlan(
             full=queries,
             participating={
                 actor: query
@@ -255,8 +256,8 @@ def install_exit_simulation_queries(
             regime,
             simulation=replace(
                 regime.simulation,
-                exit_queries=MappingProxyType(
-                    {**regime.simulation.exit_queries, period: plan}
+                composition_queries=MappingProxyType(
+                    {**regime.simulation.composition_queries, period: plan}
                 ),
                 programs=replace(
                     programs,
@@ -265,7 +266,7 @@ def install_exit_simulation_queries(
                             **programs.exit_full,
                             **(
                                 {
-                                    period: exit_policy_program(
+                                    period: composition_policy_program(
                                         queries=queries,
                                         draw=draw,
                                         uniform_bases=uniform_bases,
@@ -280,7 +281,7 @@ def install_exit_simulation_queries(
                     exit_participating=MappingProxyType(
                         {
                             **programs.exit_participating,
-                            period: exit_policy_program(
+                            period: composition_policy_program(
                                 queries=participating[owner, period],
                                 draw=draw,
                                 uniform_bases=uniform_bases,
@@ -355,7 +356,7 @@ def _realise_frame(
     )
 
 
-class PreparedExitDecision(NamedTuple):
+class PreparedCompositionDecision(NamedTuple):
     """The final actor's decision, already selected before any transition."""
 
     indices: IntND
@@ -365,7 +366,7 @@ class PreparedExitDecision(NamedTuple):
 
 
 @dataclass(frozen=True, kw_only=True)
-class OriginalExitDecision:
+class OriginalCompositionDecision:
     """Evaluate one original occupant without changing its entry context.
 
     Named keys include target-only innovations, but their physical transforms
@@ -385,7 +386,7 @@ class OriginalExitDecision:
         query_arguments: Mapping[str, Mapping[str, PytreeValue]],
         _holders: BoolND,
         overrides: Mapping[ShockName, CurrentIIDOverride] = MappingProxyType({}),
-    ) -> OriginalExitOutput:
+    ) -> OriginalCompositionOutput:
         """Publish the source frame and the destination coordinates replay validates."""
         fixed = query_arguments[self.queries.root]
         source = {**states, "period": fixed["period"], "age": fixed["age"]}
@@ -422,20 +423,22 @@ class OriginalExitDecision:
         )
         projections = {self.queries.root: updates} if root.state_updates else {}
         adjustments = {}
-        # A read several exit IDs share, such as a member's read at the default of a
-        # settlement its projection ignores, lands every row taking any of them and
-        # pays the adjustment of the ID taken.
+        # A read several composition action IDs share, such as a member's read at the
+        # default of a transfer its projection ignores, lands every row taking any of
+        # them and pays the adjustment of the ID taken.
         chosen: dict[str, BoolND] = {}
-        for identifier, targets in root.exit_targets.items():
+        for identifier, targets in root.composition_action_targets.items():
             for query in targets.values():
                 chosen[query] = chosen.get(query, jnp.asarray(a=False)) | (
                     answer[1] == identifier
                 )
-        for identifier, targets in root.exit_targets.items():
+        for identifier, targets in root.composition_action_targets.items():
             for member, query in targets.items():
                 node = self.queries.definitions[query]
                 selected = answer[1] == identifier
-                helper = root.exit_adjustments.get(identifier, {}).get(member)
+                helper = root.composition_action_adjustments.get(identifier, {}).get(
+                    member
+                )
                 operands = {
                     **fixed,
                     **cast("Mapping[str, PytreeValue]", fixed["_lcm_query_projection"]),
@@ -459,12 +462,13 @@ class OriginalExitDecision:
                 if query in projections:
                     continue
 
-                # An exit evaluates only its selected destination projection.
+                # A composition action evaluates only its selected destination
+                # projection.
                 project_here = chosen[query]
 
-                # A subject that does not land here takes the neutral payload. Batched
-                # over subjects the condition becomes a select, so the projection is
-                # evaluated for every subject of a block and discarded where unused.
+                # An agent that does not land here takes the neutral payload. Batched
+                # over agents the condition becomes a select, so the projection is
+                # evaluated for every agent of a block and discarded where unused.
                 def project(*, query: str = query) -> dict[str, FloatND | IntND]:
                     return dict(
                         self.queries.project(
@@ -491,7 +495,7 @@ class OriginalExitDecision:
 
 
 @dataclass(frozen=True, kw_only=True)
-class RevealedExitDecision:
+class RevealedCompositionDecision:
     """Act in the final regime using held original-row innovations."""
 
     queries: ScalarPolicyQueries
@@ -510,7 +514,7 @@ class RevealedExitDecision:
         taste_keys: Mapping[str, jax.Array],
         overrides: Mapping[ShockName, CurrentIIDOverride],
         produced: Mapping[ShockName, BoolND],
-    ) -> ParticipatingExitOutput:
+    ) -> ParticipatingCompositionOutput:
         """Reveal target physical values, then run Participating exactly once."""
         query_arguments = {
             name: {
@@ -644,7 +648,7 @@ def _produce_observed_group(
     overrides: Mapping[ShockName, CurrentIIDOverride],
     produced: Mapping[ShockName, BoolND],
     supplied_only: bool = False,
-) -> ExitFramePayload:
+) -> CompositionFramePayload:
     """Return the producer's numerical leaves across JAX's metadata boundary."""
     node = queries.definitions[producer]
     producing_states = queries.observation_inputs(
@@ -741,7 +745,7 @@ def _produce_observed_group(
     )
 
 
-def _frame_output(*, frame: CurrentIIDDrawFrame) -> ExitFramePayload:
+def _frame_output(*, frame: CurrentIIDDrawFrame) -> CompositionFramePayload:
     """Keep one declared leaf roster for ordinary, base and physical inputs."""
     return (
         dict(frame.physical),
@@ -759,52 +763,54 @@ def _frame_output(*, frame: CurrentIIDDrawFrame) -> ExitFramePayload:
 
 
 @dataclass(frozen=True, kw_only=True)
-class _BatchedExitDecision:
+class _BatchedCompositionDecision:
     """Give JAX's positional batching boundary one explicit argument tree."""
 
-    body: Callable[..., OriginalExitOutput | ParticipatingExitOutput]
+    body: Callable[..., OriginalCompositionOutput | ParticipatingCompositionOutput]
 
     def __call__(
         self, **arguments: PytreeValue
-    ) -> OriginalExitOutput | ParticipatingExitOutput:
-        """Evaluate one subject; batched, evaluate subjects in vectorized blocks."""
+    ) -> OriginalCompositionOutput | ParticipatingCompositionOutput:
+        """Evaluate one agent; batched, evaluate agents in vectorized blocks."""
         decision = jax.custom_batching.custom_vmap(
-            partial(_evaluate_exit_decision, body=self.body)
+            partial(_evaluate_composition_decision, body=self.body)
         )
-        decision.def_vmap(partial(_evaluate_exit_decision_blocks, body=self.body))
+        decision.def_vmap(
+            partial(_evaluate_composition_decision_blocks, body=self.body)
+        )
         return decision(arguments)
 
 
 # keyword-only-exempt: library-callback=jax.custom_batching.custom_vmap
-def _evaluate_exit_decision(
+def _evaluate_composition_decision(
     arguments: Mapping[str, PytreeValue],
     *,
-    body: Callable[..., OriginalExitOutput | ParticipatingExitOutput],
-) -> OriginalExitOutput | ParticipatingExitOutput:
-    """Evaluate one canonical subject body."""
+    body: Callable[..., OriginalCompositionOutput | ParticipatingCompositionOutput],
+) -> OriginalCompositionOutput | ParticipatingCompositionOutput:
+    """Evaluate one canonical agent body."""
     return body(**arguments)
 
 
 # keyword-only-exempt: library-callback=jax.custom_batching.custom_vmap.def_vmap
-def _evaluate_exit_decision_blocks(
+def _evaluate_composition_decision_blocks(
     axis_size: int,
     in_batched: list[PytreeValue],
     arguments: Mapping[str, PytreeValue],
     *,
-    body: Callable[..., OriginalExitOutput | ParticipatingExitOutput],
-) -> tuple[OriginalExitOutput | ParticipatingExitOutput, PytreeValue]:
-    """Vectorize the body over blocks of subjects and loop over the blocks.
+    body: Callable[..., OriginalCompositionOutput | ParticipatingCompositionOutput],
+) -> tuple[OriginalCompositionOutput | ParticipatingCompositionOutput, PytreeValue]:
+    """Vectorize the body over blocks of agents and loop over the blocks.
 
-    Vectorized, the body's per-subject scalar conditions become selects: every
-    branch runs for each subject of a block and only the taken branch's result
-    reaches that subject. Draws read each subject's own key, and a key
-    implementation that needs scalar dispatch keeps its own per-subject loop.
+    Vectorized, the body's per-agent scalar conditions become selects: every
+    branch runs for each agent of a block and only the taken branch's result
+    reaches that agent. Draws read each agent's own key, and a key
+    implementation that needs scalar dispatch keeps its own per-agent loop.
 
-    A block holds at most `BOOTSTRAP_TILE_WIDTH_CAP` subjects, so the workspace of
+    A block holds at most `BOOTSTRAP_TILE_WIDTH_CAP` agents, so the workspace of
     the selects stays bounded whatever tile width the planner admits; the compiled
     program's memory profile still decides that admission. Blocks are balanced and
-    the last one is padded with copies of the last subject, which are dropped, so
-    the body is traced once. Every reshape names its sizes, so a per-subject array
+    the last one is padded with copies of the last agent, which are dropped, so
+    the body is traced once. Every reshape names its sizes, so a per-agent array
     without elements keeps its shape through the blocks.
     """
     leaves, treedef = jax.tree.flatten(arguments)
@@ -813,9 +819,9 @@ def _evaluate_exit_decision_blocks(
     width = -(-axis_size // n_blocks)
     n_padding = n_blocks * width - axis_size
 
-    def evaluate_subject(
+    def evaluate_agent(
         rows: list[PytreeValue],
-    ) -> OriginalExitOutput | ParticipatingExitOutput:
+    ) -> OriginalCompositionOutput | ParticipatingCompositionOutput:
         supplied = iter(rows)
         merged = [
             next(supplied) if batched else leaf
@@ -825,7 +831,7 @@ def _evaluate_exit_decision_blocks(
 
     rows = [leaf for leaf, batched in zip(leaves, flags, strict=True) if batched]
     if n_blocks == 1:
-        out = jax.vmap(evaluate_subject)(rows)
+        out = jax.vmap(evaluate_agent)(rows)
     else:
         blocks = [
             jnp.concatenate([leaf, jnp.repeat(leaf[-1:], n_padding, axis=0)]).reshape(
@@ -835,37 +841,39 @@ def _evaluate_exit_decision_blocks(
         ]
         out = jax.tree.map(
             lambda leaf: leaf.reshape(n_blocks * width, *leaf.shape[2:])[:axis_size],
-            jax.lax.map(jax.vmap(evaluate_subject), blocks),
+            jax.lax.map(jax.vmap(evaluate_agent), blocks),
         )
     return out, jax.tree.map(lambda _: True, out)
 
 
-def exit_policy_program(
+def composition_policy_program(
     *,
     queries: ScalarPolicyQueries,
     draw: CurrentIIDDrawPlan,
     uniform_bases: Mapping[str, bool],
     original: bool,
 ) -> CoreProgram:
-    """Declare the native subject program and every retained draw-frame leaf."""
+    """Declare the native agent program and every retained draw-frame leaf."""
     # Imports stay below engine construction: programs imports the engine's
     # forward declarations, while this builder runs only after contexts exist.
     from _lcm.current_iid import CORRELATION_SUPPORT_ARGUMENT  # noqa: PLC0415
     from _lcm.simulation.programs import (  # noqa: PLC0415
+        _AgentTiled,
         _ArgumentsBoundAtDispatch,
-        _SubjectTiled,
     )
 
     name = "simulate_exit_full" if original else "simulate_exit_participating"
     draw = _query_draw(queries=queries, draw=draw)
     body = (
-        OriginalExitDecision(queries=queries, draw=draw, uniform_bases=uniform_bases)
+        OriginalCompositionDecision(
+            queries=queries, draw=draw, uniform_bases=uniform_bases
+        )
         if original
-        else RevealedExitDecision(
+        else RevealedCompositionDecision(
             queries=queries, draw=draw, uniform_bases=uniform_bases
         )
     )
-    subject_inputs = ("states", "keys", "_holders", "overrides") + (
+    agent_inputs = ("states", "keys", "_holders", "overrides") + (
         () if original else ("taste_keys", "held_bases", "produced")
     )
     root = queries.definitions[queries.root]
@@ -926,7 +934,9 @@ def exit_policy_program(
         "landing_count",
     )
     targets = {
-        query for members in root.exit_targets.values() for query in members.values()
+        query
+        for members in root.composition_action_targets.values()
+        for query in members.values()
     }
     roles = (
         (
@@ -961,19 +971,19 @@ def exit_policy_program(
     )
     return CoreProgram(
         name=name,
-        function=_SubjectTiled(
+        function=_AgentTiled(
             func=with_signature(
-                _BatchedExitDecision(body=body),
+                _BatchedCompositionDecision(body=body),
                 args=list(signature(body).parameters),
                 enforce=False,
             ),
-            subject_arg_names=subject_inputs,
+            agent_arg_names=agent_inputs,
         ),
         argument_builder=_ArgumentsBoundAtDispatch(
-            program_name=name, subject_arg_names=subject_inputs
+            program_name=name, agent_arg_names=agent_inputs
         ),
         requirements=CoreExecutionRequirements(
-            tiled_axes=(subject_axis(state_names=()),),
+            tiled_axes=(agent_axis(state_names=()),),
             value_reads=queries.value_reads(core_key=name),
         ),
         output_roles=roles,
@@ -981,7 +991,7 @@ def exit_policy_program(
     )
 
 
-class ExitRoute(NamedTuple):
+class CompositionRoute(NamedTuple):
     """One selected member's exact original-source to final-actor route."""
 
     source: RegimeName
@@ -993,10 +1003,10 @@ class ExitRoute(NamedTuple):
     """Key of the exact producer query, retaining mapped-law provenance."""
 
 
-type ExitRouteFields = tuple[RegimeName, RegimeName, int, int | None, int, str]
+type CompositionRouteFields = tuple[RegimeName, RegimeName, int, int | None, int, str]
 
 
-def route_original_subjects(
+def route_original_agents(
     *,
     original_regime_ids: IntND,
     original_roles: IntND,
@@ -1004,7 +1014,7 @@ def route_original_subjects(
     decisions: Mapping[RegimeName, IntND],
     projections: Mapping[str, Mapping[str, FloatND | IntND]],
     adjustments: Mapping[str, FloatND],
-    routes: tuple[ExitRouteFields, ...],
+    routes: tuple[CompositionRouteFields, ...],
     regime_ids: Mapping[RegimeName, IntND | int],
     state_updates: tuple[tuple[RegimeName, str], ...] = (),
 ) -> tuple[
@@ -1016,14 +1026,14 @@ def route_original_subjects(
 ]:
     """Apply every route against immutable original membership and state.
 
-    In particular, a row entering a regime whose original occupants leave cannot
-    take that regime's exit. Its destination coordinates came from the original
+    In particular, a row entering a regime whose original occupants leave cannot take
+    that regime's composition action. Its destination coordinates came from the original
     source's bound projection, before any row's state or membership was changed.
 
-    The states come back as immutable mappings in the order of `original_states`.
-    A compiled call hands a returned `dict` back with its keys sorted, while an
-    immutable mapping keeps its order, so profiled and dispatched exits publish
-    the carrier in the order the planned programs declare.
+    The states come back as immutable mappings in the order of `original_states`. A
+    compiled call hands a returned `dict` back with its keys sorted, while an immutable
+    mapping keeps its order, so profiled and dispatched composition actions publish the
+    carrier in the order the planned programs declare.
     """
     final_ids = original_regime_ids
     final_roles = original_roles
@@ -1066,7 +1076,7 @@ def apply_retained_state_updates(
     """Apply a final actor's selected coordinates only to its moving rows.
 
     The states keep their incoming order through compilation, as in
-    `route_original_subjects`.
+    `route_original_agents`.
     """
     return MappingProxyType(
         {

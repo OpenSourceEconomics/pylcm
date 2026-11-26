@@ -2,7 +2,7 @@
 
 For a qualifying regime with discrete actions, the solve publishes per-branch
 conditional value and policy rows. Simulation re-decides the discrete branch at
-each subject's state by comparing the branches' interpolated conditional values
+each agent's state by comparing the branches' interpolated conditional values
 — each at that branch's own resources — and reads the winning branch's policy
 off-grid. Discrete-only user constraints exclude infeasible branches from the
 comparison, exactly as they mask the grid argmax.
@@ -12,6 +12,7 @@ import dataclasses
 
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
 from lcm import AgeGrid, DiscreteGrid, LogSpacedGrid, Model, categorical
@@ -105,7 +106,7 @@ def _bonus_model(constraints: dict[FunctionName, UserFunction] | None = None) ->
     )
 
 
-def _simulate_period_0(*, model: Model, off_grid_wealth: np.ndarray):
+def _simulate_period_0(*, model: Model, off_grid_wealth: np.ndarray) -> pd.DataFrame:
     params = get_graph_only_retirement_params(
         n_periods=2, discount_factor=_DISCOUNT_FACTOR
     )
@@ -138,12 +139,12 @@ def _off_grid_wealth_straddling_the_switch() -> np.ndarray:
     return np.concatenate([below[:4], above[:4]])
 
 
-def test_branch_redecision_matches_the_closed_form_switch_and_policy():
+def test_branch_redecision_matches_the_closed_form_switch_and_policy() -> None:
     """Simulated branch and consumption hit their closed forms off-grid.
 
     With `resources = wealth + b * take` and utility `log(c) - kappa * take`,
     the conditional optimum is `c*_d = R_d / (1 + beta)` and taking pays iff
-    `(1 + beta) * log(1 + b / wealth) > kappa`. Subjects seeded strictly
+    `(1 + beta) * log(1 + b / wealth) > kappa`. Agents seeded strictly
     between wealth-grid nodes on both sides of the switch must take exactly
     when the closed form says so, and consume the winning branch's off-grid
     optimum — a grid-restricted pair can do neither.
@@ -151,7 +152,7 @@ def test_branch_redecision_matches_the_closed_form_switch_and_policy():
     off_grid_wealth = _off_grid_wealth_straddling_the_switch()
     period_0 = _simulate_period_0(
         model=_bonus_model(), off_grid_wealth=off_grid_wealth
-    ).sort_values("subject_id")
+    ).sort_values("agent_id")
 
     take = period_0["take_bonus"].to_numpy()
     expected_take = (off_grid_wealth < _SWITCH_WEALTH).astype(take.dtype)
@@ -168,10 +169,10 @@ def _bonus_forbidden(take_bonus: DiscreteAction) -> BoolND:
     return take_bonus == 0
 
 
-def test_branch_redecision_respects_discrete_action_constraints():
+def test_branch_redecision_respects_discrete_action_constraints() -> None:
     """An infeasible branch cannot win the off-grid value comparison.
 
-    With the bonus forbidden by a discrete-only constraint, every subject must
+    With the bonus forbidden by a discrete-only constraint, every agent must
     skip — including those for whom taking would win on unconstrained value —
     and consume the skip branch's off-grid optimum `wealth / (1 + beta)`.
     """
@@ -179,7 +180,7 @@ def test_branch_redecision_respects_discrete_action_constraints():
     model = _bonus_model(constraints={"bonus_forbidden": _bonus_forbidden})
     period_0 = _simulate_period_0(
         model=model, off_grid_wealth=off_grid_wealth
-    ).sort_values("subject_id")
+    ).sort_values("agent_id")
 
     take = period_0["take_bonus"].to_numpy()
     np.testing.assert_array_equal(take, np.zeros_like(take))

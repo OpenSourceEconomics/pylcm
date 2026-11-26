@@ -180,7 +180,7 @@ def test_a_simulated_joint_output_realizes_one_of_its_support_points() -> None:
     """Simulation takes the physical value the output names, not a node.
 
     The node basis exists so the solve can read a stored value function; the
-    state itself is the physical value, so a subject's realized `wage_shock` is
+    state itself is the physical value, so an agent's realized `wage_shock` is
     one of the two points the joint support declares.
     """
     model = _model(support=(-0.1, 0.1))

@@ -300,12 +300,12 @@ def test_location_zero_utility_shift_moves_value_by_constant_and_keeps_choices()
     scale = 0.2
     discount_factor = 0.95
     wealth = np.linspace(1.0, 10.0, 6)
-    n_subjects = wealth.size
+    n_agents = wealth.size
     initial_conditions = {
-        "age": jnp.full(n_subjects, 40.0),
+        "age": jnp.full(n_agents, 40.0),
         "wealth": jnp.asarray(wealth),
         "regime_id": jnp.full(
-            n_subjects, taste_shocks_toy.ToyRegimeId.alive, dtype=jnp.int32
+            n_agents, taste_shocks_toy.ToyRegimeId.alive, dtype=jnp.int32
         ),
     }
     mean_zero_params = taste_shocks_toy.get_params(
@@ -630,7 +630,7 @@ def test_a_cell_where_every_alternative_is_minus_infinity_is_worth_minus_infinit
     *, solver: str
 ) -> None:
     """Specification 14.5a: where every alternative is worth minus infinity, the
-    node is worth minus infinity and has no choice probabilities, and a subject
+    node is worth minus infinity and has no choice probabilities, and an agent
     who reaches it is a fault of the model, as for a node without a feasible
     action. The simulation refuses it under both solvers."""
     model = _doom_model(solver=solver)

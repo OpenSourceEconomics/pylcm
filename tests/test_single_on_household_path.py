@@ -19,18 +19,18 @@ from _lcm_regime_finder.model_adapter import adapt_snapshot
 from _lcm_regime_finder.model_snapshot import read_model
 from _lcm_regime_finder.records import JSONValue
 from lcm import (
+    CompositionAction,
+    Destination,
     DiscreteGrid,
-    Exit,
-    ExitTarget,
     InitialNodes,
     LinSpacedGrid,
     Model,
     PowerMean,
     Regime,
 )
+from lcm.composition_actions import PCOnActions, PCOnWeight
 from lcm.exceptions import InvalidInitialConditionsError
 from lcm.execution import ExecutionConfig
-from lcm.exits import Unilateral
 from lcm.result import SimulationResult
 from lcm.solver_api import SolutionResult
 from lcm.solvers import EGM
@@ -47,7 +47,7 @@ from tests.regime_building import test_gate_shared_fallback as household_to_sing
 from tests.regime_building import test_gated_edge_params_are_per_edge as single_gate
 from tests.solution import test_decoupled as decoupled
 from tests.solution import test_egm_solver as egm_closed_form
-from tests.solution.test_mutual_consent_settlement import _Singleton
+from tests.solution.test_mutual_consent_transfer import _Singleton
 from tests.test_models import (
     n_nbegm_toy,
     nbegm_floor_toy,
@@ -62,18 +62,18 @@ from tests.test_models.nbegm_common import RegimeId as NBEGMRegimeId
 type InitialConditions = dict[str, FloatND | IntND]
 type Case = tuple[Model, dict[str, UserParamsNode], InitialConditions]
 
-_N_SUBJECTS = 8
+_N_AGENTS = 8
 _SEED = 7
 
 
 def _precautionary_savings_health() -> Case:
     model = precautionary_savings_health.get_model(retirement_age=20)
     initial_conditions: InitialConditions = {
-        "age": jnp.full(_N_SUBJECTS, 18.0),
-        "wealth": jnp.linspace(5.0, 40.0, _N_SUBJECTS),
-        "health": jnp.linspace(0.2, 0.8, _N_SUBJECTS),
+        "age": jnp.full(_N_AGENTS, 18.0),
+        "wealth": jnp.linspace(5.0, 40.0, _N_AGENTS),
+        "health": jnp.linspace(0.2, 0.8, _N_AGENTS),
         "regime_id": jnp.full(
-            _N_SUBJECTS, precautionary_savings_health.RegimeId.working_life
+            _N_AGENTS, precautionary_savings_health.RegimeId.working_life
         ),
     }
     return (
@@ -88,22 +88,22 @@ def _stochastic_volatility() -> Case:
     model = stochastic_volatility.get_model.__wrapped__(
         n_periods=3, wealth_n_points=8, consumption_n_points=8, income_n_points=3
     )
-    low_and_high = jnp.arange(_N_SUBJECTS) % 2
+    low_and_high = jnp.arange(_N_AGENTS) % 2
     initial_conditions: InitialConditions = {
-        "age": jnp.full(_N_SUBJECTS, 20.0),
-        "wealth": jnp.linspace(2.0, 30.0, _N_SUBJECTS),
+        "age": jnp.full(_N_AGENTS, 20.0),
+        "wealth": jnp.linspace(2.0, 30.0, _N_AGENTS),
         "uncertainty": low_and_high,
         "lagged_uncertainty": low_and_high,
-        "regime_id": jnp.full(_N_SUBJECTS, stochastic_volatility.RegimeId.alive),
+        "regime_id": jnp.full(_N_AGENTS, stochastic_volatility.RegimeId.alive),
     }
     return model, stochastic_volatility.get_params(), initial_conditions
 
 
 def _taste_shocks_toy() -> Case:
     initial_conditions: InitialConditions = {
-        "age": jnp.full(_N_SUBJECTS, 40.0),
-        "wealth": jnp.linspace(1.0, 10.0, _N_SUBJECTS),
-        "regime_id": jnp.full(_N_SUBJECTS, taste_shocks_toy.ToyRegimeId.alive),
+        "age": jnp.full(_N_AGENTS, 40.0),
+        "wealth": jnp.linspace(1.0, 10.0, _N_AGENTS),
+        "regime_id": jnp.full(_N_AGENTS, taste_shocks_toy.ToyRegimeId.alive),
     }
     return (
         taste_shocks_toy.get_model(),
@@ -115,10 +115,10 @@ def _taste_shocks_toy() -> Case:
 def _additive_shock() -> Case:
     # The continuation is read through the value averaged over the shock.
     initial_conditions: InitialConditions = {
-        "age": jnp.zeros(_N_SUBJECTS),
-        "wealth": jnp.linspace(1.0, 10.0, _N_SUBJECTS),
-        "health": jnp.arange(_N_SUBJECTS) % 2,
-        "regime_id": jnp.zeros(_N_SUBJECTS, dtype=jnp.int32),
+        "age": jnp.zeros(_N_AGENTS),
+        "wealth": jnp.linspace(1.0, 10.0, _N_AGENTS),
+        "health": jnp.arange(_N_AGENTS) % 2,
+        "regime_id": jnp.zeros(_N_AGENTS, dtype=jnp.int32),
     }
     return (
         additive_shock._model(additive=True),
@@ -131,9 +131,9 @@ def _decoupled(*, taste_shocks: bool) -> Case:
     # A partially naive agent: it chooses with one aggregator, stores another,
     # and its acting self chooses with a third.
     initial_conditions: InitialConditions = {
-        "wealth": jnp.arange(_N_SUBJECTS) % 4,
-        "regime_id": jnp.full(_N_SUBJECTS, decoupled.RegimeId.decide),
-        "period": jnp.zeros(_N_SUBJECTS, dtype=jnp.int32),
+        "wealth": jnp.arange(_N_AGENTS) % 4,
+        "regime_id": jnp.full(_N_AGENTS, decoupled.RegimeId.decide),
+        "period": jnp.zeros(_N_AGENTS, dtype=jnp.int32),
     }
     if taste_shocks:
         return (
@@ -154,10 +154,10 @@ def _aggregator_reads_state() -> Case:
         decoupled._mood_model(koopmans_aggregator=decoupled.mood_dependent_choice),
         {"decide": {"koopmans_aggregator": {"delta": decoupled.DELTA}}},
         {
-            "wealth": jnp.arange(_N_SUBJECTS) % 4,
-            "mood": jnp.arange(_N_SUBJECTS) % 2,
-            "regime_id": jnp.full(_N_SUBJECTS, decoupled.RegimeId.decide),
-            "period": jnp.zeros(_N_SUBJECTS, dtype=jnp.int32),
+            "wealth": jnp.arange(_N_AGENTS) % 4,
+            "mood": jnp.arange(_N_AGENTS) % 2,
+            "regime_id": jnp.full(_N_AGENTS, decoupled.RegimeId.decide),
+            "period": jnp.zeros(_N_AGENTS, dtype=jnp.int32),
         },
     )
 
@@ -165,10 +165,10 @@ def _aggregator_reads_state() -> Case:
 def _epstein_zin() -> Case:
     # A nonlinear certainty equivalent over a stochastic regime and health draw.
     initial_conditions: InitialConditions = {
-        "age": jnp.full(_N_SUBJECTS, 25.0),
-        "wealth": jnp.linspace(1.0, 10.0, _N_SUBJECTS),
-        "health": jnp.arange(_N_SUBJECTS) % 2,
-        "regime_id": jnp.full(_N_SUBJECTS, epstein_zin.EZRegimeId.alive),
+        "age": jnp.full(_N_AGENTS, 25.0),
+        "wealth": jnp.linspace(1.0, 10.0, _N_AGENTS),
+        "health": jnp.arange(_N_AGENTS) % 2,
+        "regime_id": jnp.full(_N_AGENTS, epstein_zin.EZRegimeId.alive),
     }
     return (
         epstein_zin.get_model(certainty_equivalent=PowerMean()),
@@ -182,9 +182,9 @@ def _egm() -> Case:
         solver=EGM(savings_grid=egm_closed_form._SAVINGS_GRID)
     )
     initial_conditions: InitialConditions = {
-        "age": jnp.zeros(_N_SUBJECTS),
-        "wealth": jnp.linspace(3.0, 50.0, _N_SUBJECTS),
-        "regime_id": jnp.full(_N_SUBJECTS, egm_closed_form.RegimeId.saving),
+        "age": jnp.zeros(_N_AGENTS),
+        "wealth": jnp.linspace(3.0, 50.0, _N_AGENTS),
+        "regime_id": jnp.full(_N_AGENTS, egm_closed_form.RegimeId.saving),
     }
     return model, egm_closed_form._params(), initial_conditions
 
@@ -193,19 +193,19 @@ def _dcegm() -> Case:
     # `get_full_model` is cached; the wrapped builder makes a model under the switch.
     model = dcegm_variants.get_full_model.__wrapped__(solver="dcegm", n_periods=3)
     initial_conditions: InitialConditions = {
-        "age": jnp.full(_N_SUBJECTS, 40.0),
-        "wealth": jnp.linspace(10.0, 300.0, _N_SUBJECTS),
-        "regime_id": jnp.full(_N_SUBJECTS, dcegm_base.RegimeId.working_life),
+        "age": jnp.full(_N_AGENTS, 40.0),
+        "wealth": jnp.linspace(10.0, 300.0, _N_AGENTS),
+        "regime_id": jnp.full(_N_AGENTS, dcegm_base.RegimeId.working_life),
     }
     return model, dcegm_variants.get_full_params(n_periods=3), initial_conditions
 
 
 def _negm() -> Case:
     initial_conditions: InitialConditions = {
-        "age": jnp.full(_N_SUBJECTS, 20.0),
-        "wealth": jnp.linspace(1.0, 25.0, _N_SUBJECTS),
-        "illiquid": jnp.linspace(0.0, 20.0, _N_SUBJECTS),
-        "regime_id": jnp.full(_N_SUBJECTS, negm_kinked_toy.RegimeId.alive),
+        "age": jnp.full(_N_AGENTS, 20.0),
+        "wealth": jnp.linspace(1.0, 25.0, _N_AGENTS),
+        "illiquid": jnp.linspace(0.0, 20.0, _N_AGENTS),
+        "regime_id": jnp.full(_N_AGENTS, negm_kinked_toy.RegimeId.alive),
     }
     return (
         negm_kinked_toy.build_model(),
@@ -219,9 +219,9 @@ def _nbegm() -> Case:
         variant="nbegm", n_periods=3, n_liquid=20, n_savings=20
     )
     initial_conditions: InitialConditions = {
-        "age": jnp.zeros(_N_SUBJECTS),
-        "liquid": jnp.linspace(0.5, 25.0, _N_SUBJECTS),
-        "regime_id": jnp.full(_N_SUBJECTS, NBEGMRegimeId.alive),
+        "age": jnp.zeros(_N_AGENTS),
+        "liquid": jnp.linspace(0.5, 25.0, _N_AGENTS),
+        "regime_id": jnp.full(_N_AGENTS, NBEGMRegimeId.alive),
     }
     return model, nbegm_floor_toy.build_params(), initial_conditions
 
@@ -229,10 +229,10 @@ def _nbegm() -> Case:
 def _nbegm_ride_along() -> Case:
     # The schedule route with a ride-along state, whose periods share one program.
     initial_conditions: InitialConditions = {
-        "age": jnp.zeros(_N_SUBJECTS),
-        "liquid": jnp.linspace(0.5, 25.0, _N_SUBJECTS),
-        "kind": jnp.arange(_N_SUBJECTS) % 2,
-        "regime_id": jnp.full(_N_SUBJECTS, NBEGMRegimeId.alive),
+        "age": jnp.zeros(_N_AGENTS),
+        "liquid": jnp.linspace(0.5, 25.0, _N_AGENTS),
+        "kind": jnp.arange(_N_AGENTS) % 2,
+        "regime_id": jnp.full(_N_AGENTS, NBEGMRegimeId.alive),
     }
     model = nbegm_ride_along_toy.build_model(
         variant="nbegm", n_liquid=8, n_savings=10, n_consumption=12
@@ -242,10 +242,10 @@ def _nbegm_ride_along() -> Case:
 
 def _nnbegm() -> Case:
     initial_conditions: InitialConditions = {
-        "age": jnp.full(_N_SUBJECTS, 20.0),
-        "wealth": jnp.linspace(1.0, 25.0, _N_SUBJECTS),
-        "illiquid": jnp.linspace(0.0, 15.0, _N_SUBJECTS),
-        "regime_id": jnp.full(_N_SUBJECTS, n_nbegm_toy.RegimeId.alive),
+        "age": jnp.full(_N_AGENTS, 20.0),
+        "wealth": jnp.linspace(1.0, 25.0, _N_AGENTS),
+        "illiquid": jnp.linspace(0.0, 15.0, _N_AGENTS),
+        "regime_id": jnp.full(_N_AGENTS, n_nbegm_toy.RegimeId.alive),
     }
     return (
         n_nbegm_toy.build_model(variant="n_nbegm", n_periods=3),
@@ -261,17 +261,17 @@ def _collective_household() -> Case:
     model = collective_household.get_model(
         n_periods=3, wealth_n_points=6, consumption_n_points=6
     )
-    n_subjects = 64
-    n_single = n_subjects // 2
-    is_single = jnp.arange(n_subjects) < n_single
-    is_woman = jnp.arange(n_subjects) % 2 == 0
+    n_agents = 64
+    n_single = n_agents // 2
+    is_single = jnp.arange(n_agents) < n_single
+    is_woman = jnp.arange(n_agents) % 2 == 0
     regime_ids = model.regime_names_to_ids
     member_ids = model.member_names_to_ids
     initial_conditions: InitialConditions = {
         "wealth": jnp.concatenate(
             [jnp.linspace(1.0, 20.0, n_single), jnp.linspace(2.0, 40.0, n_single)]
         ),
-        "age": jnp.zeros(n_subjects),
+        "age": jnp.zeros(n_agents),
         "regime_id": jnp.where(
             is_single,
             jnp.where(is_woman, regime_ids["single_f"], regime_ids["single_m"]),
@@ -294,9 +294,9 @@ def _gate_single_to_single() -> Case:
         "edges": {"source": {"target": {"predicate": {"marriage_bonus": 1.0}}}},
     }
     initial_conditions: InitialConditions = {
-        "age": jnp.full(_N_SUBJECTS, 40.0),
-        "x": jnp.linspace(0.0, 2.0, _N_SUBJECTS),
-        "regime_id": jnp.full(_N_SUBJECTS, single_gate.RegimeId.source),
+        "age": jnp.full(_N_AGENTS, 40.0),
+        "x": jnp.linspace(0.0, 2.0, _N_AGENTS),
+        "regime_id": jnp.full(_N_AGENTS, single_gate.RegimeId.source),
     }
     return model, params, initial_conditions
 
@@ -340,7 +340,7 @@ def _keep_wealth(wealth: FloatND) -> FloatND:
     return wealth
 
 
-def _single_exit(*, compares: Literal["each_action", "optimum"]) -> Case:
+def _single_composition_action(*, compares: Literal["each_action", "optimum"]) -> Case:
     """A single leaves for another single where staying pays less than one.
 
     The stay optimum pays `max(0, wealth - 0.5)`, so the source leaves at wealth
@@ -353,13 +353,13 @@ def _single_exit(*, compares: Literal["each_action", "optimum"]) -> Case:
                 states={"wealth": wealth},
                 actions={"choice": DiscreteGrid(values=jnp.asarray([0, 1]))},
                 functions={"utility": _stay_utility},
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
                             regime="target", projection={"wealth": _keep_wealth}
                         )
                     },
-                    rule=Unilateral(compares=compares),
+                    rule=PCOnActions() if compares == "each_action" else PCOnWeight(),
                 ),
             ),
             "target": Regime(
@@ -374,9 +374,9 @@ def _single_exit(*, compares: Literal["each_action", "optimum"]) -> Case:
         execution_config=ExecutionConfig(device_memory_bytes=None),
     )
     initial_conditions: InitialConditions = {
-        "period": jnp.zeros(_N_SUBJECTS, dtype=jnp.int32),
-        "regime_id": jnp.zeros(_N_SUBJECTS, dtype=jnp.int32),
-        "wealth": jnp.linspace(0.0, 2.0, _N_SUBJECTS),
+        "period": jnp.zeros(_N_AGENTS, dtype=jnp.int32),
+        "regime_id": jnp.zeros(_N_AGENTS, dtype=jnp.int32),
+        "wealth": jnp.linspace(0.0, 2.0, _N_AGENTS),
     }
     return model, {}, initial_conditions
 
@@ -402,8 +402,12 @@ _CASES: dict[str, Callable[[], Case]] = {
     "nbegm_ride_along": _nbegm_ride_along,
     "negm": _negm,
     "nnbegm": _nnbegm,
-    "single_exit_each_action": functools.partial(_single_exit, compares="each_action"),
-    "single_exit_at_optimum": functools.partial(_single_exit, compares="optimum"),
+    "single_composition_action_each_action": functools.partial(
+        _single_composition_action, compares="each_action"
+    ),
+    "single_composition_action_at_optimum": functools.partial(
+        _single_composition_action, compares="optimum"
+    ),
     "precautionary_savings_health": _precautionary_savings_health,
     "stochastic_volatility": _stochastic_volatility,
     "taste_shocks_toy": _taste_shocks_toy,
@@ -469,7 +473,11 @@ def test_every_value_array_ends_in_the_members_of_its_regime(
 
 @pytest.mark.parametrize(
     "name",
-    ["gate_single_to_single", "single_exit_each_action", "single_exit_at_optimum"],
+    [
+        "gate_single_to_single",
+        "single_composition_action_each_action",
+        "single_composition_action_at_optimum",
+    ],
 )
 def test_a_model_of_singles_simulates_with_value_and_no_own_member(
     *, name: str, runs: dict[str, _Run]
@@ -510,7 +518,11 @@ def _adapted_without_input_digest(snapshot: dict[str, JSONValue]) -> JSONValue:
 
 @pytest.mark.parametrize(
     "name",
-    ["gate_household_to_single", "gate_single_to_single", "single_exit_each_action"],
+    [
+        "gate_household_to_single",
+        "gate_single_to_single",
+        "single_composition_action_each_action",
+    ],
 )
 def test_regime_finder_reads_a_recorded_member_self_as_an_individual(
     name: str,
@@ -548,7 +560,7 @@ def _without_own_member(initial_conditions: InitialConditions) -> InitialConditi
 
 
 def test_singles_start_without_own_member() -> None:
-    """Subjects that all start single need no `own_member`."""
+    """Agents that all start single need no `own_member`."""
     model, params, initial_conditions = _collective_household()
     singles = {k: v[:32] for k, v in _without_own_member(initial_conditions).items()}
 
@@ -556,7 +568,7 @@ def test_singles_start_without_own_member() -> None:
 
 
 def test_a_household_start_still_requires_own_member() -> None:
-    """Subjects starting in a couple that can dissolve must name their role."""
+    """Agents starting in a couple that can dissolve must name their role."""
     model, params, initial_conditions = _collective_household()
 
     with pytest.raises(InvalidInitialConditionsError, match="need an `own_member`"):

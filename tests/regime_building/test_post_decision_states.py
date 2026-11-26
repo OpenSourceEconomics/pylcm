@@ -278,9 +278,9 @@ def test_the_model_repr_lists_the_integrated_shock() -> None:
 
 
 def test_the_integrated_policy_does_not_depend_on_the_declaration() -> None:
-    """Simulated consumption agrees subject by subject in the first period.
+    """Simulated consumption agrees agent by agent in the first period.
 
-    Both models start every subject at the same wealth; consumption at age 0 is
+    Both models start every agent at the same wealth; consumption at age 0 is
     chosen before any draw, so it depends only on the stored continuation values.
     """
     wealth = jnp.asarray(np.asarray(WEALTH_GRID.to_jax())[::3])
@@ -308,7 +308,7 @@ def test_the_integrated_policy_does_not_depend_on_the_declaration() -> None:
     np.testing.assert_array_equal(consumption[False], consumption[True])
 
 
-N_SUBJECTS = 400
+N_AGENTS = 400
 START_WEALTH = 8.0
 
 
@@ -323,19 +323,19 @@ def _first_transition(
         model.simulate(
             params=_params(),
             initial_conditions={
-                "wealth": jnp.full(N_SUBJECTS, START_WEALTH),
-                "age": jnp.zeros(N_SUBJECTS),
-                "regime_id": jnp.full(N_SUBJECTS, _RegimeId.alive),
+                "wealth": jnp.full(N_AGENTS, START_WEALTH),
+                "age": jnp.zeros(N_AGENTS),
+                "regime_id": jnp.full(N_AGENTS, _RegimeId.alive),
             },
             shock_paths=shock_paths,
             log_level="off",
             seed=seed,
         )
         .to_dataframe()
-        .sort_values("subject_id")
+        .sort_values("agent_id")
     )
-    first = df.query("age == 0").set_index("subject_id")
-    second = df.query("age == 1").set_index("subject_id")
+    first = df.query("age == 0").set_index("agent_id")
+    second = df.query("age == 1").set_index("agent_id")
     next_wealth = second["wealth"].to_numpy()
     return next_wealth, (first["wealth"] - first["consumption"] + 1.0).to_numpy() - (
         next_wealth
@@ -355,7 +355,7 @@ def _distance_to_nearest_node(cost: np.ndarray) -> np.ndarray:
 def test_simulated_cost_is_drawn_from_the_continuous_law(*, as_state: bool) -> None:
     """The draw feeding next wealth follows N(0, 1), not the quadrature lottery.
 
-    The cost each subject paid is recovered from its wealth step, and the draw
+    The cost each agent paid is recovered from its wealth step, and the draw
     from the cost. Under the five-node lottery the Kolmogorov-Smirnov statistic
     is about 0.2; at 400 draws the 1% critical value is about 0.08.
     """
@@ -377,14 +377,14 @@ def test_simulated_cost_stays_on_the_nodes_when_the_process_asks_for_them() -> N
 
 
 @pytest.mark.parametrize("as_state", [False, True], ids=["group", "iid-state"])
-def test_continuous_draws_do_not_depend_on_subject_chunks(*, as_state: bool) -> None:
-    """Each subject's draw is addressed by its row, not by how subjects are split."""
+def test_continuous_draws_do_not_depend_on_agent_chunks(*, as_state: bool) -> None:
+    """Each agent's draw is addressed by its row, not by how agents are split."""
     whole, _ = _first_transition(model=_model(as_state=as_state))
     chunked, _ = _first_transition(
         model=_model(
             as_state=as_state,
             execution_config=ExecutionConfig(
-                axis_widths={"subject": 7}, device_memory_bytes=100_000_000
+                axis_widths={"agent": 7}, device_memory_bytes=100_000_000
             ),
         )
     )
@@ -397,7 +397,7 @@ def test_continuous_draws_replay_from_given_shock_paths(*, as_state: bool) -> No
     """Supplying the recovered draws reproduces next wealth under another seed."""
     model = _model(as_state=as_state)
     next_wealth, cost = _first_transition(model=model, seed=0)
-    path = np.zeros((N_SUBJECTS, AGES.n_periods))
+    path = np.zeros((N_AGENTS, AGES.n_periods))
     path[:, 1] = 2.0 * np.log(cost / 0.4)
 
     other_seed, _ = _first_transition(model=model, seed=1)

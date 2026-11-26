@@ -76,10 +76,10 @@ class PolicyLookup:
     `Qc`: the choice probabilities come from the objective profile.
 
     The trailing axis is the regime's members, in member order: one entry,
-    `"self"`, for a regime declared with a plain utility function. In a
-    household with taste shocks, the deciding member's entry is its smoothed
-    maximum and every other
-    member's is its mean action value under the decider's choice probabilities.
+    `"self"`, for a regime declared with a plain utility function. In a regime
+    with several members and taste shocks, the deciding member's entry is its
+    smoothed maximum. Every other member's entry is its mean action value under
+    the deciding member's choice probabilities.
     """
 
     Q: FloatND | None = None
@@ -134,8 +134,8 @@ class PolicyLookup:
     of `Q` over feasible continuous actions. With `Decoupled`, the value profile
     at the objective's first feasible continuous maximizer, not generally the
     max of `Q`. A combination without a feasible continuous action has `-inf`.
-    In a household, the deciding member's own conditional value, with no member
-    axis; every member shares the continuous actions attaining it.
+    In a regime with several members, the deciding member's own conditional
+    value, with no member axis; every member shares the continuous actions attaining it.
     """
 
     choice_probabilities: FloatND | None = None
@@ -174,7 +174,7 @@ class SimulationResult:
         step_to_regime_to_V_arr: _PeriodValuesBoundary,
         ages: TimeAxis,
         simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
-        subject_batch_size: int | None = None,
+        agent_batch_size: int | None = None,
         nested_policy_regimes: frozenset[RegimeName] = frozenset(),
         randomness: Mapping[str, str] = MappingProxyType({}),
     ) -> None:
@@ -186,14 +186,14 @@ class SimulationResult:
         self._flat_params = flat_params
         self._step_to_regime_to_V_arr = step_to_regime_to_V_arr
         self._ages = ages
-        self._subject_batch_size = subject_batch_size
+        self._agent_batch_size = agent_batch_size
         self._solution: _SolutionResultBoundary | None = None
         self._durable_identity = True
         self._plan_summary: SimulationPlanSummary | None = None
         self._dissolution_fallbacks: tuple[DissolutionFallback, ...] = ()
         # The original rows of a simulation of selected codes, which holds
         # those rows alone; `None` for a simulation of the whole population.
-        self._subject_rows: np.ndarray | None = None
+        self._agent_rows: np.ndarray | None = None
         self._metadata = _compute_metadata(
             regimes=regimes,
             raw_results=raw_results,
@@ -255,7 +255,7 @@ class SimulationResult:
     def plan_summary(self) -> SimulationPlanSummary | None:
         """The resolved execution plan this call's `simulate()` reported.
 
-        Diagnostic only (route, subject devices, resolved widths, chunking,
+        Diagnostic only (route, agent devices, resolved widths, chunking,
         budget mode). Attached the same way as `solution`: never part of the
         constructor's persisted fields, so it is `None` after `save`/`load`.
         """
@@ -263,13 +263,13 @@ class SimulationResult:
 
     @property
     def dissolution_fallbacks(self) -> tuple[DissolutionFallback, ...]:
-        """Every household sent down its gate's dissolution route.
+        """Every agent sent down its gate's dissolution route.
 
-        A household that enters a gated target regime and finds no feasible
+        An agent that enters a gated target regime and finds no feasible
         action at its realised state takes the dissolution route of the gate it
         came through in that same period, so these are ordinary events of the
         model. With runtime checks on, each one is
-        recorded here with the subject, period, regime, full state, source and
+        recorded here with the agent, period, regime, full state, source and
         fallback regime; with them off this is empty and a count per
         regime-period is logged. Diagnostic only, like `plan_summary`: empty
         after `save`/`load`.
@@ -297,9 +297,9 @@ class SimulationResult:
         return self._metadata.n_periods
 
     @property
-    def n_subjects(self) -> int:
-        """Number of subjects simulated."""
-        return self._metadata.n_subjects
+    def n_agents(self) -> int:
+        """Number of agents simulated."""
+        return self._metadata.n_agents
 
     @property
     def available_targets(self) -> tuple[FunctionName, ...]:
@@ -328,7 +328,7 @@ class SimulationResult:
                 Targets can be any function defined in a regime. Each target is
                 computed for the regimes where it exists; rows from regimes without
                 that target will have NaN. The result's saved outer chunk extent
-                also bounds the number of subject-period rows evaluated together
+                also bounds the number of agent-period rows evaluated together
                 for these deferred targets.
             use_categorical_codes: If False (default), discrete variables (states,
                 actions, and regime) are returned as pandas Categorical columns. A
@@ -337,11 +337,11 @@ class SimulationResult:
                 categories are those numbers, all of them, observed or not; cast
                 with `.astype(float)` before arithmetic. If True, discrete
                 variables are returned as integer codes.
-            terminal_rows: Which rows to emit for a subject in a terminal regime.
-                Terminal regimes are absorbing: after entry, the subject is carried
+            terminal_rows: Which rows to emit for an agent in a terminal regime.
+                Terminal regimes are absorbing: after entry, the agent is carried
                 with frozen state through every later period the regime is active.
-                - `"first"` (default): keep only each subject's entry row — a dead
-                  subject appears once at death, like leaving a panel.
+                - `"first"` (default): keep only each agent's entry row — a dead
+                  agent appears once at death, like leaving a panel.
                 - `"all"`: emit every solved period (the absorbing representation).
 
         Returns:
@@ -360,7 +360,7 @@ class SimulationResult:
             metadata=self._metadata,
             additional_targets=resolved_targets,
             ages=self._ages,
-            subject_batch_size=self._subject_batch_size,
+            agent_batch_size=self._agent_batch_size,
         )
 
         if terminal_rows == "first":
@@ -399,7 +399,7 @@ class SimulationResult:
         - `simulated_data.arrow` — a feather dump of
           `self.to_dataframe(additional_targets=df_additional_targets,
           use_categorical_codes=df_use_categorical_codes)`, ready for
-          downstream consumers that want the flat per-subject view without
+          downstream consumers that want the flat per-agent view without
           re-instantiating a `SimulationResult`.
         - `format_version` — the version of this layout, written last, which
           `load` and `load_solution` check before reading anything else.
@@ -428,7 +428,7 @@ class SimulationResult:
             empty mappings. The grid V-array (largest device-resident
             artifact) and the regimes' compiled `simulation` /
             `solution` phases (which pin XLA program workspaces on the
-            device) are released before orbax stages the per-subject
+            device) are released before orbax stages the per-agent
             tree; otherwise the post-V-array D2H allocations exhaust
             the device on smaller GPUs. Callers needing further
             in-memory access after `save` must reload via
@@ -473,8 +473,8 @@ class SimulationResult:
             ages=self._ages,
             result_metadata=self._metadata,
             available_targets=self._available_targets,
-            subject_batch_size=self._subject_batch_size,
-            subject_rows=self._subject_rows,
+            agent_batch_size=self._agent_batch_size,
+            agent_rows=self._agent_rows,
         )
         with (target / "metadata.pkl").open("wb") as fh:
             cloudpickle.dump(metadata, fh)
@@ -491,7 +491,7 @@ class SimulationResult:
             gc.collect()
 
         # Defer the arrow write until after orbax succeeds so a partial
-        # save doesn't leave stale per-subject data on disk.
+        # save doesn't leave stale per-agent data on disk.
         df = self.to_dataframe(
             additional_targets=df_additional_targets,
             use_categorical_codes=df_use_categorical_codes,
@@ -534,8 +534,8 @@ class SimulationResult:
 
         Restores `V_arr/` and nothing else. A consumer that compares or reuses
         value functions — a solver head-to-head, a warm start — therefore pays
-        neither the per-subject checkpoint nor the metadata pickle, and does not
-        need the device placement their leaves carry: the per-subject leaves are
+        neither the per-agent checkpoint nor the metadata pickle, and does not
+        need the device placement their leaves carry: the per-agent leaves are
         written from wherever the simulate loop left them, which need not be a
         device the reading process has.
 
@@ -596,8 +596,8 @@ class SimulationResult:
             action_names=tuple(saved_names.action_names),
         )
         instance._available_targets = tuple(metadata.available_targets)  # noqa: SLF001
-        instance._subject_batch_size = metadata.subject_batch_size  # noqa: SLF001
-        instance._subject_rows = metadata.subject_rows  # noqa: SLF001
+        instance._agent_batch_size = metadata.agent_batch_size  # noqa: SLF001
+        instance._agent_rows = metadata.agent_rows  # noqa: SLF001
         instance._solution = None  # noqa: SLF001
         instance._durable_identity = True  # noqa: SLF001
         instance._plan_summary = None  # noqa: SLF001
@@ -608,7 +608,7 @@ class SimulationResult:
         return (
             f"{self.__class__.__name__}(\n"
             f"  n_periods={self.n_periods},\n"
-            f"  n_subjects={self.n_subjects},\n"
+            f"  n_agents={self.n_agents},\n"
             f"  regime_names={self.regime_names},\n"
             f"  state_names={self.state_names},\n"
             f"  action_names={self.action_names}\n"
@@ -625,7 +625,7 @@ class _SavedMetadata:
 
     flat_params: FlatParams
     """Model parameters, cloudpickled whole. They are small scalars / short
-    arrays (never the sharded grid- or subject-sized arrays), so the cloudpickle
+    arrays (never the sharded grid- or agent-sized arrays), so the cloudpickle
     round-trip is cheap and keeps the JAX-array leaves intact."""
 
     ages: TimeAxis
@@ -637,10 +637,10 @@ class _SavedMetadata:
     available_targets: tuple[FunctionName, ...]
     """Names of all additional targets exposed via `to_dataframe`."""
 
-    subject_batch_size: int | None = None
-    """Subject chunk size from `simulate`, reused to bound `to_dataframe` targets."""
+    agent_batch_size: int | None = None
+    """Agent chunk size from `simulate`, reused to bound `to_dataframe` targets."""
 
-    subject_rows: np.ndarray | None = None
+    agent_rows: np.ndarray | None = None
     """Original rows of a simulation of selected codes; `None` for the whole
     population."""
 
@@ -685,16 +685,16 @@ class _ArrayTreeLeaf:
 def _keep_first_terminal_row(
     *, df: pd.DataFrame, terminal_regime_names: frozenset[RegimeName]
 ) -> pd.DataFrame:
-    """Drop each subject's frozen post-entry terminal-regime rows.
+    """Drop each agent's frozen post-entry terminal-regime rows.
 
-    Terminal regimes are absorbing: a subject that enters one is carried with
+    Terminal regimes are absorbing: an agent that enters one is carried with
     frozen state through every later period the regime is active. Keep every
-    row up to and including the subject's first terminal-regime period;
-    subjects that never enter a terminal regime keep all rows.
+    row up to and including the agent's first terminal-regime period;
+    agents that never enter a terminal regime keep all rows.
     """
     is_terminal = df["regime_name"].isin(terminal_regime_names)
-    entry_period = df["subject_id"].map(
-        df.loc[is_terminal].groupby("subject_id")["period"].min()
+    entry_period = df["agent_id"].map(
+        df.loc[is_terminal].groupby("agent_id")["period"].min()
     )
     keep = entry_period.isna() | (df["period"] <= entry_period)
     return df.loc[keep].reset_index(drop=True)

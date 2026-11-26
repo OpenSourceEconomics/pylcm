@@ -1,7 +1,7 @@
 """Forward simulation of DC-EGM-solved models.
 
 DC-EGM publishes V on the regime's exogenous grids in the same layout as the
-brute-force solver, so simulation runs the standard per-subject grid argmax
+brute-force solver, so simulation runs the standard per-agent grid argmax
 over the regime's action grids against the stored next-period V. Two
 properties anchor this:
 
@@ -77,7 +77,7 @@ def _pensioned_params(
     """Retirement-only params with a pension paid into next-period wealth.
 
     Simulation refuses a reached state with no feasible action. Without income, a
-    subject who consumes all but a fraction of a grid step enters the next period
+    agent who consumes all but a fraction of a grid step enters the next period
     unable to afford the smallest consumption node; a pension of at least the
     resources that node uses keeps every reached state feasible.
     """
@@ -87,13 +87,13 @@ def _pensioned_params(
     }
 
 
-def test_dcegm_simulated_consumption_matches_brute_force():
+def test_dcegm_simulated_consumption_matches_brute_force() -> None:
     """Both solver variants simulate consumption paths within grid resolution.
 
     The two specs are mathematically equivalent, but their simulate-phase
     conventions differ: brute force argmaxes over the shared consumption
     grid, while DC-EGM interpolates its published off-grid policy at each
-    subject's resources. At the first decision both see the same state, so
+    agent's resources. At the first decision both see the same state, so
     they disagree by at most the brute's quantization — one grid step.
     Because the off-grid choice compounds into different wealth paths, later
     periods compare slightly different states; the disagreement stays within
@@ -101,12 +101,12 @@ def test_dcegm_simulated_consumption_matches_brute_force():
     """
     n_periods = 6
     params = _pensioned_params(n_periods=n_periods)
-    n_subjects = 4
+    n_agents = 4
     initial_conditions = {
         "wealth": jnp.array([10.0, 50.0, 150.0, 300.0]),
-        "age": jnp.full(n_subjects, 40.0),
+        "age": jnp.full(n_agents, 40.0),
         "regime_id": jnp.full(
-            n_subjects, RetirementOnlyRegimeId.retirement, dtype=jnp.int32
+            n_agents, RetirementOnlyRegimeId.retirement, dtype=jnp.int32
         ),
     }
 
@@ -125,7 +125,7 @@ def test_dcegm_simulated_consumption_matches_brute_force():
         df = (
             result.to_dataframe()
             .query("regime_name == 'retirement'")
-            .sort_values(["subject_id", "period"])
+            .sort_values(["agent_id", "period"])
         )
         consumption[solver] = df["consumption"].to_numpy()
         first_decision[solver] = df.query("period == 0")["consumption"].to_numpy()
@@ -142,10 +142,10 @@ def test_dcegm_simulated_consumption_matches_brute_force():
     )
 
 
-def test_dcegm_simulate_enforces_intrinsic_budget_constraint():
+def test_dcegm_simulate_enforces_intrinsic_budget_constraint() -> None:
     """Simulated consumption never exceeds resources minus the borrowing limit.
 
-    Low-wealth subjects with a consumption grid reaching far above their
+    Low-wealth agents with a consumption grid reaching far above their
     wealth: an unmasked argmax would pick infeasible consumption, because
     `u(c)` grows in `c` while the below-limit savings it implies only
     edge-clamp the continuation to the lowest wealth node (for log utility,
@@ -161,7 +161,7 @@ def test_dcegm_simulate_enforces_intrinsic_budget_constraint():
     savings_lower_bound = dcegm_variants.SAVINGS_FLOOR
     initial_wealth = jnp.array([5.0, 10.0, 50.0])
     # The infeasible region exists by construction: the consumption grid
-    # extends far above every subject's wealth.
+    # extends far above every agent's wealth.
     assert float(dcegm_variants.CONSUMPTION_GRID.to_jax()[-1]) > float(
         jnp.max(initial_wealth)
     )
@@ -186,7 +186,7 @@ def test_dcegm_simulate_enforces_intrinsic_budget_constraint():
     assert (df["consumption"].to_numpy() <= budget + 1e-9).all()
 
 
-def test_dcegm_simulate_with_taste_shocks_work_share_decreases_in_wealth():
+def test_dcegm_simulate_with_taste_shocks_work_share_decreases_in_wealth() -> None:
     """Gumbel-max simulation of a taste-shock DC-EGM model yields sane choices.
 
     Wealthier workers retire more often (the income motive for working
@@ -219,15 +219,15 @@ def test_dcegm_simulate_with_taste_shocks_work_share_decreases_in_wealth():
     period_0 = df.query("period == 0 and regime_name == 'working_life'")
     assert len(period_0) == 2 * n_per_group
     work_share_low = (
-        period_0.query("subject_id < @n_per_group")["work_choice"] == "work"
+        period_0.query("agent_id < @n_per_group")["work_choice"] == "work"
     ).mean()
     work_share_high = (
-        period_0.query("subject_id >= @n_per_group")["work_choice"] == "work"
+        period_0.query("agent_id >= @n_per_group")["work_choice"] == "work"
     ).mean()
     assert work_share_low > work_share_high
 
 
-def test_dcegm_full_model_simulates_end_to_end():
+def test_dcegm_full_model_simulates_end_to_end() -> None:
     """The discrete-choice IJRS model with DC-EGM regimes simulates end to end.
 
     Workers choose labor supply and consumption each period; the simulated
@@ -237,17 +237,15 @@ def test_dcegm_full_model_simulates_end_to_end():
     n_periods = 6
     model = dcegm_variants.get_full_model(solver="dcegm", n_periods=n_periods)
     params = dcegm_variants.get_full_params(n_periods=n_periods)
-    n_subjects = 3
+    n_agents = 3
     savings_lower_bound = dcegm_variants.SAVINGS_FLOOR
 
     result = model.simulate(
         params=params,
         initial_conditions={
             "wealth": jnp.array([10.0, 100.0, 300.0]),
-            "age": jnp.full(n_subjects, 40.0),
-            "regime_id": jnp.full(
-                n_subjects, FullRegimeId.working_life, dtype=jnp.int32
-            ),
+            "age": jnp.full(n_agents, 40.0),
+            "regime_id": jnp.full(n_agents, FullRegimeId.working_life, dtype=jnp.int32),
         },
         log_level="debug",
         seed=99,
@@ -274,7 +272,7 @@ def test_dcegm_full_model_simulates_end_to_end():
     assert (alive["consumption"].to_numpy() <= budget + 1e-9).all()
 
 
-def test_dcegm_simulate_consumes_the_provided_solution():
+def test_dcegm_simulate_consumes_the_provided_solution() -> None:
     """`simulate` reads the V arrays it is given, not a fresh solve.
 
     With the solved V, period-0 consumption at wealth 20 is interior (the
@@ -422,7 +420,7 @@ def test_dcegm_simulation_evaluates_a_phase_resolved_savings_bound() -> None:
     assert consumption == pytest.approx(expected)
 
 
-def test_dcegm_solver_machinery_is_not_a_result_target():
+def test_dcegm_solver_machinery_is_not_a_result_target() -> None:
     """DC-EGM solver machinery never surfaces in the result API.
 
     `available_targets` and `to_dataframe(additional_targets="all")` expose
@@ -460,7 +458,7 @@ def test_dcegm_solver_machinery_is_not_a_result_target():
     assert "_lcm_direct_liquid_resources" not in df.columns
 
 
-def test_phase_variant_law_term_simulates_with_the_simulate_variant():
+def test_phase_variant_law_term_simulates_with_the_simulate_variant() -> None:
     """A `Phased` Euler law's simulate variant governs the simulated path.
 
     The solve-phase law adds a constant adjustment to savings (embedded in
@@ -485,22 +483,22 @@ def test_phase_variant_law_term_simulates_with_the_simulate_variant():
     df = (
         result.to_dataframe()
         .query("regime_name == 'working_life'")
-        .sort_values(["subject_id", "period"])
+        .sort_values(["agent_id", "period"])
     )
-    for _, subject in df.groupby("subject_id"):
-        wealth = subject["wealth"].to_numpy()
-        consumption = subject["consumption"].to_numpy()
+    for _, agent in df.groupby("agent_id"):
+        wealth = agent["wealth"].to_numpy()
+        consumption = agent["consumption"].to_numpy()
         np.testing.assert_allclose(
             wealth[1:], wealth[:-1] - consumption[:-1], atol=1e-6
         )
 
 
-def test_dcegm_simulated_markov_health_path_matches_brute_force():
+def test_dcegm_simulated_markov_health_path_matches_brute_force() -> None:
     """A Markov discrete state evolves identically under both solvers.
 
     The forward draw of `next_health` is solver-agnostic: both solves publish
     the same `weight_working_life__next_health` vector and simulation draws
-    from it with per-subject keys, so under one seed the realized health path
+    from it with per-agent keys, so under one seed the realized health path
     is identical whether the regime was solved by brute force or DC-EGM. The
     health law reads only `health` and `age`, so a consumption-grid
     disagreement in the wealth path cannot perturb it — the realized paths
@@ -509,7 +507,7 @@ def test_dcegm_simulated_markov_health_path_matches_brute_force():
     covered by `test_dcegm_simulated_consumption_matches_brute_force`.
     """
     params = _markov_params()
-    n_subjects = 6
+    n_agents = 6
     initial_conditions = {
         "wealth": jnp.array([10.0, 30.0, 50.0, 70.0, 90.0, 40.0]),
         "health": jnp.array(
@@ -523,8 +521,8 @@ def test_dcegm_simulated_markov_health_path_matches_brute_force():
             ],
             dtype=jnp.int32,
         ),
-        "age": jnp.full(n_subjects, 40.0),
-        "regime_id": jnp.full(n_subjects, MarkovRegimeId.working_life, dtype=jnp.int32),
+        "age": jnp.full(n_agents, 40.0),
+        "regime_id": jnp.full(n_agents, MarkovRegimeId.working_life, dtype=jnp.int32),
     }
 
     realized = {}
@@ -538,7 +536,7 @@ def test_dcegm_simulated_markov_health_path_matches_brute_force():
         realized[solver] = (
             result.to_dataframe(use_categorical_codes=True)
             .query("regime_name == 'working_life'")
-            .sort_values(["subject_id", "period"])
+            .sort_values(["agent_id", "period"])
         )
 
     np.testing.assert_array_equal(

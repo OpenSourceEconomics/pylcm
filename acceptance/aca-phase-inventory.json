@@ -50,7 +50,7 @@
   ],
   "driver_sha256": "137429f93656c87755ffc35599ee850fc9bbdf1200d9c9f8ab5c21e036701303",
   "execution_config": {
-    "axis_widths": "mappingproxy({'subject': 2048})",
+    "axis_widths": "mappingproxy({'agent': 2048})",
     "device_memory_bytes": "None",
     "devices": "(0, 1, 2, 3, 4, 5, 6, 7)",
     "donate_buffers": "True",
@@ -11797,6 +11797,6 @@
     "retention": "VALUES_AND_REPLAY",
     "simulation_seed": 20260903,
     "solver": "GridSearch",
-    "subjects": 226848
+    "agents": 226848
   }
 }

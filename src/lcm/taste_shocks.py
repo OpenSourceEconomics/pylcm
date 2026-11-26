@@ -31,20 +31,20 @@ class ExtremeValueTasteShocks:
     grid-restricted and need not reproduce its off-grid solve value or choice
     probabilities.
 
-    A regime with taste shocks cannot have its own exit or formation: it
-    declares no `exit`, under any rule. Another regime's exit or formation may
-    read it, as its target or as the counterparty of a `Consent`. That read
-    prices the regime at the value its solve publishes: the decider's smoothed
-    expected maximum, and every other member's mean value under the decider's
-    choice probabilities. A subject that moves there draws its discrete action
-    at the regime's own taste address when it acts.
+    A regime with taste shocks cannot have its own composition action or formation: it
+    declares no `composition_action`, under any rule. Another regime's composition
+    action or formation may read it, as its target or as the counterparty of a
+    `Consent`. That read prices the regime at the value its solve publishes: the
+    deciding member's smoothed expected maximum, and every other member's mean value
+    under the deciding member's choice probabilities. An agent that lands there draws
+    its discrete action at the regime's own taste address when it acts.
 
     At least one discrete action is required. The implemented solver routes are
     `GridSearch` and `DCEGM`. The declaration is rejected for `NEGM`, `NBEGM`,
-    and `NNBEGM`; for a household unless exactly one member has a positive
-    Pareto weight; on a source regime with a `Gate`; on a regime that declares
-    an `exit`; and together with a nonlinear certainty equivalent. These
-    combinations are rejected during `Regime` declaration or `Model`
+    and `NNBEGM`; for a regime with several members unless exactly one member has
+    a positive Pareto weight; on a source regime with a `Gate`; on a regime that
+    declares a `composition_action`; and together with a nonlinear certainty
+    equivalent. These combinations are rejected during `Regime` declaration or `Model`
     construction, before solve, rather than silently dropping the shocks; only
     a Pareto weight declared as a function is checked when the model is solved,
     at every cell of the regime's grid.

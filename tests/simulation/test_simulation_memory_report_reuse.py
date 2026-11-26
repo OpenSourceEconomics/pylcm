@@ -242,14 +242,14 @@ def _axis_width_case(
     budget: int = 2**28,
     population: int = 8,
 ) -> tuple[Model, UserParams, UserInitialConditions]:
-    """One model pinned to an explicit inner subject width and population.
+    """One model pinned to an explicit inner agent width and population.
 
-    Since the top-first planner (`_resolve_subject_anchor_width` in
-    `chunk_admission.py`) always resolves an *unpinned* subject anchor to the
+    Since the top-first planner (`_resolve_agent_anchor_width` in
+    `chunk_admission.py`) always resolves an *unpinned* agent anchor to the
     full population — the outer-cohort doubling frontier
     (`_independent_outer_candidates`) then collapses to that one extent, and
-    the top-first search never visits a second `n_subjects` candidate — an
-    explicit `axis_widths={"subject": ...}` pin smaller than `population` is
+    the top-first search never visits a second `n_agents` candidate — an
+    explicit `axis_widths={"agent": ...}` pin smaller than `population` is
     required to get a real multi-candidate doubling frontier at all.
     """
     parameters = {"mu": 0.1415, "sigma": 1.876, "n_std": 3.2}
@@ -290,14 +290,14 @@ def _axis_width_case(
 def _top_first_descent_case(
     *, budget: int
 ) -> tuple[Model, UserParams, UserInitialConditions]:
-    """A 64-subject population pinned to an 8-subject anchor under `budget`.
+    """A 64-agent population pinned to an 8-agent anchor under `budget`.
 
     This gives the top-first planner (`_plan_independent_chunks`) an outer
     doubling frontier of (8, 16, 32, 64): it tries the full population (64)
     first, and only descends into the smaller candidates on refusal.
     """
     return _axis_width_case(
-        axis_widths={"subject": _CANDIDATE_SEARCH_ANCHOR},
+        axis_widths={"agent": _CANDIDATE_SEARCH_ANCHOR},
         budget=budget,
         population=_CANDIDATE_SEARCH_POPULATION,
     )
@@ -307,7 +307,7 @@ def _find_top_first_descent_budget() -> int | None:
     """Probe live-process residency to find a budget where the top-first
     planner refuses the full-population candidate at least once before
     admitting a smaller extent — i.e. visits at least two distinct
-    `n_subjects` candidates via `chunk_admission._profile_independent_candidate`.
+    `n_agents` candidates via `chunk_admission._profile_independent_candidate`.
 
     The admitted band is only a few kilobytes wide, and where it sits shifts
     with whatever device buffers earlier tests in this process still hold
@@ -326,13 +326,13 @@ def _find_top_first_descent_budget() -> int | None:
     def counted(
         *,
         profiler: chunk_admission._ChunkProfiler,
-        n_subjects: int,
+        n_agents: int,
         widths: Mapping[str, int],
         attempts: list[chunk_admission.ChunkCandidateReceipt],
     ) -> chunk_admission.SimulationChunkPlan | None:
-        visited.append(n_subjects)
+        visited.append(n_agents)
         return original(
-            profiler=profiler, n_subjects=n_subjects, widths=widths, attempts=attempts
+            profiler=profiler, n_agents=n_agents, widths=widths, attempts=attempts
         )
 
     with pytest.MonkeyPatch.context() as observe:
@@ -371,7 +371,7 @@ def test_candidate_search_reads_the_report_once_per_distinct_executable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The top-first planner's descent (refuse the full population, then admit
-    a smaller extent) visits several distinct `n_subjects` candidates per
+    a smaller extent) visits several distinct `n_agents` candidates per
     dispatch, but the total reads across the whole cold search still equal the
     number of distinct executables compiled — never one read per candidate
     visit. A warm repeat, which revisits the same candidates, reads nothing.
@@ -424,11 +424,11 @@ def _assert_single_candidate_plus_refusal_reads_once(
 def test_changed_width_map_produces_a_fresh_report(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Two models pinned to different inner subject widths each compile and
+    """Two models pinned to different inner agent widths each compile and
     read their own distinct executables; neither one's cached report is
     reused for the other's width map."""
     narrow_model, narrow_params, narrow_initial = _axis_width_case(
-        axis_widths={"subject": 4}
+        axis_widths={"agent": 4}
     )
     narrow_solution = narrow_model.solve(params=narrow_params, log_level="off")
     with _count_memory_reads(monkeypatch=monkeypatch) as narrow_counts:
@@ -441,7 +441,7 @@ def test_changed_width_map_produces_a_fresh_report(
         )
     assert narrow_counts["reservation_reads"] > 0
 
-    wide_model, wide_params, wide_initial = _axis_width_case(axis_widths={"subject": 8})
+    wide_model, wide_params, wide_initial = _axis_width_case(axis_widths={"agent": 8})
     wide_solution = wide_model.solve(params=wide_params, log_level="off")
     with _count_memory_reads(monkeypatch=monkeypatch) as wide_counts:
         _simulate(

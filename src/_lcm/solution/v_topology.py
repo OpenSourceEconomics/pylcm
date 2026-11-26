@@ -5,7 +5,7 @@ templates from it, the failure-path diagnostics rebuild the rolling V mapping
 from it, and the simulate-side AOT compile reuses the same templates.
 
 Backward induction stores values on each regime's assigned devices. Simulation
-reads period-owned replicas on the actual subject devices. This module computes
+reads period-owned replicas on the actual agent devices. This module computes
 only their shapes and destination layouts; it never relocates a stored solution.
 """
 
@@ -99,7 +99,7 @@ def _get_regime_V_shapes_and_shardings(
 
     The V-array has one dimension per state variable, sized by that state's
     grid. Solve templates use each regime's assigned placement. Simulation
-    templates replicate the value across the devices evaluating subjects;
+    templates replicate the value across the devices evaluating agents;
     deriving their shape never requires a state grid to divide the larger
     simulation mesh.
 
@@ -108,8 +108,8 @@ def _get_regime_V_shapes_and_shardings(
         flat_params: Regime parameters (needed for runtime grid shapes).
         phase: Which placement to build against — `"solve"` reads each
             regime's assigned devices; `"simulate"` uses a replicated read
-            layout over the model's subject devices. With no sharded state,
-            subjects run on the model's first device.
+            layout over the model's agent devices. With no sharded state,
+            agents run on the model's first device.
         device_ids: The model's device ids, ascending. Empty names every
             device JAX reports.
 

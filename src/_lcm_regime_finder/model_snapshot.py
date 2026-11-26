@@ -279,7 +279,7 @@ def read_model(model: Any, *, checkpoint=None, capture_limits=None, structural_s
                     'scope': 'Original Model declared DAG inputs; callback implementation semantics remain separate'}
                 result['declaration_api'] = api_declaration
                 names = ('original_steps_by_regime', 'value_steps_by_regime',
-                         'query_steps_by_phase', 'exit_function_demand')
+                         'query_steps_by_phase', 'composition_action_function_demand')
                 result['construction_authorities'] = {
                     'values': {name: normalize(getattr(declarations, name)) for name in names},
                     'source': 'pylcm.Model.get_declarations/v1'}

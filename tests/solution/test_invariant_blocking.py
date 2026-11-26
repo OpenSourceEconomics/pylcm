@@ -857,7 +857,7 @@ def test_blocked_household_simulation_equals_the_unblocked_panel() -> None:
     got, want = blocked.to_dataframe(), unblocked.to_dataframe()
     values = ["value_f", "value_m"]
 
-    assert grouped_simulation._subject_grouping(result=blocked) == "pref_type"
+    assert grouped_simulation._agent_grouping(result=blocked) == "pref_type"
     assert got.columns.equals(want.columns)
     pd.testing.assert_frame_equal(
         got.drop(columns=values), want.drop(columns=values), check_exact=True

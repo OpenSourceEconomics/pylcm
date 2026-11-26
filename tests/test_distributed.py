@@ -171,7 +171,7 @@ def _make_correct_distributed_model(
     retirement_reads_type2: bool = True,
     move_type2: bool = False,
     cell_width: int | None = None,
-    subject_width: int | None = None,
+    agent_width: int | None = None,
     exact_layout: bool = False,
     one_regime_per_period: bool = False,
 ) -> Model:
@@ -253,7 +253,7 @@ def _make_correct_distributed_model(
         execution_config=ExecutionConfig(
             axis_widths={
                 **({"cell": cell_width} if cell_width is not None else {}),
-                **({"subject": subject_width} if subject_width is not None else {}),
+                **({"agent": agent_width} if agent_width is not None else {}),
             },
             sharded_states=(
                 *(("type1",) if distributed else ()),
@@ -1392,15 +1392,15 @@ def test_model_error_if_grid_product_exceeds_devices() -> None:
 
 
 @_skip_pytest_parallel
-def test_simulation_pads_non_device_multiple_subject_count(
+def test_simulation_pads_non_device_multiple_agent_count(
     correct_distributed_model: Model,
 ) -> None:
-    """A subject count that is not a multiple of the device count simulates cleanly.
+    """An agent count that is not a multiple of the device count simulates cleanly.
 
-    Distributed grids shard subjects across devices, which needs the leading axis to
-    divide evenly. pylcm pads internally (duplicating the last subject up to the next
-    device multiple) and trims the pad rows back out, so 5 subjects on 4 devices
-    yields a result with exactly 5 subjects.
+    Distributed grids shard agents across devices, which needs the leading axis to
+    divide evenly. pylcm pads internally (duplicating the last agent up to the next
+    device multiple) and trims the pad rows back out, so 5 agents on 4 devices
+    yields a result with exactly 5 agents.
     """
     result = correct_distributed_model.simulate(
         log_level="debug",
@@ -1415,21 +1415,21 @@ def test_simulation_pads_non_device_multiple_subject_count(
         seed=12345,
     )
 
-    assert result.n_subjects == 5
-    assert result.to_dataframe()["subject_id"].nunique() == 5
+    assert result.n_agents == 5
+    assert result.to_dataframe()["agent_id"].nunique() == 5
 
 
 @_skip_pytest_parallel
-@pytest.mark.parametrize("subject_batch_size", [3, 4])
-def test_distributed_simulation_with_subject_batching_matches_single_pass(
+@pytest.mark.parametrize("agent_batch_size", [3, 4])
+def test_distributed_simulation_with_agent_batching_matches_single_pass(
     *,
     correct_distributed_model: Model,
-    subject_batch_size: int,
+    agent_batch_size: int,
 ) -> None:
     """Chunked simulate under distributed grids equals the single-pass result.
 
     The value-function arrays stay sharded across the devices throughout; each
-    subject chunk is placed onto the subject mesh axis before its period loop, so
+    agent chunk is placed onto the agent mesh axis before its period loop, so
     chunking bounds the per-chunk device workspace without gathering anything onto
     one device. A batch size that does not divide the device count (3 on 4
     devices) is rounded up to the next device multiple.
@@ -1447,9 +1447,7 @@ def test_distributed_simulation_with_subject_batching_matches_single_pass(
         initial_conditions=initial_conditions,
         seed=12345,
     )
-    chunked = _make_correct_distributed_model(
-        subject_width=subject_batch_size
-    ).simulate(
+    chunked = _make_correct_distributed_model(agent_width=agent_batch_size).simulate(
         log_level="off",
         params={"discount_factor": 0.95},
         initial_conditions=initial_conditions,
@@ -1459,13 +1457,13 @@ def test_distributed_simulation_with_subject_batching_matches_single_pass(
 
 
 @_skip_pytest_parallel
-def test_distributed_simulation_pads_subjects_to_a_chunk_multiple() -> None:
-    """A chunk size that does not divide the subject count simulates cleanly.
+def test_distributed_simulation_pads_agents_to_a_chunk_multiple() -> None:
+    """A chunk size that does not divide the agent count simulates cleanly.
 
     Under distributed grids the chunk size is rounded up to a device multiple
-    and every chunk must match the compiled shape, so the subject axis is
-    padded up to a chunk multiple (duplicating the last subject) and the pad
-    rows are trimmed back out — the result holds exactly the real subjects and
+    and every chunk must match the compiled shape, so the agent axis is
+    padded up to a chunk multiple (duplicating the last agent) and the pad
+    rows are trimmed back out — the result holds exactly the real agents and
     equals the single-pass result.
     """
     model = _make_correct_distributed_model()
@@ -1482,13 +1480,13 @@ def test_distributed_simulation_pads_subjects_to_a_chunk_multiple() -> None:
         initial_conditions=initial_conditions,
         seed=12345,
     )
-    chunked = _make_correct_distributed_model(subject_width=8).simulate(
+    chunked = _make_correct_distributed_model(agent_width=8).simulate(
         log_level="off",
         params={"discount_factor": 0.95},
         initial_conditions=initial_conditions,
         seed=12345,
     )
-    assert chunked.n_subjects == 12
+    assert chunked.n_agents == 12
     pd.testing.assert_frame_equal(chunked.to_dataframe(), single_pass.to_dataframe())
 
 

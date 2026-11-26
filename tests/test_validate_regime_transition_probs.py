@@ -31,11 +31,11 @@ from lcm_examples.mortality import RegimeId as MortalityRegimeId
 from lcm_examples.mortality import get_model, get_params
 
 
-def test_valid_probs_accept_boundary_inputs():
+def test_valid_probs_accept_boundary_inputs() -> None:
     """Inclusive [0, 1] bounds and a sum within tolerance pass validation.
 
-    Subject 0 splits probability exactly `[1.0, 0.0]` — values at the
-    inclusive bounds. Subject 1 falls short of unit mass by a few epsilons
+    Agent 0 splits probability exactly `[1.0, 0.0]` — values at the
+    inclusive bounds. Agent 1 falls short of unit mass by a few epsilons
     of the working dtype, the rounding slack a genuine probability sum can
     accumulate. The validator must accept both.
     """
@@ -55,7 +55,7 @@ def test_valid_probs_accept_boundary_inputs():
     )
 
 
-def test_raises_for_mass_large_enough_to_reverse_an_argmax():
+def test_raises_for_mass_large_enough_to_reverse_an_argmax() -> None:
     """A total mass of `1.000005` is rejected, not absorbed as rounding.
 
     At float32 that much excess mass is enough to flip a Bellman `argmax`,
@@ -80,7 +80,7 @@ def test_raises_for_mass_large_enough_to_reverse_an_argmax():
         )
 
 
-def test_valid_probs_with_undeclared_target_at_zero():
+def test_valid_probs_with_undeclared_target_at_zero() -> None:
     """A target outside the declared support with zero probability passes validation."""
     probs = MappingProxyType(
         {
@@ -98,8 +98,8 @@ def test_valid_probs_with_undeclared_target_at_zero():
     )
 
 
-def test_raises_for_probs_not_summing_to_one():
-    """Per-subject probabilities that don't sum to 1 show a DataFrame summary."""
+def test_raises_for_probs_not_summing_to_one() -> None:
+    """Per-agent probabilities that don't sum to 1 show a DataFrame summary."""
     probs = MappingProxyType(
         {
             "working_life": jnp.array([0.5, 0.6, 0.7]),
@@ -119,7 +119,7 @@ def test_raises_for_probs_not_summing_to_one():
         )
 
 
-def test_raises_for_positive_probability_outside_the_declared_targets():
+def test_raises_for_positive_probability_outside_the_declared_targets() -> None:
     """Positive probability outside the declared targets raises an error."""
     probs = MappingProxyType(
         {
@@ -141,7 +141,7 @@ def test_raises_for_positive_probability_outside_the_declared_targets():
         )
 
 
-def test_raises_for_out_of_bounds_values():
+def test_raises_for_out_of_bounds_values() -> None:
     """Probabilities outside [0, 1] that sum to 1 raise an error."""
     probs = MappingProxyType(
         {
@@ -162,7 +162,7 @@ def test_raises_for_out_of_bounds_values():
         )
 
 
-def test_raises_for_nan_values():
+def test_raises_for_nan_values() -> None:
     """NaN values in probabilities raise an error."""
     probs = MappingProxyType(
         {
@@ -183,7 +183,7 @@ def test_raises_for_nan_values():
         )
 
 
-def test_raises_for_inf_values():
+def test_raises_for_inf_values() -> None:
     """Inf values in probabilities raise an error."""
     probs = MappingProxyType(
         {
@@ -204,13 +204,13 @@ def test_raises_for_inf_values():
         )
 
 
-def test_format_sum_violation_with_scalar_input():
+def test_format_sum_violation_with_scalar_input() -> None:
     """A 0-d array (scalar) input does not raise IndexError."""
     result = _format_sum_violation(sum_all=jnp.array(0.5))
     assert "1 of 1 probability vectors do not sum to 1.0" in result
 
 
-def test_format_sum_violation_with_scalar_input_and_state_action_values():
+def test_format_sum_violation_with_scalar_input_and_state_action_values() -> None:
     """0-d inputs for both sum_all and state_action_values work correctly."""
     result = _format_sum_violation(
         sum_all=jnp.array(0.5),
@@ -278,14 +278,14 @@ def _build_action_dependent_model() -> tuple[Model, UserParams]:
     return model, params
 
 
-def test_solve_catches_transition_bug_hidden_at_first_grid_point():
+def test_solve_catches_transition_bug_hidden_at_first_grid_point() -> None:
     """Pre-solve validation catches invalid probs even if first action value is ok."""
     model, params = _build_action_dependent_model()
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError, match="outside"):
         model.solve(log_level="debug", params=params)
 
 
-def test_regime_transition_validation_passes_period_as_int32():
+def test_regime_transition_validation_passes_period_as_int32() -> None:
     """Regime-transition validation hands the transition function a 0-d int32 `period`.
 
     The x64-enabled test suite would otherwise trace a Python-int `period` as
@@ -347,7 +347,7 @@ def _invalid_survival_probs(n_periods: int) -> jnp.ndarray:
     return jnp.array([2.0] + [0.0] * (n_periods - 2))
 
 
-def test_solve_raises_for_invalid_regime_transition_probs():
+def test_solve_raises_for_invalid_regime_transition_probs() -> None:
     """model.solve() raises for out-of-bounds regime transition probabilities."""
     model = get_model(N_PERIODS)
     params = get_params(
@@ -357,7 +357,7 @@ def test_solve_raises_for_invalid_regime_transition_probs():
         model.solve(log_level="debug", params=params)
 
 
-def test_simulate_raises_for_invalid_regime_transition_probs():
+def test_simulate_raises_for_invalid_regime_transition_probs() -> None:
     """model.simulate() raises for out-of-bounds regime transition probabilities."""
     model = get_model(N_PERIODS)
     bad_params = get_params(
@@ -378,7 +378,7 @@ def test_simulate_raises_for_invalid_regime_transition_probs():
         )
 
 
-def test_simulate_with_solve_raises_for_invalid_regime_transition_probs():
+def test_simulate_with_solve_raises_for_invalid_regime_transition_probs() -> None:
     """model.simulate() raises for out-of-bounds probs."""
     model = get_model(N_PERIODS)
     params = get_params(
@@ -397,7 +397,7 @@ def test_simulate_with_solve_raises_for_invalid_regime_transition_probs():
         )
 
 
-def test_dual_invalid_regime_probs_report_sum_error_first():
+def test_dual_invalid_regime_probs_report_sum_error_first() -> None:
     """When both the sum-to-one and graph-membership checks fail, sum wins.
 
     Restores the validation order (range in `[0, 1]` -> sum-to-one ->
@@ -445,7 +445,7 @@ def _malformed_aux_probs() -> FloatND:
     return jnp.array([0.5, 0.6])
 
 
-def test_coarse_state_transition_is_checked_with_empty_period_targets():
+def test_coarse_state_transition_is_checked_with_empty_period_targets() -> None:
     """A coarse stochastic state law is checked at every age its regime is solved.
 
     `solo` is solved only at age 21 and moves to the terminal `term`. The coarse

@@ -66,7 +66,7 @@ def test_final_assembly_refuses_before_allocation_and_preserves_every_field(
         else:
             with pytest.raises(ExecutionPlanningError):
                 trim_pad_from_raw_results(
-                    raw_results=raw, original_n_subjects=1, memory=low
+                    raw_results=raw, original_n_agents=1, memory=low
                 )
     generous = _memory(inputs=originals, budget=1_000_000)
     if operation == "concatenate":
@@ -79,7 +79,7 @@ def test_final_assembly_refuses_before_allocation_and_preserves_every_field(
         ]
     else:
         actual = trim_pad_from_raw_results(
-            raw_results=raw, original_n_subjects=1, memory=generous
+            raw_results=raw, original_n_agents=1, memory=generous
         )["alive"][0]
         expected = [np.asarray(a)[:1] for a in originals[0]]
     for observed, reference in zip(_leaves(actual), expected, strict=True):

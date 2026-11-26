@@ -39,8 +39,8 @@ model = Model(
 
 This route requires one invariant discrete state, width one, carried by every regime,
 and the `BLOCK_MAJOR` schedule. Combined solve/simulation also requires the forward
-phase to group subjects by that state and to run without a device memory budget. The
-other admission restrictions in the linked tuning guide still apply.
+phase to group agents by that state and to run without a device memory budget. The other
+admission restrictions in the linked tuning guide still apply.
 `device_memory_bytes=None` disables memory-budget admission; it does not establish that
 the workload fits the available hardware.
 
@@ -88,14 +88,13 @@ for each zero-based job index.
 
 Give both `initial_conditions` and `seed` to solve and simulate, or omit both for a
 solve-only campaign. Every worker receives the **same full population in the same row
-order**, including rows belonging to other jobs. The engine selects the assigned
-subjects itself, retaining each subject's global row and random keys from the
-full-population seed. Do not split the input frame or seed workers independently. A code
-with no subjects still contributes all of its solution values. The full population must
-be nonempty.
+order**, including rows belonging to other jobs. The engine selects the assigned agents
+itself, retaining each agent's global row and random keys from the full-population seed.
+Do not split the input frame or seed workers independently. A code with no agents still
+contributes all of its solution values. The full population must be nonempty.
 
 The population digest covers column names, dtypes, shapes and contents; it does not
-authenticate a DataFrame's index. If an application uses external subject IDs, retain
+authenticate a DataFrame's index. If an application uses external agent IDs, retain
 their mapping separately and use the same canonical row order in the campaign and its
 single-process reference.
 
@@ -154,9 +153,9 @@ Collection has no `initial_conditions` argument. It reconstructs the population 
 verified fragments, restores global row order, and returns `simulation=None` for a
 solve-only plan. For a simulating plan, `simulation.raw_results` and
 `simulation.to_dataframe()` expose the usual complete results. `solution.values`
-contains every period, regime and code, including codes with empty subject groups.
-Values remain retained on the host and are assembled on access, as in a single
-block-major solve.
+contains every period, regime and code, including codes with empty agent groups. Values
+remain retained on the host and are assembled on access, as in a single block-major
+solve.
 
 The collector refuses missing, failed, duplicated, stale or corrupt fragments, incorrect
 code coverage, conflicting execution records, invalid value schemas, and incomplete or

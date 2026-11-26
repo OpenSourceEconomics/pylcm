@@ -16,12 +16,12 @@ from tests.test_models.deterministic.regression import (
 )
 
 
-def test_subject_batch_size_is_not_a_public_simulation_argument() -> None:
-    """A model's execution configuration is the public subject-width control."""
-    assert "subject_batch_size" not in inspect.signature(Model.simulate).parameters
+def test_agent_batch_size_is_not_a_public_simulation_argument() -> None:
+    """A model's execution configuration is the public agent-width control."""
+    assert "agent_batch_size" not in inspect.signature(Model.simulate).parameters
 
 
-def test_a_fixed_subject_width_bounds_complete_dispatched_chunks(
+def test_a_fixed_agent_width_bounds_complete_dispatched_chunks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Seven real rows execute in three chunks of three, with padding hidden."""
@@ -31,26 +31,26 @@ def test_a_fixed_subject_width_bounds_complete_dispatched_chunks(
         consumption_grid=LinSpacedGrid(start=1, stop=3, n_points=3),
         # A budget treats the pin as the search anchor only; it bounds chunks here.
         execution_config=ExecutionConfig(
-            axis_widths={"subject": 3}, device_memory_bytes=None
+            axis_widths={"agent": 3}, device_memory_bytes=None
         ),
     )
     params = get_params(n_periods=2)
     solution = model.solve(params=params, log_level="off")
     chunks: list[int] = []
     windows: list[tuple[int, int]] = []
-    run_chunk = simulation._simulate_subject_chunk
+    run_chunk = simulation._simulate_agent_chunk
 
     def observe_chunk(**kwargs: Unpack[SimulationChunkInputs]) -> ChunkResults:
         chunks.append(int(kwargs["initial_regime_ids"].shape[0]))
-        window = kwargs["subject_slice"]
+        window = kwargs["agent_slice"]
         assert isinstance(window, slice)
         assert isinstance(window.start, int)
         assert isinstance(window.stop, int)
         windows.append((window.start, window.stop))
-        assert kwargs["original_n_subjects"] == 7
+        assert kwargs["original_n_agents"] == 7
         return run_chunk(**kwargs)
 
-    monkeypatch.setattr(simulation, "_simulate_subject_chunk", observe_chunk)
+    monkeypatch.setattr(simulation, "_simulate_agent_chunk", observe_chunk)
     result = model.simulate(
         params=params,
         solution=solution,
@@ -62,6 +62,6 @@ def test_a_fixed_subject_width_bounds_complete_dispatched_chunks(
         seed=17,
         log_level="off",
     )
-    assert result.n_subjects == 7
+    assert result.n_agents == 7
     assert chunks == [3, 3, 3]
     assert windows == [(0, 3), (3, 6), (6, 9)]

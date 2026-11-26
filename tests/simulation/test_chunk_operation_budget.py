@@ -52,9 +52,9 @@ def test_chunk_operation_admits_before_allocation_and_preserves_outputs(
         "slice_population": {"array": values, "start": 1, "width": 3},
         "period_age": {"values": values, "period": 3},
         "regime_mask": {"regime_ids": ids, "regime_id": index - 1},
-        "broadcast_value": {"value": scalar, "n_subjects": 3},
+        "broadcast_value": {"value": scalar, "n_agents": 3},
         "empty_fallback": {"mask": mask},
-        "broadcast_collective": {"indices": index, "value": vector, "n_subjects": 3},
+        "broadcast_collective": {"indices": index, "value": vector, "n_agents": 3},
     }
     originals = (originals, arguments_by_name[operation])
     low = _memory(inputs=originals, budget=1)

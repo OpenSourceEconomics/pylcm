@@ -99,7 +99,7 @@ def verify_certificate(problem, report):
         require(report['search'].get('lower_bound')==cert.get('score') and report['search'].get('gap')==0,'optimality gap/lower bound mismatch')
         expected_transitions=reported_transitions(model,selected)
         require(report['recommended']['transitions']==expected_transitions,'generated transition projections mismatch')
-        require(report['recommended'].get('external_report_tags',[])==problem.get('external_report_tags',[]),'external subject/report association dropped')
+        require(report['recommended'].get('external_report_tags',[])==problem.get('external_report_tags',[]),'external agent/report association dropped')
         return {'status':'FAIL' if errors else 'PASS','errors':errors,'optimum_verified':not errors,
                 'segments_reconstructed':segment_count,'bellman_inequalities_checked':inequality_count,
                 'score':[expected_cost['work'],expected_cost['blocks']],

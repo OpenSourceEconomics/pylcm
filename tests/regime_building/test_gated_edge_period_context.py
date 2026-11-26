@@ -40,7 +40,7 @@ type _TemplateNode = str | Mapping[str, _TemplateNode]
 _BETA = 0.5
 _AGES = AgeGrid(start=40, inclusive_stop=50, step="5Y")
 _X = LinSpacedGrid(start=0.0, stop=2.0, n_points=2)
-_N_SUBJECTS = 2
+_N_AGENTS = 2
 
 
 @categorical(ordered=True)
@@ -213,7 +213,7 @@ def _initial_conditions(model: Model) -> UserInitialConditions:
             "x": jnp.asarray([0.0, 2.0]),
             "age": jnp.asarray([40.0, 40.0]),
             "regime_id": jnp.full(
-                _N_SUBJECTS,
+                _N_AGENTS,
                 model.regime_names_to_ids["source"],
                 dtype=jnp.int32,
             ),

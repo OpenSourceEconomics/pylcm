@@ -580,8 +580,8 @@ def get_Q_and_F_parts(*, Q_and_F: QAndFFunction) -> Callable[..., QAndFParts]:
 
     The result takes the kernel's own arguments and returns `QAndFParts` from
     the same evaluation the kernel returns `(Q, F)` from, so its `Q` and `F` are
-    the kernel's. A household kernel's `U`, `CE` and `Q` carry its trailing
-    member axis.
+    the kernel's. For a regime with several members, `U`, `CE` and `Q` carry
+    the trailing member axis.
 
     Args:
         Q_and_F: A kernel built by one of the `get_Q_and_F` builders.
@@ -604,8 +604,9 @@ def get_intermediates(*, Q_and_F: QAndFFunction) -> Callable[..., Intermediates]
 
     The result takes the kernel's own arguments and returns, from the kernel's
     own evaluation, `(U, F, CE, Q, active_regime_probs)`: the parts and the
-    transition probabilities of the targets the continuation reads. A household
-    kernel's `U`, `CE` and `Q` carry its trailing member axis.
+    transition probabilities of the targets the continuation reads. For a
+    regime with several members, `U`, `CE` and `Q` carry the trailing member
+    axis.
 
     Args:
         Q_and_F: A kernel built by `get_Q_and_F_collective`.
@@ -667,8 +668,9 @@ class _Intermediates:
 def _member_utility_name(member: str) -> FunctionName:
     """Name the function holding a member's utility.
 
-    A household member `<s>` reads `utility_<s>`; the member `"self"` of a
-    regime declared with a plain utility function reads `utility`.
+    A member `<s>` of a collective regime reads `utility_<s>`. The member
+    `"self"` of a regime declared with a plain utility function reads
+    `utility`.
     """
     return member_name(base="utility", member=member)
 
@@ -685,8 +687,8 @@ def get_Q_and_F_terminal_collective(
 
     Builds ONE closure over every member's `utility_<s>` target plus the
     single `feasibility` target. Feasibility is regime-level: `_get_feasibility`
-    takes no member input, so a household has one action set however many
-    felicities it carries, and the mask is a DAG target the felicities share
+    takes no member input, so the members share one action set however many
+    felicities the regime carries, and the mask is a DAG target the felicities share
     rather than one evaluated per member. The returned `Q_and_F` stacks the
     per-member utilities on a trailing member axis: for a scalar
     (state, action) cell it returns `U` of shape `(n_members,)` and a scalar
@@ -781,7 +783,7 @@ class _TerminalCollectiveQAndF:
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG002
         **states_actions_params: QAndFArg,
     ) -> EvaluatedQAndF:
-        """Keep shared bound integrity from the household's terminal flow pass."""
+        """Keep shared bound integrity from the members' terminal flow pass."""
         flow = _evaluated_action_utilities_and_F(
             function=self.utilities_and_F, states_actions_params=states_actions_params
         )
@@ -947,7 +949,7 @@ class ResolvedProjectedRegimeValue:
 
     The index above locates the value on one regime's axis; the name is what
     the role means model-wide, and forward simulation needs the name to say
-    which role a subject carries after following this reference.
+    which role an agent carries after following this reference.
     """
 
 
@@ -1309,9 +1311,9 @@ def get_Q_and_F_collective(
     the member branch there (`collective_readout`) consumes.
 
     Taste shocks are admitted only where exactly one member
-    has a positive Pareto weight and the regime declares no `exit` and no
-    `shocks`; the member branch there reads its decider's smoothed choice
-    (`decider_smoothed_readout`).
+    has a positive Pareto weight and the regime declares no `composition_action` and no
+    `shocks`. The member branch there reads the smoothed choice of that
+    deciding member (`decider_smoothed_readout`).
 
     Args:
         flat_param_names: Frozenset of flat parameter names for the regime.
@@ -1340,7 +1342,7 @@ def get_Q_and_F_collective(
             interpolation axis).
         koopmans_aggregator: The regime's Bellman aggregator, combining each
             member's utility and certainty equivalent into `Q^s`.
-        objective_aggregator: The aggregator the household's action is chosen
+        objective_aggregator: The aggregator the members' action is chosen
             on, applied to every member, or `None` when the Bellman aggregator
             also chooses.
         members: Ordered member names; fixes the trailing-axis order.
@@ -1371,7 +1373,8 @@ def get_Q_and_F_collective(
     # coincide (`None`); only the simulate phase passes them apart. The
     # continuation prices the target V under the perceived law, pairing
     # `transitions` with `continuation_pool`; a sub-DAG resolved against the
-    # other pool is neither phase and can reverse the household argmax.
+    # other pool is neither phase and can reverse the argmax of the
+    # Pareto-weighted objective.
     #
     # The flow needs no pool of its own: `next_<state>` is reserved for a
     # transition's output, so no per-member utility or feasibility reads one
@@ -1381,8 +1384,8 @@ def get_Q_and_F_collective(
     )
     # One DAG for every member's felicity and the single feasibility mask.
     # The mask takes no member input — `_get_feasibility` is handed the
-    # regime's constraints and function pool alone — so a household has one
-    # action set however many felicities it carries, and the felicities' shared
+    # regime's constraints and function pool alone — so the members share one
+    # action set however many felicities the regime carries, and the shared
     # nodes are computed once rather than once per member.
     utilities_and_F = _get_U_and_F(
         functions=functions,
@@ -1509,7 +1512,7 @@ class _CollectiveQAndF:
     objective_aggregator: EconFunction | None = field(
         default=None, metadata={"fingerprint_omit_if_default": True}
     )
-    """The aggregator `W_objective` the household's action is chosen on, or
+    """The aggregator `W_objective` the members' action is chosen on, or
     `None` when `W` also chooses."""
     build_objective_kwargs: (
         Callable[[QAndFKwargs], dict[ReferenceName, EconFunctionArg]] | None
@@ -1558,7 +1561,7 @@ class _CollectiveQAndF:
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
     ) -> QAndFParts:
-        """Keep household continuation integrity from the ordinary flow pass."""
+        """Keep the members' continuation integrity from the ordinary flow pass."""
         return self._parts_from_utilities(
             next_regime_to_V_arr=next_regime_to_V_arr,
             utilities_and_F=self.utilities_and_F(**states_actions_params),
@@ -1570,7 +1573,7 @@ class _CollectiveQAndF:
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
     ) -> EvaluatedQAndF:
-        """Preserve actual floor integrity through household continuation and F."""
+        """Preserve actual floor integrity through the members' continuation and F."""
         flow = _evaluated_action_utilities_and_F(
             function=self.utilities_and_F, states_actions_params=states_actions_params
         )
@@ -2347,15 +2350,16 @@ def _get_compute_CE(
         regime_to_v_interpolation_info: Immutable mapping of regime names to
             V-interpolation info.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
-            regime, or `None` for the linear expectation. A household passes
-            `None` and states its members' in `member_certainty_equivalents`.
+            regime, or `None` for the linear expectation. A regime with several
+            members passes `None` and states its members' in
+            `member_certainty_equivalents`.
         co_map_state_names: Tuple of state names co-mapped with the continuation V.
         n_members: Length of the trailing member axis the continuation
             carries. Every target's V leaf, and hence `CE`, ends in that axis,
             while the regime-transition probabilities — which are member-independent —
             keep the plain cell shape and broadcast across it.
-        member_certainty_equivalents: A household's certainty equivalent per
-            member, in member order, each with the flat params names of its
+        member_certainty_equivalents: The certainty equivalent per member, in
+            member order, each with the flat params names of its
             arguments. Unless every member's is the linear expectation, each
             member's slice of the joint lottery is aggregated under its own.
         gated_continuations: Mapping of target regime names to the gated-edge
@@ -2984,7 +2988,7 @@ class _ComputeCE:
     member_certainty_equivalents: tuple[
         tuple[CertaintyEquivalent, MappingProxyType[str, str]], ...
     ] = field(default=(), metadata={"fingerprint_omit_if_default": True})
-    """A household's certainty equivalent per member, with its flat params names."""
+    """The certainty equivalent per member, with its flat params names."""
     gated_scalar_landing_checks: tuple[
         tuple[RegimeName, tuple[LandingCheck, ...]], ...
     ] = field(default=(), metadata={"fingerprint_omit_if_default": True})
@@ -5148,7 +5152,7 @@ class _OuterJointWeights:
             # The empty product is the certain event. Building it from an
             # empty factor array would close a zero-size array into the
             # program, and the CPU compiler crashes on a zero-size operand of
-            # the `shard_map` that splits subjects over devices.
+            # the `shard_map` that splits agents over devices.
             return jnp.ones(()), jnp.zeros((), dtype=jnp.int32)
         return scaled_joint_weight(jnp.array(list(kwargs.values())))
 
@@ -5168,8 +5172,9 @@ def _get_U_and_F(
     executed if they matter for the value of U.
 
     Feasibility carries no member input of its own: `_get_feasibility` builds
-    the mask from the regime's constraints and the shared function pool, so a
-    household has ONE action set however many felicities it carries. A constraint
+    the mask from the regime's constraints and the shared function pool, so the
+    members share ONE action set however many felicities the regime carries. A
+    constraint
     may still name a member-indexed node (`utility_f`) — that names the same
     node for every member, which is why the mask is a single DAG target here
     rather than one per felicity.

@@ -1,4 +1,4 @@
-"""Shared simulation operands follow the actual subject devices in both modes.
+"""Shared simulation operands follow the actual agent devices in both modes.
 
 Run this module alone so its four-device CPU topology precedes initialization.
 """
@@ -29,8 +29,8 @@ from _lcm.execution.value_transfer import (
 )
 from _lcm.simulation.operand_placement import place_simulation_arguments
 from _lcm.simulation.policy_programs import ReplayPayload
-from _lcm.simulation.program_types import subject_axis
-from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
+from _lcm.simulation.program_types import agent_axis
+from _lcm.simulation.programs import _AgentTiled, _ArgumentsBoundAtDispatch
 from _lcm.simulation.residency import measure_buffer_footprint
 from _lcm.simulation.runtime import SimulationRuntime, _materialize_abstract
 from lcm.exceptions import ExecutionPlanningError
@@ -48,7 +48,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _subject_with_shared_operands(
+def _agent_with_shared_operands(
     *,
     state: jax.Array,
     action_grid: jax.Array,
@@ -69,18 +69,18 @@ def _subject_with_shared_operands(
 
 
 def _program() -> CoreProgram:
-    """Declare a real subject-tiled body and one already-placed value read."""
+    """Declare a real agent-tiled body and one already-placed value read."""
     name = "simulate_transition"
     return CoreProgram(
         name=name,
-        function=_SubjectTiled(
-            func=_subject_with_shared_operands, subject_arg_names=("state",)
+        function=_AgentTiled(
+            func=_agent_with_shared_operands, agent_arg_names=("state",)
         ),
         argument_builder=_ArgumentsBoundAtDispatch(
-            program_name=name, subject_arg_names=("state",)
+            program_name=name, agent_arg_names=("state",)
         ),
         requirements=CoreExecutionRequirements(
-            tiled_axes=(subject_axis(state_names=("state",)),),
+            tiled_axes=(agent_axis(state_names=("state",)),),
             value_reads=(
                 ValueRead(
                     target=ValueArtifactAddress(
@@ -104,16 +104,16 @@ def _program() -> CoreProgram:
 
 
 @pytest.mark.parametrize("prewarm", [False, True])
-def test_runtime_places_shared_operands_on_subject_devices(*, prewarm: bool) -> None:
+def test_runtime_places_shared_operands_on_agent_devices(*, prewarm: bool) -> None:
     """Lazy and AOT calls exclude device zero and keep equal-size grids shared."""
     devices = jax.devices()
-    subject_devices = (devices[3], devices[1], devices[2])
+    agent_devices = (devices[3], devices[1], devices[2])
     mesh = jax.make_mesh(
-        (3,), ("X",), (jax.sharding.AxisType.Auto,), devices=subject_devices
+        (3,), ("X",), (jax.sharding.AxisType.Auto,), devices=agent_devices
     )
-    subject_sharding = jax.NamedSharding(mesh, jax.P("X"))
+    agent_sharding = jax.NamedSharding(mesh, jax.P("X"))
     shared_sharding = jax.NamedSharding(mesh, jax.P())
-    state = jax.device_put(jnp.arange(6, dtype=float), subject_sharding)
+    state = jax.device_put(jnp.arange(6, dtype=float), agent_sharding)
     action_grid = jax.device_put(jnp.arange(6, dtype=float), devices[0])
     reference = jax.device_put(jnp.full(6, 4.0), shared_sharding)
     arguments = {
@@ -130,17 +130,17 @@ def test_runtime_places_shared_operands_on_subject_devices(*, prewarm: bool) -> 
         execution=ResolvedExecution(
             device_ids=(1, 2, 3),
             sharded_states=frozenset({"state"}),
-            axis_widths=MappingProxyType({"subject": 3}),
+            axis_widths=MappingProxyType({"agent": 3}),
             device_memory_bytes=None,
         ),
         enable_jit=True,
-        subject_devices=subject_devices,
+        agent_devices=agent_devices,
     )
     program = _program()
     if prewarm:
-        runtime.prepare(program=program, arguments=arguments, period=0, n_subjects=6)
+        runtime.prepare(program=program, arguments=arguments, period=0, n_agents=6)
     result = runtime.dispatch(
-        program=program, arguments=arguments, period=0, n_subjects=6
+        program=program, arguments=arguments, period=0, n_agents=6
     )
 
     assert isinstance(result, jax.Array)
@@ -149,27 +149,27 @@ def test_runtime_places_shared_operands_on_subject_devices(*, prewarm: bool) -> 
     )
     result_sharding = result.sharding
     assert isinstance(result_sharding, jax.NamedSharding)
-    assert tuple(result_sharding.mesh.devices.flat) == subject_devices
+    assert tuple(result_sharding.mesh.devices.flat) == agent_devices
     assert arguments["state"] is state
-    assert state.sharding == subject_sharding
+    assert state.sharding == agent_sharding
     assert action_grid.sharding.device_set == {devices[0]}
     assert not reference.is_deleted()
     assert reference.sharding == shared_sharding
 
 
 @pytest.mark.parametrize("budget_bytes", [None, 1_000_000])
-def test_operand_placement_preserves_subjects_and_addressed_values(
+def test_operand_placement_preserves_agents_and_addressed_values(
     *, budget_bytes: int | None
 ) -> None:
-    """Exact names distinguish equal-size shared grids, subject keys and V leaves."""
+    """Exact names distinguish equal-size shared grids, agent keys and V leaves."""
     devices = jax.devices()
-    subject_devices = (devices[3], devices[1], devices[2])
+    agent_devices = (devices[3], devices[1], devices[2])
     mesh = jax.make_mesh(
-        (3,), ("X",), (jax.sharding.AxisType.Auto,), devices=subject_devices
+        (3,), ("X",), (jax.sharding.AxisType.Auto,), devices=agent_devices
     )
-    subject_sharding = jax.NamedSharding(mesh, jax.P("X"))
+    agent_sharding = jax.NamedSharding(mesh, jax.P("X"))
     shared_sharding = jax.NamedSharding(mesh, jax.P())
-    state = jax.device_put(jnp.arange(6.0), subject_sharding)
+    state = jax.device_put(jnp.arange(6.0), agent_sharding)
     keys = jax.device_put(jax.random.split(jax.random.key(0), 6), devices[0])
     value = jax.device_put(jnp.arange(6.0), devices[0])
     placed = place_simulation_arguments(
@@ -179,19 +179,19 @@ def test_operand_placement_preserves_subjects_and_addressed_values(
             "action_grid": jax.device_put(jnp.arange(6.0), devices[0]),
             "reference": {"done": value, "scale": 2.0},
         },
-        subject_arg_names=("state", "key"),
+        agent_arg_names=("state", "key"),
         value_reads=_program().requirements.value_reads,
-        devices=subject_devices,
+        devices=agent_devices,
         budget_bytes=budget_bytes,
         live_footprint=measure_buffer_footprint(tree=(state, keys, value)),
         budget_devices=tuple(devices),
     )
 
     assert placed["state"] is state
-    assert state.sharding == subject_sharding
+    assert state.sharding == agent_sharding
     placed_keys = placed["key"]
     assert isinstance(placed_keys, jax.Array)
-    assert placed_keys.sharding == subject_sharding
+    assert placed_keys.sharding == agent_sharding
     np.testing.assert_array_equal(
         jax.random.key_data(placed_keys), jax.random.key_data(keys)
     )
@@ -223,7 +223,7 @@ def test_shared_operand_copy_checks_source_destination_and_scratch_first(
     with pytest.raises(ExecutionPlanningError, match="budget"):
         place_simulation_arguments(
             arguments={"action_grid": source},
-            subject_arg_names=(),
+            agent_arg_names=(),
             value_reads=(),
             devices=(devices[3], devices[1], devices[2]),
             budget_bytes=2 * source.nbytes - 1,
@@ -244,11 +244,11 @@ def test_abstract_materialization_preserves_container_order_and_value_reads(
 ) -> None:
     """Shape-only placement keeps dynamic key order and protected value layouts."""
     devices = tuple(jax.devices())
-    subject_devices = (devices[3], devices[1], devices[2])
+    agent_devices = (devices[3], devices[1], devices[2])
     mesh = jax.make_mesh(
-        (3,), ("X",), (jax.sharding.AxisType.Auto,), devices=subject_devices
+        (3,), ("X",), (jax.sharding.AxisType.Auto,), devices=agent_devices
     )
-    subject = jax.NamedSharding(mesh, jax.P("X"))
+    agent = jax.NamedSharding(mesh, jax.P("X"))
     shared = jax.NamedSharding(mesh, jax.P())
     protected = jax.ShapeDtypeStruct(
         (6,), float, sharding=jax.sharding.make_single_device_sharding(devices[0])
@@ -256,7 +256,7 @@ def test_abstract_materialization_preserves_container_order_and_value_reads(
     weights = jax.ShapeDtypeStruct((6,), float, sharding=shared)
     scalar = jax.ShapeDtypeStruct((), float, sharding=shared, weak_type=True)
     arguments = {
-        "state": jax.ShapeDtypeStruct((6,), float, sharding=subject),
+        "state": jax.ShapeDtypeStruct((6,), float, sharding=agent),
         "action_grid": weights,
         "params": {"zeta": scalar, "weights": weights, "alpha": scalar},
         "age": scalar,
@@ -267,11 +267,11 @@ def test_abstract_materialization_preserves_container_order_and_value_reads(
         execution=ResolvedExecution(
             device_ids=(1, 2, 3),
             sharded_states=frozenset({"state"}),
-            axis_widths=MappingProxyType({"subject": 3}),
+            axis_widths=MappingProxyType({"agent": 3}),
             device_memory_bytes=None,
         ),
         enable_jit=True,
-        subject_devices=subject_devices,
+        agent_devices=agent_devices,
     )
     with monkeypatch.context() as guard:
         guard.setattr(jax, "device_put", _refuse_operand_copy)
@@ -285,7 +285,7 @@ def test_abstract_materialization_preserves_container_order_and_value_reads(
             program=_program(),
             arguments=arguments,
             period=0,
-            n_subjects=6,
+            n_agents=6,
         )
     placed = materialized.arguments
     params = placed["params"]
@@ -310,9 +310,9 @@ def test_replay_payload_placement_preserves_abstract_and_protected_arrays(
 ) -> None:
     """Preserve the replay tree, addressed arrays and strict runtime boundary."""
     devices = tuple(jax.devices())
-    subject_devices = (devices[3], devices[1], devices[2])
+    agent_devices = (devices[3], devices[1], devices[2])
     mesh = jax.make_mesh(
-        (3,), ("X",), (jax.sharding.AxisType.Auto,), devices=subject_devices
+        (3,), ("X",), (jax.sharding.AxisType.Auto,), devices=agent_devices
     )
     shared = jax.NamedSharding(mesh, jax.P())
     concrete_value = jax.device_put(jnp.arange(6.0), devices[0])
@@ -338,9 +338,9 @@ def test_replay_payload_placement_preserves_abstract_and_protected_arrays(
         )
         placed_replay = place_simulation_arguments(
             arguments={"payload": abstract_replay},
-            subject_arg_names=(),
+            agent_arg_names=(),
             value_reads=(replay_read,),
-            devices=subject_devices,
+            devices=agent_devices,
         )["payload"]
     assert isinstance(placed_replay, ReplayPayload)
     assert placed_replay.structure is replay.structure
@@ -350,9 +350,9 @@ def test_replay_payload_placement_preserves_abstract_and_protected_arrays(
     )
     concrete_replay = place_simulation_arguments(
         arguments={"payload": replay},
-        subject_arg_names=(),
+        agent_arg_names=(),
         value_reads=(replay_read,),
-        devices=subject_devices,
+        devices=agent_devices,
     )["payload"]
     assert isinstance(concrete_replay, ReplayPayload)
     assert concrete_replay.structure is replay.structure

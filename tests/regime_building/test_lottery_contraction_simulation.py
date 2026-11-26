@@ -1,10 +1,10 @@
 """The simulation contracts the draws the solve contracts, so both read one Q.
 
 Its Q reads the solve's continuation, so a contracted draw is summed into the
-next-period value there as well, inside the subject tiles as the solve builds it
-inside the cell and action tiles. A process draw whose weights read the subject's
+next-period value there as well, inside the agent tiles as the solve builds it
+inside the cell and action tiles. A process draw whose weights read the agent's
 own value, which may lie between the process's nodes, keeps its axis, even for a
-subject exactly on a node. A source with a gated edge contracts in neither phase.
+agent exactly on a node. A source with a gated edge contracts in neither phase.
 
 With both contracting, the transposed cancellation of
 `test_lottery_contraction_domain` makes the simulation choose what the solve chose.
@@ -70,26 +70,26 @@ class _GatedRegimes:
     fallback: ScalarInt
 
 
-# Two subjects per tile, so five subjects run in several subject tiles.
-_NARROW_TILES = ExecutionConfig(axis_widths={"cell": 2, "subject": 2})
+# Two agents per tile, so five agents run in several agent tiles.
+_NARROW_TILES = ExecutionConfig(axis_widths={"cell": 2, "agent": 2})
 _TRANSPOSED_PARAMS = {
     "alive": {"koopmans_aggregator": {"discount_factor": 1.0}},
     "final": {},
 }
 
 
-def _initial_conditions(*, n_subjects: int) -> dict[str, jnp.ndarray]:
-    codes = jnp.arange(n_subjects) % 2
+def _initial_conditions(*, n_agents: int) -> dict[str, jnp.ndarray]:
+    codes = jnp.arange(n_agents) % 2
     return {
-        "wealth": jnp.linspace(0.5, 3.5, n_subjects),
+        "wealth": jnp.linspace(0.5, 3.5, n_agents),
         # Between the process's nodes, where a contracted row would be a node's.
-        "income": jnp.linspace(-0.15, 0.2, n_subjects),
-        "z": jnp.arange(n_subjects) % 3,
+        "income": jnp.linspace(-0.15, 0.2, n_agents),
+        "z": jnp.arange(n_agents) % 3,
         "q": codes,
         "w": 1 - codes,
         "y": codes,
-        "age": jnp.zeros(n_subjects),
-        "regime_id": jnp.full(n_subjects, _RegimeId.alive, dtype=jnp.int32),
+        "age": jnp.zeros(n_agents),
+        "regime_id": jnp.full(n_agents, _RegimeId.alive, dtype=jnp.int32),
     }
 
 
@@ -103,7 +103,7 @@ def _initial_conditions(*, n_subjects: int) -> dict[str, jnp.ndarray]:
 def test_simulation_keeps_a_process_draw_that_reads_an_off_node_value(
     *, income_kind: Literal["markov", "iid"], expected: set[str]
 ) -> None:
-    """A subject's process value may lie between nodes, so its row is not a node's."""
+    """An agent's process value may lie between nodes, so its row is not a node's."""
     contraction = _planned_contraction(
         model=_model(final_z="same", solver=GridSearch(), income_kind=income_kind),
         source_name="alive",
@@ -129,7 +129,7 @@ def test_simulation_with_contraction_chooses_as_without(
         )
         frames[contract] = model.simulate(
             params=_params(final_z="same"),
-            initial_conditions=_initial_conditions(n_subjects=5),
+            initial_conditions=_initial_conditions(n_agents=5),
             seed=0,
             log_level="off",
         ).to_dataframe()
@@ -265,7 +265,7 @@ def test_simulation_enumerates_a_process_draw_reading_its_value_even_at_a_node(
     Interpolated per draw, the midpoint keeps `(1/4) * 2 = 1/2`. Eligibility is
     fixed when the simulation is built, and a simulated process value may lie
     between nodes, so the simulation and the public lookup enumerate this draw
-    for every subject, on a node or not.
+    for every agent, on a node or not.
     """
     model = _process_cancellation_model(contract=contract)
     solution = model.solve(params=_TRANSPOSED_PARAMS, log_level="off")

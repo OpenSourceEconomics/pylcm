@@ -149,7 +149,7 @@ _PARAMS: UserParams = {
     "alive": {"utility": {"bonus": jnp.array([0.0, 0.2])}},
 }
 
-# Three subjects, one per node of every value grid.
+# Three agents, one per node of every value grid.
 _VALUE_START = {
     "experience": np.array([0, 4, 10]),
     "level": np.array([0.5, 1.0, 2.0]),
@@ -219,7 +219,7 @@ def test_to_dataframe_value_grid_column_casts_to_float_for_arithmetic(
 ) -> None:
     """`.astype(float)` turns a value-grid column into numbers for moments.
 
-    Each row holds the value of the node its subject occupies.
+    Each row holds the value of the node its agent occupies.
     """
     numbers = (
         _first_alive_rows(value_frame)[["experience", "level", "hours"]]

@@ -272,7 +272,7 @@ Every regime has **members**: `Regime.members` is `("self",)` for a regime decla
 with a plain utility function, and the `utilities` keys of a `CollectiveUtility`, in
 insertion order, for a household; those fix the trailing axis of `V` and of every
 published array. A household may not name a member `"self"`. Everything is declared in a
-slot that already exists: the regime's utility, its `exit`, and the `Transition` on its
+slot that already exists: the regime's utility, its `composition_action`, and the `Transition` on its
 `Model(edges=...)` entry:
 
 ```python
@@ -322,8 +322,8 @@ Model(
 - A gate predicate reads target states, params, `period` and `age`, never a value: an
   argument named `V_target`, `V_target_<s>` or `D_target` raises `GateReadsValueError`
   when the `Gate` is declared, and `Gate` takes no `references`. A move decided by
-  comparing values is an `Exit` in `Regime(exit=...)` of the regime that decides:
-  formation with a `Consent` rule on the single's regime, dissolution with `Unilateral`
+  comparing values is a `CompositionAction` in `Regime(composition_action=...)` of the regime that decides:
+  formation with a `Consent` rule on the single's regime, dissolution with `PCOnActions`
   or `MutualConsent` on the household's. The Boolean-dtype requirement is checked **at
   evaluation**, i.e. on the first `solve()`, not at build.
 - An exit's payoff is the destination's problem value at the projected state, without
@@ -332,7 +332,7 @@ Model(
   a longer chain is refused. See
   `docs/adr/0004-one-noun-members-and-the-rule-of-the-deciding-regime.md`.
 - A household admits `taste_shocks` only when exactly one member has a positive Pareto
-  weight (the decider), and not with an `exit`, with `shocks`, or when another regime's
+  weight (the decider), and not with a `composition_action`, with `shocks`, or when another regime's
   exit reads its decision.
 - `ParetoObjective(weights=...)` scalarizes the household; a weight may read the
   regime's states and `period`/`age`, never an action. Its other arguments become free
@@ -457,7 +457,7 @@ result.regime_names  # list[str]
 result.state_names  # list[str]
 result.action_names  # list[str]
 result.n_periods  # int
-result.n_subjects  # int
+result.n_agents  # int
 result.available_targets  # list[str] - computable additional targets
 
 # Access raw data for advanced users

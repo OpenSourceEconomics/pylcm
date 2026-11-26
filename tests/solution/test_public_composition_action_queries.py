@@ -1,4 +1,4 @@
-"""Public exits compare actual mapped common policies, with independent anchors."""
+"""Composition actions compare the mapped common policies, with independent anchors."""
 
 import inspect
 from collections.abc import Callable, Mapping
@@ -14,10 +14,14 @@ import pandas as pd
 import pytest
 
 import lcm
-from _lcm import exit_queries, policy_queries
+from _lcm import composition_queries, policy_queries
+from _lcm.composition_queries import (
+    _compose,
+    _QueryGraphBuilder,
+    bind_composition_query_graph,
+)
 from _lcm.current_iid import CurrentIIDDrawPlan
 from _lcm.execution.core_program import CoreBuildContext
-from _lcm.exit_queries import _compose, _QueryGraphBuilder, bind_exit_query_graph
 from _lcm.policy_queries import (
     PolicyAnswer,
     QueryKind,
@@ -35,12 +39,12 @@ from _lcm.typing import FlatParams, PytreeValue
 from lcm import (
     AgeGrid,
     CollectiveUtility,
+    CompositionAction,
     Consent,
     Counterparty,
+    Destination,
     DiscreteGrid,
     ExecutionConfig,
-    Exit,
-    ExitTarget,
     InitialNodes,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -49,13 +53,13 @@ from lcm import (
     Regime,
     categorical,
 )
+from lcm.composition_actions import CompositionRule, PCOnActions
 from lcm.exceptions import (
     InvalidParamsError,
     OffGridStateError,
     RegimeInitializationError,
     ShockDeclarationError,
 )
-from lcm.exits import ExitRule, Unilateral
 from lcm.shocks import (
     Discrete,
     GaussHermite,
@@ -149,9 +153,9 @@ def _household(
             "single_f": Regime(
                 states={"wealth": wealth},
                 functions={"utility": _school_single if outside_lag else _single},
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
                             regime="couple",
                             role="f",
                             projection={
@@ -184,16 +188,16 @@ def _household(
                 functions={
                     "utility": CollectiveUtility(utilities={"f": _female, "m": _male})
                 },
-                exit=Exit(
-                    targets={
-                        "f": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "f": Destination(
                             regime="single_f",
                             projection={
                                 "wealth": _school_projection if outside_lag else _wealth
                             },
                             utility_adjustment=_cost,
                         ),
-                        "m": ExitTarget(
+                        "m": Destination(
                             regime="single_m",
                             projection={
                                 "wealth": _school_projection if outside_lag else _wealth
@@ -201,7 +205,7 @@ def _household(
                             utility_adjustment=_cost,
                         ),
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                 ),
             ),
         },
@@ -217,8 +221,8 @@ def _household(
         execution_config=ExecutionConfig(device_memory_bytes=None),
         fixed_params={
             "couple": {
-                "exit": {
-                    "targets": {
+                "composition_action": {
+                    "destinations": {
                         "f": {"utility_adjustment": {"cost": 0.0}},
                         "m": {"utility_adjustment": {"cost": 2.0}},
                     }
@@ -491,15 +495,15 @@ def _offer_model(
                 states={"wealth": wealth},
                 functions={"utility": _stay_with_offer if shared else _stay},
                 shocks=("offers",) if shared else (),
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
                             regime="single_m",
                             projection={"wealth": _opposite if flipped else _wealth},
                             utility_adjustment=_fee,
                         )
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                     observes=("offer",) if observed else (),
                 ),
             ),
@@ -616,7 +620,7 @@ def _positive(wealth: FloatND) -> BoolND:
     return wealth > 0
 
 
-def _settlement(wealth: FloatND) -> FloatND:
+def _transfer(wealth: FloatND) -> FloatND:
     return 2 * wealth - 1
 
 
@@ -632,20 +636,20 @@ def _taste_stay(wealth: FloatND) -> FloatND:
     backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
 )
 def test_hidden_target_taste_is_priced_at_logsum_then_drawn_when_acting() -> None:
-    """log(4)>1.2>log(3): a hard target max would make the wrong exit decision."""
+    """log(4)>1.2>log(3): a hard target max would make the wrong decision to leave."""
     wealth = LinSpacedGrid(start=0, stop=1, n_points=2)
     model = Model(
         regimes={
             "single_f": Regime(
                 states={"wealth": wealth},
                 functions={"utility": _taste_stay},
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
                             regime="single_m", projection={"wealth": _wealth}
                         )
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                 ),
             ),
             "single_m": Regime(
@@ -666,7 +670,7 @@ def test_hidden_target_taste_is_priced_at_logsum_then_drawn_when_acting() -> Non
     np.testing.assert_allclose(result.values[0]["single_f"], np.log(4.0))
     kernel = model._regimes["single_f"].solution.period_kernels[0]
     assert isinstance(kernel, _PolicyQueryKernel)
-    definitions, root = bind_exit_query_graph(
+    definitions, root = bind_composition_query_graph(
         contexts={
             node.read.target: node.context for node in kernel.definitions.values()
         },
@@ -720,13 +724,13 @@ def _joint_information_model(*, observes: tuple[str, ...], correlated: bool) -> 
             "single_f": Regime(
                 states={"wealth": wealth},
                 functions={"utility": _quarter},
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
                             regime="single_m", projection={"wealth": _wealth}
                         )
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                     observes=observes,
                 ),
             ),
@@ -766,7 +770,7 @@ def test_wholly_hidden_joint_group_keeps_its_original_rows(*, correlated: bool) 
     np.testing.assert_allclose(result.values[0]["single_f"], expected)
 
 
-def test_an_exit_observing_part_of_a_shock_group_is_refused() -> None:
+def test_a_composition_action_observing_part_of_a_shock_group_is_refused() -> None:
     """A group is observed whole or not at all."""
     with pytest.raises(
         ShockDeclarationError, match=r"\['x'\] of shock group 'joint' but not \['y'\]"
@@ -821,9 +825,11 @@ def test_query_only_target_retains_its_genuine_next_period_value_read() -> None:
         regimes={
             "single_f": Regime(
                 functions={"utility": _one},
-                exit=Exit(
-                    targets={"self": ExitTarget(regime="single_m", projection={})},
-                    rule=Unilateral(),
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(regime="single_m", projection={})
+                    },
+                    rule=PCOnActions(),
                 ),
             ),
             "single_m": Regime(functions={"utility": _one}),
@@ -862,9 +868,9 @@ def test_raw_counterparty_omits_unread_formation_params(*, preserve: bool) -> No
     """A synthetic Raw/Part spouse keeps declarations, but never calls Consent."""
     base = _household(newlywed=True, enable_jit=True, source_only=True)
     spouse = base.user_regimes["single_m"]
-    ignored = Exit(
-        targets={
-            "self": ExitTarget(
+    ignored = CompositionAction(
+        destinations={
+            "self": Destination(
                 regime="couple",
                 role="m",
                 projection={"wealth": _wealth, "married_last_period": _newlywed},
@@ -888,7 +894,7 @@ def test_raw_counterparty_omits_unread_formation_params(*, preserve: bool) -> No
                     **({"reporter": _reporter} if preserve else {}),
                 },
                 output_only_functions=("reporter",) if preserve else (),
-                exit=ignored,
+                composition_action=ignored,
             ),
         },
         regime_id_class=_Household,
@@ -899,13 +905,13 @@ def test_raw_counterparty_omits_unread_formation_params(*, preserve: bool) -> No
         execution_config=ExecutionConfig(device_memory_bytes=None),
     )
     template = model.get_params_template()["single_m"]
-    assert "exit" not in template
+    assert "composition_action" not in template
     assert "unused_helper" not in template
     if preserve:
         assert template["reporter"] == {"report_toll": "FloatND"}
     else:
         assert "reporter" not in template
-    assert model.user_regimes["single_m"].exit is not None
+    assert model.user_regimes["single_m"].composition_action is not None
     assert model._model_structure_fingerprint != base._model_structure_fingerprint
     result = model.solve(
         params={"single_m": {"reporter": {"report_toll": 0.0}}} if preserve else {},
@@ -921,19 +927,21 @@ def _strict_stay(*, action: IntND, wealth: FloatND) -> FloatND:
 
 def _rule_model(
     *,
-    rule: ExitRule,
+    rule: CompositionRule,
     target_taste: bool = False,
     available: UserFunction | None = None,
 ) -> Model:
     wealth = LinSpacedGrid(start=0, stop=1, n_points=2)
-    target = ExitTarget(regime="single_m", projection={"wealth": _wealth})
+    target = Destination(regime="single_m", projection={"wealth": _wealth})
     return Model(
         regimes={
             "single_f": Regime(
                 states={"wealth": wealth},
                 actions={"action": DiscreteGrid(values=jnp.asarray([0, 1]))},
                 functions={"utility": _strict_stay},
-                exit=Exit(targets={"self": target}, rule=rule, available=available),
+                composition_action=CompositionAction(
+                    destinations={"self": target}, rule=rule, available=available
+                ),
             ),
             "single_m": Regime(
                 states={"wealth": wealth},
@@ -959,9 +967,11 @@ def _single_tie(wealth: FloatND) -> FloatND:
     return 1.0 + 0 * wealth
 
 
-def test_strict_tie_has_empty_participating_policy_and_full_exit() -> None:
+def test_strict_tie_has_empty_participating_policy_and_full_composition_action() -> (
+    None
+):
     """Strict source choice rejects the tied stay; Raw still chooses stayID1."""
-    model = _rule_model(rule=Unilateral(tie="leave"))
+    model = _rule_model(rule=PCOnActions(tie="leave"))
     result = model.solve(params={}, log_level="off", runtime_checks=False)
     np.testing.assert_allclose(result.values[0]["single_f"], 1.0)
     kernel = model._regimes["single_f"].solution.period_kernels[0]
@@ -972,7 +982,7 @@ def test_strict_tie_has_empty_participating_policy_and_full_exit() -> None:
         (QueryKind.PARTICIPATING, -1, False),
         (QueryKind.FULL, 2, True),
     ]:
-        definitions, root = bind_exit_query_graph(
+        definitions, root = bind_composition_query_graph(
             contexts=contexts,
             canonical_regimes=model._regimes,
             root="single_f",
@@ -1003,9 +1013,9 @@ def test_strict_tie_has_empty_participating_policy_and_full_exit() -> None:
         np.testing.assert_allclose(value, 1.0 if expected_support else -jnp.inf)
 
 
-def test_strict_exit_prices_a_hidden_target_taste_at_its_logsum() -> None:
-    """The exit compares the stay with the target's expected maximum, log 4."""
-    result = _rule_model(rule=Unilateral(tie="leave"), target_taste=True).solve(
+def test_strict_composition_action_prices_a_hidden_target_taste_at_its_logsum() -> None:
+    """Staying is compared with the target's expected maximum, log 4."""
+    result = _rule_model(rule=PCOnActions(tie="leave"), target_taste=True).solve(
         params={}, log_level="off", runtime_checks=False
     )
     np.testing.assert_allclose(result.values[0]["single_f"], np.log(4.0))
@@ -1023,12 +1033,12 @@ def test_public_availability_accepts_python_scalar_but_refuses_vector_reduction(
     None
 ):
     """False is a scalar guard; a vector cannot silently become all(vector)."""
-    result = _rule_model(rule=Unilateral(), available=_never_available).solve(
+    result = _rule_model(rule=PCOnActions(), available=_never_available).solve(
         params={}, log_level="off", runtime_checks=False
     )
     np.testing.assert_allclose(result.values[0]["single_f"], 1.0)
     with pytest.raises(ValueError, match="must be a scalar Boolean"):
-        _rule_model(rule=Unilateral(), available=_vector_available).solve(
+        _rule_model(rule=PCOnActions(), available=_vector_available).solve(
             params={}, log_level="off", runtime_checks=False
         )
 
@@ -1059,12 +1069,13 @@ def test_formation_requires_target_policy_information_at_the_actual_choice(
     base = _household(newlywed=True, enable_jit=True, source_only=True)
     source = base.user_regimes["single_f"]
     formation = replace(
-        cast("Exit", source.exit), observes=("offer",) if observed else ()
+        cast("CompositionAction", source.composition_action),
+        observes=("offer",) if observed else (),
     )
     couple = base.user_regimes["couple"]
     regimes = {
         **base.user_regimes,
-        "single_f": replace(source, exit=formation),
+        "single_f": replace(source, composition_action=formation),
         "couple": replace(
             couple,
             shocks=("offers",),
@@ -1107,15 +1118,17 @@ def test_formation_requires_target_policy_information_at_the_actual_choice(
         np.testing.assert_allclose(result.values[0]["single_f"], 5.5)
 
 
-def test_statically_false_exit_does_not_require_an_inactive_target_context() -> None:
+def test_statically_false_composition_needs_no_inactive_destination_context() -> None:
     """A proof of false guards the same missing context admitted by graph validation."""
     model = Model(
         regimes={
             "single_f": Regime(
                 functions={"utility": _one},
-                exit=Exit(
-                    targets={"self": ExitTarget(regime="single_m", projection={})},
-                    rule=Unilateral(),
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(regime="single_m", projection={})
+                    },
+                    rule=PCOnActions(),
                     available=_never_available,
                 ),
             ),
@@ -1142,14 +1155,14 @@ def test_false_ancestor_protects_a_poisoned_mapped_child_availability() -> None:
     """The child predicate cannot inspect sqrt(-1) after its ancestor refuses."""
     base = _household(newlywed=True, enable_jit=True, source_only=True)
     source = base.user_regimes["single_f"]
-    declaration = cast("Exit", source.exit)
+    declaration = cast("CompositionAction", source.composition_action)
     formation = replace(
         declaration,
         available=_positive,
-        targets={
+        destinations={
             "self": replace(
-                declaration.targets["self"],
-                projection={"wealth": _settlement, "married_last_period": _newlywed},
+                declaration.destinations["self"],
+                projection={"wealth": _transfer, "married_last_period": _newlywed},
             )
         },
     )
@@ -1157,10 +1170,13 @@ def test_false_ancestor_protects_a_poisoned_mapped_child_availability() -> None:
     model = Model(
         regimes={
             **base.user_regimes,
-            "single_f": replace(source, exit=formation),
+            "single_f": replace(source, composition_action=formation),
             "couple": replace(
                 couple,
-                exit=replace(cast("Exit", couple.exit), available=_unsafe_available),
+                composition_action=replace(
+                    cast("CompositionAction", couple.composition_action),
+                    available=_unsafe_available,
+                ),
             ),
         },
         regime_id_class=_Household,
@@ -1179,7 +1195,7 @@ def test_false_ancestor_protects_a_poisoned_mapped_child_availability() -> None:
 )
 @pytest.mark.parametrize("n_points", [64, 65])
 def test_outside_choice_ignores_padded_query_lanes(*, n_points: int) -> None:
-    """An exit keeps every live source value on a partial chunk."""
+    """A composition action keeps every live source value on a partial chunk."""
     wealth = LinSpacedGrid(start=0.0, stop=1.0, n_points=n_points)
     model = Model(
         regimes={
@@ -1189,13 +1205,13 @@ def test_outside_choice_ignores_padded_query_lanes(*, n_points: int) -> None:
                     "action": DiscreteGrid(values=np.asarray([0], dtype=np.int32))
                 },
                 functions={"utility": _strict_stay},
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
                             regime="single_m", projection={"wealth": _wealth}
                         )
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                 ),
             ),
             "single_m": Regime(
@@ -1225,11 +1241,11 @@ def test_outside_choice_ignores_padded_query_lanes(*, n_points: int) -> None:
     )
 
 
-def _ancestor_settlement(*, wealth: FloatND, ancestor_shift: FloatND) -> FloatND:
+def _ancestor_transfer(*, wealth: FloatND, ancestor_shift: FloatND) -> FloatND:
     return wealth + ancestor_shift
 
 
-def _descendant_settlement(descendant_shift: FloatND) -> FloatND:
+def _descendant_transfer(descendant_shift: FloatND) -> FloatND:
     return descendant_shift
 
 
@@ -1261,7 +1277,7 @@ class _NestedHousehold:
     backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
 )
 @pytest.mark.parametrize("fixed", [False, True])
-def test_nested_information_uses_each_ancestors_settlement_operands(
+def test_nested_information_uses_each_ancestors_transfer_operands(
     *, fixed: bool
 ) -> None:
     """A constant descendant map cannot supply its ancestor's shift or guard.
@@ -1282,12 +1298,12 @@ def test_nested_information_uses_each_ancestors_settlement_operands(
             states={"wealth": LinSpacedGrid(start=0, stop=1, n_points=2)},
             functions={"utility": _information_stay},
             shocks=("root_noise",),
-            exit=Exit(
-                targets={
-                    "self": ExitTarget(
+            composition_action=CompositionAction(
+                destinations={
+                    "self": Destination(
                         regime="couple",
                         role="f",
-                        projection={"wealth": _ancestor_settlement},
+                        projection={"wealth": _ancestor_transfer},
                     )
                 },
                 available=_ancestor_available,
@@ -1312,18 +1328,18 @@ def test_nested_information_uses_each_ancestors_settlement_operands(
                 )
             },
             shocks=("middle_noise",),
-            exit=Exit(
-                targets={
-                    "f": ExitTarget(
+            composition_action=CompositionAction(
+                destinations={
+                    "f": Destination(
                         regime="alone_f",
-                        projection={"wealth": _descendant_settlement},
+                        projection={"wealth": _descendant_transfer},
                     ),
-                    "m": ExitTarget(
+                    "m": Destination(
                         regime="single_m",
-                        projection={"wealth": _descendant_settlement},
+                        projection={"wealth": _descendant_transfer},
                     ),
                 },
-                rule=Unilateral(),
+                rule=PCOnActions(),
             ),
         ),
         "alone_f": Regime(
@@ -1398,7 +1414,7 @@ def test_nested_information_uses_each_ancestors_settlement_operands(
         assert np.all(np.isfinite(solution.values[0]["single_f"]))
 
 
-def test_leaf_exit_projection_does_not_capture_a_dag() -> None:
+def test_leaf_composition_action_projection_does_not_capture_a_dag() -> None:
     """A projection with no computed inputs retains only its authored callback."""
 
     builder = cast(
@@ -1422,7 +1438,7 @@ def test_leaf_exit_projection_does_not_capture_a_dag() -> None:
     np.testing.assert_array_equal(bound(wealth=jnp.asarray(3.0)), 3.0)
 
 
-def test_exit_projection_keeps_computed_inputs_and_parameter_aliases() -> None:
+def test_destination_projection_keeps_computed_inputs_and_parameter_aliases() -> None:
     """Computed dependencies and their caller-owned aliases retain their values."""
 
     def resources(wealth: FloatND) -> FloatND:
@@ -1451,7 +1467,7 @@ def test_exit_projection_keeps_computed_inputs_and_parameter_aliases() -> None:
     np.testing.assert_array_equal(bound(cash=jnp.asarray(3.0)), 7.0)
 
 
-def test_callable_exit_projection_keeps_fingerprint_admission() -> None:
+def test_callable_composition_action_projection_keeps_fingerprint_admission() -> None:
     """Callable identity declarations keep the existing composed-hash support."""
 
     builder = cast(
@@ -1490,7 +1506,7 @@ def test_own_raw_and_full_evaluate_canonical_problem_once(  # noqa: PLR0915 - ke
 
     The couple reads the single's outside value at its point.
     """
-    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", False)
+    monkeypatch.setattr(composition_queries, "_READ_STORED_OUTSIDE_VALUES", False)
     model = _household(
         newlywed=True, enable_jit=True, source_only=True, outside_lag=True
     )
@@ -1499,8 +1515,8 @@ def test_own_raw_and_full_evaluate_canonical_problem_once(  # noqa: PLR0915 - ke
     root = kernel.definitions[kernel.root]
     own_key = root.inputs["own_raw"]
     own = kernel.definitions[own_key]
-    couple = kernel.definitions[root.inputs["exit_self"]]
-    outside_key = couple.inputs["exit_f"]
+    couple = kernel.definitions[root.inputs["composition_action_self"]]
+    outside_key = couple.inputs["composition_action_f"]
     outside = kernel.definitions[outside_key]
     assert outside.read.kind is QueryKind.RAW
     assert outside.read.target == "single_f"
@@ -1526,7 +1542,7 @@ def test_own_raw_and_full_evaluate_canonical_problem_once(  # noqa: PLR0915 - ke
     consent_calls: list[bool] = []
     evaluate = policy_queries._shared_evaluation
     core = _QueryCore.__call__
-    eligible = exit_queries._ExitReducer._eligible
+    eligible = composition_queries._CompositionReducer._eligible
 
     def record_numerical(value: np.ndarray) -> None:
         numerical_calls.append(float(value[0]))
@@ -1551,14 +1567,14 @@ def test_own_raw_and_full_evaluate_canonical_problem_once(  # noqa: PLR0915 - ke
 
     # keyword-only-exempt: library-callback=Python.descriptor_binding
     def observed_eligible(
-        self: exit_queries._ExitReducer,
+        self: composition_queries._CompositionReducer,
         *,
         operands: Mapping[str, PytreeValue],
         payoffs: Mapping[str, FloatND],
         active: BoolND,
     ) -> tuple[BoolND, BoolND]:
         result = eligible(self, operands=operands, payoffs=payoffs, active=active)
-        if isinstance(cast("Exit", self.declaration).rule, Consent):
+        if isinstance(cast("CompositionAction", self.declaration).rule, Consent):
             jax.debug.callback(
                 lambda value: consent_calls.append(bool(value)), result[0]
             )
@@ -1566,7 +1582,9 @@ def test_own_raw_and_full_evaluate_canonical_problem_once(  # noqa: PLR0915 - ke
 
     monkeypatch.setattr(policy_queries, "_shared_evaluation", observed_evaluation)
     monkeypatch.setattr(_QueryCore, "__call__", observed_core)
-    monkeypatch.setattr(exit_queries._ExitReducer, "_eligible", observed_eligible)
+    monkeypatch.setattr(
+        composition_queries._CompositionReducer, "_eligible", observed_eligible
+    )
     program = kernel.programs["_chunks"]
     builder = cast("_ChunkArguments", program.argument_builder)
     operands = builder.operands(
@@ -1646,8 +1664,8 @@ def _sharing_control_model(
                 functions={
                     "utility": _shifted_single if parameterized else _school_single
                 },
-                exit=replace(
-                    cast("Exit", source.exit),
+                composition_action=replace(
+                    cast("CompositionAction", source.composition_action),
                     available=_positive_wealth if guarded else None,
                 ),
             ),
@@ -1705,7 +1723,7 @@ def test_static_single_sharing_preserves_uninstrumented_chunks(
 
     The couple reads the single's outside value at its point.
     """
-    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", False)
+    monkeypatch.setattr(composition_queries, "_READ_STORED_OUTSIDE_VALUES", False)
     model = _sharing_control_model(state_count=state_count, constrained=constrained)
     source = model._regimes["single_f"].solution.period_kernels[0]
     assert isinstance(source, _PolicyQueryKernel)
@@ -1808,7 +1826,7 @@ def test_static_single_sharing_retains_guard_and_projection_fallback(
 
     The couple reads the single's outside value at its point.
     """
-    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", False)
+    monkeypatch.setattr(composition_queries, "_READ_STORED_OUTSIDE_VALUES", False)
     model = _sharing_control_model(guarded=guarded)
     source = model._regimes["single_f"].solution.period_kernels[0]
     assert isinstance(source, _PolicyQueryKernel)
@@ -1863,7 +1881,7 @@ def test_static_single_sharing_reads_changed_params_and_preserves_jvp(
 
     The couple reads the single's outside value at its point.
     """
-    monkeypatch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", False)
+    monkeypatch.setattr(composition_queries, "_READ_STORED_OUTSIDE_VALUES", False)
     model = _sharing_control_model(state_count=state_count, parameterized=True)
     source = model._regimes["single_f"].solution.period_kernels[0]
     assert isinstance(source, _PolicyQueryKernel)
@@ -1990,16 +2008,16 @@ def _household_model(
     outside_m: Callable[..., FloatND] = _outside_m,
     initial_nodes: InitialNodes | None = None,
 ) -> Model:
-    """Build the household whose husband's exit lands beyond his destination grid.
+    """Build a couple whose husband, on leaving, lands beyond his destination grid.
 
-    A source household carries its wage into `pair`, whose wage grid has nodes 1, 2
-    and 3. In `pair` the wife's payoff `(wage - 2)**2` beats her outside option of 0.5
-    at nodes 1 and 3 but not at 2, so at wage 2 the household dissolves. The husband's
-    exit projection keeps wages 1 and 3 and sends wage 2 to 4, beyond the top node of
-    his destination `alone_m`, whose grid declares `rule`; there his payoff is the wage
-    itself. The source puts all weight on the husband. Its optional move costs 6.5 and
-    carries the household at wage 1 instead, where both spouses stay and the husband
-    gets 10.
+    A source household carries its wage into `pair`, whose wage grid has nodes 1, 2 and
+    3. In `pair` the wife's payoff `(wage - 2)**2` beats her outside option of 0.5 at
+    nodes 1 and 3 but not at 2, so at wage 2 the household dissolves. The husband's
+    composition action projection keeps wages 1 and 3 and sends wage 2 to 4, beyond the
+    top node of his destination `alone_m`, whose grid declares `rule`; there his payoff
+    is the wage itself. The source puts all weight on the husband. Its optional move
+    costs 6.5 and carries the household at wage 1 instead, where both spouses stay and
+    the husband gets 10.
     """
     grid = IrregSpacedGrid(points=_NODES)
     source_utility = _move_cost if with_move else _no_flow
@@ -2024,16 +2042,16 @@ def _household_model(
                     "utility": CollectiveUtility(utilities={"f": _wife, "m": _husband})
                 },
                 shocks=pair_shocks,
-                exit=Exit(
-                    targets={
-                        "f": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "f": Destination(
                             regime="alone_f", projection={"wage": projection_f}
                         ),
-                        "m": ExitTarget(
+                        "m": Destination(
                             regime="alone_m", projection={"wage": projection_m}
                         ),
                     },
-                    rule=Unilateral(tie="leave"),
+                    rule=PCOnActions(tie="leave"),
                     available=available,
                 ),
             ),
@@ -2104,7 +2122,7 @@ def _solve_and_simulate(
 @pytest.mark.parametrize("rule", ["extrapolate", "clip_state", "clip_lookup"])
 @pytest.mark.parametrize("with_move", [False, True], ids=["no_move", "move"])
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
-def test_exit_is_priced_and_realised_under_the_destination_rule(
+def test_composition_action_is_priced_and_realised_under_the_destination_rule(
     *, rule: OffGrid, with_move: bool, enable_jit: bool
 ) -> None:
     """The source's move and value, and the husband's landing, match the reference.
@@ -2128,7 +2146,7 @@ def test_exit_is_priced_and_realised_under_the_destination_rule(
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_clip_state_prices_the_exit_at_the_value_of_the_realised_landing() -> None:
+def test_clip_state_prices_leaving_at_the_value_of_the_realised_landing() -> None:
     """The pair's husband value at wage 2 is his `alone_m` payoff at his landing.
 
     `alone_m` pays the wage itself, so the price equals the realised landing.
@@ -2180,7 +2198,7 @@ def test_capped_landings_are_read_from_the_stored_destination_table(
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_raise_refuses_an_active_off_grid_exit_read() -> None:
+def test_raise_refuses_an_active_off_grid_composition_action_read() -> None:
     """At wage 2 the husband's outside read lands at 4, beyond `alone_m`'s grid."""
     with pytest.raises(
         OffGridStateError,
@@ -2203,8 +2221,8 @@ def test_raise_refuses_an_off_grid_read_the_household_does_not_act_on() -> None:
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_raise_ignores_an_off_grid_read_where_the_exit_is_unavailable() -> None:
-    """The exit is closed at wage 2, so the household stays and nothing is read."""
+def test_raise_ignores_an_off_grid_read_where_leaving_is_unavailable() -> None:
+    """Leaving is closed at wage 2, so the couple stays and nothing is read."""
     model = _household_model(rule="raise", available=_not_at_two)
     solution = model.solve(params=_PARAMS, log_level="off")
     np.testing.assert_array_almost_equal(
@@ -2255,7 +2273,7 @@ def test_raise_refuses_an_off_grid_read_that_carries_mass() -> None:
 @pytest.mark.parametrize(
     ("rule", "expected"), [("extrapolate", 8.0), ("clip_state", 6.0)]
 )
-def test_hidden_destination_law_reads_the_landing_the_exit_prices(
+def test_hidden_destination_law_reads_the_landing_the_composition_action_prices(
     *, rule: OffGrid, expected: float
 ) -> None:
     """A bonus with mean equal to the wage makes `alone_m` worth twice the wage.
@@ -2310,7 +2328,7 @@ def _formation_model(*, rule: Literal["extrapolate", "clip_state"]) -> Model:
     """A single woman may form a couple by consent with an incoming man.
 
     In the couple the husband stays only where his payoff of 3.5 beats his outside
-    value in `alone_m`, read at the landing his dissolution exit projects.
+    value in `alone_m`, read at the landing his dissolution composition action projects.
     """
     grid = IrregSpacedGrid(points=_NODES)
     return Model(
@@ -2318,9 +2336,9 @@ def _formation_model(*, rule: Literal["extrapolate", "clip_state"]) -> Model:
             "single": Regime(
                 states={"wage": grid},
                 functions={"utility": _single_stay},
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
                             regime="couple", role="f", projection={"wage": _keep}
                         )
                     },
@@ -2339,12 +2357,12 @@ def _formation_model(*, rule: Literal["extrapolate", "clip_state"]) -> Model:
                         utilities={"f": _couple_f, "m": _couple_m}
                     )
                 },
-                exit=Exit(
-                    targets={
-                        "f": ExitTarget(regime="alone_f", projection={"wage": _keep}),
-                        "m": ExitTarget(regime="alone_m", projection={"wage": _bend}),
+                composition_action=CompositionAction(
+                    destinations={
+                        "f": Destination(regime="alone_f", projection={"wage": _keep}),
+                        "m": Destination(regime="alone_m", projection={"wage": _bend}),
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                 ),
             ),
             "alone_f": Regime(states={"wage": grid}, functions={"utility": _outside_f}),

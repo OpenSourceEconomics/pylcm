@@ -247,12 +247,12 @@ def _compute_targets(
     targets: Sequence[FunctionName],
     regime: Regime,
     regime_params: FlatRegimeParams,
-    subject_batch_size: int | None = None,
+    agent_batch_size: int | None = None,
 ) -> dict[str, FloatND | IntND | BoolND | np.ndarray]:
     """Compute additional targets for a regime.
 
-    The target DAG is vmapped over independent in-regime subject-period rows.
-    A positive `subject_batch_size` uses that saved extent for every chunk: a
+    The target DAG is vmapped over independent in-regime agent-period rows.
+    A positive `agent_batch_size` uses that saved extent for every chunk: a
     partial chunk repeats its last actual row, then trims its outputs on host.
     Each chunk's outputs reach host before the next runs. This bounds the row
     workspace and preserves shapes as regime membership changes; it does not
@@ -276,7 +276,7 @@ def _compute_targets(
     inputs = {k: v for k, v in data.items() if k in variables}
     n_rows = len(data["period"])
 
-    if not subject_batch_size or n_rows == 0:
+    if not agent_batch_size or n_rows == 0:
         kwargs = {k: jnp.asarray(v) for k, v in inputs.items()}
         result = vectorized_func(**all_params, **kwargs)
         return {
@@ -287,17 +287,17 @@ def _compute_targets(
     # time, so the fused DAG's workspace is bounded by the chunk.
     host_inputs = {name: np.asarray(values) for name, values in inputs.items()}
     chunk_outputs: list[dict[str, np.ndarray]] = []
-    for start in range(0, n_rows, subject_batch_size):
-        stop = min(start + subject_batch_size, n_rows)
+    for start in range(0, n_rows, agent_batch_size):
+        stop = min(start + agent_batch_size, n_rows)
         chunk_kwargs = {}
         for name, values in host_inputs.items():
             chunk = values[start:stop]
-            if stop - start < subject_batch_size:
+            if stop - start < agent_batch_size:
                 chunk = np.concatenate(
                     (
                         chunk,
                         np.repeat(
-                            chunk[-1:], subject_batch_size - (stop - start), axis=0
+                            chunk[-1:], agent_batch_size - (stop - start), axis=0
                         ),
                     )
                 )
@@ -305,7 +305,7 @@ def _compute_targets(
         chunk_result = vectorized_func(**all_params, **chunk_kwargs)
         chunk_outputs.append(
             {
-                k: np.asarray(_one_value_per_row(values=v, n_rows=subject_batch_size))[
+                k: np.asarray(_one_value_per_row(values=v, n_rows=agent_batch_size))[
                     : stop - start
                 ]
                 for k, v in chunk_result.items()
@@ -323,7 +323,7 @@ def _one_value_per_row(
 ) -> FloatND | IntND | BoolND:
     """Return a target's values shaped as exactly one entry per row.
 
-    A target that reads no per-subject variable — a terminal regime's constant
+    A target that reads no per-agent variable — a terminal regime's constant
     `utility` is the ordinary case — comes back from the vectorized DAG without
     a row axis, and a single row's chunk comes back with one of length one that
     a squeeze would remove. Either shape put into a `DataFrame` gives a column

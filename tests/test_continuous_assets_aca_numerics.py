@@ -152,7 +152,7 @@ def test_two_coordinate_values_and_carried_simulation_match_reference(  # noqa: 
     monkeypatch: pytest.MonkeyPatch,
     record_property: Callable[[str, int], None],
 ) -> None:
-    """Eight assets shards preserve two-coordinate values and carried subject paths."""
+    """Eight assets shards preserve two-coordinate values and carried agent paths."""
     _require_eight()
 
     model = _model(widths=widths)
@@ -255,21 +255,21 @@ def test_two_coordinate_values_and_carried_simulation_match_reference(  # noqa: 
         )
         frames.append(
             result.to_dataframe(use_categorical_codes=True)
-            .sort_values(["subject_id", "period"])
+            .sort_values(["agent_id", "period"])
             .reset_index(drop=True)
         )
     for frame in frames:
         working = frame.query('regime_name == "working"')
         assert len(working) == 34
         np.testing.assert_array_equal(
-            working["pension"], 4 + working["subject_id"] + 2 * working["period"]
+            working["pension"], 4 + working["agent_id"] + 2 * working["period"]
         )
         np.testing.assert_array_equal(
-            working["decision"].astype(int), working["subject_id"] % 2
+            working["decision"].astype(int), working["agent_id"] % 2
         )
     for frame in frames[1:]:
         for name in (
-            "subject_id",
+            "agent_id",
             "period",
             "shock",
             "persistent",

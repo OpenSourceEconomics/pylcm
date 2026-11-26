@@ -48,7 +48,7 @@ def _selector(
 ) -> tuple[admission._ChunkProfiler, list[SimulationChunkProfile]]:
     """Supply typed profile shells with scalar costs; execute no numerical body."""
     device = jax.devices()[0]
-    pins = {"subject": 2}
+    pins = {"agent": 2}
     if pinned_action is not None:
         pins["action_product"] = pinned_action
     # Only fields consumed by the selector are populated. No fake executable is
@@ -74,7 +74,7 @@ def _selector(
         TiledOutputAxis(
             name=name, state_names=(name,), extent=extent, width_keyword=name
         )
-        for name, extent in (("subject", 2), ("action_product", 8))
+        for name, extent in (("agent", 2), ("action_product", 8))
     )
     monkeypatch.setattr(admission, "_common_axes", lambda **_: axes)
     original_widths = admission.workspace_width_candidates
@@ -90,7 +90,7 @@ def _selector(
 
     # keyword-only-exempt: primary-argument=_self
     def profile_widths(
-        _self: admission._ChunkProfiler, *, n_subjects: int, widths: Mapping[str, int]
+        _self: admission._ChunkProfiler, *, n_agents: int, widths: Mapping[str, int]
     ) -> SimulationChunkProfile:
         stage = object.__new__(SimulationStageProfile)
         for name, value in {
@@ -101,11 +101,11 @@ def _selector(
         }.items():
             object.__setattr__(stage, name, value)
         profile = SimulationChunkProfile(
-            n_subjects=n_subjects,
-            padded_population=-(-population // n_subjects) * n_subjects,
+            n_agents=n_agents,
+            padded_population=-(-population // n_agents) * n_agents,
             stages=(stage,),
             fixed_reservation=MappingProxyType(
-                {device: costs[n_subjects, widths["action_product"]]}
+                {device: costs[n_agents, widths["action_product"]]}
             ),
             output_reservation=MappingProxyType({device: 5}),
             axis_widths=MappingProxyType(dict(widths)),
@@ -127,7 +127,7 @@ def test_independent_admits_a_fitting_largest_candidate_with_one_profile(
     selected = admission._plan_independent_chunks(profiler=profiler, alignment=1)
     assert selected.profile is profiles[0]
     assert [dict(p.axis_widths) for p in profiles] == [
-        {"subject": 2, "action_product": 8}
+        {"agent": 2, "action_product": 8}
     ]
     receipt = selected.receipt
     assert receipt is not None
@@ -153,7 +153,7 @@ def test_independent_freezes_full_map_and_descends_after_top_refusal(
     selected = admission._plan_independent_chunks(profiler=profiler, alignment=1)
     assert selected.profile is profiles[2 if larger_fits else 1]
     assert [dict(p.axis_widths) for p in profiles] == [
-        {"subject": 2, "action_product": 8}
+        {"agent": 2, "action_product": 8}
     ] * 3
     receipt = selected.receipt
     assert receipt is not None
@@ -164,7 +164,7 @@ def test_independent_freezes_full_map_and_descends_after_top_refusal(
         True,
         larger_fits,
     ]
-    assert [attempt.n_subjects for attempt in receipt.attempts] == [6, 2, 4]
+    assert [attempt.n_agents for attempt in receipt.attempts] == [6, 2, 4]
     assert receipt.stopping_reason == (
         "first fitting descending candidate admitted"
         if larger_fits
@@ -182,7 +182,7 @@ def test_independent_bootstrap_anchor_is_frozen_for_larger_candidate(
         costs={(6, 8): 90, (2, 8): 90, (2, 4): 30, (6, 4): 90, (4, 4): 40},
     )
     selected = admission._plan_independent_chunks(profiler=profiler, alignment=1)
-    assert [(p.n_subjects, p.axis_widths["action_product"]) for p in profiles] == [
+    assert [(p.n_agents, p.axis_widths["action_product"]) for p in profiles] == [
         (6, 8),
         (2, 8),
         (2, 4),
@@ -205,10 +205,10 @@ def test_independent_pins_admit_the_largest_candidate_with_one_profile(
         population=population,
     )
     selected = admission._plan_independent_chunks(profiler=profiler, alignment=1)
-    assert [p.n_subjects for p in profiles] == [population]
-    assert all(p.axis_widths == {"subject": 2, "action_product": 3} for p in profiles)
+    assert [p.n_agents for p in profiles] == [population]
+    assert all(p.axis_widths == {"agent": 2, "action_product": 3} for p in profiles)
     assert selected.receipt is not None
-    assert selected.receipt.selected_subjects == population
+    assert selected.receipt.selected_agents == population
 
 
 def test_independent_pinned_singleton_frontier_refuses_after_one_profile(
@@ -234,7 +234,7 @@ def test_independent_bounded_refusal_does_not_probe_larger_or_intermediate_maps(
         ExecutionPlanningError, match="no anchor map fits after top-first admission"
     ) as error:
         admission._plan_independent_chunks(profiler=profiler, alignment=1)
-    assert [(p.n_subjects, p.axis_widths["action_product"]) for p in profiles] == [
+    assert [(p.n_agents, p.axis_widths["action_product"]) for p in profiles] == [
         (6, 8),
         (2, 8),
         (2, 4),
@@ -267,14 +267,14 @@ def test_selected_plan_does_not_retain_transient_profiler(
     assert len(selected.receipt.attempts) == 1
 
 
-def test_singleton_anchor_retains_subject_pin_without_manufacturing_axis() -> None:
+def test_singleton_anchor_retains_agent_pin_without_manufacturing_axis() -> None:
     assert admission._independent_outer_candidates(
-        population=3, alignment=1, subject_width=1
+        population=3, alignment=1, agent_width=1
     ) == (1, 2, 3)
     choices = admission._independent_anchor_widths(
-        axes=(), configured={"subject": 1}, ceilings={}
+        axes=(), configured={"agent": 1}, ceilings={}
     )
-    assert choices == ({"subject": 1},)
+    assert choices == ({"agent": 1},)
 
 
 def test_independent_actual_profiles_reject_larger_and_recheck_live_owner(
@@ -308,11 +308,11 @@ def test_independent_actual_profiles_reject_larger_and_recheck_live_owner(
                     }
                 ),
             },
-            subject_arg_names=("flat_indices",),
+            agent_arg_names=("flat_indices",),
             devices=(device,),
         )
         profiles[width] = SimulationChunkProfile(
-            n_subjects=width,
+            n_agents=width,
             padded_population=256,
             stages=(
                 SimulationStageProfile(
@@ -326,7 +326,7 @@ def test_independent_actual_profiles_reject_larger_and_recheck_live_owner(
                 {device: width * originals.dtype.itemsize}
             ),
             output_reservation=MappingProxyType({device: bank_bytes}),
-            axis_widths=MappingProxyType({"subject": 64}),
+            axis_widths=MappingProxyType({"agent": 64}),
         )
     live = measure_buffer_footprint(tree=(grid, originals, originals))
     resident = resident_bytes_by_device(
@@ -347,7 +347,7 @@ def test_independent_actual_profiles_reject_larger_and_recheck_live_owner(
         "runtime": SimpleNamespace(
             execution=SimpleNamespace(
                 device_memory_bytes=totals[64],
-                axis_widths={"subject": 64},
+                axis_widths={"agent": 64},
                 axis_width_ceilings=MappingProxyType({}),
                 device_memory_cap_note=lambda: "",
             )
@@ -363,11 +363,11 @@ def test_independent_actual_profiles_reject_larger_and_recheck_live_owner(
 
     # keyword-only-exempt: primary-argument=_self
     def profile_widths(
-        _self: admission._ChunkProfiler, *, n_subjects: int, widths: Mapping[str, int]
+        _self: admission._ChunkProfiler, *, n_agents: int, widths: Mapping[str, int]
     ) -> SimulationChunkProfile:
-        assert widths == {"subject": 64}
-        requested.append(n_subjects)
-        return profiles[n_subjects]
+        assert widths == {"agent": 64}
+        requested.append(n_agents)
+        return profiles[n_agents]
 
     monkeypatch.setattr(admission._ChunkProfiler, "profile_widths", profile_widths)
     plan = admission._plan_independent_chunks(profiler=profiler, alignment=1)
@@ -377,7 +377,7 @@ def test_independent_actual_profiles_reject_larger_and_recheck_live_owner(
     memory = SimulationMemory(
         budget_bytes=totals[64],
         devices=(device,),
-        subject_devices=(device,),
+        agent_devices=(device,),
         operations=operations,
         inputs=live,
     )
@@ -418,13 +418,13 @@ def test_independent_actual_profiles_reject_larger_and_recheck_live_owner(
 def test_independent_frontier_doubles_the_inner_width_up_to_the_population() -> None:
     """Outer candidates double from the inner width until one covers everyone."""
     assert admission._independent_outer_candidates(
-        population=226848, alignment=8, subject_width=2048
+        population=226848, alignment=8, agent_width=2048
     ) == (2048, 4096, 8192, 16384, 32768, 65536, 131072, 226848)
 
 
 def test_independent_frontier_aligns_every_candidate_to_the_device_count() -> None:
     assert admission._independent_outer_candidates(
-        population=226848, alignment=3, subject_width=2048
+        population=226848, alignment=3, agent_width=2048
     ) == (2049, 4098, 8193, 16386, 32769, 65538, 131073, 226848)
 
 
@@ -439,7 +439,7 @@ def test_independent_retains_the_last_admitted_extent_before_a_rejection(
     assert selected.profile is profiles[2]
     assert selected.receipt is not None
     assert len(selected.receipt.attempts) == 3
-    assert selected.receipt.selected_subjects == 4
+    assert selected.receipt.selected_agents == 4
     assert selected.receipt.stopping_reason == (
         "first fitting descending candidate admitted"
     )
@@ -453,7 +453,7 @@ def test_independent_reports_skipped_smaller_profiles_when_the_top_fits(
     )
     selected = admission._plan_independent_chunks(profiler=profiler, alignment=1)
     assert selected.receipt is not None
-    assert selected.receipt.selected_subjects == 6
+    assert selected.receipt.selected_agents == 6
     assert selected.receipt.stopping_reason == (
         "largest candidate admitted; smaller profiles skipped"
     )

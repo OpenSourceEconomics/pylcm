@@ -4,10 +4,11 @@ title: Resource contract for collective and gated models
 
 # Resource contract for collective and gated models
 
-A collective regime, an exit and a gated transition each buy something a singleton model
-does not have, and each costs something a singleton model does not pay. This page names
-the workloads those costs are measured on, says which axis each one is allowed to grow
-along, and states what a regression is.
+A regime with several members, a composition action and a gated transition each buy
+something that a model of regimes with one member does not have. Each also costs
+something that such a model does not pay. This page names the workloads those costs are
+measured on, says which axis each one is allowed to grow along, and states what a
+regression is.
 
 It is a contract, not a report: the numbers live in the ASV history, and what is written
 down here is the *shape* each cost is allowed to have. A change that moves a level is
@@ -17,9 +18,10 @@ level.
 ## The workloads
 
 All of them are in `benchmarks/asv/bench_collective_household.py` and run over the
-marriage market of `lcm_examples.collective_household`: a single who meets a partner
-marries through her exit when both consent, and the household dissolves through its own
-exit in the current period.
+marriage market of `lcm_examples.collective_household`. A single who meets a partner
+forms a couple through the composition action of her regime, by consent of both agents.
+The couple separates through the composition action of its own regime, in the same
+period.
 
 `CollectiveHouseholdConstruct` and `CollectiveHouseholdSolve` publish their timing and
 host-memory numbers through `setup_cache`-backed `track_*` metrics, so one build and one
@@ -27,15 +29,15 @@ cold call are shared by every metric of that class. The simulation workloads mea
 each cohort once per commit in one shared `setup_cache`, which every simulation metric
 reads.
 
-| Workload                    | Class and metric                                         | What it isolates                                                                                                                                |
-| --------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Model construction          | `CollectiveHouseholdConstruct.track_execution_time`      | The phase scan, the lowering of the collective declarations, and per-edge parameter discovery, with nothing traced or compiled.                 |
-| Host memory, construction   | `CollectiveHouseholdConstruct.track_peak_cpu_mem`        | Resident peak while the model is built.                                                                                                         |
-| First-solve assembly        | `CollectiveHouseholdSolve.track_compilation_time`        | A whole first `solve()`: tracing, lowering, compiling-or-loading every kernel and fold, AND running the backward induction. See the note below. |
-| Warm solve                  | `CollectiveHouseholdSolve.track_execution_time`          | What an estimation loop pays per parameter vector.                                                                                              |
-| Host memory, solve          | `CollectiveHouseholdSolve.track_peak_cpu_mem`            | Resident peak while backward induction runs.                                                                                                    |
-| Simulation over cohort size | `CollectiveHouseholdSimulate`, `n_subjects ∈ {1e3, 1e5}` | Routing: each period's exit decisions and regime draws over the whole population.                                                               |
-| Device memory, simulation   | `CollectiveHouseholdSimulateGpuPeakMem`                  | Device peak while routing the cohort, at the larger of the two cohort sizes.                                                                    |
+| Workload                    | Class and metric                                       | What it isolates                                                                                                                                |
+| --------------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Model construction          | `CollectiveHouseholdConstruct.track_execution_time`    | The phase scan, the lowering of the collective declarations, and per-edge parameter discovery, with nothing traced or compiled.                 |
+| Host memory, construction   | `CollectiveHouseholdConstruct.track_peak_cpu_mem`      | Resident peak while the model is built.                                                                                                         |
+| First-solve assembly        | `CollectiveHouseholdSolve.track_compilation_time`      | A whole first `solve()`: tracing, lowering, compiling-or-loading every kernel and fold, AND running the backward induction. See the note below. |
+| Warm solve                  | `CollectiveHouseholdSolve.track_execution_time`        | What an estimation loop pays per parameter vector.                                                                                              |
+| Host memory, solve          | `CollectiveHouseholdSolve.track_peak_cpu_mem`          | Resident peak while backward induction runs.                                                                                                    |
+| Simulation over cohort size | `CollectiveHouseholdSimulate`, `n_agents ∈ {1e3, 1e5}` | Routing: each period's decisions on the composition and regime draws over the whole population.                                                 |
+| Device memory, simulation   | `CollectiveHouseholdSimulateGpuPeakMem`                | Device peak while routing the cohort, at the larger of the two cohort sizes.                                                                    |
 
 ## The budgets
 
@@ -50,11 +52,12 @@ machines and backends. A level is defended by the ASV history on one machine.
   folds. It contains no gate evaluator: those execute on the simulation side, while this
   workload only solves. Forward gate compilation is outside the contract's measured
   surface.
-- **Warm solve** is `O(periods × regimes × cells)`, the same order as a singleton model
-  of the same total grid size. A collective regime multiplies the cell count by its
-  member count; a gated edge adds one fold over the target's grid per period. It may not
-  grow with the *number of subjects*, which appears nowhere in the solve.
-- **Simulation** is `O(periods × (regimes + edges) × subjects)` and therefore linear in
+- **Warm solve** is `O(periods × regimes × cells)`, the same order as a model of regimes
+  with one member and the same total grid size. A regime with several members multiplies
+  the cell count by its number of members; a gated edge adds one fold over the target's
+  grid per period. It may not grow with the *number of agents*, which appears nowhere in
+  the solve.
+- **Simulation** is `O(periods × (regimes + edges) × agents)` and therefore linear in
   the cohort. The two cohort sizes exist to make a super-linear term visible; a slope
   above one between them is the regression this workload is for. They are two orders of
   magnitude apart deliberately — an intermediate point cost run time without separating
@@ -111,9 +114,9 @@ both phases, using the kernels the model already has. A future reoptimization mo
 recomputing the target's own optimum at the realized point — is a different kernel and
 is kept statically separate from the default one: it must be selectable per edge, must
 not appear in a model that did not ask for it, and carries its own entries in this table
-before it is offered. Its cost is `O(subjects × target action grid)` per edge per
-period, which is a different order from the default's `O(subjects)`, so the two may not
-share a budget line.
+before it is offered. Its cost is `O(agents × target action grid)` per edge per period,
+which is a different order from the default's `O(agents)`, so the two may not share a
+budget line.
 
 ## Running them
 

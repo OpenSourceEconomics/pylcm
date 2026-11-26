@@ -31,10 +31,10 @@ _ALLOWED: dict[tuple[str, str], str] = {
     ): "renegotiation is a rule between two members",
     (
         "_lcm/user_regime_validation.py",
-        "_validate_settlement",
-    ): "a settlement is a rule between two members",
+        "_validate_transfer",
+    ): "a transfer is a rule between two members",
     (
-        "_lcm/exit_queries.py",
+        "_lcm/composition_queries.py",
         "_validate_consent_context",
     ): "consent compares the raw channels of two singles",
     (

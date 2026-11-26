@@ -695,7 +695,7 @@ def test_query_metadata_does_not_unwrap_an_unknown_custody_lookalike() -> None:
 
 
 def test_collective_scenario_constructs_public_query_metadata(tmp_path: Path) -> None:
-    """A public household exposes Full graphs and the declared exits."""
+    """A public household exposes Full graphs and the declared composition actions."""
     code = """
 import sys
 from math import prod
@@ -734,12 +734,15 @@ assert query_regimes
 assert ("couple", 1) in query_sites
 routes = _route_metadata(model)
 _assert_scenario_identity(spec=spec, routes=routes)
-exit_owners = {
-    name for name, regime in model.user_regimes.items() if regime.exit is not None
+composition_owners = {
+    name
+    for name, regime in model.user_regimes.items()
+    if regime.composition_action is not None
 }
-# Dissolution is the couple's exit, formation each single's consent exit.
-assert exit_owners == {"couple", "single_f", "single_m"}
-assert exit_owners <= set(routes["gs_vd_regimes"])
+# Dissolution is the couple's composition action, formation each single's consent
+# composition action.
+assert composition_owners == {"couple", "single_f", "single_m"}
+assert composition_owners <= set(routes["gs_vd_regimes"])
 query_rows = [
     row for row in routes["kernels"]
     if (row["regime"], row["period"]) in query_sites

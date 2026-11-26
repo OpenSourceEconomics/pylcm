@@ -31,7 +31,7 @@ from tests.test_models.basic_discrete import (
 from tests.test_models.processes import get_model as get_process_model
 
 
-def test_regime_name_column_maps_to_regime_id_codes():
+def test_regime_name_column_maps_to_regime_id_codes() -> None:
     """`regime_name` column (strings) yields a `regime_id` dict entry of int codes."""
     model = get_basic_model()
     df = pd.DataFrame(
@@ -54,7 +54,7 @@ def test_regime_name_column_maps_to_regime_id_codes():
     assert "regime_name" not in conditions
 
 
-def test_continuous_states_and_age():
+def test_continuous_states_and_age() -> None:
     model = get_basic_model()
     df = pd.DataFrame(
         {
@@ -77,7 +77,7 @@ def test_continuous_states_and_age():
     assert jnp.allclose(conditions["age"], jnp.array([25.0, 35.0]))
 
 
-def test_categorical_string_labels():
+def test_categorical_string_labels() -> None:
     model = get_basic_model()
     df = pd.DataFrame(
         {
@@ -99,7 +99,7 @@ def test_categorical_string_labels():
     assert jnp.array_equal(conditions["health"], jnp.array([Health.bad, Health.good]))
 
 
-def test_categorical_pd_categorical_column():
+def test_categorical_pd_categorical_column() -> None:
     model = get_basic_model()
     health_dtype = Health.to_categorical_dtype()  # ty: ignore[unresolved-attribute]
     df = pd.DataFrame(
@@ -118,7 +118,7 @@ def test_categorical_pd_categorical_column():
     assert jnp.array_equal(conditions["health"], jnp.array([Health.good, Health.bad]))
 
 
-def test_multi_regime():
+def test_multi_regime() -> None:
     model = get_basic_model()
     df = pd.DataFrame(
         {
@@ -146,7 +146,7 @@ def test_multi_regime():
     assert len(conditions["wealth"]) == 3
 
 
-def test_missing_regime_column_raises():
+def test_missing_regime_column_raises() -> None:
     model = get_basic_model()
     df = pd.DataFrame({"wealth": [10.0]})
     with pytest.raises(ValueError, match="'regime_name' column"):
@@ -157,7 +157,7 @@ def test_missing_regime_column_raises():
         )
 
 
-def test_invalid_regime_name_raises():
+def test_invalid_regime_name_raises() -> None:
     model = get_basic_model()
     df = pd.DataFrame(
         {
@@ -173,7 +173,7 @@ def test_invalid_regime_name_raises():
         )
 
 
-def test_invalid_category_label_raises():
+def test_invalid_category_label_raises() -> None:
     model = get_basic_model()
     df = pd.DataFrame(
         {
@@ -191,7 +191,7 @@ def test_invalid_category_label_raises():
         )
 
 
-def test_empty_dataframe_raises():
+def test_empty_dataframe_raises() -> None:
     model = get_basic_model()
     df = pd.DataFrame(
         {"regime_name": pd.Series([], dtype=str), "wealth": pd.Series([], dtype=float)}
@@ -204,7 +204,7 @@ def test_empty_dataframe_raises():
         )
 
 
-def test_unknown_column_raises():
+def test_unknown_column_raises() -> None:
     model = get_basic_model()
     df = pd.DataFrame(
         {
@@ -212,7 +212,7 @@ def test_unknown_column_raises():
             "health": ["bad"],
             "wealth": [10.0],
             "age": [25.0],
-            "subject_id": [42],
+            "agent_id": [42],
         }
     )
     with pytest.raises(ValueError, match="Unknown columns"):
@@ -223,7 +223,7 @@ def test_unknown_column_raises():
         )
 
 
-def test_missing_state_column_raises():
+def test_missing_state_column_raises() -> None:
     model = get_basic_model()
     df = pd.DataFrame(
         {
@@ -240,7 +240,7 @@ def test_missing_state_column_raises():
         )
 
 
-def test_process_state_columns_accepted():
+def test_process_state_columns_accepted() -> None:
     """Process grid columns are accepted as continuous float columns."""
     model = get_process_model(n_periods=4, distribution_type="uniform")
     df = pd.DataFrame(
@@ -262,7 +262,7 @@ def test_process_state_columns_accepted():
     assert "regime_id" in conditions
 
 
-def test_process_state_columns_required():
+def test_process_state_columns_required() -> None:
     """DataFrame without process columns raises (process states are required)."""
     model = get_process_model(n_periods=4, distribution_type="uniform")
     df = pd.DataFrame(
@@ -281,7 +281,7 @@ def test_process_state_columns_required():
         )
 
 
-def test_round_trip_with_discrete_model():
+def test_round_trip_with_discrete_model() -> None:
     """Verify DataFrame-based initial states match raw arrays."""
     from tests.test_models.deterministic.discrete import (  # noqa: PLC0415
         DiscreteWealth,
@@ -505,7 +505,7 @@ def test_initial_conditions_process_grid_heterogeneous_state_sets() -> None:
         regime_names_to_ids=model.regime_names_to_ids,
     )
 
-    # earner subjects retain provided shock values
+    # earner agents retain provided shock values
     assert jnp.isclose(result["income"][0], 0.3)
     assert jnp.isclose(result["income"][1], 0.7)
     # retiree has no shock state; value is not asserted (only earner reads it)

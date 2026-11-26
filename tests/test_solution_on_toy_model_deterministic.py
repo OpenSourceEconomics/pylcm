@@ -184,11 +184,11 @@ def analytical_simulate_deterministic(
 ) -> pd.DataFrame:
     """Compute analytical simulation results in the same format as to_dataframe().
 
-    Returns DataFrame with columns: period, subject_id, regime_name, value, wealth,
-    consumption, working. Sorted by (subject_id, period).
+    Returns DataFrame with columns: period, agent_id, regime_name, value, wealth,
+    consumption, working. Sorted by (agent_id, period).
     Uses categorical dtypes for discrete variables to match to_dataframe() output.
     """
-    n_subjects = len(initial_wealth)
+    n_agents = len(initial_wealth)
 
     # Period 0
     V_arr_0 = value_first_period_deterministic(wealth=initial_wealth, params=params)
@@ -200,7 +200,7 @@ def analytical_simulate_deterministic(
     policy_1 = policy_second_period_deterministic(wealth_1)
 
     # Build DataFrame in the same format as to_dataframe()
-    # Sorted by (subject_id, period)
+    # Sorted by (agent_id, period)
     consumption_codes = np.concatenate(
         [policy_0["consumption"], policy_1["consumption"]]
     ).astype(int)
@@ -210,12 +210,12 @@ def analytical_simulate_deterministic(
 
     df = pd.DataFrame(
         {
-            "period": np.concatenate(
-                [np.zeros(n_subjects), np.ones(n_subjects)]
-            ).astype(int),
-            "subject_id": np.tile(np.arange(n_subjects), 2),
+            "period": np.concatenate([np.zeros(n_agents), np.ones(n_agents)]).astype(
+                int
+            ),
+            "agent_id": np.tile(np.arange(n_agents), 2),
             "regime_name": pd.Categorical(
-                ["alive"] * (2 * n_subjects), categories=["alive", "dead"]
+                ["alive"] * (2 * n_agents), categories=["alive", "dead"]
             ),
             "value": np.concatenate([V_arr_0, V_arr_1]),
             "wealth": np.concatenate([initial_wealth, wealth_1]),
@@ -229,7 +229,7 @@ def analytical_simulate_deterministic(
             ),
         }
     )
-    return df.sort_values(["subject_id", "period"]).reset_index(drop=True)
+    return df.sort_values(["agent_id", "period"]).reset_index(drop=True)
 
 
 def matrix_to_dict_of_vectors(

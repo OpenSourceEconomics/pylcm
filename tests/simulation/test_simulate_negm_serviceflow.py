@@ -8,10 +8,14 @@ the realised consumption matches the consumption the backward-induction policy
 prescribes for the seeded states.
 """
 
+from collections.abc import Callable
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from lcm import Model
+from lcm.typing import ScalarInt
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models import negm_kinked_toy, negm_serviceflow_toy
 
@@ -22,17 +26,17 @@ pytestmark = [
 
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
 
-# Three subjects seeded at the same liquid/illiquid states, simulated forward
+# Three agents seeded at the same liquid/illiquid states, simulated forward
 # through the toy's full (deterministic, shock-free) lifecycle.
 _INITIAL_WEALTH = (5.0, 10.0, 15.0)
 _INITIAL_ILLIQUID = (4.0, 6.0, 8.0)
 
 # Period-0 `alive` consumption the solved NEGM policy prescribes for the three
-# seeded subjects. The toys have no shocks, so the simulated path is
+# seeded agents. The toys have no shocks, so the simulated path is
 # deterministic; each value is an exact node of the toy's consumption grid
 # (`LinSpacedGrid(0.1, 20.0, n_points)`) selected by the simulate argmax:
 # - kinked (25 nodes, step 19.9/24): nodes 12, 14, 17 → 10.05, 11.708333, 14.195833
-# - serviceflow (15 nodes, step 19.9/14): node 3 → 4.364286 for all three subjects
+# - serviceflow (15 nodes, step 19.9/14): node 3 → 4.364286 for all three agents
 # The simulated values reproduce these nodes to float32 precision, so the
 # assertion is a genuine per-node change detector rather than a wide band.
 _KINKED_PERIOD0_CONSUMPTION = (10.05, 11.708333, 14.195833)
@@ -43,15 +47,17 @@ _SERVICEFLOW_PERIOD0_CONSUMPTION = (4.364286, 4.364286, 4.364286)
 _CONSUMPTION_ATOL = 1e-5
 
 
-def _simulate_period0_alive_consumption(*, model, regime_id) -> np.ndarray:
-    """Solve, simulate, and return the period-0 `alive` consumption per subject."""
+def _simulate_period0_alive_consumption(
+    *, model: Model, regime_id: ScalarInt
+) -> np.ndarray:
+    """Solve, simulate, and return the period-0 `alive` consumption per agent."""
     solution = model.solve(params=_PARAMS, log_level="debug")
-    n_subjects = len(_INITIAL_WEALTH)
+    n_agents = len(_INITIAL_WEALTH)
     initial_conditions = {
         "wealth": jnp.asarray(_INITIAL_WEALTH),
         "illiquid": jnp.asarray(_INITIAL_ILLIQUID),
-        "age": jnp.full(n_subjects, 20.0),
-        "regime_id": jnp.full(n_subjects, regime_id, dtype=jnp.int32),
+        "age": jnp.full(n_agents, 20.0),
+        "regime_id": jnp.full(n_agents, regime_id, dtype=jnp.int32),
     }
     result = model.simulate(
         params=_PARAMS,
@@ -61,7 +67,7 @@ def _simulate_period0_alive_consumption(*, model, regime_id) -> np.ndarray:
     )
     df = result.to_dataframe()
     period0 = df.query("regime_name == 'alive' and period == 0")
-    return period0.sort_values("subject_id")["consumption"].to_numpy()
+    return period0.sort_values("agent_id")["consumption"].to_numpy()
 
 
 @pytest.mark.parametrize(
@@ -80,11 +86,14 @@ def _simulate_period0_alive_consumption(*, model, regime_id) -> np.ndarray:
     ],
 )
 def test_negm_simulate_reproduces_the_solved_consumption(
-    *, build_model, regime_id, expected
-):
+    *,
+    build_model: Callable[[], Model],
+    regime_id: ScalarInt,
+    expected: tuple[float, float, float],
+) -> None:
     """The simulated period-0 consumption equals the solved NEGM policy.
 
-    Seeding three subjects at known liquid/illiquid states and stepping the
+    Seeding three agents at known liquid/illiquid states and stepping the
     shock-free toy forward, the realised period-0 consumption reproduces the
     exact consumption-grid node the backward-induction policy prescribes, to
     float32 precision.

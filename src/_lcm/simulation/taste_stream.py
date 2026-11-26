@@ -1,4 +1,4 @@
-"""Address destination taste draws by original subject row and period."""
+"""Address destination taste draws by original agent row and period."""
 
 from collections.abc import Mapping
 from types import MappingProxyType
@@ -12,7 +12,7 @@ from _lcm.simulation.random import _create_simulation_key
 from _lcm.simulation.random_address import (
     RandomAddress,
     draw_window_keys,
-    encode_subject_row,
+    encode_agent_row,
 )
 from _lcm.time import TimeAxis, step_count
 from _lcm.typing import ArrayTree, PRNGKeyND
@@ -59,9 +59,9 @@ def prepare_decision_taste_keys(
     key: PRNGKeyND,
     taste_key: PRNGKeyND | None,
     taste_address: tuple[int, ...] | None,
-    n_subjects: int,
-    subject_slice: slice,
-    original_n_subjects: int | None,
+    n_agents: int,
+    agent_slice: slice,
+    original_n_agents: int | None,
     memory: SimulationMemory | None,
     period: int = 0,
 ) -> tuple[PRNGKeyND, PRNGKeyND]:
@@ -70,12 +70,12 @@ def prepare_decision_taste_keys(
         raise ExecutionPlanningError(
             "Independent taste stream lacks its domain address."
         )
-    real_subjects = n_subjects if original_n_subjects is None else original_n_subjects
+    real_agents = n_agents if original_n_agents is None else original_n_agents
     taste_keys = generate_taste_shock_keys(
         key=key if taste_key is None else taste_key,
         address_words=taste_address,
-        subject_slice=subject_slice,
-        original_n_subjects=real_subjects,
+        agent_slice=agent_slice,
+        original_n_agents=real_agents,
         memory=memory,
         period=period,
     )
@@ -86,25 +86,25 @@ def generate_taste_shock_keys(
     *,
     key: PRNGKeyND,
     address_words: tuple[int, ...],
-    subject_slice: slice,
-    original_n_subjects: int,
+    agent_slice: slice,
+    original_n_agents: int,
     memory: SimulationMemory | None,
     period: int = 0,
 ) -> PRNGKeyND:
     """Admit only this chunk's addressed keys, with dynamic age and row words."""
-    start = subject_slice.start
+    start = agent_slice.start
     return run_simulation_operation(
         memory=memory,
         function=draw_taste_shock_keys,
         arguments={
             "key": key,
             "address_words": np.asarray(address_words, dtype=np.uint32),
-            "subject_start": encode_subject_row(row=start),
-            "last_real_subject": encode_subject_row(row=original_n_subjects - 1),
+            "agent_start": encode_agent_row(row=start),
+            "last_real_agent": encode_agent_row(row=original_n_agents - 1),
             "period": np.uint32(period),
         },
-        static_arguments={"subject_count": subject_slice.stop - start},
-        subject_outputs=True,
+        static_arguments={"agent_count": agent_slice.stop - start},
+        agent_outputs=True,
     )
 
 
@@ -127,15 +127,15 @@ def draw_taste_shock_keys(
     *,
     key: _ScalarKey,
     address_words: _AddressWords,
-    subject_start: _RowWords,
-    last_real_subject: _RowWords,
-    subject_count: int,
+    agent_start: _RowWords,
+    last_real_agent: _RowWords,
+    agent_count: int,
     period: int | _Word | np.uint32 = _INITIAL_PERIOD,
 ) -> PRNGKeyND:
     """Fold dynamic time/domain metadata and uint64 global rows into a key.
 
     Rows use two uint32 words, high first, including when JAX disables x64.
-    Padded rows duplicate the final real subject. Only the current chunk is
+    Padded rows duplicate the final real agent. Only the current chunk is
     constructed. The caller supplies the caller's typed root; no mutable
     transition stream, regime code or population-wide split enters these keys.
 
@@ -147,8 +147,8 @@ def draw_taste_shock_keys(
     return draw_window_keys(
         key=key,
         address_words=address_words,
-        subject_start=subject_start,
-        last_real_subject=last_real_subject,
-        subject_count=subject_count,
+        agent_start=agent_start,
+        last_real_agent=last_real_agent,
+        agent_count=agent_count,
         period=period,
     )

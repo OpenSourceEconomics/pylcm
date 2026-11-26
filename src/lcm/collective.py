@@ -26,7 +26,7 @@ from lcm.typing import UserFunction
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
 class ParetoObjective:
-    r"""The household's Pareto scalarization of its members' action values.
+    r"""The Pareto scalarization of a collective regime's member action values.
 
     A collective regime takes one action for everybody, and this declares how
     the members' action values are traded off in taking it:
@@ -40,7 +40,7 @@ class ParetoObjective:
     lets the engine own what a Pareto weight means: one per member, finite
     and non-negative, with a strictly positive total, normalized cell by cell,
     and multiplied in zero-safely — so a member carrying no weight cannot
-    decide the household's choice through an admissible `-inf` of her own.
+    decide the members' choice through an admissible `-inf` of her own.
 
     Omit it (the regime's default) for equal weights.
     """
@@ -136,7 +136,7 @@ class CollectiveUtility:
     member axis of the regime's value function and of every published
     array.
 
-    The household takes one action for everybody. It maximizes `objective`
+    The members take one action together. They maximize `objective`
     over the feasible actions and reads off each member's own action value
     at that common choice.
 
@@ -154,20 +154,20 @@ class CollectiveUtility:
     `"self"` is not a valid key: it names the single member of a regime
     declared with a plain utility function.
 
-    Three ways to name a member's utility, and the keys are the household
+    Three ways to name a member's utility, and the keys are the members
     either way:
 
     - a function — the ordinary case;
-    - a `Phased` — the utility the household is solved against differs from the
+    - a `Phased` — the utility the regime is solved against differs from the
       one simulation realizes;
     - `None` — the body arrives from elsewhere, under the regime's own
       `utility_<s>` entry. That is what lets a model declare a common utility
-      at the model level and still name its households here; a member left
+      at the model level and still name its members here; a member left
       undeclared in both places is an error naming the entry that is missing.
     """
 
     objective: ParetoObjective | None = None
-    """How the members' action values are scalarized into the household's.
+    """How the members' action values are scalarized into one objective.
 
     `None` (the default) weights them equally. A `ParetoObjective` declares the
     weights, and declaring them rather than writing the sum as an ordinary
@@ -179,14 +179,14 @@ class CollectiveUtility:
     def __post_init__(self) -> None:
         if not self.utilities:
             raise RegimeInitializationError(
-                "A `CollectiveUtility` declares a household, so it needs at "
-                "least one member: `utilities` may not be empty."
+                "A `CollectiveUtility` declares the members of a regime, so it "
+                "needs at least one member: `utilities` may not be empty."
             )
         if "self" in self.utilities:
             raise RegimeInitializationError(
                 "A `CollectiveUtility` may not name a member 'self': that name "
                 "is reserved for the single member of a regime declared with a "
-                "plain utility function. Name the household's members otherwise."
+                "plain utility function. Name the members otherwise."
             )
         object.__setattr__(
             self, "utilities", ensure_containers_are_immutable(self.utilities)
@@ -211,7 +211,7 @@ class MemberRoute:
 
     A bare `ProjectedRegimeValue` is both what the branch is worth and where it
     puts a row. `Phased(solve=..., simulate=...)` separates them, because what
-    a household expects from leaving and what a settlement hands it are two
+    a member expects from leaving and what a transfer hands it are two
     objects:
 
     - the SOLVE leg prices the source's decision;
@@ -274,9 +274,10 @@ class Gate:
     member into singleton ones. A raw transition between regimes of
     different member structure stays rejected.
 
-    A gate never reads a value. A move decided by comparing values is an `Exit`
-    of the regime that decides: formation is an `Exit` with a `Consent` rule on
-    the source, dissolution the household's own exit.
+    A gate never reads a value. A decision on the composition that compares
+    values is the `CompositionAction` of the regime that decides. Formation is a
+    `CompositionAction` with a `Consent` rule on the source. Separation is the
+    composition action of the regime with several members.
     """
 
     predicate: UserFunction
@@ -320,10 +321,12 @@ class Gate:
             msg = (
                 f"The gate predicate reads {value_operands}, a value of its "
                 "target regime. A gate routes on the target's states and "
-                "parameters only. Declare a move decided by comparing values "
-                "as an `Exit` of the regime that decides: formation as an "
-                "`Exit` with a `Consent` rule on the source regime, dissolution "
-                "as the household regime's own `Exit`."
+                "parameters only. Declare a decision on the composition that "
+                "compares values as a `CompositionAction` of the regime that "
+                "decides: formation as "
+                "a `CompositionAction` with a `Consent` rule on the source regime, "
+                "divorce as the own `CompositionAction` of the regime with several "
+                "members."
             )
             raise GateReadsValueError(msg)
         object.__setattr__(self, "routes", ensure_containers_are_immutable(self.routes))

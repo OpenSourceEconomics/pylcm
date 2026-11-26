@@ -36,17 +36,17 @@ The model does not assign an age or elapsed duration to a period. See
 [Periods and temporal parameters](../user_guide/period_time.md).
 
 `stages={stage_name: (regime_name, ...), ...}` declares several decisions within every
-period, in order; every regime is in exactly one stage. Subjects start in their regime's
+period, in order; every regime is in exactly one stage. Agents start in their regime's
 stage, an edge lands at its target's next occurrence, the first later step of the
-target's stage, and an exit enters a regime of its own or a later stage of its period. A
-subject has no row and no transition at a step its regime sits out, and parameters,
-regime codes, values and simulated results name only declared regimes. Stages of one
-period are linked without discounting, so crossing into the next period discounts once,
-and a regime whose edges land in its period declares no Koopmans aggregator and uses no
-endogenous-grid solver. `period` and `age` mean the period in user functions,
-time-indexed parameters and the simulated frame, which gains a `stage` column.
-`model.n_periods` counts periods; `model.n_steps`, the solution and the raw simulation
-results count steps, one per period and stage.
+target's stage, and a composition action's destination is in its own stage or a later
+stage of its period. An agent has no row and no transition at a step its regime sits
+out, and parameters, regime codes, values and simulated results name only declared
+regimes. Stages of one period are linked without discounting, so crossing into the next
+period discounts once, and a regime whose edges land in its period declares no Koopmans
+aggregator and uses no endogenous-grid solver. `period` and `age` mean the period in
+user functions, time-indexed parameters and the simulated frame, which gains a `stage`
+column. `model.n_periods` counts periods; `model.n_steps`, the solution and the raw
+simulation results count steps, one per period and stage.
 `model.step_of(period=..., regime_name=...)`, `model.period_of_step(step=...)` and
 `model.stage_of_step(step=...)` convert between the two. `stages=None` gives every
 period one stage. See
@@ -109,31 +109,32 @@ or a DataFrame with a `"regime_name"` column, ages and categorical labels — an
 - `validate_initial_conditions(*, initial_conditions, params) -> None` raises
   `InvalidInitialConditionsError` for a malformed structure (unknown regime, missing or
   extra state, unequal lengths, off-grid age, inactive regime, invalid categorical code)
-  or for a subject admitting no jointly feasible action combination, with the same
+  or for an agent admitting no jointly feasible action combination, with the same
   diagnostics `simulate(log_level="debug")` reports.
 - `initial_conditions_feasibility(*, initial_conditions, params) -> Bool1D` returns a
-  one-dimensional boolean mask, `True` exactly for the feasible subjects in the order
+  one-dimensional boolean mask, `True` exactly for the feasible agents in the order
   supplied. A malformed structure raises rather than being reported infeasible;
   `validate_initial_conditions` succeeds exactly when the mask is all `True`.
 
-A subject is feasible when at least one combination of its regime's declared action-grid
+An agent is feasible when at least one combination of its regime's declared action-grid
 points satisfies every constraint jointly or, in a regime without actions, when every
-state-only constraint holds. A subject starting where its regime's current-period exit
-decides is accepted without a feasible stay action, since only the solution says whether
-the exit moves it; `simulate` raises `NoFeasibleActionError` if it then neither acts nor
-moves. Both methods apply every initial-condition check `simulate` applies, including
-the `own_member` declaration a collective start needs, and take no `log_level`: they
-always raise. The verdict does not depend on how the check is executed; at present both
-run in one eager pass on the default device, without device-memory admission or subject
-padding. When a constraint depends on an age-specialized function, each subject is
-checked against the constraints and functions resolved at its own start period.
+state-only constraint holds. An agent that starts where its regime's composition action
+is available is accepted without a feasible stay action, since only the solution says
+whether its composition changes. `simulate` raises `NoFeasibleActionError` if the agent
+then neither acts nor changes its composition. Both methods apply every
+initial-condition check `simulate` applies, including the `own_member` declaration a
+collective start needs, and take no `log_level`: they always raise. The verdict does not
+depend on how the check is executed; at present both run in one eager pass on the
+default device, without device-memory admission or agent padding. When a constraint
+depends on an age-specialized function, each agent is checked against the constraints
+and functions resolved at its own start period.
 
 `model.initial_state_grids(regime_name=...)` returns an immutable mapping of finalized
 public state declarations for initial-condition recipes. A generated `CompositeState`
 entry is replaced by its original member grids, preserving their category labels and
 codes. Ordinary grids, `Phased` declarations, and named joint-normal coordinate
 declarations keep their existing finalized form. `initial_state_names(regime_name=...)`
-gives physical per-subject names, expanding both composite members and joint-normal
+gives physical per-agent names, expanding both composite members and joint-normal
 coordinates. These differ from `state_names` / `state_grid`, which describe value-array
 axes.
 
@@ -191,7 +192,7 @@ full product of the members.
 - Members are held on category grids. A member declared by its values
   (`DiscreteGrid(values=...)`) is refused, and so is a member law that reads a variable
   declared by its values.
-- Initial conditions are encoded only for subjects whose starting regime carries the
+- Initial conditions are encoded only for agents whose starting regime carries the
   members; member codes must be whole numbers.
 - A model declares at most one composite state.
 
@@ -253,7 +254,7 @@ A general regime declares:
 | `shocks`                | Model-level IID shock groups; read as `x` or, from transitions, as `next_x`   |
 | `koopmans_aggregator`   | Optional regime-level continuation aggregator, `Phased` or `Decoupled`        |
 | `certainty_equivalent`  | Optional regime-level lottery reduction                                       |
-| `exit`                  | Current-period move with mapped policy queries                                |
+| `composition_action`    | The members' decision on the composition, with mapped policy queries          |
 | `description`           | Human-readable description                                                    |
 
 Use `Regime.replace(...)` to derive a modified immutable declaration.
@@ -266,11 +267,11 @@ Each user function returns the kind its role reads. A Python scalar (`0`, `1.5`,
 is accepted wherever an array of its kind is, and is converted where the engine receives
 it:
 
-| Role                                                                                                                                    | Returns                                                        |
-| --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| Constraint, gate, exit availability                                                                                                     | A Boolean, e.g. `wealth > 0` or `work == 1`                    |
-| Law of a discrete state, regime selector                                                                                                | An integer code, or a Boolean for the codes 0 and 1            |
-| Utility, law of a continuous state, transition probability, joint-transition weight or output, exit utility adjustment, borrowing bound | A number: an integer or a float, read at the model's precision |
+| Role                                                                                                                                           | Returns                                                        |
+| ---------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Constraint, gate, availability of the composition action                                                                                       | A Boolean, e.g. `wealth > 0` or `work == 1`                    |
+| Law of a discrete state, regime selector                                                                                                       | An integer code, or a Boolean for the codes 0 and 1            |
+| Utility, law of a continuous state, transition probability, joint-transition weight or output, destination utility adjustment, borrowing bound | A number: an integer or a float, read at the model's precision |
 
 Only the returned dtype is checked, when the function is first evaluated in `solve()`. A
 return of the wrong kind raises `InvalidFunctionOutputError`, naming the function. A
@@ -291,173 +292,188 @@ required by EGM-family solvers. See
 
 (api-current-exits)=
 
-## Current-period exits
+## The composition action
 
-`Regime(exit=Exit(...))` declares a move before the period's action. A regime has at
-most one exit; its parameters live under `exit`. Scheduled next-period transitions
-remain in `Model(edges=...)`.
+`Regime(composition_action=CompositionAction(...))` declares the members' decision on
+the composition. The members decide before the period's action. A regime has at most one
+composition action. Its parameters live under `composition_action`. Scheduled
+next-period transitions stay in `Model(edges=...)`.
 
-- `Exit(targets=..., rule=..., available=None, observes=(), nodes=None)` names each
-  source member's destination. A singleton uses the key `"self"`. `nodes`, a
-  `MonteCarlo` or `QuasiMonteCarlo` rule, applies when the regime is solved: every shock
-  group of the choice that the regime's own stay problem does not read, observed target
-  information included, is drawn `n` times from its law at the current state, and the
-  same draws serve every row of the groups the stay problem reads, which keep their
-  declared nodes. `None` integrates over the full product. Simulation uses the realized
-  shocks. `observes` names every shock of a group or none of them; naming some of a
-  group raises `ShockDeclarationError` when the model is built.
-- `ExitTarget(regime=..., projection=..., role=None, utility_adjustment=None)` names a
-  real destination and maps its complete current state. A collective destination
-  requires its member `role`. The adjustment reads source states and parameters and
-  enters the exit payoff once. A projection may be `Phased(solve=..., simulate=...)`; it
-  does not change information, and under `MutualConsent` a `Phased` projection that
-  reads the settlement, directly or through other functions, is refused when the model
-  is built. A projection names every state its destination declares, model-level ones
-  included. Where the destination does not read a model-level state and pruning drops
-  it, the projection onto it is dropped as well, as a law of motion toward that
-  destination is, so the same projection builds either way. A projected continuous state
-  follows its destination grid's `off_grid` rule, as a realised next state does, in the
-  solve and in the simulation alike. Under `"clip_state"` the destination's problem is
-  priced, its shock laws read and the mover landed at the state capped to the grid's
-  outer nodes. Under `"raise"` a read the exit choice evaluates outside the grid raises
-  `OffGridStateError`, even where the household then stays; a read where the exit is
-  unavailable, or at a shock node of zero mass, does not. `"extrapolate"` and
-  `"clip_lookup"` keep the projected state. A `"clip_state"` or `"raise"` grid whose
-  points are supplied at run time is refused when the model is built.
-- `Consent(counterparty=Counterparty(regime=..., role=..., projection=...))` compares
-  each party's payoff at the destination's common Participating policy strictly against
-  that party's Raw stay value. Equality keeps the original state. A party with no
-  feasible action has the value minus infinity, so it gains exactly where its value at
-  the destination is finite. The counterparty's projection follows the same rule as a
-  target's. A formation pays nothing: its target declares no `utility_adjustment`.
-- Built-in `rule=Unilateral()` keeps the match only if every member is willing to stay.
-  A member is willing when its stay value is above its exit payoff, or equal to it under
-  the default `tie="stay"`; `tie="leave"` makes an indifferent member leave. A member
-  whose destination has no feasible action at its landing state has the outside value
-  minus infinity and is willing at every feasible stay action, whatever `tie` says, also
-  where its stay value is minus infinity; this holds under every rule and comparison
-  below. Among the kept stay actions the household takes its Pareto-weighted argmax;
-  with none kept, the exit is taken. `rule=MutualConsent(settle=...)` needs a
-  settlement, below.
-- `compares` says where that comparison is made. `"each_action"` tests every stay
-  action, as just described. `"optimum"` tests only the household's unconstrained
-  optimum: `Unilateral` separates when any member refuses there, and a household that
-  stays acts at its optimum. Where the exit is not available the household stays at its
-  optimum; with no feasible action and the exit available it separates. A separation
-  needs a feasible action in every destination where the exit puts its member; without
-  one the cell has no value, as under `"each_action"`. The default `None` is `"optimum"`
-  with `renegotiate` and `"each_action"` otherwise. `MutualConsent` always compares at
-  the optimum; `"each_action"` together with `renegotiate` or `settle` is refused.
+- `CompositionAction(destinations=..., rule=..., available=None, observes=(), nodes=None)`
+  names each source member's destination. A regime with one member uses the key
+  `"self"`. `nodes`, a `MonteCarlo` or `QuasiMonteCarlo` rule, applies when the regime
+  is solved: every shock group of the choice that the regime's own stay problem does not
+  read, observed destination information included, is drawn `n` times from its law at
+  the current state, and the same draws serve every row of the groups the stay problem
+  reads, which keep their declared nodes. `None` integrates over the full product.
+  Simulation uses the realized shocks. `observes` names every shock of a group or none
+  of them; naming some of a group raises `ShockDeclarationError` when the model is
+  built.
+- `Destination(regime=..., projection=..., role=None, utility_adjustment=None)` names an
+  actual destination regime and maps its complete current state. A destination with
+  several members requires the member `role`. The adjustment reads source states and
+  parameters and enters the value of the outside option once. A projection may be
+  `Phased(solve=..., simulate=...)`; it does not change information. Under
+  `MutualConsent`, a `Phased` projection that reads the transfer, directly or through
+  other functions, is refused when the model is built. A projection names every state
+  its destination declares, model-level ones included. Where the destination does not
+  read a model-level state and pruning drops it, the projection onto it is dropped as
+  well, as a law of motion toward that destination is, so the same projection builds
+  either way. A projected continuous state follows its destination grid's `off_grid`
+  rule, as a realised next state does, in the solve and in the simulation alike. Under
+  `"clip_state"`, the destination's problem is priced, its shock laws are read and the
+  deciding member lands at the state capped to the grid's outer nodes. Under `"raise"`,
+  a read that the decision on the composition evaluates outside the grid raises
+  `OffGridStateError`, even where the members then stay. A read where the composition
+  action is unavailable, or at a shock node of zero mass, does not raise.
+  `"extrapolate"` and `"clip_lookup"` keep the projected state. A `"clip_state"` or
+  `"raise"` grid whose points are supplied at run time is refused when the model is
+  built.
+- `Consent(counterparty=Counterparty(regime=..., role=..., projection=...))` declares
+  formation by consent. It compares each agent's value at the destination's common
+  Participating policy strictly against that agent's Raw stay value. Equality keeps the
+  original state. An agent with no feasible action has the value minus infinity, so it
+  gains exactly where its value at the destination is finite. The counterparty's
+  projection follows the same rule as a destination's. A formation pays nothing: its
+  destination declares no `utility_adjustment`.
+- `rule=PCOnActions()` declares unilateral divorce with participation constraints on
+  actions. The members stay only if every member is willing to stay. A member is willing
+  when its value of staying is above the value of its outside option, or equal to it
+  under the default `tie="stay"`; `tie="leave"` makes an indifferent member leave. The
+  comparison is made at every stay action. A member whose destination has no feasible
+  action at its landing state has the value of the outside option minus infinity. It is
+  willing at every feasible stay action, whatever `tie` says, also where its value of
+  staying is minus infinity; this holds under every rule below. Among the kept stay
+  actions, the members take their Pareto-weighted argmax. With none kept, they separate.
+- `rule=PCOnWeight()` declares unilateral divorce with participation constraints on the
+  Pareto weight. Each member compares only at the members' unconstrained optimum.
+  Without a `state`, there is one Pareto weight and nothing adjusts: the members
+  separate when any member refuses at the optimum, and members that stay act at their
+  optimum. With a `state`, the Pareto weight first moves toward the refusing member; see
+  below. Where the composition action is not available, the members stay at their
+  optimum. With no feasible action and the composition action available, they separate.
+  A separation needs a feasible action in every destination where the composition action
+  puts a member; without one the cell has no value, as under `PCOnActions`.
+- `rule=MutualConsent(transfer=...)` declares mutual consent divorce. It compares at the
+  members' unconstrained optimum and needs a transfer; see below.
 
-A subject moves at most once per period, so an exit payoff is the value of the
-destination's problem at the projected state, without the destination's own exit. The
-destination's rule for leaving does not constrain that value, and two regimes may exit
-into each other. A formation by `Consent` is the exception: the formed couple applies
-its own rule for staying, and the outside values that rule compares are again problem
-values. Within one step (one stage of one period), a rule for staying that is read
-through such a value reads problem values only; a longer chain is refused. A mover acts
-in the problem its move was priced at, the formed couple's Participating policy after
-consent and the destination's problem otherwise. A regime with an available exit that
-needs no consent, entered in one period both by consent and by another exit, would act
-in two different problems; the model refuses it when it is built.
+An agent decides on its composition at most once per period. The value of the outside
+option is therefore the destination's value without the composition action at the
+projected state. The destination's rule for leaving does not constrain that value, and
+two regimes may be each other's destinations. A formation by `Consent` is the exception:
+the formed couple applies its own rule for staying. The values of the outside options
+that this rule compares are again values without the composition action. Within one step
+(one stage of one period), a rule for staying that is read through such a value reads
+only values without the composition action; a longer chain is refused. The deciding
+member acts in the problem at which its decision was priced: the formed couple's
+Participating policy after consent, and the destination's problem otherwise. Consider a
+regime with an available composition action that needs no consent. If agents enter it in
+one period both by consent and by another composition action, they would act in two
+different problems. The model refuses this when it is built.
 
-`Unilateral(renegotiate=Renegotiate(state="mu"))` first optimizes the Raw stay policy at
-every node of the ordered discrete state. It supports a collective pair: increasing node
-order favors the first member in the utility mapping, decreasing order the second. If
-both accept the incumbent, it stays. If one refuses, walk one node toward that member
-and stop at the first node both accept. Simultaneous refusal, reaching the grid edge or
-encountering the other member's refusal separates the pair; a later feasible island does
-not reopen the path. Equality follows the rule's `tie`. Outside payoffs are those at the
-original source state, its incumbent node included; they are not evaluated again along
-the path.
+`PCOnWeight(state="mu")` first optimizes the Raw stay policy at every node of the
+ordered discrete state that holds the Pareto weight. It supports a regime with two
+members: increasing node order favors the first member in the utility mapping,
+decreasing order the second. If both members accept at the incumbent node, the Pareto
+weight stays there. If one member refuses, the Pareto weight moves one node at a time
+toward that member and stops at the first node where both accept. The members separate
+when both refuse at once, when the path reaches the edge of the grid, or when the other
+member refuses on the path. A later feasible island does not reopen the path. Equality
+follows the rule's `tie`. The values of the outside options are those at the original
+source state, its incumbent node included. They are not evaluated again along the path.
 
-`MutualConsent(settle=Settlement(name="share", candidates=grid, default=f))` lets a pair
-of members shift the division on separation before deciding. Every exit target's
-projection functions and utility adjustment may read the settlement as the argument
-`name`; a settlement no target reads, and a name that is a state, action, function or
-shock of the source, are refused when the model is built. `candidates` is a continuous
-grid with fixed points; increasing values favour the first member. `default` is
-evaluated at the source node before the action and returns one number there: it may read
-states, parameters, the period, functions of the regime and shocks the regime itself
-draws, and it reads neither an action nor the settlement. Its value is clipped to the
-candidates' range and need not be a candidate. With `O_i(s)` member `i`'s outside value
-at settlement `s` (its destination's problem value at the projections evaluated with
-`s`, plus its adjustment evaluated with `s`), `W_i` its value at the household optimum
-and `d` the default:
+`MutualConsent(transfer=Transfer(name="share", candidates=grid, default=f))` lets two
+members shift the divorce transfer before they decide. Every destination's projection
+functions and utility adjustment may read the transfer as the argument `name`. A
+transfer that no destination reads is refused when the model is built, and so is a name
+that is a state, action, function or shock of the source. `candidates` is a continuous
+grid with fixed points; increasing values favour the first member. `default` is the
+division by law. It is evaluated at the source node before the action and returns one
+number there: it may read states, parameters, the period, functions of the regime and
+shocks the regime itself draws, and it reads neither an action nor the transfer. Its
+value is clipped to the candidates' range and need not be a candidate. Let $O_\kappa(t)$
+be member $\kappa$'s value of the outside option at transfer $t$: its destination's
+value without the composition action at the projections evaluated with $t$, plus its
+adjustment evaluated with $t$. Let $W_\kappa$ be its value of staying at the members'
+optimum, and $d$ the default:
 
-1. A member prefers leaving at `s` when `O_i(s)` is above `W_i`, or equal to it under
-   `tie="leave"`. `tie` decides every comparison of the rule, except that a member whose
-   destination has no feasible action at its landing state does not prefer leaving where
-   the household has a feasible action.
-1. A member refuses to stay when it prefers leaving at `d`. Nobody refuses: stay at the
-   optimum. Both refuse: separate at `d`; the candidates are not searched, and where a
-   destination has no feasible action at its landing state at `d` the cell has no value.
-1. Exactly one refuses: among the candidates strictly on the other member's side of `d`
-   at which every destination is supported, take the one nearest `d` at which that
-   member prefers leaving. It never does at `d` itself. Separate there if the member who
-   refuses to stay prefers leaving there too; otherwise, or without such a candidate,
-   stay at the optimum.
+1. A member prefers leaving at $t$ when $O_\kappa(t)$ is above $W_\kappa$, or equal to
+   it under `tie="leave"`. `tie` decides every comparison of the rule, with one
+   exception: a member whose destination has no feasible action at its landing state
+   does not prefer leaving where the members have a feasible action.
+1. A member refuses to stay when it prefers leaving at $d$. If nobody refuses, the
+   members stay at the optimum. If both refuse, they separate at $d$. The candidates are
+   not searched then, and where a destination has no feasible action at its landing
+   state at $d$, the cell has no value.
+1. If exactly one member refuses, take the candidates strictly on the other member's
+   side of $d$ at which every destination is supported. Among them, take the one nearest
+   $d$ at which the other member prefers leaving. The other member never does at $d$
+   itself. The members separate there if the member who refuses to stay prefers leaving
+   there too. Otherwise, or without such a candidate, they stay at the optimum.
 
-The engine does not check that the accepting member's outside value rises in that
-member's direction; the rule takes the nearest accepting candidate and tests the member
-who refuses to stay at that candidate only, never at a farther one. Each member's
-outside value at a candidate is compared with its value at the household optimum, not
-with its outside value at the default. A member whose projection does not read the
-settlement is read once, and only its adjustment varies; a candidate read whose
-projections land on the destination's grid takes the stored table. A household that
-separates lands at the projections evaluated with the selected settlement and receives
-the adjustments evaluated with it. The settlement is not a column of the simulated
-output; the landing states and values carry it. Two members only; a shifted settlement
-is searched on the candidates, never between them; a default that is random and
-unobserved at the decision cannot be declared.
+The engine does not check that the accepting member's value of the outside option rises
+in that member's direction. The rule takes the nearest accepting candidate and tests the
+member who refuses to stay at that candidate only, never at a farther one. Each member's
+value of the outside option at a candidate is compared with its value of staying at the
+members' optimum, not with its value of the outside option at the default. A member
+whose projection does not read the transfer is read once, and only its adjustment
+varies. A candidate read whose projections land on the destination's grid takes the
+stored table. Members that separate land at the projections evaluated with the selected
+transfer and receive the adjustments evaluated with it. The transfer is not a column of
+the simulated output; the landing states and values carry it. The rule has three limits:
+two members only; a shifted transfer is searched on the candidates, never between them;
+a default that is random and unobserved at the decision cannot be declared.
 
 An outside policy can have a gated transition into the next period. Its nominal target
 components and each projected personal fallback enter as explicit future value reads;
 the gate is applied at the landing point. This also holds when the outside regime is
 only queried and publishes no own Full value bank.
 
-The selected node supplies the action and spouse values and becomes the current state
-used by forward transitions. Declare `fixed_transition("mu")` when the state continues,
-so its selected node is also next period's node. A conflicting state law or joint update
-is refused. The feature uses the declared finite grid; it does not solve for continuous
-indifference. Other same-period Full recursion remains forbidden. Use `Model.simulate`
-for the routed decision: `lookup_policy` refuses an active renegotiating exit because it
-cannot return changed state and separation destinations.
+The selected node supplies the action and the members' values and becomes the current
+state used by forward transitions. Declare `fixed_transition("mu")` when the state
+continues, so its selected node is also next period's node. A conflicting state law or
+joint update is refused. The feature uses the declared finite grid; it does not solve
+for continuous indifference. Other same-period Full recursion remains forbidden. Use
+`Model.simulate` for the routed decision. `lookup_policy` refuses an active `PCOnWeight`
+with a `state`, because it cannot return a changed state or a separation destination.
 
 `available` reads states, parameters and observed shocks, and precedes unsafe benchmark
-evaluation. `observes` adds target information available at the exit choice. Hidden
-target shocks are priced before the source choice and revealed when a mover executes the
-destination's action. Partial observation of a correlated group is refused; see the
-adopted [IID and exit contract](../development/iid-exits-redesign.md).
+evaluation. `observes` adds destination information available at the decision on the
+composition. Hidden destination shocks are priced before the source's choice and
+revealed when the deciding member takes the destination's action. Partial observation of
+a correlated group is refused; see the adopted
+[contract for IID shocks and the composition action](../development/iid-exits-redesign.md).
 
-A `utility_adjustment`, a settlement's `default` and `available` are the same in the
-solve and in the simulation. One that reads, directly or through other functions, a
-function or law of motion declared `Phased` or a carried state is refused when the model
-is built, with the regime, the target and the name it reads.
+A `utility_adjustment`, a transfer's `default` and `available` are the same in the solve
+and in the simulation. One that reads, directly or through other functions, a function
+or law of motion declared `Phased` or a carried state is refused when the model is
+built, with the regime, the destination and the name it reads.
 
 When `available` reads nothing but discrete shocks of one group that the stay problem
 does not read, as an offer flag does, the solve enumerates that group's nodes where the
-exit is available and one node where it is not, weighted by the whole mass of those
-nodes at the value of staying; the values equal the full enumeration's to rounding.
+composition action is available and one node where it is not, weighted by the whole mass
+of those nodes at the value of staying; the values equal the full enumeration's to
+rounding.
 
-When an exit observes every shock of a target group, all of that group's quadrature rows
-are the same physical point, so the target's policy is evaluated once and that answer is
-weighted by every row's original weight. Values equal the row-by-row reduction. A group
-the exit observes only partly keeps its row-by-row evaluation.
+When a composition action observes every shock of a destination group, all of that
+group's quadrature rows are the same physical point, so the destination's policy is
+evaluated once and that answer is weighted by every row's original weight. Values equal
+the row-by-row reduction. A group the composition action observes only partly keeps its
+row-by-row evaluation.
 
-When the source draws the group of a shock its exit observes, the source and the
-destination see one draw, so its law is the same at the source's state and at the
-landing state: it may read parameters, and states that the projection returns unchanged
-under their own name. Model build raises `ShockDeclarationError` for such a law that
-reads a state the projection changes or is not proven to keep, for every law family and
-every rule, naming the regimes, the group, the shock and the state. To let such a shock
-depend on a changing state, draw it in the source and carry it to the destination as a
-state. A group only the destination draws has its law at the landing state: the source's
-decision, the destination's node and the simulated draw all evaluate it there, so it may
-read any state the projection sets.
+When the source draws the group of a shock its composition action observes, the source
+and the destination see one draw, so its law is the same at the source's state and at
+the landing state: it may read parameters, and states that the projection returns
+unchanged under their own name. Model build raises `ShockDeclarationError` for such a
+law that reads a state the projection changes or is not proven to keep, for every law
+family and every rule, naming the regimes, the group, the shock and the state. To let
+such a shock depend on a changing state, draw it in the source and carry it to the
+destination as a state. A group only the destination draws has its law at the landing
+state: the source's decision, the destination's node and the simulated draw all evaluate
+it there, so it may read any state the projection sets.
 
-When solving, an outside value is read from a table rather than evaluated again, where
-the model build can prove that the read lands on the table's nodes:
+When solving, the value of an outside option is read from a table rather than evaluated
+again, where the model build can prove that the read lands on the table's nodes:
 
 - the destination is solved in that period, with `GridSearch`, on a grid that is fixed
   when the model is built and not specialized to the period's age;
@@ -465,47 +481,49 @@ the model build can prove that the read lands on the table's nodes:
   `"clip_state"` grid's cap: the projection returns a source state unchanged between
   identical grids, or each of its finitely many inputs (grid points of the source's
   states, the period, its age, codes of a discrete shock) lands on a grid point;
-- each shock group of the destination is either observed whole by the exit, on the
-  destination's own nodes, or not observed at all.
+- each shock group of the destination is either observed whole by the composition
+  action, on the destination's own nodes, or not observed at all.
 
-The source regime tabulates the destination's problem value at every point of its grid
-and every node of the observed groups, integrating the others, once per period; each
-read gathers from that table. A cell whose problem fails its numerical checks fails only
-the reads that take it. A read the build cannot prove aligned, for example a projection
-that reads a parameter or a continuous shock, or lands between grid points, is evaluated
-at its exact point; no stored value is interpolated. An outside read of a destination
-solved with an endogenous-grid method is refused when the model is built. Simulation
-always evaluates the destination at each subject's realized state and shocks.
+The source regime tabulates the destination's value without the composition action at
+every point of its grid and every node of the observed groups, integrating the others,
+once per period; each read gathers from that table. A cell whose problem fails its
+numerical checks fails only the reads that take it. A read the build cannot prove
+aligned, for example a projection that reads a parameter or a continuous shock, or lands
+between grid points, is evaluated at its exact point; no stored value is interpolated. A
+read of the value of the outside option at a destination solved with an endogenous-grid
+method is refused when the model is built. Simulation always evaluates the destination
+at each agent's realized state and shocks.
 
 The cells of a query chunk and the rows of an information support run as batched lanes.
 Unless `ExecutionConfig(axis_widths={"query_cell": ...})` fixes the chunk, it holds as
 many cells as fill one step with the rows of the widest query it evaluates rather than
-reads from a table, and at least 64. A lane whose exit is unavailable is still computed
-and then discarded; its target reads its first grid point instead of the projected
-state, so a projection that is meaningless when the exit is unavailable cannot reach
-user functions there.
+reads from a table, and at least 64. A lane whose composition action is unavailable is
+still computed and then discarded. Its destination reads its first grid point instead of
+the projected state, so a projection that is meaningless when the composition action is
+unavailable cannot reach user functions there.
 
-Native current-period exits use each queried regime's declared `GridSearch` solver,
-whether the regime is evaluated at a point or tabulated for stored reads.
-Endogenous-grid query reconstruction is not implemented. Query admission also refuses
-invariant or co-mapped state layouts, action partitioning, stored Full-value references
-and runtime-bound query status adapters.
+The composition action uses each queried regime's declared `GridSearch` solver, whether
+the regime is evaluated at a point or tabulated for stored reads. Endogenous-grid query
+reconstruction is not implemented. Query admission also refuses invariant or co-mapped
+state layouts, action partitioning, stored Full-value references and runtime-bound query
+status adapters.
 
-Collective current-IID decisions select one common action and route exits at each node,
-then integrate each member's selected value. Stored values retain the member axis and
-carry no current-shock axis. A collective regime without an exit runs the ordinary grid
-search, integrating each member's value at the household's choice over the nodes. A
-regime with EV1 taste shocks that declares an exit is refused; see
+Collective current-IID decisions select one common action and route the decision on the
+composition at each node, then integrate each member's selected value. Stored values
+retain the member axis and carry no current-shock axis. A collective regime without a
+composition action runs the ordinary grid search, integrating each member's value at the
+members' choice over the nodes. A regime with EV1 taste shocks that declares a
+composition action is refused; see
 [`ExtremeValueTasteShocks`](#api-extreme-value-taste-shocks).
 
-A regime with a `Decoupled` aggregator has no exit or formation of its own: the model
-refuses it when it is built. Drop the separate objective, or let the current self choose
+A regime with a `Decoupled` aggregator declares no composition action: the model refuses
+it when it is built. Drop the separate objective, or let the current self choose
 differently with `koopmans_aggregator=Phased(solve=..., simulate=...)`, which a regime
-with an exit accepts. Another regime's move may read a `Decoupled` regime, as the target
-of its exit, the counterparty of its `Consent` or the couple its formation forms. The
-read takes the values that regime's solve publishes: each member's stored value at the
-action its objective selects, and with taste shocks their expectation under the
-objective's choice probabilities.
+with a composition action accepts. Another regime's composition action may read a
+`Decoupled` regime as its destination, as the counterparty of its `Consent` or as the
+couple its formation forms. The read takes the values that regime's solve publishes:
+each member's stored value at the action its objective selects, and with taste shocks
+their expectation under the objective's choice probabilities.
 
 (api-extreme-value-taste-shocks)=
 
@@ -535,7 +553,7 @@ expected latent perturbed maximum equals their smoothed log-sum. The shock affec
 choice, while simulation publishes the selected unshocked value. The solved value
 therefore includes the expected taste shock: it is the log-sum
 $\sigma \log \sum_j e^{Q_c(j)/\sigma}$. The simulated `value` column records $Q_c(j)$ of
-the action taken, without its shock, so its mean over subjects at one state estimates
+the action taken, without its shock, so its mean over agents at one state estimates
 $\sum_j P(j)\, Q_c(j)$ and lies below the solved value wherever more than one action has
 positive probability. This describes a regime whose Koopmans aggregator also chooses.
 With a `Decoupled` aggregator the continuous actions and the choice probabilities come
@@ -551,17 +569,18 @@ choice probabilities; see [Solvers and capabilities](solvers.md#api-dcegm).
 
 This feature requires at least one discrete action and is implemented by `GridSearch`
 and `DCEGM`. A collective regime admits it when exactly one member has a positive Pareto
-weight; that member decides, and every other member's value is the mean of its action
-values under the decider's choice probabilities (see
+weight. That member decides, and every other member's value is the mean of its action
+values under the deciding member's choice probabilities (see
 [Collective regimes](collective_regimes.md)). It is rejected for `NEGM`, `NBEGM`, and
-`NNBEGM`; on a collective regime with more than one positive weight; on the source
-regime of a gated transition; on a regime that declares an `exit`, whether a dissolution
-or a formation; and together with a nonlinear certainty equivalent. Another regime's
-exit may read a regime with taste shocks as its target or its `Consent` counterparty, at
-the decider's smoothed expected maximum and every other member's mean value. These are
-semantic boundaries, not ignored options: the declaration is rejected during `Regime`
-declaration or `Model` construction, before solve, except that a weight declared as a
-function is checked at every solve.
+`NNBEGM`; on a collective regime with more than one positive Pareto weight; on the
+source regime of a gated transition; on a regime that declares a `composition_action`,
+whether for a separation or a formation; and together with a nonlinear certainty
+equivalent. Another regime's composition action may read a regime with taste shocks as
+its destination or its `Consent` counterparty, at the deciding member's smoothed
+expected maximum and every other member's mean value. These are semantic boundaries, not
+ignored options: the declaration is rejected during `Regime` declaration or `Model`
+construction, before solve, except that a Pareto weight declared as a function is
+checked at every solve.
 
 (api-euler-gamma)=
 

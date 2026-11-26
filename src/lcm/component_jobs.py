@@ -11,7 +11,7 @@ exchange nothing while they run:
    reproduce.
 2. `run_component_job` runs one job. It takes the model and parameters the
    user's script builds, solves the job's codes and, when the plan simulates,
-   simulates the subjects holding them; then it publishes one fragment.
+   simulates the agents holding them; then it publishes one fragment.
 3. `collect_component_jobs` verifies every fragment and returns the complete
    result: the solution a single block-major solve publishes and, when the plan
    simulates, the panel of the whole population in its original order.
@@ -60,11 +60,11 @@ from _lcm.persistence.solution import (
     _require_positive_exact_int,
     _require_sha256,
 )
+from _lcm.simulation.agent_devices import simulation_agent_devices
+from _lcm.simulation.agent_groups import group_codes, group_sizes
 from _lcm.simulation.chunk_offload import chunk_host_device
 from _lcm.simulation.programs import forward_regimes_by_period
 from _lcm.simulation.random_address import RANDOM_ADDRESS_VERSION
-from _lcm.simulation.subject_devices import simulation_subject_devices
-from _lcm.simulation.subject_groups import group_codes, group_sizes
 from _lcm.solution.artifacts import fingerprint_flat_params
 from _lcm.solution.block_major import (
     RetainedComponentValues,
@@ -149,8 +149,8 @@ class ComponentJobPlan:
     seed: int | None
     """Simulation seed, or `None` for a plan that does not simulate."""
 
-    n_subjects: int | None
-    """Number of simulated subjects, or `None` for a plan that does not simulate."""
+    n_agents: int | None
+    """Number of simulated agents, or `None` for a plan that does not simulate."""
 
     initial_conditions_sha256: str | None
     """Digest of the planned population, or `None` for a plan that does not simulate."""
@@ -159,11 +159,11 @@ class ComponentJobPlan:
     """Digest of each job's original rows, or `None` for a solve-only plan."""
 
     code_counts: tuple[int, ...] | None
-    """Subjects holding each code, in grid order, or `None` for a solve-only plan."""
+    """Agents holding each code, in grid order, or `None` for a solve-only plan."""
 
     @property
     def simulates(self) -> bool:
-        """Whether the jobs simulate their codes' subjects."""
+        """Whether the jobs simulate their codes' agents."""
         return self.seed is not None
 
 
@@ -202,7 +202,7 @@ def plan_component_jobs(
         assignment: The codes of each job. Every code appears in exactly one
             nonempty job.
         initial_conditions: The population every job simulates its codes'
-            subjects of, or `None` for jobs that only solve. Give it together
+            agents of, or `None` for jobs that only solve. Give it together
             with `seed`.
         seed: The simulation seed, given together with `initial_conditions`.
 
@@ -227,12 +227,12 @@ def plan_component_jobs(
     if seed is not None and type(seed) is not int:
         msg = "A simulation seed must be an exact integer."
         raise ExecutionPlanningError(msg)
-    n_subjects = (
+    n_agents = (
         None
         if initial_conditions is None
-        else _n_subjects(initial_conditions=initial_conditions)
+        else _n_agents(initial_conditions=initial_conditions)
     )
-    if n_subjects == 0:
+    if n_agents == 0:
         msg = "A simulating component plan requires a nonempty overall population."
         raise ExecutionPlanningError(msg)
     if directory.exists() and any(directory.iterdir()):
@@ -260,7 +260,7 @@ def plan_component_jobs(
             jobs=jobs,
             codes=codes,
             initial_conditions=canonical,
-            n_subjects=cast("int", n_subjects),
+            n_agents=cast("int", n_agents),
         )
     (directory / FRAGMENT_DIRECTORY).mkdir(parents=True, exist_ok=True)
     write_json_atomically(
@@ -277,7 +277,7 @@ def plan_component_jobs(
             if initial_conditions is None
             else {
                 "seed": seed,
-                "n_subjects": n_subjects,
+                "n_agents": n_agents,
                 "initial_conditions_sha256": _initial_conditions_sha256(
                     initial_conditions=initial_conditions
                 ),
@@ -345,11 +345,11 @@ def load_component_job_plan(*, directory: Path) -> ComponentJobPlan:
         if job_rows_sha256 is not None and len(job_rows_sha256) != len(jobs):
             msg = "Job row digests do not match the planned code jobs."
             raise SolutionIntegrityError(msg)
-        n_subjects = (
+        n_agents = (
             None
             if simulation is None
             else _require_positive_exact_int(
-                value=simulation["n_subjects"], label="simulation population count"
+                value=simulation["n_agents"], label="simulation population count"
             )
         )
         code_counts = (
@@ -363,11 +363,11 @@ def load_component_job_plan(*, directory: Path) -> ComponentJobPlan:
             )
         )
         if code_counts is not None and (
-            len(code_counts) != len(codes) or sum(code_counts) != n_subjects
+            len(code_counts) != len(codes) or sum(code_counts) != n_agents
         ):
             msg = (
                 f"Code populations {code_counts!r} do not give one count per code "
-                f"of {codes!r} summing to the population of {n_subjects}."
+                f"of {codes!r} summing to the population of {n_agents}."
             )
             raise SolutionIntegrityError(msg)
         return ComponentJobPlan(
@@ -381,7 +381,7 @@ def load_component_job_plan(*, directory: Path) -> ComponentJobPlan:
                 dict(cast("Mapping[str, JSONValue]", plan["identity"]))
             ),
             seed=cast("int | None", seed),
-            n_subjects=n_subjects,
+            n_agents=n_agents,
             initial_conditions_sha256=None
             if simulation is None
             else _require_sha256(
@@ -409,7 +409,7 @@ def run_component_job(
     """Run one job of a plan and publish its fragment.
 
     The job solves each of its codes through every period on the block-major
-    engine. When the plan simulates, it simulates the subjects holding its
+    engine. When the plan simulates, it simulates the agents holding its
     codes while their values are on the device, on the chunks and with the
     random keys the whole population's simulation gives them. Whatever the job
     raises, it records the failure, publishes no fragment and re-raises.
@@ -831,8 +831,8 @@ def _fail_if_population_differs(
         raise ExecutionPlanningError(msg)
 
 
-def _n_subjects(*, initial_conditions: UserInitialConditions | pd.DataFrame) -> int:
-    """Return the number of subjects of a population."""
+def _n_agents(*, initial_conditions: UserInitialConditions | pd.DataFrame) -> int:
+    """Return the number of agents of a population."""
     if isinstance(initial_conditions, pd.DataFrame):
         return len(initial_conditions)
     return len(next(iter(initial_conditions.values())))
@@ -877,24 +877,22 @@ def _planned_rows(
     jobs: tuple[tuple[int, ...], ...],
     codes: tuple[int, ...],
     initial_conditions: InitialConditions,
-    n_subjects: int,
+    n_agents: int,
 ) -> tuple[tuple[str, ...], tuple[int, ...]]:
     """Bind each job to the canonical population's rows; count each code's rows.
 
     Returns:
-        The digest of each job's original rows, and the number of subjects
+        The digest of each job's original rows, and the number of agents
         holding each code, in grid order.
 
     """
     route = next(iter(model._regimes.values())).simulation.programs.grouping  # noqa: SLF001
     if route is None:
-        msg = (
-            "Simulating component jobs require the model's invariant subject grouping."
-        )
+        msg = "Simulating component jobs require the model's invariant agent grouping."
         raise ExecutionPlanningError(msg)
     if tuple(route.codes) != codes:
         msg = (
-            f"The subject grouping orders the codes {tuple(route.codes)!r}, not "
+            f"The agent grouping orders the codes {tuple(route.codes)!r}, not "
             f"the grid order {codes!r}."
         )
         raise ExecutionPlanningError(msg)
@@ -903,7 +901,7 @@ def _planned_rows(
         if route.state_name in initial_conditions
         else None
     )
-    keys = group_codes(route=route, codes=population_codes, n_real=n_subjects)
+    keys = group_codes(route=route, codes=population_codes, n_real=n_agents)
     digests = tuple(
         _job_row_checksum(
             job=job,
@@ -912,7 +910,7 @@ def _planned_rows(
         )
         for job, job_codes in enumerate(jobs)
     )
-    counts = group_sizes(route=route, codes=population_codes, n_real=n_subjects)
+    counts = group_sizes(route=route, codes=population_codes, n_real=n_agents)
     return digests, counts
 
 
@@ -1004,7 +1002,7 @@ def _simulate_job(
     log_level: LogLevel,
     max_compilation_workers: int | None,
 ) -> tuple[RetainedComponentValues, FragmentPanel]:
-    """Solve the job's codes while simulating their subjects; return both."""
+    """Solve the job's codes while simulating their agents; return both."""
     with selected_components(codes=codes) as selection:
         result = model.simulate(
             params=params,
@@ -1014,7 +1012,7 @@ def _simulate_job(
             log_level=log_level,
             max_compilation_workers=max_compilation_workers,
         )
-    rows = result._subject_rows  # noqa: SLF001
+    rows = result._agent_rows  # noqa: SLF001
     if rows is None:
         msg = "A selected simulation did not report the rows it simulated."
         raise ExecutionPlanningError(msg)
@@ -1029,8 +1027,8 @@ def _simulate_job(
     # One transfer for every leaf; a tuple keeps the addresses in their order.
     host_leaves = jax.device_get(tuple(leaves.values()))
     return selection.retained, FragmentPanel(
-        n_subjects=cast("int", plan.n_subjects),
-        subject_batch_size=int(cast("int", result._subject_batch_size)),  # noqa: SLF001
+        n_agents=cast("int", plan.n_agents),
+        agent_batch_size=int(cast("int", result._agent_batch_size)),  # noqa: SLF001
         rows=np.asarray(rows, dtype=np.int64),
         regimes=tuple(
             (regime, tuple(int(period) for period in periods))
@@ -1262,22 +1260,22 @@ def _collected_simulation(
         if len(panel.rows) != planned:
             msg = (
                 f"Job {fragment.job} holds {len(panel.rows)} rows, not the "
-                f"{planned} subjects the plan counts for codes {fragment.codes!r}."
+                f"{planned} agents the plan counts for codes {fragment.codes!r}."
             )
             raise SolutionIntegrityError(msg)
-    n_subjects = cast("int", plan.n_subjects)
+    n_agents = cast("int", plan.n_agents)
     rows = np.concatenate([panel.rows for panel in panels])
-    covered = np.zeros(n_subjects, dtype=np.int64)
-    np.add.at(covered, rows[(rows >= 0) & (rows < n_subjects)], 1)
-    widths = {panel.subject_batch_size for panel in panels}
+    covered = np.zeros(n_agents, dtype=np.int64)
+    np.add.at(covered, rows[(rows >= 0) & (rows < n_agents)], 1)
+    widths = {panel.agent_batch_size for panel in panels}
     if (
-        {panel.n_subjects for panel in panels} != {n_subjects}
+        {panel.n_agents for panel in panels} != {n_agents}
         or len(widths) != 1
-        or len(rows) != n_subjects
+        or len(rows) != n_agents
         or not np.all(covered == 1)
     ):
         msg = (
-            "The jobs' panels do not hold every subject of the population exactly "
+            "The jobs' panels do not hold every agent of the population exactly "
             "once on one chunk width."
         )
         raise SolutionIntegrityError(msg)
@@ -1308,7 +1306,7 @@ def _collected_simulation(
     ] = {}
     for address, leaf in template.leaves.items():
         regime, period, field_name, key = address
-        full = np.empty((n_subjects, *leaf.shape[1:]), dtype=leaf.dtype)
+        full = np.empty((n_agents, *leaf.shape[1:]), dtype=leaf.dtype)
         for panel in populated:
             full[panel.rows] = panel.leaves[address]
         fields_by_cell.setdefault((regime, period), {}).setdefault(field_name, {})[
@@ -1335,7 +1333,7 @@ def _collected_simulation(
         step_to_regime_to_V_arr=solution.values,
         ages=model._time,  # noqa: SLF001
         simulation_output_dtypes=model.simulation_output_dtypes,
-        subject_batch_size=widths.pop(),
+        agent_batch_size=widths.pop(),
         nested_policy_regimes=frozenset(
             regime_name
             for regime_name, regime in regimes.items()
@@ -1361,10 +1359,10 @@ def _reference_shardings(
 ) -> MappingProxyType[LeafAddress, jax.sharding.Sharding]:
     """Return, per raw leaf, where the single-process simulation leaves it.
 
-    The single-process simulation cuts each code's subjects into chunks of
+    The single-process simulation cuts each code's agents into chunks of
     `width`. Several chunks are each moved to the host assembly device as they
     finish and assembled there; a single chunk stays on the layout it was
-    computed on, which the one job holding every subject recorded.
+    computed on, which the one job holding every agent recorded.
 
     Raises:
         SolutionIntegrityError: A single chunk's recorded layout is missing, not
@@ -1377,7 +1375,7 @@ def _reference_shardings(
     template = populated[0]
     if n_chunks > 1:
         host = chunk_host_device(
-            subject_devices=simulation_subject_devices(
+            agent_devices=simulation_agent_devices(
                 regimes=model._regimes,  # noqa: SLF001
                 device_ids=model._execution.device_ids,  # noqa: SLF001
             )
@@ -1390,15 +1388,15 @@ def _reference_shardings(
         )
     if len(populated) != 1:
         msg = (
-            f"{len(populated)} jobs hold subjects of a population the plan "
+            f"{len(populated)} jobs hold agents of a population the plan "
             "simulates in one chunk."
         )
         raise SolutionIntegrityError(msg)
     devices = _selected_devices(model=model)
-    n_subjects = cast("int", plan.n_subjects)
+    n_agents = cast("int", plan.n_agents)
     shardings: dict[LeafAddress, jax.sharding.Sharding] = {}
     for address, leaf in template.leaves.items():
-        shape = (n_subjects, *leaf.shape[1:])
+        shape = (n_agents, *leaf.shape[1:])
         try:
             sharding = _sharding_from_layout(
                 layout=template.layouts[address], devices=devices
@@ -1584,7 +1582,7 @@ def _validate_raw_fields(
                 msg = (
                     f"Raw field {(name, step, field_name)!r} has shape "
                     f"{leaf.shape!r} and dtype {leaf.dtype!s}, incompatible with "
-                    "the model's subject and member axes or field dtype."
+                    "the model's agent and member axes or field dtype."
                 )
                 raise SolutionIntegrityError(msg)
 

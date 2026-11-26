@@ -10,6 +10,7 @@ import numpy as np
 from jax import Array
 from jaxtyping import Int, Scalar, UInt32
 
+from _lcm.simulation.agent_groups import AgentRows
 from _lcm.simulation.memory import SimulationMemory, run_simulation_operation
 from _lcm.simulation.random_address import (
     RandomAddress,
@@ -17,9 +18,8 @@ from _lcm.simulation.random_address import (
     Word,
     draw_row_keys,
     draw_window_keys,
-    encode_subject_row,
+    encode_agent_row,
 )
-from _lcm.simulation.subject_groups import SubjectRows
 from _lcm.typing import PRNGKeyND
 from lcm.exceptions import ExecutionPlanningError, InvalidSimulationInputError
 from lcm.typing import PRNGKey, UserSeed
@@ -32,9 +32,9 @@ def canonicalize_simulation_seed(
 ) -> int | PRNGKey | None:
     """Refuse malformed random roots before processing inputs or solving.
 
-    The ordinary-stream `seed` must be a Threefry key: draws inside a subject chunk
-    are batched, and only Threefry gives every subject the same draws whatever the
-    chunk width. The taste stream draws per subject key, so `taste_shock_seed`
+    The ordinary-stream `seed` must be a Threefry key: draws inside an agent chunk
+    are batched, and only Threefry gives every agent the same draws whatever the
+    chunk width. The taste stream draws per agent key, so `taste_shock_seed`
     accepts any implementation.
     """
     if seed is None or (
@@ -104,8 +104,8 @@ def generate_simulation_keys(
     key: PRNGKeyND,
     names: list[str],
     n_initial_states: int,
-    subject_slice: slice | SubjectRows | None = None,
-    original_n_subjects: int | None = None,
+    agent_slice: slice | AgentRows | None = None,
+    original_n_agents: int | None = None,
     memory: SimulationMemory | None = None,
     period: int = 0,
     addresses: Mapping[str, RandomAddress] = MappingProxyType({}),
@@ -120,7 +120,7 @@ def generate_simulation_keys(
         raise ExecutionPlanningError(
             "A random period must fit an unsigned 32-bit word."
         )
-    real = n_initial_states if original_n_subjects is None else original_n_subjects
+    real = n_initial_states if original_n_agents is None else original_n_agents
     if not 0 < real <= n_initial_states <= 2**64:
         raise ExecutionPlanningError("A random population requires valid uint64 rows.")
     encoded_addresses = tuple(
@@ -130,12 +130,12 @@ def generate_simulation_keys(
     static_arguments = {
         "names": tuple(names),
         "n_initial_states": n_initial_states,
-        "original_n_subjects": real,
+        "original_n_agents": real,
         "partitionable": jax.config.jax_threefry_partitionable,
         "addresses": encoded_addresses,
     }
-    if isinstance(subject_slice, SubjectRows):
-        original_rows = np.asarray(subject_slice.rows)
+    if isinstance(agent_slice, AgentRows):
+        original_rows = np.asarray(agent_slice.rows)
         if (
             original_rows.ndim != 1
             or original_rows.dtype.kind not in "iu"
@@ -155,40 +155,38 @@ def generate_simulation_keys(
             static_arguments={
                 name: value
                 for name, value in static_arguments.items()
-                if name not in ("n_initial_states", "original_n_subjects")
+                if name not in ("n_initial_states", "original_n_agents")
             },
-            subject_arg_names=("rows",),
-            subject_outputs=True,
+            agent_arg_names=("rows",),
+            agent_outputs=True,
         )
-    subject_slice = (
-        slice(0, n_initial_states) if subject_slice is None else subject_slice
-    )
+    agent_slice = slice(0, n_initial_states) if agent_slice is None else agent_slice
     start, width = _validated_chunk_window(
-        subject_slice=subject_slice, n_initial_states=n_initial_states
+        agent_slice=agent_slice, n_initial_states=n_initial_states
     )
     return key, run_simulation_operation(
         memory=memory,
         function=_generate_windowed_simulation_keys,
         arguments={
             "key": key,
-            "start": encode_subject_row(start),
+            "start": encode_agent_row(start),
             "period": np.uint32(period),
         },
         static_arguments={**static_arguments, "width": width},
-        subject_outputs=True,
+        agent_outputs=True,
     )
 
 
 def _validated_chunk_window(
-    *, subject_slice: slice, n_initial_states: int
+    *, agent_slice: slice, n_initial_states: int
 ) -> tuple[int, int]:
     """Refuse invalid chunk bounds instead of silently clamping or striding."""
-    start = 0 if subject_slice.start is None else subject_slice.start
-    stop = n_initial_states if subject_slice.stop is None else subject_slice.stop
+    start = 0 if agent_slice.start is None else agent_slice.start
+    stop = n_initial_states if agent_slice.stop is None else agent_slice.stop
     if (
         type(start) is not int
         or type(stop) is not int
-        or subject_slice.step not in (None, 1)
+        or agent_slice.step not in (None, 1)
         or not 0 <= start < stop <= n_initial_states <= 2**64
     ):
         raise ExecutionPlanningError(
@@ -204,15 +202,15 @@ def _generate_windowed_simulation_keys(
     start: RowWords,
     names: tuple[str, ...],
     n_initial_states: int,
-    original_n_subjects: int | None,
+    original_n_agents: int | None,
     partitionable: bool,
     width: int,
     period: int | np.uint32 | Word = _INITIAL_PERIOD,
     addresses: tuple[tuple[int, ...], ...] | None = None,
 ) -> dict[str, PRNGKeyND]:
     """Construct addressed keys directly for a dynamic original-row window."""
-    real = n_initial_states if original_n_subjects is None else original_n_subjects
-    last = encode_subject_row(real - 1)
+    real = n_initial_states if original_n_agents is None else original_n_agents
+    last = encode_agent_row(real - 1)
     with jax.threefry_partitionable(partitionable):
         return {
             f"key_{name}": draw_window_keys(
@@ -223,9 +221,9 @@ def _generate_windowed_simulation_keys(
                     else addresses[index],
                     dtype=np.uint32,
                 ),
-                subject_start=start,
-                last_real_subject=last,
-                subject_count=width,
+                agent_start=start,
+                last_real_agent=last,
+                agent_count=width,
                 period=period,
             )
             for index, name in enumerate(names)
@@ -241,7 +239,7 @@ def _generate_rowed_simulation_keys(
     period: int | np.uint32 | Word = _INITIAL_PERIOD,
     addresses: tuple[tuple[int, ...], ...] | None = None,
 ) -> dict[str, PRNGKeyND]:
-    """Address grouped subjects by their encoded original rows."""
+    """Address grouped agents by their encoded original rows."""
     with jax.threefry_partitionable(partitionable):
         return {
             f"key_{name}": draw_row_keys(
