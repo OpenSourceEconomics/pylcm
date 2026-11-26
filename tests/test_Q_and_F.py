@@ -15,11 +15,13 @@ from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.grids import categorical
 from _lcm.params.processing import create_params_template, get_flat_param_names
 from _lcm.probability import regime_mass_is_a_distribution
+from _lcm.regime_building.collective import member_name
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_building.Q_and_F import (
     _aggregate_joint_lottery,
     _as_lottery,
+    _CollectiveQAndF,
     _get_feasibility,
     _get_joint_weights_function,
     _get_U_and_F,
@@ -610,6 +612,59 @@ def _build_two_target_closure(
         return Q[..., 0], F
 
     return single
+
+
+@pytest.mark.parametrize("member_names", [SELF, ("a", "b")], ids=["single", "pair"])
+def test_one_aggregator_for_every_member_is_traced_as_one_call(
+    member_names: tuple[str, ...],
+) -> None:
+    """A `W` and an objective `W` declared once serve all members in one call.
+
+    The program the kernel's aggregators trace to on the stacked member values is
+    the aggregator's own program on them: no member's slice is cut out and no
+    per-member result is stacked back.
+    """
+    kernel = cast(
+        "_CollectiveQAndF",
+        get_Q_and_F_collective(
+            phase_name="solution",
+            members=member_names,
+            flat_param_names=frozenset(),
+            functions=MappingProxyType(
+                {
+                    member_name(base="utility", member=member): cast(
+                        "EconFunction", _sum_utility
+                    )
+                    for member in member_names
+                }
+            ),
+            koopmans_aggregator=cast("EconFunction", LinearAggregator()),
+            objective_aggregator=cast("EconFunction", LinearAggregator()),
+            constraints=MappingProxyType({}),
+            period_targets=("low", "high"),
+            transitions=MappingProxyType({}),
+            transition_plans=MappingProxyType({}),
+            compute_regime_transition_probs=concatenate_functions(
+                functions={"regime_transition_probs": _low_and_high_probs},
+                targets="regime_transition_probs",
+                enforce_signature=False,
+                set_annotations=True,
+            ),
+            regime_to_v_interpolation_info=MappingProxyType(
+                {"low": _STATELESS_V_INFO, "high": _STATELESS_V_INFO}
+            ),
+        ),
+    )
+    stacked = {
+        "utility": jnp.arange(len(member_names), dtype=float),
+        "CE": jnp.arange(len(member_names), dtype=float) + 1.0,
+        "discount_factor": jnp.asarray(0.5),
+    }
+    expected = str(jax.make_jaxpr(LinearAggregator())(**stacked))
+
+    assert kernel.objective_aggregator is not None
+    for aggregator in (kernel.koopmans_aggregator, kernel.objective_aggregator):
+        assert str(jax.make_jaxpr(aggregator)(**stacked)) == expected
 
 
 class _TwoTargetCallKwargs(TypedDict, closed=True):

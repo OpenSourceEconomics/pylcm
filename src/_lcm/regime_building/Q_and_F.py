@@ -1392,15 +1392,15 @@ def get_Q_and_F_collective(
     )
     n_members = len(members)
     # An aggregator is a function of one member's utility and continuation. A
-    # bare one serves every member with the shared params, so it is applied to
-    # each member's slice like an aggregator keyed by member.
+    # bare one serves every member with the shared params, so it is mapped over
+    # the member axis in one call.
     if not isinstance(koopmans_aggregator, _MemberAggregator):
-        koopmans_aggregator = get_member_aggregator(
-            aggregators=(koopmans_aggregator,) * n_members
+        koopmans_aggregator = cast(
+            "EconFunction", _EachMemberAggregator(aggregator=koopmans_aggregator)
         )
     if objective_aggregator is not None:
-        objective_aggregator = get_member_aggregator(
-            aggregators=(objective_aggregator,) * n_members
+        objective_aggregator = cast(
+            "EconFunction", _EachMemberAggregator(aggregator=objective_aggregator)
         )
 
     # The engine's one continuation-aggregation site, told that every target's V
@@ -1703,6 +1703,37 @@ class _MemberAggregator:
             ],
             axis=-1,
         )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _EachMemberAggregator:
+    """One Koopmans aggregator mapped over the trailing member axis.
+
+    Each member's call sees that member's `utility` and `CE` alone; the further
+    arguments are shared. Mapping rather than slicing and stacking keeps the
+    traced program the aggregator's own elementwise program.
+    """
+
+    aggregator: EconFunction
+    """The aggregator every member shares."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            arg_names=tuple(inspect.signature(self.aggregator).parameters),
+            return_annotation="FloatND",
+            name="koopmans_aggregator",
+        )
+
+    @no_type_check
+    def __call__(self, *, utility: FloatND, CE: FloatND, **kwargs: QAndFArg) -> FloatND:
+        # Positional, since `jax.vmap` maps keyword arguments; the further
+        # arguments are closed over and so shared by every member.
+        # keyword-only-exempt: library-callback=jax.vmap
+        def one_member(member_utility: FloatND, member_CE: FloatND) -> FloatND:
+            return self.aggregator(utility=member_utility, CE=member_CE, **kwargs)
+
+        return jax.vmap(one_member, in_axes=-1, out_axes=-1)(utility, CE)
 
 
 def _get_member_sliced_interpolator(
