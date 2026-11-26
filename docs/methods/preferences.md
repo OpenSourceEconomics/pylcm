@@ -75,8 +75,11 @@ stored value is the agent's assessment of the policy it expects to follow, which
 from the long-run value of the policy it follows. PyLCM has no backward pass for that
 realized value; discounting the utilities along simulated paths estimates it. The stored
 value is read off away from its own maximum, so grid error in the chosen action enters
-it at first order. Only `GridSearch` solves a `Decoupled` regime. See the executable
-[beta-delta notebook](../explanations/beta_delta.ipynb).
+it at first order. Only `GridSearch` solves a `Decoupled` regime. Such a regime has no
+exit or formation of its own; let the current self choose differently with a `Phased`
+aggregator there. Another regime's exit or formation reads a `Decoupled` regime at the
+values its solve publishes, the stored values where its objective chooses. See the
+executable [beta-delta notebook](../explanations/beta_delta.ipynb).
 
 Solver support for nonlinear certainty equivalents is narrower than support for linear
 expectations:

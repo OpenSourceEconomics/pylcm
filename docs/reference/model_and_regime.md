@@ -329,9 +329,13 @@ remain in `Model(edges=...)`.
   target's. A formation pays nothing: its target declares no `utility_adjustment`.
 - Built-in `rule=Unilateral()` keeps the match only if every member is willing to stay.
   A member is willing when its stay value is above its exit payoff, or equal to it under
-  the default `tie="stay"`; `tie="leave"` makes an indifferent member leave. Among the
-  kept stay actions the household takes its Pareto-weighted argmax; with none kept, the
-  exit is taken. `rule=MutualConsent(settle=...)` needs a settlement, below.
+  the default `tie="stay"`; `tie="leave"` makes an indifferent member leave. A member
+  whose destination has no feasible action at its landing state has the outside value
+  minus infinity and is willing at every feasible stay action, whatever `tie` says, also
+  where its stay value is minus infinity; this holds under every rule and comparison
+  below. Among the kept stay actions the household takes its Pareto-weighted argmax;
+  with none kept, the exit is taken. `rule=MutualConsent(settle=...)` needs a
+  settlement, below.
 - `compares` says where that comparison is made. `"each_action"` tests every stay
   action, as just described. `"optimum"` tests only the household's unconstrained
   optimum: `Unilateral` separates when any member refuses there, and a household that
@@ -379,7 +383,9 @@ at settlement `s` (its destination's problem value at the projections evaluated 
 and `d` the default:
 
 1. A member prefers leaving at `s` when `O_i(s)` is above `W_i`, or equal to it under
-   `tie="leave"`. `tie` decides every comparison of the rule.
+   `tie="leave"`. `tie` decides every comparison of the rule, except that a member whose
+   destination has no feasible action at its landing state does not prefer leaving where
+   the household has a feasible action.
 1. A member refuses to stay when it prefers leaving at `d`. Nobody refuses: stay at the
    optimum. Both refuse: separate at `d`; the candidates are not searched, and where a
    destination has no feasible action at its landing state at `d` the cell has no value.
@@ -489,6 +495,15 @@ search, integrating each member's value at the household's choice over the nodes
 regime with EV1 taste shocks that declares an exit is refused; see
 [`ExtremeValueTasteShocks`](#api-extreme-value-taste-shocks).
 
+A regime with a `Decoupled` aggregator has no exit or formation of its own: the model
+refuses it when it is built. Drop the separate objective, or let the current self choose
+differently with `koopmans_aggregator=Phased(solve=..., simulate=...)`, which a regime
+with an exit accepts. Another regime's move may read a `Decoupled` regime, as the target
+of its exit, the counterparty of its `Consent` or the couple its formation forms. The
+read takes the values that regime's solve publishes: each member's stored value at the
+action its objective selects, and with taste shocks their expectation under the
+objective's choice probabilities.
+
 (api-extreme-value-taste-shocks)=
 
 ## `ExtremeValueTasteShocks`
@@ -524,7 +539,10 @@ With a `Decoupled` aggregator the continuous actions and the choice probabilitie
 from the objective, and the solve stores the expectation of `value` at the noisy choice
 including the chosen action's shock, $\sum_j P(j)\,[v(j) - \sigma \log P(j)]$ with
 $v(j)$ the `value` at combination $j$; simulation again records $v(j)$ of the action
-taken. See [preferences](../methods/preferences.md). DCEGM simulation uses
+taken. See [preferences](../methods/preferences.md). A cell where every feasible
+combination is worth $-\infty$ to the deciding member is worth $-\infty$ to every member
+and has no choice probabilities; a simulation that reaches it raises
+`NoFeasibleActionError`, as at a cell without a feasible action. DCEGM simulation uses
 grid-restricted candidates and therefore need not reproduce its off-grid solve value or
 choice probabilities; see [Solvers and capabilities](solvers.md#api-dcegm).
 

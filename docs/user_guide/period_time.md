@@ -190,9 +190,18 @@ where it decides. An edge into it reads its value at its next occurrence, and a 
 in it has no row and no transition at a step it sits out. The parameter template,
 `model.regime_names_to_ids`, `model.initial_nodes`, the solution's values, the raw
 simulation results and the simulated frame list only declared regimes, so they have no
-entry for a step the regime sits out. A gated edge does not skip a stage, a regime with
-a continuous stochastic process does not sit out a stage, and an edge whose target's
-next occurrence lies beyond the last period is refused.
+entry for a step the regime sits out. An edge whose target's next occurrence lies beyond
+the last period is refused.
+
+An edge into a regime that sits out a stage is a shorthand, and it has three limits: a
+source's edges at one age all stay in its period or all cross into the next one, a gated
+edge does not skip a stage, and an edge does not skip a stage of a regime with a
+continuous stochastic process among its states. Where an edge breaks one of them, the
+error names the regime and the stage in which to declare its pass-through explicitly. A
+pass-through is a regime of that stage with the same states as the regime it stands for,
+one action, no shock and zero utility, whose edge lands in that regime, so that its
+value is the regime's value handed through; let the refused edge land in the
+pass-through instead.
 
 - `period` and `age` are the period's wherever the model reads them: in functions,
   constraints and conditions, laws, gates, exits and settlements, Pareto weights and

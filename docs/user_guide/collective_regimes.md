@@ -105,8 +105,11 @@ member to the other. A regime with taste shocks, single or household, cannot hav
 own exit or formation: drop `taste_shocks` on it, or move the exit decision to a regime
 without taste shocks. Another regime's exit or formation may read it, as its target or
 as the counterparty of a `Consent`: the decider's value there is its smoothed expected
-maximum, every other member's its mean under the decider's choice probabilities. A
-household with taste shocks may observe current-period `shocks`.
+maximum, every other member's its mean under the decider's choice probabilities. Where
+every feasible alternative is worth minus infinity to the decider, every member's value
+is minus infinity, and a simulation that reaches that cell raises
+`NoFeasibleActionError`. A household with taste shocks may observe current-period
+`shocks`.
 
 ## Dissolving in the current period: where the members compare
 
@@ -126,7 +129,10 @@ A member's outside value is its destination's problem at the state the exit targ
 `projection` gives, and a member who leaves lands there. That state follows the
 destination grid's `off_grid` rule as a realised next state does: a `"clip_state"` grid
 caps it to its outer nodes for both the outside value and the landing, and a `"raise"`
-grid refuses a read outside it, even where the household then stays.
+grid refuses a read outside it, even where the household then stays. A member whose
+destination has no feasible action there has the outside value minus infinity and
+accepts every feasible stay action, whatever the rule's `tie` says, also where its own
+stay value is minus infinity.
 
 Under mutual consent the members compare at the optimum and can shift the division on
 separation before they decide. `Settlement` names it as an argument the exit's
@@ -167,7 +173,9 @@ The settlement rule, with outside values evaluated at a settlement:
 
 1. Each member compares its value at the optimum with its outside value at the `default`
    settlement. In every comparison of the rule an indifferent member does what `tie`
-   says: it prefers staying under `"stay"` and leaving under `"leave"`.
+   says: it prefers staying under `"stay"` and leaving under `"leave"`. A member whose
+   destination has no feasible action prefers staying wherever the household has a
+   feasible action.
 1. If nobody wants to leave, the household stays. If both want to leave, it separates at
    the default, without a search of the candidates.
 1. If exactly one wants to leave, the other member is compensated: among the candidates
@@ -253,8 +261,10 @@ At every node of the state the household's optimum is computed ignoring the exit
 all other states held at their current values. Each member's value at that optimum is
 compared with the member's outside value. A member accepts a node when its value there
 is above its outside value, or equal to it under the default `tie="stay"`; `tie="leave"`
-makes an indifferent member refuse. A node at which the household has no feasible action
-is accepted by nobody. Starting from the household's current node:
+makes an indifferent member refuse. A member whose destination has no feasible action
+accepts every node at which the household has a feasible action. A node at which the
+household has no feasible action is accepted by nobody. Starting from the household's
+current node:
 
 1. If both members accept it, the household stays there and acts at its optimum.
 1. If both refuse it, the household separates.

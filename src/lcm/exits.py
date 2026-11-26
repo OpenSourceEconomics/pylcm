@@ -91,7 +91,9 @@ class Settlement:
 
     Exit-target projections and utility adjustments read the settlement under
     `name`. Each member compares its stay value at the household optimum with its
-    outside value; the rule's `tie` says which of two equal values it prefers. If
+    outside value; the rule's `tie` says which of two equal values it prefers, and a
+    member whose destination has no feasible action prefers staying wherever the
+    household has a feasible action. If
     both members want to leave at the default, the pair separates there, without a
     search of the candidates; where a destination has no feasible action there, the
     node has no value. If exactly one does, the other member accepts the candidate
@@ -136,7 +138,11 @@ class Unilateral:
     """Any member can end the match: it continues only if every member is willing."""
 
     tie: Literal["stay", "leave"] = "stay"
-    """What a member exactly indifferent between staying and the exit does."""
+    """What a member exactly indifferent between staying and the exit does.
+
+    A member whose destination has no feasible action is willing to stay at every
+    feasible stay action, whatever `tie` says.
+    """
     compares: Literal["each_action", "optimum"] | None = field(
         default=None, metadata={"fingerprint_omit_if_default": True}
     )
@@ -167,7 +173,9 @@ class MutualConsent:
     """Which of an equal stay and outside value a member prefers, at every comparison.
 
     It decides who wants to leave at the default, whether the other member accepts a
-    candidate settlement, and whether the member who wants to leave does so there.
+    candidate settlement, and whether the member who wants to leave does so there. A
+    member whose destination has no feasible action prefers staying wherever the
+    household has a feasible action, whatever `tie` says.
     """
     compares: Literal["each_action", "optimum"] | None = field(
         default=None, metadata={"fingerprint_omit_if_default": True}

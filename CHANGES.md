@@ -61,11 +61,20 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   member accepts a candidate only where its outside value is above its stay value.
   Results change at exact ties only: such a member, indifferent at a candidate, passes
   it over for the next one, and indifferent at the default no longer separates there.
-- A household with a `Decoupled` aggregator and no taste shocks breaks ties in its
-  weighted objective on the members' objectives and then on their stored values, each
-  in member order, so its stored values do not depend on the order of the actions.
-  Actions that are still tied give every member the same value; the first of them in
-  grid order is simulated, so the simulated action can depend on that order.
+- A member whose destination has no feasible action at its landing state accepts every
+  feasible stay action, whatever the rule's `tie`, also where its own stay value is
+  minus infinity: under `Unilateral`, with or without `Renegotiate`, and under
+  `MutualConsent`. Before, such a member refused under `tie="leave"` where its stay
+  value was minus infinity.
+- Where a separate objective (`Decoupled`) chooses, ties in the objective go to the
+  members' stored values; the members' own objectives no longer enter. When exactly one
+  member has a positive Pareto weight, that member decides, and a tie goes to every
+  other member's stored value in member order and then to the deciding member's; with
+  several positive weights, to every member's stored value in member order. The solve
+  and the simulation use the same order, without and with taste shocks; with taste
+  shocks it picks the continuous actions within each discrete one. Actions that are
+  still tied give every member the same value; the first of them in grid order is
+  simulated, so the simulated action can depend on that order.
 
 ### Several decisions in one period
 
@@ -80,6 +89,12 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   land in its period that declares a Koopmans aggregator or uses an endogenous-grid
   solver, are refused, as is an exit into
   an earlier stage or one that observes a shock its destination draws later.
+- An edge into a regime that sits out a stage is a shorthand with limits: a source's
+  edges at one age either all stay in its period or all cross into the next one, a
+  gated edge skips no stage, and an edge skips no stage of a regime with a continuous
+  stochastic process. Where one of these refuses an edge, the error names the regime
+  and the stage in which to declare its pass-through explicitly: a regime with the same
+  states, one action, no shock and zero utility, which hands the value through.
 - `period` and `age` are the period's in user functions, time-indexed parameters are
   indexed by period, and the simulated frame gains a `stage` column. `model.n_periods`,
   the solution and the raw simulation results count steps, one per period and stage. A
@@ -144,6 +159,11 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   household. A single with taste shocks and an `exit` was accepted before; building such
   a model raises `RegimeInitializationError`. Drop `taste_shocks` on that regime, or
   move the exit decision to a regime without taste shocks.
+- A cell where every feasible alternative is worth minus infinity to the decider is
+  worth minus infinity to every member and has no choice probabilities, also with a
+  `Decoupled` aggregator; a simulation that reaches it raises `NoFeasibleActionError`,
+  as at a cell without a feasible action. Before, the decider took the first
+  alternative with probability one and every other member was valued there.
 - A taste-shock `scale` that is NaN or infinite is refused with `InvalidParamsError`
   before the solve, like a scale that is not strictly positive.
 - Values of models without taste shocks in a household are unchanged.
@@ -763,6 +783,14 @@ unchanged. The solvers keep the derivative rules they use themselves.
   `PolicyLookup.Q_objective` publishes the objective's action values. Only `GridSearch`
   supports it; gated-edge sources and sharded continuous states refuse it. A `Phased`
   Koopmans aggregator is unchanged.
+- A regime with a `Decoupled` aggregator has no exit or formation of its own: building
+  such a model raises `RegimeInitializationError`. Drop the separate objective, or let
+  the current self choose differently with `koopmans_aggregator=Phased(solve=...,
+  simulate=...)`, which such a regime accepts. Another regime's move reads a
+  `Decoupled` regime as the target of its exit, the counterparty of its `Consent` or
+  the couple its formation forms, at the values that regime's solve publishes: each
+  member's stored value at the action its objective selects, and with taste shocks
+  their expectation under the objective's choice probabilities.
 - A state or regime-function input read only by a Koopmans aggregator reaches it.
 
 ### Choice probabilities in policy lookup with taste shocks

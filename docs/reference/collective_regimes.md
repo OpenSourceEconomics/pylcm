@@ -284,6 +284,7 @@ checked at evaluation only fires once the model runs.
 | taste shocks (unless exactly one constant or callable weight can be positive), or a non-`GridSearch` solver, on a collective regime                            | `Regime` construction                                             | `NotImplementedError`       |
 | taste shocks, a nonlinear certainty equivalent, or a non-`GridSearch` solver on the SOURCE regime of a gated transition                                        | model build, binding the edge law to its source                   | `NotImplementedError`       |
 | taste shocks on a regime that declares an `exit`, whether a dissolution or a formation                                                                         | model build                                                       | `RegimeInitializationError` |
+| a `Decoupled` aggregator on a regime that declares an `exit`, whether a dissolution or a formation                                                             | model build                                                       | `RegimeInitializationError` |
 | a reference or fallback regime exists, and `member` matches its structure                                                                                      | model build                                                       | `ModelInitializationError`  |
 | a projection covers exactly the states its position owes                                                                                                       | model build                                                       | `ModelInitializationError`  |
 | a predicate or projection argument names a node of the target's own DAG                                                                                        | model build                                                       | `ModelInitializationError`  |
@@ -334,14 +335,20 @@ single's. A slot keyed by member needs a solver that supports several members, s
 `Decoupled(objective=..., value=...)` is declared for the household as a whole, never
 per member. Without taste shocks the household chooses the action that maximizes the
 Pareto-weighted sum of its members' objectives, and stores each member's `value` there.
-Ties in that sum go to the members' objectives and then to their values, each in member
-order, so the stored values do not depend on the order of the actions. Actions that are
-still tied give every member the same value. The first of them in grid order is
-simulated, so the simulated action can depend on the order of the actions. With taste
-shocks the one deciding member chooses on its own objective, as a single would; its
-stored value is the expectation of its `value` at the noisy choice including the chosen
-action's shock, and every other member's is the mean of its own `value` under the
-decider's choice probabilities, without a shock term.
+Ties in that sum go to the members' stored values, so the stored values do not depend on
+the order of the actions. When exactly one member has a positive weight, that member
+decides, and a tie goes to every other member's stored value in member order and then to
+the deciding member's; with several positive weights, to every member's stored value in
+member order. Actions that are still tied give every member the same value. The first of
+them in grid order is simulated, so the simulated action can depend on the order of the
+actions. With taste shocks the one deciding member chooses on its own objective, as a
+single would; its stored value is the expectation of its `value` at the noisy choice
+including the chosen action's shock, and every other member's is the mean of its own
+`value` under the decider's choice probabilities, without a shock term. Ties in the
+decider's objective among the continuous actions of one discrete action go to the stored
+values in the same order. A regime with a `Decoupled` aggregator has no exit or
+formation of its own; another regime's exit or formation reads it at the values its
+solve publishes (see [Current-period exits](model_and_regime.md#current-period-exits)).
 
 `Model.lookup_policy(..., keep_intermediates=...)` and the NaN diagnostics of a failed
 solve work for a household as for a single. `Q`, `U` and `CE` end in the member axis, in
@@ -474,12 +481,15 @@ Each of these raises at `Regime` construction, naming the regime slot to change:
   action, weighted by the decider's choice probabilities $P(j)$; a discrete action of
   probability zero contributes nothing. Simulation draws the decider's choice as a
   single's draw; `Model.lookup_policy` returns $Q^d_c(j)$ as `Qc`, $P(j)$, $c^*(j)$ and
-  the member values, without a draw. Constant weights with more than one positive entry
-  are refused here; a weight declared as a function is checked at every solve, at every
-  cell. A regime with taste shocks, single or household, cannot have its own exit or
-  formation and is refused when the model is built. Another regime's exit or formation
-  reads its member values as the solve publishes them, as target or as `Consent`
-  counterparty.
+  the member values, without a draw. A cell where every feasible alternative is worth
+  $-\infty$ to the decider is worth $-\infty$ to every member and has no choice
+  probabilities, also with a `Decoupled` aggregator; a simulation that reaches it raises
+  `NoFeasibleActionError`, as at a cell without a feasible action. Constant weights with
+  more than one positive entry are refused here; a weight declared as a function is
+  checked at every solve, at every cell. A regime with taste shocks, single or
+  household, cannot have its own exit or formation and is refused when the model is
+  built. Another regime's exit or formation reads its member values as the solve
+  publishes them, as target or as `Consent` counterparty.
 - **Any solver other than `GridSearch`.** The household argmax and per-member value
   readout run over the full action product.
 
