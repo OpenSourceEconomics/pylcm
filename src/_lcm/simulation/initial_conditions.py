@@ -559,10 +559,12 @@ def _read_initial_cohorts(
     periods = tuple(host_periods.tolist())
     if (
         any(
-            periods[index] + stage_position(ages=ages, regime=name)
-            not in regimes[name].active_periods
+            not np.isin(
+                np.asarray(host_periods)[np.asarray(members, dtype=np.intp)]
+                + stage_position(ages=ages, regime=name),
+                regimes[name].active_periods,
+            ).all()
             for name, members in indices.items()
-            for index in members
         )
         or host[age_stop:].any()
     ):
