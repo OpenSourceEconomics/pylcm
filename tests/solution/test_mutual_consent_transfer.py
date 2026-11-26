@@ -1194,7 +1194,7 @@ def _below_the_grid(*, case: IntND) -> FloatND:
     return -1.0 + 0.0 * case
 
 
-def _solvent(*, assets: FloatND) -> BoolND:
+def _nonnegative_assets(*, assets: FloatND) -> BoolND:
     return assets >= 0.0
 
 
@@ -1275,7 +1275,7 @@ def test_a_member_with_an_undefined_destination_accepts_staying_under_leave(
             "single_m": Regime(
                 states={"assets": LinSpacedGrid(start=-2.0, stop=2.0, n_points=5)},
                 actions={"c": DiscreteGrid(values=jnp.asarray([0, 1]))},
-                constraints={"solvent": _solvent},
+                constraints={"solvent": _nonnegative_assets},
                 functions={"utility": _own_assets},
             ),
         },

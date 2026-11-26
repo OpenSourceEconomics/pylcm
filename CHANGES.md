@@ -218,7 +218,8 @@ fragments keep format version 3.
 - A cell where every feasible alternative is worth minus infinity to the deciding member
   is worth minus infinity to every member and has no choice probabilities, also with a
   `Decoupled` aggregator. A simulation that reaches it raises `NoFeasibleActionError`,
-  as at a cell without a feasible action.
+  as at a cell without a feasible action, also when an agent arrives there by a
+  composition action.
 - A taste-shock `scale` that is NaN or infinite is refused with `InvalidParamsError`
   before the solve, like a scale that is not strictly positive.
 - Values of regimes with several members and without taste shocks are unchanged.

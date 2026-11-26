@@ -284,7 +284,7 @@ checked at evaluation only fires once the model runs.
 | a gate's `predicate` is a plain callable, not a `StochasticTransition`                                                                                         | model build, binding the edge law to its source                   | `RegimeInitializationError` |
 | `routes` covers the source's member structure                                                                                                                  | model build, binding the edge law to its source                   | `RegimeInitializationError` |
 | a gate sits on a target its `Transition` reaches; a target reached in both phases carries one equal `Gate` in both or none                                     | model build                                                       | `ModelInitializationError`  |
-| taste shocks (unless exactly one constant or callable Pareto weight can be positive), or a non-`GridSearch` solver, on a collective regime                     | `Regime` construction                                             | `NotImplementedError`       |
+| on a regime with several members: taste shocks (unless exactly one constant or callable Pareto weight can be positive), or a solver other than `GridSearch`    | `Regime` construction                                             | `NotImplementedError`       |
 | taste shocks, a nonlinear certainty equivalent, or a non-`GridSearch` solver on the SOURCE regime of a gated transition                                        | model build, binding the edge law to its source                   | `NotImplementedError`       |
 | taste shocks on a regime that declares a `composition_action`, whether for a separation or a formation                                                         | model build                                                       | `RegimeInitializationError` |
 | a `Decoupled` aggregator on a regime that declares a `composition_action`, whether for a separation or a formation                                             | model build                                                       | `RegimeInitializationError` |
@@ -500,8 +500,9 @@ Each of these raises at `Regime` construction, naming the regime slot to change:
   action and is refused when the model is built. Another regime's composition action
   reads its member values as the solve publishes them, as destination or as `Consent`
   counterparty.
-- **Any solver other than `GridSearch`.** The members' joint argmax and the per-member
-  value readout run over the full action product.
+- **Any solver other than `GridSearch` in a regime with several members.** The members'
+  joint argmax and the per-member value readout run over the full action product. A
+  regime with one member can use an endogenous-grid solver.
 
 The **source** regime of a gated transition, whether or not it is collective, declares
 no taste shocks, no nonlinear certainty equivalent and no solver other than

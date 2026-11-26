@@ -398,14 +398,6 @@ def test_nbegm_with_taste_shocks_rejects_certainty_equivalent() -> None:
         )
 
 
-def _resources(wealth: ContinuousState) -> FloatND:
-    return wealth
-
-
-def _savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
-    return resources - consumption
-
-
 _NBEGM_FUNCTIONS: dict[str, FunctionEntry] = {
     "utility": _utility_alive,
     "resources": _resources,

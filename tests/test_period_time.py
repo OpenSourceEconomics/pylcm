@@ -2779,10 +2779,6 @@ def _certain_reading_period(*, period: Period) -> FloatND:
     return jnp.asarray(1.0)
 
 
-def _certain() -> FloatND:
-    return jnp.asarray(1.0)
-
-
 def _open_reading_period(*, period: Period) -> BoolND:
     _read(period)
     return period >= 0

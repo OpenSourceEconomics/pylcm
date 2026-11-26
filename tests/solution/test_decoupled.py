@@ -2220,3 +2220,286 @@ def test_an_objective_at_minus_infinity_leaves_the_choice_to_stored_values() -> 
         _simulate(model=plain, params={}),
         check_exact=True,
     )
+
+
+@lcm.categorical(ordered=False)
+class _EntryRegimeId:
+    source: ScalarInt
+    target: ScalarInt
+    source_end: ScalarInt
+    target_end: ScalarInt
+
+
+@lcm.categorical(ordered=False)
+class _Draw:
+    low: ScalarInt
+    high: ScalarInt
+
+
+def _cannot_stay(*, alternative: DiscreteAction) -> BoolND:
+    return alternative < 0
+
+
+def _source_utility(*, alternative: DiscreteAction) -> FloatND:
+    return 0.0 * alternative
+
+
+def _no_bonus() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def _bonus_of_c(*, c: ContinuousAction) -> FloatND:
+    return 0.25 * c
+
+
+def _bonus_of_c_and_draw(*, c: ContinuousAction, draw: DiscreteState) -> FloatND:
+    return 0.25 * c + 0.0 * draw
+
+
+def _deciders_utility(*, alternative: DiscreteAction, bonus: FloatND) -> FloatND:
+    """2 at `first` and 3 at `second`, plus the bonus of the continuous action."""
+    return 2.0 + alternative + bonus
+
+
+def _deciders_utility_without_first(
+    *, alternative: DiscreteAction, bonus: FloatND
+) -> FloatND:
+    return jnp.where(alternative == Alternative.first, -jnp.inf, 2.0 + bonus + 1.0)
+
+
+def _deciders_utility_without_alternative(
+    *, alternative: DiscreteAction, bonus: FloatND
+) -> FloatND:
+    return jnp.full_like(2.0 + alternative + bonus, -jnp.inf)
+
+
+def _others_utility(*, alternative: DiscreteAction, bonus: FloatND) -> FloatND:
+    """11 at `first` and 7 at `second`, plus twice the bonus."""
+    return 11.0 - 4.0 * alternative + 2.0 * bonus
+
+
+def _objective_without_first(*, utility: FloatND, CE: FloatND) -> FloatND:
+    """The deciding member's objective is `-inf` at `first` (utility below 3)."""
+    return jnp.where(utility + CE < 3.0, -jnp.inf, utility + CE)
+
+
+# The deciding member's utility, without and with a separate objective, by the
+# alternatives it values above minus infinity.
+_DECIDERS_UTILITY = {
+    "none": _deciders_utility_without_alternative,
+    "second": _deciders_utility_without_first,
+}
+_SEPARATE_OBJECTIVE = {
+    "none": _objective_at_minus_infinity,
+    "second": _objective_without_first,
+}
+
+
+def _entry_model(
+    *,
+    alternatives: str,
+    separate_objective: bool,
+    members: tuple[str, ...],
+    continuous: bool,
+    draw: str,
+    taste_shocks: bool,
+    enable_jit: bool,
+) -> lcm.Model:
+    """`source` cannot stay, so its composition action moves every agent to `target`.
+
+    There the deciding member `x` (the only member, or `x` beside `y`) chooses
+    between `first` and `second`, with a continuous action `c` within each
+    alternative if `continuous`, and a current shock `draw` that `target` reads
+    and `source` observes (`"observed"`), does not observe (`"hidden"`), or
+    that does not exist (`"none"`).
+    """
+    if separate_objective:
+        deciders_utility: UserFunction = _deciders_utility
+        aggregator: UserFunction | lcm.Decoupled = lcm.Decoupled(
+            objective=_SEPARATE_OBJECTIVE[alternatives], value=additive
+        )
+    else:
+        deciders_utility = _DECIDERS_UTILITY[alternatives]
+        aggregator = additive
+    if members:
+        target_utility: UserFunction | lcm.CollectiveUtility = lcm.CollectiveUtility(
+            utilities={
+                name: deciders_utility if name == "x" else _others_utility
+                for name in members
+            },
+            objective=lcm.ParetoObjective(
+                weights={name: float(name == "x") for name in members}
+            ),
+        )
+        end_utility: UserFunction | lcm.CollectiveUtility = lcm.CollectiveUtility(
+            utilities=dict.fromkeys(members, zero_utility)
+        )
+    else:
+        target_utility = deciders_utility
+        end_utility = zero_utility
+    actions: dict[str, lcm.DiscreteGrid | lcm.LinSpacedGrid] = {
+        "alternative": lcm.DiscreteGrid(Alternative)
+    }
+    if continuous:
+        actions["c"] = lcm.LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
+    bonus = {
+        (False, "none"): _no_bonus,
+        (True, "none"): _bonus_of_c,
+        (True, "hidden"): _bonus_of_c_and_draw,
+        (True, "observed"): _bonus_of_c_and_draw,
+    }[continuous, draw]
+    return lcm.Model(
+        n_periods=2,
+        regimes={
+            "source": lcm.Regime(
+                actions={"alternative": lcm.DiscreteGrid(Alternative)},
+                functions={"utility": _source_utility},
+                constraints={"cannot_stay": _cannot_stay},
+                koopmans_aggregator=additive,
+                composition_action=lcm.CompositionAction(
+                    destinations={
+                        "self": lcm.Destination(
+                            regime="target",
+                            projection={},
+                            role="x" if members else None,
+                        )
+                    },
+                    rule=lcm.PCOnActions(),
+                    observes=("draw",) if draw == "observed" else (),
+                ),
+            ),
+            "target": lcm.Regime(
+                actions=actions,
+                functions={"utility": target_utility, "bonus": bonus},
+                koopmans_aggregator=aggregator,
+                taste_shocks=lcm.ExtremeValueTasteShocks() if taste_shocks else None,
+                shocks=("draws",) if draw != "none" else (),
+            ),
+            "source_end": lcm.Regime(functions={"utility": zero_utility}),
+            "target_end": lcm.Regime(functions={"utility": end_utility}),
+        },
+        shocks=(
+            {
+                "draws": lcm.shocks.ShockGroup(
+                    shocks={
+                        "draw": lcm.shocks.Discrete(
+                            categories=_Draw, probs=np.asarray([0.5, 0.5])
+                        )
+                    }
+                )
+            }
+            if draw != "none"
+            else {}
+        ),
+        regime_id_class=_EntryRegimeId,
+        initial_nodes=lcm.InitialNodes(by_period={0: ("source", "target")}),
+        edges={
+            "source": {"source_end": lcm.Periods(values=(0,))},
+            "target": {"target_end": lcm.Periods(values=(0,))},
+        },
+        enable_jit=enable_jit,
+        execution_config=lcm.ExecutionConfig(device_memory_bytes=None),
+    )
+
+
+def _simulate_entry(*, model: lcm.Model, params: UserParams) -> pd.DataFrame:
+    """Four agents start in `source` and take its composition action."""
+    return model.simulate(
+        params=params,
+        solution=model.solve(params=params, log_level="off"),
+        initial_conditions={
+            "period": jnp.zeros(4, dtype=jnp.int32),
+            "regime_id": jnp.full(4, _EntryRegimeId.source, dtype=jnp.int32),
+        },
+        seed=7,
+        log_level="off",
+    ).to_dataframe(use_categorical_codes=True)
+
+
+# Per case: a separate objective or not, the members of `target` (the deciding
+# member `x` first or second), a continuous action within each alternative, and
+# the current shock of `target`.
+_ENTRY_CASES = {
+    "one member": (False, (), False, "none"),
+    "one member, separate objective": (True, (), False, "none"),
+    "one member, separate objective, c": (True, (), True, "none"),
+    "x and y, c": (False, ("x", "y"), True, "none"),
+    "y and x, separate objective": (True, ("y", "x"), False, "none"),
+    "one member, c, hidden draw": (False, (), True, "hidden"),
+    "x and y, c, observed draw": (False, ("x", "y"), True, "observed"),
+}
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("alternatives", ["none", "second"])
+@pytest.mark.parametrize("case", list(_ENTRY_CASES))
+def test_a_composition_action_into_a_taste_node_without_a_finite_alternative_fails(
+    *, case: str, alternatives: str, enable_jit: bool
+) -> None:
+    """A composition action that takes an agent to a node with taste shocks where
+    every alternative is worth minus infinity to the deciding member fails, as a
+    node without a feasible action does (specification 14.5a).
+
+    That node has no choice probabilities and is worth minus infinity to every
+    member, with or without a separate objective. Where `second` is worth more
+    than minus infinity, the agent takes it, and every member publishes its
+    value there: 3 to the deciding member and 7 to `y`, plus the bonus of the
+    best `c`.
+    """
+    separate_objective, members, continuous, draw = _ENTRY_CASES[case]
+    model = _entry_model(
+        alternatives=alternatives,
+        separate_objective=separate_objective,
+        members=members,
+        continuous=continuous,
+        draw=draw,
+        taste_shocks=True,
+        enable_jit=enable_jit,
+    )
+    params: UserParams = {"target": {"taste_shocks": {"scale": 0.5}}}
+    if alternatives == "none":
+        solution = model.solve(params=params, log_level="off")
+        assert np.isneginf(np.asarray(solution.value(step=0, regime="target"))).all()
+        with pytest.raises(NoFeasibleActionError, match="no feasible action"):
+            _simulate_entry(model=model, params=params)
+        return
+    frame = _simulate_entry(model=model, params=params)
+    first = frame.loc[frame["period"] == 0]
+    assert (first["regime_name"] == "target").all()
+    assert (first["alternative"] == Alternative.second).all()
+    bonus = 0.25 if continuous else 0.0
+    if members:
+        assert (first["value_x"] == 3.0 + bonus).all()
+        assert (first["value_y"] == 7.0 + 2.0 * bonus).all()
+    else:
+        assert (first["value"] == 3.0 + bonus).all()
+
+
+@pytest.mark.parametrize("members", [(), ("y", "x")])
+def test_a_composition_action_into_a_hard_max_at_minus_infinity_takes_the_tie(
+    *, members: tuple[str, ...]
+) -> None:
+    """Without taste shocks, a separate objective worth minus infinity at every
+    action ties them all, and the stored values choose (specification 14.5a):
+    the agent who arrives acts. `y` comes first in the tie order and takes
+    `first` and `c = 1`, worth 11.5 to `y`; alone, `x` takes `second` and `c = 1`,
+    worth 3.25."""
+    model = _entry_model(
+        alternatives="none",
+        separate_objective=True,
+        members=members,
+        continuous=True,
+        draw="none",
+        taste_shocks=False,
+        enable_jit=True,
+    )
+    frame = _simulate_entry(model=model, params={})
+    first = frame.loc[frame["period"] == 0]
+    assert (first["regime_name"] == "target").all()
+    if members:
+        assert (first["alternative"] == Alternative.first).all()
+        assert (first["value_x"] == 2.25).all()
+        assert (first["value_y"] == 11.5).all()
+    else:
+        assert (first["alternative"] == Alternative.second).all()
+        assert (first["value"] == 3.25).all()

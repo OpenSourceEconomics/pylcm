@@ -1259,10 +1259,6 @@ class TwoEntryRegimeId:
     dead: ScalarInt
 
 
-def _shock_utility(*, shock: ContinuousState) -> ScalarFloat:
-    return shock
-
-
 def _two_entry_model(
     *, enable_jit: bool = False, width: int = 1, budget: int | None = None
 ) -> Model:

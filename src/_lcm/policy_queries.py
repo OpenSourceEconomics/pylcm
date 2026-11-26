@@ -2374,6 +2374,8 @@ def _active_query_cell(
             arguments=arguments,
         )
         valid &= taste_valid
+        # An acting draw without an alternative to draw publishes no action.
+        support &= action >= 0
     elif objective is not None:
         # A separate objective chooses as in the regime's own solve.
         action, value = household_argmax_and_readout(
@@ -2563,7 +2565,11 @@ def _taste_query_choice(
             scale=scale,
             key=key,
         )
-        return identifiers[discrete], value, _scale_is_valid(scale)
+        return (
+            jnp.where(discrete < 0, -1, identifiers[discrete]),
+            value,
+            _scale_is_valid(scale),
+        )
     smoothed = smoothed_profiles(
         # The reduction reads only F, Q and Q_objective of the parts.
         parts=QAndFParts(U=q, F=feasible, CE=q, Q=q, Q_objective=objective),
@@ -2587,7 +2593,11 @@ def _taste_query_choice(
             scale=scale,
             key=key,
         )
-    return identifiers[discrete], value, _scale_is_valid(scale)
+    return (
+        jnp.where(discrete < 0, -1, identifiers[discrete]),
+        value,
+        _scale_is_valid(scale),
+    )
 
 
 def _scale_is_valid(scale: FloatND) -> BoolND:
@@ -2621,6 +2631,10 @@ def taste_choice(
     member's log-sum, with every other member at its mean of `at_choice` under the
     deciding member's choice probabilities (`decider_expected_values`).
 
+    Where every alternative is worth `-inf` to the deciding member, the logit has
+    no probabilities: the draw takes no alternative (index `-1`) and publishes
+    `-inf` for every member, as the regime's own simulation does.
+
     Args:
         values: The deciding member's value of each alternative.
         at_choice: Each alternative's published value, every member's value in
@@ -2640,7 +2654,11 @@ def taste_choice(
         chosen = jnp.argmax(
             values + draw_taste_shock_noise(key=key, shape=values.shape, scale=scale)
         )
-        return chosen, at_choice[chosen]
+        worthless = jnp.all(jnp.isneginf(values))
+        return (
+            jnp.where(worthless, -1, chosen),
+            jnp.where(worthless, -jnp.inf, at_choice[chosen]),
+        )
     chosen = jnp.argmax(values)
     return chosen, decider_expected_values(
         decider=decider, Qc=values, at_choice=at_choice, scale=scale
