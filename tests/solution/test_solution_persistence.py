@@ -68,8 +68,8 @@ _REGIME = "working"
 _REPLAY_KEY = ArtifactKey(type_id="example.static_policy", schema_version=1)
 _VALUE_COORDINATES = ((0, _REGIME), (1, _REGIME), (2, _REGIME))
 _REPLAY_REFS = (
-    ArtifactRef(period=0, regime=_REGIME, key=_REPLAY_KEY),
-    ArtifactRef(period=1, regime=_REGIME, key=_REPLAY_KEY),
+    ArtifactRef(step=0, regime=_REGIME, key=_REPLAY_KEY),
+    ArtifactRef(step=1, regime=_REGIME, key=_REPLAY_KEY),
 )
 _REPLAY_ROUTE = ReplayRouteIdentity(route_id="example.static", route_version=3)
 _EMPLOYMENT_DOMAIN = CategoryDomain(
@@ -325,7 +325,7 @@ def _make_solution() -> SolutionResult:
         for period, regime in _VALUE_COORDINATES
     }
     replay_entries = {
-        ref: jnp.asarray([ref.period, ref.period + 0.5], dtype=jnp.float32)
+        ref: jnp.asarray([ref.step, ref.step + 0.5], dtype=jnp.float32)
         for ref in _REPLAY_REFS
     }
     replay_axis = AxisAuthority(
@@ -385,7 +385,7 @@ def _make_solution() -> SolutionResult:
     )
     metadata = SolutionMetadata(
         retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
-        n_periods=3,
+        n_steps=3,
         regime_names=(_REGIME,),
         solver_types={_REGIME: "example.StaticArraySolver"},
         model_instance_id="test-model-instance",
@@ -547,7 +547,7 @@ def _make_values_only_solution(
         values={0: {_REGIME: array}},
         metadata=SolutionMetadata(
             retention=ResultRetention.VALUES,
-            n_periods=1,
+            n_steps=1,
             regime_names=(_REGIME,),
             solver_types={_REGIME: "example.ValueOnlySolver"},
             model_instance_id="value-only-model",
@@ -568,22 +568,21 @@ def _assert_all_unloaded(solution: SolutionResult) -> None:
     assert isinstance(solution.values, ValueStore)
     for period, regime in _VALUE_COORDINATES:
         assert (
-            solution.values.load_state(period=period, regime=regime)
-            is LoadState.UNLOADED
+            solution.values.load_state(step=period, regime=regime) is LoadState.UNLOADED
         )
     for ref in _REPLAY_REFS:
         assert solution.replay_artifacts.load_state(ref) is LoadState.UNLOADED
 
 
 def test_solution_metadata_rejects_value_schema_at_the_horizon() -> None:
-    """Value schemas may address periods only inside ``range(n_periods)``."""
+    """Value schemas may address steps only inside ``range(n_steps)``."""
     source = _make_solution().metadata
     schema = source.value_schemas[_VALUE_COORDINATES[0]]
 
     with pytest.raises(ValueError, match="invalid coordinate"):
         dataclasses.replace(
             source,
-            value_schemas={(source.n_periods, _REGIME): schema},
+            value_schemas={(source.n_steps, _REGIME): schema},
         )
 
 
@@ -595,7 +594,7 @@ def test_complete_solution_roundtrip_materializes_only_the_requested_entries(
     assert isinstance(solution.values, ValueStore)
     for period, regime in _VALUE_COORDINATES:
         assert (
-            solution.values.load_state(period=period, regime=regime) is LoadState.LOADED
+            solution.values.load_state(step=period, regime=regime) is LoadState.LOADED
         )
     for ref in _REPLAY_REFS:
         assert solution.replay_artifacts.load_state(ref) is LoadState.LOADED
@@ -607,7 +606,7 @@ def test_complete_solution_roundtrip_materializes_only_the_requested_entries(
 
     assert isinstance(restored, SolutionResult)
     assert isinstance(restored.values, ValueStore)
-    assert restored.metadata.n_periods == 3
+    assert restored.metadata.n_steps == 3
     assert restored.metadata.artifact_descriptors[_REPLAY_REFS[0]].persistence is (
         PersistencePolicy.MODEL_VERIFIABLE
     )
@@ -618,14 +617,14 @@ def test_complete_solution_roundtrip_materializes_only_the_requested_entries(
     _assert_all_unloaded(restored)
 
     np.testing.assert_array_equal(
-        restored.value(period=0, regime=_REGIME),
+        restored.value(step=0, regime=_REGIME),
         np.asarray([1.0, 2.0], dtype=np.float32),
     )
 
-    assert restored.values.load_state(period=0, regime=_REGIME) is LoadState.LOADED
+    assert restored.values.load_state(step=0, regime=_REGIME) is LoadState.LOADED
     for period in (1, 2):
         assert (
-            restored.values.load_state(period=period, regime=_REGIME)
+            restored.values.load_state(step=period, regime=_REGIME)
             is LoadState.UNLOADED
         )
     for ref in _REPLAY_REFS:
@@ -640,7 +639,7 @@ def test_complete_solution_roundtrip_materializes_only_the_requested_entries(
     assert restored.replay_artifacts.load_state(_REPLAY_REFS[1]) is LoadState.UNLOADED
     for period in (1, 2):
         assert (
-            restored.values.load_state(period=period, regime=_REGIME)
+            restored.values.load_state(step=period, regime=_REGIME)
             is LoadState.UNLOADED
         )
 
@@ -664,7 +663,7 @@ def test_save_extracts_custom_pytree_from_sealed_plan_without_callbacks(
             entry = next(
                 candidate
                 for candidate in entries
-                if candidate["period"] == ref.period
+                if candidate["step"] == ref.step
                 and candidate["regime"] == ref.regime
                 and candidate["type_id"] == ref.key.type_id
                 and candidate["schema_version"] == ref.key.schema_version
@@ -819,11 +818,11 @@ def test_lazy_root_arrays_return_fresh_buffers_after_delete(tmp_path: Path) -> N
         )
     )
 
-    first_value = restored.value(period=0, regime=_REGIME)
+    first_value = restored.value(step=0, regime=_REGIME)
     first_artifact = cast("jax.Array", restored.replay_artifacts[_REPLAY_REFS[0]])
     first_value.delete()
     first_artifact.delete()
-    second_value = restored.value(period=0, regime=_REGIME)
+    second_value = restored.value(step=0, regime=_REGIME)
     second_artifact = cast("jax.Array", restored.replay_artifacts[_REPLAY_REFS[0]])
 
     np.testing.assert_array_equal(second_value, [1.0, 2.0])
@@ -983,7 +982,7 @@ def test_lazy_entries_survive_a_cwd_change_after_relative_archive_load(
     monkeypatch.chdir(later_cwd)
 
     np.testing.assert_array_equal(
-        restored.value(period=0, regime=_REGIME),
+        restored.value(step=0, regime=_REGIME),
         np.asarray([1.0, 2.0], dtype=np.float32),
     )
     np.testing.assert_array_equal(
@@ -1007,7 +1006,7 @@ def test_lazy_store_membership_inspects_coordinates_without_loading(
     assert _REGIME in restored.values[0]
     assert _REPLAY_REFS[0] in restored.replay_artifacts
     absent_ref = ArtifactRef(
-        period=0,
+        step=0,
         regime=_REGIME,
         key=ArtifactKey(type_id="example.absent", schema_version=1),
     )
@@ -1094,9 +1093,9 @@ def test_payload_checksum_mismatch_is_rejected_on_materialization(
     restored = load_solution(path=path)
 
     assert isinstance(restored.values, ValueStore)
-    assert restored.values.load_state(period=0, regime=_REGIME) is LoadState.UNLOADED
+    assert restored.values.load_state(step=0, regime=_REGIME) is LoadState.UNLOADED
     with pytest.raises(SolutionIntegrityError, match="checksum"):
-        restored.value(period=0, regime=_REGIME)
+        restored.value(step=0, regime=_REGIME)
 
 
 @pytest.mark.parametrize(
@@ -1175,7 +1174,7 @@ def test_load_rejects_value_schema_at_the_horizon(tmp_path: Path) -> None:
         value_schemas = cast(
             "list[dict[str, _MutableJSONValue]]", metadata["value_schemas"]
         )
-        value_schemas[0]["period"] = metadata["n_periods"]
+        value_schemas[0]["step"] = metadata["n_steps"]
         _replace_manifest(archive=archive, manifest=manifest)
 
     with pytest.raises(SolutionIntegrityError, match="descriptive metadata"):
@@ -1183,7 +1182,7 @@ def test_load_rejects_value_schema_at_the_horizon(tmp_path: Path) -> None:
 
 
 def test_load_rejects_value_payload_at_the_horizon(tmp_path: Path) -> None:
-    """Reject an archive payload address outside ``range(n_periods)``."""
+    """Reject an archive payload address outside ``range(n_steps)``."""
     path = save_solution(
         solution=_make_solution(),
         path=tmp_path / "solution.lcm",
@@ -1192,10 +1191,10 @@ def test_load_rejects_value_payload_at_the_horizon(tmp_path: Path) -> None:
         manifest = _read_manifest(archive)
         metadata = cast("dict[str, _MutableJSONValue]", manifest["metadata"])
         value_entries = cast("list[dict[str, _MutableJSONValue]]", manifest["values"])
-        value_entries[0]["period"] = metadata["n_periods"]
+        value_entries[0]["step"] = metadata["n_steps"]
         _replace_manifest(archive=archive, manifest=manifest)
 
-    with pytest.raises(SolutionIntegrityError, match="invalid period or regime"):
+    with pytest.raises(SolutionIntegrityError, match="invalid step or regime"):
         load_solution(path=path)
 
 
@@ -1208,7 +1207,7 @@ def test_failed_save_leaves_existing_archive_unchanged(tmp_path: Path) -> None:
     original_bytes = path.read_bytes()
     source = _make_solution()
     value_entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {
-        coordinate: source.value(period=coordinate[0], regime=coordinate[1])
+        coordinate: source.value(step=coordinate[0], regime=coordinate[1])
         for coordinate in _VALUE_COORDINATES
     }
     value_entries[_VALUE_COORDINATES[0]] = _ObjectDtypeLazyEntry()
@@ -1276,7 +1275,7 @@ def test_save_rejects_weakly_typed_compatibility_versions(
     assert type(invalid) is not int
     object.__setattr__(metadata, field_name, invalid)
     value_entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {
-        (period, regime): source.value(period=period, regime=regime)
+        (period, regime): source.value(step=period, regime=regime)
         for period, regime in _VALUE_COORDINATES
     }
     lazy_value = _SaveEnvelopeMutatingLazyEntry(
@@ -1352,7 +1351,7 @@ def test_save_rejects_armed_metadata_key_before_hashing(tmp_path: Path) -> None:
     metadata = dataclasses.replace(source.metadata)
     object.__setattr__(metadata, "solver_types", MappingProxyType(solver_types))
     value_entries: dict[tuple[int, str], FloatND | solver_api_module._LazyEntry] = {
-        coordinate: source.value(period=coordinate[0], regime=coordinate[1])
+        coordinate: source.value(step=coordinate[0], regime=coordinate[1])
         for coordinate in _VALUE_COORDINATES
     }
     lazy_value = _SaveEnvelopeMutatingLazyEntry(
@@ -1448,13 +1447,13 @@ def test_save_rejects_value_payload_at_the_horizon(tmp_path: Path) -> None:
         period: dict(regime_to_value)
         for period, regime_to_value in source.values.items()
     }
-    values[source.metadata.n_periods] = {
+    values[source.metadata.n_steps] = {
         _REGIME: jnp.asarray([4.0, 5.0], dtype=jnp.float32)
     }
     malformed = dataclasses.replace(source, values=values)
     object.__setattr__(malformed, "_artifact_authority", source._artifact_authority)
 
-    with pytest.raises(IncompatibleSolutionError, match="invalid period or regime"):
+    with pytest.raises(IncompatibleSolutionError, match="invalid step or regime"):
         save_solution(solution=malformed, path=tmp_path / "solution.lcm")
 
     assert list(tmp_path.iterdir()) == []
@@ -1664,7 +1663,7 @@ def test_save_rejects_undescribed_continuation_omission(
     *, tmp_path: Path, reason: OmissionReason
 ) -> None:
     """Every continuation in the complete solution schema needs a descriptor."""
-    ref = ArtifactRef(period=0, regime=_REGIME, key=EGM_CONTINUATION)
+    ref = ArtifactRef(step=0, regime=_REGIME, key=EGM_CONTINUATION)
     malformed = dataclasses.replace(
         _make_values_only_solution(value=[1.0], dtype="float32"),
         omissions={ref: reason},
@@ -1687,7 +1686,7 @@ def test_load_rejects_undescribed_continuation_omission(tmp_path: Path) -> None:
         omissions = cast("list[dict[str, _MutableJSONValue]]", manifest["omissions"])
         omissions.append(
             {
-                "period": 0,
+                "step": 0,
                 "regime": _REGIME,
                 "type_id": EGM_CONTINUATION.type_id,
                 "schema_version": EGM_CONTINUATION.schema_version,
@@ -1752,7 +1751,7 @@ def test_load_rejects_unsupported_omission_for_required_artifact(
         removed = artifact_entries.pop()
         cast("list[_MutableJSONValue]", manifest["omissions"]).append(
             {
-                "period": removed["period"],
+                "step": removed["step"],
                 "regime": removed["regime"],
                 "type_id": removed["type_id"],
                 "schema_version": removed["schema_version"],
@@ -1884,7 +1883,7 @@ def test_load_rejects_malformed_omission_entry(
         )
         removed = artifact_entries.pop()
         omission = {
-            "period": removed["period"],
+            "step": removed["step"],
             "regime": removed["regime"],
             "type_id": removed["type_id"],
             "schema_version": removed["schema_version"],
@@ -1946,7 +1945,7 @@ def test_scalar_value_roundtrip_preserves_zero_dimensional_shape(
 
     restored = load_solution(path=path)
 
-    assert restored.value(period=0, regime=_REGIME).shape == ()
+    assert restored.value(step=0, regime=_REGIME).shape == ()
 
 
 def test_materialization_refuses_jax_dtype_narrowing(tmp_path: Path) -> None:
@@ -1962,7 +1961,7 @@ def test_materialization_refuses_jax_dtype_narrowing(tmp_path: Path) -> None:
         jax.enable_x64(new_val=False),
         pytest.raises(IncompatibleSolutionError, match="would materialize it as"),
     ):
-        restored.value(period=0, regime=_REGIME)
+        restored.value(step=0, regime=_REGIME)
 
 
 @pytest.mark.skipif(
@@ -1978,7 +1977,7 @@ def test_unsupported_numpy_dtype_is_normalized_and_stays_unloaded(
         values=ValueStore({(0, _REGIME): array}),
         metadata=SolutionMetadata(
             retention=ResultRetention.VALUES,
-            n_periods=1,
+            n_steps=1,
             regime_names=(_REGIME,),
             solver_types={_REGIME: "example.ValueOnlySolver"},
             model_instance_id="value-only-model",
@@ -1999,10 +1998,10 @@ def test_unsupported_numpy_dtype_is_normalized_and_stays_unloaded(
     restored = load_solution(path=path)
 
     values = cast("ValueStore", restored.values)
-    assert values.load_state(period=0, regime=_REGIME) is LoadState.UNLOADED
+    assert values.load_state(step=0, regime=_REGIME) is LoadState.UNLOADED
     with pytest.raises(IncompatibleSolutionError, match="cannot materialize"):
-        restored.value(period=0, regime=_REGIME)
-    assert values.load_state(period=0, regime=_REGIME) is LoadState.UNLOADED
+        restored.value(step=0, regime=_REGIME)
+    assert values.load_state(step=0, regime=_REGIME) is LoadState.UNLOADED
 
 
 def test_persisted_categorical_domains_decode_to_a_read_only_mapping() -> None:

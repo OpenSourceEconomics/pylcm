@@ -759,7 +759,7 @@ def _regime_param_periods(
             and (
                 not is_transition
                 or len(parts) < ParamsQnameDepth.TARGETREGIME__FUNC__PARAM
-                or graph.has_edge(period=step, source=regime_name, target=parts[0])
+                or graph.has_edge(step=step, source=regime_name, target=parts[0])
             )
         )
     return tuple(sorted(required))

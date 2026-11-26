@@ -218,7 +218,7 @@ def test_ephemeral_model_cannot_publish_durable_archives(tmp_path: Path) -> None
     model, params, _ = _inputs(durable_identity=False)
     capture = PeriodCapture(
         directory=tmp_path / "captures",
-        periods=(("working_life", 0),),
+        steps=(("working_life", 0),),
         source_identity={"model": "local-model"},
     )
     with pytest.raises(UnsupportedOperationError, match="ephemeral"):

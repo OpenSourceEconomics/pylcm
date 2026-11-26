@@ -59,7 +59,13 @@ from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.phases import PhasedRegimeSpec, RegimePhaseSpec
 from _lcm.regime_building.Q_and_F import partition_continuation_targets
 from _lcm.regime_building.V import VInterpolationInfo
-from _lcm.time import TimeAxis, landing_step, specialization_coordinate_at, step_count
+from _lcm.time import (
+    TimeAxis,
+    describe_step,
+    landing_step,
+    specialization_coordinate_at,
+    step_count,
+)
 from _lcm.transition_plans import TargetTransitionPlan
 from _lcm.typing import (
     ConstraintFunction,
@@ -548,7 +554,7 @@ class _ContinuationGroupKey:
             ()
             if period == self.phase_reachability.n_steps - 1
             else self.phase_reachability.targets(
-                period=period, source=self.source_regime_name
+                step=period, source=self.source_regime_name
             )
         )
         # Beside each continuation target, the grids a gated edge into that
@@ -678,8 +684,10 @@ def _resolve_function_marker(
             msg = (
                 f"AgeSpecializedFunction in regime '{regime_name}' is not "
                 f"parameter-invariant: build(age) returned parameters "
-                f"{sorted(first_params)} at period {first_period}, but "
-                f"{sorted(params)} at period {period}. Every concrete function "
+                f"{sorted(first_params)} at "
+                f"{describe_step(ages=ages, step=cast('int', first_period))}, but "
+                f"{sorted(params)} at {describe_step(ages=ages, step=period)}. "
+                "Every concrete function "
                 f"returned by build must expose the same call signature; only "
                 f"its behavior may vary."
             )
@@ -743,7 +751,8 @@ def _resolve_grid_marker(
             msg = (
                 f"AgeSpecializedGrid '{state_name}' in regime '{regime_name}' "
                 f"build(age) must return a plain ContinuousGrid, not a stochastic "
-                f"process; got {type(grid).__name__} at period {period}. "
+                f"process; got {type(grid).__name__} at "
+                f"{describe_step(ages=ages, step=period)}. "
                 f"Age-varying process states are not supported."
             )
             raise RegimeInitializationError(msg)
@@ -756,7 +765,7 @@ def _resolve_grid_marker(
         except _GridTraitsError as error:
             msg = (
                 f"AgeSpecializedGrid '{state_name}' in regime '{regime_name}' at "
-                f"period {period}: {error}"
+                f"{describe_step(ages=ages, step=period)}: {error}"
             )
             raise RegimeInitializationError(msg) from error
         if first_traits is None:
@@ -766,8 +775,10 @@ def _resolve_grid_marker(
                 f"AgeSpecializedGrid '{state_name}' in regime '{regime_name}' is not "
                 "shape-invariant: "
                 f"{_describe_trait_mismatch(first=first_traits, other=traits)} "
-                f"The first active age is period {first_period}, the offending one is "
-                f"period {period}. Age-varying grids must keep the same class, "
+                "The first active age is at "
+                f"{describe_step(ages=ages, step=cast('int', first_period))}, the "
+                f"offending one at {describe_step(ages=ages, step=period)}. "
+                "Age-varying grids must keep the same class, "
                 f"points mode and resolved node shape/dtype at every "
                 f"active age; only their bounds or node values may vary."
             )

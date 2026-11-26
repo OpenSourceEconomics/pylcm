@@ -741,7 +741,7 @@ class RetainedComponentValues:
             reads = f"Materializing {len(coordinates)} block-major values at once"
             remedy = (
                 "Read the values one at a time with "
-                "SolutionResult.value(period=..., regime=...), save the result "
+                "SolutionResult.value(step=..., regime=...), save the result "
                 "with SolutionResult.save, or raise "
                 "ExecutionConfig.device_memory_bytes."
             )

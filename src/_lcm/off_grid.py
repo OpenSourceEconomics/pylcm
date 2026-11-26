@@ -35,6 +35,7 @@ from lcm.typing import (
     OffGrid,
     RegimeName,
     ScalarInt,
+    StageName,
     StateName,
 )
 
@@ -86,6 +87,7 @@ def report_off_grid(
     state: StateName,
     phase: str,
     logger: logging.Logger,
+    stage: StageName | None = None,
 ) -> None:
     """Enforce a declared raise policy and separately emit checked counts."""
     message = off_grid_message(
@@ -95,6 +97,7 @@ def report_off_grid(
         period=period,
         state=state,
         phase=phase,
+        stage=stage,
     )
     if count and rule == "raise":
         raise OffGridStateError(message)
@@ -113,17 +116,21 @@ def off_grid_message(
     period: int,
     state: StateName,
     phase: str,
+    stage: StageName | None = None,
 ) -> str:
     """Describe one target state's raw landings outside, or not finite on, its grid.
 
     Every check that counts landings words its report and its refusal with this,
     so the same landing reads the same in the solve kernel, the preflight and the
-    realized simulation. A count at `COUNT_CAPACITY` is a lower bound.
+    realized simulation. `stage` names the source's stage in a model with
+    stages. A count at `COUNT_CAPACITY` is a lower bound.
     """
     shown = f">={count}" if count >= COUNT_CAPACITY else f"={count}"
+    in_stage = "" if stage is None else f", stage={stage!r}"
     return (
         f"Off-grid next states: regime={regime!r}, target={target!r}, "
-        f"period={period}, state={state!r}, phase={phase!r}, count{shown}"
+        f"period={period}{in_stage}, state={state!r}, phase={phase!r}, "
+        f"count{shown}"
     )
 
 

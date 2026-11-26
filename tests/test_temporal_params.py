@@ -1462,7 +1462,7 @@ def test_nbegm_temporal_case_pieces_use_source_grants(
             for name, grant in (("below", 3.0), ("above", 1.0))
         }
         solution = model.solve(params=params, log_level="debug")
-        values.append(solution.value(period=source_period, regime="work"))
+        values.append(solution.value(step=source_period, regime="work"))
     np.testing.assert_allclose(values[1], values[0], rtol=0, atol=1e-5)
 
 
@@ -1484,7 +1484,7 @@ def test_egm_temporal_consumers_use_the_source_period(
     expected = 2.0 * np.log(consumption) + np.log(2.0 * (wealth - consumption))
     # The terminal log grid and savings interpolation approximate the closed form.
     np.testing.assert_allclose(
-        solution.value(period=source_period, regime="work")[..., 0],
+        solution.value(step=source_period, regime="work")[..., 0],
         expected,
         atol=1e-3,
         rtol=0,
@@ -1544,7 +1544,7 @@ def test_egm_temporal_periods_share_a_core(solver_name: str) -> None:
         consumption = weight / (weight + 1.0) * wealth
         expected = weight * np.log(consumption) + np.log(2.0 * (wealth - consumption))
         np.testing.assert_allclose(
-            solution.value(period=period, regime="work")[..., 0],
+            solution.value(step=period, regime="work")[..., 0],
             expected,
             atol=1e-3,
             rtol=0,

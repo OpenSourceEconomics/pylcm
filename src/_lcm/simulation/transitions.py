@@ -33,6 +33,7 @@ from _lcm.simulation.random_address import RandomAddress, draw_categorical_index
 from _lcm.simulation.runtime import execute_simulation_program
 from _lcm.simulation.subject_groups import SubjectRows
 from _lcm.state_action_space import _validate_all_states_present
+from _lcm.time import TimeAxis, describe_step, period_of_step, stage_of_step
 from _lcm.transition_checks import validate_realized_regime_transition_probs
 from _lcm.typing import (
     ActionName,
@@ -78,16 +79,16 @@ def clip_next_states(
     subjects: Bool1D,
     genuine: np.ndarray,
     memory: SimulationMemory | None,
-    reported_period: int | None = None,
+    ages: TimeAxis,
+    step: int,
 ) -> StatesPerRegime:
     """Check raw realized states before applying explicit economic state clipping.
 
     `subjects` selects the rows this source advances; `genuine` additionally marks
     the rows that stand for a distinct real subject, so alignment and grouping
     duplicates are advanced and clipped but never counted. Off-grid reports name
-    `reported_period`, by default the transition's period `next_period - 1`.
+    the period and stage of the source's `step`.
     """
-    period = next_period - 1 if reported_period is None else reported_period
     points: dict[RegimeName, dict[StateName, Float1D]] = {}
     for target in targets:
         regime = regimes[target]
@@ -131,9 +132,10 @@ def clip_next_states(
                                 count=int(counts[1]),
                                 regime=source,
                                 target=target,
-                                period=period,
+                                period=period_of_step(ages=ages, step=step),
                                 state=name,
                                 phase="realized",
+                                stage=stage_of_step(ages=ages, step=step),
                             )
                         )
                     report_off_grid(
@@ -141,10 +143,11 @@ def clip_next_states(
                         rule=grid.off_grid,
                         regime=source,
                         target=target,
-                        period=period,
+                        period=period_of_step(ages=ages, step=step),
                         state=name,
                         phase="realized",
                         logger=logger,
+                        stage=stage_of_step(ages=ages, step=step),
                     )
                 if grid.off_grid == "clip_state":
                     points.setdefault(target, {})[name] = nodes
@@ -191,7 +194,7 @@ def fail_if_drawn_codes_leave_their_grids(
     regimes: Mapping[RegimeName, Regime],
     targets: tuple[RegimeName, ...],
     source: RegimeName,
-    period: int,
+    when: str,
     new_regime_ids: Int1D,
     regime_ids: RegimeNamesToIds,
     subjects: Bool1D,
@@ -233,7 +236,7 @@ def fail_if_drawn_codes_leave_their_grids(
     for (target, name, _), count in zip(checks, jax.device_get(counts), strict=True):
         if int(count):
             msg = (
-                f"In regime {source!r} (period {period}), the simulated law of "
+                f"In regime {source!r} ({when}), the simulated law of "
                 f"{name!r} to regime {target!r} returns a code outside its grid "
                 "for a subject drawn there. A continuous state between its grid "
                 "nodes can produce such a code; keep the law on its grid."
@@ -489,6 +492,7 @@ def calculate_next_regime_membership(
     state_action_space: StateActionSpace,
     optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
     period: int,
+    ages: TimeAxis,
     age: ScalarInt | ScalarFloat,
     regime_params: FlatRegimeParams,
     regime_names_to_ids: RegimeNamesToIds,
@@ -512,7 +516,8 @@ def calculate_next_regime_membership(
         regime: The internal regime instance.
         state_action_space: State-action space for subjects in this regime.
         optimal_actions: Optimal actions computed for these subjects.
-        period: Current period.
+        period: Current step.
+        ages: The model clock, which names the period of the step.
         age: Age corresponding to current period.
         regime_params: Flat regime parameters.
         regime_names_to_ids: Mapping from regime names to integer IDs.
@@ -596,13 +601,15 @@ def calculate_next_regime_membership(
         # unconditionally rather than under `log_level`, because an empty
         # candidate set makes the draw impossible rather than merely suspect.
         msg = (
-            f"Regime '{regime.name}' has no regime to move into at period "
-            f"{period + 1}: none of its declared transition targets "
+            f"Regime '{regime.name}' has no regime to move into after "
+            f"{describe_step(ages=ages, step=period)}: none of its declared "
+            "transition targets "
             f"({', '.join(repr(name) for name in sorted(regime_transition_probs))}) "
             f"is solved there, and the regimes that are "
             f"({', '.join(repr(name) for name in sorted(active_regimes_next_period))}) "
             f"are not among them. Subjects simulated in '{regime.name}' at "
-            f"period {period} (age {age}) have nowhere to go. Either extend a "
+            f"{describe_step(ages=ages, step=period)} (age {age}) have nowhere to "
+            "go. Either extend a "
             f"target's schedule to cover that period, or keep '{regime.name}' "
             f"from being occupied there."
         )

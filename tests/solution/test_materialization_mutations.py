@@ -19,7 +19,7 @@ def test_materialization_admission_covers_shapes_and_accessors(
 
     def read() -> FloatND:
         if access == "value":
-            return solution.value(period=0, regime="working")
+            return solution.value(step=0, regime="working")
         return solution.values[0]["working"]
 
     with pytest.raises(ExecutionPlanningError):

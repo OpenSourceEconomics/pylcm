@@ -15,7 +15,7 @@ from _lcm.typing import JSONValue
 class PeriodCapture:
     """Persist selected ordinary GridSearch entries and completed references.
 
-    Each target gets a new `regime@period` directory. Existing targets are refused.
+    Each target gets a new `regime@step` directory. Existing targets are refused.
     The caller's source identity complements the model, grid, parameter, installed
     source and runtime identities computed by pylcm. No model or callable is pickled.
     GPU capture and replay require actual serialized buffer-assignment metadata.
@@ -26,27 +26,27 @@ class PeriodCapture:
     directory: Path
     """Parent directory for the selected captures."""
 
-    periods: tuple[tuple[str, int], ...]
-    """Distinct `(regime name, zero-based period)` targets."""
+    steps: tuple[tuple[str, int], ...]
+    """Distinct `(regime name, zero-based step)` targets; see `Model.step_of`."""
 
     source_identity: Mapping[str, str]
     """Explicit revision or content digests of the consuming model and inputs."""
 
     def __post_init__(self) -> None:
         """Validate selection and own the caller's identity mapping."""
-        targets = tuple(self.periods)
+        targets = tuple(self.steps)
         if not targets or len(set(targets)) != len(targets):
-            raise ValueError("PeriodCapture periods must be nonempty and distinct.")
-        for name, period in targets:
+            raise ValueError("PeriodCapture steps must be nonempty and distinct.")
+        for name, step in targets:
             if (
                 type(name) is not str
                 or not name
                 or any(character in name for character in "/\\@")
                 or name in {".", ".."}
-                or type(period) is not int
-                or period < 0
+                or type(step) is not int
+                or step < 0
             ):
-                raise ValueError("Invalid PeriodCapture regime or period.")
+                raise ValueError("Invalid PeriodCapture regime or step.")
         identity = dict(self.source_identity.items())
         if not identity or any(
             type(key) is not str or not key or type(value) is not str or not value
@@ -56,7 +56,7 @@ class PeriodCapture:
                 "source_identity requires nonempty string names and values."
             )
         object.__setattr__(self, "directory", Path(self.directory))
-        object.__setattr__(self, "periods", targets)
+        object.__setattr__(self, "steps", targets)
         object.__setattr__(self, "source_identity", MappingProxyType(identity))
 
 

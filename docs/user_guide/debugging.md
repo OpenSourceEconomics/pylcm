@@ -170,7 +170,7 @@ from lcm import load_snapshot
 snapshot = load_snapshot("./debug/solve_snapshot_001")
 snapshot.model  # the Model instance
 snapshot.params  # the user parameters
-snapshot.period_to_regime_to_V_arr  # value function arrays (loaded from HDF5)
+snapshot.step_to_regime_to_V_arr  # value function arrays (loaded from HDF5)
 
 # Re-run the solve to reproduce the result
 solution = snapshot.model.solve(params=snapshot.params, log_level="debug")
@@ -181,9 +181,9 @@ For large snapshots, skip fields you don't need:
 ```python
 # Load without the (potentially large) value function arrays
 snapshot = load_snapshot(
-    "./debug/solve_snapshot_001", exclude=["period_to_regime_to_V_arr"]
+    "./debug/solve_snapshot_001", exclude=["step_to_regime_to_V_arr"]
 )
-snapshot.period_to_regime_to_V_arr  # None
+snapshot.step_to_regime_to_V_arr  # None
 snapshot.model  # still available
 ```
 

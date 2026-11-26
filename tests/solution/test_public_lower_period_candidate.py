@@ -164,7 +164,7 @@ class _DispatchCallback(Protocol):
 
 
 def _candidate_address(manifest: _Manifest) -> _DispatchAddress:
-    regime, period, core = manifest["regime"], manifest["period"], manifest["core"]
+    regime, period, core = manifest["regime"], manifest["step"], manifest["core"]
     assert isinstance(regime, str)
     assert isinstance(period, int)
     assert isinstance(core, str)
@@ -198,14 +198,14 @@ def _selected_artifact_keys(manifest: _Manifest) -> frozenset[LoweringDescriptor
 
 class _CandidateKwargs(TypedDict):
     regime: RegimeName
-    period: int
+    step: int
     core: str
     widths: dict[str, int]
 
 
 def _candidate_kwargs(manifest: _Manifest) -> _CandidateKwargs:
     regime, period, core, widths, _donated = _candidate_address(manifest=manifest)
-    return {"regime": regime, "period": period, "core": core, "widths": dict(widths)}
+    return {"regime": regime, "step": period, "core": core, "widths": dict(widths)}
 
 
 def _manifest_text(*, manifest: _Manifest, key: str) -> str:
@@ -445,7 +445,7 @@ def test_public_lower_period_candidate_matches_solve(
         (manifest, ir)
         for manifest, ir in observed
         if _candidate_address(manifest=manifest) in dispatched
-        and _candidate_address(manifest=manifest)[1] < model.n_periods - 1
+        and _candidate_address(manifest=manifest)[1] < model.n_steps - 1
         and bool(manifest["primary_donated"]) == (retention is ResultRetention.VALUES)
     ]
     assert matches, "No genuine primary continuation candidate reached dispatch"
@@ -594,12 +594,12 @@ def _observe_context(
         selected = frozenset(
             ref.key
             for ref in kwargs["persistable_artifact_refs"]
-            if ref.regime == regime and ref.period == period
+            if ref.regime == regime and ref.step == period
         )
         context: dict[str, LoweringDescriptor | JSONValue] = {
             "primary_key": _semantic_fingerprint(_describe(keys[candidate])),
             "regime": regime,
-            "period": period,
+            "step": period,
             "core": core,
             "widths": _describe(resolved.tile_widths),
             "rank": frontier.candidates_by_triple[triple].index(candidate),
@@ -764,7 +764,7 @@ def test_public_lower_period_candidate_rejects_absent_members_before_lowering(
             retention=ResultRetention.VALUES,
         )
     candidates = sorted(
-        entry for entry in dispatched if entry[1] < model.n_periods - 1 and entry[4]
+        entry for entry in dispatched if entry[1] < model.n_steps - 1 and entry[4]
     )
     assert candidates, "No genuine donated continuation candidate reached dispatch"
     regime, period, core, width_items, _donated = candidates[0]
@@ -777,20 +777,20 @@ def test_public_lower_period_candidate_rejects_absent_members_before_lowering(
     requests = (
         (
             lcm.PeriodCandidate(
-                regime=regime, period=model.n_periods, core=core, widths=widths
+                regime=regime, step=model.n_steps, core=core, widths=widths
             ),
             "Candidate is absent from the selected solve graph.",
         ),
         (
             lcm.PeriodCandidate(
-                regime=regime, period=period, core=absent_core, widths=widths
+                regime=regime, step=period, core=absent_core, widths=widths
             ),
             "Candidate is absent from the selected solve graph.",
         ),
         (
             lcm.PeriodCandidate(
                 regime=regime,
-                period=period,
+                step=period,
                 core=core,
                 widths=incomplete_widths,
             ),

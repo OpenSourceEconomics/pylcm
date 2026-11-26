@@ -91,12 +91,12 @@ def prepare_period_capture(
 ) -> CaptureContext:
     """Refuse unsupported selections before solve planning or numerical dispatch."""
     validate_capture_route(
-        periods=request.periods,
+        periods=request.steps,
         regimes=regimes,
         execution=execution,
         enable_jit=enable_jit,
     )
-    for name, period in request.periods:
+    for name, period in request.steps:
         target = request.directory / f"{name}@{period}"
         if target.exists():
             raise FileExistsError(f"Period capture target already exists: {target}")
@@ -205,7 +205,7 @@ def capture_public_entry(
     """
     if (
         context is None
-        or (kernel_kwargs["regime_name"], period) not in context.request.periods
+        or (kernel_kwargs["regime_name"], period) not in context.request.steps
     ):
         return None
     # Gated-edge values belong to the regimes declaring the edges. A target without

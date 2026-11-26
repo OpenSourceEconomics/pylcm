@@ -97,7 +97,9 @@ def _stdout(*, body: str, tmp_path: Path) -> str:
     return result.stdout
 
 
-def test_every_captured_array_leaf_round_trips_to_its_recorded_descriptor(tmp_path):
+def test_every_captured_array_leaf_round_trips_to_its_recorded_descriptor(
+    tmp_path: Path,
+) -> None:
     """Restoring a capture's layout reproduces the descriptor of every array leaf."""
     body = """
     # The loader fills in the next-period values the capture holds as templates.
@@ -116,7 +118,9 @@ def test_every_captured_array_leaf_round_trips_to_its_recorded_descriptor(tmp_pa
     assert _stdout(body=body, tmp_path=tmp_path).split()[-2:] == ["12", "True"]
 
 
-def test_a_layout_replay_validates_every_recorded_compiled_sharding(tmp_path):
+def test_a_layout_replay_validates_every_recorded_compiled_sharding(
+    tmp_path: Path,
+) -> None:
     """The replay compares each compiled placement against the recorded one."""
     body = """
     compared = []
@@ -139,7 +143,9 @@ def test_a_layout_replay_validates_every_recorded_compiled_sharding(tmp_path):
     assert _stdout(body=body, tmp_path=tmp_path).split()[-1] == "15"
 
 
-def test_a_mismatched_recorded_output_sharding_is_refused_naming_both_values(tmp_path):
+def test_a_mismatched_recorded_output_sharding_is_refused_naming_both_values(
+    tmp_path: Path,
+) -> None:
     """A recorded placement the replay does not reproduce is refused, both named."""
     body = """
     import dataclasses
@@ -176,7 +182,9 @@ def test_a_mismatched_recorded_output_sharding_is_refused_naming_both_values(tmp
     assert _stdout(body=body, tmp_path=tmp_path).split()[-1] == "True"
 
 
-def test_a_wrong_device_count_is_refused_naming_recorded_and_given(tmp_path):
+def test_a_wrong_device_count_is_refused_naming_recorded_and_given(
+    tmp_path: Path,
+) -> None:
     """Replaying on fewer devices than were recorded refuses, naming both counts."""
     body = """
     try:
@@ -196,7 +204,9 @@ def test_a_wrong_device_count_is_refused_naming_recorded_and_given(tmp_path):
     assert _stdout(body=body, tmp_path=tmp_path).split()[-1] == "True"
 
 
-def test_a_capture_on_a_device_subset_records_and_replays_only_that_subset(tmp_path):
+def test_a_capture_on_a_device_subset_records_and_replays_only_that_subset(
+    tmp_path: Path,
+) -> None:
     """A model solved on two of four devices replays on any two devices."""
     body = """
     import lcm
@@ -222,7 +232,7 @@ def test_a_capture_on_a_device_subset_records_and_replays_only_that_subset(tmp_p
     assert _stdout(body=body, tmp_path=tmp_path).split()[-3:] == ["RECORDED", "2", "3"]
 
 
-def test_an_unsupported_route_is_refused_by_name(tmp_path):
+def test_an_unsupported_route_is_refused_by_name(tmp_path: Path) -> None:
     """A capture from a route this entry point cannot reinstate is refused by name."""
     body = """
     import dataclasses
@@ -248,7 +258,7 @@ def test_an_unsupported_route_is_refused_by_name(tmp_path):
     assert _stdout(body=body, tmp_path=tmp_path).split()[-1] == "True"
 
 
-def test_a_capture_without_recorded_layouts_is_refused_by_name(tmp_path):
+def test_a_capture_without_recorded_layouts_is_refused_by_name(tmp_path: Path) -> None:
     """A capture predating the layout block is refused rather than half-honoured."""
     body = """
     rewrite(lambda payload: payload.pop(period_capture.LAYOUTS_KEY))
@@ -265,7 +275,9 @@ def test_a_capture_without_recorded_layouts_is_refused_by_name(tmp_path):
     assert _stdout(body=body, tmp_path=tmp_path).split()[-1] == "True"
 
 
-def test_a_capture_without_recorded_layouts_still_replays_logically(tmp_path):
+def test_a_capture_without_recorded_layouts_still_replays_logically(
+    tmp_path: Path,
+) -> None:
     """Dropping the layout block leaves the logical entry point working.
 
     The logical replay runs where the backend places the restored arrays, on one
@@ -303,7 +315,9 @@ def test_a_capture_without_recorded_layouts_still_replays_logically(tmp_path):
     assert _stdout(body=body, tmp_path=tmp_path).split()[-2:] == ["True", "True"]
 
 
-def test_a_layout_replay_reproduces_the_value_array_of_the_full_solve(tmp_path):
+def test_a_layout_replay_reproduces_the_value_array_of_the_full_solve(
+    tmp_path: Path,
+) -> None:
     """The layout-faithful replay returns exactly the array the solve published."""
     body = """
     replay = period_replay.replay_period_on_recorded_layout(
@@ -322,7 +336,7 @@ def test_a_layout_replay_reproduces_the_value_array_of_the_full_solve(tmp_path):
     assert _stdout(body=body, tmp_path=tmp_path).split()[-1] == "True"
 
 
-def test_a_layout_replay_reports_scope_layout(tmp_path):
+def test_a_layout_replay_reports_scope_layout(tmp_path: Path) -> None:
     """A replay that reinstated and validated the recorded layout says so."""
     body = """
     replay = period_replay.replay_period_on_recorded_layout(
@@ -333,7 +347,7 @@ def test_a_layout_replay_reports_scope_layout(tmp_path):
     assert _stdout(body=body, tmp_path=tmp_path).split()[-1] == "layout"
 
 
-def test_the_logical_entry_point_reports_scope_logical(tmp_path):
+def test_the_logical_entry_point_reports_scope_logical(tmp_path: Path) -> None:
     """`replay_period` places by the backend's default rules and says so."""
     body = """
     replay = period_replay.replay_period(directory=directory)
@@ -342,7 +356,9 @@ def test_the_logical_entry_point_reports_scope_logical(tmp_path):
     assert _stdout(body=body, tmp_path=tmp_path).split()[-1] == "logical"
 
 
-def test_a_recorded_donation_is_reinstated_and_replays_on_its_layout(tmp_path):
+def test_a_recorded_donation_is_reinstated_and_replays_on_its_layout(
+    tmp_path: Path,
+) -> None:
     """A core whose capture records a donation is lowered donating and still matches.
 
     The GridSearch route declares no donation candidates, so a production capture
@@ -376,7 +392,9 @@ def test_a_recorded_donation_is_reinstated_and_replays_on_its_layout(tmp_path):
     assert _stdout(body=body, tmp_path=tmp_path).split()[-1] == "layout"
 
 
-def test_a_mismatched_recorded_variant_is_refused_naming_both_values(tmp_path):
+def test_a_mismatched_recorded_variant_is_refused_naming_both_values(
+    tmp_path: Path,
+) -> None:
     """A recorded variant the replay does not reproduce is refused, both named."""
     body = """
     import dataclasses
@@ -412,7 +430,7 @@ def test_a_mismatched_recorded_variant_is_refused_naming_both_values(tmp_path):
     assert _stdout(body=body, tmp_path=tmp_path).split()[-1] == "True"
 
 
-def test_a_recorded_donation_reaches_the_compiled_executable(tmp_path):
+def test_a_recorded_donation_reaches_the_compiled_executable(tmp_path: Path) -> None:
     """The reinstated donation reaches the executable as donated buffers.
 
     `next_regime_to_V_arr` carries the value array of each period target. At the
@@ -596,7 +614,9 @@ two_mesh_devices = jax.devices()[: len(two_mesh_layouts.device_ids)]
 """
 
 
-def test_a_capture_spanning_two_named_meshes_replays_under_the_strict_check(tmp_path):
+def test_a_capture_spanning_two_named_meshes_replays_under_the_strict_check(
+    tmp_path: Path,
+) -> None:
     """Inputs on two same-device meshes with different axis names replay exactly.
 
     The replay passes the strict layout comparison and returns the value array
@@ -609,7 +629,7 @@ def test_a_capture_spanning_two_named_meshes_replays_under_the_strict_check(tmp_
     )
     np.testing.assert_array_equal(
         np.asarray(replay.output.value),
-        np.asarray(simulated.period_to_regime_to_V_arr[1]["alive"]),
+        np.asarray(simulated.step_to_regime_to_V_arr[1]["alive"]),
     )
     print("STRICT-REPLAY", replay.scope)
     """
@@ -620,7 +640,9 @@ def test_a_capture_spanning_two_named_meshes_replays_under_the_strict_check(tmp_
     ]
 
 
-def test_a_two_mesh_capture_with_a_different_recorded_input_spec_is_refused(tmp_path):
+def test_a_two_mesh_capture_with_a_different_recorded_input_spec_is_refused(
+    tmp_path: Path,
+) -> None:
     """A recorded input partition spec the replay does not reproduce is refused."""
     body = _TWO_MESH_SOLVE + textwrap.dedent(
         """

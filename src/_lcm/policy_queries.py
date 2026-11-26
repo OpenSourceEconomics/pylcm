@@ -438,7 +438,7 @@ def gated_query_targets(
     return tuple(
         target
         for target in context.solution_reachability.targets(
-            period=period, source=context.regime_name
+            step=period, source=context.regime_name
         )
         if target in context.edge_target_regimes
     )

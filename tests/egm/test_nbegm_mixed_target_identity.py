@@ -123,11 +123,11 @@ def _assert_canonical_target_identity(*, model: Model) -> None:
     assert model._graph.laws["done"].terminal
     assert living.active_periods == (1,)
     assert done.active_periods == (1, 2)
-    assert set(model.reachability.solution.targets(period=0, source="parent")) == {
+    assert set(model.reachability.solution.targets(step=0, source="parent")) == {
         "living",
         "done",
     }
-    assert model.reachability.solution.targets(period=1, source="living") == ("done",)
+    assert model.reachability.solution.targets(step=1, source="living") == ("done",)
     assert living.solution.state_names == ("liquid", "z")
     assert done.solution.state_names == ("liquid", "z")
     assert living.solution.discrete_state_names == ()

@@ -89,12 +89,12 @@ def _traverse_public_mapping_items[K, V](
 
 
 @beartype(conf=SOLVER_API_CONF)
-def _require_exact_value_period(period: int) -> int:
-    if type(period) is not int:
-        raise TypeError("Value periods must be exact ints.")
-    if period < 0:
-        raise ValueError("Value periods must be nonnegative.")
-    return period
+def _require_exact_value_step(step: int) -> int:
+    if type(step) is not int:
+        raise TypeError("Value steps must be exact ints.")
+    if step < 0:
+        raise ValueError("Value steps must be nonnegative.")
+    return step
 
 
 @beartype(conf=SOLVER_API_CONF)
@@ -121,7 +121,7 @@ def _require_exact_artifact_key(key: ArtifactKey) -> ArtifactKey:
 def _require_exact_artifact_ref(ref: ArtifactRef) -> ArtifactRef:
     if type(ref) is not ArtifactRef:
         raise TypeError("Artifact addresses must be exact ArtifactRef objects.")
-    _require_exact_value_period(ref.period)
+    _require_exact_value_step(ref.step)
     _require_exact_regime_name(ref.regime)
     _require_exact_artifact_key(ref.key)
     return ref
@@ -129,41 +129,41 @@ def _require_exact_artifact_ref(ref: ArtifactRef) -> ArtifactRef:
 
 @beartype(conf=SOLVER_API_CONF)
 @dataclass(frozen=True, eq=False)
-class _ValuePeriodView(Mapping[RegimeName, FloatND]):
-    """Read-through view of one period in a :class:`ValueStore`."""
+class _ValueStepView(Mapping[RegimeName, FloatND]):
+    """Read-through view of one step in a :class:`ValueStore`."""
 
     store: _ValueStoreBoundary
-    period: int
+    step: int
 
     def __getitem__(self, regime: RegimeName) -> _FloatValueBoundary:
-        return self.store._load(period=self.period, regime=regime)  # noqa: SLF001
+        return self.store._load(step=self.step, regime=regime)  # noqa: SLF001
 
     def __iter__(self) -> Iterator[RegimeName]:
-        return iter(self.store._regimes_by_period[self.period])  # noqa: SLF001
+        return iter(self.store._regimes_by_step[self.step])  # noqa: SLF001
 
     def __len__(self) -> int:
-        return len(self.store._regimes_by_period[self.period])  # noqa: SLF001
+        return len(self.store._regimes_by_step[self.step])  # noqa: SLF001
 
     def __contains__(self, regime: object) -> bool:
         """Check one regime coordinate without materializing its value."""
         if type(regime) is not str or not regime:
             return False
-        return regime in self.store._regimes_by_period[self.period]  # noqa: SLF001
+        return regime in self.store._regimes_by_step[self.step]  # noqa: SLF001
 
 
 @beartype(conf=SOLVER_API_CONF)
 def _admit_value_entry(
     *,
-    period: int,
+    step: int,
     regime: RegimeName,
     value: _ValueEntry,
     entries: dict[_ValueCoordinate, _LazyEntry],
-    regimes_by_period: dict[int, list[RegimeName]],
+    regimes_by_step: dict[int, list[RegimeName]],
     array_copier: _ArrayCopier | None = None,
 ) -> None:
     """Check one raw coordinate exactly and for uniqueness, then own its value."""
     coordinate = (
-        _require_exact_value_period(period),
+        _require_exact_value_step(step),
         _require_exact_regime_name(regime),
     )
     if coordinate in entries:
@@ -173,7 +173,7 @@ def _admit_value_entry(
         if isinstance(value, _LazyEntry) and type(value) is not _CanonicalValueEntry
         else _canonical_value_entry(value=value, array_copier=array_copier)
     )
-    regimes_by_period.setdefault(coordinate[0], []).append(coordinate[1])
+    regimes_by_step.setdefault(coordinate[0], []).append(coordinate[1])
 
 
 @beartype(conf=SOLVER_API_CONF)
@@ -182,14 +182,12 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
     """Immutable, independently materializable value-function store.
 
     Eager solves and restored archives expose the same mapping interface.  The
-    latter keep a lazy entry per ``(period, regime)``; inspecting coordinates or
+    latter keep a lazy entry per ``(step, regime)``; inspecting coordinates or
     load state never reads a numerical payload.
     """
 
     _entries: MappingProxyType[_ValueCoordinate, _LazyEntry] = field(repr=False)
-    _regimes_by_period: MappingProxyType[int, tuple[RegimeName, ...]] = field(
-        repr=False
-    )
+    _regimes_by_step: MappingProxyType[int, tuple[RegimeName, ...]] = field(repr=False)
 
     def __init__(self, _entries: _ValueEntriesInput = MappingProxyType({})) -> None:
         # `__post_init__` replaces the supplied mapping with its canonical form.
@@ -211,7 +209,7 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
 
     def _initialize(self, *, array_copier: _ArrayCopier | None = None) -> None:
         # The mapping is read through exactly one item traversal. Its form — flat
-        # ``(period, regime)`` tuples or ``period -> regime -> value`` — is decided
+        # ``(step, regime)`` tuples or ``step -> regime -> value`` — is decided
         # from those same items, and every raw coordinate is checked exactly and for
         # uniqueness before it is inserted, so ``True`` cannot overwrite ``1`` and a
         # repeated address cannot be contracted into one.
@@ -223,12 +221,12 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
         is_flat = [type(key) is tuple for key, _ in items]
         if any(is_flat) and not all(is_flat):
             raise TypeError(
-                "ValueStore entries must be keyed either by (period, regime) tuples "
-                "or by periods, not by both."
+                "ValueStore entries must be keyed either by (step, regime) tuples "
+                "or by steps, not by both."
             )
 
         entries: dict[_ValueCoordinate, _LazyEntry] = {}
-        regimes_by_period: dict[int, list[RegimeName]] = {}
+        regimes_by_step: dict[int, list[RegimeName]] = {}
 
         if all(is_flat):
             for coordinate, value in items:
@@ -236,28 +234,28 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
                     raise ValueError("A ValueStore coordinate must have two entries.")
                 _admit_value_entry(
                     entries=entries,
-                    regimes_by_period=regimes_by_period,
-                    period=coordinate[0],
+                    regimes_by_step=regimes_by_step,
+                    step=coordinate[0],
                     regime=coordinate[1],
                     value=value,
                     array_copier=array_copier,
                 )
         else:
-            for period, regime_to_value in items:
-                exact_period = _require_exact_value_period(period)
+            for step, regime_to_value in items:
+                exact_step = _require_exact_value_step(step)
                 if not isinstance(regime_to_value, Mapping):
                     raise TypeError(
-                        f"ValueStore period {exact_period} must map to a mapping of "
+                        f"ValueStore step {exact_step} must map to a mapping of "
                         "regime names to values."
                     )
                 for regime, value in _traverse_public_mapping_items(
                     mapping=regime_to_value,
-                    label=f"ValueStore period {exact_period} entries",
+                    label=f"ValueStore step {exact_step} entries",
                 ):
                     _admit_value_entry(
                         entries=entries,
-                        regimes_by_period=regimes_by_period,
-                        period=exact_period,
+                        regimes_by_step=regimes_by_step,
+                        step=exact_step,
                         regime=regime,
                         value=value,
                         array_copier=array_copier,
@@ -265,52 +263,49 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
         object.__setattr__(self, "_entries", MappingProxyType(entries))
         object.__setattr__(
             self,
-            "_regimes_by_period",
+            "_regimes_by_step",
             MappingProxyType(
-                {
-                    period: tuple(regimes)
-                    for period, regimes in regimes_by_period.items()
-                }
+                {step: tuple(regimes) for step, regimes in regimes_by_step.items()}
             ),
         )
 
-    def __getitem__(self, period: int) -> _RegimeValuesBoundary:
-        period = _require_exact_value_period(period)
-        if period not in self._regimes_by_period:
+    def __getitem__(self, step: int) -> _RegimeValuesBoundary:
+        step = _require_exact_value_step(step)
+        if step not in self._regimes_by_step:
             raise KeyError(
-                f"No values stored for period {period}; stored periods: "
-                f"{tuple(self._regimes_by_period)!r}."
+                f"No values stored for step {step}; stored steps: "
+                f"{tuple(self._regimes_by_step)!r}."
             )
-        return _ValuePeriodView(store=self, period=period)
+        return _ValueStepView(store=self, step=step)
 
     def __iter__(self) -> Iterator[int]:
-        return iter(self._regimes_by_period)
+        return iter(self._regimes_by_step)
 
     def __len__(self) -> int:
-        return len(self._regimes_by_period)
+        return len(self._regimes_by_step)
 
-    def __contains__(self, period: object) -> bool:
-        """Check one period coordinate without materializing a value."""
-        if type(period) is not int or period < 0:
+    def __contains__(self, step: object) -> bool:
+        """Check one step coordinate without materializing a value."""
+        if type(step) is not int or step < 0:
             return False
-        return period in self._regimes_by_period
+        return step in self._regimes_by_step
 
     def _load(
         self,
         *,
-        period: int,
+        step: int,
         regime: RegimeName,
         array_copier: _ArrayCopier | None = None,
         value_materializer: _ValueMaterializer | None = None,
     ) -> _FloatValueBoundary:
-        period = _require_exact_value_period(period)
+        step = _require_exact_value_step(step)
         regime = _require_exact_regime_name(regime)
         try:
-            entry = self._entries[(period, regime)]
+            entry = self._entries[(step, regime)]
         except KeyError:
             raise KeyError(
-                f"No stored value for regime {regime!r} in period {period}; "
-                f"stored regimes: {self._regimes_by_period.get(period, ())!r}."
+                f"No stored value for regime {regime!r} in step {step}; "
+                f"stored regimes: {self._regimes_by_step.get(step, ())!r}."
             ) from None
         if array_copier is not None and isinstance(entry, _LazyEntry):
             if type(entry) is _CanonicalValueEntry:
@@ -328,7 +323,7 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
                 return fresh
             value = _materialize_entry(entry=entry)
         if type(entry) is not _CanonicalValueEntry:
-            label = f"Solution value at period={period}, regime={regime!r}"
+            label = f"Solution value at step={step}, regime={regime!r}"
             value = (
                 _copy_solution_value(value=value, label=label)
                 if array_copier is None
@@ -353,17 +348,17 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
             ]
         )
 
-    def _raw(self, *, period: int, regime: RegimeName) -> _LazyEntry:
+    def _raw(self, *, step: int, regime: RegimeName) -> _LazyEntry:
         """Return one value's entry without materializing it."""
-        period = _require_exact_value_period(period)
+        step = _require_exact_value_step(step)
         regime = _require_exact_regime_name(regime)
-        return self._entries[(period, regime)]
+        return self._entries[(step, regime)]
 
-    def load_state(self, *, period: int, regime: RegimeName) -> LoadState:
+    def load_state(self, *, step: int, regime: RegimeName) -> LoadState:
         """Return one value entry's state without materializing it."""
-        period = _require_exact_value_period(period)
+        step = _require_exact_value_step(step)
         regime = _require_exact_regime_name(regime)
-        entry = self._entries[(period, regime)]
+        entry = self._entries[(step, regime)]
         return entry.load_state if isinstance(entry, _LazyEntry) else LoadState.LOADED
 
     def materialize(self) -> _MaterializedValuesBoundary:
@@ -390,10 +385,10 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
             kind._admit_joint_materialization(entries=tuple(entries))  # noqa: SLF001
         return MappingProxyType(
             {
-                period: MappingProxyType(
+                step: MappingProxyType(
                     {
                         regime: self._load(
-                            period=period,
+                            step=step,
                             regime=regime,
                             array_copier=array_copier,
                             value_materializer=value_materializer,
@@ -401,7 +396,7 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
                         for regime in view
                     }
                 )
-                for period, view in self.items()
+                for step, view in self.items()
             }
         )
 
@@ -412,7 +407,7 @@ class ArtifactStore(Mapping[ArtifactRef, ArtifactPayload]):
     """Immutable store of explicitly addressed solution artifacts.
 
     The mapping interface keeps artifacts solver-extensible. ``project`` gives engine
-    consumers the nested ``period -> regime -> payload`` view for one known artifact
+    consumers the nested ``step -> regime -> payload`` view for one known artifact
     key.
     """
 
@@ -457,17 +452,17 @@ class ArtifactStore(Mapping[ArtifactRef, ArtifactPayload]):
     def project(
         self, key: ArtifactKey
     ) -> MappingProxyType[int, MappingProxyType[RegimeName, ArtifactPayload]]:
-        """Project one artifact schema to an immutable nested period mapping."""
+        """Project one artifact schema to an immutable nested step mapping."""
         key = _require_exact_artifact_key(key)
         projected: dict[int, dict[RegimeName, ArtifactPayload]] = {}
         for ref in self._entries:
             _require_exact_artifact_ref(ref)
             if _same_exact_artifact_contract(actual=ref.key, expected=key):
-                projected.setdefault(ref.period, {})[ref.regime] = self[ref]
+                projected.setdefault(ref.step, {})[ref.regime] = self[ref]
         return MappingProxyType(
             {
-                period: MappingProxyType(regime_to_payload)
-                for period, regime_to_payload in sorted(projected.items())
+                step: MappingProxyType(regime_to_payload)
+                for step, regime_to_payload in sorted(projected.items())
             }
         )
 

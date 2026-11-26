@@ -23,7 +23,7 @@ from _lcm.simulation.operand_placement import SubjectArgumentNames
 from _lcm.simulation.program_types import _PerSubjectFunction
 from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
 from _lcm.simulation.subject_groups import SubjectRows
-from _lcm.time import TimeAxis, step_count
+from _lcm.time import TimeAxis, describe_step, step_count
 from _lcm.typing import (
     FlatParams,
     QualifiedName,
@@ -106,8 +106,8 @@ def resolve_shock_paths(  # noqa: C901, PLR0912
         values = np.asarray(path)
         if values.ndim not in (1, 2) or values.dtype.kind not in "fiu":
             raise InvalidSimulationInputError(
-                f"shock_paths '{name}' requires a real array of shape (periods,) "
-                "or (subjects, periods)."
+                f"shock_paths '{name}' requires a real array of shape (steps,) "
+                "or (subjects, steps)."
             )
         if values.ndim != 1 and values.shape[0] != len(regime_ids):
             raise InvalidSimulationInputError(
@@ -131,8 +131,9 @@ def resolve_shock_paths(  # noqa: C901, PLR0912
                     continue
                 if period >= values.shape[-1]:
                     raise InvalidSimulationInputError(
-                        f"shock_paths '{name}' does not cover period {period} "
-                        f"in regime '{regime_name}'."
+                        f"shock_paths '{name}' does not cover step {period} "
+                        f"({describe_step(ages=ages, step=period)}) in regime "
+                        f"'{regime_name}'."
                     )
                 original, column = (
                     (values[period : period + 1], narrowed[period : period + 1])
@@ -149,8 +150,9 @@ def resolve_shock_paths(  # noqa: C901, PLR0912
                     )
                 ):
                     raise InvalidSimulationInputError(
-                        f"shock_paths '{name}' has an inadmissible value at period "
-                        f"{period} in regime '{regime_name}'."
+                        f"shock_paths '{name}' has an inadmissible value at "
+                        f"{describe_step(ages=ages, step=period)} in regime "
+                        f"'{regime_name}'."
                     )
                 # Check after narrowing too: overflow/underflow cannot manufacture
                 # an admissible path in the format simulation actually consumes.
@@ -162,7 +164,8 @@ def resolve_shock_paths(  # noqa: C901, PLR0912
                 if not np.all(valid):
                     raise InvalidSimulationInputError(
                         f"shock_paths '{name}' is not admissible in the simulation "
-                        f"dtype at period {period} in regime '{regime_name}'."
+                        f"dtype at {describe_step(ages=ages, step=period)} in regime "
+                        f"'{regime_name}'."
                     )
                 coded = process_code_reads.get(regime_name, {}).get(name)
                 if lag == 0 and coded is not None:
@@ -171,7 +174,8 @@ def resolve_shock_paths(  # noqa: C901, PLR0912
                         name=name,
                         process=coded,
                         error=InvalidSimulationInputError,
-                        where=f"shock_paths '{name}' at period {period} in regime "
+                        where=f"shock_paths '{name}' at "
+                        f"{describe_step(ages=ages, step=period)} in regime "
                         f"'{regime_name}'",
                     )
         result[name] = narrowed
@@ -381,7 +385,7 @@ def _shock_declarations(
             and any(
                 f"next_{name}" in regime.simulation.transition_plans[target].lotteries
                 for target in regime.simulation.reachability.targets(
-                    period=step, source=regime_name
+                    step=step, source=regime_name
                 )
                 if target in regime.simulation.transition_plans
                 and name not in regimes[target].simulation.grids
@@ -486,7 +490,7 @@ def _subject_occupancy(
                     for source in actors
                     if step in regimes[source].simulation.feasibility_pools_by_period
                     for target in regimes[source].simulation.reachability.targets(
-                        period=step, source=source
+                        step=step, source=source
                     )
                 }
     return occupancy

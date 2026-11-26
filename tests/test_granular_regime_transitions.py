@@ -359,10 +359,8 @@ def test_disjoint_phase_targets_price_perceived_choice_and_realize_exit(
         params |= {"perceived_scale": 1.0, "realized_scale": 1.0}
     solution = model.solve(params=params, log_level="debug")
     np.testing.assert_array_equal(solution.values[0]["work"][..., 0], jnp.ones(2))
-    assert model.reachability.solution.targets(period=0, source="work") == ("dead",)
-    assert model.reachability.simulation.targets(period=0, source="work") == (
-        "retired",
-    )
+    assert model.reachability.solution.targets(step=0, source="work") == ("dead",)
+    assert model.reachability.simulation.targets(step=0, source="work") == ("retired",)
     result = model.simulate(
         params=params,
         solution=solution,
@@ -420,7 +418,7 @@ def test_fixed_zero_probability_does_not_hide_an_invalid_empty_distribution() ->
             )
         },
     )
-    assert model.reachability.solution.targets(period=0, source="work") == (
+    assert model.reachability.solution.targets(step=0, source="work") == (
         "dead",
         "retired",
     )

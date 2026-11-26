@@ -90,7 +90,7 @@ def test_budgeted_native_value_archive_replays_and_reuses_its_resolution(
     ]
     assert coordinates
     assert all(
-        loaded.values.load_state(period=period, regime=regime) is LoadState.UNLOADED
+        loaded.values.load_state(step=period, regime=regime) is LoadState.UNLOADED
         for period, regime in coordinates
     )
     if preloaded:
@@ -104,7 +104,7 @@ def test_budgeted_native_value_archive_replays_and_reuses_its_resolution(
     ).to_dataframe()
     assert_frame_equal(actual, expected)
     assert all(
-        loaded.values.load_state(period=period, regime=regime) is LoadState.LOADED
+        loaded.values.load_state(step=period, regime=regime) is LoadState.LOADED
         for period, regime in coordinates
     )
     # The accepted consumed view must survive independent deletion of a fresh

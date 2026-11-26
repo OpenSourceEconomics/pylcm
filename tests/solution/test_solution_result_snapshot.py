@@ -516,7 +516,7 @@ def _array_authority(*, value: float = 0.0) -> ArtifactAuthority:
 def _minimal_metadata() -> SolutionMetadata:
     return SolutionMetadata(
         retention=ResultRetention.VALUES,
-        n_periods=1,
+        n_steps=1,
         regime_names=("working",),
         solver_types={"working": "example.GridSearch"},
         model_instance_id="model-1",
@@ -600,7 +600,7 @@ def test_result_envelope_owns_each_mapping_once_without_loading() -> None:
 
 def test_descriptor_and_authority_mappings_are_each_captured_once() -> None:
     key = ArtifactKey(type_id="example.payload")
-    ref = ArtifactRef(period=0, regime="working", key=key)
+    ref = ArtifactRef(step=0, regime="working", key=key)
     domain = CategoryDomain(labels=("no", "yes"), codes=(0, 1), ordered=False)
     leaf_path = ("flattened:0",)
     leaf_descriptor = LeafDescriptor(
@@ -751,7 +751,7 @@ def test_public_and_engine_authorities_observe_each_template_exactly_once() -> N
     assert _CountingTree.flatten_count == 1
 
     public_ref = ArtifactRef(
-        period=0,
+        step=0,
         regime="working",
         key=public.descriptor.key,
     )
@@ -1013,7 +1013,7 @@ def test_owned_artifact_store_returns_fresh_callback_free_graphs() -> None:
     _CountingTree.flatten_count = 0
     _CountingTree.unflatten_count = 0
     authority = _counting_tree_authority(value=5.0)
-    ref = ArtifactRef(period=0, regime="working", key=authority.descriptor.key)
+    ref = ArtifactRef(step=0, regime="working", key=authority.descriptor.key)
     store = snapshot_artifact_store(
         store=ArtifactStore({ref: _CountingTree(jnp.asarray(5.0, dtype=jnp.float32))}),
         authorities={ref: authority},

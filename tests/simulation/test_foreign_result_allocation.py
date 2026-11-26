@@ -452,7 +452,7 @@ def test_unexpected_supplied_artifact_is_rejected_before_unprofiled_copy(
     solution = model.solve(params=params, log_level="off")
     artifact_authority = _array_authority(value=4.0)
     ref = ArtifactRef(
-        period=0, regime="working_life", key=artifact_authority.descriptor.key
+        step=0, regime="working_life", key=artifact_authority.descriptor.key
     )
     store = snapshot_artifact_store(
         store=ArtifactStore({ref: jnp.asarray(4.0, dtype=jnp.float32)}),

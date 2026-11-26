@@ -99,6 +99,7 @@ from lcm.typing import (
     Period,
     RegimeName,
     ScalarInt,
+    StageName,
     StateName,
     StateOrActionName,
 )
@@ -708,6 +709,7 @@ def test_validate_transitions_counts_off_grid_landings_without_output(
         state: StateName,
         phase: str,  # noqa: ARG001
         logger: logging.Logger,  # noqa: ARG001
+        stage: StageName | None = None,  # noqa: ARG001
     ) -> None:
         reported.append((state, period, count))
 

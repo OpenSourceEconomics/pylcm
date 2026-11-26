@@ -245,8 +245,8 @@ def test_artifact_identity_includes_schema_version() -> None:
     policy_v2 = ArtifactKey(type_id="example.policy", schema_version=2)
 
     assert policy_v1 != policy_v2
-    assert ArtifactRef(period=3, regime="alive", key=policy_v1) != ArtifactRef(
-        period=3, regime="alive", key=policy_v2
+    assert ArtifactRef(step=3, regime="alive", key=policy_v1) != ArtifactRef(
+        step=3, regime="alive", key=policy_v2
     )
 
 
@@ -268,9 +268,9 @@ def test_artifact_store_is_immutable_and_projects_one_artifact_type() -> None:
     policy = ArtifactKey(type_id="example.policy")
     diagnostic = ArtifactKey(type_id="example.diagnostic")
     refs = {
-        ArtifactRef(period=1, regime="alive", key=policy): "p1",
-        ArtifactRef(period=0, regime="alive", key=policy): "p0",
-        ArtifactRef(period=0, regime="alive", key=diagnostic): "d0",
+        ArtifactRef(step=1, regime="alive", key=policy): "p1",
+        ArtifactRef(step=0, regime="alive", key=policy): "p0",
+        ArtifactRef(step=0, regime="alive", key=diagnostic): "d0",
     }
     store = ArtifactStore(cast("Mapping[ArtifactRef, ArtifactPayload]", refs))
 
@@ -287,7 +287,7 @@ def test_solution_result_keeps_values_explicit_and_immutable() -> None:
     values = {0: {"alive": jnp.asarray([1.0, 2.0])}}
     metadata = SolutionMetadata(
         retention=ResultRetention.VALUES,
-        n_periods=1,
+        n_steps=1,
         regime_names=("alive",),
         solver_types={"alive": "example.Grid"},
         model_instance_id="model-1",
@@ -300,7 +300,7 @@ def test_solution_result_keeps_values_explicit_and_immutable() -> None:
     )
     result = SolutionResult(values=values, metadata=metadata)
 
-    np.testing.assert_array_equal(result.value(period=0, regime="alive"), [1.0, 2.0])
+    np.testing.assert_array_equal(result.value(step=0, regime="alive"), [1.0, 2.0])
     assert isinstance(result.values, ValueStore)
     assert isinstance(result.values[0], Mapping)
     assert isinstance(result.omissions, MappingProxyType)
@@ -312,14 +312,14 @@ def test_solution_result_keeps_values_explicit_and_immutable() -> None:
 def test_value_store_missing_period_names_stored_periods(*, period: int) -> None:
     """An absent period reports the available value coordinates."""
     values = ValueStore({(1, "alive"): jnp.asarray([1.0])})
-    with pytest.raises(KeyError, match=rf"period {period}.*stored periods.*1"):
+    with pytest.raises(KeyError, match=rf"step {period}.*stored steps.*1"):
         values[period]
 
 
 def test_value_store_missing_regime_names_stored_regimes() -> None:
     """An incoming-only actor need not have a stored value in its entry period."""
     values = ValueStore({(0, "working"): jnp.asarray([1.0])})
-    with pytest.raises(KeyError, match=r"retired.*period 0.*stored regimes.*working"):
+    with pytest.raises(KeyError, match=r"retired.*step 0.*stored regimes.*working"):
         values[0]["retired"]
 
 
@@ -339,7 +339,7 @@ def test_store_lookups_reject_nonexact_coordinates_before_hashing() -> None:
         values=values,
         metadata=SolutionMetadata(
             retention=ResultRetention.VALUES,
-            n_periods=1,
+            n_steps=1,
             regime_names=("alive",),
             solver_types={"alive": "example.Grid"},
             model_instance_id="model-1",
@@ -357,10 +357,10 @@ def test_store_lookups_reject_nonexact_coordinates_before_hashing() -> None:
     assert True not in values
     assert hostile_regime not in values[0]
     with pytest.raises(TypeError, match="exact strs"):
-        result.value(period=0, regime=hostile_regime)
+        result.value(step=0, regime=hostile_regime)
 
     key = ArtifactKey(type_id="example.policy")
-    ref = ArtifactRef(period=0, regime="alive", key=key)
+    ref = ArtifactRef(step=0, regime="alive", key=key)
     artifacts = ArtifactStore({ref: cast("ArtifactPayload", object())})
     hostile_ref = replace(ref)
     object.__setattr__(hostile_ref, "regime", hostile_regime)
@@ -432,12 +432,12 @@ def test_model_solve_omits_policy_without_replay_route() -> None:
     assert result.metadata.retention is ResultRetention.VALUES_AND_REPLAY
     assert not result.replay_artifacts.project(SIMULATION_POLICY)
     policy_ref = ArtifactRef(
-        period=0,
+        step=0,
         regime="retirement",
         key=SIMULATION_POLICY,
     )
     continuation_ref = ArtifactRef(
-        period=0,
+        step=0,
         regime="retirement",
         key=EGM_CONTINUATION,
     )
@@ -453,7 +453,7 @@ def test_model_rejects_a_present_inapplicable_artifact() -> None:
     params = get_graph_only_retirement_params(n_periods=2, discount_factor=0.98)
     solution = model.solve(params=params, log_level="off")
     policy_ref = ArtifactRef(
-        period=0,
+        step=0,
         regime="retirement",
         key=SIMULATION_POLICY,
     )
@@ -540,7 +540,7 @@ def test_values_only_result_drops_replay_with_an_explicit_reason() -> None:
 
     assert not result.replay_artifacts
     policy_ref = ArtifactRef(
-        period=0,
+        step=0,
         regime="retirement",
         key=SIMULATION_POLICY,
     )
@@ -558,7 +558,7 @@ def test_all_persistable_retains_model_verifiable_egm_continuation() -> None:
     )
 
     continuation_ref = ArtifactRef(
-        period=0,
+        step=0,
         regime="retirement",
         key=EGM_CONTINUATION,
     )
@@ -939,7 +939,7 @@ def test_solution_result_structure_is_checked_before_simulation(defect: str) -> 
     if defect == "metadata":
         malformed = replace(
             solution,
-            metadata=replace(solution.metadata, n_periods=model.n_periods + 1),
+            metadata=replace(solution.metadata, n_steps=model.n_steps + 1),
         )
     else:
         value_store = solution.values
@@ -1129,10 +1129,10 @@ def test_solution_result_normalizes_an_unexpected_empty_value_period() -> None:
         period: dict(regime_to_value)
         for period, regime_to_value in solution.values.items()
     }
-    values[model.n_periods] = {}
+    values[model.n_steps] = {}
     malformed = replace(solution, values=values)
 
-    assert model.n_periods not in malformed.values
+    assert model.n_steps not in malformed.values
     model.simulate(
         params=params,
         initial_conditions=initial_conditions,
@@ -1157,7 +1157,7 @@ def test_solution_result_rejects_unexpected_artifact_coordinates_before_forward(
     model, params, initial_conditions = _small_grid_search_inputs()
     solution = model.solve(params=params, log_level="off")
     unexpected_ref = ArtifactRef(
-        period=model.n_periods,
+        step=model.n_steps,
         regime=solution.metadata.regime_names[0],
         key=ArtifactKey(type_id="test.unexpected"),
     )
@@ -1203,7 +1203,7 @@ def test_solution_result_rejects_present_and_omitted_artifacts_before_forward(
     solution = model.solve(params=params, log_level="off")
     period, regime_name = next(iter(solution.metadata.value_schemas))
     ref = ArtifactRef(
-        period=period,
+        step=period,
         regime=regime_name,
         key=ArtifactKey(type_id="test.overlap"),
     )
@@ -1233,7 +1233,7 @@ def test_solution_result_rejects_one_ref_in_multiple_artifact_stores_before_forw
     solution = model.solve(params=params, log_level="off")
     period, regime_name = next(iter(solution.metadata.value_schemas))
     ref = ArtifactRef(
-        period=period,
+        step=period,
         regime=regime_name,
         key=ArtifactKey(type_id="test.duplicate"),
     )
@@ -1509,7 +1509,7 @@ def test_policy_at_an_undeclared_coordinate_is_refused_before_forward(
     model, params, initial_conditions = _small_grid_search_inputs()
     solution = model.solve(params=params, log_level="off")
     policy_ref = ArtifactRef(
-        period=0,
+        step=0,
         regime="working_life",
         key=SIMULATION_POLICY,
     )
@@ -1661,7 +1661,7 @@ def test_value_frame_labels_grid_nodes(
     )
     result = model.solve(params={}, log_level="off")
     frame = result.value_frame(
-        period=0, regime="alive", use_categorical_codes=use_categorical_codes
+        step=0, regime="alive", use_categorical_codes=use_categorical_codes
     )
     assert tuple(frame.columns) == (
         *result.metadata.value_schemas[0, "alive"].axis_names,
@@ -1670,7 +1670,7 @@ def test_value_frame_labels_grid_nodes(
     np.testing.assert_array_equal(frame["wealth"], [1, 2, 3, 1, 2, 3])
     np.testing.assert_array_equal(frame["V"], [1, 2, 3, 11, 12, 13])
     np.testing.assert_array_equal(
-        frame["V"], np.asarray(result.value(period=0, regime="alive")).ravel()
+        frame["V"], np.asarray(result.value(step=0, regime="alive")).ravel()
     )
     if not use_categorical_codes:
         assert frame["kind"].tolist() == ["low"] * 3 + ["high"] * 3
@@ -1681,12 +1681,12 @@ def test_value_frame_labels_grid_nodes(
     assert_frame_equal(
         frame,
         restored.value_frame(
-            period=0, regime="alive", use_categorical_codes=use_categorical_codes
+            step=0, regime="alive", use_categorical_codes=use_categorical_codes
         ),
     )
     frame["V"] = -99.0
     np.testing.assert_array_equal(
-        result.value_frame(period=0, regime="alive")["V"], [1, 2, 3, 11, 12, 13]
+        result.value_frame(step=0, regime="alive")["V"], [1, 2, 3, 11, 12, 13]
     )
 
 
@@ -1700,7 +1700,7 @@ def test_value_frame_rejects_colliding_column_names(
         values=ValueStore({(0, "alive"): jnp.ones(shape, dtype=jnp.float32)}),
         metadata=SolutionMetadata(
             retention=ResultRetention.VALUES,
-            n_periods=1,
+            n_steps=1,
             regime_names=("alive",),
             solver_types={"alive": "example.Grid"},
             model_instance_id="model-1",
@@ -1723,26 +1723,24 @@ def test_value_frame_rejects_colliding_column_names(
             },
         ),
     )
-    np.testing.assert_array_equal(
-        result.value(period=0, regime="alive"), np.ones(shape)
-    )
+    np.testing.assert_array_equal(result.value(step=0, regime="alive"), np.ones(shape))
     with pytest.raises(ValueError, match=r"unique.*'V'"):
-        result.value_frame(period=0, regime="alive")
+        result.value_frame(step=0, regime="alive")
 
 
 def test_value_frame_scalar_and_collective() -> None:
     """Scalar values have one row per member, labelled by that member."""
     result = _solve_scalar_and_collective_model()
-    assert result.value_frame(period=0, regime="alone").to_dict("list") == {
+    assert result.value_frame(step=0, regime="alone").to_dict("list") == {
         "member": ["self"],
         "V": [7.0],
     }
-    assert result.value_frame(period=0, regime="couple").to_dict("list") == {
+    assert result.value_frame(step=0, regime="couple").to_dict("list") == {
         "member": ["f", "m"],
         "V": [3.0, 5.0],
     }
     with pytest.raises(KeyError):
-        result.value_frame(period=2, regime="alone")
+        result.value_frame(step=2, regime="alone")
 
 
 @pytest.mark.parametrize("collective", [False, True])
@@ -1798,11 +1796,11 @@ def test_value_frame_preserves_state_named_member(
     assert axes[0].role is AxisRole.STATE
     assert axes[-1].role is AxisRole.MEMBER
     np.testing.assert_array_equal(
-        result.value(period=0, regime="alive"),
+        result.value(step=0, regime="alive"),
         np.repeat(np.asarray(coordinates)[:, None], 2 if collective else 1, axis=1),
     )
     with pytest.raises(ValueError, match="unique"):
-        result.value_frame(period=0, regime="alive")
+        result.value_frame(step=0, regime="alive")
 
 
 def _wealth_grid_at_age(age: float) -> LinSpacedGrid:
@@ -1847,7 +1845,7 @@ def test_value_frame_uses_resolved_grid_coordinates(*, grid_kind: str) -> None:
     )
     result = model.solve(params=params, log_level="off")
     for period in (0, 1):
-        frame = result.value_frame(period=period, regime="alive")
+        frame = result.value_frame(step=period, regime="alive")
         expected = (
             [0.0, 1.0, 2.0]
             if grid_kind == "process"
@@ -1899,7 +1897,7 @@ def test_value_frame_keeps_members_beside_an_action_named_member() -> None:
     )
     result = model.solve(params={}, log_level="off")
     # Household means are 4 and 5, so action 1 wins with payoffs 4 and 6.
-    assert result.value_frame(period=0, regime="alive").to_dict("list") == {
+    assert result.value_frame(step=0, regime="alive").to_dict("list") == {
         "member": ["f", "m"],
         "V": [4.0, 6.0],
     }
@@ -1933,12 +1931,12 @@ def _assert_collective_frame_matches_reference(
     )
     assert dict(schema.categorical_domains) == {}
     np.testing.assert_array_equal(
-        result.value(period=0, regime="alive"),
+        result.value(step=0, regime="alive"),
         np.asarray([row[2] for row in expected]).reshape(2, 2),
     )
     for use_categorical_codes in (False, True):
         frame = result.value_frame(
-            period=0, regime="alive", use_categorical_codes=use_categorical_codes
+            step=0, regime="alive", use_categorical_codes=use_categorical_codes
         )
         assert frame.to_dict("list") == {
             "wealth": [row[0] for row in expected],
@@ -2025,8 +2023,8 @@ def test_value_frame_categorical_action_does_not_relabel_members(
             result=candidate, member_names=member_names
         )
     assert_frame_equal(
-        result.value_frame(period=0, regime="alive"),
-        restored.value_frame(period=0, regime="alive"),
+        result.value_frame(step=0, regime="alive"),
+        restored.value_frame(step=0, regime="alive"),
     )
 
 
@@ -2038,7 +2036,7 @@ def _reference_value_frame(
     use_categorical_codes: bool,
 ) -> pd.DataFrame:
     """Build the long value frame directly from the stored array and schema."""
-    value = np.asarray(result.value(period=period, regime=regime))
+    value = np.asarray(result.value(step=period, regime=regime))
     schema = result.metadata.value_schemas[period, regime]
     frame = pd.DataFrame(index=pd.RangeIndex(value.size))
     for index, axis in enumerate(schema.named_axes):
@@ -2138,12 +2136,12 @@ def test_value_array_categorical_coordinates(
     """
     result = _solve_labelled_model()
     array = result.value_array(
-        period=0, regime="alive", use_categorical_codes=use_categorical_codes
+        step=0, regime="alive", use_categorical_codes=use_categorical_codes
     )
     assert array["kind"].to_numpy().tolist() == expected
     if use_categorical_codes:
         return
-    default_array = result.value_array(period=0, regime="alive")
+    default_array = result.value_array(step=0, regime="alive")
     assert default_array.dims == result.metadata.value_schemas[0, "alive"].axis_names
     np.testing.assert_array_equal(default_array["wealth"], [1.0, 2.0, 3.0])
     assert isinstance(default_array.indexes["kind"], pd.CategoricalIndex)
@@ -2157,14 +2155,14 @@ def test_value_array_categorical_coordinates(
 def test_value_array_scalar_regime_has_only_the_member_dimension() -> None:
     """A regime without states yields an array over its one member."""
     result = _solve_scalar_and_collective_model()
-    array = result.value_array(period=0, regime="alone")
+    array = result.value_array(step=0, regime="alone")
     assert (array.dims, float(array.sel(member="self"))) == (("member",), 7.0)
 
 
 def test_value_array_collective_regime_labels_members() -> None:
     """A collective regime's trailing dimension is labelled by member."""
     result = _solve_scalar_and_collective_model()
-    curve = result.value_array(period=0, regime="couple").sel(member="m")
+    curve = result.value_array(step=0, regime="couple").sel(member="m")
     assert float(curve) == 5.0
 
 
@@ -2177,10 +2175,10 @@ def test_value_array_survives_save_and_load(
     restored = load_solution(path=result.save(path=tmp_path / "labelled"))
     xr.testing.assert_identical(
         result.value_array(
-            period=0, regime="alive", use_categorical_codes=use_categorical_codes
+            step=0, regime="alive", use_categorical_codes=use_categorical_codes
         ),
         restored.value_array(
-            period=0, regime="alive", use_categorical_codes=use_categorical_codes
+            step=0, regime="alive", use_categorical_codes=use_categorical_codes
         ),
     )
 
@@ -2204,7 +2202,7 @@ def test_value_frame_matches_direct_construction(
     result = solve()
     assert_frame_equal(
         result.value_frame(
-            period=0, regime=regime, use_categorical_codes=use_categorical_codes
+            step=0, regime=regime, use_categorical_codes=use_categorical_codes
         ),
         _reference_value_frame(
             result=result,

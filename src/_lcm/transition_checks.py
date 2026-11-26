@@ -104,7 +104,14 @@ from _lcm.solution.feasibility import (
     reduce_bound_input_status,
     validate_runtime_bound_status,
 )
-from _lcm.time import TimeAxis, format_age, step_count
+from _lcm.time import (
+    TimeAxis,
+    describe_step,
+    format_age,
+    period_of_step,
+    stage_of_step,
+    step_count,
+)
 from _lcm.transition_plans import (
     LotteryLifetime,
     TargetTransitionPlans,
@@ -618,7 +625,7 @@ def validate_off_grid_transitions(
                 regime=regime, regime_name=name, period=step
             ):
                 phase = regime.simulation if realized else regime.solution
-                for target in reachability.targets(period=step, source=name):
+                for target in reachability.targets(step=step, source=name):
                     target_phase = (
                         regimes[target].simulation
                         if realized
@@ -669,7 +676,11 @@ def validate_off_grid_transitions(
                         process_grid_resolver=process_grid_resolver,
                     )
                     counts = _validate_off_grid_bound_status(
-                        counts=counts, phase=phase, regime_name=name, period=step
+                        counts=counts,
+                        phase=phase,
+                        regime_name=name,
+                        period=step,
+                        ages=ages,
                     )
                     for index, (state, grid) in enumerate(grids.items()):
                         if grid.off_grid == "raise" and int(counts[index, 1]):
@@ -678,8 +689,9 @@ def validate_off_grid_transitions(
                                     count=int(counts[index, 1]),
                                     regime=name,
                                     target=target,
-                                    period=step,
+                                    period=period_of_step(ages=ages, step=step),
                                     state=state,
+                                    stage=stage_of_step(ages=ages, step=step),
                                     phase="simulate" if realized else "solve",
                                 )
                             )
@@ -688,10 +700,11 @@ def validate_off_grid_transitions(
                             rule=grid.off_grid,
                             regime=name,
                             target=target,
-                            period=step,
+                            period=period_of_step(ages=ages, step=step),
                             state=state,
                             phase="simulate" if realized else "solve",
                             logger=logger,
+                            stage=stage_of_step(ages=ages, step=step),
                         )
 
 
@@ -701,12 +714,14 @@ def _validate_off_grid_bound_status(
     phase: SolutionPhase | SimulationPhase,
     regime_name: RegimeName,
     period: int,
+    ages: TimeAxis,
 ) -> IntND:
     """Validate canonical bound integrity before interpreting reached landings."""
     if isinstance(counts, _CurrentIIDOffGridCounts):
         if bool(counts.invalid_law):
             raise ShockDeclarationError(
-                f"Invalid current IID law in regime {regime_name!r}, period {period}."
+                f"Invalid current IID law in regime {regime_name!r}, "
+                f"{describe_step(ages=ages, step=period)}."
             )
         counts = counts.counts
     if isinstance(counts, BoundedResult):
@@ -1553,7 +1568,7 @@ def validate_regime_transition_probs_all_periods(
                             flat_params, regime_name=regime_name
                         ),
                         active_regimes_next_period=reachability.targets(
-                            period=step, source=regime_name
+                            step=step, source=regime_name
                         ),
                         regime_name=regime_name,
                         period=step,
@@ -2297,6 +2312,7 @@ def validate_discrete_state_laws_all_periods(
                     regimes=regimes,
                     regime_name=regime_name,
                     period=step,
+                    ages=ages,
                     age=ages.values[step],  # noqa: PD011
                     state_action_space=state_action_space,
                     params=MappingProxyType(
@@ -2320,6 +2336,7 @@ def _validate_discrete_state_laws(  # noqa: C901
     regimes: MappingProxyType[RegimeName, Regime],
     regime_name: RegimeName,
     period: int,
+    ages: TimeAxis,
     age: float | ScalarInt | ScalarFloat,
     state_action_space: StateActionSpace,
     params: FlatRegimeParams,
@@ -2356,7 +2373,7 @@ def _validate_discrete_state_laws(  # noqa: C901
             **_phase_extra_grids(regime=regime, phase=side),
             **state_action_space.actions,
         }
-        for target in phase.reachability.targets(period=period, source=regime_name):
+        for target in phase.reachability.targets(step=period, source=regime_name):
             # A carried state has a simulation grid but no solve axis, so each
             # side reads its target's grids from the same phase.
             target_phase = (
@@ -2557,7 +2574,7 @@ def _validate_discrete_state_laws(  # noqa: C901
                     target_grid=target_grid,
                     description=(
                         f"In regime '{regime_name}' at age {format_age(age)} "
-                        f"(period {period}), "
+                        f"({describe_step(ages=ages, step=period)}), "
                         f"the law '{name}' to regime '{target}'"
                     ),
                     value_dependent=regime.solution.counts_raise_landings,
@@ -3076,7 +3093,7 @@ def validate_joint_transitions_all_periods(
                 ("solve", regime.solution),
                 ("simulate", regime.simulation),
             ):
-                targets = phase.reachability.targets(period=step, source=regime_name)
+                targets = phase.reachability.targets(step=step, source=regime_name)
                 functions = _phase_functions(
                     regime=regime, phase=phase_name, period=step
                 )
@@ -3694,7 +3711,7 @@ def _state_transition_unused_in_period(
         return True
     if transition.target_regime_name is None:
         return False
-    period_targets = owner.reachability.targets(period=period, source=regime.name)
+    period_targets = owner.reachability.targets(step=period, source=regime.name)
     return transition.target_regime_name not in period_targets
 
 

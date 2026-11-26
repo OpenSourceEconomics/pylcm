@@ -156,7 +156,7 @@ def _strip_V_arr_from_result(
 ) -> SimulationResult:
     """Create a copy of result with value arrays and compiled callables stripped.
 
-    `period_to_regime_to_V_arr` is dropped to avoid storing it both in the
+    `step_to_regime_to_V_arr` is dropped to avoid storing it both in the
     pickle and in the HDF5 file. `_regimes` is overwritten with the
     model's canonical `_regimes`, so call-local runtime executors and their
     compiled programs cannot enter the pickle. The canonical regimes carry
@@ -167,7 +167,7 @@ def _strip_V_arr_from_result(
     that cannot be pickled.
     """
     stripped = copy.copy(result)
-    object.__setattr__(stripped, "_period_to_regime_to_V_arr", MappingProxyType({}))
+    object.__setattr__(stripped, "_step_to_regime_to_V_arr", MappingProxyType({}))
     object.__setattr__(stripped, "_regimes", model._regimes)  # noqa: SLF001
     object.__setattr__(stripped, "_solution", None)
     return stripped

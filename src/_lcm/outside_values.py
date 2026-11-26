@@ -79,6 +79,7 @@ from _lcm.shock_projection import (
     finite_outputs,
     returned_input,
 )
+from _lcm.time import describe_step
 from _lcm.typing import PytreeValue, ShapeDtypePytree
 from lcm.exceptions import RegimeInitializationError
 from lcm.grids import (
@@ -453,13 +454,11 @@ def _unaligned_destination(
     )
     if node.read.phase != "solve" or not node.ancestors:
         return f"the read of {target!r} is not a solved outside read"
+    when = describe_step(ages=node.context.ages, step=period)
     if period not in value_periods_by_regime.get(target, ()):
-        return f"{target!r} is not solved in period {period}"
+        return f"{target!r} is not solved in {when}"
     if specialized:
-        return (
-            f"{target!r} has age-specialized states {sorted(specialized)} in "
-            f"period {period}"
-        )
+        return f"{target!r} has age-specialized states {sorted(specialized)} in {when}"
     if node.observation_sources:
         return (
             f"{target!r} observes shock groups {sorted(node.observation_sources)} "

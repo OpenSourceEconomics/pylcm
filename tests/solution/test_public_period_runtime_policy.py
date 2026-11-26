@@ -102,7 +102,7 @@ def _capture(
     target: tuple[str, int] = ("done", 1),
 ) -> Path:
     capture = PeriodCapture(
-        directory=directory, periods=(target,), source_identity=_SOURCE
+        directory=directory, steps=(target,), source_identity=_SOURCE
     )
     _model().solve(
         params=_params(probability_mass=probability_mass),

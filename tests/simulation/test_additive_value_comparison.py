@@ -189,7 +189,7 @@ def reference_additive_norms(
     """
     flat_params = result.flat_params
     assert_additive_witness(model=model, flat_params=flat_params)
-    values = result.period_to_regime_to_V_arr
+    values = result.step_to_regime_to_V_arr
     norms = np.zeros((len(frame), 1), dtype=canonical_float_dtype())
     evaluators = {}
     for index, row in enumerate(frame.to_dict("records")):

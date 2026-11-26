@@ -102,7 +102,7 @@ def test_two_null_axes_keep_ordinary_state_and_simulation_publication(
         runtime_checks=False,
     )
     np.testing.assert_array_equal(
-        frame.period_to_regime_to_V_arr[0]["probe"][..., 0], expected
+        frame.step_to_regime_to_V_arr[0]["probe"][..., 0], expected
     )
     realized = frame.raw_results["probe"][0]
     np.testing.assert_array_equal(realized.V_arr[..., 0], expected)

@@ -363,8 +363,8 @@ def test_simulation_retains_original_value_arrays_on_their_solve_placements(
     for period, values in owned.values.items():
         for regime, value in values.items():
             assert not value.is_deleted()
-            assert first.period_to_regime_to_V_arr[period][regime] is value
-            assert second.period_to_regime_to_V_arr[period][regime] is value
+            assert first.step_to_regime_to_V_arr[period][regime] is value
+            assert second.step_to_regime_to_V_arr[period][regime] is value
 
 
 @pytest.mark.parametrize(("n_types", "devices"), _PLACEMENTS)

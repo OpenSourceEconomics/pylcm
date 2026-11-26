@@ -5,7 +5,7 @@ from pathlib import Path
 
 from networkx import DiGraph
 
-from _lcm.time import landing_step
+from _lcm.time import landing_step, period_of_step
 from _lcm.typing import JSONValue
 from _lcm_regime_finder.layout_search import analyze_layouts as _analyze_layouts
 from lcm.model import Model
@@ -136,8 +136,8 @@ def digraph(model: Model, *, phase: Phase | None = None) -> DiGraph:
         for regime_name in sorted(regime_names):
             result.add_node(
                 (clock[period], regime_name),
-                period=period,
-                declaration=declarations.regimes_by_period[period][regime_name],
+                period=period_of_step(ages=model._time, step=period),  # noqa: SLF001
+                declaration=declarations.regimes_by_step[period][regime_name],
             )
     for period, targets_by_source in enumerate(temporal.targets_by_period):
         for source in sorted(targets_by_source):
@@ -156,7 +156,7 @@ def digraph(model: Model, *, phase: Phase | None = None) -> DiGraph:
                     target_node,
                     law=graph.laws[source],
                     status=temporal.edge_status(
-                        period=period, source=source, target=target
+                        step=period, source=source, target=target
                     ),
                 )
     return result

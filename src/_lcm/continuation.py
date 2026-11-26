@@ -498,10 +498,10 @@ class ContinuationSpec:
         templates = dict(self.templates_by_period)
         for period, template in templates.items():
             if type(period) is not int or period < 0:
-                raise ValueError("A continuation schema needs a nonnegative period.")
+                raise ValueError("A continuation schema needs a nonnegative step.")
             if template.artifact_key != self.artifact_key:
                 raise ValueError(
-                    f"The continuation template at period {period} carries key "
+                    f"The continuation template at step {period} carries key "
                     f"{template.artifact_key}, not {self.artifact_key}."
                 )
         object.__setattr__(self, "templates_by_period", MappingProxyType(templates))
@@ -511,7 +511,7 @@ class ContinuationSpec:
         if not self.templates_by_period:
             return self.template
         if period not in self.templates_by_period:
-            raise ValueError(f"No continuation schema is declared at period {period}.")
+            raise ValueError(f"No continuation schema is declared at step {period}.")
         return self.templates_by_period[period]
 
     def stored_value_aliases(

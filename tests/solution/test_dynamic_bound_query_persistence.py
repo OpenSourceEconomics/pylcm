@@ -184,7 +184,7 @@ def test_query_artifact_axes_bind_floor_links_and_intervals(
     """Each numeric field has its own independent model-labelled dimensions."""
     model = _feature_model(liquid_corner=liquid_corner)
     result = _authority(model)
-    ref = ArtifactRef(period=0, regime="done", key=EGM_CONTINUATION)
+    ref = ArtifactRef(step=0, regime="done", key=EGM_CONTINUATION)
     descriptor = result.artifact_descriptors[ref]
     by_path = {leaf.path: leaf for leaf in descriptor.leaf_descriptors}
     assert by_path[("attribute:query_data", "attribute:floor_used")].axis_names == (
@@ -303,7 +303,7 @@ def test_query_container_snapshot_has_inert_static_metadata(
 def _query_solution(model: Model) -> SolutionResult:
     """Build a numeric transport fixture from independent canonical artifact schemas."""
     authority = _authority(model)
-    ref = ArtifactRef(period=0, regime="done", key=EGM_CONTINUATION)
+    ref = ArtifactRef(step=0, regime="done", key=EGM_CONTINUATION)
     value = authority.values[0, "done"]
     spec = cast(
         "continuation.EGMContinuationSpec",
@@ -314,7 +314,7 @@ def _query_solution(model: Model) -> SolutionResult:
         retained_continuations=ArtifactStore({ref: spec.template}),
         metadata=SolutionMetadata(
             retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
-            n_periods=1,
+            n_steps=1,
             regime_names=("done",),
             solver_types={"done": "GridSearch"},
             model_instance_id="query-transport-fixture",
@@ -342,7 +342,7 @@ def test_query_numeric_archive_roundtrip_uses_fresh_model_template(
     """Independent lazy entries restore exact query containers, paths and dtypes."""
     model = _feature_model(liquid_corner=liquid_corner)
     result = _query_solution(model)
-    ref = ArtifactRef(period=0, regime="done", key=EGM_CONTINUATION)
+    ref = ArtifactRef(step=0, regime="done", key=EGM_CONTINUATION)
     restored = load_solution(
         path=save_solution(solution=result, path=tmp_path / "query.lcm")
     )
@@ -679,7 +679,7 @@ def test_literal_budget_descriptors_keep_feature_free_authority(*, kind: str) ->
         flat_params=model._process_params({}),
         ages=model.ages,
     )
-    ref = ArtifactRef(period=0, regime="done", key=EGM_CONTINUATION)
+    ref = ArtifactRef(step=0, regime="done", key=EGM_CONTINUATION)
     assert cast("EGMCarry", authority.artifacts[ref].template).query_data is None
 
 
@@ -687,7 +687,7 @@ def test_outer_query_artifact_axes_follow_the_declared_operator() -> None:
     """Finite candidate banks keep fixed-cell floors apart from candidate rows."""
     model = _feature_model(outer_mode="finite_max")
     authority = _authority(model)
-    ref = ArtifactRef(period=0, regime="done", key=EGM_CONTINUATION)
+    ref = ArtifactRef(step=0, regime="done", key=EGM_CONTINUATION)
     paths = {
         leaf.path: leaf.axis_names
         for leaf in authority.artifact_descriptors[ref].leaf_descriptors
@@ -748,9 +748,7 @@ def test_query_authority_authenticates_lower_dependencies_in_every_context(
     assert expected.target_periods == (0, 1)
     accepted = _authority(model)
     assert {
-        ref.period
-        for ref in accepted.artifact_descriptors
-        if ref.key == EGM_CONTINUATION
+        ref.step for ref in accepted.artifact_descriptors if ref.key == EGM_CONTINUATION
     } == {0, 1}
     bound = regime.solution.post_decision_bounds[0]
     target = bound.lower_target if change == "lower" else "floor_helper"

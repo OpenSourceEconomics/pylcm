@@ -675,7 +675,7 @@ def test_simulation_policy_identity_and_channel_are_model_owned(
     replay_entries.pop(ref)
     if mutation == "schema_version":
         wrong_ref = ArtifactRef(
-            period=ref.period,
+            step=ref.step,
             regime=ref.regime,
             key=ArtifactKey(
                 type_id=SIMULATION_POLICY.type_id,

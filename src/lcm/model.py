@@ -312,7 +312,13 @@ from _lcm.solution.result_snapshot import (
 )
 from _lcm.solution.solve_phase_records import CallId, new_call_id, solve_phase
 from _lcm.solution.structural_blueprints import StructuralBlueprintCache
-from _lcm.time import ModelTime
+from _lcm.time import (
+    ModelTime,
+    describe_step,
+    period_of_step,
+    stage_of_step,
+    stage_position,
+)
 from _lcm.time_validation import validate_stages, validate_time_declarations
 from _lcm.transition_checks import validate_regime_selection, validate_transitions
 from _lcm.typing import (
@@ -542,7 +548,6 @@ class _PickledModel(TypedDict):
     durable_identity: NotRequired[bool]
     ages: AgeGrid | None
     _time: NotRequired[ModelTime]
-    n_periods: int
     fixed_params: UserParams
     _edges: ModelEdges
     _declared_transitions: MappingProxyType[RegimeName, tuple[Transition, ...]]
@@ -709,7 +714,7 @@ def _materialize_artifact_projection(
                 payload_defect = _built_in_policy_payload_defect(
                     supplied=materialized,
                     descriptor=authority.replay[ref],
-                    period=ref.period,
+                    period=ref.step,
                 )
                 if payload_defect is not None:
                     raise InvalidSimulationInputError(
@@ -725,7 +730,7 @@ def _materialize_artifact_projection(
             raise InvalidSimulationInputError(
                 f"Artifact {ref!r} mismatched_payload: cannot be canonicalized: {error}"
             ) from error
-        projected.setdefault(ref.period, {})[ref.regime] = canonical
+        projected.setdefault(ref.step, {})[ref.regime] = canonical
     return MappingProxyType(
         {
             period: MappingProxyType(regime_to_payload)
@@ -989,9 +994,6 @@ class Model:
     ages: AgeGrid | None
     """Age grid, or None when the horizon is declared with n_periods."""
 
-    n_periods: int
-    """Number of steps in the model: its periods times the stages of a period."""
-
     regime_names_to_ids: RegimeNamesToIds
     """Immutable mapping from each declared regime's name to its integer code."""
 
@@ -1003,6 +1005,38 @@ class Model:
     a model with no collective regime. This is the vocabulary
     `initial_conditions["own_member"]` is written in, and the one the
     published `own_member` column is labelled from."""
+
+    @property
+    def n_periods(self) -> int:
+        """Number of periods, as declared by `n_periods` or the age grid."""
+        return self._time.n_steps // self._time.n_stages
+
+    @property
+    def n_steps(self) -> int:
+        """Number of steps, one per pair of a period and a stage.
+
+        The solution counts steps: `values` and `raw_results` are keyed by step.
+        Without `stages` a step is a period.
+        """
+        return self._time.n_steps
+
+    def step_of(self, *, period: int, regime_name: RegimeName) -> int:
+        """Return the step at which `regime_name` decides in `period`.
+
+        `step = period * n_stages + position of the regime's stage`, so without
+        `stages` the step is the period. Use it to read `solution.values`.
+        """
+        return period * self._time.n_stages + stage_position(
+            ages=self._time, regime=regime_name
+        )
+
+    def period_of_step(self, *, step: int) -> int:
+        """Return the period of `step`, a key of `solution.values`."""
+        return period_of_step(ages=self._time, step=step)
+
+    def stage_of_step(self, *, step: int) -> StageName | None:
+        """Return the name of the stage of `step`; `None` without `stages`."""
+        return stage_of_step(ages=self._time, step=step)
 
     @property
     def user_regimes(self) -> MappingProxyType[RegimeName, FinalizedUserRegime]:
@@ -1206,8 +1240,8 @@ class Model:
                 Stages of one period are linked without discounting. `period`
                 and `age` are economic time in user functions and results, and
                 the simulated frame gains a `stage` column. `None` means one
-                stage per period. `self.n_periods` and the solution count steps,
-                the pairs of a period and a stage.
+                stage per period. `self.n_periods` counts periods; `self.n_steps`
+                and the solution count steps, the pairs of a period and a stage.
             description: Description of the model.
             regime_id_class: Dataclass mapping regime names to integer indices.
             shocks: Named IID shock groups, referenced by `Regime.shocks`. A
@@ -1395,7 +1429,6 @@ class Model:
         self._time = ModelTime.from_inputs(
             ages=ages, n_periods=n_periods, stages=stages, regime_names=tuple(regimes)
         )
-        self.n_periods = self._time.n_steps
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
         # The graph declares every regime transition: bind each source's law
         # from its edges before anything reads the regimes.
@@ -2070,7 +2103,7 @@ class Model:
         return _get_model_declarations(
             structure=self._declaration_preparation.prepared_structure,
             graph=self.graph,
-            n_steps=self.n_periods,
+            n_steps=self.n_steps,
             declared_regimes=self.user_regimes,
         )
 
@@ -2244,7 +2277,6 @@ class Model:
         state = _PickledModel(
             description=self.description,
             ages=self.ages,
-            n_periods=self.n_periods,
             fixed_params=self.fixed_params,
             _edges=self._edges,
             _declared_transitions=self._declared_transitions,
@@ -3038,7 +3070,7 @@ class Model:
                 retention=preparation.retention,
                 regimes=self._regimes,
                 user_regimes=self._user_regimes,
-                n_periods=self.n_periods,
+                n_steps=self.n_steps,
                 model_instance_id=self._solution_model_instance_id,
                 params_fingerprint=self._params_fingerprint(flat_params=flat_params),
                 model_fingerprint=preparation.model_fingerprint,
@@ -3849,9 +3881,9 @@ class Model:
                 f"{metadata.solution_schema_version} "
                 f"(expected {SOLUTION_SCHEMA_VERSION})"
             )
-        if not _same_exactly_typed(actual=metadata.n_periods, expected=self.n_periods):
+        if not _same_exactly_typed(actual=metadata.n_steps, expected=self.n_steps):
             metadata_defects.append(
-                f"n_periods={metadata.n_periods} (expected {self.n_periods})"
+                f"n_steps={metadata.n_steps} (expected {self.n_steps})"
             )
         if not _same_exactly_typed(
             actual=metadata.regime_names,
@@ -3910,7 +3942,7 @@ class Model:
             sorted(
                 ref
                 for ref in present_refs | omission_refs
-                if (ref.period, ref.regime) not in expected_coverage
+                if (ref.step, ref.regime) not in expected_coverage
             )
         )
         overlap = tuple(sorted(present_refs & omission_refs))
@@ -4231,7 +4263,7 @@ class Model:
                     state_action_space=state_action_space,
                 )
                 build_context = SimulationBuildContext(
-                    period=replay_context.period,
+                    step=replay_context.step,
                     regime_name=replay_context.regime_name,
                     state_names=replay_context.state_names,
                     action_names=replay_context.action_names,
@@ -4241,7 +4273,7 @@ class Model:
                 declared = {
                     ref.key: artifact_authority
                     for ref, artifact_authority in authority.artifacts.items()
-                    if ref.period == period
+                    if ref.step == period
                     and ref.regime == regime_name
                     and artifact_authority.descriptor.channel is ArtifactChannel.REPLAY
                 }
@@ -4282,7 +4314,7 @@ class Model:
                 snapshot_authorities: dict[ArtifactKey, ArtifactAuthority] = {}
                 defects: list[str] = []
                 for key, declared_authority in declared.items():
-                    ref = ArtifactRef(period=period, regime=regime_name, key=key)
+                    ref = ArtifactRef(step=period, regime=regime_name, key=key)
                     model_authority = declared_authority
                     described = metadata.artifact_descriptors.get(ref)
                     if not _same_exact_artifact_contract(
@@ -4374,7 +4406,7 @@ class Model:
         for period, regime_to_value in values.items():
             for regime_name in regime_to_value:
                 ref = ArtifactRef(
-                    period=period,
+                    step=period,
                     regime=regime_name,
                     key=SIMULATION_POLICY,
                 )
@@ -4555,10 +4587,11 @@ class Model:
                 Threefry; typed keys retain their implementation;
                 comparisons require matching precision/backend and JAX random
                 configuration. `None` preserves the ordinary seeded stream.
-            shock_paths: Given realised shock values indexed by computational period:
-                `(periods,)` for a common path or `(subjects, periods)` in original
-                initial-condition row order. Overrides the entry value and later
-                draws, including IID and persistent processes. Continuous
+            shock_paths: Given realised shock values indexed by step, one per
+                period without `stages`: `(steps,)` for a common path or
+                `(subjects, steps)` in original initial-condition row order.
+                Overrides the entry value and later draws, including IID and
+                persistent processes. Continuous
                 values must be in the distribution's support; discrete values are
                 exact category codes. This holds for a state declared with
                 `values` too, whatever `use_categorical_codes` says, while every
@@ -5326,7 +5359,8 @@ class Model:
             params: The parameters `solution` was solved with; checked against its
                 params fingerprint exactly as `simulate` does.
             solution: Complete result returned by `solve()`.
-            period: Period index of the queried node.
+            period: Zero-based period of the queried node; the regime's stage
+                fixes its step, `step_of(period=period, regime_name=regime_name)`.
             regime_name: Regime of the queried node; it must be active in `period`.
             states: One 1-D array per state of the regime, all of equal length.
                 A category-class state takes its codes, a state declared with
@@ -5406,14 +5440,15 @@ class Model:
         if regime is None:
             msg = f"Unknown regime {regime_name!r}; known: {tuple(self._regimes)}."
             raise InvalidSimulationInputError(msg)
-        if period not in regime.simulation.programs.decision:
+        step = self.step_of(period=period, regime_name=regime_name)
+        if step not in regime.simulation.programs.decision:
             msg = f"Regime {regime_name!r} makes no decision in period {period}."
             raise InvalidSimulationInputError(msg)
         _fail_if_invalid_intermediates(keep_intermediates=keep_intermediates)
         _fail_if_policy_lookup_unsupported(
             regime=regime,
             regime_name=regime_name,
-            period=period,
+            period=step,
             solver=self._user_regimes[regime_name].solver,
         )
         value_grids = (
@@ -5490,7 +5525,7 @@ class Model:
             lookup = self._lookup_policy(
                 params=params,
                 solution=solution,
-                period=period,
+                period=step,
                 regime_name=regime_name,
                 states=states,
                 action_grids=action_grids,
@@ -5587,8 +5622,9 @@ class Model:
             period, {}
         ).get(regime_name) is not None:
             msg = (
-                f"Regime {regime_name!r} replays a published policy in period "
-                f"{period}; policy lookup supports the grid argmax only."
+                f"Regime {regime_name!r} replays a published policy in "
+                f"{describe_step(ages=self._time, step=period)}; policy lookup "
+                "supports the grid argmax only."
             )
             raise InvalidSimulationInputError(msg)
         _fail_if_off_grid(
@@ -5624,9 +5660,9 @@ class Model:
             next_period_values=V_arrs.get(period + 1, MappingProxyType({})),
             required_targets=(
                 ()
-                if period == self.n_periods - 1
+                if period == self.n_steps - 1
                 else regime.solution.reachability.targets(
-                    period=period, source=regime_name
+                    step=period, source=regime_name
                 )
             ),
             source_regime_name=regime_name,
@@ -5929,7 +5965,9 @@ class Model:
                 f"{state_name!r}; known: {names}."
             )
         if period is not None and (
-            type(period) is not int or period not in regime.active_periods
+            type(period) is not int
+            or self.step_of(period=period, regime_name=regime_name)
+            not in regime.active_periods
         ):
             raise InvalidSimulationInputError(
                 "Initial state bounds period must be valued in regime "
@@ -5976,7 +6014,7 @@ class Model:
     def state_names(self, *, regime_name: RegimeName) -> tuple[StateName, ...]:
         """Return a regime's state names in the axis order of its value arrays.
 
-        `solution.values[period][regime_name]` has one axis per state, in this
+        `solution.values[step][regime_name]` has one axis per state, in this
         order; `state_grid` gives each axis's node values.
         """
         return tuple(
@@ -6006,7 +6044,8 @@ class Model:
 
         `period` is the zero-based model period, not an age. It is required
         for an age-specialized state: its coordinates are the period's own
-        nodes, exactly as used to tabulate `solution.values[period][regime_name]`.
+        nodes, exactly as used to tabulate `solution.values[step][regime_name]`
+        at `step = step_of(period=period, regime_name=regime_name)`.
         For an age-invariant state it can be omitted, including a process grid
         whose nodes depend on runtime parameters such as `sigma`.
 
@@ -6019,12 +6058,17 @@ class Model:
             msg = f"Unknown regime {regime_name!r}; known: {tuple(self._regimes)}."
             raise InvalidSimulationInputError(msg)
         if period is not None and (
-            type(period) is not int or period not in regime.active_periods
+            type(period) is not int
+            or self.step_of(period=period, regime_name=regime_name)
+            not in regime.active_periods
         ):
+            valued = dict.fromkeys(
+                step // self._time.n_stages for step in regime.active_periods
+            )
             msg = (
                 f"State grid period must be an integer at which regime "
                 f"{regime_name!r} is valued; got {period!r}. "
-                f"Valued periods: {tuple(regime.active_periods)}."
+                f"Valued periods: {tuple(valued)}."
             )
             raise InvalidSimulationInputError(msg)
         states = regime.solution.state_action_space(
@@ -6047,7 +6091,9 @@ class Model:
                     "coordinates."
                 )
                 raise InvalidSimulationInputError(msg)
-            return period_axes[period][state_name]
+            return period_axes[self.step_of(period=period, regime_name=regime_name)][
+                state_name
+            ]
         return states[state_name]
 
     @beartype(conf=PARAMS_CONF)

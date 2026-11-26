@@ -685,7 +685,7 @@ def test_renegotiation_outside_option_keeps_future_personal_gate_values(
     model = _gated_outside_model(pointwise=pointwise)
     params = {"discount_factor": 1.0}
     solution = model.solve(params=params, log_level="off")
-    couple_values = solution.value_array(period=0, regime="couple")
+    couple_values = solution.value_array(step=0, regime="couple")
     np.testing.assert_array_equal(
         couple_values.sel(assets=2.0),
         [[2, 4], [2, 4], [3, 3], [3, 3]] if pointwise else [[2, 4]] * 4,

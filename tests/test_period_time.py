@@ -153,8 +153,8 @@ def test_period_selectors_bound_an_explicit_transition_law(
         "done": frozenset({0, 1}),
     }
     solution = model.solve(params={}, log_level="off")
-    np.testing.assert_allclose(solution.value(period=0, regime="work"), 4.0)
-    np.testing.assert_allclose(solution.value(period=1, regime="work"), 6.0)
+    np.testing.assert_allclose(solution.value(step=0, regime="work"), 4.0)
+    np.testing.assert_allclose(solution.value(step=1, regime="work"), 6.0)
     result = model.simulate(
         params={},
         solution=solution,
@@ -615,7 +615,7 @@ def test_period_capture_and_public_replay_report_no_age(tmp_path: Path) -> None:
         params={},
         log_level="off",
         period_capture=PeriodCapture(
-            directory=tmp_path, periods=(("work", 1),), source_identity=source
+            directory=tmp_path, steps=(("work", 1),), source_identity=source
         ),
     )
     directory = tmp_path / "work@1"
@@ -1044,7 +1044,7 @@ def test_valid_clock_support_preserves_solve_and_simulation(
     )
     assert (model.ages is None) == (clock == "period")
     solution = model.solve(params={}, log_level=log_level)
-    actual_value = np.asarray(solution.value(period=source_period, regime="work"))
+    actual_value = np.asarray(solution.value(step=source_period, regime="work"))
     np.testing.assert_array_almost_equal(
         actual_value, expected_value, decimal=DECIMAL_PRECISION
     )
@@ -1255,6 +1255,7 @@ def _staged_model(
     shocks: Mapping[str, ShockGroup] | None = None,
     composite_states: Mapping[str, lcm.CompositeState] | None = None,
     discount_factor: float = 0.9,
+    start_period: int = 0,
 ) -> lcm.Model:
     last = _N_ECONOMIC_PERIODS - 1
     if clock == "hand":
@@ -1294,7 +1295,7 @@ def _staged_model(
         composite_states={} if composite_states is None else composite_states,
         initial_nodes=lcm.InitialNodes(by_age={60: "working"})
         if by_age
-        else lcm.InitialNodes(by_period={0: "working"}),
+        else lcm.InitialNodes(by_period={start_period: "working"}),
         edges={
             "working": {
                 "spending": selector(exclusive_stop=origin + last),
@@ -1374,7 +1375,7 @@ def test_stages_solve_and_simulate_as_their_hand_encoding(declared: str) -> None
         params={"wage": _wage(steps=False)}, log_level="off"
     ).values
     hand_values = hand.solve(params={"wage": _wage(steps=True)}, log_level="off").values
-    assert staged.n_periods == hand.n_periods == 2 * _N_ECONOMIC_PERIODS
+    assert staged.n_steps == hand.n_steps == 2 * _N_ECONOMIC_PERIODS
     assert {step: set(regimes) for step, regimes in staged_values.items()} == {
         step: set(regimes) for step, regimes in hand_values.items()
     }
@@ -3092,3 +3093,75 @@ def test_a_staged_simulation_reports_the_period_of_an_infeasible_state() -> None
             seed=7,
             log_level="off",
         )
+
+
+def test_a_staged_model_counts_periods_and_its_solution_counts_steps(
+    tmp_path: Path,
+) -> None:
+    """`n_periods` counts periods everywhere; the solution and `n_steps` count steps.
+
+    `lookup_policy` and `InitialNodes(by_period=...)` take the economic period;
+    `Model.reachability` is indexed by step.
+    """
+    model = _staged_model(clock="staged")
+    params = {"wage": _wage(steps=False)}
+    solution = model.solve(params=params, log_level="off")
+    assert (model.n_periods, model.n_steps) == (_N_ECONOMIC_PERIODS, 6)
+    assert model.step_of(period=1, regime_name="spending") == 3
+    assert (model.period_of_step(step=3), model.stage_of_step(step=3)) == (1, "spend")
+    assert model.reachability.solution.targets(step=4, source="working") == ("final",)
+    with pytest.raises(ModelInitializationError, match="Period 3 in selector"):
+        _staged_model(clock="staged", start_period=_N_ECONOMIC_PERIODS)
+    result = model.simulate(
+        params=params,
+        initial_conditions={
+            "period": jnp.zeros(2, dtype=jnp.int32),
+            "regime_id": jnp.full(2, StagedId.working, dtype=jnp.int32),
+            "wealth": jnp.array([2.0, 4.0]),
+        },
+        solution=solution,
+        seed=7,
+        log_level="off",
+    )
+    assert result.n_periods == _N_ECONOMIC_PERIODS
+    loaded = lcm.load_solution(path=solution.save(path=tmp_path / "solution.lcm"))
+    assert loaded.metadata.n_steps == 6
+    np.testing.assert_array_equal(
+        loaded.value(step=3, regime="spending"),
+        solution.value(step=3, regime="spending"),
+    )
+    lookup = model.lookup_policy(
+        params=params,
+        solution=solution,
+        period=1,
+        regime_name="spending",
+        states={"wealth": jnp.linspace(1.0, 6.0, 6)},
+    )
+    # The lookup evaluates the six grid points at its own vmap width, so XLA may
+    # vectorize differently: a few ULP, where a wrong step would differ outright.
+    assert_agrees_to_ulp(
+        got=lookup.value,
+        expected=solution.value(step=3, regime="spending"),
+        n_ulp=4,
+    )
+
+
+def test_a_staged_off_grid_check_reports_the_period_and_stage() -> None:
+    """A landing check names the period and the stage, not the step."""
+    regimes = _staged_regimes(clock="staged")
+    regimes["working"] = regimes["working"].replace(
+        state_transitions={"wealth": _wealth_lost_in_the_second_period},
+        functions={"utility": _work_utility},
+    )
+    regimes["spending"] = regimes["spending"].replace(
+        states={
+            "wealth": lcm.LinSpacedGrid(
+                start=1.0, stop=6.0, n_points=6, off_grid="raise"
+            )
+        }
+    )
+    model = _staged_model(clock="staged", regimes=regimes)
+    with pytest.raises(
+        lcm.exceptions.OffGridStateError, match=r"period=1, stage='work', "
+    ):
+        model.solve(params={}, log_level="off")

@@ -9,6 +9,7 @@ the constructor consumes, so no equality-based contraction can erase the evidenc
 """
 
 from collections.abc import Iterator, Mapping
+from pathlib import Path
 from types import MappingProxyType
 from typing import cast
 
@@ -92,7 +93,7 @@ def _payload(value: float) -> FloatND:
 def _metadata(*, n_periods: int = 2) -> SolutionMetadata:
     return SolutionMetadata(
         retention=ResultRetention.VALUES,
-        n_periods=n_periods,
+        n_steps=n_periods,
         regime_names=(_REGIME, _OTHER_REGIME),
         solver_types={_REGIME: "example.Grid", _OTHER_REGIME: "example.Grid"},
         model_instance_id="model-1",
@@ -215,7 +216,9 @@ def test_value_store_preserves_every_addressed_payload_of_a_valid_mapping(
         np.testing.assert_array_equal(materialized[coordinate], value)
 
 
-def test_public_value_mapping_survives_save_load_and_replay(tmp_path) -> None:
+def test_public_value_mapping_survives_save_load_and_replay(
+    tmp_path: Path,
+) -> None:
     """A result rebuilt from a valid nested public mapping persists, restores, and
     replays exactly like the solve that produced it."""
     model, params, initial_conditions = _small_grid_search_inputs()
@@ -243,7 +246,7 @@ def test_public_value_mapping_survives_save_load_and_replay(tmp_path) -> None:
     ):
         for regime, value in regime_to_value.items():
             np.testing.assert_array_equal(
-                restored.value(period=period, regime=regime), value
+                restored.value(step=period, regime=regime), value
             )
     expected = model.simulate(
         params=params,
@@ -261,7 +264,7 @@ def test_public_value_mapping_survives_save_load_and_replay(tmp_path) -> None:
 
 
 def _ref(*, period: int, regime: RegimeName = _REGIME) -> ArtifactRef:
-    return ArtifactRef(period=period, regime=regime, key=SIMULATION_POLICY)
+    return ArtifactRef(step=period, regime=regime, key=SIMULATION_POLICY)
 
 
 def test_artifact_store_rejects_a_repeated_address_at_construction() -> None:

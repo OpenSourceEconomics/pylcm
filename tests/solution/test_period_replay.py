@@ -490,7 +490,7 @@ def test_public_solve_captures_adjacent_periods_for_fresh_model_replay(
     monkeypatch.setenv("LCM_LOG_KERNEL_ATTRIBUTION", "1")
     capture = PeriodCapture(
         directory=tmp_path,
-        periods=(("retirement", 1), ("working_life", 0)),
+        steps=(("retirement", 1), ("working_life", 0)),
         source_identity={"model": "tiny-public-model-v1"},
     )
     params = retirement_model.get_params(n_periods=_N_PERIODS)
@@ -506,7 +506,7 @@ def test_public_solve_captures_adjacent_periods_for_fresh_model_replay(
         period_capture=capture,
     )
     fresh = _make_public_capture_model(budget=budget)
-    for regime_name, period in capture.periods:
+    for regime_name, period in capture.steps:
         caplog.clear()
         replay = fresh.replay_period(
             directory=tmp_path / f"{regime_name}@{period}",
@@ -577,7 +577,7 @@ def test_public_interrupted_capture_has_inputs_without_a_reference(
     assert persistent_compilation_cache is False
     capture = PeriodCapture(
         directory=tmp_path,
-        periods=(("working_life", 0),),
+        steps=(("working_life", 0),),
         source_identity={"model": "tiny-public-model-v1"},
     )
     monkeypatch.setenv("LCM_LOG_KERNEL_ATTRIBUTION", "1")
@@ -692,7 +692,7 @@ def test_public_capture_from_separately_warmed_gpu_cache_requires_native_metadat
     logger.addFilter(interrupt)
     capture = PeriodCapture(
         directory=root / "capture",
-        periods=(("working_life", 0),),
+        steps=(("working_life", 0),),
         source_identity={"model": "tiny-public-model-v1"},
     )
     try:
@@ -729,7 +729,7 @@ def test_an_ungated_regime_in_a_gated_edge_model_replays_bit_for_bit(
     params = {"discount_factor": 0.9}
     capture = PeriodCapture(
         directory=tmp_path,
-        periods=(target,),
+        steps=(target,),
         source_identity={"model": "gated-edge-topology-v1"},
     )
     result = build_gated_edge_model(devices=(0,), sharded=()).solve(
@@ -807,7 +807,7 @@ def test_a_value_with_a_member_axis_replays_bit_for_bit(
     assert jax.config.jax_enable_compilation_cache is persistent_compilation_cache
     build, params, periods, n_members = _MEMBER_AXIS_CAPTURES[case]
     capture = PeriodCapture(
-        directory=tmp_path, periods=periods, source_identity={"model": case}
+        directory=tmp_path, steps=periods, source_identity={"model": case}
     )
     result = build().solve(params=params, log_level="off", period_capture=capture)
     fresh = build()
@@ -1023,7 +1023,7 @@ def test_captured_admission_records_round_trip_as_read_only_views(
     monkeypatch.setattr(backward_induction, "_compile_all_functions", observe)
     capture = PeriodCapture(
         directory=tmp_path,
-        periods=(("working_life", 0),),
+        steps=(("working_life", 0),),
         source_identity={"model": "tiny-public-model-v1"},
     )
     _make_public_capture_model().solve(

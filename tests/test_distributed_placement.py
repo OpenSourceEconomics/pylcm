@@ -363,7 +363,7 @@ def test_public_replay_uploads_saved_values_directly_to_the_recorded_device(
         log_level="off",
         period_capture=PeriodCapture(
             directory=tmp_path,
-            periods=(("working", 0),),
+            steps=(("working", 0),),
             source_identity=identity,
         ),
     )

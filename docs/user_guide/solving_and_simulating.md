@@ -20,13 +20,15 @@ value_functions = solution.values
 ```
 
 Backward induction returns one immutable `SolutionResult`. Its `values` mapping is
-indexed by `period -> regime_name -> value_function_array`; replay policies,
+indexed by `step -> regime_name -> value_function_array`; a step is a period in a model
+without `stages`, and `model.period_of_step(step=...)` and
+`model.stage_of_step(step=...)` give the period and stage of a step. Replay policies,
 diagnostics, metadata, and omission reasons remain in their labelled fields and
 addressed artifact stores.
 
 To inspect values with their state coordinates, use
-`solution.value_array(period=0, regime="working")`. It returns an xarray `DataArray`
-with one named dimension per state and a last dimension `member`, so
+`solution.value_array(step=0, regime="working")`. It returns an xarray `DataArray` with
+one named dimension per state and a last dimension `member`, so
 `.sel(education="college", member="self")` picks a curve regardless of axis order; a
 regime declared with a plain utility function has the one member `"self"`. Discrete
 states carry categorical labels by default, and a state declared with
@@ -110,9 +112,9 @@ and artifacts are independently lazy after loading:
 ```python
 from lcm.solver_api import LoadState
 
-assert restored.values.load_state(period=0, regime="working") is LoadState.UNLOADED
-V_working = restored.value(period=0, regime="working")
-assert restored.values.load_state(period=0, regime="working") is LoadState.LOADED
+assert restored.values.load_state(step=0, regime="working") is LoadState.UNLOADED
+V_working = restored.value(step=0, regime="working")
+assert restored.values.load_state(step=0, regime="working") is LoadState.LOADED
 ```
 
 Loading one value leaves every other value and replay entry unloaded. Pass
@@ -578,7 +580,7 @@ loaded = SimulationResult.load(directory=Path("my_results"))
 ```python
 result.raw_results  # regime -> period -> PeriodRegimeSimulationData
 result.flat_params  # processed parameter object
-result.period_to_regime_to_V_arr  # value function arrays from solve()
+result.step_to_regime_to_V_arr  # value function arrays from solve(), keyed by step
 ```
 
 ## Typical Workflow
@@ -668,10 +670,10 @@ result = model.simulate(
 )
 ```
 
-Each path is a real array shaped `(periods,)` for a common history or
-`(subjects, periods)` for individual histories in the original initial-condition row
-order. Columns are computational periods, beginning at the model's first age or period;
-a subject entering later reads its entry column. The given value overrides that
+Each path is a real array shaped `(steps,)` for a common history or `(subjects, steps)`
+for individual histories in the original initial-condition row order. Columns are steps,
+one per period in a model without `stages`, beginning at the model's first age or
+period; a subject entering later reads its entry column. The given value overrides that
 subject's initial shock and each subsequent realised draw. Continuous processes accept
 finite values in their distribution's support, including off-node values; lognormal
 levels must be positive and uniform draws must lie inside the declared interval.

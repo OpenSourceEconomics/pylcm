@@ -133,7 +133,7 @@ def test_period_continuation_schema_uses_the_actual_producer_date() -> None:
     declarations[1] = terminal
     assert spec.template_at(period=1) is first
     assert spec.template_at(period=2) is terminal
-    with pytest.raises(ValueError, match="period 0"):
+    with pytest.raises(ValueError, match="step 0"):
         spec.template_at(period=0)
 
 
@@ -148,7 +148,7 @@ def test_constant_continuation_schema_preserves_its_template() -> None:
 def test_period_continuation_schema_requires_its_declared_artifact_key() -> None:
     """A dated payload cannot change the artifact's represented object."""
     declared = ArtifactKey(type_id="example_solver.participation", schema_version=1)
-    with pytest.raises(ValueError, match="period 1"):
+    with pytest.raises(ValueError, match="step 1"):
         ContinuationSpec(
             template=_template(),
             artifact_key=EGM_CONTINUATION,

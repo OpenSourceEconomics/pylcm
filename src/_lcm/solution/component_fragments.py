@@ -313,7 +313,7 @@ def _write_fragment_file(
                 identity = {
                     "kind": "value",
                     "code": int(code),
-                    "period": int(period),
+                    "step": int(period),
                     "regime": str(regime),
                 }
                 value_entries.append(
@@ -346,7 +346,7 @@ def _write_fragment_file(
                             identity={
                                 "kind": "panel",
                                 "regime": regime,
-                                "period": period,
+                                "step": period,
                                 "field": field_name,
                                 "key": key,
                             },
@@ -414,7 +414,7 @@ def _read_fragment_file(*, path: Path, file: h5py.File) -> Fragment:
             value=entry["identity"], label=f"fragment {path.name} value address"
         )
         if (
-            set(identity) != {"kind", "code", "period", "regime"}
+            set(identity) != {"kind", "code", "step", "regime"}
             or identity["kind"] != "value"
         ):
             msg = f"Fragment {path.name} has an invalid value address {identity!r}."
@@ -429,7 +429,7 @@ def _read_fragment_file(*, path: Path, file: h5py.File) -> Fragment:
             raise SolutionIntegrityError(msg)
         coordinate = (
             _require_nonnegative_exact_int(
-                value=identity["period"], label=f"fragment {path.name} value period"
+                value=identity["step"], label=f"fragment {path.name} value step"
             ),
             _require_nonempty_exact_str(
                 value=identity["regime"], label=f"fragment {path.name} value regime"
@@ -591,7 +591,7 @@ def _read_panel(
     for leaf in cast("list[dict[str, JSONValue]]", entry["leaves"]):
         identity = _require_exact_dict(value=leaf["identity"], label="raw leaf address")
         if (
-            set(identity) != {"kind", "regime", "period", "field", "key"}
+            set(identity) != {"kind", "regime", "step", "field", "key"}
             or identity["kind"] != "panel"
         ):
             msg = f"Fragment {path.name} has an invalid raw leaf address {identity!r}."
@@ -599,9 +599,7 @@ def _read_panel(
         key = identity["key"]
         address = (
             _require_nonempty_exact_str(value=identity["regime"], label="raw regime"),
-            _require_nonnegative_exact_int(
-                value=identity["period"], label="raw period"
-            ),
+            _require_nonnegative_exact_int(value=identity["step"], label="raw step"),
             _require_nonempty_exact_str(value=identity["field"], label="raw field"),
             None
             if key is None
@@ -626,7 +624,7 @@ def _read_panel(
             (
                 _require_nonempty_exact_str(value=regime, label="raw regime"),
                 tuple(
-                    _require_nonnegative_exact_int(value=period, label="raw period")
+                    _require_nonnegative_exact_int(value=period, label="raw step")
                     for period in _require_exact_list(
                         value=periods, label="raw periods"
                     )

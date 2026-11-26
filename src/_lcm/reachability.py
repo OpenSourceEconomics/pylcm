@@ -52,7 +52,10 @@ class EdgeStatus(IntEnum):
 
 @dataclass(frozen=True, kw_only=True)
 class PhaseReachability:
-    """One phase's immutable period-indexed regime graph.
+    """One phase's immutable regime graph, indexed by step.
+
+    A step is one stage of one period (`Model.period_of_step`); without
+    `stages` the step is the period.
 
     `CONDITIONAL` is retained in `targets_by_period`. It is provenance, not a
     deferred Boolean; there is deliberately no runtime `resolve` method.
@@ -77,40 +80,40 @@ class PhaseReachability:
             )
         )
 
-    def targets(self, *, period: int, source: RegimeName) -> tuple[RegimeName, ...]:
-        """Return retained targets for the edge from `period` to `period + 1`."""
-        if not 0 <= period < self.n_steps - 1:
-            raise IndexError(period)
-        return self.targets_by_period[period].get(source, ())
+    def targets(self, *, step: int, source: RegimeName) -> tuple[RegimeName, ...]:
+        """Return retained targets of the edges leaving `source` at `step`."""
+        if not 0 <= step < self.n_steps - 1:
+            raise IndexError(step)
+        return self.targets_by_period[step].get(source, ())
 
-    def has_edge(self, *, period: int, source: RegimeName, target: RegimeName) -> bool:
-        """Return whether the static graph contains this period-specific edge."""
+    def has_edge(self, *, step: int, source: RegimeName, target: RegimeName) -> bool:
+        """Return whether the static graph contains this step's edge."""
         return (
-            self.edge_status(period=period, source=source, target=target)
+            self.edge_status(step=step, source=source, target=target)
             != EdgeStatus.FALSE
         )
 
     def edge_status(
-        self, *, period: int, source: RegimeName, target: RegimeName
+        self, *, step: int, source: RegimeName, target: RegimeName
     ) -> EdgeStatus:
         """Return the construction-time status of a candidate edge.
 
         A retained edge is `CONDITIONAL`; every other pair is `FALSE`.
         """
-        if not 0 <= period < self.n_steps - 1:
-            raise IndexError(period)
-        if target in self.targets_by_period[period].get(source, ()):
+        if not 0 <= step < self.n_steps - 1:
+            raise IndexError(step)
+        if target in self.targets_by_period[step].get(source, ()):
             return EdgeStatus.CONDITIONAL
         return EdgeStatus.FALSE
 
-    def periods_for_edge(
+    def steps_for_edge(
         self, *, source: RegimeName, target: RegimeName
     ) -> tuple[int, ...]:
-        """Return all source periods in which the edge is retained."""
+        """Return all source steps at which the edge is retained."""
         return tuple(
             step
             for step in range(self.n_steps - 1)
-            if self.has_edge(period=step, source=source, target=target)
+            if self.has_edge(step=step, source=source, target=target)
         )
 
     def union_targets(self, *, source: RegimeName) -> tuple[RegimeName, ...]:
@@ -120,7 +123,7 @@ class PhaseReachability:
                 {
                     target
                     for step in range(self.n_steps - 1)
-                    for target in self.targets(period=step, source=source)
+                    for target in self.targets(step=step, source=source)
                 }
             )
         )

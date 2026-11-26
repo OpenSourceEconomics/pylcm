@@ -185,7 +185,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             {
                 target: values[period + 1][target]
                 for target in regime.solution.reachability.targets(
-                    period=period, source=name
+                    step=period, source=name
                 )
             }
         )

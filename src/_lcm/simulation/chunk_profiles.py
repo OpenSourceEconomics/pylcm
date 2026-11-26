@@ -735,7 +735,7 @@ def _profile_next_subjects(
         "Mapping[str, jax.ShapeDtypeStruct]",
         _record_core(inventory=inventory, profile=cores["route"], family="route"),
     )
-    targets = regime.simulation.reachability.targets(period=period, source=name)
+    targets = regime.simulation.reachability.targets(step=period, source=name)
     if runtime_checks:
         inventory.operation(
             function=regime_probability_flags,

@@ -843,7 +843,7 @@ def _decision_value_reads(
         ()
         if period == context.solution_reachability.n_steps - 1
         else context.solution_reachability.targets(
-            period=period, source=context.regime_name
+            step=period, source=context.regime_name
         )
     )
     return _value_reads(
@@ -1505,7 +1505,7 @@ class _ArgumentsBoundAtDispatch:
             return context.call_arguments
         msg = (
             f"Simulation program {self.program_name!r} binds its arguments at "
-            f"dispatch, from the simulated population of period {context.period}, "
+            f"dispatch, from the simulated population of step {context.period}, "
             "not at model build."
         )
         raise ExecutionPlanningError(msg)

@@ -39,10 +39,10 @@ def test_an_edge_is_the_declared_support_at_its_period() -> None:
     )
 
     assert (
-        graph.edge_status(period=0, source="source", target="target")
+        graph.edge_status(step=0, source="source", target="target")
         == EdgeStatus.CONDITIONAL
     )
-    assert not graph.has_edge(period=1, source="source", target="target")
+    assert not graph.has_edge(step=1, source="source", target="target")
 
 
 def test_a_declared_target_not_covered_next_period_is_rejected() -> None:
@@ -63,8 +63,8 @@ def test_conditional_edge_is_retained_without_runtime_resolution() -> None:
         support_by_period={"a": {0: ("b",)}},
     )
 
-    assert graph.targets(period=0, source="a") == ("b",)
-    assert graph.edge_status(period=0, source="a", target="b") == EdgeStatus.CONDITIONAL
+    assert graph.targets(step=0, source="a") == ("b",)
+    assert graph.edge_status(step=0, source="a", target="b") == EdgeStatus.CONDITIONAL
     assert not hasattr(graph, "resolve")
 
 
@@ -77,7 +77,7 @@ def test_terminal_source_has_no_edge() -> None:
         terminal_regimes={"dead"},
     )
 
-    assert not graph.has_edge(period=0, source="dead", target="alive")
+    assert not graph.has_edge(step=0, source="dead", target="alive")
 
 
 def test_unknown_target_is_rejected() -> None:
@@ -106,8 +106,8 @@ def test_solution_and_simulation_graphs_use_the_same_builder() -> None:
         terminal_regimes={"solve_target", "simulate_target"},
     )
 
-    assert graph.solution.targets(period=0, source="source") == ("solve_target",)
-    assert graph.simulation.targets(period=0, source="source") == ("simulate_target",)
+    assert graph.solution.targets(step=0, source="source") == ("solve_target",)
+    assert graph.simulation.targets(step=0, source="source") == ("simulate_target",)
 
 
 def test_engine_has_no_period_target_inference_helper() -> None:
@@ -379,8 +379,8 @@ def test_fixed_zero_probability_removes_target_problem(
         fixed_params=fixed_params,
         enable_jit=False,
     )
-    assert model.reachability.solution.targets(period=0, source="source") == ("low",)
-    assert model.reachability.simulation.targets(period=0, source="source") == ("low",)
+    assert model.reachability.solution.targets(step=0, source="source") == ("low",)
+    assert model.reachability.simulation.targets(step=0, source="source") == ("low",)
     assert (1, "high") not in model.reachability.nodes
     assert (1, "high") not in model.reachability.visited_nodes
     assert "high" not in model.get_params_template()["source"]

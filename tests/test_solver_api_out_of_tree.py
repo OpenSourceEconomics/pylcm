@@ -556,7 +556,7 @@ def test_an_unkept_continuation_is_recorded_under_the_key_its_solver_declared(
     solution = model.solve(
         params={"discount_factor": 1.0}, log_level="off", retention=retention
     )
-    assert ArtifactRef(period=0, regime="alive", key=_COUNTER) in solution.omissions
+    assert ArtifactRef(step=0, regime="alive", key=_COUNTER) in solution.omissions
 
 
 @pytest.mark.parametrize(

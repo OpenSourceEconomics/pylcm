@@ -19,17 +19,17 @@ class PeriodCandidate:
 
     regime: RegimeName
     """Regime name in the model's solve graph."""
-    period: int
-    """Zero-based period in the unchanged model horizon."""
+    step: int
+    """Zero-based step of the solve; see `Model.step_of`."""
     core: str
     """Named core selected by the solve's retention policy."""
     widths: Mapping[str, int]
     """Exact execution-axis widths; copied to an immutable mapping."""
 
     def __post_init__(self) -> None:
-        if type(self.period) is not int or self.period < 0:
+        if type(self.step) is not int or self.step < 0:
             raise ExecutionPlanningError(
-                "Candidate period must be a nonnegative integer."
+                "Candidate step must be a nonnegative integer."
             )
         if not self.regime or not self.core:
             raise ExecutionPlanningError("Candidate regime and core must be nonempty.")

@@ -238,7 +238,7 @@ def test_runtime_checks_simulate_disabled_allows_nan(
     )
     assert any(
         bool(jnp.any(jnp.isnan(value)))
-        for values in result.period_to_regime_to_V_arr.values()
+        for values in result.step_to_regime_to_V_arr.values()
         for value in values.values()
     )
 
@@ -319,7 +319,7 @@ def test_runtime_checks_disabled_preserves_initial_conditions_structure() -> Non
         )
 
 
-def test_warning_level_solves_without_per_row_materialisation():
+def test_warning_level_solves_without_per_row_materialisation() -> None:
     """Happy-path solve at log_level="warning" returns finite V without
     entering the failure-path localisation."""
     model = _make_model()
@@ -330,7 +330,7 @@ def test_warning_level_solves_without_per_row_materialisation():
             assert not jnp.any(jnp.isinf(V_arr))
 
 
-def test_nan_failure_raises_with_regime_and_age():
+def test_nan_failure_raises_with_regime_and_age() -> None:
     """A NaN-producing parameter set raises with the offending (regime, age).
 
     `discount_factor=NaN` poisons the next-V contribution to Q on the
@@ -345,7 +345,7 @@ def test_nan_failure_raises_with_regime_and_age():
 
 def test_nan_failure_raises_at_warning_level(
     caplog: pytest.LogCaptureFixture,
-):
+) -> None:
     """At warning verbosity a NaN value function still stops the solve."""
     model = _make_model()
     params = {**_HEALTHY_PARAMS, "discount_factor": float("nan")}
@@ -356,7 +356,7 @@ def test_nan_failure_raises_at_warning_level(
         model.solve(params=params, log_level="warning")
 
 
-def test_off_level_solves_without_diagnostics(caplog: pytest.LogCaptureFixture):
+def test_off_level_solves_without_diagnostics(caplog: pytest.LogCaptureFixture) -> None:
     """Disabled checks at off verbosity permit NaNs without diagnostic output."""
     model = _make_model()
     params = {**_HEALTHY_PARAMS, "discount_factor": float("nan")}
@@ -371,7 +371,7 @@ def test_off_level_solves_without_diagnostics(caplog: pytest.LogCaptureFixture):
 @pytest.mark.parametrize("runtime_checks", [False, True])
 def test_debug_level_emits_per_period_stats(
     *, caplog: pytest.LogCaptureFixture, tmp_path: Path, runtime_checks: bool
-):
+) -> None:
     """log_level="debug" logs a min/max/mean line for every (regime, period)."""
     model = _make_model()
     with caplog.at_level(logging.DEBUG, logger="lcm"):

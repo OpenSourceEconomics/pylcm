@@ -48,7 +48,7 @@ def undeclared_read_pins(
     if period >= reachability.n_steps - 1:
         return tuple(dict.fromkeys(artifacts))
     continuation_specs = _continuation_specs(regimes=regimes)
-    for target in reachability.targets(period=period, source=regime_name):
+    for target in reachability.targets(step=period, source=regime_name):
         if declares_no_reads:
             artifacts.extend(
                 _next_period_value_reads(

@@ -13,11 +13,11 @@ constructed model, with `schema_version == 1`:
 
 - `graph` is `model.graph`: declared and effective phase edges, their bound laws,
   starting nodes, valued nodes, visited nodes and pruning reasons.
-- `regimes_by_period[period][regime_name]` retains finalized user declarations, with the
+- `regimes_by_step[step][regime_name]` retains finalized user declarations, with the
   age/period factories already resolved during construction. This includes
   phase-invariant actions, ownership and preference declarations.
-- `phases[period, regime_name, phase]` contains the resolved phase slice, where `phase`
-  is `"solve"` or `"simulate"`. It retains the full grid states, function pool,
+- `phases[step, regime_name, phase]` contains the resolved phase slice, where `phase` is
+  `"solve"` or `"simulate"`. It retains the full grid states, function pool,
   constraints, state and joint laws, regime-transition law, aggregators and same-period
   exits. Undemanded simulation contexts are absent, including contexts whose
   simulation-only factories construction did not need to build.
@@ -25,7 +25,7 @@ constructed model, with `schema_version == 1`:
   entry's `arg_names` gives its finite declared DAG inputs, or `None` when the interface
   remains variadic or cannot be inspected. This uses the same Python signature
   convention as construction, including wrappers and partials.
-- `original_periods_by_regime`, `value_periods_by_regime`, `query_periods_by_phase` and
+- `original_steps_by_regime`, `value_steps_by_regime`, `query_steps_by_phase` and
   `exit_function_demand` preserve the construction roles of physical entry, stored full
   values and same-period decisions. The query mapping retains the construction namespace
   keys `"solution"` and `"simulation"`; node keys use the public phase names `"solve"`
@@ -150,7 +150,7 @@ source = {"model": "my-recorded-model-revision"}
 params = get_params(n_periods=3)
 capture = PeriodCapture(
     directory=Path("period-captures"),
-    periods=(("working_life", 0),),
+    steps=(("working_life", 0),),
     source_identity=source,
 )
 template = get_model(n_periods=3)
@@ -535,12 +535,12 @@ solution = model.solve(
     retention=ResultRetention.VALUES_AND_REPLAY,
 )
 
-V_working = solution.value(period=0, regime="working")
-values = solution.value_array(period=0, regime="working")
+V_working = solution.value(step=0, regime="working")
+values = solution.value_array(step=0, regime="working")
 curve = values.sel(education="college")
 frame = curve.to_dataframe().reset_index()
-full_frame = solution.value_frame(period=0, regime="working")
-codes = solution.value_frame(period=0, regime="working", use_categorical_codes=True)
+full_frame = solution.value_frame(step=0, regime="working")
+codes = solution.value_frame(step=0, regime="working", use_categorical_codes=True)
 ```
 
 `value_array` returns an xarray `DataArray` named `V` with one dimension per axis in
@@ -572,11 +572,11 @@ they are not re-exported from the top-level `lcm` namespace. The retention modes
 | `ALL_PERSISTABLE_ARTIFACTS` | Values plus every applicable model-verifiable artifact                       |
 
 Values live in a `ValueStore`; artifacts are addressed by an
-`ArtifactRef(period=..., regime=..., key=...)` and kept in immutable `ArtifactStore`
+`ArtifactRef(step=..., regime=..., key=...)` and kept in immutable `ArtifactStore`
 instances. Both stores expose the same eager values after a solve and independently lazy
 entries after restoration. Inspecting coordinates, metadata, omissions, or
 `load_state(...)` does not load numerical data. After restoration, `solution.value(...)`
-and `solution.values[period][regime]` load only the requested value entry and verify its
+and `solution.values[step][regime]` load only the requested value entry and verify its
 checksum first. Whole-store numerical traversal is explicit through
 `solution.values.materialize()`; per-coordinate access preserves independent laziness.
 For ordinary array artifacts, `store[ref]` does the same. A plugin-defined PyTree
@@ -671,7 +671,7 @@ values_only = model.solve(
     retention=ResultRetention.VALUES,
 )
 
-V_alive = values_only.value(period=0, regime="alive")
+V_alive = values_only.value(step=0, regime="alive")
 ```
 
 Such a result simulates only where every decision is recoverable from values; a model
@@ -820,9 +820,8 @@ name to the chosen grid values, and `value`, the maximised value at each state, 
 trailing member axis in member order: one entry for a regime declared with a plain
 utility function. Continuous states off the grid extrapolate as in simulate; discrete
 states and restricted `action_grids` values must lie on their grids. `Model.state_names`
-gives the order of the state axes of `solution.values[period][regime]`, which precede
-its member axis, and `Model.state_grid` gives a state's grid nodes after runtime
-parameters.
+gives the order of the state axes of `solution.values[step][regime]`, which precede its
+member axis, and `Model.state_grid` gives a state's grid nodes after runtime parameters.
 
 A regime that reads a `shocks=` group on the integrated current-IID route, that is a
 group no endogenous-grid regime reads, raises `UnsupportedOperationError`: its decision
@@ -902,7 +901,7 @@ ordered Categorical over those numbers that `.astype(float)` turns into numbers.
 
 Inspection properties include `regime_names`, `state_names`, `action_names`,
 `n_periods`, `n_subjects`, `available_targets`, `raw_results`, `flat_params`, and
-`period_to_regime_to_V_arr`. `plan_summary` carries the resolved execution plan the call
+`step_to_regime_to_V_arr`. `plan_summary` carries the resolved execution plan the call
 reported (route, subject devices, resolved widths, chunking, budget mode); it is
 diagnostic only and is `None` for a result read back with `load`.
 

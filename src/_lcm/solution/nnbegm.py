@@ -2380,7 +2380,7 @@ def _nnbegm_query_period_groups(
             ()
             if step == context.solution_reachability.n_steps - 1
             else context.solution_reachability.targets(
-                period=step, source=context.regime_name
+                step=step, source=context.regime_name
             )
         )
         key = solver_period_group_key(
@@ -2505,7 +2505,7 @@ def _with_declared_nested_reads(
         ()
         if period == context.solution_reachability.n_steps - 1
         else context.solution_reachability.targets(
-            period=period, source=context.regime_name
+            step=period, source=context.regime_name
         )
     )
     return replace(

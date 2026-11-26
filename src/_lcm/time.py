@@ -164,6 +164,20 @@ def period_of_step(*, ages: TimeAxis, step: int) -> int:
     return step // stages_per_period(ages)
 
 
+def stage_of_step(*, ages: TimeAxis, step: int) -> StageName | None:
+    """Name of the stage of step `step`; `None` in a model without stages."""
+    if not isinstance(ages, ModelTime) or not ages.stages:
+        return None
+    return ages.stages[step % ages.n_stages][0]
+
+
+def describe_step(*, ages: TimeAxis, step: int) -> str:
+    """Name the period of step `step` for a message, with its stage if it has one."""
+    period = f"period {period_of_step(ages=ages, step=step)}"
+    stage = stage_of_step(ages=ages, step=step)
+    return period if stage is None else f"{period}, stage {stage!r}"
+
+
 def stage_position(*, ages: TimeAxis, regime: RegimeName) -> int:
     """Position of `regime`'s stage within every period of `ages`."""
     return ages.stage_of.get(regime, 0) if isinstance(ages, ModelTime) else 0

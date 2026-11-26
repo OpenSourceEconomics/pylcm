@@ -227,7 +227,7 @@ def test_solve_stores_the_value_at_the_objective(*, agent: str, period: int) -> 
     beta_tilde = AGENTS[agent]
     solution = _model().solve(params=_params(beta_tilde=beta_tilde), log_level="off")
     assert_array_almost_equal(
-        solution.value(period=period, regime="decide")[..., 0],
+        solution.value(step=period, regime="decide")[..., 0],
         _enumerate_values(beta_tilde=beta_tilde)[period],
         decimal=DECIMAL_PRECISION,
     )
@@ -237,7 +237,7 @@ def test_sophisticated_value_lies_below_the_best_long_run_value() -> None:
     """At wealth two the self spends, worth 2.85, although saving is worth 2.97."""
     solution = _model().solve(params=_params(beta_tilde=BETA), log_level="off")
     assert_array_almost_equal(
-        solution.value(period=0, regime="decide")[Wealth.two],
+        solution.value(step=0, regime="decide")[Wealth.two],
         2.85,
         decimal=DECIMAL_PRECISION,
     )
@@ -254,8 +254,8 @@ def test_identical_objective_and_value_solve_like_the_plain_aggregator(
     ).solve(params=params, log_level="off")
     plain = _model(koopmans_aggregator=long_run).solve(params=params, log_level="off")
     assert_array_equal(
-        wrapped.value(period=period, regime="decide"),
-        plain.value(period=period, regime="decide"),
+        wrapped.value(step=period, regime="decide"),
+        plain.value(step=period, regime="decide"),
     )
 
 
@@ -278,7 +278,7 @@ def test_tied_objective_takes_the_action_of_larger_stored_value(*, period: int) 
         max(SPEND_UTILITY + DELTA * next_values[w - 1], save[w]) for w in (1, 2, 3)
     ]
     assert_array_almost_equal(
-        solution.value(period=period, regime="decide")[..., 0],
+        solution.value(step=period, regime="decide")[..., 0],
         expected,
         decimal=DECIMAL_PRECISION,
     )
@@ -515,12 +515,12 @@ def test_a_household_chooses_on_its_weighted_objectives(*, period: int) -> None:
     household = _household_model(single)
     params = _params(beta_tilde=0.7)
     values = household.solve(params=params, log_level="off").value(
-        period=period, regime="decide"
+        step=period, regime="decide"
     )
     assert_array_almost_equal(
         values[..., 0],
         single.solve(params=params, log_level="off").value(
-            period=period, regime="decide"
+            step=period, regime="decide"
         )[..., 0],
         decimal=DECIMAL_PRECISION,
     )
@@ -589,7 +589,7 @@ def test_a_state_read_only_by_the_objective_is_used() -> None:
         params={"decide": {"koopmans_aggregator": {"delta": DELTA}}}, log_level="off"
     )
     assert_array_almost_equal(
-        solution.value(period=1, regime="decide")[..., 0],
+        solution.value(step=1, regime="decide")[..., 0],
         np.stack(
             [
                 _enumerate_values(beta_tilde=1.0)[1],
@@ -607,7 +607,7 @@ def test_a_state_read_only_by_the_koopmans_aggregator_is_used() -> None:
         params={"decide": {"koopmans_aggregator": {"delta": DELTA}}}, log_level="off"
     )
     assert_array_almost_equal(
-        solution.value(period=1, regime="decide")[:, Mood.patient, 0],
+        solution.value(step=1, regime="decide")[:, Mood.patient, 0],
         _enumerate_values(beta_tilde=1.0)[1],
         decimal=DECIMAL_PRECISION,
     )
@@ -639,7 +639,7 @@ def test_a_labelled_objective_parameter_is_read_by_label() -> None:
         log_level="off",
     )
     assert_array_almost_equal(
-        solution.value(period=1, regime="decide")[:, Mood.impatient, 0],
+        solution.value(step=1, regime="decide")[:, Mood.impatient, 0],
         _enumerate_values(beta_tilde=BETA)[1],
         decimal=DECIMAL_PRECISION,
     )
@@ -1015,7 +1015,7 @@ def test_objective_ties_go_to_the_other_members_then_to_the_decider(
     ).to_dataframe()
 
     assert_array_almost_equal(
-        solution.value(period=0, regime="decide")[0],
+        solution.value(step=0, regime="decide")[0],
         expected,
         decimal=DECIMAL_PRECISION,
     )
@@ -1033,11 +1033,11 @@ def test_invariant_blocking_solves_like_the_unblocked_model(*, period: int) -> N
     )
     assert_array_equal(
         blocked.solve(params=params, log_level="off").value(
-            period=period, regime="decide"
+            step=period, regime="decide"
         ),
         _mood_model()
         .solve(params=params, log_level="off")
-        .value(period=period, regime="decide"),
+        .value(step=period, regime="decide"),
     )
 
 
@@ -1136,7 +1136,7 @@ def test_ev1_solve_stores_the_expected_value_at_the_noisy_objective(
         params=_ev1_params(beta_tilde=beta_tilde), log_level="off"
     )
     assert_array_almost_equal(
-        solution.value(period=period, regime="decide")[..., 0],
+        solution.value(step=period, regime="decide")[..., 0],
         _enumerate_ev1_values(beta_tilde=beta_tilde)[period],
         decimal=DECIMAL_PRECISION,
     )
@@ -1172,7 +1172,7 @@ def test_ev1_household_publishes_the_deciders_value_and_the_others_mean(
     values = (
         _household_model(_ev1_model())
         .solve(params=params, log_level="off")
-        .value(period=period, regime="decide")
+        .value(step=period, regime="decide")
     )
 
     assert_array_almost_equal(
@@ -1200,8 +1200,8 @@ def test_ev1_identical_objective_and_value_solve_like_the_plain_aggregator(
         params=params, log_level="off"
     )
     assert_array_almost_equal(
-        wrapped.value(period=period, regime="decide"),
-        plain.value(period=period, regime="decide"),
+        wrapped.value(step=period, regime="decide"),
+        plain.value(step=period, regime="decide"),
         decimal=DECIMAL_PRECISION,
     )
 
@@ -1362,7 +1362,7 @@ def test_ev1_stored_value_survives_a_large_objective_translation(
         regime_name="decide",
         states={},
     )
-    assert float(np.asarray(solution.value(period=0, regime="decide"))[..., 0]) == 1.0
+    assert float(np.asarray(solution.value(step=0, regime="decide"))[..., 0]) == 1.0
     assert_array_equal(np.asarray(lookup.value)[..., 0], [1.0])
 
 
@@ -1760,8 +1760,8 @@ def test_a_current_self_solves_and_simulates_on_a_regime_with_its_own_exit(
     )
     for regime in ("couple", "single_f", "single_m"):
         assert_array_equal(
-            solution.value(period=0, regime=regime),
-            plain.value(period=0, regime=regime),
+            solution.value(step=0, regime=regime),
+            plain.value(step=0, regime=regime),
         )
     start = _ExitRegimeId.single_f if rule == "formation" else _ExitRegimeId.couple
     frame = current_self.simulate(
@@ -1964,12 +1964,12 @@ def test_a_read_of_a_separate_objective_takes_the_stored_values_at_its_choice(
     solution = model.solve(
         params=_read_params(read=regime, taste_shocks=taste_shocks), log_level="off"
     )
-    couple = np.asarray(solution.value(period=0, regime="couple"))
+    couple = np.asarray(solution.value(step=0, regime="couple"))
     # A single regime keeps its one member on a trailing axis.
-    single_f = np.asarray(solution.value(period=0, regime="single_f"))[..., 0]
+    single_f = np.asarray(solution.value(step=0, regime="single_f"))[..., 0]
     if rule != "formation":
         member = 0 if regime == "single_f" else 1
-        target = np.asarray(solution.value(period=0, regime=regime))[..., 0]
+        target = np.asarray(solution.value(step=0, regime=regime))[..., 0]
         assert_array_equal(
             couple[..., member], np.broadcast_to(target[:, None], (2, 2))
         )
@@ -1985,7 +1985,7 @@ def test_a_read_of_a_separate_objective_takes_the_stored_values_at_its_choice(
         assert_array_equal(couple[:, 0, 0], [1.375, 1.375])
     else:
         assert_array_equal(
-            np.asarray(solution.value(period=0, regime=regime))[..., 0], [0.375, 0.375]
+            np.asarray(solution.value(step=0, regime=regime))[..., 0], [0.375, 0.375]
         )
 
 
@@ -2018,11 +2018,11 @@ def test_a_simulated_move_into_a_separate_objective_takes_the_solved_value(
     ).to_dataframe(use_categorical_codes=True)
     first = frame.loc[frame["period"] == 0].set_index("subject_id")
     if forms:
-        solved = np.asarray(solution.value(period=0, regime="single_f"))[0]
+        solved = np.asarray(solution.value(step=0, regime="single_f"))[0]
         assert first.loc[0, "regime_name"] == "couple"
         assert first.loc[0, "value_f"] == solved
         return
-    solved = np.asarray(solution.value(period=0, regime="couple"))[0, 0]
+    solved = np.asarray(solution.value(step=0, regime="couple"))[0, 0]
     for subject, member in enumerate(("f", "m")):
         assert first.loc[subject, "regime_name"] == f"single_{member}"
         assert first.loc[subject, "value"] == solved[subject]
@@ -2116,7 +2116,7 @@ def test_callable_floor_decoupled_keeps_objective_choice_and_stored_value(
         else 0.25
     )
     assert_array_almost_equal(
-        solution.value(period=0, regime="decide")[..., 0],
+        solution.value(step=0, regime="decide")[..., 0],
         np.full((2, 2), expected_value),
         decimal=DECIMAL_PRECISION,
     )

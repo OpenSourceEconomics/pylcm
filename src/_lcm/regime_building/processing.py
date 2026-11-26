@@ -3734,7 +3734,7 @@ def _state_handoff_errors(
     for step in range(phase_reachability.n_steps - 1):
         for source in sorted(phase_reachability.active_regimes_by_period[step]):
             source_slice = phase_slices[source]
-            for target in phase_reachability.targets(period=step, source=source):
+            for target in phase_reachability.targets(step=step, source=source):
                 target_slice = phase_slices[target]
                 for state_name, target_grid in target_slice.grid_states.items():
                     # A value reaching a process the source does not hold
@@ -3804,7 +3804,7 @@ def _state_handoff_errors(
                     ):
                         continue
                     status = phase_reachability.edge_status(
-                        period=step,
+                        step=step,
                         source=source,
                         target=target,
                     )
@@ -3978,7 +3978,7 @@ def _runtime_param_entry_error(
     runtime_params = target_grid.params_to_pass_at_runtime
     if not runtime_params:
         return None
-    status = phase_reachability.edge_status(period=period, source=source, target=target)
+    status = phase_reachability.edge_status(step=period, source=source, target=target)
     named = ", ".join(f"'{param}'" for param in sorted(runtime_params))
     return (
         f"{phase_name} phase, period {period} "
@@ -4130,9 +4130,7 @@ def _fail_if_a_continuation_demand_is_unmet(
                 for step in source_regime.active_periods
                 if step < source_regime.solution.reachability.n_steps - 1
                 and target
-                in source_regime.solution.reachability.targets(
-                    period=step, source=source
-                )
+                in source_regime.solution.reachability.targets(step=step, source=source)
             )
             installed_missing = tuple(
                 sorted(
@@ -10342,9 +10340,7 @@ def _build_next_state_vmapped(
             (
                 ()
                 if period == phase_reachability.n_steps - 1
-                else phase_reachability.targets(
-                    period=period, source=source_regime_name
-                )
+                else phase_reachability.targets(step=period, source=source_regime_name)
             ),
             periodized_tree_signature(tree=functions, period=period),
         ),

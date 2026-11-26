@@ -154,14 +154,15 @@ group, including a block-diagonal group, retains the complete-group physical-inp
 restriction; this interface does not perform component completion.
 
 For an ordinary GridSearch simulation, `shock_paths` maps a named current shock to one
-of these records. Its array has shape `(periods,)` for a common path, or
-`(subjects, periods)` in original initial-condition row order. Mapping-form
-`initial_conditions` can include tagged `(subjects,)` entry values on current-shock
-names. An entry value applies only at that subject's actual entry period; subsequent
-periods use fresh addressed draws. A path supersedes the entry value and its tag for the
-same name. Current shocks in DataFrame inputs require the tagged mapping form. Untagged
-current-shock arrays receive an explicit migration error. Ordinary persistent states and
-transition-local state paths retain their own input interpretation.
+of these records. Its array has shape `(steps,)` for a common path, or
+`(subjects, steps)` in original initial-condition row order, one step per period in a
+model without `stages`. Mapping-form `initial_conditions` can include tagged
+`(subjects,)` entry values on current-shock names. An entry value applies only at that
+subject's actual entry period; subsequent periods use fresh addressed draws. A path
+supersedes the entry value and its tag for the same name. Current shocks in DataFrame
+inputs require the tagged mapping form. Untagged current-shock arrays receive an
+explicit migration error. Ordinary persistent states and transition-local state paths
+retain their own input interpretation.
 
 Shape and dtype are checked at the boundary. Law support and correlated completeness are
 enforced on the cells actually consumed; values before entry and unread tail cells do

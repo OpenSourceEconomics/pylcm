@@ -103,8 +103,8 @@ class SolveSnapshot:
     params: UserParams | None
     """User parameters passed to solve."""
 
-    period_to_regime_to_V_arr: PeriodToRegimeToVArr | None
-    """Immutable mapping of periods to regime value function arrays."""
+    step_to_regime_to_V_arr: PeriodToRegimeToVArr | None
+    """Immutable mapping of steps to regime value function arrays."""
 
     platform: str
     """Platform string, e.g. `"x86_64-Linux"`."""
@@ -123,8 +123,8 @@ class SimulateSnapshot:
     initial_conditions: InitialConditions | None
     """Immutable mapping of state names and `"regime_id"` to canonical-dtype arrays."""
 
-    period_to_regime_to_V_arr: PeriodToRegimeToVArr | None
-    """Immutable mapping of periods to regime value function arrays."""
+    step_to_regime_to_V_arr: PeriodToRegimeToVArr | None
+    """Immutable mapping of steps to regime value function arrays."""
 
     result: _SimulationResultOrNone
     """SimulationResult object."""
@@ -142,7 +142,7 @@ def load_snapshot(
     Args:
         path: Path to the snapshot directory (e.g. `solve_snapshot_001/`).
         exclude: Field names to skip loading
-            (e.g. `["period_to_regime_to_V_arr"]` to save memory).
+            (e.g. `["step_to_regime_to_V_arr"]` to save memory).
             Excluded fields are set to `None`.
 
     Returns:
@@ -188,14 +188,14 @@ def load_snapshot(
     model = cast("_ModelOrNone", pickled.get("model"))
     params = cast("UserParams | None", pickled.get("params"))
 
-    # Load period_to_regime_to_V_arr from HDF5 if not excluded
+    # Load step_to_regime_to_V_arr from HDF5 if not excluded
     values: PeriodToRegimeToVArr | None = None
     h5_path = path / "arrays.h5"
-    if h5_path.exists() and "period_to_regime_to_V_arr" not in exclude:
+    if h5_path.exists() and "step_to_regime_to_V_arr" not in exclude:
         values = _load_h5(h5_path)
-    elif "period_to_regime_to_V_arr" not in exclude:
+    elif "step_to_regime_to_V_arr" not in exclude:
         logger.warning(
-            "arrays.h5 not found in %s; period_to_regime_to_V_arr set to None",
+            "arrays.h5 not found in %s; step_to_regime_to_V_arr set to None",
             path,
         )
 
@@ -203,7 +203,7 @@ def load_snapshot(
         return SolveSnapshot(
             model=model,
             params=params,
-            period_to_regime_to_V_arr=values,
+            step_to_regime_to_V_arr=values,
             platform=saved_platform,
         )
     if snapshot_type == "simulate":
@@ -213,7 +213,7 @@ def load_snapshot(
             initial_conditions=cast(
                 "InitialConditions | None", pickled.get("initial_conditions")
             ),
-            period_to_regime_to_V_arr=values,
+            step_to_regime_to_V_arr=values,
             result=cast("_SimulationResultOrNone", pickled.get("result")),
             platform=saved_platform,
         )

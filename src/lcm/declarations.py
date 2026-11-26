@@ -55,22 +55,22 @@ class ModelDeclarations:
 
     graph: ModelGraph
     """The model's declared and effective phase graphs, with bound laws."""
-    regimes_by_period: MappingProxyType[int, MappingProxyType[RegimeName, Regime]]
-    """Finalized regimes with construction-time age/period factories resolved."""
+    regimes_by_step: MappingProxyType[int, MappingProxyType[RegimeName, Regime]]
+    """Finalized regimes of each step, with age/period factories resolved."""
     phases: MappingProxyType[tuple[int, RegimeName, Phase], RegimePhaseSpec]
-    """Resolved phase slices for demanded period/regime contexts; grids stay full-sized.
+    """Resolved phase slices keyed by step, regime and phase; grids stay full-sized.
 
     Phase-invariant actions and ownership declarations remain in
-    `regimes_by_period`. Phase slices carry functions, constraints, grid states,
+    `regimes_by_step`. Phase slices carry functions, constraints, grid states,
     state and joint laws, continuation aggregators, and same-period exits.
     """
     functions: tuple[FunctionDeclaration, ...]
     """Unique callable identities and the input signatures construction accepts."""
-    original_periods_by_regime: Mapping[RegimeName, tuple[int, ...]]
-    """Physical entry cohorts before same-period exits."""
-    value_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None
-    """Periods with stored full values, or `None` when not separately recorded."""
-    query_periods_by_phase: Mapping[str, Mapping[RegimeName, tuple[int, ...]]]
+    original_steps_by_regime: Mapping[RegimeName, tuple[int, ...]]
+    """Steps of the physical entry cohorts before same-period exits."""
+    value_steps_by_regime: Mapping[RegimeName, tuple[int, ...]] | None
+    """Steps with stored full values, or `None` when not separately recorded."""
+    query_steps_by_phase: Mapping[str, Mapping[RegimeName, tuple[int, ...]]]
     """Query-only decisions keyed by `solution` and `simulation`, including exits."""
     exit_function_demand: ExitFunctionDemand | None
     """Declared callback paths demanded by same-period exits."""
@@ -141,14 +141,14 @@ def _get_model_declarations(
                 phases[step, regime_name, phase] = resolved
     return ModelDeclarations(
         graph=graph,
-        regimes_by_period=regimes,
+        regimes_by_step=regimes,
         phases=MappingProxyType(phases),
         functions=_get_function_declarations(
             roots=(declared_regimes, regimes, phases, graph.laws)
         ),
-        original_periods_by_regime=structure.original_periods_by_regime,
-        value_periods_by_regime=structure.value_periods_by_regime,
-        query_periods_by_phase=structure.query_periods_by_phase,
+        original_steps_by_regime=structure.original_periods_by_regime,
+        value_steps_by_regime=structure.value_periods_by_regime,
+        query_steps_by_phase=structure.query_periods_by_phase,
         exit_function_demand=structure.exit_function_demand,
     )
 

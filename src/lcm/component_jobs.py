@@ -1332,7 +1332,7 @@ def _collected_simulation(
         raw_results=raw_results,
         regimes=regimes,
         flat_params=flat_params,
-        period_to_regime_to_V_arr=solution.values,
+        step_to_regime_to_V_arr=solution.values,
         ages=model._time,  # noqa: SLF001
         simulation_output_dtypes=model.simulation_output_dtypes,
         subject_batch_size=widths.pop(),
@@ -1535,7 +1535,7 @@ def _validate_raw_fields(
 ) -> None:
     """Require model-owned raw cells, names and fixed-field representations."""
     regimes = model._regimes  # noqa: SLF001
-    forward = forward_regimes_by_period(regimes=regimes, n_steps=model.n_periods)
+    forward = forward_regimes_by_period(regimes=regimes, n_steps=model.n_steps)
     expected_regimes = tuple(
         (name, tuple(step for step, active in enumerate(forward) if name in active))
         for name in regimes

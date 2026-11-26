@@ -424,7 +424,7 @@ def test_dcegm_declares_reads_only_for_regimes_reachable_at_the_next_period(
     reads = core_program_graph(kernel=kernel)["main"].requirements.value_reads
     expected_targets = set(
         model._regimes[regime].solution.reachability.targets(
-            period=_LAST_NON_TERMINAL_PERIOD, source=regime
+            step=_LAST_NON_TERMINAL_PERIOD, source=regime
         )
     )
 

@@ -657,7 +657,7 @@ def test_value_array_coordinates_are_values_or_labels(
     *, solution: SolutionResult, name: str, expected: list[_Label]
 ) -> None:
     """A value grid's coordinates are its values, a label grid's its labels."""
-    array = solution.value_array(period=0, regime="alive")
+    array = solution.value_array(step=0, regime="alive")
     assert array[name].to_numpy().tolist() == expected
 
 
@@ -666,13 +666,13 @@ def test_value_array_coordinates_with_categorical_codes_are_codes(
     *, solution: SolutionResult, name: str
 ) -> None:
     """`use_categorical_codes=True` gives every discrete coordinate as codes."""
-    array = solution.value_array(period=0, regime="alive", use_categorical_codes=True)
+    array = solution.value_array(step=0, regime="alive", use_categorical_codes=True)
     assert array[name].to_numpy().tolist() == list(range(len(array[name])))
 
 
 def test_value_array_selects_by_value(solution: SolutionResult) -> None:
     """`.sel` picks a value-grid node by its value."""
-    array = solution.value_array(period=0, regime="alive")
+    array = solution.value_array(step=0, regime="alive")
     np.testing.assert_array_equal(
         array.sel(experience=4, level=2.0),
         np.asarray(solution.values[0]["alive"])[1, 2],
@@ -681,7 +681,7 @@ def test_value_array_selects_by_value(solution: SolutionResult) -> None:
 
 def test_value_array_matches_simulated_values(solution: SolutionResult) -> None:
     """The value at each starting node equals the simulated value there."""
-    array = solution.value_array(period=0, regime="alive")
+    array = solution.value_array(step=0, regime="alive")
     frame = _first_alive_rows(_reference())
     got = [
         float(

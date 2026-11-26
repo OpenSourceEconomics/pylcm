@@ -110,7 +110,7 @@ def test_every_regime_value_is_retained() -> None:
 def test_a_persisted_continuation_payload_is_retained_leaf_by_leaf() -> None:
     """Persistence-oriented retention keeps every leaf of the payload it selects."""
     model = _egm_model(solver=EGM(savings_grid=_SAVINGS_GRID))
-    reference = ArtifactRef(period=3, regime="done", key=EGM_CONTINUATION)
+    reference = ArtifactRef(step=3, regime="done", key=EGM_CONTINUATION)
     ledger = _build_planned_input_liveness(
         regimes=model._regimes,
         program_metadata=_metadata(model=model),
@@ -125,7 +125,7 @@ def test_a_persisted_continuation_payload_is_retained_leaf_by_leaf() -> None:
     assert ledger.retained_artifacts >= frozenset(
         ValueArtifactAddress(
             kind=ValueArtifactKind.CONTINUATION_LEAF,
-            period=reference.period,
+            period=reference.step,
             regime=reference.regime,
             artifact_key=reference.key,
             leaf_path=path,
@@ -334,9 +334,7 @@ def test_a_program_declaring_no_reads_pins_every_reachable_continuation_leaf() -
     pins = undeclared_read_pins(
         regimes=regimes, regime_name=source, period=period, declares_no_reads=True
     )
-    targets = regimes[source].solution.reachability.targets(
-        period=period, source=source
-    )
+    targets = regimes[source].solution.reachability.targets(step=period, source=source)
     leaf_pins = {
         (artifact.regime, artifact.leaf_path)
         for artifact in pins

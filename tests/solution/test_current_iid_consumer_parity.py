@@ -952,7 +952,7 @@ def _assert_values_integrate_node_state_values(
                 label=f"V period={period} regime={regime_name}",
             )
             assert not set(nodes) & set(
-                declared_solution.value_array(period=period, regime=regime_name).dims
+                declared_solution.value_array(step=period, regime=regime_name).dims
             )
     return legacy_solution, declared_solution
 

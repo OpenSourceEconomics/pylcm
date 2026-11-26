@@ -439,7 +439,7 @@ def build_egm_step_functions(
         targets = (
             ()
             if step == solution_reachability.n_steps - 1
-            else solution_reachability.targets(period=step, source=regime_name)
+            else solution_reachability.targets(step=step, source=regime_name)
         )
         carry, scalar = get_egm_continuation_targets(
             targets=targets,

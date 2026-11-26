@@ -52,7 +52,9 @@ def _simulate(*, log_level: LogLevel) -> None:
     )
 
 
-def test_no_nan_warning_from_out_of_regime_placeholders(caplog):
+def test_no_nan_warning_from_out_of_regime_placeholders(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Simulating a healthy multi-regime model emits no NaN/Inf warnings."""
     with caplog.at_level(logging.WARNING, logger="lcm"):
         _simulate(log_level="warning")
@@ -191,7 +193,7 @@ def test_runtime_checks_disabled_allow_owned_simulated_nan(
     assert bool(jnp.any(jnp.isnan(result.raw_results["work"][0].V_arr)))
     assert all(
         bool(jnp.all(jnp.isfinite(value)))
-        for values in result.period_to_regime_to_V_arr.values()
+        for values in result.step_to_regime_to_V_arr.values()
         for value in values.values()
     )
 

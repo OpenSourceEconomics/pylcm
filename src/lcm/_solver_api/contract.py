@@ -265,20 +265,20 @@ class ReplayMode(StrEnum):
 
 @dataclass(frozen=True, order=True, kw_only=True)
 class ArtifactRef:
-    """Address of one artifact in a regime-period solution cell."""
+    """Address of one artifact in a solution cell of one step and regime."""
 
-    period: int
-    """Period of the solution cell."""
+    step: int
+    """Step of the solution cell; see `Model.step_of`."""
     regime: RegimeName
     """Name of the regime of the solution cell."""
     key: ArtifactKey
     """Versioned identity of the artifact schema."""
 
     def __post_init__(self) -> None:
-        if type(self.period) is not int:
-            raise TypeError("ArtifactRef.period must be an exact int.")
-        if self.period < 0:
-            raise ValueError("ArtifactRef.period must be non-negative.")
+        if type(self.step) is not int:
+            raise TypeError("ArtifactRef.step must be an exact int.")
+        if self.step < 0:
+            raise ValueError("ArtifactRef.step must be non-negative.")
         if type(self.regime) is not str:
             raise TypeError("ArtifactRef.regime must be an exact str.")
         if not self.regime:
@@ -363,8 +363,8 @@ class SolutionMetadata:
 
     retention: ResultRetention
     """The retention the solve was requested with."""
-    n_periods: int
-    """Number of periods in the model's lifecycle."""
+    n_steps: int
+    """Number of steps: the model's periods times the stages of a period."""
     regime_names: tuple[RegimeName, ...]
     """Names of every regime, in model order."""
     # Callers pass any mappings; `__post_init__` stores read-only copies of them.
@@ -375,7 +375,7 @@ class SolutionMetadata:
     params_fingerprint: str
     """Digest of the canonical parameters the solve depends on."""
     value_schemas: Mapping[tuple[int, RegimeName], ValueArraySchema]
-    """Schema of every stored value array, keyed by period and regime."""
+    """Schema of every stored value array, keyed by step and regime."""
     model_fingerprint: str = "0" * _SHA256_HEX_LENGTH
     """Model identity digest; durable results may use it after restoration."""
     durable_identity: bool = True
@@ -400,8 +400,8 @@ class SolutionMetadata:
     """Version of the result container's schema."""
 
     def __post_init__(self) -> None:  # noqa: C901, PLR0912
-        if self.n_periods < 1:
-            raise ValueError("SolutionMetadata.n_periods must be positive.")
+        if self.n_steps < 1:
+            raise ValueError("SolutionMetadata.n_steps must be positive.")
         if type(self.pylcm_version) is not str or not self.pylcm_version:
             raise ValueError("SolutionMetadata.pylcm_version must be a non-empty str.")
         if self.solution_schema_version < 1:
@@ -438,7 +438,7 @@ class SolutionMetadata:
             or len(coordinate) != 2  # noqa: PLR2004
             or type(coordinate[0]) is not int
             or coordinate[0] < 0
-            or coordinate[0] >= self.n_periods
+            or coordinate[0] >= self.n_steps
             or type(coordinate[1]) is not str
             or coordinate[1] not in self.regime_names
             for coordinate in value_schemas
@@ -471,8 +471,8 @@ class SolutionMetadata:
         if any(
             type(ref) is not ArtifactRef
             or ref.regime not in self.regime_names
-            or ref.period < 0
-            or ref.period >= self.n_periods
+            or ref.step < 0
+            or ref.step >= self.n_steps
             or type(descriptor) is not ArtifactDescriptor
             or not _same_exact_artifact_contract(
                 actual=ref.key,
@@ -549,13 +549,13 @@ _ARTIFACT_CONTRACT_DATACLASS_FIELDS: tuple[
             "required",
         ),
     ),
-    (ArtifactRef, ("period", "regime", "key")),
+    (ArtifactRef, ("step", "regime", "key")),
     (ValueArraySchema, ("shape", "dtype", "axis_names")),
     (
         SolutionMetadata,
         (
             "retention",
-            "n_periods",
+            "n_steps",
             "regime_names",
             "solver_types",
             "model_instance_id",

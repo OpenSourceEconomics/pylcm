@@ -415,7 +415,7 @@ def test_one_dataset_cannot_supply_distinct_panel_addresses(
             for leaf in leaves
             if leaf["identity"]["field"] == "nested_policy_fallback"
             and leaf["identity"]["regime"] == source["identity"]["regime"]
-            and leaf["identity"]["period"] == source["identity"]["period"]
+            and leaf["identity"]["step"] == source["identity"]["step"]
         )
         array = np.asarray(file[source["dataset"]][()])
         target_array = np.asarray(file[target["dataset"]][()])
@@ -468,7 +468,7 @@ def test_fragment_metadata_preserves_exact_address_types(
         elif corruption == "code-fraction":
             identity["code"] += 0.5
         elif corruption == "period-fraction":
-            identity["period"] += 0.5
+            identity["step"] += 0.5
         elif corruption == "kind":
             identity["kind"] = "panel"
         elif corruption == "shape-fraction":
@@ -781,7 +781,7 @@ def test_fragment_headers_and_panels_preserve_exact_metadata(
         elif corruption in {"panel-period", "panel-kind"}:
             leaf = manifest["panel"]["leaves"][0]
             if corruption == "panel-period":
-                leaf["identity"]["period"] += 0.5
+                leaf["identity"]["step"] += 0.5
             else:
                 leaf["identity"]["kind"] = "value"
             leaf["sha256"] = _array_checksum(

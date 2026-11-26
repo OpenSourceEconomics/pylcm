@@ -147,7 +147,7 @@ def test_get_declarations_never_prepares_a_runtime_generation(model: Model) -> N
 
 def test_get_declarations_mappings_are_read_only(model: Model) -> None:
     with pytest.raises(TypeError):
-        model.get_declarations().regimes_by_period[0] = {}  # ty: ignore[invalid-assignment]
+        model.get_declarations().regimes_by_step[0] = {}  # ty: ignore[invalid-assignment]
 
 
 def test_get_declarations_resolves_cached_age_constraints() -> None:

@@ -71,7 +71,7 @@ def test_a_completed_streamed_archive_loads_like_a_saved_solution(
     for period, regime_to_value in saved.values.items():
         for regime_name, value in regime_to_value.items():
             np.testing.assert_array_equal(
-                np.asarray(streamed.value(period=period, regime=regime_name)),
+                np.asarray(streamed.value(step=period, regime=regime_name)),
                 np.asarray(value),
                 strict=True,
             )
@@ -105,7 +105,7 @@ def test_a_disk_value_entry_reads_its_value_onto_its_sharding(tmp_path: Path) ->
             assert read.sharding.memory_kind == "device"
             np.testing.assert_array_equal(
                 np.asarray(read),
-                np.asarray(solution.value(period=period, regime=regime_name)),
+                np.asarray(solution.value(step=period, regime=regime_name)),
                 strict=True,
             )
             np.testing.assert_array_equal(
@@ -123,15 +123,15 @@ def test_an_unfinished_archive_records_how_far_the_solve_got(tmp_path: Path) -> 
     archive = StreamedSolutionArchive(
         directory=tmp_path, name="solution-3", record=_RECORD
     )
-    assert _record_of(archive) == _RECORD | {"last_completed_period": None}
+    assert _record_of(archive) == _RECORD | {"last_completed_step": None}
     archive.write_value(
         period=4,
         regime="c",
-        value=np.asarray(solution.value(period=4, regime="c")),
-        sharding=solution.value(period=4, regime="c").sharding,
+        value=np.asarray(solution.value(step=4, regime="c")),
+        sharding=solution.value(step=4, regime="c").sharding,
     )
     archive.mark_period_written(period=4)
-    assert _record_of(archive) == _RECORD | {"last_completed_period": 4}
+    assert _record_of(archive) == _RECORD | {"last_completed_step": 4}
 
     del archive
     gc.collect()
@@ -141,7 +141,7 @@ def test_an_unfinished_archive_records_how_far_the_solve_got(tmp_path: Path) -> 
     with h5py.File(path, "r") as file:
         assert "manifest" not in file
         assert json.loads(bytes(file["incomplete"][()]).decode()) == _RECORD | {
-            "last_completed_period": 4
+            "last_completed_step": 4
         }
     with pytest.raises(SolutionIntegrityError):
         load_solution(path=path)

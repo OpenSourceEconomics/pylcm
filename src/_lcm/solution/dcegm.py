@@ -1255,7 +1255,7 @@ def dcegm_kernel_with_declared_reads(
         ()
         if period == context.solution_reachability.n_steps - 1
         else context.solution_reachability.targets(
-            period=period,
+            step=period,
             source=context.regime_name,
         )
     )

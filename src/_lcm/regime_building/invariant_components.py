@@ -42,7 +42,7 @@ from _lcm.regime_building.phases import (
     normalize_regime_phases,
 )
 from _lcm.regime_law import RegimeLaws
-from _lcm.time import TimeAxis
+from _lcm.time import TimeAxis, describe_step
 from _lcm.typing import RegimeName, StateName
 from lcm.exceptions import ExecutionPlanningError
 from lcm.grids import DiscreteGrid
@@ -170,6 +170,7 @@ def analyze_invariant_components(
                 reachability=reachability.solution
                 if phase == "solve"
                 else reachability.simulation,
+                ages=ages,
             )
             for phase in ("solve", "simulate")
         }
@@ -283,6 +284,7 @@ def _analyze_phase(
     specs: Mapping[RegimeName, PhasedRegimeSpec],
     regimes: Mapping[RegimeName, Regime],
     reachability: PhaseReachability,
+    ages: TimeAxis,
 ) -> InvariantPhaseAnalysis:
     """Classify every retained edge and value channel of one phase."""
     slices = {
@@ -299,7 +301,7 @@ def _analyze_phase(
     shared: list[RegimeEdge] = []
     for step in range(reachability.n_steps - 1):
         for source in sorted(reachability.active_regimes_by_period[step]):
-            for target in reachability.targets(period=step, source=source):
+            for target in reachability.targets(step=step, source=source):
                 edge = RegimeEdge(period=step, source=source, target=target)
                 if source in carriers and target in carriers:
                     law = _law_toward(
@@ -309,14 +311,16 @@ def _analyze_phase(
                         preserving.append(edge)
                     else:
                         refusals.append(
-                            f"edge {source} -> {target} at period {step} gives "
+                            f"edge {source} -> {target} at "
+                            f"{describe_step(ages=ages, step=step)} gives "
                             f"{state_name!r} the law {_describe(law)}, not the identity"
                         )
                 elif source in carriers:
                     shared.append(edge)
                 elif target in carriers:
                     refusals.append(
-                        f"edge {source} -> {target} at period {step} enters a "
+                        f"edge {source} -> {target} at "
+                        f"{describe_step(ages=ages, step=step)} enters a "
                         f"carrier of {state_name!r} from a regime without it, so the "
                         "source reads every code's value"
                     )

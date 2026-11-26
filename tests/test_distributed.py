@@ -1336,9 +1336,9 @@ def test_save_load_preserves_sharding_and_dataframe(
     res.save(directory=save_dir)
     loaded = SimulationResult.load(directory=save_dir)
 
-    for period, regime_dict in res._period_to_regime_to_V_arr.items():
+    for period, regime_dict in res._step_to_regime_to_V_arr.items():
         for regime_name, V_arr in regime_dict.items():
-            loaded_V = loaded._period_to_regime_to_V_arr[period][regime_name]
+            loaded_V = loaded._step_to_regime_to_V_arr[period][regime_name]
             assert loaded_V.sharding.num_devices == V_arr.sharding.num_devices
             for original_shard, loaded_shard in zip(
                 V_arr.addressable_shards,

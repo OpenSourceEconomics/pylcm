@@ -169,7 +169,7 @@ def _retained(solution: SolutionResult) -> block_major.RetainedComponentValues:
     values = _store(solution)
     period = next(iter(values))
     regime = next(iter(values[period]))
-    entry = values._raw(period=period, regime=regime)
+    entry = values._raw(step=period, regime=regime)
     owner = getattr(entry, "owner", None)
     assert isinstance(owner, block_major.RetainedComponentValues)
     return owner
@@ -306,7 +306,7 @@ def test_inspecting_a_block_major_result_assembles_no_value(
         for regime in solution.values[period]
     }
     states = {
-        _store(solution).load_state(period=period, regime=regime)
+        _store(solution).load_state(step=period, regime=regime)
         for period, regime in coordinates
     }
     schemas = dict(solution.metadata.value_schemas)
@@ -326,10 +326,10 @@ def test_reading_one_value_assembles_only_that_entry_on_its_solve_layout(
     model, params = _workload(name="sector_typed_terminal", schedule=_BLOCK_MAJOR)
     reference, _ = _workload(name="sector_typed_terminal", schedule=_PERIOD_MAJOR)
     solution = _solution(model=model, params=params)
-    want = _solution(model=reference, params=params).value(period=1, regime="working")
+    want = _solution(model=reference, params=params).value(step=1, regime="working")
     assemblies = _Assemblies(monkeypatch=monkeypatch)
 
-    got = solution.value(period=1, regime="working")
+    got = solution.value(step=1, regime="working")
 
     assert assemblies.calls == [(1, "working")]
     assert isinstance(got, jax.Array)
@@ -458,7 +458,7 @@ def _create_rounding_panel(
         raw_results=raw,
         regimes=model._regimes,
         flat_params=result.flat_params,
-        period_to_regime_to_V_arr=result.period_to_regime_to_V_arr,
+        step_to_regime_to_V_arr=result.step_to_regime_to_V_arr,
         ages=model.ages,
         simulation_output_dtypes=model.simulation_output_dtypes,
     )
@@ -715,8 +715,8 @@ def test_a_block_major_simulation_result_saves_and_loads_its_values(
     loaded = SimulationResult.load(directory=tmp_path / "result")
 
     _assert_value_bytes_equal(
-        got=loaded.period_to_regime_to_V_arr,
-        want=want.period_to_regime_to_V_arr,
+        got=loaded.step_to_regime_to_V_arr,
+        want=want.step_to_regime_to_V_arr,
         ordered=False,
     )
     assert loaded.to_dataframe().equals(want_frame)
@@ -949,7 +949,7 @@ def test_materializing_every_value_above_the_budget_is_refused_before_upload(
         _store(solution).materialize()
     assert assemblies.calls == []
 
-    value = solution.value(period=0, regime="working")
+    value = solution.value(step=0, regime="working")
     assert value.shape == (6, int(_LONG_WEALTH.n_points), 1)
     assert assemblies.calls == [(0, "working")]
 

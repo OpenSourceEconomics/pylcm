@@ -30,7 +30,7 @@ from dags import concatenate_functions
 
 from _lcm.engine import Regime, SimulationPhase, SolutionPhase
 from _lcm.grids import Grid
-from _lcm.time import TimeAxis, landing_step
+from _lcm.time import TimeAxis, describe_step, landing_step
 from _lcm.typing import (
     FlatRegimeParams,
     FunctionName,
@@ -111,7 +111,7 @@ def enumerate_reachable_states(
     for age, name in initial_nodes:
         if name in carriers:
             by_node.setdefault((period_of_age[age], name), set()).update(starts)
-    edges = _edges(regimes=regimes, carriers=carriers)
+    edges = _edges(regimes=regimes, carriers=carriers, ages=ages)
     for period in range(len(ages.exact_values) - 1):
         for source, target, phase_name in edges.get(period, ()):
             tuples = by_node.get((period, source))
@@ -192,9 +192,12 @@ def _fail_if_start_codes_are_invalid(
 
 
 def _edges(
-    *, regimes: Mapping[RegimeName, Regime], carriers: frozenset[RegimeName]
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    carriers: frozenset[RegimeName],
+    ages: TimeAxis,
 ) -> dict[int, tuple[tuple[RegimeName, RegimeName, str], ...]]:
-    """Return each period's carrier-to-carrier edges of either phase.
+    """Return each step's carrier-to-carrier edges of either phase.
 
     Refuses an edge entering a carrier from a regime without the states, since the
     enumeration has no tuple to start that edge from.
@@ -204,12 +207,13 @@ def _edges(
         reachability = getattr(next(iter(regimes.values())), phase_name).reachability
         for step in range(reachability.n_steps - 1):
             for source in sorted(reachability.active_regimes_by_period[step]):
-                for target in reachability.targets(period=step, source=source):
+                for target in reachability.targets(step=step, source=source):
                     if target not in carriers:
                         continue
                     if source not in carriers:
                         msg = (
-                            f"Edge {source} -> {target} at period {step} enters a "
+                            f"Edge {source} -> {target} at "
+                            f"{describe_step(ages=ages, step=step)} enters a "
                             "regime carrying the enumerated states from one without "
                             "them."
                         )

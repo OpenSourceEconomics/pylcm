@@ -112,7 +112,7 @@ def _terminal_regime() -> UserRegime:
     )
 
 
-def _model_with_state_probs(next_health_func) -> Model:
+def _model_with_state_probs(next_health_func: Callable[..., FloatND]) -> Model:
     alive = UserRegime(
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=_Health)},
         actions={"consumption": CONSUMPTION_GRID},
@@ -628,7 +628,10 @@ def _income(wealth: ContinuousState) -> FloatND:
 
 
 def _model_with_function_reading_health_probs(
-    *, next_health_func, phased: bool = False, **model_options: Unpack[_ModelOptions]
+    *,
+    next_health_func: Callable[..., FloatND],
+    phased: bool = False,
+    **model_options: Unpack[_ModelOptions],
 ) -> Model:
     """Build a model whose `health` law reads regime-function outputs.
 
@@ -1140,7 +1143,7 @@ def _phase_demand_model(
             ("simulate", model.graph.simulation),
         )
         for period in range(len(_PHASE_DEMAND_AGES) - 1)
-        for target in graph.targets(period=period, source="source")
+        for target in graph.targets(step=period, source="source")
     )
     assert observed == demanded
     return model, demanded

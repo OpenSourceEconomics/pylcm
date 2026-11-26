@@ -192,7 +192,7 @@ def _normalize(value: Any, *, depth: int = 0, seen: frozenset[int] = frozenset()
 def _capture_cached_specializations(model, captured, *, declarations=None):
     """Read the actual dated construction products, never execute a factory."""
     if declarations is not None:
-        periods = declarations.regimes_by_period
+        periods = declarations.regimes_by_step
     else:
         preparation = getattr(model, '_declaration_preparation', None)
         structure = getattr(preparation, 'prepared_structure', None)
@@ -278,8 +278,8 @@ def read_model(model: Any, *, checkpoint=None, capture_limits=None, structural_s
                     'source_sha256': session.file_digest(filename),
                     'scope': 'Original Model declared DAG inputs; callback implementation semantics remain separate'}
                 result['declaration_api'] = api_declaration
-                names = ('original_periods_by_regime', 'value_periods_by_regime',
-                         'query_periods_by_phase', 'exit_function_demand')
+                names = ('original_steps_by_regime', 'value_steps_by_regime',
+                         'query_steps_by_phase', 'exit_function_demand')
                 result['construction_authorities'] = {
                     'values': {name: normalize(getattr(declarations, name)) for name in names},
                     'source': 'pylcm.Model.get_declarations/v1'}

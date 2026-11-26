@@ -208,6 +208,7 @@ from _lcm.time import (
     TimeAxis,
     coordinate_at,
     coordinate_kind,
+    describe_step,
     display_age_at,
     landing_step,
     period_of_step,
@@ -858,7 +859,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
             raw_results=wrapped_results,
             regimes=regimes,
             flat_params=flat_params,
-            period_to_regime_to_V_arr=(
+            step_to_regime_to_V_arr=(
                 period_to_regime_to_V_arr
                 if component_values is None
                 else MappingProxyType({})
@@ -1409,14 +1410,14 @@ def _subject_chunk_periods(  # noqa: PLR0915
                     ()
                     if step == step_count(ages) - 1
                     else regime.solution.reachability.targets(
-                        period=step, source=regime_name
+                        step=step, source=regime_name
                     )
                 ),
                 realization_targets_next_period=(
                     ()
                     if step == step_count(ages) - 1
                     else regime.simulation.reachability.targets(
-                        period=step, source=regime_name
+                        step=step, source=regime_name
                     )
                 ),
                 key=key,
@@ -2613,6 +2614,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                     regime_names_to_ids=regime_names_to_ids,
                     flat_params=flat_params,
                     period=period,
+                    ages=ages,
                     reported_period=reported_period,
                     age=age,
                     subject_slice=subject_slice,
@@ -2752,6 +2754,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 state_action_space=state_action_space,
                 optimal_actions=optimal_actions,
                 period=period,
+                ages=ages,
                 age=age,
                 regime_params=regime_kernel_params(
                     flat_params, regime_name=regime_name
@@ -2829,7 +2832,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                     regime_names_to_ids=regime_names_to_ids,
                 ),
                 source=regime_name,
-                period=period,
+                when=describe_step(ages=ages, step=period),
                 new_regime_ids=new_subject_regime_ids,
                 regime_ids=regime_names_to_ids,
                 subjects=subject_ids_in_regime
@@ -2957,6 +2960,8 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 else original_n_subjects,
             ),
             memory=memory,
+            ages=ages,
+            step=period,
         )
 
     return (
@@ -2991,6 +2996,7 @@ def _take_dissolution_routes(
     regime_names_to_ids: RegimeNamesToIds,
     flat_params: FlatParams,
     period: int,
+    ages: TimeAxis,
     reported_period: int,
     age: ScalarInt | ScalarFloat,
     subject_slice: slice | SubjectRows,
@@ -3056,7 +3062,8 @@ def _take_dissolution_routes(
             )
         ),
         next_period=period,
-        reported_period=period,
+        ages=ages,
+        step=period,
         source=regime_name,
         new_regime_ids=outcome.subject_regime_ids,
         regime_ids=regime_names_to_ids,
@@ -3090,7 +3097,7 @@ def _take_dissolution_routes(
                         if isinstance(subject_slice, SubjectRows)
                         else cast("int", subject_slice.start) + row
                     ),
-                    period=period,
+                    period=reported_period,
                     regime=regime_name,
                     state=MappingProxyType(
                         physical_state_at_row(
@@ -3111,7 +3118,7 @@ def _take_dissolution_routes(
         log_dissolution_fallbacks(
             logger=logger,
             regime_name=regime_name,
-            period=period,
+            period=reported_period,
             n_rows=int(rerouted_rows.size),
             recorded=records is not None and validation_enabled(logger),
         )

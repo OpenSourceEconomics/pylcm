@@ -448,8 +448,8 @@ counted, not merely retained.
 
 A program whose builder reads a stored value it does not declare, or declares one its
 builder does not read, is refused when the program is materialized.
-`SolverBuildContext.solution_reachability.targets(period=..., source=...)` returns the
-target regimes to declare for one period; the last period of the horizon has none. The
+`SolverBuildContext.solution_reachability.targets(step=..., source=...)` returns the
+target regimes to declare for one step; the last step of the horizon has none. The
 conformance fixture's `TargetValueSolver` is the reference shape.
 
 (publishing-a-continuation)=

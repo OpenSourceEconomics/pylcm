@@ -977,7 +977,7 @@ class TargetValueSolver(Solver):
                 ()
                 if period == last_period
                 else context.solution_reachability.targets(
-                    period=period, source=context.regime_name
+                    step=period, source=context.regime_name
                 )
             )
             program = CoreProgram(

@@ -196,8 +196,8 @@ def test_several_fixed_zero_edges_leave_only_the_positive_edge(*, joint: bool) -
     """Every edge fixed at zero is removed from both phases' effective graphs."""
     model = _model(joint=joint, fixed_params=_fixed(joint=joint, p_mid=0.0, p_high=0.0))
     assert (
-        model.graph.solution.targets(period=0, source="source"),
-        model.graph.simulation.targets(period=0, source="source"),
+        model.graph.solution.targets(step=0, source="source"),
+        model.graph.simulation.targets(step=0, source="source"),
         dict(model.graph.pruned_edges["solve"]),
         set(model.graph.edges.solve["source"]),
     ) == (
@@ -232,7 +232,7 @@ def test_nonzero_fixed_probability_keeps_the_edge(*, joint: bool) -> None:
     model = _model(
         joint=joint, fixed_params=_fixed(joint=joint, p_mid=0.25, p_high=0.5)
     )
-    assert set(model.graph.solution.targets(period=0, source="source")) == {
+    assert set(model.graph.solution.targets(step=0, source="source")) == {
         "low",
         "mid",
         "high",
@@ -252,7 +252,7 @@ def test_joint_edge_zero_in_one_phase_only_stays_declared_in_both() -> None:
         simulate_high_mass=True,
     )
     assert (
-        "high" in model.graph.simulation.targets(period=0, source="source"),
+        "high" in model.graph.simulation.targets(step=0, source="source"),
         float(_source_value(model=model, params={})),
     ) == (True, 2.0)
 

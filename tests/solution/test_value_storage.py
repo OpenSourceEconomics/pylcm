@@ -183,7 +183,7 @@ def test_host_storage_publishes_the_device_storage_values(
     }
     for period, regime_to_value in device.values.items():
         for regime_name, value in regime_to_value.items():
-            host_value = host.value(period=period, regime=regime_name)
+            host_value = host.value(step=period, regime=regime_name)
             assert host_value.sharding.memory_kind == "device"
             np.testing.assert_array_equal(
                 np.asarray(host_value), np.asarray(value), strict=True
@@ -227,9 +227,7 @@ def test_every_storage_publishes_and_simulates_the_stochastic_model_alike(
         solution = model.solve(params=params, log_level="off")
         values.append(
             {
-                (period, regime): np.asarray(
-                    solution.value(period=period, regime=regime)
-                )
+                (period, regime): np.asarray(solution.value(step=period, regime=regime))
                 for period, regime_to_value in solution.values.items()
                 for regime in regime_to_value
             }
@@ -342,11 +340,11 @@ def test_a_debug_solve_snapshot_holds_the_device_storage_values(
     (directory,) = snapshots.glob("solve_snapshot_*/")
     snapshot = load_snapshot(directory)
     assert isinstance(snapshot, SolveSnapshot)
-    assert snapshot.period_to_regime_to_V_arr is not None
+    assert snapshot.step_to_regime_to_V_arr is not None
     for period, regime_to_value in device.values.items():
         for regime, value in regime_to_value.items():
             np.testing.assert_array_equal(
-                np.asarray(snapshot.period_to_regime_to_V_arr[period][regime]),
+                np.asarray(snapshot.step_to_regime_to_V_arr[period][regime]),
                 np.asarray(value),
                 strict=True,
             )
@@ -1365,7 +1363,7 @@ def test_a_blocked_host_storage_solve_publishes_the_blocked_device_values() -> N
     for period, regime_to_value in solutions[0].values.items():
         for regime_name, value in regime_to_value.items():
             np.testing.assert_array_equal(
-                np.asarray(solutions[1].value(period=period, regime=regime_name)),
+                np.asarray(solutions[1].value(step=period, regime=regime_name)),
                 np.asarray(value),
                 strict=True,
             )
@@ -1433,7 +1431,7 @@ def test_disk_storage_publishes_the_device_storage_values(
     }
     for period, regime_to_value in device.values.items():
         for regime_name, value in regime_to_value.items():
-            read = disk.value(period=period, regime=regime_name)
+            read = disk.value(step=period, regime=regime_name)
             assert read.sharding.memory_kind == "device"
             np.testing.assert_array_equal(
                 np.asarray(read), np.asarray(value), strict=True
@@ -1453,8 +1451,8 @@ def test_disk_storage_keeps_each_solve_in_a_file_of_its_own(tmp_path: Path) -> N
         type(entry) for entry in cast("ValueStore", first.values)._entries.values()
     } == {DiskValueEntry}
     np.testing.assert_array_equal(
-        np.asarray(first.value(period=0, regime="a")),
-        np.asarray(second.value(period=0, regime="a")),
+        np.asarray(first.value(step=0, regime="a")),
+        np.asarray(second.value(step=0, regime="a")),
         strict=True,
     )
 
@@ -1483,14 +1481,14 @@ def test_saving_a_disk_result_copies_its_archive(tmp_path: Path) -> None:
     (archive,) = storage.iterdir()
 
     saved = solution.save(path=tmp_path / "kept.h5")
-    value = np.asarray(solution.value(period=4, regime="c"))
+    value = np.asarray(solution.value(step=4, regime="c"))
 
     assert filecmp.cmp(saved, archive, shallow=False)
     del solution
     gc.collect()
     assert list(storage.iterdir()) == []
     np.testing.assert_array_equal(
-        np.asarray(load_solution(path=saved).value(period=4, regime="c")),
+        np.asarray(load_solution(path=saved).value(step=4, regime="c")),
         value,
         strict=True,
     )
@@ -1660,12 +1658,12 @@ def test_a_failed_disk_solve_leaves_an_incomplete_record(
     assert name.endswith(".incomplete")
     with h5py.File(tmp_path / name, "r") as file:
         record = json.loads(bytes(file["incomplete"][()]).decode())
-    assert record["last_completed_period"] == 2
+    assert record["last_completed_step"] == 2
     assert record["dtype"] == (
         "float64" if jax.config.read("jax_enable_x64") else "float32"
     )
     assert set(record) == {
-        "last_completed_period",
+        "last_completed_step",
         "dtype",
         "model_fingerprint",
         "params_fingerprint",
@@ -1763,7 +1761,7 @@ def test_a_failed_host_copy_names_its_period_regime_and_target(
     monkeypatch.setattr(host_values, "_to_pinned_host", _fail)
     with pytest.raises(
         ValueStorageError,
-        match=r"period 4, regime '\w+' to pinned host memory",
+        match=r"step 4, regime '\w+' to pinned host memory",
     ) as raised:
         _three_regime_model(_host()).solve(params=_PARAMS, log_level="off")
     assert isinstance(raised.value.__cause__, RuntimeError)
@@ -1779,7 +1777,7 @@ def test_a_failed_wait_for_a_host_copy_names_its_period_and_regime(
 
     monkeypatch.setattr(host_values.jax, "block_until_ready", _fail)
     with pytest.raises(
-        ValueStorageError, match=r"period 3, regime 'b' to pinned host memory"
+        ValueStorageError, match=r"step 3, regime 'b' to pinned host memory"
     ):
         host_values.wait_for_host_copies(copies=((3, "b", _STORED_VALUE),))
 
@@ -1814,7 +1812,7 @@ def test_a_failed_disk_write_names_its_period_regime_and_archive(
     monkeypatch.setattr(StreamedSolutionArchive, "write_value", _fail_at_period_1)
     with pytest.raises(
         ValueStorageError,
-        match=rf"period 1, regime '\w+' to {tmp_path}/solution-\S+\.h5\.partial",
+        match=rf"step 1, regime '\w+' to {tmp_path}/solution-\S+\.h5\.partial",
     ) as raised:
         _three_regime_model(_disk(tmp_path)).solve(params=_PARAMS, log_level="off")
     assert isinstance(raised.value.__cause__, OSError)
@@ -1823,12 +1821,12 @@ def test_a_failed_disk_write_names_its_period_regime_and_archive(
     # The record is in the file while the failed solve is still held.
     (partial,) = tmp_path.iterdir()
     assert partial.name.endswith(".h5.partial")
-    assert _record_in(partial)["last_completed_period"] == 2
+    assert _record_in(partial)["last_completed_step"] == 2
 
     del raised
     (name,) = _archives(tmp_path)
     assert name.endswith(".incomplete")
-    assert _record_in(tmp_path / name)["last_completed_period"] == 2
+    assert _record_in(tmp_path / name)["last_completed_step"] == 2
 
 
 def test_a_failed_flush_of_the_finished_archive_raises_and_keeps_it_loadable(
@@ -1855,7 +1853,7 @@ def test_a_failed_flush_of_the_finished_archive_raises_and_keeps_it_loadable(
     for period, regime_to_value in device.values.items():
         for regime, value in regime_to_value.items():
             np.testing.assert_array_equal(
-                np.asarray(loaded.value(period=period, regime=regime)),
+                np.asarray(loaded.value(step=period, regime=regime)),
                 np.asarray(value),
                 strict=True,
             )
@@ -2414,7 +2412,7 @@ def test_the_planner_reserves_what_one_period_copies_early(
         regimes=model._regimes,
         values=host_values.planning_stand_in(engine_view.values),
         policies=None,
-        n_steps=model.n_periods,
+        n_steps=model.n_steps,
         devices=tuple(jax.devices()),
     )
 
@@ -2584,7 +2582,7 @@ _LIFE_CYCLE_PARAMS = life_cycle._params(typed_dead=True)
 
 def _life_cycle_values(solution: SolutionResult) -> dict[tuple[int, str], np.ndarray]:
     return {
-        (period, regime): np.asarray(solution.value(period=period, regime=regime))
+        (period, regime): np.asarray(solution.value(step=period, regime=regime))
         for period, regime_to_value in solution.values.items()
         for regime in regime_to_value
     }
@@ -2878,7 +2876,7 @@ def test_a_failed_block_major_disk_write_names_its_code_period_regime_and_archiv
     with pytest.raises(
         ValueStorageError,
         match=(
-            rf"code \d+ of period \d+, regime '\w+' to "
+            rf"code \d+ of step \d+, regime '\w+' to "
             rf"{tmp_path}/solution-\S+\.h5\.partial"
         ),
     ) as raised:
@@ -2942,7 +2940,7 @@ def test_a_block_major_simulation_whose_solve_fails_records_its_completed_codes(
     assert (completed_codes == []) is (nan_code == 0)
     assert set(record) == {
         "completed_codes",
-        "last_completed_period",
+        "last_completed_step",
         "dtype",
         "model_fingerprint",
         "params_fingerprint",

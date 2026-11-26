@@ -217,10 +217,15 @@ Two players who move in turn are one household regime per stage, each with both 
 as members and a `ParetoObjective` that puts all weight on the player who moves: the
 mover maximizes its own value, and the other player's value follows the mover's choice.
 
-The engine solves one step per pair of a period and a stage: `model.n_periods` counts
-steps, and the solution's values and the raw simulation results are keyed by step,
-`2 * period` for `work` and `2 * period + 1` for `spend` above. Without `stages` every
-period has one stage, and a step is a period.
+The engine solves one step per pair of a period and a stage. `model.n_periods` counts
+periods and `model.n_steps` counts steps. The solution's values, its accessors
+(`solution.value(step=..., regime=...)`) and the raw simulation results are keyed by
+step, `2 * period` for `work` and `2 * period + 1` for `spend` above.
+`model.step_of(period=..., regime_name=...)` gives the step of a period and regime, and
+`model.period_of_step(step=...)` and `model.stage_of_step(step=...)` give a step's
+period and stage name. `Model` methods that take `period=`, such as `lookup_policy` and
+`state_grid`, take the period and find the regime's step themselves. Without `stages`
+every period has one stage, and a step is a period.
 
 ## Economic profiles
 

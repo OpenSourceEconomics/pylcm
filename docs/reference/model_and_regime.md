@@ -45,8 +45,11 @@ period are linked without discounting, so crossing into the next period discount
 and a regime whose edges land in its period declares no Koopmans aggregator and uses no
 endogenous-grid solver. `period` and `age` mean the period in user functions,
 time-indexed parameters and the simulated frame, which gains a `stage` column.
-`model.n_periods`, the solution and the raw simulation results count steps, one per
-period and stage. `stages=None` gives every period one stage. See
+`model.n_periods` counts periods; `model.n_steps`, the solution and the raw simulation
+results count steps, one per period and stage.
+`model.step_of(period=..., regime_name=...)`, `model.period_of_step(step=...)` and
+`model.stage_of_step(step=...)` convert between the two. `stages=None` gives every
+period one stage. See
 [Several decisions in one period](../user_guide/period_time.md#several-decisions-in-one-period).
 
 `edges` declares every regime transition, structure and law. Each source maps to a plain
@@ -199,10 +202,10 @@ full product of the members.
 `model.lower_period_candidate(params=..., log_level=..., candidate=..., retention=...)`
 returns a frozen `lcm.LoweredPeriodCandidate` containing raw unoptimized StableHLO bytes
 and an immutable descriptor manifest. Select an exact primary candidate with
-`lcm.PeriodCandidate(regime=..., period=..., core=..., widths=...)`; periods are
-zero-based. The core must belong to the ordinary solve's retention-selected graph, and
-widths must occur in its ranked frontier. No donation-free fallback or off-frontier
-width is substituted.
+`lcm.PeriodCandidate(regime=..., step=..., core=..., widths=...)`; steps are zero-based.
+The core must belong to the ordinary solve's retention-selected graph, and widths must
+occur in its ranked frontier. No donation-free fallback or off-frontier width is
+substituted.
 
 The method shares solve's sealed bindings, parameter and transition validation, solution
 authority, solver checks and fullgraph structural preparation. It lowers only the

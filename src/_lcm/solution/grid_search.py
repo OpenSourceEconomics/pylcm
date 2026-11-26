@@ -367,7 +367,7 @@ class GridSearch(Solver):
                 ()
                 if step == context.solution_reachability.n_steps - 1
                 else context.solution_reachability.targets(
-                    period=step,
+                    step=step,
                     source=context.regime_name,
                 )
             )
@@ -758,7 +758,7 @@ def grid_search_query_inputs(
         ()
         if period == context.solution_reachability.n_steps - 1
         else context.solution_reachability.targets(
-            period=period, source=context.regime_name
+            step=period, source=context.regime_name
         )
     )
     references = _edge_reference_regimes_for_targets(

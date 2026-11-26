@@ -99,7 +99,7 @@ def _kernel_published_policies(
         persistable_artifact_refs=frozenset(
             {
                 ArtifactRef(
-                    period=0,
+                    step=0,
                     regime="retirement",
                     key=SIMULATION_POLICY,
                 )
@@ -111,7 +111,7 @@ def _kernel_published_policies(
 
 def test_solve_publishes_policy_matching_closed_form_consumption(
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     """Interpolating the published policy reproduces `c* = wealth / (1 + beta)`.
 
     With log utility, zero interest, a two-period horizon, and a terminal
@@ -142,7 +142,7 @@ def test_solve_publishes_policy_matching_closed_form_consumption(
     np.testing.assert_allclose(np.asarray(consumption), expected, rtol=2e-2)
 
 
-def test_retained_policies_are_host_resident():
+def test_retained_policies_are_host_resident() -> None:
     """Solve evicts retained simulation policies to host, not device.
 
     The policies are a solve output no backward step reads; keeping them on the

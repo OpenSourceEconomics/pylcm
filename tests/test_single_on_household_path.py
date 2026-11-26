@@ -451,9 +451,9 @@ def test_every_value_array_ends_in_the_members_of_its_regime(
 
     got = {
         (period, regime): (
-            solution.value_array(period=period, regime=regime).dims[-1],
+            solution.value_array(step=period, regime=regime).dims[-1],
             tuple(
-                solution.value_array(period=period, regime=regime)
+                solution.value_array(step=period, regime=regime)
                 .coords["member"]
                 .values.tolist()
             ),

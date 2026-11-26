@@ -909,12 +909,12 @@ _COMBINED_INPUT_MUTATIONS = {
     "foreign_store:materialize_dependency_omitted": (
         "src/lcm/_solver_api/stores.py",
         (
-            "period=period,\n"
+            "step=step,\n"
             "                            regime=regime,\n"
             "                            array_copier=array_copier,"
         ),
         (
-            "period=period,\n"
+            "step=step,\n"
             "                            regime=regime,\n"
             "                            array_copier=None,"
         ),

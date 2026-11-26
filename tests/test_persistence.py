@@ -143,8 +143,8 @@ def test_persistence_roundtrip_preserves_the_exact_sparse_domain(
         } == expected
     for period, name in expected:
         np.testing.assert_array_equal(
-            np.asarray(loaded.value(period=period, regime=name)),
-            np.asarray(solution.value(period=period, regime=name)),
+            np.asarray(loaded.value(step=period, regime=name)),
+            np.asarray(solution.value(step=period, regime=name)),
         )
 
 
@@ -198,7 +198,7 @@ def _save_cpu_checkpoint(
         ),
         regimes=model._regimes,
         flat_params=MappingProxyType({"working": MappingProxyType({})}),
-        period_to_regime_to_V_arr=MappingProxyType(
+        step_to_regime_to_V_arr=MappingProxyType(
             {0: MappingProxyType({"working": values})}
         ),
         ages=model.ages,  # ty: ignore[invalid-argument-type]
@@ -344,8 +344,8 @@ def test_save_and_load_solution_roundtrip(
         assert set(loaded.values[period]) == set(solved.values[period])
         for regime_name in solved.values[period]:
             assert jnp.allclose(
-                loaded.value(period=period, regime=regime_name),
-                solved.value(period=period, regime=regime_name),
+                loaded.value(step=period, regime=regime_name),
+                solved.value(step=period, regime=regime_name),
             )
 
 
@@ -367,7 +367,7 @@ def test_legacy_value_only_archive_requires_the_explicit_migration_reader(
             for regime_name in solved.values[period]:
                 archive.create_dataset(
                     f"{period}/{regime_name}/V_arr",
-                    data=solved.value(period=period, regime=regime_name),
+                    data=solved.value(step=period, regime=regime_name),
                 )
 
     with pytest.raises(SolutionIntegrityError, match="manifest"):
@@ -381,7 +381,7 @@ def test_legacy_value_only_archive_requires_the_explicit_migration_reader(
         for regime_name in solved.values[period]:
             assert jnp.allclose(
                 migrated_values[period][regime_name],
-                solved.value(period=period, regime=regime_name),
+                solved.value(step=period, regime=regime_name),
             )
 
 
@@ -401,11 +401,11 @@ def test_solve_debug_persists_snapshot(
 
     snapshot = load_snapshot(dirs[0])
     assert isinstance(snapshot, SolveSnapshot)
-    assert snapshot.period_to_regime_to_V_arr is not None
+    assert snapshot.step_to_regime_to_V_arr is not None
     for period in period_to_regime_to_V_arr.values:
         for regime_name in period_to_regime_to_V_arr.values[period]:
             assert jnp.allclose(
-                snapshot.period_to_regime_to_V_arr[period][regime_name],
+                snapshot.step_to_regime_to_V_arr[period][regime_name],
                 period_to_regime_to_V_arr.values[period][regime_name],
             )
 
@@ -481,7 +481,7 @@ def test_simulate_with_solve_debug_persists_snapshot(
 
     snapshot = load_snapshot(path=dirs[0])
     assert isinstance(snapshot, SimulateSnapshot)
-    assert snapshot.period_to_regime_to_V_arr is not None
+    assert snapshot.step_to_regime_to_V_arr is not None
     assert snapshot.result is not None
 
 
@@ -629,9 +629,9 @@ def test_load_snapshot_with_exclude(
 
     snap_dir = min(tmp_path.glob("solve_snapshot_*/"))
 
-    snapshot = load_snapshot(path=snap_dir, exclude=["period_to_regime_to_V_arr"])
+    snapshot = load_snapshot(path=snap_dir, exclude=["step_to_regime_to_V_arr"])
     assert isinstance(snapshot, SolveSnapshot)
-    assert snapshot.period_to_regime_to_V_arr is None
+    assert snapshot.step_to_regime_to_V_arr is None
     assert snapshot.model is not None
     assert snapshot.params is not None
 

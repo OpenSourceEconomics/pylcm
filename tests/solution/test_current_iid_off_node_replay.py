@@ -267,7 +267,7 @@ def _integrated_read(
     the integrated value and economic marginal weight the node rows equally.
     """
     carry = result.retained_continuations[
-        ArtifactRef(period=1, regime="child", key=EGM_CONTINUATION)
+        ArtifactRef(step=1, regime="child", key=EGM_CONTINUATION)
     ]
     assert isinstance(carry, EGMCarry)
     assert carry.endog_grid.shape[0] == len(nodes)

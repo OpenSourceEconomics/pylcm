@@ -171,7 +171,7 @@ class SimulationResult:
         ],
         regimes: MappingProxyType[RegimeName, Regime],
         flat_params: FlatParams,
-        period_to_regime_to_V_arr: _PeriodValuesBoundary,
+        step_to_regime_to_V_arr: _PeriodValuesBoundary,
         ages: TimeAxis,
         simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
         subject_batch_size: int | None = None,
@@ -184,7 +184,7 @@ class SimulationResult:
             name for name, regime in regimes.items() if regime.terminal
         )
         self._flat_params = flat_params
-        self._period_to_regime_to_V_arr = period_to_regime_to_V_arr
+        self._step_to_regime_to_V_arr = step_to_regime_to_V_arr
         self._ages = ages
         self._subject_batch_size = subject_batch_size
         self._solution: _SolutionResultBoundary | None = None
@@ -215,7 +215,10 @@ class SimulationResult:
     ) -> MappingProxyType[
         RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
     ]:
-        """Raw simulation results by regime and period.
+        """Raw simulation results by regime and step.
+
+        A step is one stage of one period, `Model.step_of`; without `stages` the
+        step is the period.
 
         Leaves are `jax.Array`. When simulation uses multiple outer chunks, they
         are host-resident (CPU-backed), since each completed chunk is offloaded
@@ -229,13 +232,13 @@ class SimulationResult:
         return self._flat_params
 
     @property
-    def period_to_regime_to_V_arr(self) -> _PeriodValuesBoundary:
-        """Value function arrays from the solution.
+    def step_to_regime_to_V_arr(self) -> _PeriodValuesBoundary:
+        """Value function arrays from the solution, keyed by step then regime.
 
         A block-major simulation holds the solution's `ValueStore`, which
         assembles each value when it is read.
         """
-        return self._period_to_regime_to_V_arr
+        return self._step_to_regime_to_V_arr
 
     @property
     def solution(self) -> _SolutionResultBoundary | None:
@@ -421,7 +424,7 @@ class SimulationResult:
 
         Notes:
             `save` consumes the in-memory result: on exit both
-            `self.period_to_regime_to_V_arr` and `self._regimes` are
+            `self.step_to_regime_to_V_arr` and `self._regimes` are
             empty mappings. The grid V-array (largest device-resident
             artifact) and the regimes' compiled `simulation` /
             `solution` phases (which pin XLA program workspaces on the
@@ -454,10 +457,10 @@ class SimulationResult:
         # post-V-array D2H transfers (`to_dataframe`, orbax staging) need the
         # device pool the V-array was occupying.
         _save_period_to_regime_to_V_arr(
-            period_to_regime_to_V_arr=self._period_to_regime_to_V_arr,
+            period_to_regime_to_V_arr=self._step_to_regime_to_V_arr,
             output_dir=target / "V_arr",
         )
-        self._period_to_regime_to_V_arr = MappingProxyType({})
+        self._step_to_regime_to_V_arr = MappingProxyType({})
         self._solution = None
         gc.collect()
 
@@ -541,7 +544,7 @@ class SimulationResult:
                 checkpoint.
 
         Returns:
-            Immutable mapping of periods to regime value-function arrays.
+            Immutable mapping of steps to regime value-function arrays.
 
         Raises:
             IncompatibleSolutionError: If the directory holds another format version.
@@ -582,7 +585,7 @@ class SimulationResult:
             name for name, regime in metadata.regimes.items() if regime.terminal
         )
         instance._flat_params = metadata.flat_params  # noqa: SLF001
-        instance._period_to_regime_to_V_arr = period_to_regime_to_V_arr  # noqa: SLF001
+        instance._step_to_regime_to_V_arr = period_to_regime_to_V_arr  # noqa: SLF001
         instance._ages = metadata.ages  # noqa: SLF001
         # An archive may hold the name listings as lists; loading freezes them.
         saved_names = metadata.result_metadata
@@ -975,7 +978,7 @@ def _host_or_device_value(
     host: jax.Device,
 ) -> FloatND:
     """Return one stored value, on the host when its entry can be assembled there."""
-    entry = store._raw(period=period, regime=regime)  # noqa: SLF001
+    entry = store._raw(step=period, regime=regime)  # noqa: SLF001
     host_value = entry.host_value() if isinstance(entry, _LazyEntry) else None
     if host_value is None:
         return store[period][regime]

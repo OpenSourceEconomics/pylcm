@@ -582,7 +582,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 execution=resolved_execution,
                 capture_periods=()
                 if period_capture is None
-                else period_capture.request.periods,
+                else period_capture.request.steps,
                 retain_replay=retain_replay,
                 persistable_artifact_refs=persistable_artifact_refs,
                 max_compilation_workers=max_compilation_workers,
@@ -1079,7 +1079,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                     result.continuation_artifacts.items()
                                 )
                                 if ArtifactRef(
-                                    period=step,
+                                    step=step,
                                     regime=regime_name,
                                     key=key,
                                 )
@@ -1108,7 +1108,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                 and (
                                     retain_replay
                                     or ArtifactRef(
-                                        period=step,
+                                        step=step,
                                         regime=regime_name,
                                         key=key,
                                     )
@@ -1124,7 +1124,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                         result.auxiliary_artifacts.items()
                                     )
                                     if ArtifactRef(
-                                        period=step,
+                                        step=step,
                                         regime=regime_name,
                                         key=key,
                                     )
@@ -1470,7 +1470,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         key,
                     ), payload in period_retained_continuations.items():
                         retained_continuations[
-                            ArtifactRef(period=step, regime=regime_name, key=key)
+                            ArtifactRef(step=step, regime=regime_name, key=key)
                         ] = jax.block_until_ready(jax.device_put(payload, host_device))
                 if retain_all_artifacts:
                     assert host_device is not None  # noqa: S101
@@ -1479,13 +1479,13 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         key,
                     ), payload in period_auxiliary_artifacts.items():
                         auxiliary_artifacts[
-                            ArtifactRef(period=step, regime=regime_name, key=key)
+                            ArtifactRef(step=step, regime=regime_name, key=key)
                         ] = jax.block_until_ready(jax.device_put(payload, host_device))
                 if retain_replay or period_replay_artifacts:
                     assert host_device is not None  # noqa: S101
                     for (regime_name, key), payload in period_replay_artifacts.items():
                         replay_artifacts[
-                            ArtifactRef(period=step, regime=regime_name, key=key)
+                            ArtifactRef(step=step, regime=regime_name, key=key)
                         ] = jax.block_until_ready(jax.device_put(payload, host_device))
 
                 elapsed = time.monotonic() - period_start
@@ -3434,14 +3434,14 @@ def _retained_continuation_leaves(
     for ref in sorted(persistable_artifact_refs):
         spec = continuation_specs.get(ref.regime)
         template = published_continuation_template(
-            continuation_specs=continuation_specs, target=ref.regime, period=ref.period
+            continuation_specs=continuation_specs, target=ref.regime, period=ref.step
         )
         if spec is None or template is None or spec.artifact_key != ref.key:
             continue
         leaves.extend(
             ValueArtifactAddress(
                 kind=ValueArtifactKind.CONTINUATION_LEAF,
-                period=ref.period,
+                period=ref.step,
                 regime=ref.regime,
                 artifact_key=ref.key,
                 leaf_path=leaf_path,
@@ -4824,7 +4824,7 @@ def _selected_artifact_keys_for_cell(
     return frozenset(
         ref.key
         for ref in persistable_artifact_refs
-        if ref.period == period and ref.regime == regime_name
+        if ref.step == period and ref.regime == regime_name
     )
 
 

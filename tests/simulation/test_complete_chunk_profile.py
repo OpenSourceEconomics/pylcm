@@ -121,7 +121,7 @@ def test_complete_profile_covers_actual_stages_and_retained_records_without_allo
             regimes=model._regimes,
             flat_params=result.flat_params,
             base_spaces=spaces,
-            values=result.period_to_regime_to_V_arr,
+            values=result.step_to_regime_to_V_arr,
             ages=model.ages,
             initial_conditions=initial,
             regime_names_to_ids=model.regime_names_to_ids,

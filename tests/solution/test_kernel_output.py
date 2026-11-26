@@ -407,7 +407,7 @@ def test_values_only_result_does_not_suppress_solve_time_continuation() -> None:
         retention=ResultRetention.VALUES,
     )
 
-    assert set(result.values) == set(range(model.n_periods))
+    assert set(result.values) == set(range(model.n_steps))
     assert all(result.values[period] for period in result.values)
     assert not result.retained_continuations
 

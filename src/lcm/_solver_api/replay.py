@@ -68,8 +68,8 @@ class ReplayModelContext:
 
     regime_name: RegimeName
     """Name of the regime being replayed."""
-    period: int
-    """Period of the solution cell."""
+    step: int
+    """Step of the solution cell; see `Model.step_of`."""
     state_names: tuple[StateName, ...]
     """Solution-state names in canonical product-map order."""
 
@@ -85,8 +85,8 @@ class ReplayModelContext:
     def __post_init__(self) -> None:
         if type(self.regime_name) is not str or not self.regime_name:
             raise TypeError("ReplayModelContext.regime_name must be a nonempty str.")
-        if type(self.period) is not int or self.period < 0:
-            raise TypeError("ReplayModelContext.period must be a nonnegative int.")
+        if type(self.step) is not int or self.step < 0:
+            raise TypeError("ReplayModelContext.step must be a nonnegative int.")
         object.__setattr__(self, "state_names", tuple(self.state_names))
         object.__setattr__(self, "action_names", tuple(self.action_names))
 
@@ -117,8 +117,8 @@ class SimulationBuildContext:
     are not artifact axes and therefore do not appear here.
     """
 
-    period: int
-    """Period of the solution cell the reader is built for."""
+    step: int
+    """Step of the solution cell the reader is built for."""
     regime_name: RegimeName
     """Name of the regime the reader is built for."""
     state_names: tuple[StateName, ...]

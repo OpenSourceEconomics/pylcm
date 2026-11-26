@@ -13,7 +13,7 @@ from _lcm.processes.joint_normal_lowering import (
     joint_normal_declarations,
 )
 from _lcm.regime_building.processing import compute_merged_discrete_categories
-from _lcm.time import TimeAxis, step_count
+from _lcm.time import TimeAxis, stages_per_period, step_count
 from _lcm.typing import ActionName, ProcessName, RegimeName, RegimeNamesToIds, StateName
 from lcm.grids import DiscreteGrid
 from lcm.phased import Phased
@@ -238,14 +238,13 @@ def _compute_metadata(
         MappingProxyType({}),
     )
 
-    n_steps = step_count(ages)
     n_subjects = _get_n_subjects(raw_results)
 
     return ResultMetadata(
         regime_names=regime_names,
         state_names=tuple(sorted(all_states)),
         action_names=tuple(sorted(all_actions)),
-        n_periods=n_steps,
+        n_periods=step_count(ages) // stages_per_period(ages),
         n_subjects=n_subjects,
         regime_to_states=MappingProxyType(regime_to_states),
         regime_to_actions=MappingProxyType(regime_to_actions),

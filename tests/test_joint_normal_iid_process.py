@@ -331,8 +331,8 @@ def test_joint_normal_native_values_and_named_simulation(
     aaae(lookup.value, manual_lookup.value, decimal=DECIMAL_PRECISION)
     for period, regime_name in enumerate(("working", "done")):
         aaae(
-            solution.value(period=period, regime=regime_name),
-            reference.value(period=period, regime=regime_name),
+            solution.value(step=period, regime=regime_name),
+            reference.value(step=period, regime=regime_name),
             decimal=DECIMAL_PRECISION,
         )
     size = 10000

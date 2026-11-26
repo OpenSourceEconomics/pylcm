@@ -96,10 +96,29 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   and the stage in which to declare its pass-through explicitly: a regime with the same
   states, one action, no shock and zero utility, which hands the value through.
 - `period` and `age` are the period's in user functions, time-indexed parameters are
-  indexed by period, and the simulated frame gains a `stage` column. `model.n_periods`,
-  the solution and the raw simulation results count steps, one per period and stage. A
-  simulation that reaches a state without a feasible action names the period in its
+  indexed by period, and the simulated frame gains a `stage` column. A simulation that
+  reaches a state without a feasible action names the period in its
   `NoFeasibleActionError`, not the step.
+- A period is economic time and a step one stage of one period; every public name says
+  which it holds. `Model.n_periods`, `SimulationResult.n_periods`,
+  `InitialNodes(by_period=...)` and the `period=` of `Model.lookup_policy`,
+  `Model.state_grid` and `Model.initial_state_bounds` are periods; the Model methods
+  find the regime's step themselves. The solution, the raw simulation results and
+  `Model.reachability` are keyed by step: the new `Model.n_steps` counts steps,
+  `Model.step_of(period=..., regime_name=...)`, `Model.period_of_step(step=...)` and
+  `Model.stage_of_step(step=...)` convert. Renamed to say step:
+  `SolutionResult.value`, `value_array` and `value_frame` and `ValueStore.load_state`
+  take `step=`; `SolutionMetadata.n_steps`; `ArtifactRef.step`;
+  `ReplayModelContext.step`; `SimulationBuildContext.step` of the solver API;
+  `PeriodCandidate.step`; `PeriodCapture.steps`;
+  `SimulationResult.step_to_regime_to_V_arr`; `SolveSnapshot` and `SimulateSnapshot`
+  `.step_to_regime_to_V_arr`; `ModelDeclarations.regimes_by_step`,
+  `original_steps_by_regime`, `value_steps_by_regime` and `query_steps_by_phase`; the
+  `step=` of `PhaseReachability.targets`, `has_edge` and `edge_status`, and
+  `PhaseReachability.steps_for_edge`; the saved-solution keys `n_steps` and `step` and
+  the component-fragment key `step`, within the format versions above. Shock paths have
+  one column per step. Messages name the period and, with `stages`, the stage. Without
+  `stages` a step is a period, so only the renamed keywords and attributes change.
 - A model without `stages` has one stage per period; its programs, parameter templates,
   fingerprints and saved formats are those of a model without the argument.
 - See

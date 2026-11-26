@@ -142,7 +142,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
     retention: ResultRetention,
     regimes: Mapping[RegimeName, Regime],
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
-    n_periods: int,
+    n_steps: int,
     model_instance_id: str,
     params_fingerprint: str,
     model_fingerprint: str,
@@ -226,7 +226,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         user_regime = user_regimes[regime_name]
 
         policy_ref = ArtifactRef(
-            period=period,
+            step=period,
             regime=regime_name,
             key=SIMULATION_POLICY,
         )
@@ -289,7 +289,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         elif artifact_authority.required:
             raise RuntimeError(
                 "A model-authoritative route published no required artifact at "
-                f"({ref.period}, {ref.regime!r}, {ref.key.type_id!r})."
+                f"({ref.step}, {ref.regime!r}, {ref.key.type_id!r})."
             )
         else:
             omissions[ref] = OmissionReason.UNSUPPORTED
@@ -320,7 +320,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         ),
         metadata=SolutionMetadata(
             retention=retention,
-            n_periods=n_periods,
+            n_steps=n_steps,
             regime_names=tuple(regimes),
             solver_types=MappingProxyType(
                 {
@@ -584,7 +584,7 @@ def _add_nested_artifacts[Payload](
     """Flatten one existing period/regime mapping into addressed artifacts."""
     for period, regime_to_payload in nested.items():
         for regime, payload in regime_to_payload.items():
-            target[ArtifactRef(period=period, regime=regime, key=key)] = payload
+            target[ArtifactRef(step=period, regime=regime, key=key)] = payload
 
 
 __all__ = [

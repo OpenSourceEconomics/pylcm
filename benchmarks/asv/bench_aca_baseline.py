@@ -119,7 +119,7 @@ def _build() -> tuple[Model, UserParams, UserInitialConditions]:
         pref_type_grid=DiscreteGrid(category_class=BenchmarkPrefType),
         **_gpu_mem.lottery_contraction_kwargs(create_benchmark_model),
     )
-    edge_periods = model.reachability.solution.periods_for_edge(
+    edge_periods = model.reachability.solution.steps_for_edge(
         source="retiree_oamc_forced_forcedout",
         target="nongroup_dimc_choose_canwork",
     )

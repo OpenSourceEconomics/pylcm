@@ -133,10 +133,10 @@ def test_archive_observation_never_opens_or_decodes_the_archive(
     path = save_solution(solution=original, path=tmp_path / "solution.h5")
     solution = load_solution(path=path)
     if loaded:
-        solution.value(period=0, regime="working")
+        solution.value(step=0, regime="working")
     entry = cast(
         "persistence._LazyHdf5Entry",
-        cast("ValueStore", solution.values)._raw(period=0, regime="working"),
+        cast("ValueStore", solution.values)._raw(step=0, regime="working"),
     )
     expected = (
         cast("persistence._LoadedEntryPayload", entry._cache.value).leaves
@@ -205,7 +205,7 @@ def test_consumed_reader_retains_snapshot_authorities_and_grid_context() -> None
             metadata=base.metadata,
         ),
         context=SimulationBuildContext(
-            period=0,
+            step=0,
             regime_name="working",
             state_names=("state",),
             action_names=("action",),
@@ -275,7 +275,7 @@ def test_invalid_archive_cache_is_refused_without_materialization(
     solution = load_solution(path=path)
     entry = cast(
         "persistence._LazyHdf5Entry",
-        cast("ValueStore", solution.values)._raw(period=0, regime="working"),
+        cast("ValueStore", solution.values)._raw(step=0, regime="working"),
     )
     entry._cache.value = object()  # ty: ignore[invalid-assignment]
     with pytest.raises(ExecutionPlanningError, match="unsupported retained"):

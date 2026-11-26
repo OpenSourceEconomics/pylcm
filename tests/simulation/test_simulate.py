@@ -748,7 +748,7 @@ def test_load_solution_reads_value_arrays_without_the_per_subject_artifacts(
     # `save` releases the in-memory solution, so snapshot it beforehand.
     expected = {
         period: {name: jnp.asarray(V_arr) for name, V_arr in by_regime.items()}
-        for period, by_regime in result.period_to_regime_to_V_arr.items()
+        for period, by_regime in result.step_to_regime_to_V_arr.items()
     }
 
     save_dir = tmp_path / "result"
@@ -896,15 +896,15 @@ def test_save_clears_regimes_to_release_compiled_program_workspaces(
     assert dict(result._regimes) == {}
 
 
-def test_save_clears_period_to_regime_to_V_arr_to_free_device_memory(
+def test_save_clears_step_to_regime_to_V_arr_to_free_device_memory(
     tmp_path: Path,
 ) -> None:
-    """`save` drops the in-memory `period_to_regime_to_V_arr` after persisting it.
+    """`save` drops the in-memory `step_to_regime_to_V_arr` after persisting it.
 
     The grid V-array is the largest device-resident artifact at save time. The
     orbax checkpoint that follows needs the device to be near-empty, so `save`
     chunks the V-array to disk first, releases the references, and only then
-    invokes orbax. After `save` returns, `result.period_to_regime_to_V_arr`
+    invokes orbax. After `save` returns, `result.step_to_regime_to_V_arr`
     is therefore an empty mapping; callers that still need the values must
     reload from disk via `SimulationResult.load`.
     """
@@ -919,11 +919,11 @@ def test_save_clears_period_to_regime_to_V_arr_to_free_device_memory(
             "regime_id": jnp.array([RegimeId.working_life] * 2),
         },
     )
-    assert len(result.period_to_regime_to_V_arr) > 0
+    assert len(result.step_to_regime_to_V_arr) > 0
 
     result.save(directory=tmp_path / "result")
 
-    assert dict(result.period_to_regime_to_V_arr) == {}
+    assert dict(result.step_to_regime_to_V_arr) == {}
 
 
 def test_collect_array_tree_leaf_sizes_orders_leaves_by_size_descending() -> None:

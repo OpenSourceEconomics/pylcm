@@ -66,7 +66,7 @@ _SCRIPT = textwrap.dedent(
     assert any(len(s.device_set) == 2 for s in stored_shardings), stored_shardings
     for period, regime_to_value in solutions[0].values.items():
         for regime_name, value in regime_to_value.items():
-            read = solutions[1].value(period=period, regime=regime_name)
+            read = solutions[1].value(step=period, regime=regime_name)
             assert read.sharding.memory_kind == "device"
             assert read.sharding.is_equivalent_to(value.sharding, value.ndim)
             np.testing.assert_array_equal(

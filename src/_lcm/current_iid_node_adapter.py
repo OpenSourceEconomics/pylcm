@@ -437,7 +437,7 @@ class NodeAxisAdapter:
         if replayed is None:
             return result
         schemas = replayed.metadata.value_schemas
-        result._period_to_regime_to_V_arr = MappingProxyType(  # noqa: SLF001
+        result._step_to_regime_to_V_arr = MappingProxyType(  # noqa: SLF001
             {
                 period: MappingProxyType(
                     {
@@ -448,7 +448,7 @@ class NodeAxisAdapter:
                         for regime_name, value in regimes.items()
                     }
                 )
-                for period, regimes in result.period_to_regime_to_V_arr.items()
+                for period, regimes in result.step_to_regime_to_V_arr.items()
             }
         )
         result._solution = (  # noqa: SLF001

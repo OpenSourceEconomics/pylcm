@@ -110,8 +110,8 @@ def test_a_source_period_losing_a_target_gets_its_own_decision_component() -> No
     regime = _build_saver_model()._regimes["saver"]
     for period in (0, 1):
         graph = regime.solution.reachability
-        assert graph.has_edge(period=period, source="saver", target="account")
-        assert graph.has_edge(period=period, source="saver", target="saver") is (
+        assert graph.has_edge(step=period, source="saver", target="account")
+        assert graph.has_edge(step=period, source="saver", target="saver") is (
             period == 0
         )
     signatures = regime.solution.period_signatures

@@ -1582,8 +1582,8 @@ def test_block_major_components_over_assets_shards_equal_period_major_values(
     }
     for period in want.values:
         for regime in want.values[period]:
-            got_value = got.value(period=period, regime=regime)
-            want_value = want.value(period=period, regime=regime)
+            got_value = got.value(step=period, regime=regime)
+            want_value = want.value(step=period, regime=regime)
             assert got_value.sharding == want_value.sharding
             assert np.asarray(got_value).tobytes() == np.asarray(want_value).tobytes()
 

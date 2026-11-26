@@ -151,12 +151,8 @@ def test_graph_edges_price_perceived_choice_and_realize_other_destination() -> N
         enable_jit=False,
     )
     assert model.graph.initial_nodes == frozenset({(0, "work")})
-    assert model.reachability.solution.targets(period=0, source="work") == (
-        "perceived",
-    )
-    assert model.reachability.simulation.targets(period=0, source="work") == (
-        "realized",
-    )
+    assert model.reachability.solution.targets(step=0, source="work") == ("perceived",)
+    assert model.reachability.simulation.targets(step=0, source="work") == ("realized",)
     solution = model.solve(params={"discount_factor": 1.0}, log_level="debug")
     np.testing.assert_array_equal(solution.values[0]["work"][..., 0], jnp.ones(2))
     frame = model.simulate(
@@ -223,7 +219,7 @@ def test_graph_snapshot_owns_immutable_source_age_selectors() -> None:
     assert model.graph.edges.solve["work"]["perceived"] == frozenset({0, 1})
     assert model.graph.edges.simulate["work"]["perceived"] == frozenset({0, 1})
     assert model.graph.initial_nodes == frozenset({(1, "work")})
-    assert model.graph.solution.targets(period=1, source="work") == ("perceived",)
+    assert model.graph.solution.targets(step=1, source="work") == ("perceived",)
     assert (2, "perceived") in model.graph.nodes
     with pytest.raises(TypeError):
         model.graph.edges.solve["work"]["perceived"] = frozenset({0})  # ty: ignore[invalid-assignment] -- intentional mutation
@@ -251,8 +247,8 @@ def test_fixed_zero_graph_edge_keeps_declared_topology_and_pruning_reason() -> N
         enable_jit=False,
     )
     assert model.graph.edges.solve["work"]["perceived"] == frozenset({0})
-    assert model.graph.solution.targets(period=0, source="work") == ("realized",)
-    assert model.graph.simulation.targets(period=0, source="work") == ("realized",)
+    assert model.graph.solution.targets(step=0, source="work") == ("realized",)
+    assert model.graph.simulation.targets(step=0, source="work") == ("realized",)
     for phase in ("solve", "simulate"):
         assert model.graph.pruned_edges[phase][(0, "work", "perceived")] == (
             "fixed_zero_probability"
@@ -339,7 +335,7 @@ def test_kernel_cannot_select_destination_outside_current_source_age_edges(
         },
         enable_jit=False,
     )
-    assert model.graph.solution.targets(period=1, source="work") == ("realized",)
+    assert model.graph.solution.targets(step=1, source="work") == ("realized",)
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
         model.solve(params={"discount_factor": 1.0}, log_level=log_level)
 
@@ -369,7 +365,7 @@ def test_value_only_node_needs_only_its_perceived_graph_continuation() -> None:
         {(0, "work"), (1, "perceived"), (1, "realized"), (2, "realized")}
     )
     assert model.graph.visited_nodes == frozenset({(0, "work"), (1, "realized")})
-    assert model.graph.simulation.targets(period=1, source="perceived") == ()
+    assert model.graph.simulation.targets(step=1, source="perceived") == ()
     solution = model.solve(params={"discount_factor": 1.0}, log_level="debug")
     np.testing.assert_array_equal(solution.values[0]["work"][..., 0], jnp.ones(2))
 
@@ -391,7 +387,7 @@ def test_broadcast_graph_preserves_nnbegm_phase_invariance() -> None:
     """Broadcast topology preserves identical numerical declarations across phases."""
     model = n_nbegm_toy.build_model(variant="n_nbegm", n_periods=3)
     assert model.graph.edges.solve == model.graph.edges.simulate
-    assert model.graph.solution.targets(period=0, source="alive") == ("alive", "dead")
+    assert model.graph.solution.targets(step=0, source="alive") == ("alive", "dead")
 
 
 def test_graph_destination_order_preserves_nnbegm_phase_invariance() -> None:
@@ -421,7 +417,7 @@ def test_graph_destination_order_preserves_nnbegm_phase_invariance() -> None:
         edges=Phased(solve=solve_edges, simulate=simulate_edges),
     )
     assert model.graph.edges.solve == model.graph.edges.simulate
-    assert model.graph.solution.targets(period=0, source="alive") == ("alive", "dead")
+    assert model.graph.solution.targets(step=0, source="alive") == ("alive", "dead")
 
 
 def test_required_age_without_an_edge_out_names_the_missing_edge() -> None:

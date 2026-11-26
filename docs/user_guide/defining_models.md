@@ -229,12 +229,13 @@ After construction, the model exposes several useful attributes:
 
 ```python
 model.graph.edges.solve  # declared perceived source-age support
-model.graph.solution  # effective perceived graph, indexed by period
+model.graph.solution  # effective perceived graph, indexed by step
 model.graph.nodes  # valued age–regime pairs
 model.graph.visited_nodes  # realized reachable age–regime pairs
 model.user_regimes  # immutable mapping of finalized `Regime` objects
 model.pruned_variables  # per regime, the broadcast names pruned by DAG reachability
-model.n_periods  # number of steps: periods times stages
+model.n_periods  # number of periods
+model.n_steps  # number of steps: periods times stages
 model.regime_names_to_ids  # name -> integer mapping
 model.get_params_template()  # mutable copy of the parameter template
 ```
