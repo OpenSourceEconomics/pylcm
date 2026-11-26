@@ -2375,23 +2375,23 @@ def _nnbegm_query_period_groups(
     # the stock the continuation is read at, not the raw node the outer
     # search picked.
     grouped_periods: dict[Hashable, list[int]] = {}
-    for period in context.regimes_to_active_periods[context.regime_name]:
+    for step in context.regimes_to_active_periods[context.regime_name]:
         targets = (
             ()
-            if period == context.solution_reachability.n_periods - 1
+            if step == context.solution_reachability.n_steps - 1
             else context.solution_reachability.targets(
-                period=period, source=context.regime_name
+                period=step, source=context.regime_name
             )
         )
         key = solver_period_group_key(
             context=context,
-            period=period,
+            period=step,
             continuation_targets=targets,
             solver_path=("nnbegm",),
         )
         if query_model is not None:
             key = (key, query_model.authority)
-        grouped_periods.setdefault(key, []).append(period)
+        grouped_periods.setdefault(key, []).append(step)
 
     return inner_models, grouped_periods
 
@@ -2503,7 +2503,7 @@ def _with_declared_nested_reads(
         return kernel
     reachable = frozenset(
         ()
-        if period == context.solution_reachability.n_periods - 1
+        if period == context.solution_reachability.n_steps - 1
         else context.solution_reachability.targets(
             period=period, source=context.regime_name
         )

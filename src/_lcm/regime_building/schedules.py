@@ -50,7 +50,7 @@ from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
     _SupportedStochasticTransition,
 )
-from _lcm.time import TimeAxis, coordinate_kind, landing_step
+from _lcm.time import TimeAxis, coordinate_kind, landing_step, step_count
 from _lcm.typing import AnnotationForm, EconFunctionArg, RegimeName
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.initial_nodes import InitialNodes, UserInitialNodes
@@ -327,7 +327,7 @@ def resolve_regime_schedules(
     Nothing is lowered here: `lower_demanded_transitions` lowers only the laws
     demand selects. `laws` maps each regime to its graph-bound `RegimeLaw`.
     """
-    all_periods = tuple(range(ages.n_periods))
+    all_periods = tuple(range(step_count(ages)))
     coverage: dict[RegimeName, tuple[int, ...]] = {}
     support: dict[
         PhaseKey, dict[RegimeName, MappingProxyType[int, tuple[str, ...]]]
@@ -348,9 +348,9 @@ def resolve_regime_schedules(
                 "Mapping[int, CaseLaw]", transition.resolve(ages=ages).law_by_period
             )
             law_by_period = {
-                period: law
-                for period, law in resolved.items()
-                if period < ages.n_periods - 1
+                step: law
+                for step, law in resolved.items()
+                if step < step_count(ages) - 1
             }
         else:
             law_by_period = dict.fromkeys(all_periods[:-1], transition)
@@ -363,32 +363,32 @@ def resolve_regime_schedules(
                 for age in selected
             }
             law_by_period = {
-                period: law
-                for period, law in law_by_period.items()
-                if ages.exact_values[period] in edge_ages
+                step: law
+                for step, law in law_by_period.items()
+                if ages.exact_values[step] in edge_ages
             }
         coverage[name] = tuple(law_by_period)
         side_by_phase = {
             phase: {
-                period: _phase_side(law=law, side=side)
-                for period, law in law_by_period.items()
+                step: _phase_side(law=law, side=side)
+                for step, law in law_by_period.items()
             }
             for phase, side in zip(_PHASES, ("solve", "simulate"), strict=True)
         }
         for phase, side_by_period in side_by_phase.items():
             support[phase][name] = MappingProxyType(
                 {
-                    period: _edge_support(
+                    step: _edge_support(
                         law=law,
                         source=name,
-                        period=period,
+                        period=step,
                         ages=ages,
                         regime_names=tuple(laws),
                         source_ages=None
                         if source_ages_by_phase is None
                         else source_ages_by_phase[phase],
                     )
-                    for period, law in side_by_period.items()
+                    for step, law in side_by_period.items()
                 }
             )
         gated = regime_law.gated_edges
@@ -396,8 +396,8 @@ def resolve_regime_schedules(
         simulation_support = support["simulation"][name]
         value_reads["solution"][name] = MappingProxyType(
             {
-                period: _fallbacks(gated_edges=gated, targets=targets, side="solve")
-                for period, targets in solution_support.items()
+                step: _fallbacks(gated_edges=gated, targets=targets, side="solve")
+                for step, targets in solution_support.items()
             }
         )
         value_reads["simulation"][name] = MappingProxyType(
@@ -405,8 +405,8 @@ def resolve_regime_schedules(
         )
         landings[name] = MappingProxyType(
             {
-                period: _fallbacks(gated_edges=gated, targets=targets, side="simulate")
-                for period, targets in simulation_support.items()
+                step: _fallbacks(gated_edges=gated, targets=targets, side="simulate")
+                for step, targets in simulation_support.items()
             }
         )
         law_by_period_by_regime[name] = MappingProxyType(law_by_period)
@@ -682,7 +682,7 @@ def resolve_demand(  # noqa: C901, PLR0915 - shared fixed point for occupancy, v
     def landing(*, period: int, target: RegimeName, requester: str) -> int:
         """The step an edge from `period` into `target` lands at, if any."""
         step = landing_step(ages=ages, step=period, target=target)
-        if step >= ages.n_periods:
+        if step >= step_count(ages):
             raise ModelInitializationError(
                 f"{requester} lands in '{target}' at its next occurrence, which "
                 "lies beyond the last period."
@@ -954,7 +954,7 @@ def _unavailable_message(
     age = ages.exact_values[period]
     reason = (
         "which is nonterminal at the last age: no next age exists"
-        if period == ages.n_periods - 1
+        if period == step_count(ages) - 1
         else f"where `edges` declares no {side}edge out of '{name}' at that age"
     )
     return f"{requester} requires '{name}' at age {age}, {reason}."
@@ -1525,15 +1525,15 @@ def _dispatch(
     role: OutputRole,
     kind: str,
 ) -> Callable[..., FloatND | IntND]:
-    n_periods = max(law_by_period) + 2
+    n_steps = max(law_by_period) + 2
     position = {id(law): index for index, law in enumerate(laws)}
     cases = tuple(in_role(func=case, role=role, kind=kind) for case in cases)
     return _period_dispatch(
         cases=cases,
         case_names=tuple(_argument_names(case) for case in cases),
         case_by_period=tuple(
-            position[id(law_by_period[period])] if period in law_by_period else 0
-            for period in range(n_periods)
+            position[id(law_by_period[step])] if step in law_by_period else 0
+            for step in range(n_steps)
         ),
     )
 

@@ -103,7 +103,7 @@ def next_regime(*, age: int, last_working_age: float) -> ScalarInt:
     )
 
 
-WEALTH_GRID = LinSpacedGrid(start=0, stop=50, n_points=25)
+WEALTH_GRID = LinSpacedGrid(start=0, stop=50, n_points=25, off_grid="extrapolate")
 CONSUMPTION_GRID = LogSpacedGrid(start=4, stop=50, n_points=100)
 
 

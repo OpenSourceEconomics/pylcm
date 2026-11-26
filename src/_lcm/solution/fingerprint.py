@@ -57,7 +57,7 @@ from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.value_adapter import AdaptedBuild, ValueAdapter
 from _lcm.regime_law import RegimeLaw
-from _lcm.time import ModelTime, Stages, TimeAxis, coordinate_kind
+from _lcm.time import ModelTime, Stages, TimeAxis, coordinate_kind, step_count
 from _lcm.typing import (
     DataclassInstance,
     FlatEdgeParams,
@@ -839,7 +839,7 @@ def _clock_record(
     record = (
         tuple(ages.exact_values)
         if coordinate_kind(ages) == "age"
-        else ("period", ages.n_periods)
+        else ("period", step_count(ages))
     )
     if isinstance(ages, ModelTime) and ages.stages:
         return (record, ages.stages)

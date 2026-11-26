@@ -360,14 +360,14 @@ class GridSearch(Solver):
         )
         n_discrete_action_axes = len(context.state_action_space.discrete_actions)
         flattened_bound_programs: set[int] = set()
-        for period, Q_and_F in context.Q_and_F_functions.items():
-            current_iid_plan = context.current_iid_plans.get(period)
+        for step, Q_and_F in context.Q_and_F_functions.items():
+            current_iid_plan = context.current_iid_plans.get(step)
             q_id = id(current_iid_plan) if current_iid_plan is not None else id(Q_and_F)
             target_regimes = (
                 ()
-                if period == context.solution_reachability.n_periods - 1
+                if step == context.solution_reachability.n_steps - 1
                 else context.solution_reachability.targets(
-                    period=period,
+                    period=step,
                     source=context.regime_name,
                 )
             )
@@ -482,7 +482,7 @@ class GridSearch(Solver):
                 )
                 flattened_bound_programs.add(q_id)
             argument_builder, value_reads = grid_search_query_inputs(
-                context=context, period=period
+                context=context, period=step
             )
             requirements = CoreExecutionRequirements(
                 reduced_axes=(
@@ -570,7 +570,7 @@ class GridSearch(Solver):
                 disposition_reason=(None if requires_plan else action_streaming.value),
                 donation_candidates=(),
             )
-            result[period] = _GridSearchPeriodKernel(
+            result[step] = _GridSearchPeriodKernel(
                 current_iid=current_iid_plan is not None,
                 _core_programs=MappingProxyType({"main": program})
                 if not context.invariant_bindings
@@ -582,15 +582,15 @@ class GridSearch(Solver):
             period_kernels=MappingProxyType(result),
             period_group_keys=MappingProxyType(
                 {
-                    period: (
+                    step: (
                         "current-iid",
-                        period,
+                        step,
                         tuple(
                             (name, nodes.fingerprint)
                             for name, _, nodes in plan.bindings
                         ),
                     )
-                    for period, plan in context.current_iid_plans.items()
+                    for step, plan in context.current_iid_plans.items()
                     if plan is not None
                 }
             ),
@@ -756,7 +756,7 @@ def grid_search_query_inputs(
     """Share canonical Q/F operand and continuation paths without another max."""
     targets = (
         ()
-        if period == context.solution_reachability.n_periods - 1
+        if period == context.solution_reachability.n_steps - 1
         else context.solution_reachability.targets(
             period=period, source=context.regime_name
         )

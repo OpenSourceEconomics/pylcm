@@ -307,7 +307,7 @@ def test_temporal_graph_limits_canonical_transition_bundles() -> None:
     )
     raw_specs = normalize_all_regime_phases(user_regimes=finalized, laws=laws)
     graph = build_phase_reachability(
-        n_periods=2,
+        n_steps=2,
         active_periods_by_regime={"work": {0}, "retire": {1}, "dead": {1}},
         support_by_period={"work": {0: ("retire", "dead")}},
         terminal_regimes={"dead"},

@@ -14,7 +14,7 @@ from _lcm.simulation.random_address import (
     draw_window_keys,
     encode_subject_row,
 )
-from _lcm.time import TimeAxis
+from _lcm.time import TimeAxis, step_count
 from _lcm.typing import ArrayTree, PRNGKeyND
 from lcm.exceptions import ExecutionPlanningError
 from lcm.grids import DiscreteGrid
@@ -116,8 +116,8 @@ def build_taste_stream_addresses(
     """Name each destination's taste stream independently of mutable action grids."""
     return MappingProxyType(
         {
-            (period, regime): RandomAddress(kind="taste", name=regime).words()
-            for period in range(ages.n_periods)
+            (step, regime): RandomAddress(kind="taste", name=regime).words()
+            for step in range(step_count(ages))
             for regime in discrete_actions_by_regime
         }
     )

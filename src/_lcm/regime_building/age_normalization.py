@@ -59,7 +59,7 @@ from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.phases import PhasedRegimeSpec, RegimePhaseSpec
 from _lcm.regime_building.Q_and_F import partition_continuation_targets
 from _lcm.regime_building.V import VInterpolationInfo
-from _lcm.time import TimeAxis, landing_step, specialization_coordinate_at
+from _lcm.time import TimeAxis, landing_step, specialization_coordinate_at, step_count
 from _lcm.transition_plans import TargetTransitionPlan
 from _lcm.typing import (
     ConstraintFunction,
@@ -546,7 +546,7 @@ class _ContinuationGroupKey:
     def __call__(self, *, period: int) -> tuple[tuple[RegimeName, ...], Hashable]:
         complete = (
             ()
-            if period == self.phase_reachability.n_periods - 1
+            if period == self.phase_reachability.n_steps - 1
             else self.phase_reachability.targets(
                 period=period, source=self.source_regime_name
             )
@@ -669,7 +669,7 @@ def _resolve_function_marker(
     first_params: frozenset[str] | None = None
     first_period: int | None = None
     for period in active_periods:
-        age = specialization_coordinate_at(ages=ages, period=period)
+        age = specialization_coordinate_at(ages=ages, step=period)
         concrete = marker.build(age)
         params = frozenset(inspect.signature(concrete).parameters)
         if first_params is None:
@@ -735,7 +735,7 @@ def _resolve_grid_marker(
     first_traits: _GridTraits | None = None
     first_period: int | None = None
     for period in active_periods:
-        age = specialization_coordinate_at(ages=ages, period=period)
+        age = specialization_coordinate_at(ages=ages, step=period)
         grid = marker.build(age)
         if not isinstance(grid, ContinuousGrid) or isinstance(
             grid, _ContinuousStochasticProcess
@@ -1103,7 +1103,7 @@ def _fill_sat_out_steps[Entry](
     A value read at such a step is the value at the occurrence, so the step holds
     the occurrence's grids and functions.
     """
-    for step in range(ages.n_periods):
+    for step in range(step_count(ages)):
         for name in names:
             occurrence = landing_step(ages=ages, step=step - 1, target=name)
             if occurrence != step and name in table.get(occurrence, {}):

@@ -428,7 +428,7 @@ def gated_query_targets(
     *, context: SolverBuildContext, period: int
 ) -> tuple[RegimeName, ...]:
     """Select this query's future gates; terminal dates have no continuation."""
-    if period >= context.solution_reachability.n_periods - 1:
+    if period >= context.solution_reachability.n_steps - 1:
         return ()
     return tuple(
         target

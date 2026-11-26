@@ -429,22 +429,22 @@ def build_egm_step_functions(
         solution_reachability.union_targets(source=regime_name)
     )
     active_periods = tuple(
-        period
-        for period, active_regimes in enumerate(
+        step
+        for step, active_regimes in enumerate(
             solution_reachability.active_regimes_by_period
         )
         if regime_name in active_regimes
     )
-    for period in active_periods:
+    for step in active_periods:
         targets = (
             ()
-            if period == solution_reachability.n_periods - 1
-            else solution_reachability.targets(period=period, source=regime_name)
+            if step == solution_reachability.n_steps - 1
+            else solution_reachability.targets(period=step, source=regime_name)
         )
         carry, scalar = get_egm_continuation_targets(
             targets=targets,
             regime_to_v_interpolation_info=continuation_v_interpolation_info(
-                period=period,
+                period=step,
                 regime_to_v_interpolation_info=regime_to_v_interpolation_info,
                 period_to_regime_v_interp=period_to_regime_v_interp,
             ),
@@ -455,24 +455,24 @@ def build_egm_step_functions(
                 scalar,
                 (
                     continuation_grid_signature(
-                        period=period,
+                        period=step,
                         targets=carry + scalar,
                         period_to_regime_grid_signature=period_to_regime_grid_signature,
                     ),
                     # An `AgeSpecializedFunction` is a different function at each
                     # age, so periods may share a program only where the user's
                     # declared signature says the closures agree.
-                    periodized_tree_signature(tree=functions, period=period),
-                    periodized_tree_signature(tree=constraints, period=period),
+                    periodized_tree_signature(tree=functions, period=step),
+                    periodized_tree_signature(tree=constraints, period=step),
                     tuple(
                         (
                             target,
                             periodized_tree_signature(
-                                tree=model.functions, period=period + 1
+                                tree=model.functions, period=step + 1
                             ),
                             periodized_tree_signature(
                                 tree={"koopmans_aggregator": model.koopmans_aggregator},
-                                period=period + 1,
+                                period=step + 1,
                             ),
                         )
                         for target in carry
@@ -487,7 +487,7 @@ def build_egm_step_functions(
                 ),
             ),
             [],
-        ).append(period)
+        ).append(step)
 
     built: dict[_EGMGroupKey, EGMStepFunction[_DCEGMStepOutput]] = {}
     node_axes_by_group: dict[_EGMGroupKey, tuple[tuple[StateName, int], ...]] = {}
@@ -596,9 +596,9 @@ def build_egm_step_functions(
     result: dict[int, EGMStepFunction[_DCEGMStepOutput]] = {}
     group_keys: dict[int, _EGMGroupKey] = {}
     for key, grouped_periods in configs.items():
-        for period in grouped_periods:
-            result[period] = built[key]
-            group_keys[period] = key
+        for step in grouped_periods:
+            result[step] = built[key]
+            group_keys[step] = key
 
     return EGMStepBuild(
         steps=MappingProxyType(dict(sorted(result.items()))),
@@ -609,7 +609,7 @@ def build_egm_step_functions(
         row_passive_state_names=own_passive_state_names,
         row_discrete_action_names=tuple(own_discrete_action_values),
         stochastic_node_axes_by_period=MappingProxyType(
-            {period: node_axes_by_group[key] for period, key in group_keys.items()}
+            {step: node_axes_by_group[key] for step, key in group_keys.items()}
         ),
         cell_extent=math.prod(leading_shape[:n_cell_axes]),
         savings_point_extent=n_savings_nodes,

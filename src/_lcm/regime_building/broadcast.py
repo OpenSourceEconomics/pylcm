@@ -1152,9 +1152,7 @@ def _resolved_at_representative_age(
         )
     ):
         return mapping
-    representative_age = specialization_coordinate_at(
-        ages=ages, period=active_periods[0]
-    )
+    representative_age = specialization_coordinate_at(ages=ages, step=active_periods[0])
     return {
         name: resolve_node(node=value, age=representative_age)
         for name, value in mapping.items()

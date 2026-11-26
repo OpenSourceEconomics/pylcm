@@ -211,6 +211,7 @@ from _lcm.time import (
     display_age_at,
     landing_step,
     period_of_step,
+    step_count,
 )
 from _lcm.typing import (
     ActionName,
@@ -456,7 +457,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                 )
             if not budgeted_simulation_programs_ready(
                 regimes=regimes,
-                n_periods=ages.n_periods,
+                n_steps=step_count(ages),
                 enable_jit=runtime.enable_jit,
             ):
                 raise ExecutionPlanningError(
@@ -673,7 +674,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                             windows, chunk_records, strict=True
                         )
                     ),
-                    n_periods=ages.n_periods,
+                    n_steps=step_count(ages),
                     host_device=cast("jax.Device", host_device),
                     memory=memory,
                     prepared_chunks=prepared_chunks,
@@ -681,7 +682,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                     prefetch=functools.partial(
                         _prefetch_period_reads,
                         active_by_period=forward_regimes_by_period(
-                            regimes=regimes, n_periods=ages.n_periods
+                            regimes=regimes, n_steps=step_count(ages)
                         ),
                         values=period_to_regime_to_V_arr,
                         policies=period_to_regime_to_sim_policy or MappingProxyType({}),
@@ -918,7 +919,7 @@ def _simulate_windows_period_by_period(
         Generator[tuple[SubjectChunkResults, ArrayTree], None, SubjectChunkResults],
         ...,
     ],
-    n_periods: int,
+    n_steps: int,
     host_device: jax.Device,
     memory: SimulationMemory | None = None,
     prepared_chunks: PreparedSimulationChunks | None = None,
@@ -946,12 +947,12 @@ def _simulate_windows_period_by_period(
     so_far: list[SubjectChunkResults] = [{} for _ in chunks]
     # The device copies the read-through views hold, early ones included.
     early: tuple[jax.Array, ...] = ()
-    for period in range(n_periods):
-        if prefetch is not None and period + 1 < n_periods:
-            early = prefetch(period=period + 1)
+    for step in range(n_steps):
+        if prefetch is not None and step + 1 < n_steps:
+            early = prefetch(period=step + 1)
         for index, chunk in enumerate(chunks):
             if memory is not None:
-                if period == 0 and prepared_chunks is not None:
+                if step == 0 and prepared_chunks is not None:
                     prepared_chunks.require_chunk(
                         memory=memory, completed_setup=completed_setup
                     )
@@ -963,9 +964,9 @@ def _simulate_windows_period_by_period(
                 )
             so_far[index], carries[index] = next(chunk)
             for by_period in so_far[index].values():
-                if period in by_period:
-                    by_period[period] = offload_chunk(
-                        tree=by_period[period], host_device=host_device, memory=memory
+                if step in by_period:
+                    by_period[step] = offload_chunk(
+                        tree=by_period[step], host_device=host_device, memory=memory
                     )
             if memory is not None:
                 memory.close_unit()
@@ -1236,8 +1237,8 @@ def _subject_chunk_periods(  # noqa: PLR0915
     source_roles: Int1D | None = None
     entered_through: Int1D | None = None
 
-    for period, active_regimes in enumerate(
-        forward_regimes_by_period(regimes=regimes, n_periods=ages.n_periods)
+    for step, active_regimes in enumerate(
+        forward_regimes_by_period(regimes=regimes, n_steps=step_count(ages))
     ):
         period_start = time.monotonic()
         if memory is not None:
@@ -1253,7 +1254,7 @@ def _subject_chunk_periods(  # noqa: PLR0915
                 entered_through,
             )
         original_age = chunk_operations.period_age(
-            values=ages.values, period=period, memory=memory
+            values=ages.values, period=step, memory=memory
         )
         age = place_simulation_arguments(
             arguments={"age": original_age},
@@ -1268,7 +1269,7 @@ def _subject_chunk_periods(  # noqa: PLR0915
             memory.hold(tree=age)
 
         subject_regime_ids, own_member = activate_subject_membership(
-            period=period,
+            period=step,
             starting_periods=starting_periods,
             initial_regime_ids=initial_regime_ids,
             initial_own_member=initial_own_member,
@@ -1287,7 +1288,7 @@ def _subject_chunk_periods(  # noqa: PLR0915
             subject_outputs=True,
         )
 
-        age_label = display_age_at(ages=ages, period=period)
+        age_label = display_age_at(ages=ages, step=step)
         log_period_header(
             logger=logger,
             age_label=age_label,
@@ -1295,17 +1296,17 @@ def _subject_chunk_periods(  # noqa: PLR0915
             time_kind=coordinate_kind(ages),
         )
 
-        period_policies = (period_to_regime_to_sim_policy or {}).get(period, {})
-        period_readers = period_to_regime_to_replay_reader.get(period, {})
+        period_policies = (period_to_regime_to_sim_policy or {}).get(step, {})
+        period_readers = period_to_regime_to_replay_reader.get(step, {})
         executor = next(iter(regimes.values())).simulation.programs.executor
         owner = PeriodSimulationReads(
-            period=period,
+            period=step,
             devices=devices,
             reads_by_unit={
                 name: unit_value_reads(
                     regime=active,
                     name=name,
-                    period=period,
+                    period=step,
                     values=period_to_regime_to_V_arr,
                     policy=period_policies.get(name),
                     reader=period_readers.get(name),
@@ -1326,7 +1327,7 @@ def _subject_chunk_periods(  # noqa: PLR0915
 
         states, subject_regime_ids, own_member, prepared_exits = prepare_exit_period(
             regimes=regimes,
-            period=period,
+            period=step,
             states=states,
             regime_ids=subject_regime_ids,
             roles=own_member,
@@ -1387,9 +1388,9 @@ def _subject_chunk_periods(  # noqa: PLR0915
                 subject_devices=devices,
                 memory=memory,
                 base_state_action_space=base_state_action_spaces[regime_name],
-                period=period,
+                period=step,
                 ages=ages,
-                reported_period=period_of_step(ages=ages, step=period),
+                reported_period=period_of_step(ages=ages, step=step),
                 age=age,
                 states=states,
                 subject_regime_ids=subject_regime_ids,
@@ -1397,30 +1398,30 @@ def _subject_chunk_periods(  # noqa: PLR0915
                 period_to_regime_to_V_arr=period_to_regime_to_V_arr,
                 base_state_action_spaces=base_state_action_spaces,
                 sim_policy=(period_to_regime_to_sim_policy or {})
-                .get(period, {})
+                .get(step, {})
                 .get(regime_name),
-                replay_reader=period_to_regime_to_replay_reader.get(period, {}).get(
+                replay_reader=period_to_regime_to_replay_reader.get(step, {}).get(
                     regime_name
                 ),
                 flat_params=flat_params,
                 regime_names_to_ids=regime_names_to_ids,
                 decision_targets_next_period=(
                     ()
-                    if period == ages.n_periods - 1
+                    if step == step_count(ages) - 1
                     else regime.solution.reachability.targets(
-                        period=period, source=regime_name
+                        period=step, source=regime_name
                     )
                 ),
                 realization_targets_next_period=(
                     ()
-                    if period == ages.n_periods - 1
+                    if step == step_count(ages) - 1
                     else regime.simulation.reachability.targets(
-                        period=period, source=regime_name
+                        period=step, source=regime_name
                     )
                 ),
                 key=key,
                 taste_key=taste_key,
-                taste_address=taste_addresses.get((period, regime_name)),
+                taste_address=taste_addresses.get((step, regime_name)),
                 current_iid_overrides=current_iid_overrides,
                 node_axis_inputs=node_axis_inputs,
                 logger=logger,
@@ -1432,11 +1433,11 @@ def _subject_chunk_periods(  # noqa: PLR0915
                     argument_names=tuple(
                         name
                         for name in supplied_shock_argument_names(
-                            regime=regime, period=period
+                            regime=regime, period=step
                         )
                         if name.removeprefix("supplied_shock__") in shock_paths
                     ),
-                    period=period + 1,
+                    period=step + 1,
                     subject_slice=subject_slice,
                     n_subjects=len(subject_regime_ids),
                 )
@@ -1445,8 +1446,8 @@ def _subject_chunk_periods(  # noqa: PLR0915
                 own_member=own_member,
                 new_own_member=new_own_member,
                 gated_edge_fold_age=(
-                    coordinate_at(ages=ages, period=period + 1)
-                    if regime.gated_edges and period + 1 < ages.n_periods
+                    coordinate_at(ages=ages, step=step + 1)
+                    if regime.gated_edges and step + 1 < step_count(ages)
                     else None
                 ),
                 source_roles=source_roles,
@@ -1459,7 +1460,7 @@ def _subject_chunk_periods(  # noqa: PLR0915
             )
             ran_this_period.append(regime_name)
             states = new_states
-            simulation_results[regime_name][period] = result
+            simulation_results[regime_name][step] = result
             if memory is not None:
                 memory.publish(tree=result)
             owner.commit(
@@ -1508,7 +1509,7 @@ def _subject_chunk_periods(  # noqa: PLR0915
             time_kind=coordinate_kind(ages),
             memory=memory,
             period_results=tuple(
-                (regime_name, simulation_results[regime_name][period])
+                (regime_name, simulation_results[regime_name][step])
                 for regime_name in active_regimes
             ),
         )

@@ -40,6 +40,10 @@ and the same with `JAX_ENABLE_X64=0`, `--precision 32` and the `f32` directory.
 The script refuses to overwrite an existing archive or host record. It also refuses
 to write when `lcm` was not imported from `--source-root`, when the precision JAX runs
 at differs from `--precision`, or when the backend is not the CPU.
+
+`--solution-output tests/data/regression_tests/solution.pkl` with `--precision 64`, and
+`<old>` added to `PYTHONPATH`, instead writes the solved values `test_regression_test`
+compares with at either precision.
 """
 
 import argparse
@@ -51,7 +55,9 @@ import shlex
 import subprocess
 from collections.abc import Iterator, Mapping
 from pathlib import Path
+from types import MappingProxyType
 
+import cloudpickle
 import jax
 import jax.numpy as jnp
 import jaxlib
@@ -140,9 +146,20 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--precision", type=int, choices=(32, 64), required=True)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--solution-output", type=Path)
     args = parser.parse_args()
     source_root = args.source_root.resolve()
+    if (args.output is None) == (args.solution_output is None):
+        parser.error("Exactly one of --output and --solution-output is required.")
+    if args.solution_output is not None:
+        _fail_if_not_probing(
+            lcm_file=Path(lcm.__file__).resolve(),
+            source_root=source_root,
+            precision=args.precision,
+        )
+        write_regression_solution(args.solution_output)
+        return
     if args.output.exists() or host_file(args.output).exists():
         raise FileExistsError(f"A frozen output already exists beside {args.output}.")
     lcm_file = Path(lcm.__file__).resolve()
@@ -187,6 +204,46 @@ def main() -> None:
     for field, value in provenance.items():
         print(f"{field}: {value!r}")  # noqa: T201
     print(f"wrote {len(arrays)} arrays to {args.output}")  # noqa: T201
+
+
+def write_regression_solution(output: Path) -> None:
+    """Write the solved values `test_regression_test` compares with to `output`.
+
+    The values of the test's own model and parameters are stored as read-only
+    mappings of period to regime to value array, so the file names no pylcm class.
+    """
+    from tests.test_models.deterministic.regression import (  # noqa: PLC0415 - test models are importable only from a checkout
+        get_model,
+        get_params,
+    )
+
+    if output.exists():
+        raise FileExistsError(f"A frozen output already exists at {output}.")
+    n_periods = 4
+    values = (
+        get_model(n_periods=n_periods)
+        .solve(
+            params=get_params(
+                n_periods=n_periods,
+                discount_factor=0.95,
+                disutility_of_work=1.0,
+                interest_rate=0.05,
+            ),
+            log_level="off",
+        )
+        .values
+    )
+    with output.open("wb") as stream:
+        cloudpickle.dump(
+            MappingProxyType(
+                {
+                    period: MappingProxyType(dict(by_regime))
+                    for period, by_regime in values.items()
+                }
+            ),
+            stream,
+        )
+    print(f"wrote the solved values of {len(values)} periods to {output}")  # noqa: T201
 
 
 def _fail_if_not_probing(*, lcm_file: Path, source_root: Path, precision: int) -> None:

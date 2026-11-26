@@ -40,10 +40,10 @@ class RegimeId:
     dead: ScalarInt
 
 
-WEALTH_GRID = LinSpacedGrid(start=1.0, stop=20.0, n_points=20)
+WEALTH_GRID = LinSpacedGrid(start=1.0, stop=20.0, n_points=20, off_grid="extrapolate")
 CONSUMPTION_GRID = LinSpacedGrid(start=0.1, stop=25.0, n_points=30)
 SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=20.0, n_points=40)
-ILLIQUID_GRID = LinSpacedGrid(start=0.0, stop=5.0, n_points=8)
+ILLIQUID_GRID = LinSpacedGrid(start=0.0, stop=5.0, n_points=8, off_grid="extrapolate")
 INVESTMENT_GRID = LinSpacedGrid(start=0.0, stop=2.0, n_points=15)
 
 

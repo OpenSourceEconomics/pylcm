@@ -297,10 +297,10 @@ def _analyze_phase(
     refusals = _grid_refusals(state_name=state_name, slices=slices, carriers=carriers)
     preserving: list[RegimeEdge] = []
     shared: list[RegimeEdge] = []
-    for period in range(reachability.n_periods - 1):
-        for source in sorted(reachability.active_regimes_by_period[period]):
-            for target in reachability.targets(period=period, source=source):
-                edge = RegimeEdge(period=period, source=source, target=target)
+    for step in range(reachability.n_steps - 1):
+        for source in sorted(reachability.active_regimes_by_period[step]):
+            for target in reachability.targets(period=step, source=source):
+                edge = RegimeEdge(period=step, source=source, target=target)
                 if source in carriers and target in carriers:
                     law = _law_toward(
                         phase_slice=slices[source], state_name=state_name, target=target
@@ -309,14 +309,14 @@ def _analyze_phase(
                         preserving.append(edge)
                     else:
                         refusals.append(
-                            f"edge {source} -> {target} at period {period} gives "
+                            f"edge {source} -> {target} at period {step} gives "
                             f"{state_name!r} the law {_describe(law)}, not the identity"
                         )
                 elif source in carriers:
                     shared.append(edge)
                 elif target in carriers:
                     refusals.append(
-                        f"edge {source} -> {target} at period {period} enters a "
+                        f"edge {source} -> {target} at period {step} enters a "
                         f"carrier of {state_name!r} from a regime without it, so the "
                         "source reads every code's value"
                     )
@@ -328,10 +328,8 @@ def _analyze_phase(
         carrying_periods=MappingProxyType(
             {
                 name: tuple(
-                    period
-                    for period, active in enumerate(
-                        reachability.active_regimes_by_period
-                    )
+                    step
+                    for step, active in enumerate(reachability.active_regimes_by_period)
                     if name in active
                 )
                 for name in sorted(carriers)

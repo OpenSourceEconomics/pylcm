@@ -186,7 +186,7 @@ def replay_period(*, directory: Path) -> PeriodReplay:
     return PeriodReplay(
         regime_name=kernel_kwargs["regime_name"],
         period=period,
-        age=age_at(ages=kernel_kwargs["ages"], period=period),
+        age=age_at(ages=kernel_kwargs["ages"], step=period),
         output=output,
         scope="logical",
     )
@@ -562,7 +562,7 @@ def replay_period_on_recorded_layout(
     return PeriodReplay(
         regime_name=kernel_kwargs["regime_name"],
         period=payload["period"],
-        age=age_at(ages=kernel_kwargs["ages"], period=payload["period"]),
+        age=age_at(ages=kernel_kwargs["ages"], step=payload["period"]),
         output=output,
         scope="layout",
     )

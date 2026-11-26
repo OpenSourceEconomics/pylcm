@@ -202,20 +202,20 @@ def _edges(
     edges: dict[int, set[tuple[RegimeName, RegimeName, str]]] = {}
     for phase_name in ("solution", "simulation"):
         reachability = getattr(next(iter(regimes.values())), phase_name).reachability
-        for period in range(reachability.n_periods - 1):
-            for source in sorted(reachability.active_regimes_by_period[period]):
-                for target in reachability.targets(period=period, source=source):
+        for step in range(reachability.n_steps - 1):
+            for source in sorted(reachability.active_regimes_by_period[step]):
+                for target in reachability.targets(period=step, source=source):
                     if target not in carriers:
                         continue
                     if source not in carriers:
                         msg = (
-                            f"Edge {source} -> {target} at period {period} enters a "
+                            f"Edge {source} -> {target} at period {step} enters a "
                             "regime carrying the enumerated states from one without "
                             "them."
                         )
                         raise ModelInitializationError(msg)
-                    edges.setdefault(period, set()).add((source, target, phase_name))
-    return {period: tuple(sorted(e)) for period, e in sorted(edges.items())}
+                    edges.setdefault(step, set()).add((source, target, phase_name))
+    return {step: tuple(sorted(e)) for step, e in sorted(edges.items())}
 
 
 class _SuccessorEvaluator:

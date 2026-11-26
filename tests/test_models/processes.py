@@ -149,7 +149,9 @@ def get_model(
 
     alive = UserRegime(
         states={
-            "wealth": LinSpacedGrid(start=1, stop=5, n_points=5),
+            "wealth": LinSpacedGrid(
+                start=1, stop=5, n_points=5, off_grid="extrapolate"
+            ),
             "income": _SHOCK_GRID_CLASSES[distribution_type](n_points=5),
             "health": DiscreteGrid(category_class=Health),
         },
@@ -218,8 +220,10 @@ def get_multi_regime_model(
     living_regimes = {
         name: UserRegime(
             states={
-                "wealth": LinSpacedGrid(start=1, stop=5, n_points=5),
-                "income": shock_grid_cls(n_points=5),
+                "wealth": LinSpacedGrid(
+                    start=1, stop=5, n_points=5, off_grid="extrapolate"
+                ),
+                "income": shock_grid_cls(n_points=5, off_grid="extrapolate"),
                 "health": DiscreteGrid(category_class=Health),
             },
             state_transitions={

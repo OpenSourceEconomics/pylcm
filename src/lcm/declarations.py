@@ -82,24 +82,24 @@ def _get_model_declarations(
     *,
     structure: PreparedModelStructure,
     graph: ModelGraph,
-    n_periods: int,
+    n_steps: int,
     declared_regimes: Mapping[RegimeName, Regime],
 ) -> ModelDeclarations:
     regimes = MappingProxyType(
         {
-            period: (
+            step: (
                 structure.period_regimes.by_period.get(
-                    period, structure.representative_user_regimes
+                    step, structure.representative_user_regimes
                 )
                 if structure.period_regimes is not None
                 else structure.representative_user_regimes
             )
-            for period in range(n_periods)
+            for step in range(n_steps)
         }
     )
     phases: dict[tuple[int, RegimeName, Phase], RegimePhaseSpec] = {}
-    for regime_name, periods in structure.active_periods_by_regime.items():
-        for period in periods:
+    for regime_name, steps in structure.active_periods_by_regime.items():
+        for step in steps:
             spec = structure.phased_specs[regime_name]
             for phase, phase_spec in (
                 ("solve", spec.solution),
@@ -108,9 +108,9 @@ def _get_model_declarations(
                 if phase == "simulate" and (
                     regime_name
                     not in structure.reachability.simulation.active_regimes_by_period[
-                        period
+                        step
                     ]
-                    and period
+                    and step
                     not in structure.query_periods_by_phase.get("simulation", {}).get(
                         regime_name, ()
                     )
@@ -120,13 +120,13 @@ def _get_model_declarations(
                     phase_spec,
                     **{
                         field.name: _resolve_value(
-                            value=getattr(phase_spec, field.name), period=period
+                            value=getattr(phase_spec, field.name), period=step
                         )
                         for field in dataclasses.fields(phase_spec)
                     },
                 )
                 if structure.grid_schedule is not None:
-                    grids = structure.grid_schedule.by_period.get(period, {}).get(
+                    grids = structure.grid_schedule.by_period.get(step, {}).get(
                         regime_name, {}
                     )
                     resolved = dataclasses.replace(
@@ -138,7 +138,7 @@ def _get_model_declarations(
                             }
                         ),
                     )
-                phases[period, regime_name, phase] = resolved
+                phases[step, regime_name, phase] = resolved
     return ModelDeclarations(
         graph=graph,
         regimes_by_period=regimes,

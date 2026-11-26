@@ -271,8 +271,10 @@ from _lcm.time import (
     coordinate_at,
     coordinate_kind,
     display_age_at,
+    period_of_step,
     stage_position,
     stages_per_period,
+    step_count,
 )
 from _lcm.typing import (
     AgeValue,
@@ -630,20 +632,20 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 first_by_cell.setdefault(error.triple[:2], error)
             for error in first_by_cell.values():
                 narrowings += 1
-                regime_name, period, core_key = error.triple
+                regime_name, step, core_key = error.triple
                 logger.info(
                     "Workspace narrowing %d: %r at %r period %d refused; %s",
                     narrowings,
                     core_key,
                     regime_name,
-                    period,
+                    step,
                     error,
                 )
                 regimes = _narrow_native_closure(regimes=regimes, error=error)
     compiled_functions = compiled_programs.executables
     replay_dispatches = {
-        (regime_name, period)
-        for (regime_name, period, _core_name), metadata in (
+        (regime_name, step)
+        for (regime_name, step, _core_name), metadata in (
             compiled_programs.metadata.items()
         )
         if metadata.scope is ProgramScope.REPLAY
@@ -805,7 +807,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             gc.collect()
             gc.freeze()
         try:
-            for period in reversed(range(ages.n_periods)):
+            for step in reversed(range(step_count(ages))):
                 period_start = time.monotonic()
                 period_solution: dict[RegimeName, FloatND] = {}
                 period_continuations: dict[RegimeName, ContinuationPayload] = {}
@@ -831,7 +833,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 )
                 register_rolled_inputs(
                     inputs=period_inputs,
-                    next_period=period + 1,
+                    next_period=step + 1,
                     ledger=input_liveness,
                     registry=buffer_registry,
                 )
@@ -843,12 +845,12 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 active_regimes = {
                     regime_name: regime
                     for regime_name, regime in regimes.items()
-                    if period in regime.active_periods
+                    if step in regime.active_periods
                 }
 
                 log_period_header(
                     logger=logger,
-                    age_label=display_age_at(ages=ages, period=period),
+                    age_label=display_age_at(ages=ages, step=step),
                     n_active_regimes=len(active_regimes),
                     time_kind=coordinate_kind(ages),
                 )
@@ -857,7 +859,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     _period_shared_transfer_plan(
                         compiled_cores_by_regime=MappingProxyType(
                             {
-                                regime_name: compiled_functions[(regime_name, period)]
+                                regime_name: compiled_functions[(regime_name, step)]
                                 for regime_name in active_regimes
                             }
                         ),
@@ -884,14 +886,14 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 waves = plan_period_waves(
                     nodes=tuple(
                         ScheduledNode(
-                            period=period,
+                            period=step,
                             regime=regime_name,
                             program=core_key,
                             reads=same_period_reads(plan=core.input_transfer_plan),
                         )
                         for regime_name in active_regimes
                         for core_key, core in compiled_functions[
-                            (regime_name, period)
+                            (regime_name, step)
                         ].items()
                     ),
                     device_sets=MappingProxyType(
@@ -907,12 +909,12 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         regime = active_regimes[regime_name]
                         regime_retains_replay = (
                             regime_name,
-                            period,
+                            step,
                         ) in replay_dispatches
                         selected_artifact_keys = _selected_artifact_keys_for_cell(
                             persistable_artifact_refs=persistable_artifact_refs,
                             regime_name=regime_name,
-                            period=period,
+                            period=step,
                         )
                         selected_cores, selected_donations = (
                             _select_runtime_donation_cores(
@@ -945,7 +947,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                             ],
                             regime=regime,
                             regime_name=regime_name,
-                            period=period,
+                            period=step,
                             compiled_cores=_cores_with_transfer_cache(
                                 cores=selected_cores,
                                 cache=period_transfer_cache,
@@ -957,11 +959,11 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                 V_templates=input_templates.next_regime_to_V_arr,
                                 period_capture=period_capture,
                                 captured_admission=compiled_programs.capture_admission.get(
-                                    (regime_name, period), MappingProxyType({})
+                                    (regime_name, step), MappingProxyType({})
                                 ),
                                 regime=regime,
                                 regime_name=regime_name,
-                                period=period,
+                                period=step,
                                 state_action_space=base_state_action_spaces[
                                     regime_name
                                 ],
@@ -988,7 +990,8 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         ):
                             raise ShockDeclarationError(
                                 "Current-IID law is invalid or unresolved "
-                                f"in {regime_name!r}, period {period}."
+                                f"in {regime_name!r}, period "
+                                f"{period_of_step(ages=ages, step=step)}."
                             )
                         runtime_bounds = tuple(
                             bound
@@ -1005,11 +1008,11 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                 statuses=statuses,
                                 bound_specs=runtime_bounds,
                                 regime_name=regime_name,
-                                period=period,
+                                period=step,
                             )
                         query_authorities = (
                             regime.solution.query_input_authorities or {}
-                        ).get(period, ())
+                        ).get(step, ())
                         query_status = _published_query_status(output=output)
                         if query_authorities or query_status is not None:
                             validate_query_input_status(
@@ -1027,7 +1030,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                 totals=output.landing_totals,
                                 checks=output.landing_checks,
                                 regime_name=regime_name,
-                                period=period,
+                                period=step,
                             )
                         continuation_spec = regime.solution.continuation_spec
                         result = consume_kernel_output(
@@ -1037,13 +1040,13 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                 if continuation_spec is None
                                 or (
                                     continuation_spec.templates_by_period
-                                    and period
+                                    and step
                                     not in continuation_spec.templates_by_period
                                 )
                                 else continuation_spec.artifact_key
                             ),
                             regime_name=regime_name,
-                            period=period,
+                            period=step,
                             artifact_authorities=regime.solution.artifact_authorities,
                         )
                         V_arr = result.value
@@ -1055,7 +1058,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         # here, never re-placed.
                         V_arr = _publish_kernel_value(
                             value=V_arr,
-                            compiled_cores=compiled_functions[(regime_name, period)],
+                            compiled_cores=compiled_functions[(regime_name, step)],
                             assembled_template=input_templates.next_regime_to_V_arr[
                                 regime_name
                             ],
@@ -1063,7 +1066,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         _fail_if_continuation_publisher_returned_none(
                             result=result,
                             regime_name=regime_name,
-                            period=period,
+                            period=step,
                             continuation_publishers=next_regime_to_continuation,
                             continuation_spec=continuation_spec,
                         )
@@ -1076,7 +1079,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                     result.continuation_artifacts.items()
                                 )
                                 if ArtifactRef(
-                                    period=period,
+                                    period=step,
                                     regime=regime_name,
                                     key=key,
                                 )
@@ -1105,7 +1108,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                 and (
                                     retain_replay
                                     or ArtifactRef(
-                                        period=period,
+                                        period=step,
                                         regime=regime_name,
                                         key=key,
                                     )
@@ -1121,7 +1124,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                         result.auxiliary_artifacts.items()
                                     )
                                     if ArtifactRef(
-                                        period=period,
+                                        period=step,
                                         regime=regime_name,
                                         key=key,
                                     )
@@ -1137,7 +1140,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         running_any_nan, running_any_inf = _fold_period_diagnostics(
                             V_arr=V_arr,
                             regime_name=regime_name,
-                            period=period,
+                            period=step,
                             ages=ages,
                             diagnostics_enabled=diagnostics_enabled,
                             stats_enabled=stats_enabled,
@@ -1184,7 +1187,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                                     state_action_space=base_state_action_spaces[
                                         regime_name
                                     ],
-                                    period=period,
+                                    period=step,
                                 ),
                                 next_regime_to_V_arr,
                                 next_regime_to_continuation,
@@ -1221,7 +1224,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                             next_edge_to_V_arr,
                         ) = _retire_donated_inputs(
                             donated_inputs=donated_inputs,
-                            dispatch=(period, regime_name),
+                            dispatch=(step, regime_name),
                             inputs=SolveInputMappings(
                                 next_regime_to_V_arr=next_regime_to_V_arr,
                                 next_regime_to_continuation=next_regime_to_continuation,
@@ -1248,10 +1251,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         ):
                             period_transfer_cache.commit_consumer(key=key)
                         for closed in input_liveness.commit_successful_dispatch(
-                            dispatch=(period, unit.regime)
+                            dispatch=(step, unit.regime)
                         ):
                             period_release_candidates.setdefault(
-                                closed, (period, unit.regime)
+                                closed, (step, unit.regime)
                             )
                     (
                         next_regime_to_V_arr,
@@ -1291,7 +1294,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         diagnostic_mean[-1].block_until_ready()
                 _materialize_period_feasibility_counts(
                     diagnostic_rows=diagnostic_rows,
-                    period=period,
+                    period=step,
                     enabled=logger.isEnabledFor(logging.WARNING),
                 )
                 # The first NaN is diagnosed now, while this period's values and
@@ -1300,7 +1303,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     nan_error = period_nan_error(
                         logger=logger,
                         diagnostic_rows=diagnostic_rows,
-                        period=period,
+                        period=step,
                         period_values=MappingProxyType(period_solution),
                         next_values=next_regime_to_V_arr,
                         stored_values=solution,
@@ -1320,7 +1323,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 folded_edge_to_V_arr = _roll_gated_edges(
                     regimes=regimes,
                     ages=ages,
-                    period=period,
+                    period=step,
                     period_solution=period_solution,
                     base_state_action_spaces=base_state_action_spaces,
                     flat_params=flat_params,
@@ -1344,14 +1347,14 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 # the same enumeration left unfolded declared none and commits nothing.
                 for folded_edge in _folded_edge_keys_at_period(
                     regimes=regimes,
-                    period=period,
+                    period=step,
                     solved_regimes=period_solution,
                 ):
                     for closed in input_liveness.commit_successful_dispatch(
-                        dispatch=(period, *folded_edge)
+                        dispatch=(step, *folded_edge)
                     ):
                         period_release_candidates.setdefault(
-                            closed, (period, *folded_edge)
+                            closed, (step, *folded_edge)
                         )
                 (
                     next_regime_to_V_arr,
@@ -1378,7 +1381,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     _roll_continuation_inputs(
                         regimes=regimes,
                         ages=ages,
-                        period=period,
+                        period=step,
                         next_regime_to_V_arr=next_regime_to_V_arr,
                         period_solution=period_solution,
                         period_continuations=period_continuations,
@@ -1395,11 +1398,11 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     # next period computes. The device copy stays reachable only
                     # through the rolled inputs, which release it once read.
                     host_copies = (
-                        copy_values_to_host(period=period, values=period_solution)
+                        copy_values_to_host(period=step, values=period_solution)
                         if store_on_host
                         else None
                     )
-                    solution[period] = (
+                    solution[step] = (
                         MappingProxyType(period_solution)
                         if host_copies is None
                         else host_copies
@@ -1408,12 +1411,12 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     # Under host storage policies travel as values do; device
                     # storage moves them to the CPU device before going on.
                     if store_on_host:
-                        simulation_policies[period] = copy_values_to_host(
-                            period=period, values=period_simulation_policies
+                        simulation_policies[step] = copy_values_to_host(
+                            period=step, values=period_simulation_policies
                         )
                     else:
                         assert host_device is not None  # noqa: S101
-                        simulation_policies[period] = MappingProxyType(
+                        simulation_policies[step] = MappingProxyType(
                             {
                                 regime_name: jax.block_until_ready(
                                     jax.device_put(simulation_policy, host_device)
@@ -1430,26 +1433,26 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 if value_writer is not None and period_solution:
                     _swap_in_written_periods(
                         written=value_writer.submit(
-                            period=period,
+                            period=step,
                             values=cast(
                                 "MappingProxyType[RegimeName, jax.Array]",
-                                solution[period],
+                                solution[step],
                             ),
                             policies=cast(
                                 "MappingProxyType[RegimeName, SimulationPolicy]",
-                                simulation_policies.get(period, MappingProxyType({})),
+                                simulation_policies.get(step, MappingProxyType({})),
                             ),
                         ),
                         solution=solution,
                         simulation_policies=simulation_policies,
                     )
                 if period_generated_replay_authorities:
-                    generated_replay_authorities[period] = MappingProxyType(
+                    generated_replay_authorities[step] = MappingProxyType(
                         period_generated_replay_authorities
                     )
                 if period_solver_diagnostics:
                     assert host_device is not None  # noqa: S101
-                    solver_diagnostics[period] = MappingProxyType(
+                    solver_diagnostics[step] = MappingProxyType(
                         {
                             regime_name: _copy_solver_diagnostics_to_host(
                                 diagnostics=diagnostics,
@@ -1467,7 +1470,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         key,
                     ), payload in period_retained_continuations.items():
                         retained_continuations[
-                            ArtifactRef(period=period, regime=regime_name, key=key)
+                            ArtifactRef(period=step, regime=regime_name, key=key)
                         ] = jax.block_until_ready(jax.device_put(payload, host_device))
                 if retain_all_artifacts:
                     assert host_device is not None  # noqa: S101
@@ -1476,13 +1479,13 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         key,
                     ), payload in period_auxiliary_artifacts.items():
                         auxiliary_artifacts[
-                            ArtifactRef(period=period, regime=regime_name, key=key)
+                            ArtifactRef(period=step, regime=regime_name, key=key)
                         ] = jax.block_until_ready(jax.device_put(payload, host_device))
                 if retain_replay or period_replay_artifacts:
                     assert host_device is not None  # noqa: S101
                     for (regime_name, key), payload in period_replay_artifacts.items():
                         replay_artifacts[
-                            ArtifactRef(period=period, regime=regime_name, key=key)
+                            ArtifactRef(period=step, regime=regime_name, key=key)
                         ] = jax.block_until_ready(jax.device_put(payload, host_device))
 
                 elapsed = time.monotonic() - period_start
@@ -1507,10 +1510,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 if store_on_host:
                     wait_for_host_copies(copies=in_flight_host_copies)
                     in_flight_host_copies = tuple(
-                        (period, regime_name, array)
+                        (step, regime_name, array)
                         for period_mapping in (solution, simulation_policies)
                         for regime_name, stored in period_mapping.get(
-                            period, MappingProxyType({})
+                            step, MappingProxyType({})
                         ).items()
                         for array in jax.tree.leaves(stored)
                         if isinstance(array, jax.Array)
@@ -2260,7 +2263,7 @@ def _roll_gated_edges(
         wbar = _evaluate_edge_fold(
             fold=fold,
             fold_period=period,
-            fold_age=coordinate_at(ages=ages, period=period),
+            fold_age=coordinate_at(ages=ages, step=period),
             target_states=_states_for_period(
                 regime=regimes[target_name],
                 state_action_space=base_state_action_spaces[target_name],
@@ -3345,7 +3348,7 @@ def _rolled_aliases(
     period roll carries forward unchanged; each is the buffer the same address
     names one period later.
     """
-    n_periods = _model_n_periods(regimes=regimes)
+    n_steps = _model_n_steps(regimes=regimes)
     fold_dispatches = frozenset(_gated_edge_fold_dispatches(regimes=regimes))
     aliases: dict[ValueArtifactAddress, ValueArtifactAddress] = {
         alias: origin
@@ -3356,7 +3359,7 @@ def _rolled_aliases(
     pending = list(artifacts)
     while pending:
         artifact = pending.pop()
-        if artifact in aliases or artifact.period >= n_periods - 1:
+        if artifact in aliases or artifact.period >= n_steps - 1:
             continue
         if artifact.kind is ValueArtifactKind.GATED_CONTINUATION:
             produced = (
@@ -3530,7 +3533,7 @@ def _gated_edge_fold_dispatches(
     from every other edge folded there.
     """
     dispatches: dict[_InputDispatch, tuple[ValueArtifactAddress, ...]] = {}
-    for period in range(_model_n_periods(regimes=regimes)):
+    for period in range(_model_n_steps(regimes=regimes)):
         reads_by_consumer: dict[tuple[RegimeName, str], list[ValueArtifactAddress]] = {}
         for read in gated_edge_fold_value_reads(regimes=regimes, period=period):
             reads_by_consumer.setdefault(
@@ -3564,10 +3567,10 @@ def _regimes_active_at_period(
     )
 
 
-def _model_n_periods(*, regimes: Mapping[RegimeName, Regime]) -> int:
+def _model_n_steps(*, regimes: Mapping[RegimeName, Regime]) -> int:
     """Return the number of periods the model spans, as its regimes record it."""
     return max(
-        (regime.solution.reachability.n_periods for regime in regimes.values()),
+        (regime.solution.reachability.n_steps for regime in regimes.values()),
         default=0,
     )
 
@@ -3640,7 +3643,7 @@ def _resident_inventory_by_triple(
                     footprints=footprints,
                     device_ids_by_regime=device_ids_by_regime,
                 )
-                for period in range(_model_n_periods(regimes=regimes))
+                for period in range(_model_n_steps(regimes=regimes))
             }
         ),
         fold_dispatches=_fold_output_artifacts(regimes=regimes),
@@ -3651,20 +3654,20 @@ def _resident_inventory_by_triple(
     )
     copies_by_period = {
         period: _period_copy_reservations(period=period, metadata=program_metadata)
-        for period in range(_model_n_periods(regimes=regimes))
+        for period in range(_model_n_steps(regimes=regimes))
     }
     scratch_by_period = {
         period: _period_transfer_scratch_reservations(
             period=period, metadata=program_metadata, device_ids=device_ids
         )
-        for period in range(_model_n_periods(regimes=regimes))
+        for period in range(_model_n_steps(regimes=regimes))
     }
     counters_by_period = {
         period: _period_feasibility_counter_reservations(
             active=_regimes_active_at_period(regimes=regimes, period=period),
             device_ids_by_regime=device_ids_by_regime,
         )
-        for period in range(_model_n_periods(regimes=regimes))
+        for period in range(_model_n_steps(regimes=regimes))
     }
     read_counters_by_period = {
         period: _period_continuation_counter_reservations(
@@ -3675,7 +3678,7 @@ def _resident_inventory_by_triple(
             ),
             device_ids_by_regime=device_ids_by_regime,
         )
-        for period in range(_model_n_periods(regimes=regimes))
+        for period in range(_model_n_steps(regimes=regimes))
     }
     return MappingProxyType(
         {
@@ -6965,7 +6968,7 @@ def _resolve_candidate_donations(
     resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
     representatives: Mapping[_CoreTriple, ResolvedCoreProgram],
     input_liveness: PlannedInputLiveness[_InputDispatch, ValueArtifactAddress],
-    n_periods: int,
+    n_steps: int,
     enable_jit: bool,
     donate_buffers: bool,
 ) -> tuple[
@@ -6989,7 +6992,7 @@ def _resolve_candidate_donations(
                 program=resolved,
                 dispatch=(candidate[0][1], candidate[0][0]),
                 ledger=input_liveness,
-                n_periods=n_periods,
+                n_steps=n_steps,
             )
             if enable_jit and donate_buffers
             else ()
@@ -7005,8 +7008,8 @@ def _resolve_candidate_donations(
     # representatives carry it: every core of the unit appears once, and the
     # declared reads a census counts do not vary with the width.
     unit_programs: dict[tuple[int, RegimeName], list[ResolvedCoreProgram]] = {}
-    for (regime_name, period, _core_key), resolved in representatives.items():
-        unit_programs.setdefault((period, regime_name), []).append(resolved)
+    for (regime_name, step, _core_key), resolved in representatives.items():
+        unit_programs.setdefault((step, regime_name), []).append(resolved)
     readers_by_dispatch = {
         dispatch: unit_input_readers(programs=programs)
         for dispatch, programs in unit_programs.items()
@@ -7125,7 +7128,7 @@ class _LazyCandidateFrontier:
     input_liveness: PlannedInputLiveness[_InputDispatch, ValueArtifactAddress]
     regimes: MappingProxyType[RegimeName, Regime]
     program_fingerprint: str
-    n_periods: int
+    n_steps: int
     enable_jit: bool
     donate_buffers: bool
     fallback_keys: dict[_CoreCandidate, Hashable] = dataclasses.field(
@@ -7231,13 +7234,13 @@ class _LazyCandidateFrontier:
         )[candidate]
         self.resolved_programs[candidate] = resolved
         self.internal_templates[candidate] = templates
-        regime_name, period, _core_key = triple
+        regime_name, step, _core_key = triple
         self.nominations[candidate] = (
             resolve_donations(
                 program=resolved,
-                dispatch=(period, regime_name),
+                dispatch=(step, regime_name),
                 ledger=self.input_liveness,
-                n_periods=self.n_periods,
+                n_steps=self.n_steps,
             )
             if self.enable_jit and self.donate_buffers
             else ()
@@ -7246,7 +7249,7 @@ class _LazyCandidateFrontier:
         self.donations[candidate] = withhold_shared_donations(
             program=resolved,
             donations=self.nominations[candidate],
-            unit_readers=self.readers_by_dispatch[(period, regime_name)],
+            unit_readers=self.readers_by_dispatch[(step, regime_name)],
         )
         self.lowering_keys.update(
             _lowering_keys(
@@ -7697,12 +7700,12 @@ def _bind_structural_blueprint(
         program_metadata=representative_metadata,
         persistable_artifact_refs=persistable_artifact_refs,
     )
-    n_periods = _model_n_periods(regimes=regimes)
+    n_steps = _model_n_steps(regimes=regimes)
     nominations, readers_by_dispatch, donations = _resolve_candidate_donations(
         resolved_programs=resolved_programs,
         representatives=representatives,
         input_liveness=input_liveness,
-        n_periods=n_periods,
+        n_steps=n_steps,
         enable_jit=enable_jit,
         donate_buffers=donate_buffers,
     )
@@ -7732,7 +7735,7 @@ def _bind_structural_blueprint(
         input_liveness=input_liveness,
         regimes=regimes,
         program_fingerprint=program_fingerprint,
-        n_periods=n_periods,
+        n_steps=n_steps,
         enable_jit=enable_jit,
         donate_buffers=donate_buffers,
     )

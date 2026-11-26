@@ -43,12 +43,12 @@ def _template() -> EGMCarry:
     )
 
 
-def test_continuation_payload_alias_has_one_engine_definition():
+def test_continuation_payload_alias_has_one_engine_definition() -> None:
     """The engine and solver contract import the same continuation alias."""
     assert engine.ContinuationPayload is contract.ContinuationPayload
 
 
-def test_solution_kernels_bundle_template_with_its_layout():
+def test_solution_kernels_bundle_template_with_its_layout() -> None:
     """A continuation template cannot be published without its interpretation."""
     layout = EGMContinuationLayout(
         retains_discrete_action_rows=False,
@@ -62,7 +62,7 @@ def test_solution_kernels_bundle_template_with_its_layout():
     assert cast("EGMContinuationSpec", kernels.continuation_spec).layout is layout
 
 
-def test_grid_search_declares_the_layout_of_engine_produced_carries():
+def test_grid_search_declares_the_layout_of_engine_produced_carries() -> None:
     """A brute-force child has shared-grid rows and no discrete-action rows."""
     assert GridSearch().egm_continuation_layout == EGMContinuationLayout(
         retains_discrete_action_rows=False,
@@ -70,10 +70,10 @@ def test_grid_search_declares_the_layout_of_engine_produced_carries():
     )
 
 
-def test_only_reachable_targets_of_continuation_readers_publish_carries():
+def test_only_reachable_targets_of_continuation_readers_publish_carries() -> None:
     """Unreachable and value-only targets do not receive an EGM carry artifact."""
     reachability = build_phase_reachability(
-        n_periods=2,
+        n_steps=2,
         active_periods_by_regime={
             "reader": (0,),
             "value_only": (0,),
@@ -102,14 +102,14 @@ def test_only_reachable_targets_of_continuation_readers_publish_carries():
     )
 
 
-def test_a_spec_accepts_a_template_that_carries_the_declared_key():
+def test_a_spec_accepts_a_template_that_carries_the_declared_key() -> None:
     """Template and declaration agreeing is what makes a spec constructible."""
     spec = ContinuationSpec(template=_template(), artifact_key=EGM_CONTINUATION)
 
     assert spec.artifact_key == EGM_CONTINUATION
 
 
-def test_a_template_carrying_another_key_than_the_declared_one_is_refused():
+def test_a_template_carrying_another_key_than_the_declared_one_is_refused() -> None:
     """Constructing the spec names the template's key and the declared one."""
     declared = ArtifactKey(type_id="example_solver.euler_residuals", schema_version=2)
 
@@ -121,7 +121,7 @@ def test_a_template_carrying_another_key_than_the_declared_one_is_refused():
     assert "example_solver.euler_residuals" in message
 
 
-def test_period_continuation_schema_uses_the_actual_producer_date():
+def test_period_continuation_schema_uses_the_actual_producer_date() -> None:
     """A terminal producer need not retain the nonterminal producer's operands."""
     first, terminal = _template(), _template()
     declarations = {1: first, 2: terminal}
@@ -137,7 +137,7 @@ def test_period_continuation_schema_uses_the_actual_producer_date():
         spec.template_at(period=0)
 
 
-def test_constant_continuation_schema_preserves_its_template():
+def test_constant_continuation_schema_preserves_its_template() -> None:
     """A producer with one schema shares that same object at every date."""
     template = _template()
     spec = ContinuationSpec(template=template, artifact_key=EGM_CONTINUATION)
@@ -145,7 +145,7 @@ def test_constant_continuation_schema_preserves_its_template():
     assert spec.template_at(period=2) is template
 
 
-def test_period_continuation_schema_requires_its_declared_artifact_key():
+def test_period_continuation_schema_requires_its_declared_artifact_key() -> None:
     """A dated payload cannot change the artifact's represented object."""
     declared = ArtifactKey(type_id="example_solver.participation", schema_version=1)
     with pytest.raises(ValueError, match="period 1"):

@@ -116,7 +116,7 @@ def borrowing_constraint(
     return consumption <= wealth
 
 
-WEALTH_GRID = LinSpacedGrid(start=1, stop=400, n_points=100)
+WEALTH_GRID = LinSpacedGrid(start=1, stop=400, n_points=100, off_grid="extrapolate")
 CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 
 # Laws of the `working_life` and `retirement` edges.

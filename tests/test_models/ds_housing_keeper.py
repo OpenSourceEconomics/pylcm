@@ -85,8 +85,10 @@ INCOME_PI = ((0.09, 0.91), (0.06, 0.94))
 # the value function curves hardest, reaching above the Euler grid's top so the
 # endogenous grid is not edge-clamped.
 BORROWING_LIMIT = 0.01
-LIQUID_ASSETS_GRID = LinSpacedGrid(start=BORROWING_LIMIT, stop=20.0, n_points=12)
-HOUSING_GRID = LinSpacedGrid(start=0.5, stop=4.0, n_points=4)
+LIQUID_ASSETS_GRID = LinSpacedGrid(
+    start=BORROWING_LIMIT, stop=20.0, n_points=12, off_grid="extrapolate"
+)
+HOUSING_GRID = LinSpacedGrid(start=0.5, stop=4.0, n_points=4, off_grid="extrapolate")
 CONSUMPTION_GRID = LinSpacedGrid(start=0.05, stop=25.0, n_points=60)
 SAVINGS_GRID = IrregSpacedGrid(
     points=np.array(tuple(BORROWING_LIMIT + 25.0 * (i / 79) ** 3 for i in range(80)))

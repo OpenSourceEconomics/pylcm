@@ -134,7 +134,7 @@ def test_a_sole_consumer_of_an_aligned_unretained_leaf_donates_it() -> None:
         program=_program(period=2),
         dispatch=(2, "alive"),
         ledger=_ledger(),
-        n_periods=_N_PERIODS,
+        n_steps=_N_PERIODS,
     )
 
     assert donations == (
@@ -164,7 +164,7 @@ def test_a_shared_retained_aliased_or_pinned_artifact_is_not_donated(
         program=_program(period=2),
         dispatch=(2, "alive"),
         ledger=ledger,
-        n_periods=_N_PERIODS,
+        n_steps=_N_PERIODS,
     )
 
     assert not any(donation.donated for donation in donations)
@@ -176,7 +176,7 @@ def test_a_transferred_copy_is_recorded_but_not_donated() -> None:
         program=_program(period=2, kind=ValueTransferKind.COPY_TO_SOURCE_LAYOUT),
         dispatch=(2, "alive"),
         ledger=_ledger(),
-        n_periods=_N_PERIODS,
+        n_steps=_N_PERIODS,
     )
 
     assert [(donation.buffer, donation.donated) for donation in donations] == [
@@ -194,7 +194,7 @@ def test_a_read_of_the_template_beyond_the_last_period_is_not_donated() -> None:
         program=_program(period=_N_PERIODS - 1),
         dispatch=(_N_PERIODS - 1, "alive"),
         ledger=ledger,
-        n_periods=_N_PERIODS,
+        n_steps=_N_PERIODS,
     )
 
     assert not any(donation.donated for donation in donations)
@@ -213,7 +213,7 @@ def test_a_candidate_no_read_addresses_is_not_donated() -> None:
             program=program,
             dispatch=(2, "alive"),
             ledger=_ledger(),
-            n_periods=_N_PERIODS,
+            n_steps=_N_PERIODS,
         )
         == ()
     )
@@ -227,7 +227,7 @@ def test_an_artifact_outside_the_plan_is_not_donated() -> None:
         program=_program(period=2),
         dispatch=(2, "alive"),
         ledger=ledger,
-        n_periods=_N_PERIODS,
+        n_steps=_N_PERIODS,
     )
 
     assert not any(donation.donated for donation in donations)

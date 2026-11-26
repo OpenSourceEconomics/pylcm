@@ -126,7 +126,7 @@ def create_model(
             n_points=wealth_n_points,
         )
         wealth_grid = IrregSpacedGrid(
-            points=np.array(tuple(lin_grid.to_jax().tolist()))
+            points=np.array(tuple(lin_grid.to_jax().tolist())), off_grid="extrapolate"
         )
     else:
         wealth_grid_cls = LogSpacedGrid if wealth_grid_type == "log" else LinSpacedGrid
@@ -134,6 +134,7 @@ def create_model(
             start=wealth_start,
             stop=wealth_stop,
             n_points=wealth_n_points,
+            off_grid="extrapolate",
         )
 
     income_grid = (

@@ -250,7 +250,7 @@ def test_time_varying_values_remain_differentiable_leaves() -> None:
     def total(values: FloatND) -> FloatND:
         aligned = align_time_varying(
             value=lcm.TimeVarying(values=values, periods=(1, 9, 0)),
-            ages=ModelTime(n_periods=3),
+            ages=ModelTime(n_steps=3),
             required_periods=(0, 1),
             name="wage",
         )

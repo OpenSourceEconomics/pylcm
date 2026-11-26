@@ -23,7 +23,7 @@ from _lcm.simulation.operand_placement import SubjectArgumentNames
 from _lcm.simulation.program_types import _PerSubjectFunction
 from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
 from _lcm.simulation.subject_groups import SubjectRows
-from _lcm.time import TimeAxis
+from _lcm.time import TimeAxis, step_count
 from _lcm.typing import (
     FlatParams,
     QualifiedName,
@@ -375,13 +375,13 @@ def _shock_declarations(
             declarations.append((regime_name, grid, simulation_periods, 0))
         local_grid = post_decision_shocks.get(regime_name, {}).get(name, grid)
         local_periods = tuple(
-            period + 1
-            for period in simulation_periods
-            if period < regime.simulation.reachability.n_periods - 1
+            step + 1
+            for step in simulation_periods
+            if step < regime.simulation.reachability.n_steps - 1
             and any(
                 f"next_{name}" in regime.simulation.transition_plans[target].lotteries
                 for target in regime.simulation.reachability.targets(
-                    period=period, source=regime_name
+                    period=step, source=regime_name
                 )
                 if target in regime.simulation.transition_plans
                 and name not in regimes[target].simulation.grids
@@ -460,9 +460,9 @@ def _subject_occupancy(
     """
     starts, on_grid = resolve_initial_periods(ages=ages, initial_ages=initial_ages)
     names = invert_regime_ids(regime_names_to_ids)
-    n_periods = ages.n_periods
+    n_steps = step_count(ages)
     occupancy = {
-        name: np.zeros((len(regime_ids), n_periods), dtype=bool) for name in regimes
+        name: np.zeros((len(regime_ids), n_steps), dtype=bool) for name in regimes
     }
     for start, regime_id in {
         (int(start), int(regime_id))
@@ -470,23 +470,23 @@ def _subject_occupancy(
     }:
         rows = on_grid & (starts == start) & (regime_ids == regime_id)
         current = {names[regime_id]} & set(regimes)
-        for period in range(start, n_periods):
+        for step in range(start, n_steps):
             for name in current:
-                occupancy[name][rows, period] = True
-            if period + 1 < n_periods:
+                occupancy[name][rows, step] = True
+            if step + 1 < n_steps:
                 actors = current | {
                     target
                     for source in current
-                    if (plan := regimes[source].simulation.exit_queries.get(period))
+                    if (plan := regimes[source].simulation.exit_queries.get(step))
                     is not None
                     for target in plan.final_actors
                 }
                 current = {
                     target
                     for source in actors
-                    if period in regimes[source].simulation.feasibility_pools_by_period
+                    if step in regimes[source].simulation.feasibility_pools_by_period
                     for target in regimes[source].simulation.reachability.targets(
-                        period=period, source=source
+                        period=step, source=source
                     )
                 }
     return occupancy

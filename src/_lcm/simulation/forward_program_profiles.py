@@ -44,7 +44,7 @@ from _lcm.simulation.shock_paths import supplied_shock_argument_names
 from _lcm.simulation.subject_groups import type_local_template
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.backward_induction import CompilationWave, _states_for_period
-from _lcm.time import TimeAxis
+from _lcm.time import TimeAxis, step_count
 from _lcm.typing import (
     FlatParams,
     PytreeValue,
@@ -189,7 +189,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
                 )
             }
         )
-        if period + 1 < ages.n_periods
+        if period + 1 < step_count(ages)
         else MappingProxyType({})
     )
     profiles: dict[str, ForwardProgramProfile] = {}

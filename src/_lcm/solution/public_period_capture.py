@@ -233,7 +233,7 @@ def capture_public_entry(
         "identity": context.identity,
         "regime": kernel_kwargs["regime_name"],
         "period": period,
-        "age": age_at(ages=kernel_kwargs["ages"], period=period),
+        "age": age_at(ages=kernel_kwargs["ages"], step=period),
         "layouts": plain_metadata(layouts),
         "widths": {
             name: dict(core.tile_widths) for name, core in compiled_cores.items()

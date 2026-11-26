@@ -133,7 +133,7 @@ class MockSolutionPhase:
 def _single_regime_reachability(*, n_periods: int) -> PhaseReachability:
     """The regime graph of a model whose only regime is `default`."""
     return PhaseReachability(
-        n_periods=n_periods,
+        n_steps=n_periods,
         active_regimes_by_period=tuple(
             frozenset({"default"}) for _period in range(n_periods)
         ),

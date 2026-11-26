@@ -102,7 +102,9 @@ def affordable(*, wealth: ContinuousState, consumption: ContinuousAction) -> Boo
     return consumption <= wealth
 
 
-_WEALTH = LinSpacedGrid(start=0, stop=N_WEALTH_POINTS - 1, n_points=N_WEALTH_POINTS)
+_WEALTH = LinSpacedGrid(
+    start=0, stop=N_WEALTH_POINTS - 1, n_points=N_WEALTH_POINTS, off_grid="extrapolate"
+)
 
 
 def get_model() -> Model:

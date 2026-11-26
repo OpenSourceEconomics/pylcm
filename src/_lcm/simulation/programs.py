@@ -457,29 +457,28 @@ def attach_gated_simulation_programs(
 ) -> dict[RegimeName, Regime]:
     """Attach the two planned gated families after every edge is resolved."""
     attached = dict(regimes)
-    n_periods = (
-        max(period for regime in regimes.values() for period in regime.active_periods)
-        + 1
+    n_steps = (
+        max(step for regime in regimes.values() for step in regime.active_periods) + 1
     )
     for name, regime in regimes.items():
         if not regime.gated_edges:
             continue
         fold = {}
         route = {}
-        for period in regime.active_periods:
-            if period + 1 >= n_periods:
+        for step in regime.active_periods:
+            if step + 1 >= n_steps:
                 continue
             folded_targets = tuple(
                 target
                 for target, edge in regime.gated_edges.items()
-                if period + 1 in edge.folds_by_period
+                if step + 1 in edge.folds_by_period
             )
             if not folded_targets:
                 continue
-            fold[period] = CoreProgram(
+            fold[step] = CoreProgram(
                 name=GATE_FOLD_PROGRAM,
                 function=_GateFoldBody(
-                    regime=regime, name=name, regimes=regimes, period=period
+                    regime=regime, name=name, regimes=regimes, period=step
                 ),
                 argument_builder=_ArgumentsBoundAtDispatch(
                     program_name=GATE_FOLD_PROGRAM
@@ -491,12 +490,12 @@ def attach_gated_simulation_programs(
                 disposition=CoreExecutionDisposition.PLANNED,
                 donation_candidates=(),
             )
-            route[period] = CoreProgram(
+            route[step] = CoreProgram(
                 name=GATE_ROUTE_PROGRAM,
                 function=_GateRouteBody(
                     regime=regime,
                     regime_names_to_ids=regime_names_to_ids,
-                    fold_period=period + 1,
+                    fold_period=step + 1,
                 ),
                 argument_builder=_ArgumentsBoundAtDispatch(
                     program_name=GATE_ROUTE_PROGRAM,
@@ -564,7 +563,7 @@ PROFILED_POLICY_ROUTES = frozenset({"nnbegm_finite", "egm_off_grid", "nbegm_grid
 
 
 def budgeted_simulation_programs_ready(
-    *, regimes: Mapping[RegimeName, Regime], n_periods: int, enable_jit: bool
+    *, regimes: Mapping[RegimeName, Regime], n_steps: int, enable_jit: bool
 ) -> bool:
     """Return whether budgeted simulation can profile every forward unit it runs.
 
@@ -575,31 +574,29 @@ def budgeted_simulation_programs_ready(
     simulation loop both ask this one question.
     """
     return enable_jit and all(
-        gated_simulation_programs_ready(
-            regime=regime, period=period, n_periods=n_periods
-        )
+        gated_simulation_programs_ready(regime=regime, period=step, n_steps=n_steps)
         and not (
             regime.simulation.replay_route.policy_applicable
             and regime.simulation.replay_route.consumer_route
             not in PROFILED_POLICY_ROUTES
         )
         and regime.simulation.external_replay_route is None
-        for period, active in enumerate(
-            forward_regimes_by_period(regimes=regimes, n_periods=n_periods)
+        for step, active in enumerate(
+            forward_regimes_by_period(regimes=regimes, n_steps=n_steps)
         )
         for regime in active.values()
     )
 
 
 def gated_simulation_programs_ready(
-    *, regime: Regime, period: int, n_periods: int
+    *, regime: Regime, period: int, n_steps: int
 ) -> bool:
     """Return whether a forward unit's gate stages have planned programs.
 
     The unit owes a fold and a route program exactly when a gated edge folds at
     the next period. Otherwise its required gate domain is empty and satisfied.
     """
-    if period + 1 >= n_periods or not any(
+    if period + 1 >= n_steps or not any(
         period + 1 in edge.folds_by_period for edge in regime.gated_edges.values()
     ):
         return True
@@ -612,7 +609,7 @@ def gated_simulation_programs_ready(
 
 
 def forward_regimes_by_period(
-    *, regimes: Mapping[RegimeName, Regime], n_periods: int
+    *, regimes: Mapping[RegimeName, Regime], n_steps: int
 ) -> tuple[MappingProxyType[RegimeName, Regime], ...]:
     """Return, per period, the regimes whose forward programs simulation runs.
 
@@ -632,11 +629,11 @@ def forward_regimes_by_period(
             active={
                 name: regime
                 for name, regime in regimes.items()
-                if period in regime.simulation.programs.decision
+                if step in regime.simulation.programs.decision
             },
             regimes=regimes,
         )
-        for period in range(n_periods)
+        for step in range(n_steps)
     )
 
 
@@ -844,7 +841,7 @@ def _decision_value_reads(
     """Declare every stored value leaf one period's decision reads."""
     target_regimes = (
         ()
-        if period == context.solution_reachability.n_periods - 1
+        if period == context.solution_reachability.n_steps - 1
         else context.solution_reachability.targets(
             period=period, source=context.regime_name
         )

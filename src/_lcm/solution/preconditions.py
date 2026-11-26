@@ -165,7 +165,7 @@ def _check_one_regimes_weights(
             **mesh,
             **regime_params,
             "period": jnp.int32(period),
-            "age": jnp.asarray(coordinate_at(ages=ages, period=period)),
+            "age": jnp.asarray(coordinate_at(ages=ages, step=period)),
         }
         declared = weights.declared(
             **{name: supplied[name] for name in weights.arg_names}

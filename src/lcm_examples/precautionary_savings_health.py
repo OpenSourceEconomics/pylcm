@@ -109,8 +109,10 @@ def borrowing_constraint(
 
 working_life = Regime(
     states={
-        "wealth": LinSpacedGrid(start=1, stop=100, n_points=100),
-        "health": LinSpacedGrid(start=0, stop=1, n_points=100),
+        "wealth": LinSpacedGrid(
+            start=1, stop=100, n_points=100, off_grid="extrapolate"
+        ),
+        "health": LinSpacedGrid(start=0, stop=1, n_points=100, off_grid="extrapolate"),
     },
     state_transitions={
         "wealth": next_wealth,
@@ -140,8 +142,10 @@ working_life = Regime(
 
 retirement = Regime(
     states={
-        "wealth": LinSpacedGrid(start=1, stop=100, n_points=100),
-        "health": LinSpacedGrid(start=0, stop=1, n_points=100),
+        "wealth": LinSpacedGrid(
+            start=1, stop=100, n_points=100, off_grid="extrapolate"
+        ),
+        "health": LinSpacedGrid(start=0, stop=1, n_points=100, off_grid="extrapolate"),
     },
     functions={"utility": utility_retirement},
 )

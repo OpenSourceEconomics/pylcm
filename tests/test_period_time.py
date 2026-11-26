@@ -589,7 +589,7 @@ def test_age_callback_coordinates_preserve_age_grid_scalars(
     )
     axis = ModelTime.from_inputs(ages=ages, n_periods=None) if wrapped else ages
     for period in range(ages.n_periods):
-        actual = coordinate_at(ages=axis, period=period)
+        actual = coordinate_at(ages=axis, step=period)
         expected = ages.period_to_age(period)
         assert actual == expected
         assert type(actual) is type(expected)

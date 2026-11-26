@@ -152,7 +152,9 @@ def build_model(
     )
     housing_class = _make_housing_levels(n_housing=n_housing)
     housing_grid = DiscreteGrid(category_class=housing_class)
-    liquid_grid = LinSpacedGrid(start=0.0, stop=liquid_max, n_points=n_grid)
+    liquid_grid = LinSpacedGrid(
+        start=0.0, stop=liquid_max, n_points=n_grid, off_grid="extrapolate"
+    )
     consumption_grid = LinSpacedGrid(
         start=0.05, stop=liquid_max, n_points=n_consumption
     )

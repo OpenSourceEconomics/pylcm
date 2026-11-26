@@ -58,7 +58,7 @@ class PhaseReachability:
     deferred Boolean; there is deliberately no runtime `resolve` method.
     """
 
-    n_periods: int
+    n_steps: int
     active_regimes_by_period: tuple[frozenset[RegimeName], ...]
     candidate_targets_by_source: MappingProxyType[RegimeName, tuple[RegimeName, ...]]
     targets_by_period: tuple[MappingProxyType[RegimeName, tuple[RegimeName, ...]], ...]
@@ -67,7 +67,7 @@ class PhaseReachability:
         """Return a structural hash independent of mapping insertion order."""
         return hash(
             (
-                self.n_periods,
+                self.n_steps,
                 self.active_regimes_by_period,
                 tuple(sorted(self.candidate_targets_by_source.items())),
                 tuple(
@@ -79,7 +79,7 @@ class PhaseReachability:
 
     def targets(self, *, period: int, source: RegimeName) -> tuple[RegimeName, ...]:
         """Return retained targets for the edge from `period` to `period + 1`."""
-        if not 0 <= period < self.n_periods - 1:
+        if not 0 <= period < self.n_steps - 1:
             raise IndexError(period)
         return self.targets_by_period[period].get(source, ())
 
@@ -97,7 +97,7 @@ class PhaseReachability:
 
         A retained edge is `CONDITIONAL`; every other pair is `FALSE`.
         """
-        if not 0 <= period < self.n_periods - 1:
+        if not 0 <= period < self.n_steps - 1:
             raise IndexError(period)
         if target in self.targets_by_period[period].get(source, ()):
             return EdgeStatus.CONDITIONAL
@@ -108,9 +108,9 @@ class PhaseReachability:
     ) -> tuple[int, ...]:
         """Return all source periods in which the edge is retained."""
         return tuple(
-            period
-            for period in range(self.n_periods - 1)
-            if self.has_edge(period=period, source=source, target=target)
+            step
+            for step in range(self.n_steps - 1)
+            if self.has_edge(period=step, source=source, target=target)
         )
 
     def union_targets(self, *, source: RegimeName) -> tuple[RegimeName, ...]:
@@ -119,8 +119,8 @@ class PhaseReachability:
             sorted(
                 {
                     target
-                    for period in range(self.n_periods - 1)
-                    for target in self.targets(period=period, source=source)
+                    for step in range(self.n_steps - 1)
+                    for target in self.targets(period=step, source=source)
                 }
             )
         )
@@ -176,7 +176,7 @@ def candidate_targets_from_transition[Cell](
 
 def build_phase_reachability(
     *,
-    n_periods: int,
+    n_steps: int,
     active_periods_by_regime: Mapping[RegimeName, Collection[int]],
     support_by_period: Mapping[RegimeName, Mapping[int, Collection[RegimeName]]],
     terminal_regimes: Collection[RegimeName] = (),
@@ -189,13 +189,12 @@ def build_phase_reachability(
     in, its next occurrence on the clock `ages`; the graph never drops a
     declared target.
     """
-    if n_periods < 1:
-        raise ValueError("n_periods must be positive")
+    if n_steps < 1:
+        raise ValueError("n_steps must be positive")
 
     regimes = frozenset(active_periods_by_regime)
     active = {
-        regime: frozenset(periods)
-        for regime, periods in active_periods_by_regime.items()
+        regime: frozenset(steps) for regime, steps in active_periods_by_regime.items()
     }
     unknown_sources = frozenset(support_by_period) - regimes
     unknown_targets = {
@@ -211,14 +210,14 @@ def build_phase_reachability(
             f"sources={sorted(unknown_sources)}, targets={sorted(unknown_targets)}"
         )
     uncovered = sorted(
-        (source, period, target)
+        (source, step, target)
         for source, by_period in support_by_period.items()
-        for period, targets in by_period.items()
+        for step, targets in by_period.items()
         for target in targets
         if (
-            period + 1
+            step + 1
             if ages is None
-            else landing_step(ages=ages, step=period, target=target)
+            else landing_step(ages=ages, step=step, target=target)
         )
         not in active[target]
     )
@@ -238,18 +237,18 @@ def build_phase_reachability(
         }
     )
     active_by_period = tuple(
-        frozenset(regime for regime, periods in active.items() if period in periods)
-        for period in range(n_periods)
+        frozenset(regime for regime, steps in active.items() if step in steps)
+        for step in range(n_steps)
     )
 
     target_maps: list[MappingProxyType[RegimeName, tuple[RegimeName, ...]]] = []
-    for period in range(n_periods - 1):
+    for step in range(n_steps - 1):
         period_targets: dict[RegimeName, tuple[RegimeName, ...]] = {}
         for source in sorted(regimes):
             declared = (
                 ()
-                if source in terminal or period not in active[source]
-                else tuple(support_by_period.get(source, {}).get(period, ()))
+                if source in terminal or step not in active[source]
+                else tuple(support_by_period.get(source, {}).get(step, ()))
             )
             retained = tuple(
                 target for target in candidates.get(source, ()) if target in declared
@@ -259,7 +258,7 @@ def build_phase_reachability(
         target_maps.append(MappingProxyType(period_targets))
 
     return PhaseReachability(
-        n_periods=n_periods,
+        n_steps=n_steps,
         active_regimes_by_period=active_by_period,
         candidate_targets_by_source=candidates,
         targets_by_period=tuple(target_maps),
@@ -268,7 +267,7 @@ def build_phase_reachability(
 
 def build_model_reachability(
     *,
-    n_periods: int,
+    n_steps: int,
     active_periods_by_regime: Mapping[RegimeName, Collection[int]],
     support_by_phase: Mapping[
         str, Mapping[RegimeName, Mapping[int, Collection[RegimeName]]]
@@ -286,14 +285,14 @@ def build_model_reachability(
     """
     return ModelReachability(
         solution=build_phase_reachability(
-            n_periods=n_periods,
+            n_steps=n_steps,
             active_periods_by_regime=active_periods_by_regime,
             support_by_period=support_by_phase["solution"],
             terminal_regimes=terminal_regimes,
             ages=ages,
         ),
         simulation=build_phase_reachability(
-            n_periods=n_periods,
+            n_steps=n_steps,
             active_periods_by_regime=(
                 active_periods_by_regime
                 if visited_periods_by_regime is None

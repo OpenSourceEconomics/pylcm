@@ -137,7 +137,9 @@ def build_model(
 
     """
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    liquid_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_liquid)
+    liquid_grid = LinSpacedGrid(
+        start=0.1, stop=liquid_max, n_points=n_liquid, off_grid="extrapolate"
+    )
     consumption_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_consumption)
     kind_grid = DiscreteGrid(category_class=ConsumerKind)
 

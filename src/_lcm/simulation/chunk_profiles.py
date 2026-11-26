@@ -112,7 +112,7 @@ from _lcm.solution.backward_induction import (
     CompilationWave,
     _resolve_compilation_workers,
 )
-from _lcm.time import TimeAxis
+from _lcm.time import TimeAxis, step_count
 from _lcm.transition_checks import (
     regime_probability_flags,
     regime_probability_inactive_indices,
@@ -254,7 +254,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
         inventory=inventory, initial=initial, regimes=regimes
     )
     forward_regimes = forward_regimes_by_period(
-        regimes=regimes, n_periods=ages.n_periods
+        regimes=regimes, n_steps=step_count(ages)
     )
     logger = get_logger(log_level=log_level, runtime_checks=runtime_checks)
     with CompilationWave(
@@ -266,16 +266,16 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
         compiled={},
         compile_phase="simulation_compilation",
     ) as wave:
-        for period in range(ages.n_periods):
-            for name, regime in forward_regimes[period].items():
-                if period in regime.simulation.exit_queries:
+        for step in range(step_count(ages)):
+            for name, regime in forward_regimes[step].items():
+                if step in regime.simulation.exit_queries:
                     continue
                 profile_forward_unit(
                     runtime=runtime,
                     regimes=regimes,
                     regime=regime,
                     name=name,
-                    period=period,
+                    period=step,
                     flat_params=flat_params,
                     base=base_spaces[name],
                     base_spaces=base_spaces,
@@ -286,7 +286,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     columns=carrier[name],
                     ordinary_key=key,
                     taste_key=taste_key,
-                    policy=(policies or {}).get(period, {}).get(name),
+                    policy=(policies or {}).get(step, {}).get(name),
                     wave=wave,
                     current_iid_override_schema=current_iid_override_schema,
                 )
@@ -310,7 +310,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
     published: dict[jax.Device, int] = {}
     records: list[ShapeDtypePytree] = []
     maximum_period: dict[jax.Device, int] = {}
-    for period in range(ages.n_periods):
+    for step in range(step_count(ages)):
         period_values: list[jax.ShapeDtypeStruct] = []
         period_masks: list[jax.ShapeDtypeStruct] = []
         inventory.operation(
@@ -348,7 +348,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
         carrier, regime_ids, own_roles, prepared_exits = profile_exit_period(
             inventory=inventory,
             regimes=regimes,
-            period=period,
+            period=step,
             states=carrier,
             regime_ids=regime_ids,
             roles=own_roles,
@@ -377,13 +377,13 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
         )
         inventory.close_unit()
         new_ids = regime_ids
-        for name, regime in forward_regimes[period].items():
+        for name, regime in forward_regimes[step].items():
             cores = profile_forward_unit(
                 runtime=runtime,
                 regimes=regimes,
                 regime=regime,
                 name=name,
-                period=period,
+                period=step,
                 flat_params=flat_params,
                 base=base_spaces[name],
                 base_spaces=base_spaces,
@@ -394,7 +394,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                 columns=carrier[name],
                 ordinary_key=key,
                 taste_key=taste_key,
-                policy=(policies or {}).get(period, {}).get(name),
+                policy=(policies or {}).get(step, {}).get(name),
                 current_iid_override_schema=current_iid_override_schema,
                 prepared_decision=prepared_exits.get(name),
             )
@@ -564,7 +564,7 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
                     inventory=inventory,
                     regime=regime,
                     name=name,
-                    period=period,
+                    period=step,
                     cores=cores,
                     carrier=carrier,
                     mask=cast("jax.ShapeDtypeStruct", mask),
@@ -613,10 +613,10 @@ def profile_simulation_chunk(  # noqa: C901, PLR0912, PLR0915
         add_bytes(
             target=pending,
             source=_period_copy_reservation(
-                regimes=forward_regimes[period],
+                regimes=forward_regimes[step],
                 values=values,
                 policies=policies,
-                period=period,
+                period=step,
                 devices=devices,
             ),
         )

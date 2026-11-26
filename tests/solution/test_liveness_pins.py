@@ -375,7 +375,7 @@ def test_the_last_period_pins_nothing(*, declares_no_reads: bool) -> None:
     model = _egm_model(solver=EGM(savings_grid=_SAVINGS_GRID))
     regimes = model._regimes
     name, regime = next(iter(regimes.items()))
-    last = regime.solution.reachability.n_periods - 1
+    last = regime.solution.reachability.n_steps - 1
 
     assert (
         undeclared_read_pins(

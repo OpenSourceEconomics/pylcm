@@ -264,7 +264,7 @@ def _observable_route() -> tuple[
             ),
             value_reads=_value_reads(
                 regime_name="source",
-                ages=ModelTime(n_periods=2),
+                ages=ModelTime(n_steps=2),
                 period=0,
                 target_regimes=("target",),
                 edge_reference_regimes=("outside",),

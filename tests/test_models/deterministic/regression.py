@@ -62,7 +62,9 @@ def next_regime(*, age: float, final_age_alive: float) -> ScalarInt:
 
 
 START_AGE = 18
-DEFAULT_WEALTH_GRID = LinSpacedGrid(start=1, stop=400, n_points=100)
+DEFAULT_WEALTH_GRID = LinSpacedGrid(
+    start=1, stop=400, n_points=100, off_grid="extrapolate"
+)
 DEFAULT_CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 
 

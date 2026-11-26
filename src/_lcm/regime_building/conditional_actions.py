@@ -266,9 +266,9 @@ def bind_specialized_annotations(
         resolved = tuple(
             _resolved(
                 readers=readers,
-                coordinate=specialization_coordinate_at(ages=ages, period=periods[0]),
+                coordinate=specialization_coordinate_at(ages=ages, step=periods[0]),
                 simulated_coordinate=specialization_coordinate_at(
-                    ages=ages, period=visited[0]
+                    ages=ages, step=visited[0]
                 ),
             )
         )

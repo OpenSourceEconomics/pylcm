@@ -38,7 +38,7 @@ def _kernel(
     requirements = CoreExecutionRequirements(
         value_reads=_value_reads(
             regime_name="source",
-            ages=ModelTime(n_periods=5),
+            ages=ModelTime(n_steps=5),
             period=3,
             target_regimes=target_regimes,
             edge_target_regimes=edge_target_regimes,

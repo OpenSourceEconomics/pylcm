@@ -638,7 +638,7 @@ def _decide(
             ledger=_synthetic_ledger(
                 labels=frozenset(entry[2] for entry in occurrences)
             ),
-            n_periods=_N_SOLVE_PERIODS,
+            n_steps=_N_SOLVE_PERIODS,
         ),
         unit_readers=readers_by_dispatch[(_PERIOD, _REGIME)],
     )

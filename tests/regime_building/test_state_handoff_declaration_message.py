@@ -10,7 +10,7 @@ Only the model's state slot establishes the model-level origin: a model action
 of the same name, masked on the target, leaves a regime-local state local.
 """
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 import jax.numpy as jnp
 import pytest
@@ -229,7 +229,11 @@ def _provenance_terminal_utility() -> FloatND:
 
 
 def _build_provenance_model(
-    *, carried: bool, action_name: ActionName, duplicate_state: bool = False
+    *,
+    carried: bool,
+    action_name: ActionName,
+    duplicate_state: bool = False,
+    stages: Mapping[str, Sequence[str]] | None = None,
 ) -> Model:
     """Reach a target-local state 'x' from a source that has no state 'x'.
 
@@ -237,7 +241,8 @@ def _build_provenance_model(
     `None`, and no states unless `duplicate_state` repeats the target's
     declaration at the model level. With `carried`, 'x' exists only in the
     simulation phase, so the target is nonterminal and has its own outgoing
-    law; that law does not supply the missing incoming handoff.
+    law; that law does not supply the missing incoming handoff. With `stages`,
+    'target' is reached later in period 0 and leaves for 'terminal' at once.
     """
     grid = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
     declaration = (
@@ -265,9 +270,10 @@ def _build_provenance_model(
         ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
         regime_id_class=ProvenanceRegimeId,
         initial_nodes={0: "source"},
-        edges={"source": {"target": 0}, "target": {"terminal": 1}},
+        edges={"source": {"target": 0}, "target": {"terminal": 0 if stages else 1}},
         actions={action_name: grid},
         states={"x": declaration} if duplicate_state else {},
+        stages=stages,
     )
 
 
@@ -317,3 +323,16 @@ def test_state_declared_on_both_model_and_regime_is_refused_before_handoff(
         _build_provenance_model(
             carried=carried, action_name="choice", duplicate_state=True
         )
+
+
+def test_handoff_error_in_a_staged_model_names_the_period_of_each_end() -> None:
+    """Both ends of a refused edge within one period are named by that period."""
+    with pytest.raises(ModelInitializationError) as captured:
+        _build_provenance_model(
+            carried=False,
+            action_name="choice",
+            stages={"move": ("source",), "settle": ("target", "terminal")},
+        )
+    assert "period 0 (age 0.0), source 'source' -> period 0 (age 0.0)" in str(
+        captured.value
+    )

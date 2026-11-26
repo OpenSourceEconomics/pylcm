@@ -65,8 +65,12 @@ class DissolutionRegimeId:
 
 _DISCOUNT_FACTOR = 0.95
 
-_SHARED_WAGE_GRID = LinSpacedGrid(start=8.0, stop=40.0, n_points=2)
-_DISSOLUTION_WAGE_GRID = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)
+_SHARED_WAGE_GRID = LinSpacedGrid(
+    start=8.0, stop=40.0, n_points=2, off_grid="extrapolate"
+)
+_DISSOLUTION_WAGE_GRID = LinSpacedGrid(
+    start=1.0, stop=3.0, n_points=3, off_grid="extrapolate"
+)
 _MIDDLE_WAGE_LOWER = 1.5
 _MIDDLE_WAGE_UPPER = 2.5
 _EFFORT_COST = 0.25

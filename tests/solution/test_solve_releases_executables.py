@@ -267,14 +267,14 @@ def test_multiperiod_value_only_solve_does_not_collect(
 ) -> None:
     """Rolling ordinary value functions requires no continuation collection."""
     model, params, _ = _small_grid_search_inputs()
-    assert model._time.n_periods > 1
+    assert model._time.n_steps > 1
     assert all(
         regime.solution.continuation_spec is None for regime in model._regimes.values()
     )
     events = _observe_collection(monkeypatch)
     for _ in range(2):
         result = model.solve(params=params, runtime_checks=False, log_level="off")
-        assert len(result.values) == model._time.n_periods
+        assert len(result.values) == model._time.n_steps
         assert not result.retained_continuations
         del result
     assert events == []

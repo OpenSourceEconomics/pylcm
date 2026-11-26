@@ -625,7 +625,7 @@ MODEL_EDGES = {
 
 WORKING_REGIME = Regime(
     states={
-        "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
+        "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS, off_grid="extrapolate"),
         "health": DiscreteGrid(category_class=Health),
         "productivity_shock": prod_shock_grid,
         "lagged_effort": DiscreteGrid(category_class=Effort),
@@ -678,7 +678,7 @@ WORKING_REGIME = Regime(
 
 RETIREMENT_REGIME = Regime(
     states={
-        "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
+        "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS, off_grid="extrapolate"),
         "health": DiscreteGrid(category_class=Health),
         "lagged_effort": DiscreteGrid(category_class=Effort),
         "adjustment_cost": UniformIIDProcess(n_points=5, start=0, stop=1),

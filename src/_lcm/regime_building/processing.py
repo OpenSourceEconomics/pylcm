@@ -268,7 +268,13 @@ from _lcm.solution.shipped_solvers import (
     fail_if_solver_is_not_shipped,
 )
 from _lcm.state_action_space import create_state_action_space
-from _lcm.time import TimeAxis, coordinate_at, coordinate_kind
+from _lcm.time import (
+    TimeAxis,
+    coordinate_at,
+    coordinate_kind,
+    period_of_step,
+    step_count,
+)
 from _lcm.transition_plans import (
     InterpolationBasisInfo,
     LotteryIndexCoordinate,
@@ -526,7 +532,7 @@ def prepare_model_structure(
     phased_specs = age_normalization.phased_specs
     try:
         reachability = build_model_reachability(
-            n_periods=ages.n_periods,
+            n_steps=step_count(ages),
             active_periods_by_regime=active_periods_by_regime,
             support_by_phase=support_by_phase,
             terminal_regimes={name for name, law in laws.items() if law.terminal},
@@ -543,8 +549,8 @@ def prepare_model_structure(
         else MappingProxyType(dict(value_periods_by_regime)),
         query_periods_by_phase=MappingProxyType(
             {
-                phase: MappingProxyType(dict(periods))
-                for phase, periods in query_periods_by_phase.items()
+                phase: MappingProxyType(dict(steps))
+                for phase, steps in query_periods_by_phase.items()
             }
         ),
         representative_user_regimes=age_normalization.representative_user_regimes,
@@ -2673,7 +2679,7 @@ def _gated_continuation_specs(
         edge.
     """
     target_ages = jnp.asarray(
-        [coordinate_at(ages=ages, period=period) for period in range(ages.n_periods)],
+        [coordinate_at(ages=ages, step=step) for step in range(step_count(ages))],
         dtype=float,
     )
     return MappingProxyType(
@@ -3725,10 +3731,10 @@ def _state_handoff_errors(
         regime_name: getattr(spec, phase_name) for regime_name, spec in specs.items()
     }
     error_messages: list[str] = []
-    for period in range(phase_reachability.n_periods - 1):
-        for source in sorted(phase_reachability.active_regimes_by_period[period]):
+    for step in range(phase_reachability.n_steps - 1):
+        for source in sorted(phase_reachability.active_regimes_by_period[step]):
             source_slice = phase_slices[source]
-            for target in phase_reachability.targets(period=period, source=source):
+            for target in phase_reachability.targets(period=step, source=source):
                 target_slice = phase_slices[target]
                 for state_name, target_grid in target_slice.grid_states.items():
                     # A value reaching a process the source does not hold
@@ -3754,7 +3760,7 @@ def _state_handoff_errors(
                             phase_name=phase_name,
                             phase_reachability=phase_reachability,
                             ages=ages,
-                            period=period,
+                            period=step,
                             source=source,
                             target=target,
                             state_name=state_name,
@@ -3798,7 +3804,7 @@ def _state_handoff_errors(
                     ):
                         continue
                     status = phase_reachability.edge_status(
-                        period=period,
+                        period=step,
                         source=source,
                         target=target,
                     )
@@ -3827,11 +3833,12 @@ def _state_handoff_errors(
                             "transition's static target support."
                         )
                     error_messages.append(
-                        f"{phase_name} phase, period {period} "
-                        f"(age {_display_age(ages=ages, period=period)}), "
+                        f"{phase_name} phase, "
+                        f"period {period_of_step(ages=ages, step=step)} "
+                        f"(age {_display_age(ages=ages, period=step)}), "
                         f"source '{source}' -> "
-                        f"period {period + 1} "
-                        f"(age {_display_age(ages=ages, period=period + 1)}), "
+                        f"period {period_of_step(ages=ages, step=step + 1)} "
+                        f"(age {_display_age(ages=ages, period=step + 1)}), "
                         f"target '{target}' retains a {status.name} edge. "
                         f"'{target}' carries {state_kind} '{state_name}' from "
                         f"{declaration}, but the "
@@ -4119,22 +4126,22 @@ def _fail_if_a_continuation_demand_is_unmet(
         readers = source_regime.solution.continuation_reader_capabilities
         if readers is not None:
             reached_periods = tuple(
-                period
-                for period in source_regime.active_periods
-                if period < source_regime.solution.reachability.n_periods - 1
+                step
+                for step in source_regime.active_periods
+                if step < source_regime.solution.reachability.n_steps - 1
                 and target
                 in source_regime.solution.reachability.targets(
-                    period=period, source=source
+                    period=step, source=source
                 )
             )
             installed_missing = tuple(
                 sorted(
                     {
                         capability
-                        for period in reached_periods
+                        for step in reached_periods
                         for capability in _missing_capabilities(
                             demanded=demanded,
-                            offered=readers.get(period, {}).get(
+                            offered=readers.get(step, {}).get(
                                 target, template.capabilities
                             ),
                         )
@@ -4683,7 +4690,7 @@ def _prepare_numerical_solution_phase(
         # the utilities on a trailing member axis.
         Q_and_F_functions = MappingProxyType(
             dict.fromkeys(
-                range(ages.n_periods),
+                range(step_count(ages)),
                 get_Q_and_F_terminal_collective(
                     bound_specs=tuple(
                         bound for bound in post_decision_bounds if bound.kind == "dag"
@@ -4786,10 +4793,10 @@ def _prepare_numerical_solution_phase(
                         (
                             user_regimes
                             if period_regimes is None
-                            else period_regimes.by_period.get(period, user_regimes)
+                            else period_regimes.by_period.get(step, user_regimes)
                         )[regime_name].exit
                         is not None
-                        for period in regimes_to_active_periods[regime_name]
+                        for step in regimes_to_active_periods[regime_name]
                     ),
                 ),
             ),
@@ -4855,12 +4862,12 @@ def _prepare_numerical_solution_phase(
     context = SolverBuildContext(
         current_iid_plans=MappingProxyType(
             {
-                period: CurrentIIDPlan.create(
+                step: CurrentIIDPlan.create(
                     bindings=current_iid_bindings,
-                    age=ages.exact_values[period],
+                    age=ages.exact_values[step],
                     coordinate_kind=coordinate_kind(ages),
                 )
-                for period in Q_and_F_functions
+                for step in Q_and_F_functions
             }
         )
         if current_iid_bindings
@@ -6035,7 +6042,7 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         realized_validation_probs = None
         Q_and_F_functions = MappingProxyType(
             dict.fromkeys(
-                range(ages.n_periods),
+                range(step_count(ages)),
                 get_Q_and_F_terminal_collective(
                     bound_specs=tuple(
                         bound for bound in post_decision_bounds if bound.kind == "dag"
@@ -6167,9 +6174,9 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
                 current_shock_names=_current_shock_names(
                     current_iid_bindings=current_iid_bindings,
                     has_exit=any(
-                        solver_context.user_regimes_at(period=period)[regime_name].exit
+                        solver_context.user_regimes_at(period=step)[regime_name].exit
                         is not None
-                        for period in regimes_to_active_periods[regime_name]
+                        for step in regimes_to_active_periods[regime_name]
                     ),
                 ),
             ),
@@ -6208,9 +6215,9 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
     # Terminal builders span the horizon; query contexts retain only actual demand.
     Q_and_F_functions = MappingProxyType(
         {
-            period: function
-            for period, function in Q_and_F_functions.items()
-            if period in context_periods
+            step: function
+            for step, function in Q_and_F_functions.items()
+            if step in context_periods
         }
     )
     per_subject_decisions = _build_per_subject_decisions_per_period(
@@ -6624,15 +6631,15 @@ def _build_simulation_phase(  # noqa: C901, PLR0912, PLR0915
         # names exactly the regimes that period's readers interpolate.
         edge_reference_regimes_by_period=MappingProxyType(
             {
-                period: _edge_reference_regimes(
+                step: _edge_reference_regimes(
                     law=law,
                     targets=tuple(
                         target
                         for target, schedule in gated_continuations.items()
-                        if period + 1 in schedule.by_period
+                        if step + 1 in schedule.by_period
                     ),
                 )
-                for period, func in per_subject_decisions.items()
+                for step, func in per_subject_decisions.items()
                 if EDGE_REF_V_ARG in get_union_of_args([func])
             }
         ),
@@ -10334,7 +10341,7 @@ def _build_next_state_vmapped(
         key=lambda period: (
             (
                 ()
-                if period == phase_reachability.n_periods - 1
+                if period == phase_reachability.n_steps - 1
                 else phase_reachability.targets(
                     period=period, source=source_regime_name
                 )

@@ -27,7 +27,7 @@ from _lcm.beartype_conf import REGIME_CONF
 from _lcm.dtypes import as_canonical_float, name_of
 from _lcm.grids.continuous import ContinuousGrid
 from _lcm.identity_transition import _IdentityTransition
-from _lcm.time import ModelTime, TimeAxis, coordinate_kind
+from _lcm.time import ModelTime, TimeAxis, coordinate_kind, step_count
 from _lcm.typing import EconFunctionArg, PytreeValue, StateName
 from lcm.collective import Gate
 from lcm.exceptions import RegimeInitializationError
@@ -961,8 +961,8 @@ class ByAge:
                 ages=ages,
                 law_by_period=MappingProxyType(
                     {
-                        period * ages.n_stages + stage: law
-                        for period, law in by_period.items()
+                        step * ages.n_stages + stage: law
+                        for step, law in by_period.items()
                         for stage in range(ages.n_stages)
                     }
                 ),
@@ -975,23 +975,23 @@ class ByAge:
         else:
             law_by_period = {}
             for selector, law in self._cases:
-                periods = _select_periods(
+                steps = _select_periods(
                     selector=selector, ages=ages, period_by_age=period_by_age
                 )
-                if not periods:
+                if not steps:
                     raise RegimeInitializationError(
                         f"`ByAge` selector {selector!r} selects no age of the model."
                     )
-                overlap = sorted(set(periods) & set(law_by_period))
+                overlap = sorted(set(steps) & set(law_by_period))
                 if overlap:
                     raise RegimeInitializationError(
                         f"`ByAge` selector {selector!r} overlaps another case at "
                         f"age(s) {[ages.exact_values[p] for p in overlap]}."
                     )
-                law_by_period.update(dict.fromkeys(periods, law))
+                law_by_period.update(dict.fromkeys(steps, law))
             if self._default is not None:
-                for period in range(ages.n_periods):
-                    law_by_period.setdefault(period, self._default)
+                for step in range(step_count(ages)):
+                    law_by_period.setdefault(step, self._default)
         return ResolvedSchedule(
             ages=ages,
             law_by_period=MappingProxyType(dict(sorted(law_by_period.items()))),

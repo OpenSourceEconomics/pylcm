@@ -41,6 +41,7 @@ from _lcm.time import (
     coordinate_kind,
     stage_position,
     stages_per_period,
+    step_count,
 )
 from _lcm.user_regime_validation import (
     fail_if_a_joint_target_is_unreachable,
@@ -756,7 +757,7 @@ def _derived_target_ages(
     """
     law = cast("CaseLaw | ByAge", transition.law)
     sides = (law.solve, law.simulate) if isinstance(law, Phased) else (law,)
-    non_final = range(stage, ages.n_periods - 1, stages_per_period(ages))
+    non_final = range(stage, step_count(ages) - 1, stages_per_period(ages))
     selected: dict[RegimeName, set[UserAge]] = {}
     for side in sides:
         by_period = (
@@ -764,14 +765,14 @@ def _derived_target_ages(
             if isinstance(side, ByAge)
             else dict.fromkeys(non_final, side)
         )
-        for period, case in by_period.items():
-            if period not in non_final:
+        for step, case in by_period.items():
+            if step not in non_final:
                 continue
             names = _case_targets(cast("CaseLaw", case))
             if names is None:
                 return None
             for name in names:
-                selected.setdefault(name, set()).add(ages.exact_values[period])
+                selected.setdefault(name, set()).add(ages.exact_values[step])
     for target, gate in transition.gates.items():
         for route in gate.routes.values():
             for fallback in {
@@ -1153,12 +1154,12 @@ def bind_graph_support(
         kernels = (
             transition.resolve(ages=ages).law_by_period
             if isinstance(transition, ByAge)
-            else dict.fromkeys(range(ages.n_periods), transition)
+            else dict.fromkeys(range(step_count(ages)), transition)
         )
         _fail_if_kernel_extends_graph(kernels=kernels, source=source, edges=edges)
         cases: list[tuple[AgeSelector, CaseLaw]] = []
         cache: dict[tuple[int, tuple[str, ...], str], PhaseLaw] = {}
-        for period, age in enumerate(ages.exact_values[:-1]):
+        for step, age in enumerate(ages.exact_values[:-1]):
             targets = {
                 side: tuple(
                     target
@@ -1169,12 +1170,12 @@ def bind_graph_support(
             }
             if not any(targets.values()):
                 continue
-            if period not in kernels:
+            if step not in kernels:
                 raise ModelInitializationError(
                     f"Graph edges out of ({age}, '{source}') have no transition "
                     "kernel selected by `ByAge`."
                 )
-            kernel = kernels[period]
+            kernel = kernels[step]
             sides: dict[Side, PhaseLaw] = {}
             for side in ("solve", "simulate"):
                 law = cast(
@@ -1222,8 +1223,8 @@ def bind_graph_support(
                         if target in named and target not in targets[side]
                     )
                     if missing:
-                        previous = dropped.get((source, period))
-                        dropped[(source, period)] = DroppedCells(
+                        previous = dropped.get((source, step))
+                        dropped[(source, step)] = DroppedCells(
                             age=age,
                             targets=tuple(
                                 dict.fromkeys(
@@ -1368,24 +1369,24 @@ def _selected_source_ages(
     """
     try:
         _fail_if_invalid_age_selector(selector)
-        periods = _select_periods(
+        steps = _select_periods(
             selector=selector, ages=ages, period_by_age=period_by_age
         )
     except RegimeInitializationError as error:
         raise ModelInitializationError(str(error)) from error
-    if not periods:
+    if not steps:
         raise ModelInitializationError(
             f"Graph selector {selector!r} for {edge} selects no model age."
         )
     n_stages = stages_per_period(ages)
-    if {period // n_stages * n_stages + stage for period in periods} == {
-        ages.n_periods - 1
+    if {step // n_stages * n_stages + stage for step in steps} == {
+        step_count(ages) - 1
     }:
         raise ModelInitializationError(
             f"Graph selector {selector!r} for {edge} selects only the final age "
             f"{ages.exact_values[-1]}, where no transition happens."
         )
-    return frozenset(ages.exact_values[period] for period in periods)
+    return frozenset(ages.exact_values[step] for step in steps)
 
 
 def _bind_law(

@@ -1395,7 +1395,7 @@ class Model:
         self._time = ModelTime.from_inputs(
             ages=ages, n_periods=n_periods, stages=stages, regime_names=tuple(regimes)
         )
-        self.n_periods = self._time.n_periods
+        self.n_periods = self._time.n_steps
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
         # The graph declares every regime transition: bind each source's law
         # from its edges before anything reads the regimes.
@@ -2070,7 +2070,7 @@ class Model:
         return _get_model_declarations(
             structure=self._declaration_preparation.prepared_structure,
             graph=self.graph,
-            n_periods=self.n_periods,
+            n_steps=self.n_periods,
             declared_regimes=self.user_regimes,
         )
 

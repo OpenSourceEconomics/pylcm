@@ -55,7 +55,7 @@ from _lcm.solution.host_values import (
     is_device_read_view,
     planning_stand_in,
 )
-from _lcm.time import TimeAxis
+from _lcm.time import TimeAxis, step_count
 from _lcm.typing import (
     FlatParams,
     RegimeName,
@@ -178,7 +178,7 @@ def prepare_simulation_chunks(
             "Chunk admission requires a budgeted simulation runtime."
         )
     if not budgeted_simulation_programs_ready(
-        regimes=regimes, n_periods=ages.n_periods, enable_jit=runtime.enable_jit
+        regimes=regimes, n_steps=step_count(ages), enable_jit=runtime.enable_jit
     ):
         raise ExecutionPlanningError(
             "Budgeted chunk admission requires compiled decision programs; "
@@ -276,7 +276,7 @@ def prepare_simulation_chunks(
             regimes=regimes,
             values=planning_stand_in(values),
             policies=planning_stand_in(policies),
-            n_periods=ages.n_periods,
+            n_steps=step_count(ages),
             devices=devices,
         )
         try:
@@ -340,7 +340,7 @@ def _prefetch_bytes(
     regimes: Mapping[RegimeName, Regime],
     values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None,
-    n_periods: int,
+    n_steps: int,
     devices: tuple[jax.Device, ...],
 ) -> dict[jax.Device, int]:
     """Estimate each device's bytes of the largest read set one period copies early.
@@ -350,21 +350,21 @@ def _prefetch_bytes(
     Every argument is a planning stand-in: nothing is read.
     """
     by_id = {device.id: device for device in devices}
-    active_by_period = forward_regimes_by_period(regimes=regimes, n_periods=n_periods)
+    active_by_period = forward_regimes_by_period(regimes=regimes, n_steps=n_steps)
     largest: dict[jax.Device, int] = {}
-    for period in range(1, n_periods):
-        active = active_by_period[period]
+    for step in range(1, n_steps):
+        active = active_by_period[step]
         arrays = [
             values[target_period][regime]
             for target_period, regime in period_read_targets(
-                active=active, period=period, values=values
+                active=active, period=step, values=values
             )
             if regime in values.get(target_period, {})
         ]
         arrays.extend(
             leaf
             for name in active
-            for leaf in jax.tree.leaves((policies or {}).get(period, {}).get(name))
+            for leaf in jax.tree.leaves((policies or {}).get(step, {}).get(name))
             if isinstance(leaf, jax.Array | jax.ShapeDtypeStruct)
         )
         need: dict[jax.Device, int] = {}
@@ -435,7 +435,7 @@ def _simulation_chunk_profile_key(
             for name, regime in regimes.items()
         ),
         _hashable_metadata(regime_names_to_ids),
-        ages.n_periods,
+        step_count(ages),
     )
     axes_and_widths = tuple(sorted(widths.items()))
     argument_metadata = (

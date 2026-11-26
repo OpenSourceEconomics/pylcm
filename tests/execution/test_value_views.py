@@ -989,7 +989,7 @@ def test_a_selected_view_never_donates_its_owner() -> None:
         program=program,
         dispatch=(3, "working"),
         ledger=_sole_reader_ledger(),
-        n_periods=6,
+        n_steps=6,
     )
 
     assert donation.buffer is DonatedBuffer.TRANSFERRED_COPY
@@ -1015,7 +1015,7 @@ def test_an_overlapping_live_view_blocks_donation_of_its_owner() -> None:
         program=whole,
         dispatch=(3, "working"),
         ledger=_sole_reader_ledger(),
-        n_periods=6,
+        n_steps=6,
     )
 
     (donation,) = withhold_shared_donations(

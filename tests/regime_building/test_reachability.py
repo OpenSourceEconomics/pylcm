@@ -33,7 +33,7 @@ type SourceText = str
 def test_an_edge_is_the_declared_support_at_its_period() -> None:
     """An edge exists exactly at the periods whose support declares its target."""
     graph = build_phase_reachability(
-        n_periods=3,
+        n_steps=3,
         active_periods_by_regime={"source": {0}, "target": {1}},
         support_by_period={"source": {0: ("target",)}},
     )
@@ -49,7 +49,7 @@ def test_a_declared_target_not_covered_next_period_is_rejected() -> None:
     """The graph never drops a declared target; it refuses an uncovered one."""
     with pytest.raises(ValueError, match="covered at the period they land in"):
         build_phase_reachability(
-            n_periods=2,
+            n_steps=2,
             active_periods_by_regime={"source": {0}, "target": {0}},
             support_by_period={"source": {0: ("target",)}},
         )
@@ -58,7 +58,7 @@ def test_a_declared_target_not_covered_next_period_is_rejected() -> None:
 def test_conditional_edge_is_retained_without_runtime_resolution() -> None:
     """A declared conditional edge remains part of the static graph."""
     graph = build_phase_reachability(
-        n_periods=2,
+        n_steps=2,
         active_periods_by_regime={"a": {0}, "b": {1}},
         support_by_period={"a": {0: ("b",)}},
     )
@@ -71,7 +71,7 @@ def test_conditional_edge_is_retained_without_runtime_resolution() -> None:
 def test_terminal_source_has_no_edge() -> None:
     """A terminal source has no outgoing edge even when support is declared."""
     graph = build_phase_reachability(
-        n_periods=2,
+        n_steps=2,
         active_periods_by_regime={"dead": {0}, "alive": {1}},
         support_by_period={"dead": {0: ("alive",)}},
         terminal_regimes={"dead"},
@@ -84,7 +84,7 @@ def test_unknown_target_is_rejected() -> None:
     """Every declared target belongs to the graph's regime universe."""
     with pytest.raises(ValueError, match="unknown regimes"):
         build_phase_reachability(
-            n_periods=2,
+            n_steps=2,
             active_periods_by_regime={"a": {0}},
             support_by_period={"a": {0: ("missing",)}},
         )
@@ -93,7 +93,7 @@ def test_unknown_target_is_rejected() -> None:
 def test_solution_and_simulation_graphs_use_the_same_builder() -> None:
     """Phase-specific declarations produce phase-specific temporal graphs."""
     graph = build_model_reachability(
-        n_periods=2,
+        n_steps=2,
         active_periods_by_regime={
             "source": (0,),
             "solve_target": (0, 1),

@@ -2414,7 +2414,7 @@ def test_the_planner_reserves_what_one_period_copies_early(
         regimes=model._regimes,
         values=host_values.planning_stand_in(engine_view.values),
         policies=None,
-        n_periods=model.n_periods,
+        n_steps=model.n_periods,
         devices=tuple(jax.devices()),
     )
 

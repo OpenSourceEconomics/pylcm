@@ -32,7 +32,7 @@ class ModelTime:
     for each of its stages.
     """
 
-    n_periods: int
+    n_steps: int
     """Number of steps, including any explicit terminal step."""
 
     ages: AgeGrid | None = None
@@ -62,12 +62,12 @@ class ModelTime:
         )
         n_stages = max(1, len(declared))
         if ages is not None:
-            return cls(ages=ages, n_periods=ages.n_periods * n_stages, stages=declared)
+            return cls(ages=ages, n_steps=ages.n_periods * n_stages, stages=declared)
         if type(n_periods) is not int or n_periods <= 0:
             raise ModelInitializationError(
                 "n_periods must be a positive integer, excluding booleans."
             )
-        return cls(n_periods=n_periods * n_stages, stages=declared)
+        return cls(n_steps=n_periods * n_stages, stages=declared)
 
     @property
     def kind(self) -> Literal["age", "period"]:
@@ -82,7 +82,7 @@ class ModelTime:
     @property
     def economic(self) -> ModelTime:
         """The clock of periods, one step per period."""
-        return ModelTime(n_periods=self.n_periods // self.n_stages, ages=self.ages)
+        return ModelTime(n_steps=self.n_steps // self.n_stages, ages=self.ages)
 
     @cached_property
     def stage_of(self) -> Mapping[RegimeName, int]:
@@ -97,7 +97,7 @@ class ModelTime:
     def values(self) -> Int1D | Float1D:
         """Coordinates indexed by step."""
         if self.ages is None:
-            values = jnp.arange(self.n_periods // self.n_stages, dtype=jnp.int32)
+            values = jnp.arange(self.n_steps // self.n_stages, dtype=jnp.int32)
         else:
             values = self.ages.values
         return values if self.n_stages == 1 else jnp.repeat(values, self.n_stages)
@@ -106,7 +106,7 @@ class ModelTime:
     def exact_values(self) -> tuple[UserAge, ...]:
         """Exact public coordinates, with no float conversion."""
         labels = (
-            tuple(range(self.n_periods // self.n_stages))
+            tuple(range(self.n_steps // self.n_stages))
             if self.ages is None
             else self.ages.exact_values
         )
@@ -154,6 +154,11 @@ def stages_per_period(ages: TimeAxis) -> int:
     return ages.n_stages if isinstance(ages, ModelTime) else 1
 
 
+def step_count(ages: TimeAxis) -> int:
+    """Number of steps of `ages`; an age grid has one step per period."""
+    return ages.n_steps if isinstance(ages, ModelTime) else ages.n_periods
+
+
 def period_of_step(*, ages: TimeAxis, step: int) -> int:
     """Period that step `step` belongs to; messages to the user name it."""
     return step // stages_per_period(ages)
@@ -183,34 +188,37 @@ def coordinate_kind(ages: TimeAxis) -> Literal["age", "period"]:
     return ages.kind if isinstance(ages, ModelTime) else "age"
 
 
-def coordinate_at(*, ages: TimeAxis, period: int) -> AgeValue:
+def coordinate_at(*, ages: TimeAxis, step: int) -> AgeValue:
     """Read a scalar time label for an internal execution context."""
-    if period < 0 or period >= ages.n_periods:
-        raise IndexError(f"Period {period} is outside the model horizon.")
+    if step < 0 or step >= step_count(ages):
+        raise IndexError(
+            f"Period {period_of_step(ages=ages, step=step)} is outside the model "
+            "horizon."
+        )
     if isinstance(ages, ModelTime):
-        economic = period // ages.n_stages
+        economic = step // ages.n_stages
         return economic if ages.ages is None else ages.ages.period_to_age(economic)
-    return ages.period_to_age(period)
+    return ages.period_to_age(step)
 
 
-def specialization_coordinate_at(*, ages: TimeAxis, period: int) -> AgeValue:
+def specialization_coordinate_at(*, ages: TimeAxis, step: int) -> AgeValue:
     """Preserve float age factories and integer period factories."""
-    coordinate = coordinate_at(ages=ages, period=period)
+    coordinate = coordinate_at(ages=ages, step=step)
     return coordinate if coordinate_kind(ages) == "period" else float(coordinate)
 
 
-def age_at(*, ages: TimeAxis, period: int) -> float | None:
+def age_at(*, ages: TimeAxis, step: int) -> float | None:
     """Report an age only when the model declares one."""
-    return None if coordinate_kind(ages) == "period" else float(ages.values[period])
+    return None if coordinate_kind(ages) == "period" else float(ages.values[step])
 
 
-def display_age_at(*, ages: TimeAxis, period: int) -> str:
+def display_age_at(*, ages: TimeAxis, step: int) -> str:
     """Return a period's coordinate for a log line, read from the exact host values.
 
     The exact coordinates are Python `int` or `Fraction`, so formatting them
     never reads the device-held `values`.
     """
-    return format_age(float(ages.exact_values[period]))
+    return format_age(float(ages.exact_values[step]))
 
 
 def format_age(age: AgeValue | ScalarInt | ScalarFloat) -> str:

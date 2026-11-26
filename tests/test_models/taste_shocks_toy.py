@@ -44,8 +44,10 @@ from lcm.typing import (
     UserParamsNode,
 )
 
-WEALTH_GRID = LinSpacedGrid(start=1.0, stop=10.0, n_points=6)
-TERMINAL_WEALTH_GRID = LinSpacedGrid(start=0.0, stop=12.0, n_points=25)
+WEALTH_GRID = LinSpacedGrid(start=1.0, stop=10.0, n_points=6, off_grid="extrapolate")
+TERMINAL_WEALTH_GRID = LinSpacedGrid(
+    start=0.0, stop=12.0, n_points=25, off_grid="extrapolate"
+)
 CONSUMPTION_GRID = LinSpacedGrid(start=0.5, stop=5.0, n_points=8)
 
 KAPPA = 0.3

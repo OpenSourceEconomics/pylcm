@@ -969,7 +969,7 @@ class TargetValueSolver(Solver):
             template=Counter(count=jnp.zeros((), dtype=state_nodes.dtype))
         )
         counter_authority = _counter_authority(template=counter_template)
-        last_period = context.solution_reachability.n_periods - 1
+        last_period = context.solution_reachability.n_steps - 1
         target_value_core = _publishing_member_axis(core=_target_value_core)
         kernels: dict[int, _PeriodKernel] = {}
         for period in context.regimes_to_active_periods[context.regime_name]:

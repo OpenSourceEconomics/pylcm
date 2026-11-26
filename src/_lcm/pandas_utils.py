@@ -44,6 +44,7 @@ from _lcm.time import (
     TimeAxis,
     coordinate_kind,
     specialization_coordinate_at,
+    step_count,
 )
 from _lcm.typing import (
     FlatParams,
@@ -484,7 +485,7 @@ def convert_series_in_params(
             continue
         user_regime = user_regimes[regime_name]
         regime_periods = (
-            tuple(range(ages.n_periods))
+            tuple(range(step_count(ages)))
             if required_periods_by_regime is None
             else required_periods_by_regime.get(regime_name, ())
         )
@@ -661,7 +662,7 @@ def _convert_edge_params(
                 param_name=param_name,
                 ages=ages,
                 source_periods=(
-                    tuple(range(ages.n_periods - 1))
+                    tuple(range(step_count(ages) - 1))
                     if required_periods_by_regime is None
                     else required_periods_by_regime.get(source, ())
                 ),
@@ -710,8 +711,8 @@ def _regime_param_periods(
     query_periods_by_phase: Mapping[str, Mapping[RegimeName, tuple[int, ...]]],
 ) -> tuple[int, ...]:
     """Require only slots where a declaring phase can read this parameter."""
-    periods = (
-        tuple(range(ages.n_periods))
+    steps = (
+        tuple(range(step_count(ages)))
         if required_periods_by_regime is None
         else required_periods_by_regime.get(regime_name, ())
     )
@@ -720,16 +721,16 @@ def _regime_param_periods(
         or len(parts) >= ParamsQnameDepth.TARGETREGIME__FUNC__PARAM
     )
     if is_transition:
-        periods = tuple(period for period in periods if period < ages.n_periods - 1)
+        steps = tuple(step for step in steps if step < step_count(ages) - 1)
     if reachability is None:
         return tuple(
             sorted(
-                set(periods)
+                set(steps)
                 | {
-                    period
+                    step
                     for queries in query_periods_by_phase.values()
-                    for period in queries.get(regime_name, ())
-                    if not is_transition or period < ages.n_periods - 1
+                    for step in queries.get(regime_name, ())
+                    if not is_transition or step < step_count(ages) - 1
                 }
             )
         )
@@ -746,19 +747,19 @@ def _regime_param_periods(
             continue
         graph = reachability.solution if phase == "solve" else reachability.simulation
         required.update(
-            period
-            for period in _phase_param_periods(
+            step
+            for step in _phase_param_periods(
                 phase=phase,
                 regime_name=regime_name,
-                periods=periods,
+                periods=steps,
                 reachability=reachability,
                 query_periods_by_phase=query_periods_by_phase,
             )
-            if (not is_transition or period < ages.n_periods - 1)
+            if (not is_transition or step < step_count(ages) - 1)
             and (
                 not is_transition
                 or len(parts) < ParamsQnameDepth.TARGETREGIME__FUNC__PARAM
-                or graph.has_edge(period=period, source=regime_name, target=parts[0])
+                or graph.has_edge(period=step, source=regime_name, target=parts[0])
             )
         )
     return tuple(sorted(required))
@@ -785,19 +786,19 @@ def _edge_param_periods(
         else tuple(declarations_by_phase.items())
     )
     for phase, declaration in variants:
-        periods = source_periods
+        steps = source_periods
         if phase is not None:
-            periods = _phase_param_periods(
+            steps = _phase_param_periods(
                 phase=phase,
                 regime_name=source,
-                periods=periods,
+                periods=steps,
                 reachability=reachability,
                 query_periods_by_phase=query_periods_by_phase,
             )
         selected = (
             declaration.law.resolve(ages=ages).law_by_period
             if isinstance(declaration.law, ByAge)
-            else dict.fromkeys(periods, declaration.law)
+            else dict.fromkeys(steps, declaration.law)
         )
         targets = (
             None
@@ -810,17 +811,17 @@ def _edge_param_periods(
             }
         )
         is_gate = len(slot) > 1 and slot[0] in declaration.gates
-        for period in periods:
-            if period >= ages.n_periods - 1:
+        for step in steps:
+            if step >= step_count(ages) - 1:
                 continue
             if targets is not None and not any(
-                period in selected for selected in targets.values()
+                step in selected for selected in targets.values()
             ):
                 continue
-            case = selected.get(period)
+            case = selected.get(step)
             if is_gate:
                 active = (
-                    period in targets.get(slot[0], ())
+                    step in targets.get(slot[0], ())
                     if targets is not None
                     else _case_names_target(case=case, target=slot[0])
                 )
@@ -831,14 +832,14 @@ def _edge_param_periods(
                     )
                     if gate is not None
                 ):
-                    required.add(period + 1)
+                    required.add(step + 1)
             elif (
-                targets is None or not slot or period in targets.get(slot[0], ())
+                targets is None or not slot or step in targets.get(slot[0], ())
             ) and any(
                 path == slot and param_name in inspect.signature(func).parameters
                 for path, func, _ in iter_edge_callables(law=case, path=(), phase=phase)
             ):
-                required.add(period)
+                required.add(step)
     return tuple(sorted(required))
 
 
@@ -997,7 +998,7 @@ def _resolve_age_specialized(
     """
     if not periods:
         return functions
-    coordinate = specialization_coordinate_at(ages=ages, period=periods[0])
+    coordinate = specialization_coordinate_at(ages=ages, step=periods[0])
     return MappingProxyType(
         {
             name: func.build(coordinate)
@@ -1053,7 +1054,7 @@ def _convert_param_value(
         # parameter is laid out over periods.
         if required_periods is not None:
             required_periods = tuple(
-                sorted({period // ages.n_stages for period in required_periods})
+                sorted({step // ages.n_stages for step in required_periods})
             )
         ages = ages.economic
 
@@ -1080,7 +1081,7 @@ def _convert_param_value(
             "supply a scalar, TimeVarying, or labelled Series."
         )
     support = (
-        tuple(range(ages.n_periods)) if required_periods is None else required_periods
+        tuple(range(step_count(ages))) if required_periods is None else required_periods
     )
     if isinstance(value, TimeVarying):
         if not managed:
@@ -1309,7 +1310,7 @@ def array_from_series(
                 f"{sr.index[sr.index.duplicated()].tolist()[:8]}."
             )
         support = (
-            tuple(range(ages.n_periods))
+            tuple(range(step_count(ages)))
             if required_periods is None
             else required_periods
         )
@@ -1442,7 +1443,7 @@ def _age_level_mapping(ages: TimeAxis) -> _LevelMapping:
         labels.update({float(v): i for i, v in enumerate(ages.exact_values)})
     return _LevelMapping(
         name=coordinate_kind(ages),
-        size=ages.n_periods,
+        size=step_count(ages),
         get_code_from_label=labels.__getitem__,
     )
 

@@ -1535,16 +1535,16 @@ def _validate_raw_fields(
 ) -> None:
     """Require model-owned raw cells, names and fixed-field representations."""
     regimes = model._regimes  # noqa: SLF001
-    forward = forward_regimes_by_period(regimes=regimes, n_periods=model.n_periods)
+    forward = forward_regimes_by_period(regimes=regimes, n_steps=model.n_periods)
     expected_regimes = tuple(
-        (name, tuple(period for period, active in enumerate(forward) if name in active))
+        (name, tuple(step for step, active in enumerate(forward) if name in active))
         for name in regimes
     )
     expected: set[LeafAddress] = set()
-    for period, active in enumerate(forward):
+    for step, active in enumerate(forward):
         for name, regime in active.items():
             expected.update(
-                (name, period, field_name, None)
+                (name, step, field_name, None)
                 for field_name in (
                     "V_arr",
                     "in_regime",
@@ -1553,11 +1553,10 @@ def _validate_raw_fields(
                 )
             )
             expected.update(
-                (name, period, "states", state)
-                for state in regime.simulation.state_names
+                (name, step, "states", state) for state in regime.simulation.state_names
             )
             expected.update(
-                (name, period, "actions", action)
+                (name, step, "actions", action)
                 for action in regime.simulation.action_names
             )
     for panel in panels:
@@ -1567,11 +1566,11 @@ def _validate_raw_fields(
                 "model's forward simulation outputs."
             )
             raise SolutionIntegrityError(msg)
-        for (name, period, field_name, _), leaf in panel.leaves.items():
+        for (name, step, field_name, _), leaf in panel.leaves.items():
             regime = regimes[name]
             trailing = (len(regime.members),) if field_name == "V_arr" else ()
             dtype = (
-                np.dtype(value_dtypes[(period, name)])
+                np.dtype(value_dtypes[(step, name)])
                 if field_name == "V_arr"
                 else np.dtype(np.int32)
                 if field_name == PERSISTED_FIELD_NAMES["own_member"]
@@ -1583,7 +1582,7 @@ def _validate_raw_fields(
                 dtype is not None and leaf.dtype != dtype
             ):
                 msg = (
-                    f"Raw field {(name, period, field_name)!r} has shape "
+                    f"Raw field {(name, step, field_name)!r} has shape "
                     f"{leaf.shape!r} and dtype {leaf.dtype!s}, incompatible with "
                     "the model's subject and member axes or field dtype."
                 )

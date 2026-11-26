@@ -1253,7 +1253,7 @@ def dcegm_kernel_with_declared_reads(
         return kernel
     reachable_targets = (
         ()
-        if period == context.solution_reachability.n_periods - 1
+        if period == context.solution_reachability.n_steps - 1
         else context.solution_reachability.targets(
             period=period,
             source=context.regime_name,

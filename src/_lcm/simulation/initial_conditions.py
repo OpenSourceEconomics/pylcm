@@ -66,6 +66,7 @@ from _lcm.time import (
     period_of_step,
     stage_position,
     stages_per_period,
+    step_count,
 )
 from _lcm.transition_checks import (
     _evaluate_admitted_transition_producer,
@@ -596,7 +597,7 @@ def resolve_initial_periods(
         # its regime's own stage.
         n_stages = stages_per_period(ages)
         values = np.asarray(initial_ages)
-        valid = (values >= 0) & (values < ages.n_periods // n_stages)
+        valid = (values >= 0) & (values < step_count(ages) // n_stages)
         if values.dtype.kind not in "iu":
             valid = np.zeros(values.shape, dtype=bool)
         return (values * n_stages).astype(np.int32), valid

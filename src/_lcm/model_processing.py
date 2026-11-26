@@ -653,7 +653,7 @@ def _validate_function_usage(
             if phase == "simulate" and visited_periods_by_regime is not None:
                 periods = visited_periods_by_regime.get(name, ())
             coordinate = specialization_coordinate_at(
-                ages=ages, period=(periods or (0,))[0]
+                ages=ages, step=(periods or (0,))[0]
             )
             for func in functions.values():
                 if not periods and isinstance(func, AgeSpecializedFunction):
@@ -927,10 +927,10 @@ def _validate_all_variables_used(
                 else visited_periods_by_regime.get(regime_name, ())
             ) or active_periods
             representative_age = specialization_coordinate_at(
-                ages=ages, period=active_periods[0]
+                ages=ages, step=active_periods[0]
             )
             simulated_age = specialization_coordinate_at(
-                ages=ages, period=visited_periods[0]
+                ages=ages, step=visited_periods[0]
             )
             user_functions = {
                 name: resolve_node(
@@ -1222,7 +1222,7 @@ def _validate_constraint_phase_invariance(
         active_periods = active_periods_by_regime.get(regime_name, ())
         if active_periods:
             representative_age = specialization_coordinate_at(
-                ages=ages, period=active_periods[0]
+                ages=ages, step=active_periods[0]
             )
             ancestry_funcs = {
                 name: resolve_node(node=func, age=representative_age)

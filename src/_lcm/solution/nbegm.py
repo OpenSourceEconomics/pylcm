@@ -6483,7 +6483,7 @@ def _build_nbegm_continuation_plan(
     solution_reachability = context.solution_reachability
     targets = (
         ()
-        if period == solution_reachability.n_periods - 1
+        if period == solution_reachability.n_steps - 1
         else solution_reachability.targets(period=period, source=context.regime_name)
     )
     stateful_targets, scalar_targets = get_egm_continuation_targets(

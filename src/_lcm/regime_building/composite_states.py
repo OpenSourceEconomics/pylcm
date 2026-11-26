@@ -215,7 +215,7 @@ def lower_composite_states(
     grid = DiscreteGrid(_category_class(name=name, n_codes=len(codes)))
     period_masks = _period_masks(
         lowering=lowering,
-        n_periods=len(dense._time.exact_values),  # noqa: SLF001
+        n_steps=len(dense._time.exact_values),  # noqa: SLF001
         n_stages=dense._time.n_stages,  # noqa: SLF001
     )
     rewritten = {
@@ -711,7 +711,7 @@ def _composite_law(
 
 
 def _period_masks(
-    *, lowering: CompositeLowering, n_periods: int, n_stages: int
+    *, lowering: CompositeLowering, n_steps: int, n_stages: int
 ) -> dict[RegimeName, np.ndarray]:
     """Per carrying regime, which codes are reachable at which period.
 
@@ -719,15 +719,15 @@ def _period_masks(
     one stage of each period, so its steps and periods correspond one to one.
     """
     masks = {
-        regime_name: np.zeros((n_periods // n_stages, len(lowering.table)), dtype=bool)
+        regime_name: np.zeros((n_steps // n_stages, len(lowering.table)), dtype=bool)
         for regime_name in lowering.carriers
     }
-    for (period, regime_name), tuples in lowering.reachable.by_node.items():
+    for (step, regime_name), tuples in lowering.reachable.by_node.items():
         # An empty successor set is a (0, n_members) table.
         rows = np.asarray(sorted(tuples), dtype=np.int64).reshape(
             len(tuples), len(lowering.members)
         )
-        masks[regime_name][period // n_stages, lowering.encode_rows(rows)] = True
+        masks[regime_name][step // n_stages, lowering.encode_rows(rows)] = True
     return masks
 
 

@@ -45,7 +45,7 @@ from _lcm.simulation.random import create_simulation_key, draw_random_seed
 from _lcm.simulation.random_address import AddressWords, RandomAddress, draw_row_keys
 from _lcm.simulation.subject_groups import SubjectRows
 from _lcm.simulation.time_inputs import lower_initial_time
-from _lcm.time import TimeAxis
+from _lcm.time import TimeAxis, step_count
 from _lcm.transition_plans import TargetTransitionPlans
 from _lcm.typing import PRNGKeyND, RegimeNamesToIds
 from lcm._solver_api.contract import ValueArraySchema
@@ -886,10 +886,10 @@ def _realise_group_paths(
     ages: TimeAxis,
 ) -> Mapping[ShockName, FloatND]:
     """Realise fresh addressed paths; supplied records use the consumption bank."""
-    n_subjects, n_periods = len(starts), ages.n_periods
+    n_subjects, n_steps = len(starts), step_count(ages)
     keys = {
         name: _addressed_keys(
-            key=key, name=name, n_subjects=n_subjects, n_periods=n_periods
+            key=key, name=name, n_subjects=n_subjects, n_steps=n_steps
         )
         for name in group.shocks
     }
@@ -897,9 +897,9 @@ def _realise_group_paths(
     physical, valid = _cell_program(group_name=group_name, group=group, kinds=())(
         cell_keys=keys,
         periods=jnp.broadcast_to(
-            jnp.arange(n_periods, dtype=jnp.int32), (n_subjects, n_periods)
+            jnp.arange(n_steps, dtype=jnp.int32), (n_subjects, n_steps)
         ),
-        ages=jnp.broadcast_to(jnp.asarray(ages.values), (n_subjects, n_periods)),
+        ages=jnp.broadcast_to(jnp.asarray(ages.values), (n_subjects, n_steps)),
         supplied={},
         enabled={},
     )
@@ -1008,7 +1008,7 @@ def _cell_program(
 
 
 def _addressed_keys(
-    *, key: PRNGKeyND, name: ShockName, n_subjects: int, n_periods: int
+    *, key: PRNGKeyND, name: ShockName, n_subjects: int, n_steps: int
 ) -> PRNGKeyND:
     """Address one shock's keys by original row and period, rows by periods."""
     rows = np.arange(n_subjects, dtype=np.uint64)
@@ -1023,7 +1023,7 @@ def _addressed_keys(
             period=period,
         )
 
-    return jax.vmap(period_keys, out_axes=1)(jnp.arange(n_periods, dtype=jnp.uint32))
+    return jax.vmap(period_keys, out_axes=1)(jnp.arange(n_steps, dtype=jnp.uint32))
 
 
 def _broadcast(

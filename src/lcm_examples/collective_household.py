@@ -132,9 +132,17 @@ def get_model(
         The model, ready to `solve()` with `get_params()`.
 
     """
-    wealth = LinSpacedGrid(start=WEALTH_MIN, stop=WEALTH_MAX, n_points=wealth_n_points)
+    wealth = LinSpacedGrid(
+        start=WEALTH_MIN,
+        stop=WEALTH_MAX,
+        n_points=wealth_n_points,
+        off_grid="extrapolate",
+    )
     couple_wealth = LinSpacedGrid(
-        start=2.0 * WEALTH_MIN, stop=2.0 * WEALTH_MAX, n_points=wealth_n_points
+        start=2.0 * WEALTH_MIN,
+        stop=2.0 * WEALTH_MAX,
+        n_points=wealth_n_points,
+        off_grid="extrapolate",
     )
     # Consumption is chosen as a share of wealth, so every choice is affordable
     # at every wealth, on the grid or between its nodes. A choice in levels is
