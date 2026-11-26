@@ -1,10 +1,12 @@
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from functools import partial
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from jax import Array, device_put, devices, jit, make_jaxpr
+from jax.core import ShapedArray
 from jax.extend.core import Jaxpr
 from numpy.testing import assert_array_equal
 
@@ -18,7 +20,10 @@ from _lcm.regime_building.argmax import (
     _reduce_float_keys,
     max_and_smallest_id,
 )
-from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
+from _lcm.regime_building.collective import (
+    collective_argmax_and_readout,
+    decider_choice,
+)
 from _lcm.solution.collective_action_reduction import COLLECTIVE_HARD_MAX_REDUCTION
 
 
@@ -179,12 +184,6 @@ _PAIRED_REDUCTION_CALLERS = {
     "max_and_smallest_id": lambda v: max_and_smallest_id(
         values=v, ids=jnp.broadcast_to(_ACTION_IDS, v.shape), initial=0.0
     ),
-    "action_reduction": lambda v: HARD_MAX_REDUCTION.add(
-        accumulator=HARD_MAX_REDUCTION.initialize(value_template=v[:, 0]),
-        values=v,
-        feasible=v > 0,
-        action_ids=_ACTION_IDS,
-    ),
     "collective_action_reduction": lambda v: COLLECTIVE_HARD_MAX_REDUCTION.add(
         accumulator=COLLECTIVE_HARD_MAX_REDUCTION.initialize(member_template=v[:, :2]),
         objectives=v,
@@ -292,3 +291,71 @@ def test_paired_max_rejects_unsupported_float_widths(
         reduce = jit(reduce)
     with pytest.raises(ValueError, match="16-, 32- and 64-bit IEEE"):
         reduce(values=values, ids=jnp.asarray([7, 3], dtype=jnp.int32))
+
+
+def _dense_household_readout(v: Array) -> tuple[Array, ...]:
+    index, values, dissolution = collective_argmax_and_readout(
+        member_Q={"f": v, "m": -v},
+        feasibility=v > 0,
+        weights={"f": 0.5, "m": 0.5},
+        action_axes=(1,),
+    )
+    return index, values["f"], values["m"], dissolution
+
+
+def _decider_choice(v: Array) -> tuple[Array, ...]:
+    return decider_choice(
+        Q=jnp.stack([v, -v], axis=-1),
+        feasibility=v > 0,
+        weights=jnp.asarray([1.0, 0.0]),
+        n_discrete_action_axes=1,
+    )
+
+
+def _streamed_household_block(v: Array) -> tuple[Array, ...]:
+    return COLLECTIVE_HARD_MAX_REDUCTION.add(
+        accumulator=COLLECTIVE_HARD_MAX_REDUCTION.initialize(member_template=v[:, :2]),
+        objectives=v,
+        member_values=jnp.stack([v, -v], axis=-1),
+        feasible=v > 0,
+        action_ids=_ACTION_IDS,
+    )
+
+
+_REDUCTION_PRIMITIVES = frozenset(
+    {"reduce", "reduce_or", "reduce_and", "reduce_max", "reduce_min", "reduce_sum"}
+)
+
+
+def _action_axis_reductions(*, jaxpr: Jaxpr, n_actions: int) -> int:
+    """Count the reductions over a trailing action axis of `n_actions` elements."""
+    count = 0
+    for nested in _nested_jaxprs(jaxpr):
+        for eqn in nested.eqns:
+            shape = cast("ShapedArray", eqn.invars[0].aval).shape if eqn.invars else ()
+            count += (
+                eqn.primitive.name in _REDUCTION_PRIMITIVES
+                and shape[-1:] == (n_actions,)
+                and len(shape) - 1
+                in eqn.params.get("dimensions", eqn.params.get("axes", ()))
+            )
+    return count
+
+
+@pytest.mark.parametrize(
+    "reducer",
+    [_dense_household_readout, _decider_choice, _streamed_household_block],
+    ids=["dense-readout", "decider-choice", "streamed-block"],
+)
+def test_household_reduction_reads_the_action_values_once(
+    *, reducer: Callable[[Array], tuple[Array, ...]]
+) -> None:
+    """One reduction over the action axis carries the NaN rule and feasibility.
+
+    A second reduction over the actions, for the NaN rule or for whether any
+    action is feasible, is a second reader of the action values, and the
+    compiler then stores them for every cell and action.
+    """
+    jaxpr = make_jaxpr(reducer)(jnp.linspace(-1.0, 1.0, 12).reshape(3, 4)).jaxpr
+
+    assert _action_axis_reductions(jaxpr=jaxpr, n_actions=4) == 1

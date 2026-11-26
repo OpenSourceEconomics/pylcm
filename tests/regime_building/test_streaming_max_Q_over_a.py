@@ -11,17 +11,23 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
+from jax.core import ShapedArray
+from jax.extend.core import Jaxpr
 from numpy.testing import assert_allclose, assert_array_equal
 
 from _lcm.engine import StateActionSpace
-from _lcm.regime_building.collective import ParetoWeights
+from _lcm.regime_building.collective import ParetoWeights, build_pareto_weights
 from _lcm.regime_building.max_Q_over_a import (
     BoundedMaxOutput,
     RawActionFunction,
     get_max_Q_over_a,
     get_streaming_max_Q_over_a,
 )
-from _lcm.solution.collective_action_reduction import COLLECTIVE_HARD_MAX_REDUCTION
+from _lcm.solution.action_streaming import build_streaming_collective_max_Q_over_a
+from _lcm.solution.collective_action_reduction import (
+    COLLECTIVE_HARD_MAX_REDUCTION,
+    CollectiveHardMaxResult,
+)
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.solution.grid_search import (
     _ActionStreamingDisposition,
@@ -225,7 +231,12 @@ def _signed_zero_Q_and_F(
 
 
 def test_full_V_streaming_matches_dense_signed_zero_across_width_one_blocks() -> None:
-    """A value tie goes to identity zero, whose negative zero both routes read."""
+    """A `{-0, +0}` tie is one value; the solve of a single publishes it as `+0`.
+
+    The dense route reads the value of identity zero, a negative zero. The
+    streamed solve of one member keeps no identity, and of `-0` and `+0` it
+    keeps `+0`.
+    """
     arguments = {
         "action": jnp.array([0, 1], dtype=jnp.int32),
         "next_regime_to_V_arr": MappingProxyType({}),
@@ -244,8 +255,8 @@ def test_full_V_streaming_matches_dense_signed_zero_across_width_one_blocks() ->
     actual = _self_value(jax.jit(streamed)(**arguments))
 
     assert_array_equal(actual, expected)
-    assert_array_equal(jnp.signbit(actual), jnp.signbit(expected))
     assert bool(jnp.signbit(expected))
+    assert not bool(jnp.signbit(actual))
 
 
 def _collective_Q_and_F(
@@ -1028,9 +1039,12 @@ def test_households_stream_to_the_values_and_choices_of_the_whole_product(
 
     A two-member couple and a single, the household of the one member `"self"`,
     solve and decide over their actions in blocks of `width`, folded by the
-    household reduction. The household argmax is exact, so every solved value,
-    every simulated action and state is bit for bit the one a block covering all
-    actions gives. A simulated value is the action value at the winner,
+    household reduction. The household argmax is exact, so every simulated
+    action and state is bit for bit the one a block covering all actions gives,
+    and so is every solved value at a width of two or more. A block of one
+    action is a different compiled program, which may round the action values
+    differently in the last bits, so its solved values agree within eight units
+    in the last place. A simulated value is the action value at the winner,
     evaluated at the subject's own state by a program compiled for the block's
     width, so it agrees to a few units in the last place.
     """
@@ -1052,7 +1066,12 @@ def test_households_stream_to_the_values_and_choices_of_the_whole_product(
     for period, values in whole_solution.values.items():
         for regime, expected in values.items():
             got = np.asarray(solution.values[period][regime])
-            assert got.tobytes() == np.asarray(expected).tobytes(), (period, regime)
+            if width == 1:
+                assert_agrees_to_ulp(
+                    got=got, expected=expected, n_ulp=8, err_msg=f"{period} {regime}"
+                )
+            else:
+                assert got.tobytes() == np.asarray(expected).tobytes(), (period, regime)
     values = [column for column in frame.columns if column.startswith("value")]
     pd.testing.assert_frame_equal(
         frame.drop(columns=values), whole_frame.drop(columns=values), check_exact=True
@@ -1064,3 +1083,213 @@ def test_households_stream_to_the_values_and_choices_of_the_whole_product(
             n_ulp=4,
             err_msg=column,
         )
+
+
+_N_CELLS = 2000
+_COUPLE = ("f", "m")
+
+
+def _interpolated_Q_and_F(
+    *,
+    consumption: FloatND,
+    wealth: FloatND,
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+) -> tuple[FloatND, BoolND]:
+    """Log consumption plus a continuation interpolated linearly on a wealth grid."""
+    v_arr = next_regime_to_V_arr["next"]
+    position = jnp.clip((wealth - consumption) * (v_arr.shape[0] - 1) / 10.0, 0, None)
+    lower = jnp.clip(jnp.floor(position).astype(jnp.int32), 0, v_arr.shape[0] - 2)
+    share = position - lower
+    continuation = (1 - share) * v_arr[lower] + share * v_arr[lower + 1]
+    return jnp.log(consumption) + 0.95 * continuation, consumption <= wealth
+
+
+def _interpolated_couple_Q_and_F(
+    *,
+    consumption: FloatND,
+    wealth: FloatND,
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+) -> tuple[FloatND, BoolND]:
+    """Two members' values of the interpolated kernel, on a trailing member axis."""
+    value, feasible = _interpolated_Q_and_F(
+        consumption=consumption,
+        wealth=wealth,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+    )
+    return jnp.stack([value, 0.5 * value - consumption], axis=-1), feasible
+
+
+def _interpolated_arguments(
+    n_actions: int,
+) -> dict[str, jax.Array | Mapping[RegimeName, FloatND]]:
+    return {
+        "consumption": jnp.linspace(0.01, 10.0, n_actions),
+        "wealth": jnp.linspace(0.1, 10.0, _N_CELLS),
+        "next_regime_to_V_arr": MappingProxyType({"next": jnp.linspace(0.0, 1.0, 50)}),
+    }
+
+
+def _interpolated_kernel_kwargs(*, household: bool) -> _KernelKwargs:
+    if not household:
+        return _single(
+            Q_and_F=_interpolated_Q_and_F,
+            batch_sizes={"wealth": 0},
+            action_names=("consumption",),
+            state_names=("wealth",),
+        )
+    return {
+        "Q_and_F": _interpolated_couple_Q_and_F,
+        "batch_sizes": {"wealth": 0},
+        "action_names": ("consumption",),
+        "state_names": ("wealth",),
+        "members": _COUPLE,
+        "pareto_weights": build_pareto_weights(
+            objective=None, members=_COUPLE, state_names=frozenset()
+        ),
+    }
+
+
+def _temp_bytes(compiled: jax.stages.Compiled) -> int:
+    analysis = compiled.memory_analysis()
+    assert analysis is not None
+    return analysis.temp_size_in_bytes
+
+
+def _solve_kernel(
+    *, household: bool, width: int | None
+) -> Callable[..., BoundedMaxOutput]:
+    """The solve kernel; no width is the dense route."""
+    kwargs = _interpolated_kernel_kwargs(household=household)
+    if width is None:
+        return get_max_Q_over_a(**kwargs)
+    return functools.partial(
+        get_streaming_max_Q_over_a(**kwargs), _lcm_action_block_width=width
+    )
+
+
+def _solve_temp_bytes(*, household: bool, n_actions: int, width: int | None) -> int:
+    """Temporary bytes of a compiled solve kernel; no width is the dense route."""
+    kernel = _solve_kernel(household=household, width=width)
+    arguments = _interpolated_arguments(n_actions)
+    return _temp_bytes(jax.jit(kernel).lower(**arguments).compile())
+
+
+def _decision_kernel(
+    *, household: bool, n_actions: int
+) -> Callable[..., tuple[IntND, FloatND]]:
+    """The simulation decision over the whole product, mapped over wealth."""
+    kwargs = _interpolated_kernel_kwargs(household=household)
+    cell = build_streaming_collective_max_Q_over_a(
+        publishes_identity=True,
+        Q_and_F=kwargs["Q_and_F"],
+        action_names=("consumption",),
+        block_width=n_actions,
+        members=kwargs["members"],
+        weights=kwargs["pareto_weights"].compute(),
+    )
+
+    # keyword-only-exempt: library-callback=jax.vmap
+    def decide(
+        wealth: FloatND, consumption: FloatND, V_arr: Mapping[RegimeName, FloatND]
+    ) -> tuple[IntND, FloatND]:
+        result = cast(
+            "CollectiveHardMaxResult",
+            cell(consumption=consumption, wealth=wealth, next_regime_to_V_arr=V_arr),
+        )
+        return result.best_global_action_id, result.best_member_values
+
+    return jax.vmap(decide, in_axes=(0, None, None))
+
+
+def _decision_temp_bytes(*, household: bool, n_actions: int, width: int | None) -> int:
+    """Temporary bytes of a compiled decision kernel over the whole product."""
+    del width
+    arguments = _interpolated_arguments(n_actions)
+    return _temp_bytes(
+        jax.jit(_decision_kernel(household=household, n_actions=n_actions))
+        .lower(
+            arguments["wealth"],
+            arguments["consumption"],
+            arguments["next_regime_to_V_arr"],
+        )
+        .compile()
+    )
+
+
+@pytest.mark.parametrize("household", [False, True], ids=["single", "couple"])
+@pytest.mark.parametrize(
+    ("temp_bytes", "streamed"),
+    [
+        (_solve_temp_bytes, None),
+        (_solve_temp_bytes, False),
+        (_solve_temp_bytes, True),
+        (_decision_temp_bytes, False),
+    ],
+    ids=["solve-dense", "solve-whole-product", "solve-streamed", "decision"],
+)
+def test_household_reduction_keeps_no_value_per_cell_and_action(
+    *, temp_bytes: Callable[..., int], streamed: bool | None, household: bool
+) -> None:
+    """The action values fuse into the household's reduction: none is stored.
+
+    The kernel's temporary grows by less than one float per cell and added
+    action when the reduced action block doubles: on the dense route, over the
+    whole product (`n_actions` follows the width) and in streamed blocks of a
+    fixed product.
+    """
+    widths = (512, 1024)
+    temps = [
+        temp_bytes(
+            household=household,
+            n_actions=4096 if streamed else block,
+            width=None if streamed is None else block,
+        )
+        for block in widths
+    ]
+    itemsize = jnp.asarray(0.0).dtype.itemsize
+
+    assert temps[1] - temps[0] < _N_CELLS * (widths[1] - widths[0]) * itemsize, temps
+
+
+def _action_reduce_operand_kinds(
+    *, jaxpr: Jaxpr, n_actions: int
+) -> list[tuple[str, ...]]:
+    """Dtype kinds of the operands of each reduce over a trailing action axis."""
+    kinds = []
+    for eqn in jaxpr.eqns:
+        operands = [cast("ShapedArray", var.aval) for var in eqn.invars]
+        if eqn.primitive.name == "reduce" and operands[0].shape[-1:] == (n_actions,):
+            kinds.append(
+                tuple(operand.dtype.kind for operand in operands[: len(operands) // 2])
+            )
+        for value in eqn.params.values():
+            nested = getattr(value, "jaxpr", value)
+            if isinstance(nested, Jaxpr):
+                kinds.extend(
+                    _action_reduce_operand_kinds(jaxpr=nested, n_actions=n_actions)
+                )
+    return kinds
+
+
+def test_single_solve_reduces_value_and_nan_flag_decision_adds_identity() -> None:
+    """The solve of one member reduces its actions on the value and the NaN flag.
+
+    Nothing in the solve reads the winner's identity, so its one reduction over
+    the actions carries the value's order key and the NaN flag only. The
+    simulation decision publishes the identity and carries it as well.
+    """
+    n_actions = 512
+    arguments = _interpolated_arguments(n_actions)
+    solve = jax.make_jaxpr(_solve_kernel(household=False, width=n_actions))(**arguments)
+    decision = jax.make_jaxpr(_decision_kernel(household=False, n_actions=n_actions))(
+        arguments["wealth"],
+        arguments["consumption"],
+        arguments["next_regime_to_V_arr"],
+    )
+
+    assert _action_reduce_operand_kinds(jaxpr=solve.jaxpr, n_actions=n_actions) == [
+        ("b", "i")
+    ]
+    assert _action_reduce_operand_kinds(jaxpr=decision.jaxpr, n_actions=n_actions) == [
+        ("b", "i", "i")
+    ]

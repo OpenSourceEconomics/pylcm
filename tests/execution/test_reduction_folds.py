@@ -18,7 +18,6 @@ from _lcm.execution.reductions import (
     OuterCandidateAccumulator,
     WeightedExpectationResult,
 )
-from _lcm.solution.action_reduction import HARD_MAX_REDUCTION, HardMaxResult
 from _lcm.solution.collective_action_reduction import (
     COLLECTIVE_HARD_MAX_REDUCTION,
     CollectiveHardMaxResult,
@@ -78,66 +77,6 @@ def _feasible() -> BoolND:
 def _action_ids() -> Int1D:
     """Return the canonical global identity of each action position."""
     return jnp.arange(_N_ACTIONS, dtype=jnp.int32)
-
-
-def _dense_hard_max(
-    *, values: FloatND, feasible: BoolND
-) -> tuple[np.ndarray, np.ndarray]:
-    """Scan the whole axis once, keeping the smallest identity among equals."""
-    observed = np.asarray(values)
-    live = np.asarray(feasible)
-    best_value = np.full(_N_STATES, -np.inf, dtype=observed.dtype)
-    best_identity = np.full(_N_STATES, -1, dtype=np.int32)
-    for state in range(_N_STATES):
-        for position in range(_N_ACTIONS):
-            if not live[state, position]:
-                continue
-            candidate = observed[state, position]
-            if best_identity[state] == -1 or candidate > best_value[state]:
-                best_value[state] = candidate
-                best_identity[state] = position
-    return best_value, best_identity
-
-
-def _folded_hard_max(*, partition: tuple[int, ...]) -> HardMaxResult:
-    """Fold the action axis in the blocks one partition cuts."""
-    values, feasible, action_ids = _values(), _feasible(), _action_ids()
-    accumulator = HARD_MAX_REDUCTION.initialize(value_template=jnp.zeros(_N_STATES))
-    for start, stop in _blocks(partition=partition):
-        accumulator = HARD_MAX_REDUCTION.add(
-            accumulator=accumulator,
-            values=values[:, start:stop],
-            feasible=feasible[:, start:stop],
-            action_ids=action_ids[start:stop],
-        )
-    return HARD_MAX_REDUCTION.finalize(accumulator=accumulator)
-
-
-@pytest.mark.parametrize("partition", _PARTITIONS, ids=("width-four", "width-three"))
-def test_hard_max_block_fold_matches_the_dense_maximum(
-    *, partition: tuple[int, ...]
-) -> None:
-    """Blockwise hard max publishes the maximum a single pass would."""
-    expected, _identity = _dense_hard_max(values=_values(), feasible=_feasible())
-
-    aaae(
-        np.asarray(_folded_hard_max(partition=partition).best_value),
-        expected,
-        decimal=DECIMAL_PRECISION,
-    )
-
-
-@pytest.mark.parametrize("partition", _PARTITIONS, ids=("width-four", "width-three"))
-def test_hard_max_block_fold_selects_the_dense_winner_identity(
-    *, partition: tuple[int, ...]
-) -> None:
-    """The winning global identity is the one a single pass selects, exactly."""
-    _value, expected = _dense_hard_max(values=_values(), feasible=_feasible())
-
-    np.testing.assert_array_equal(
-        np.asarray(_folded_hard_max(partition=partition).best_global_action_id),
-        expected,
-    )
 
 
 def _dense_collective(

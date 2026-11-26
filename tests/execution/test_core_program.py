@@ -86,18 +86,12 @@ def _hard_max_core(
         9.0,
         0.0,
     )
-    feasible = jnp.ones(values.shape, dtype=bool)
-    action_ids = jnp.arange(values.shape[0], dtype=jnp.int32)
-    accumulator = HARD_MAX_REDUCTION.initialize(value_template=jnp.asarray(0.0))
+    best = jnp.asarray(-jnp.inf)
     for start in range(0, values.shape[0], _lcm_action_block_width):
-        stop = start + _lcm_action_block_width
-        accumulator = HARD_MAX_REDUCTION.add(
-            accumulator=accumulator,
-            values=values[start:stop],
-            feasible=feasible[start:stop],
-            action_ids=action_ids[start:stop],
+        best = jnp.maximum(
+            best, jnp.max(values[start : start + _lcm_action_block_width])
         )
-    return HARD_MAX_REDUCTION.finalize(accumulator=accumulator).best_value
+    return best
 
 
 def _axis(

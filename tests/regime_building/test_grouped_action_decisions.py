@@ -35,6 +35,7 @@ def _decision_cell(
     keeps the objective at the value's float32.
     """
     streamed = build_streaming_collective_max_Q_over_a(
+        publishes_identity=True,
         Q_and_F=with_member_axis(_decision_Q_and_F),
         action_names=("choice",),
         block_width=3,

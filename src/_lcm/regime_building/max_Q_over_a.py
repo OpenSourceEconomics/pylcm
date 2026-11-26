@@ -612,6 +612,7 @@ class _StreamedMaxQOverA:
             action_names=self.action_names,
             block_width=cast("int", states_actions_params[self.action_width_keyword]),
             members=self.members,
+            publishes_identity=False,
             weights=_evaluate_pareto_weights(
                 pareto_weights=self.pareto_weights,
                 states_actions_params=states_actions_params,

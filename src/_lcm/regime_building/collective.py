@@ -30,6 +30,7 @@ from dags import concatenate_functions, rename_arguments, with_signature
 
 from _lcm.logsum import logsum_and_softmax
 from _lcm.regime_building.argmax import (
+    NO_ID,
     _flatten_last_n_axes,
     _move_axes_to_back,
     max_lexicographic_and_smallest_id,
@@ -93,7 +94,7 @@ def collective_argmax_and_readout(
         }
         return jnp.zeros(objective.shape, dtype=jnp.int32), values, dissolution
     objective = _actions_last(a=objective, action_axes=action_axes)
-    (_, *best), argmax_flat = max_lexicographic_and_smallest_id(
+    (_, *best), argmax_flat, undefined = max_lexicographic_and_smallest_id(
         values=(
             objective,
             *(_actions_last(a=q, action_axes=action_axes) for q in member_Q.values()),
@@ -105,8 +106,8 @@ def collective_argmax_and_readout(
     )
     # A NaN objective at a feasible action has no household value: every member
     # publishes NaN so the solve's checks see it, and the index is action zero.
-    undefined = jnp.any(feasible & jnp.isnan(objective), axis=-1)
-    dissolution = ~jnp.any(feasible, axis=-1)
+    # Without a feasible action the index is `NO_ID`.
+    dissolution = argmax_flat == NO_ID
     values = {
         name: jnp.where(undefined, jnp.nan, jnp.where(dissolution, -jnp.inf, value))
         for name, value in zip(member_Q, best, strict=True)
@@ -252,7 +253,7 @@ def decider_choice(
     flat_readout = flat_Q if readout is None else readout.reshape(flat_Q.shape)
     feasible = feasibility.reshape(n_discrete_cells, n_continuous_cells)
     decider_Q = jnp.take(flat_Q, decider, axis=-1)
-    (Qc, *keys), continuous_argmax = max_lexicographic_and_smallest_id(
+    (Qc, *keys), continuous_argmax, undefined = max_lexicographic_and_smallest_id(
         values=(decider_Q, *member_tie_keys(readout=flat_readout, weights=weights)),
         ids=jnp.broadcast_to(
             jnp.arange(n_continuous_cells, dtype=jnp.int32), feasible.shape
@@ -263,8 +264,7 @@ def decider_choice(
     # A NaN decider value at a feasible action leaves the discrete cell without a
     # value: every member publishes NaN there, at continuous action zero. A cell
     # with no feasible action is worth `-inf` to every member.
-    undefined = jnp.any(feasible & jnp.isnan(decider_Q), axis=1)
-    infeasible = ~jnp.any(feasible, axis=1)
+    infeasible = continuous_argmax == NO_ID
     Qc = jnp.where(undefined, jnp.nan, jnp.where(infeasible, -jnp.inf, Qc))
     at_choice = jnp.where(
         undefined[:, None],

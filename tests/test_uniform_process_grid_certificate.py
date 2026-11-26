@@ -57,14 +57,16 @@ def test_uniform_controls_preserve_both_historical_mutation_populations() -> Non
     # the one engine path deleted the singleton, streamed-EV1, streamed-logsumexp
     # and argmax_and_max controls with their reducers and moved the singleton
     # rank and gap filters onto the household routes.
-    assert len(historical) == 348
+    # Removing the single hard max's dead fold deleted its three
+    # streaming_hard_max filter, merge and signed-zero controls.
+    assert len(historical) == 345
     assert (
         _name_digest(historical)
-        == "4c39ce90f741eaa2da0e179973edd3a41256a901a5f102f304999ccaad98c19b"
+        == "3682587108e4a0ca73e145c5a69fe037fd238096c1ac23a2e2b6a5373d7fb449"
     )
-    assert len(registered) == 365
+    assert len(registered) == 362
     assert _name_digest(registered) == (
-        "9f8018df7ea36b0ba776cfe14094936cabc9b57c6aff693c4216cc363db23656"
+        "1addb68c5045e4d9cb0ba5d1a9a56d78bff3d135f1f6f8e115ec1520634e8c8b"
     )
     assert len(supplemental) == 94
     assert _name_digest(supplemental) == (

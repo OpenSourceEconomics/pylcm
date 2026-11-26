@@ -1,10 +1,11 @@
 """The engine reads a regime's members, never how many there are.
 
 Every regime has members, a single the one member `"self"`, and the engine runs
-one path for all of them. The only condition on how many members a regime has
-is the solver capability `supports_several_members`. The other allowed
-conditions validate a declaration against a rule that is itself about a member
-count. The scan covers the packages `lcm` and `_lcm`.
+one path for all of them. The only conditions on how many members a regime has
+are the solver capability `supports_several_members` and the household hard
+max's tie keys, which one member does not have. The other allowed conditions
+validate a declaration against a rule that is itself about a member count. The
+scan covers the packages `lcm` and `_lcm`.
 """
 
 import ast
@@ -20,6 +21,10 @@ _ALLOWED: dict[tuple[str, str], str] = {
         "_lcm/user_regime_validation.py",
         "_fail_if_solver_cannot_solve_the_members",
     ): "the solver capability `supports_several_members`",
+    (
+        "_lcm/solution/collective_action_reduction.py",
+        "household_hard_max_reduction",
+    ): "one member's objective is its value: no tie key can change its winner",
     (
         "_lcm/user_regime_validation.py",
         "_validate_renegotiation",

@@ -24,8 +24,10 @@ from _lcm.regime_building.Q_and_F import BoundedQAndF, has_action_integrity
 from _lcm.solution.action_reduction import (
     COLLECTIVE_HARD_MAX_REDUCTION,
     CollectiveHardMaxAccumulator,
+    CollectiveHardMaxReduction,
     CollectiveHardMaxResult,
 )
+from _lcm.solution.collective_action_reduction import household_hard_max_reduction
 from _lcm.solution.feasibility import (
     BoundedResult,
     BoundInputStatus,
@@ -143,6 +145,9 @@ def build_partitioned_streaming_max_Q_over_a(
         axis_name=axis_name,
         members=members,
         weights=weights,
+        reduction=household_hard_max_reduction(
+            members=members, publishes_identity=True
+        ),
     )
 
 
@@ -210,6 +215,7 @@ def build_streaming_collective_max_Q_over_a(
     block_width: int,
     members: tuple[str, ...],
     weights: Mapping[str, FloatND | float],
+    publishes_identity: bool,
 ) -> Callable[..., CollectiveHardMaxResult | BoundedResult[CollectiveHardMaxResult]]:
     """Build the fixed-state collective hard-max callable.
 
@@ -219,6 +225,7 @@ def build_streaming_collective_max_Q_over_a(
     value at one global C-order winner and keeps the empty feasible set explicit.
     A block covering the whole product maps the named grids and reduces that
     product as one block, as `build_streaming_max_Q_over_a` does.
+    `publishes_identity` says whether the caller reads the winner's identity.
     """
     _validate_streaming_configuration(
         action_names=action_names, block_width=block_width
@@ -235,6 +242,9 @@ def build_streaming_collective_max_Q_over_a(
         block_width=block_width,
         members=members,
         weights=weights,
+        reduction=household_hard_max_reduction(
+            members=members, publishes_identity=publishes_identity
+        ),
     )
 
 
@@ -262,6 +272,7 @@ def _bounded_hard_max(
     kwargs: dict[ReferenceName, QAndFArg],
     members: tuple[str, ...],
     weights: Mapping[str, FloatND | float],
+    reduction: CollectiveHardMaxReduction,
 ) -> BoundedResult[CollectiveHardMaxResult]:
     """OR actual action-window validity beside the existing hard-max accumulator."""
     if not action_names:
@@ -271,8 +282,9 @@ def _bounded_hard_max(
         values, feasible = result.output
         block_values = values[None, ...]
         return BoundedResult(
-            output=COLLECTIVE_HARD_MAX_REDUCTION.finalize(
+            output=reduction.finalize(
                 accumulator=_start_collective_reduction(
+                    reduction=reduction,
                     block=(
                         _household_objectives(
                             member_values=block_values, members=members, weights=weights
@@ -280,7 +292,7 @@ def _bounded_hard_max(
                         block_values,
                         feasible[None],
                         jnp.asarray([0], dtype=jnp.int32),
-                    )
+                    ),
                 )
             ),
             bound_status=result.bound_status,
@@ -312,9 +324,10 @@ def _bounded_hard_max(
         evaluate_block=cast("Callable[..., _BoundedBlock]", evaluate_block),
         first_block_index=jnp.int32(0),
         n_blocks=(n_actions + width - 1) // width,
+        reduction=reduction,
     )
     return BoundedResult(
-        output=COLLECTIVE_HARD_MAX_REDUCTION.finalize(accumulator=carry.output),
+        output=reduction.finalize(accumulator=carry.output),
         bound_status=carry.bound_status,
         query_status=carry.query_status,
     )
@@ -325,6 +338,7 @@ def _scan_bounded_blocks(
     evaluate_block: Callable[..., _BoundedBlock],
     first_block_index: jax.Array,
     n_blocks: int,
+    reduction: CollectiveHardMaxReduction,
 ) -> BoundedResult[CollectiveHardMaxAccumulator]:
     """Reduce `n_blocks` blocks from `first_block_index` on, ORing their records.
 
@@ -343,7 +357,9 @@ def _scan_bounded_blocks(
     ) -> tuple[BoundedResult[CollectiveHardMaxAccumulator], None]:
         block = evaluate_block(block_index=first_block_index + offset)
         return BoundedResult(
-            output=_add_block(accumulator=carry.output, block=block.output),
+            output=_add_block(
+                reduction=reduction, accumulator=carry.output, block=block.output
+            ),
             bound_status=tuple(
                 merge_bound_input_status(left=left, right=right)
                 for left, right in zip(
@@ -376,6 +392,7 @@ class _PartitionedStreamingHardMax:
     axis_name: str
     members: tuple[str, ...]
     weights: Mapping[str, FloatND | float]
+    reduction: CollectiveHardMaxReduction
 
     def __call__(
         self, **kwargs: QAndFArg
@@ -452,6 +469,7 @@ class _PartitionedStreamingHardMax:
                 ),
                 first_block_index=first_block_index,
                 n_blocks=layout.blocks_per_partition,
+                reduction=self.reduction,
             )
         # Every participant evaluates each block inside the scan body, exactly
         # as the unpartitioned stream does, so each action's value comes from
@@ -462,6 +480,7 @@ class _PartitionedStreamingHardMax:
         (accumulator, _), _history = jax.lax.scan(
             partial(
                 _scan_one_block,
+                reduction=self.reduction,
                 evaluate_block=cast(
                     "Callable[..., _Block]",
                     partial(
@@ -491,6 +510,7 @@ class _StreamingCollectiveHardMax:
     block_width: int
     members: tuple[str, ...]
     weights: Mapping[str, FloatND | float]
+    reduction: CollectiveHardMaxReduction
 
     def __call__(
         self, **kwargs: QAndFArg
@@ -503,6 +523,7 @@ class _StreamingCollectiveHardMax:
                 kwargs=kwargs,
                 members=self.members,
                 weights=self.weights,
+                reduction=self.reduction,
             )
         if not self.action_names:
             return _reduce_collective_no_action(
@@ -510,6 +531,7 @@ class _StreamingCollectiveHardMax:
                 members=self.members,
                 weights=self.weights,
                 kwargs=kwargs,
+                reduction=self.reduction,
             )
 
         action_grids, fixed_kwargs, action_sizes, n_actions = _prepare_action_call(
@@ -524,6 +546,7 @@ class _StreamingCollectiveHardMax:
                 members=self.members,
                 weights=self.weights,
                 kwargs=kwargs,
+                reduction=self.reduction,
             )
         n_blocks = (n_actions + self.block_width - 1) // self.block_width
         evaluate_block = partial(
@@ -547,8 +570,9 @@ class _StreamingCollectiveHardMax:
             accumulator=_empty_collective_reduction(evaluate_block=evaluate_block),
             evaluate_block=cast("Callable[..., _Block]", evaluate_block),
             n_blocks=n_blocks,
+            reduction=self.reduction,
         )
-        return COLLECTIVE_HARD_MAX_REDUCTION.finalize(accumulator=accumulator)
+        return self.reduction.finalize(accumulator=accumulator)
 
 
 def _prepare_action_call(
@@ -850,10 +874,11 @@ def _scan_blocks(
     accumulator: CollectiveHardMaxAccumulator,
     evaluate_block: Callable[..., _Block],
     n_blocks: int,
+    reduction: CollectiveHardMaxReduction,
 ) -> CollectiveHardMaxAccumulator:
     """Scan every block in order; the returned history is the ``None`` pytree."""
     (reduced, _), _history = jax.lax.scan(
-        partial(_scan_one_block, evaluate_block=evaluate_block),
+        partial(_scan_one_block, evaluate_block=evaluate_block, reduction=reduction),
         (accumulator, jnp.asarray(0, dtype=jnp.int32)),
         xs=None,
         length=n_blocks,
@@ -867,20 +892,26 @@ def _scan_one_block(
     _unused: None,
     *,
     evaluate_block: Callable[..., _Block],
+    reduction: CollectiveHardMaxReduction,
 ) -> tuple[_ScanCarry, None]:
     """Evaluate the carried block index and merge it into the hard-max state."""
     partial_accumulator, block_index = carry
     block = evaluate_block(block_index=block_index)
-    partial_accumulator = _add_block(accumulator=partial_accumulator, block=block)
+    partial_accumulator = _add_block(
+        reduction=reduction, accumulator=partial_accumulator, block=block
+    )
     return (partial_accumulator, block_index + 1), None
 
 
 def _add_block(
-    *, accumulator: CollectiveHardMaxAccumulator, block: _Block
+    *,
+    reduction: CollectiveHardMaxReduction,
+    accumulator: CollectiveHardMaxAccumulator,
+    block: _Block,
 ) -> CollectiveHardMaxAccumulator:
     """Merge one evaluated block into the household's hard-max state."""
     objectives, member_values, feasible, global_ids = block
-    return COLLECTIVE_HARD_MAX_REDUCTION.add(
+    return reduction.add(
         accumulator=accumulator,
         objectives=objectives,
         member_values=member_values,
@@ -897,6 +928,7 @@ def _reduce_collective_whole_product(
     members: tuple[str, ...],
     weights: Mapping[str, FloatND | float],
     kwargs: dict[ReferenceName, QAndFArg],
+    reduction: CollectiveHardMaxReduction,
 ) -> CollectiveHardMaxResult:
     """Reduce a collective block covering the action product, mapping the named grids.
 
@@ -916,8 +948,9 @@ def _reduce_collective_whole_product(
     _validate_collective_block_Q_and_F(
         member_values=member_values, feasible=feasible, n_members=len(members)
     )
-    return COLLECTIVE_HARD_MAX_REDUCTION.finalize(
+    return reduction.finalize(
         accumulator=_start_collective_reduction(
+            reduction=reduction,
             block=(
                 _household_objectives(
                     member_values=member_values, members=members, weights=weights
@@ -925,18 +958,18 @@ def _reduce_collective_whole_product(
                 member_values,
                 feasible,
                 jnp.arange(n_actions, dtype=jnp.int32),
-            )
+            ),
         )
     )
 
 
-def _start_collective_reduction(*, block: _Block) -> CollectiveHardMaxAccumulator:
+def _start_collective_reduction(
+    *, block: _Block, reduction: CollectiveHardMaxReduction
+) -> CollectiveHardMaxAccumulator:
     """Seed a collective hard-max reduction from one evaluated block."""
     objectives, member_values, feasible, global_ids = block
-    accumulator = COLLECTIVE_HARD_MAX_REDUCTION.initialize(
-        member_template=jnp.zeros_like(member_values[0])
-    )
-    return COLLECTIVE_HARD_MAX_REDUCTION.add(
+    accumulator = reduction.initialize(member_template=jnp.zeros_like(member_values[0]))
+    return reduction.add(
         accumulator=accumulator,
         objectives=objectives,
         member_values=member_values,
@@ -951,6 +984,7 @@ def _reduce_collective_no_action(
     members: tuple[str, ...],
     weights: Mapping[str, FloatND | float],
     kwargs: dict[ReferenceName, QAndFArg],
+    reduction: CollectiveHardMaxReduction,
 ) -> CollectiveHardMaxResult:
     """Treat a collective empty action product as one shared identity cell."""
     member_values, feasible = Q_and_F(**kwargs)
@@ -971,8 +1005,8 @@ def _reduce_collective_no_action(
         feasible[jnp.newaxis],
         jnp.array([0], dtype=jnp.int32),
     )
-    accumulator = _start_collective_reduction(block=block)
-    return COLLECTIVE_HARD_MAX_REDUCTION.finalize(accumulator=accumulator)
+    accumulator = _start_collective_reduction(block=block, reduction=reduction)
+    return reduction.finalize(accumulator=accumulator)
 
 
 def _decode_action(

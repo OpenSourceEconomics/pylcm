@@ -21,151 +21,14 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from jax.extend.core import Jaxpr
 from numpy.testing import assert_allclose
 
 from _lcm.probability import is_live
 from _lcm.regime_building.zero_safe import zero_safe_average
-from _lcm.zero_safe import _merge_scaled_sums, scaled_lottery_mean
+from _lcm.zero_safe import _largest_selected, scaled_lottery_mean
 from lcm.certainty_equivalent import LinearExpectation
 from lcm.typing import FloatND, IntND
 from tests.conftest import DECIMAL_PRECISION
-
-#: Primitives that reduce an array over some of its axes.
-_REDUCTION_PRIMITIVES = frozenset(
-    {
-        "argmax",
-        "argmin",
-        "reduce",
-        "reduce_and",
-        "reduce_max",
-        "reduce_min",
-        "reduce_or",
-        "reduce_prod",
-        "reduce_sum",
-    }
-)
-
-
-def test_scaled_lottery_mean_reads_its_values_in_one_node_reduction() -> None:
-    """Everything derived from the values reaches the node axis in one reduction.
-
-    A per-node quantity with two reductions as readers, such as an exponent
-    whose maximum is taken and which also shifts the summed terms, may be
-    stored whole by the compiler, at the size of the full lottery. One
-    reduction over the node axis leaves nothing derived from the values that
-    has to outlive it.
-    """
-    values = jnp.ones((2, 3, 4))
-    coefficients = jnp.ones((2, 3, 4))
-    shifts = jnp.zeros((2, 3, 4), dtype=jnp.int32)
-    closed = jax.make_jaxpr(
-        lambda values, coefficients, shifts: scaled_lottery_mean(
-            values=values, coefficients=coefficients, shifts=shifts
-        )
-    )(values, coefficients, shifts)
-
-    count, _ = _count_node_reductions(
-        jaxpr=closed.jaxpr, tainted=(True, False, False), node_axis=values.ndim - 1
-    )
-
-    assert count == 1
-
-
-def _count_node_reductions(
-    *, jaxpr: Jaxpr, tainted: tuple[bool, ...], node_axis: int
-) -> tuple[int, tuple[bool, ...]]:
-    """Count reductions over `node_axis` whose operands depend on a tainted input.
-
-    Taint flows from every input of an equation to all of its outputs, through
-    nested call-like jaxprs as well. A reduction's own body is not descended
-    into: the reduction is counted once, where it reads its operands.
-    """
-    taint = {var: flag for var, flag in zip(jaxpr.invars, tainted, strict=True) if flag}
-    count = 0
-    for eqn in jaxpr.eqns:
-        inputs = tuple(
-            not hasattr(var, "val") and taint.get(var, False) for var in eqn.invars
-        )
-        inner = [
-            getattr(param, "jaxpr", param)
-            for param in eqn.params.values()
-            if hasattr(getattr(param, "jaxpr", param), "eqns")
-        ]
-        if eqn.primitive.name in _REDUCTION_PRIMITIVES:
-            axes = eqn.params.get("axes", eqn.params.get("dimensions", ()))
-            reads_nodes = any(
-                flag
-                and len(getattr(var.aval, "shape", ())) == node_axis + 1
-                and node_axis in axes
-                for var, flag in zip(eqn.invars, inputs, strict=True)
-            )
-            count += int(reads_nodes)
-            outputs = (any(inputs),) * len(eqn.outvars)
-        elif len(inner) == 1 and len(inner[0].invars) == len(eqn.invars):
-            inner_count, outputs = _count_node_reductions(
-                jaxpr=inner[0], tainted=inputs, node_axis=node_axis
-            )
-            count += inner_count
-        else:
-            outputs = (any(inputs),) * len(eqn.outvars)
-        taint.update(
-            {var: True for var, flag in zip(eqn.outvars, outputs, strict=True) if flag}
-        )
-    return count, tuple(taint.get(var, False) for var in jaxpr.outvars)
-
-
-def _dtype_tiny() -> float:
-    return float(np.finfo(np.dtype(jnp.asarray(1.0).dtype)).tiny)
-
-
-@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
-@pytest.mark.parametrize(
-    ("values", "coefficients", "expected"),
-    [
-        pytest.param((1.0, np.inf), (1.0, 1.0), np.inf, id="live-infinity"),
-        pytest.param((-np.inf, np.inf), (1.0, 1.0), np.nan, id="opposite-infinities"),
-        pytest.param((1.0, np.nan), (1.0, 1.0), np.nan, id="live-nan-value"),
-        pytest.param((1.0, np.nan), (1.0, 0.0), 1.0, id="null-weight-on-nan"),
-        pytest.param((2.0, -np.inf), (1.0, 0.0), 2.0, id="null-weight-on-infinity"),
-        pytest.param((1.0, 2.0), (1.0, np.nan), np.nan, id="nan-weight"),
-        pytest.param((1.0, 2.0), (1.0, -1.0), np.nan, id="negative-weight"),
-        pytest.param((1.0, 2.0), (1.0, np.inf), np.nan, id="infinite-weight"),
-        pytest.param((1.0, 2.0), (0.0, 0.0), np.nan, id="no-live-node"),
-        pytest.param((1.0, -1.0), (1.0, 1.0), 0.0, id="exact-cancellation"),
-        pytest.param((0.0, 4.0), (1.0, 1.0), 2.0, id="zero-value"),
-        pytest.param(("tiny", "tiny/2"), (1.0, 1.0), "3tiny/4", id="subnormal-mean"),
-    ],
-)
-def test_scaled_lottery_mean_at_the_edges_of_the_format(
-    *,
-    values: tuple[float | str, ...],
-    coefficients: tuple[float, ...],
-    expected: float | str,
-    enable_jit: bool,
-) -> None:
-    """Infinite, NaN, null, invalid and subnormal rows have their exact means."""
-    tiny = _dtype_tiny()
-    named = {"tiny": tiny, "tiny/2": tiny / 2, "3tiny/4": 0.75 * tiny}
-    dtype = jnp.asarray(1.0).dtype
-    host_values = np.asarray([named.get(v, v) for v in values], dtype=dtype)
-    expected_value = np.asarray(named.get(expected, expected), dtype=dtype)
-    assert expected_value != 0 or expected == 0.0
-
-    def mean(*, values: FloatND, coefficients: FloatND) -> FloatND:
-        return scaled_lottery_mean(
-            values=values,
-            coefficients=coefficients,
-            shifts=jnp.zeros(values.shape, dtype=jnp.int32),
-        )[0]
-
-    evaluate = jax.jit(mean) if enable_jit else mean
-    actual = evaluate(
-        values=jnp.asarray(host_values),
-        coefficients=jnp.asarray(coefficients, dtype=dtype),
-    )
-
-    np.testing.assert_array_equal(np.asarray(actual), expected_value)
 
 
 @pytest.mark.parametrize("mode", ["eager", "jit", "vmap"])
@@ -224,21 +87,20 @@ def test_scaled_mean_keeps_zero_on_its_mass_scale(
     np.testing.assert_array_equal(actual, np.asarray(expected, dtype=dtype))
 
 
-@pytest.mark.parametrize("scaled_side", ["left", "right"])
 @pytest.mark.parametrize("enable_jit", [False, True])
-def test_selected_exponents_keep_the_full_integer_range(
-    *, enable_jit: bool, scaled_side: Literal["left", "right"]
-) -> None:
-    """A real minimum exponent is distinct from a sum with no scale to keep."""
+def test_selected_exponents_keep_the_full_integer_range(*, enable_jit: bool) -> None:
+    """A real minimum exponent is distinct from a row with no selected entry."""
     exponents = jnp.asarray(
-        [-(2**30) - 1, -(2**30), np.iinfo(np.int32).min], dtype=jnp.int32
+        [[-(2**30) - 1, 0], [-(2**30), 0], [np.iinfo(np.int32).min, 0], [1, 2]],
+        dtype=jnp.int32,
     )
-    scaled = (exponents, jnp.ones(3))
-    empty = (jnp.asarray([0, 7, 0], dtype=jnp.int32), jnp.asarray([0.0, -0.0, 0.0]))
-    left, right = (scaled, empty) if scaled_side == "left" else (empty, scaled)
-    evaluate = jax.jit(_merge_scaled_sums) if enable_jit else _merge_scaled_sums
-    actual, _ = evaluate(left=left, right=right)
-    np.testing.assert_array_equal(actual, exponents)
+    selected = jnp.asarray([[True, False]] * 3 + [[False, False]])
+    evaluate = jax.jit(_largest_selected) if enable_jit else _largest_selected
+    actual = evaluate(selected=selected, exponents=exponents)
+    expected = np.asarray(
+        [[-(2**30) - 1], [-(2**30)], [np.iinfo(np.int32).min], [0]], dtype=np.int32
+    )
+    np.testing.assert_array_equal(actual, expected)
 
 
 @pytest.mark.parametrize("mode", ["eager", "jit", "vmap"])
@@ -403,3 +265,56 @@ def test_zero_safe_average_prices_a_downscaled_node_along_a_reduced_axis() -> No
         jnp.asarray([largest / 2, largest / 8]),
         rtol=10.0**-DECIMAL_PRECISION,
     )
+
+
+def _dtype_tiny() -> float:
+    return float(np.finfo(np.dtype(jnp.asarray(1.0).dtype)).tiny)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize(
+    ("values", "coefficients", "expected"),
+    [
+        pytest.param((1.0, np.inf), (1.0, 1.0), np.inf, id="live-infinity"),
+        pytest.param((-np.inf, np.inf), (1.0, 1.0), np.nan, id="opposite-infinities"),
+        pytest.param((1.0, np.nan), (1.0, 1.0), np.nan, id="live-nan-value"),
+        pytest.param((1.0, np.nan), (1.0, 0.0), 1.0, id="null-weight-on-nan"),
+        pytest.param((2.0, -np.inf), (1.0, 0.0), 2.0, id="null-weight-on-infinity"),
+        pytest.param((1.0, 2.0), (1.0, np.nan), np.nan, id="nan-weight"),
+        pytest.param((1.0, 2.0), (1.0, -1.0), np.nan, id="negative-weight"),
+        pytest.param((1.0, 2.0), (1.0, np.inf), np.nan, id="infinite-weight"),
+        pytest.param((1.0, 2.0), (0.0, 0.0), np.nan, id="no-live-node"),
+        pytest.param((1.0, -1.0), (1.0, 1.0), 0.0, id="exact-cancellation"),
+        pytest.param((0.0, 4.0), (1.0, 1.0), 2.0, id="zero-value"),
+        pytest.param(("tiny", "tiny/2"), (1.0, 1.0), "3tiny/4", id="subnormal-mean"),
+    ],
+)
+def test_scaled_lottery_mean_at_the_edges_of_the_format(
+    *,
+    values: tuple[float | str, ...],
+    coefficients: tuple[float, ...],
+    expected: float | str,
+    enable_jit: bool,
+) -> None:
+    """Infinite, NaN, null, invalid and subnormal rows have their exact means."""
+    tiny = _dtype_tiny()
+    named = {"tiny": tiny, "tiny/2": tiny / 2, "3tiny/4": 0.75 * tiny}
+    dtype = jnp.asarray(1.0).dtype
+    host_values = np.asarray([named.get(v, v) for v in values], dtype=dtype)
+    expected_value = np.asarray(named.get(expected, expected), dtype=dtype)
+    assert expected_value != 0 or expected == 0.0
+
+    def mean(*, values: FloatND, coefficients: FloatND) -> FloatND:
+        return scaled_lottery_mean(
+            values=values,
+            coefficients=coefficients,
+            shifts=jnp.zeros(values.shape, dtype=jnp.int32),
+        )[0]
+
+    evaluate = jax.jit(mean) if enable_jit else mean
+    actual = evaluate(
+        values=jnp.asarray(host_values),
+        coefficients=jnp.asarray(coefficients, dtype=dtype),
+    )
+
+    np.testing.assert_array_equal(np.asarray(actual), expected_value)

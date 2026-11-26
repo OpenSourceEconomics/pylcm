@@ -163,7 +163,9 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
     # and argmax_and_max controls with their reducers and the logsumexp corridor
     # source, and moved the singleton rank and gap filters onto the household
     # routes.
-    assert len(historical) == 552
+    # Removing the single hard max's dead fold deleted its three
+    # streaming_hard_max filter, merge and signed-zero controls.
+    assert len(historical) == 549
     historical = historical - exact_count_controls
     added_feasibility_controls = {
         "feasibility_summary:published_value_changed",
@@ -195,13 +197,13 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
     # inverted and native_graph:collective_output_role_dropped with their targets;
     # the fold-machinery removal deleted ten streaming fold controls and two
     # supplemental s02_status:fold_weight_* controls with theirs.
-    assert len(historical) == 550
+    assert len(historical) == 547
     historical_before_s1 = historical - added_rng_controls - added_engine_controls
-    assert len(historical_before_s1) == 548
-    assert len(historical_before_s1 - added_initial_controls) == 536
+    assert len(historical_before_s1) == 545
+    assert len(historical_before_s1 - added_initial_controls) == 533
     assert (
         len(historical_before_s1 - added_initial_controls - added_feasibility_controls)
-        == 534
+        == 531
     )
     assert "src/_lcm/solution/feasibility.py" in direct_flow._CERTIFIED_CORRIDOR_SOURCES
     assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 181

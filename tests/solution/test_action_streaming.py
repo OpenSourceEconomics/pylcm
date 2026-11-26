@@ -35,6 +35,7 @@ def _streamed_single(
         return jnp.asarray(value)[..., jnp.newaxis], feasible
 
     streamed = build_streaming_collective_max_Q_over_a(
+        publishes_identity=True,
         Q_and_F=with_member_axis,
         action_names=action_names,
         block_width=block_width,
@@ -373,6 +374,7 @@ def _single_jaxpr() -> ClosedJaxpr:
 
 def _collective_jaxpr() -> ClosedJaxpr:
     streamed = build_streaming_collective_max_Q_over_a(
+        publishes_identity=True,
         Q_and_F=_sin_collective_Q_and_F,
         action_names=("choice",),
         block_width=3,
@@ -421,6 +423,7 @@ _SHIFTED_ROUTES = {
         Q_and_F=_shifted_Q_and_F, action_names=("choice",), block_width=3
     )(choice=_CHOICE, shift=shift),
     "collective": lambda shift: build_streaming_collective_max_Q_over_a(
+        publishes_identity=True,
         Q_and_F=_shifted_collective_Q_and_F,
         action_names=("choice",),
         block_width=3,

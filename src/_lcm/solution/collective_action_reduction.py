@@ -1,11 +1,16 @@
 """Exact blockwise collective choice under one global household identity."""
 
+from dataclasses import dataclass
 from typing import Literal, NamedTuple
 
 import jax
 import jax.numpy as jnp
 
-from _lcm.regime_building.argmax import NO_ID, max_lexicographic_and_smallest_id
+from _lcm.regime_building.argmax import (
+    NO_ID,
+    max_and_any_nan,
+    max_lexicographic_and_smallest_id,
+)
 from lcm.typing import BoolND, FloatND, IntND
 
 
@@ -29,6 +34,7 @@ class CollectiveHardMaxResult(NamedTuple):
     any_feasible: BoolND
 
 
+@dataclass(frozen=True, kw_only=True)
 class CollectiveHardMaxReduction:
     """Merge collective action blocks without changing the household choice.
 
@@ -41,6 +47,28 @@ class CollectiveHardMaxReduction:
     A feasible NaN objective has no household value: the objective and every
     member value publish NaN and the identity is global action zero, as on the
     dense route.
+
+    A household of one member ranks its actions on that member's value alone,
+    which is its objective (`ties_go_to_members` false).
+
+    Where nothing reads the winner's identity, it keeps none
+    (`keeps_identity` false): the identity is then `NO_ID`, and of a `-0` and a
+    `+0` value it keeps `+0`.
+    """
+
+    ties_go_to_members: bool = True
+    """Whether ties in the objective go to the member values.
+
+    Without tie keys the value is the reduction's only key, so the compiler
+    evaluates the action values inside the reduction instead of storing them
+    for each action.
+    """
+
+    keeps_identity: bool = True
+    """Whether the reduction carries the winner's identity.
+
+    Without it, and without tie keys, a block reduces the value and the NaN
+    flag alone.
     """
 
     @property
@@ -97,8 +125,8 @@ class CollectiveHardMaxReduction:
             member_values=member_values,
             ids=jnp.broadcast_to(action_ids, objectives.shape),
             where=feasible,
-            any_feasible=jnp.any(feasible, axis=-1),
-            any_feasible_nan=jnp.any(feasible & jnp.isnan(objectives), axis=-1),
+            ties_go_to_members=self.ties_go_to_members,
+            keeps_identity=self.keeps_identity,
         )
         return self.merge(left=accumulator, right=block)
 
@@ -131,10 +159,10 @@ class CollectiveHardMaxReduction:
                 (left.best_member_values, right.best_member_values), axis=-2
             ),
             ids=ids,
-            where=ids != NO_ID,
-            any_feasible=left.any_feasible | right.any_feasible,
-            any_feasible_nan=left.any_feasible_nan | right.any_feasible_nan,
-        )
+            where=jnp.stack((left.any_feasible, right.any_feasible), axis=-1),
+            ties_go_to_members=self.ties_go_to_members,
+            keeps_identity=self.keeps_identity,
+        )._replace(any_feasible_nan=left.any_feasible_nan | right.any_feasible_nan)
 
     def finalize(
         self, *, accumulator: CollectiveHardMaxAccumulator
@@ -192,23 +220,61 @@ def _winner(
     member_values: FloatND,
     ids: IntND,
     where: BoolND,
-    any_feasible: BoolND,
-    any_feasible_nan: BoolND,
+    ties_go_to_members: bool,
+    keeps_identity: bool,
 ) -> CollectiveHardMaxAccumulator:
-    """Take the household winner among the candidates on the last block axis."""
-    (best_objective, *best_members), best_id = max_lexicographic_and_smallest_id(
-        values=(objectives, *jnp.unstack(member_values, axis=-1)),
-        ids=ids,
-        where=where,
+    """Take the household winner among the candidates on the last block axis.
+
+    One reduction gives the winner, whether any candidate is inside `where`
+    and whether one inside it has a NaN objective.
+    """
+    if not keeps_identity:
+        best, any_nan = max_and_any_nan(values=member_values[..., 0], where=where)
+        return CollectiveHardMaxAccumulator(
+            best_objective=best,
+            best_member_values=best[..., jnp.newaxis],
+            best_global_action_id=jnp.full(best.shape, NO_ID, dtype=jnp.int32),
+            any_feasible=~jnp.isnan(best) | any_nan,
+            any_feasible_nan=any_nan,
+        )
+    (best_objective, *best_members), best_id, any_nan = (
+        max_lexicographic_and_smallest_id(
+            values=(objectives, *jnp.unstack(member_values, axis=-1)),
+            ids=ids,
+            where=where,
+        )
+        if ties_go_to_members
+        else max_lexicographic_and_smallest_id(
+            values=(member_values[..., 0],), ids=ids, where=where
+        )
     )
     return CollectiveHardMaxAccumulator(
         best_objective=best_objective,
-        best_member_values=jnp.stack(best_members, axis=-1),
+        best_member_values=(
+            jnp.stack(best_members, axis=-1)
+            if ties_go_to_members
+            else best_objective[..., jnp.newaxis]
+        ),
         best_global_action_id=best_id,
-        any_feasible=any_feasible,
-        any_feasible_nan=any_feasible_nan,
+        any_feasible=best_id != NO_ID,
+        any_feasible_nan=any_nan,
     )
 
 
 COLLECTIVE_HARD_MAX_REDUCTION = CollectiveHardMaxReduction()
 # Shared exact collective hard-max reduction specification.
+
+
+def household_hard_max_reduction(
+    *, members: tuple[str, ...], publishes_identity: bool
+) -> CollectiveHardMaxReduction:
+    """Return the hard-max reduction of a household with `members`.
+
+    The objective of a household of one member is that member's value, and no
+    tie key can change its winner: its ties go to the smallest identity alone,
+    and where the caller does not publish the identity it is not kept.
+    """
+    several = len(members) > 1
+    return CollectiveHardMaxReduction(
+        ties_go_to_members=several, keeps_identity=several or publishes_identity
+    )

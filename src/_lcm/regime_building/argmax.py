@@ -1,7 +1,8 @@
 """Maxima paired with the identity of the element attaining them.
 
 `max_and_smallest_id` and `max_lexicographic_and_smallest_id` reduce values
-over their trailing axis and return the smallest identity attaining the maximum.
+over their trailing axis and return the smallest identity attaining the maximum;
+`max_and_any_nan` returns the maximum alone.
 """
 
 from functools import partial
@@ -142,8 +143,8 @@ def _larger_float_key_then_smaller_id(
 
 def max_lexicographic_and_smallest_id(
     *, values: tuple[FloatND, ...], ids: IntND, where: BoolND
-) -> tuple[tuple[FloatND, ...], IntND]:
-    """Return the lexicographic maximum over the last axis and its smallest id.
+) -> tuple[tuple[FloatND, ...], IntND, BoolND]:
+    """Return the lexicographic maximum over the last axis, its id and a NaN flag.
 
     Elements are ranked on `values[0]`; ties go to the larger `values[1]`, then
     `values[2]`, and so on; full ties go to the smaller `int32` id. The order is
@@ -156,6 +157,11 @@ def max_lexicographic_and_smallest_id(
     the winner's own bits, except that a NaN comes back as some NaN. Where no
     element is inside `where`, every value is NaN and the id is `NO_ID`.
 
+    The flag tells whether an element inside `where` has a NaN `values[0]`. It
+    is an operand of the same reduction, so `values[0]` has no second reader:
+    a separate NaN reduction would let the compiler store the values' producer
+    for every element instead of evaluating it inside the reduction.
+
     Differentiating through the reduction raises
     `UnsupportedDifferentiationError`.
     """
@@ -165,23 +171,73 @@ def max_lexicographic_and_smallest_id(
 # keyword-only-exempt: library-callback=jax.custom_jvp
 def _lexicographic_max(
     values: tuple[FloatND, ...], ids: IntND, where: BoolND
-) -> tuple[tuple[FloatND, ...], IntND]:
-    """Reduce `(key, ..., key, id)` tuples over the last axis, without a derivative."""
+) -> tuple[tuple[FloatND, ...], IntND, BoolND]:
+    """Reduce `(flag, key, ..., key, id)` tuples over the last axis, no derivative."""
     no_id = jnp.asarray(NO_ID, dtype=jnp.int32)
     keys = tuple(_ranked_key(values=value, where=where) for value in values)
-    *best_keys, best_id = jax.lax.reduce(
-        (*keys, jnp.where(where, ids, no_id)),
-        (*(_lowest_key(key.dtype) for key in keys), no_id),
-        _lexicographically_larger,
+    any_nan, *best_keys, best_id = jax.lax.reduce(
+        (where & jnp.isnan(values[0]), *keys, jnp.where(where, ids, no_id)),
+        (
+            jnp.zeros((), dtype=bool),
+            *(_lowest_key(key.dtype) for key in keys),
+            no_id,
+        ),
+        _nan_or_lexicographically_larger,
         (ids.ndim - 1,),
     )
-    return tuple(
-        jax.lax.bitcast_convert_type(_reverse_negative_bits(key), value.dtype)
-        for key, value in zip(best_keys, values, strict=True)
-    ), best_id
+    return (
+        tuple(
+            jax.lax.bitcast_convert_type(_reverse_negative_bits(key), value.dtype)
+            for key, value in zip(best_keys, values, strict=True)
+        ),
+        best_id,
+        any_nan,
+    )
 
 
 _lexicographic_max_no_derivative = without_derivative(_lexicographic_max)
+
+
+def max_and_any_nan(*, values: FloatND, where: BoolND) -> tuple[FloatND, BoolND]:
+    """Return the maximum over the last axis and whether a value there is NaN.
+
+    Only elements inside `where` count. A NaN ranks below every number, and so
+    does an element outside `where`; with no number inside `where` the maximum
+    is NaN. Of `-0` and `+0` the maximum is `+0`. One reduction carries the order
+    key and the NaN flag, so `values` has no second reader and the compiler
+    evaluates them inside the reduction.
+
+    Differentiating through the reduction raises
+    `UnsupportedDifferentiationError`.
+    """
+    return _max_and_any_nan_no_derivative(values, where)
+
+
+# keyword-only-exempt: library-callback=jax.custom_jvp
+def _max_and_any_nan(values: FloatND, where: BoolND) -> tuple[FloatND, BoolND]:
+    """Reduce `(flag, key)` pairs over the last axis, without a derivative."""
+    keys = _ranked_key(values=values, where=where)
+    any_nan, best_key = jax.lax.reduce(
+        (where & jnp.isnan(values), keys),
+        (jnp.zeros((), dtype=bool), _lowest_key(keys.dtype)),
+        _nan_or_larger_key,
+        (values.ndim - 1,),
+    )
+    return (
+        jax.lax.bitcast_convert_type(_reverse_negative_bits(best_key), values.dtype),
+        any_nan,
+    )
+
+
+_max_and_any_nan_no_derivative = without_derivative(_max_and_any_nan)
+
+
+# keyword-only-exempt: library-callback=jax.lax.reduce
+def _nan_or_larger_key(
+    left: tuple[BoolND, _FloatBitsND], right: tuple[BoolND, _FloatBitsND]
+) -> tuple[BoolND, _FloatBitsND]:
+    """OR the NaN flags; keep the larger key."""
+    return left[0] | right[0], jnp.maximum(left[1], right[1])
 
 
 def _ranked_key(*, values: FloatND, where: BoolND) -> _FloatBitsND:
@@ -196,6 +252,15 @@ def _lowest_key(dtype: np.dtype[np.generic]) -> _FloatBitsND:
     """Return the key just below `-inf`'s; it decodes to a NaN."""
     infinity_key = _float_infinity_key(jnp.dtype(f"float{dtype.itemsize * 8}"))
     return jnp.asarray(~infinity_key - 1, dtype=dtype)
+
+
+# keyword-only-exempt: library-callback=jax.lax.reduce
+def _nan_or_lexicographically_larger(
+    left: tuple[BoolND | _FloatBitsND | IntND, ...],
+    right: tuple[BoolND | _FloatBitsND | IntND, ...],
+) -> tuple[BoolND | _FloatBitsND | IntND, ...]:
+    """OR the leading NaN flags; keep the lexicographically larger remainder."""
+    return (left[0] | right[0], *_lexicographically_larger(left[1:], right[1:]))
 
 
 # keyword-only-exempt: library-callback=jax.lax.reduce

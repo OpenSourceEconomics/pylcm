@@ -31,6 +31,7 @@ from jax import Array
 
 from _lcm.logsum import logsum_and_softmax
 from _lcm.regime_building.argmax import (
+    NO_ID,
     max_lexicographic_and_smallest_id,
 )
 from _lcm.regime_building.collective import (
@@ -116,13 +117,12 @@ def household_argmax_and_readout(
         member_Q={str(m): objectives[m] for m in range(n_members)},
         weights={str(m): weights[m] for m in range(n_members)},
     )
-    (_, *keys), index = max_lexicographic_and_smallest_id(
+    (_, *keys), index, household_nan = max_lexicographic_and_smallest_id(
         values=(objective, *member_tie_keys(readout=stored, weights=weights)),
         ids=jnp.arange(feasible.size, dtype=jnp.int32),
         where=feasible,
     )
-    empty = ~jnp.any(feasible)
-    household_nan = jnp.any(feasible & jnp.isnan(objective))
+    empty = index == NO_ID
     member_nan = jnp.any(
         feasible & (jnp.isnan(objectives) | jnp.isnan(stored.T)), axis=1
     )

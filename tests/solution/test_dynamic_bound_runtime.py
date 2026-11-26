@@ -1164,6 +1164,7 @@ def _marked_stream(
         return run_partitioned
 
     stream = build_streaming_collective_max_Q_over_a(
+        publishes_identity=True,
         Q_and_F=kernel,
         action_names=action_names,
         block_width=block_width,

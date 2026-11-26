@@ -4,11 +4,12 @@ A fresh interpreter with eight forced host CPU devices solves the many-actions
 model on the ordinary route and on the action-partitioned route — actions
 alone, actions times a sharded continuous state, and either combined with
 type-local invariant blocks — and writes a report (see
-`_action_partition_report.py`). At the same action width every published value
-equals the ordinary route bit for bit, for every partition count; at
-independently planned widths it agrees to the last few units in the last place
-and the simulated panel is unchanged; the devices exchange one accumulator per
-state cell and partition, never values over actions.
+`_action_partition_report.py`). Every published value agrees with the ordinary
+route to the last few units in the last place, for every partition count: a
+single's ordinary solve reduces its actions on the value alone, while a
+partition keeps the winner's identity for the merge. A household equals the
+ordinary route bit for bit, and the simulated panel is unchanged; the devices
+exchange one accumulator per state cell and partition, never values over actions.
 
 CPU proves semantics and placement, not GPU performance.
 """
@@ -36,6 +37,7 @@ class _Layout(TypedDict):
 
 class _FixedPartition(TypedDict):
     mismatches: list[str]
+    max_ulp: float
     working_layout: _Layout
     dead_layout: _Layout
 
@@ -46,6 +48,7 @@ class _PlannedPartition(TypedDict):
 
 class _StatePartition(TypedDict):
     mismatches_to_same_state_mesh: list[str]
+    max_ulp_to_same_state_mesh: float
     max_ulp_to_one_device: float
     working_layout: _Layout
 
@@ -63,6 +66,7 @@ class _Simulation(TypedDict):
 
 class _ChangedParams(TypedDict):
     mismatches: list[str]
+    max_ulp: float
     differs_from_first: bool
 
 
@@ -231,11 +235,18 @@ def test_the_report_ran_on_eight_host_devices_at_the_suite_precision(
 
 
 @pytest.mark.parametrize("partitions", [2, 3, 4, 8])
-def test_action_only_partitions_equal_the_ordinary_route_bitwise(
+def test_action_only_partitions_agree_with_the_ordinary_route_to_the_last_units(
     *, report: _Report, partitions: int
 ) -> None:
-    """Every period and regime, at the same fixed action width."""
-    assert _action_only_fixed(report=report, partitions=partitions)["mismatches"] == []
+    """Every period and regime, at the same fixed action width.
+
+    A single's ordinary solve reduces its actions on the value alone; a partition
+    keeps the winner's identity for the merge, a different compiled program.
+    """
+    assert (
+        _action_only_fixed(report=report, partitions=partitions)["max_ulp"]
+        <= conftest.INVARIANCE_EPS_MULTIPLE
+    )
 
 
 @pytest.mark.parametrize("partitions", [2, 3, 4, 8])
@@ -310,16 +321,17 @@ def test_simulated_values_at_planned_widths_agree_to_the_last_units_in_the_last_
 
 
 @pytest.mark.parametrize("partitions", [2, 4, 8])
-def test_state_by_action_partitions_equal_the_same_state_mesh_bitwise(
+def test_state_by_action_partitions_agree_with_the_same_state_mesh_to_the_last_units(
     *, report: _Report, partitions: int
 ) -> None:
     """Against the ordinary route sharding wealth over the same number of
-    devices, so each device evaluates the same state cells."""
+    devices, so each device evaluates the same state cells; the partition keeps
+    the winner's identity, the single's ordinary solve its value alone."""
     assert (
         _state_by_action(report=report, partitions=partitions)[
-            "mismatches_to_same_state_mesh"
+            "max_ulp_to_same_state_mesh"
         ]
-        == []
+        <= conftest.INVARIANCE_EPS_MULTIPLE
     )
 
 
@@ -346,11 +358,14 @@ def test_a_state_by_action_regime_shards_states_and_replicates_over_actions(
     }
 
 
-def test_partitions_compose_with_type_local_invariant_blocks_bitwise(
+def test_partitions_compose_with_type_local_invariant_blocks_to_the_last_units(
     report: _Report,
 ) -> None:
     """Against the same blocked solve on the ordinary route."""
-    assert report["invariant_blocks_action_only"]["mismatches"] == []
+    assert (
+        report["invariant_blocks_action_only"]["max_ulp"]
+        <= conftest.INVARIANCE_EPS_MULTIPLE
+    )
 
 
 def test_state_by_action_partitions_compose_with_invariant_blocks_to_the_last_units(
@@ -387,7 +402,9 @@ def test_partitioned_type_blocks_keep_the_block_layout(
 def test_a_second_solve_with_changed_params_reuses_nothing_stale(
     report: _Report,
 ) -> None:
-    assert report["changed_params"] == {"mismatches": [], "differs_from_first": True}
+    changed = report["changed_params"]
+    assert changed["differs_from_first"] is True
+    assert changed["max_ulp"] <= conftest.INVARIANCE_EPS_MULTIPLE
 
 
 def test_the_partitioned_program_gathers_one_accumulator_per_cell_and_device(

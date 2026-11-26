@@ -1,17 +1,13 @@
-"""Exact blockwise reductions over a canonical global action order.
+"""Exact hard maxima over a canonical global action order.
 
-The execution planner may partition an action product into blocks and process those
-blocks in any legal order.  This module owns the mathematical reduction state that
-makes such a schedule observationally equivalent to one scalar pass over the complete
-action order.  It deliberately knows nothing about grid construction, block width, or
-device placement.
+The household hard max in `collective_action_reduction` folds every action block
+a regime's solve and simulation decision reduce. `HARD_MAX_REDUCTION` declares the
+same exact contract for a reduced axis whose fold lives in its own step, such as
+NB-EGM's branch axis.
 """
 
 from typing import Literal, NamedTuple
 
-import jax.numpy as jnp
-
-from _lcm.regime_building.argmax import NO_ID, max_and_smallest_id
 from _lcm.solution.collective_action_reduction import (
     COLLECTIVE_HARD_MAX_REDUCTION,
     CollectiveHardMaxAccumulator,
@@ -20,32 +16,15 @@ from _lcm.solution.collective_action_reduction import (
 )
 from lcm.typing import BoolND, FloatND, IntND
 
-# Identity a feasible NaN carries into the paired reduction, below every real one.
-_NAN_ID = jnp.iinfo(jnp.int32).min
-
 __all__ = [
     "COLLECTIVE_HARD_MAX_REDUCTION",
     "HARD_MAX_REDUCTION",
     "CollectiveHardMaxAccumulator",
     "CollectiveHardMaxReduction",
     "CollectiveHardMaxResult",
-    "HardMaxAccumulator",
     "HardMaxReduction",
     "HardMaxResult",
 ]
-
-
-class HardMaxAccumulator(NamedTuple):
-    """Mergeable state of an exact hard maximum over action blocks."""
-
-    best_value: FloatND
-    """Best feasible value seen so far, or ``-inf`` before one is seen."""
-
-    best_global_action_id: IntND
-    """Canonical global identity of the winner, or ``-1`` if none is feasible."""
-
-    any_feasible: BoolND
-    """Whether at least one feasible action has been seen."""
 
 
 class HardMaxResult(NamedTuple):
@@ -57,17 +36,10 @@ class HardMaxResult(NamedTuple):
 
 
 class HardMaxReduction:
-    """Exact hard maximum whose merge law is independent of block scheduling.
+    """Exact hard maximum over one value per action, as a declaration only.
 
-    Blocks occupy the last axis of ``values``. ``feasible`` and ``action_ids`` must
-    broadcast to that shape; action identities are canonical global ``int32`` values,
-    not positions within a block. Equal values select the smallest global identity.
-
-    Feasibility is applied before comparison, so a feasible ``-inf`` remains distinct
-    from an all-infeasible cell. A feasible NaN preserves GridSearch's existing
-    full-array behavior: the maximum is NaN and the all-false equality mask makes
-    ``argmax`` publish global identity zero, even if action zero is infeasible. This is
-    an exact-equivalence rule, not a preferred mathematical treatment of NaNs.
+    Equal values select the smallest canonical global identity, so the winner does
+    not depend on how the axis is blocked or in which order blocks are merged.
     """
 
     @property
@@ -80,154 +52,6 @@ class HardMaxReduction:
         """Return `"exact"`: the max with lowest-id tie-break is order independent."""
         return "exact"
 
-    def initialize(self, *, value_template: FloatND) -> HardMaxAccumulator:
-        """Create an empty accumulator with ``value_template``'s shape and dtype."""
-        return HardMaxAccumulator(
-            best_value=jnp.full_like(value_template, -jnp.inf),
-            best_global_action_id=jnp.full(value_template.shape, -1, dtype=jnp.int32),
-            any_feasible=jnp.zeros(value_template.shape, dtype=bool),
-        )
-
-    def add(
-        self,
-        *,
-        accumulator: HardMaxAccumulator,
-        values: FloatND,
-        feasible: BoolND,
-        action_ids: IntND,
-    ) -> HardMaxAccumulator:
-        """Reduce one action block and merge it into ``accumulator``."""
-        if action_ids.dtype != jnp.dtype(jnp.int32):
-            msg = (
-                "HardMaxReduction.add action_ids must have dtype int32; "
-                f"got {action_ids.dtype}."
-            )
-            raise TypeError(msg)
-        block = _reduce_block(
-            values=values,
-            feasible=jnp.broadcast_to(feasible, values.shape),
-            action_ids=jnp.broadcast_to(action_ids, values.shape),
-        )
-        return self.merge(left=accumulator, right=block)
-
-    def merge(
-        self,
-        *,
-        left: HardMaxAccumulator,
-        right: HardMaxAccumulator,
-    ) -> HardMaxAccumulator:
-        """Merge partials independently of schedule, including the NaN id-zero rule."""
-        left_nan = jnp.isnan(left.best_value)
-        right_nan = jnp.isnan(right.best_value)
-        right_wins_both_feasible = (
-            (right_nan & ~left_nan)
-            | (
-                right_nan
-                & left_nan
-                & (right.best_global_action_id < left.best_global_action_id)
-            )
-            | (
-                ~right_nan
-                & ~left_nan
-                & (
-                    (right.best_value > left.best_value)
-                    | (
-                        (right.best_value == left.best_value)
-                        & (right.best_global_action_id < left.best_global_action_id)
-                    )
-                )
-            )
-        )
-        choose_right = right.any_feasible & (
-            ~left.any_feasible | (left.any_feasible & right_wins_both_feasible)
-        )
-        selected_best_value = jnp.where(choose_right, right.best_value, left.best_value)
-        both_feasible_zero = (
-            left.any_feasible
-            & right.any_feasible
-            & (left.best_value == 0)
-            & (right.best_value == 0)
-        )
-        signed_zero_max = jnp.where(
-            jnp.signbit(left.best_value) & jnp.signbit(right.best_value),
-            -jnp.zeros_like(left.best_value),
-            jnp.zeros_like(left.best_value),
-        )
-
-        return HardMaxAccumulator(
-            # Dense max publishes +0 for a {-0, +0} tie, independently of which
-            # global identity wins the replay tie. Sign conjunction is the exact,
-            # commutative and associative maximum over signed zeros.
-            best_value=jnp.where(
-                both_feasible_zero, signed_zero_max, selected_best_value
-            ),
-            best_global_action_id=jnp.where(
-                choose_right,
-                right.best_global_action_id,
-                left.best_global_action_id,
-            ),
-            any_feasible=left.any_feasible | right.any_feasible,
-        )
-
-    def finalize(self, *, accumulator: HardMaxAccumulator) -> HardMaxResult:
-        """Publish the winner while keeping the all-infeasible state explicit."""
-        return HardMaxResult(
-            best_value=jnp.where(
-                accumulator.any_feasible,
-                accumulator.best_value,
-                jnp.full_like(accumulator.best_value, -jnp.inf),
-            ),
-            best_global_action_id=jnp.where(
-                accumulator.any_feasible,
-                accumulator.best_global_action_id,
-                jnp.full_like(accumulator.best_global_action_id, -1),
-            ),
-            any_feasible=accumulator.any_feasible,
-        )
-
-
-def _reduce_block(
-    *, values: FloatND, feasible: BoolND, action_ids: IntND
-) -> HardMaxAccumulator:
-    """Reduce one block without assuming its local order is canonical.
-
-    The best value and its identity come out of one reduction, so the identity
-    always names a feasible action attaining the published value. A feasible NaN
-    enters that reduction as `+inf` under an identity below every real one, so it
-    wins every comparison and is recognised by its identity. The values thus have
-    one reader: a separate NaN reduction would let the compiler evaluate or
-    materialize the values' producer once per reader, as the compiled width
-    dictates, and the published maximum would depend on the width a regime is
-    chunked at.
-    """
-    feasible_nan = feasible & jnp.isnan(values)
-    any_feasible = jnp.any(feasible, axis=-1)
-    best_value, best_global_action_id = max_and_smallest_id(
-        values=jnp.where(feasible_nan, jnp.inf, jnp.where(feasible, values, -jnp.inf)),
-        ids=jnp.where(feasible_nan, _NAN_ID, jnp.where(feasible, action_ids, NO_ID)),
-        initial=-jnp.inf,
-    )
-    any_nan = best_global_action_id == _NAN_ID
-    best_value = jnp.where(any_nan, jnp.full_like(best_value, jnp.nan), best_value)
-
-    # Full-array GridSearch publishes identity zero when a feasible value is NaN.
-    # Keep that historical quirk even for a block that does not contain global
-    # action zero so arbitrary block schedules remain observationally equivalent
-    # after merging.
-    best_global_action_id = jnp.where(any_nan, 0, best_global_action_id)
-
-    return HardMaxAccumulator(
-        best_value=jnp.where(
-            any_feasible, best_value, jnp.full_like(best_value, -jnp.inf)
-        ),
-        best_global_action_id=jnp.where(
-            any_feasible,
-            best_global_action_id,
-            jnp.full_like(best_global_action_id, -1),
-        ),
-        any_feasible=any_feasible,
-    )
-
 
 HARD_MAX_REDUCTION = HardMaxReduction()
-# Shared exact hard-max reduction specification.
+# Shared exact hard-max declaration.

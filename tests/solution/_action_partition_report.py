@@ -83,6 +83,7 @@ def _report() -> dict[str, JSONValue]:
             "mismatches": _bitwise_mismatches(
                 got=got.values, expected=reference.values
             ),
+            "max_ulp": _max_ulp(got=got.values, expected=reference.values),
             "working_layout": _layout(got.values[0]["working"]),
             "dead_layout": _layout(got.values[3]["dead"]),
         }
@@ -118,6 +119,9 @@ def _report() -> dict[str, JSONValue]:
         )
         report[f"state_by_action_{partitions}"] = {
             "mismatches_to_same_state_mesh": _bitwise_mismatches(
+                got=got.values, expected=same_state_mesh.values
+            ),
+            "max_ulp_to_same_state_mesh": _max_ulp(
                 got=got.values, expected=same_state_mesh.values
             ),
             "max_ulp_to_one_device": _max_ulp(
@@ -159,6 +163,7 @@ def _report() -> dict[str, JSONValue]:
     second = model.solve(params=many_actions.get_params(scale=1.7), log_level="off")
     report["changed_params"] = {
         "mismatches": _bitwise_mismatches(got=second.values, expected=changed.values),
+        "max_ulp": _max_ulp(got=second.values, expected=changed.values),
         "differs_from_first": not np.array_equal(
             np.asarray(second.values[0]["working"]), np.asarray(first[0]["working"])
         ),

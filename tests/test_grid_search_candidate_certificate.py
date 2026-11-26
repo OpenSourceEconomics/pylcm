@@ -187,6 +187,7 @@ class _HouseholdFoldArguments(TypedDict, closed=True):
     block_width: int
     members: tuple[str, ...]
     weights: Mapping[str, FloatND | float]
+    publishes_identity: bool
 
 
 class _EvaluateBlock(Protocol):
@@ -1075,13 +1076,10 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
         "streaming_blocks:admit_padded_tail",
         "streaming_blocks:block_local_action_ids",
         "streaming_blocks:reverse_coordinate_decode",
-        "streaming_hard_max:filter_last_identity",
         "streaming_collective_blocks:skip_last_block",
         "streaming_collective_blocks:feasibility_mask_dropped",
         "streaming_collective_blocks:block_local_action_ids",
         "streaming_collective_blocks:objective_uses_first_member",
-        "streaming_hard_max:ignore_right_partial",
-        "streaming_hard_max:signed_zero_normalization_bypassed",
         "streaming_hard_max:semantic_key_changed",
         "native_graph:solve_collection_bypasses_central_validator",
         "native_graph:materialized_program_filtered",
@@ -1156,10 +1154,10 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
         for name in names
         if not name.startswith(("simulation_adapter:", "public_shell:"))
     }
-    assert len(original_names) == 330
+    assert len(original_names) == 327
     assert (
         hashlib.sha256(("\n".join(sorted(original_names)) + "\n").encode()).hexdigest()
-        == "d0c18b1c91498640e72710b439ccd541dc2b1daf32cf16c70fe3f48169047838"
+        == "91b111ab3c18ee5ba898f63ee5f50d2dd2043fbba0e0984582532f78854cc862"
     )
     historical_names = {
         name
@@ -1170,17 +1168,17 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
             ("simulation_adapter:initial_physical_", "public_shell:")
         )
     }
-    assert len(historical_names) == 348
+    assert len(historical_names) == 345
     assert (
         hashlib.sha256(
             ("\n".join(sorted(historical_names)) + "\n").encode()
         ).hexdigest()
-        == "4c39ce90f741eaa2da0e179973edd3a41256a901a5f102f304999ccaad98c19b"
+        == "3682587108e4a0ca73e145c5a69fe037fd238096c1ac23a2e2b6a5373d7fb449"
     )
-    assert len(names) == 365
+    assert len(names) == 362
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "9f8018df7ea36b0ba776cfe14094936cabc9b57c6aff693c4216cc363db23656"
+        == "1addb68c5045e4d9cb0ba5d1a9a56d78bff3d135f1f6f8e115ec1520634e8c8b"
     )
 
 

@@ -175,6 +175,7 @@ def _unpartitioned(
     """Run the existing single-participant streamed reduction."""
     n_cells, n_actions = values.shape
     reduce_cell = build_streaming_collective_max_Q_over_a(
+        publishes_identity=True,
         Q_and_F=_table_Q_and_F,
         action_names=("choice",),
         block_width=block_width,
@@ -632,6 +633,7 @@ def _unpartitioned_household(
     """Run the single-participant streamed household reduction."""
     n_cells, n_actions, _ = values.shape
     reduce_cell = build_streaming_collective_max_Q_over_a(
+        publishes_identity=True,
         Q_and_F=_member_table_Q_and_F,
         action_names=("choice",),
         block_width=block_width,

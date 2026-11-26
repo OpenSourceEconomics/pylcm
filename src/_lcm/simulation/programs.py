@@ -1338,6 +1338,7 @@ class _StreamedArgmaxQOverA:
             action_names=self.action_names,
             block_width=block_width,
             members=self.members,
+            publishes_identity=True,
             weights=weights.compute(
                 **{name: states_actions_params[name] for name in weights.arg_names}
             ),

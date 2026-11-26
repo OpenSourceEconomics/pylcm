@@ -22,7 +22,6 @@ import numpy as np
 import pytest
 
 from _lcm.execution import output_layout, value_transfer
-from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
 from _lcm.typing import PytreeValue
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import FloatND, IntND, RegimeName, StateName
@@ -363,33 +362,3 @@ def test_coordinate_join_survives_preference_axis_relocation() -> None:
     )
     assert original == relocated
     assert original[(("assets", 5.0), ("pref_type", 1.0))] == -150.0
-
-
-@pytest.mark.parametrize("width", [1, 2, 3, 4])
-def test_negative_ties_and_infeasible_padding_preserve_named_max(width: int) -> None:
-    """Two-coordinate cells retain negative maxima, lowest-ID ties and empty masks."""
-    values = jnp.array(
-        [
-            [[-9.0, -3.0, -3.0, 0.0], [-5.0, -4.0, -2.0, 0.0]],
-            [[-7.0, -1.0, -6.0, 0.0], [-jnp.inf, -2.0, -3.0, 0.0]],
-        ]
-    )
-    feasible = jnp.array(
-        [
-            [[True, True, True, False], [False, False, False, False]],
-            [[True, False, True, False], [True, False, False, False]],
-        ]
-    )
-    action_ids = jnp.array([5, 8, 2, 0], dtype=jnp.int32)
-    accumulator = HARD_MAX_REDUCTION.initialize(value_template=jnp.zeros((2, 2)))
-    for start in range(0, 4, width):
-        accumulator = HARD_MAX_REDUCTION.add(
-            accumulator=accumulator,
-            values=values[..., start : start + width],
-            feasible=feasible[..., start : start + width],
-            action_ids=action_ids[start : start + width],
-        )
-    result = HARD_MAX_REDUCTION.finalize(accumulator=accumulator)
-    np.testing.assert_array_equal(result.best_value, [[-3.0, -np.inf], [-6.0, -np.inf]])
-    np.testing.assert_array_equal(result.best_global_action_id, [[2, -1], [2, 5]])
-    np.testing.assert_array_equal(result.any_feasible, [[True, False], [True, True]])
