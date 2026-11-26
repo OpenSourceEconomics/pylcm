@@ -21,7 +21,7 @@ import pandas as pd
 import pytest
 
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.regime_building.Q_and_F import _CollectiveQAndF
+from _lcm.regime_building.Q_and_F import _CollectiveQAndF, _MemberAggregator
 from _lcm.simulation.programs import _StreamedArgmaxQOverA, _SubjectTiled
 from _lcm.typing import (
     FlatParams,
@@ -131,8 +131,11 @@ def _decision_q(
     assert isinstance(reducer, _StreamedArgmaxQOverA)
     q, q_bound = _unwrap(reducer.Q_and_F)
     assert isinstance(q, _CollectiveQAndF)
-    aggregator, _ = _unwrap(q.koopmans_aggregator)
-    assert type(aggregator) is LinearAggregator
+    members, _ = _unwrap(q.koopmans_aggregator)
+    assert isinstance(members, _MemberAggregator)
+    for member in members.aggregators:
+        aggregator, _ = _unwrap(member)
+        assert type(aggregator) is LinearAggregator
     return q, q_bound | reducer_bound | bound
 
 
