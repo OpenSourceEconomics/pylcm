@@ -264,7 +264,7 @@ fragments keep format version 3.
 
 - A state a `CompositionAction` projects follows its destination grid's `off_grid`
   rule, as a realised next state does, in the solve and in the simulation alike. Under
-  `"clip_state"` the destination's problem is priced, and the deciding member lands, at
+  `"clip_state"` the destination's problem is priced, and the member who leaves lands, at
   the state capped to the grid's outer nodes. Under `"raise"` a read the decision on the
   composition evaluates that lands outside the grid raises `OffGridStateError`, even
   where the members then stay. A read where the composition action is unavailable, or

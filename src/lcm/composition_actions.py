@@ -22,11 +22,11 @@ type MemberName = str
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
 class Destination:
-    """A destination regime and the current states at which the deciding member lands.
+    """A destination regime and the current states at which the member who leaves lands.
 
     The value of the outside option is the value of the destination's problem at the
     landing states, without the destination's own composition action: an agent decides
-    on its composition at most once per period, and the deciding member acts in that
+    on its composition at most once per period, and the member who leaves acts in that
     problem. Under `Consent` the destination is the formed couple, which applies its
     own rule for staying.
     """

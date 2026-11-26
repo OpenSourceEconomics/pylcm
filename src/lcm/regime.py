@@ -373,7 +373,7 @@ class Regime:
     The `decomposed_functions` view of a regime with several members carries a
     per-member `utility_<s>` for each member `<s>`, together with a
     `pareto_objective`, and a non-terminal one aggregates each member's
-    continuation `Q^s = W^s(u^s, CE^s)`. The transition targets of such a
+    continuation `Q^κ = W^κ(u^κ, CE^κ)`. The transition targets of such a
     non-terminal regime must all have the identical `members` tuple. A
     `CompositionAction` declares each member's outside option in the current
     period. EV1 taste shocks with more than one member carrying a positive
@@ -394,7 +394,7 @@ class Regime:
     """How this regime trades its members off.
 
     Derived from `CollectiveUtility.objective`. The solve maximizes the
-    Pareto-weighted scalarization `O = Σ_s λ_s Q^s` over the feasible action set.
+    Pareto-weighted scalarization `O = Σ_κ λ_κ Q^κ` over the feasible action set.
     When omitted (the default), equal weights `1/len(members)` are used —
     the symmetric-couple case, `λ = 0.5` on each partner. Declare a
     `ParetoObjective` to weigh one member more, to let the weights depend

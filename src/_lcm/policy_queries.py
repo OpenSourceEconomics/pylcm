@@ -620,7 +620,7 @@ class ScalarPolicyQueries:
     """The node that acts.
 
     - Full for an original occupant's choice.
-    - For a deciding member's once-only action, the kind its decision was priced
+    - For the once-only action of a member who leaves, the kind its decision was priced
       at: Participating after formation by consent, Raw after any other
       composition action.
     """

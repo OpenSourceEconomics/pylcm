@@ -233,7 +233,9 @@ def _winner(
         return CollectiveHardMaxAccumulator(
             best_objective=best,
             best_member_values=best[..., jnp.newaxis],
-            best_global_action_id=jnp.full(best.shape, NO_ID, dtype=jnp.int32),
+            # Built like `any_nan`, so it is batched and placed as the data is: a
+            # free constant fails under `vmap` over a mesh-sharded axis.
+            best_global_action_id=jnp.full_like(any_nan, NO_ID, dtype=jnp.int32),
             any_feasible=~jnp.isnan(best) | any_nan,
             any_feasible_nan=any_nan,
         )

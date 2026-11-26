@@ -21,6 +21,7 @@ from typing import NoReturn, NotRequired, Protocol, Unpack, cast
 
 import jax
 import numpy as np
+import pandas as pd
 import pytest
 from jax import numpy as jnp
 from numpy.typing import ArrayLike
@@ -100,6 +101,7 @@ from lcm.typing import (
     ValueND,
 )
 from tests.conftest import (
+    INVARIANCE_EPS_MULTIPLE,
     AttachResolvedOutputLayoutKwargs,
     ResidentInventoryKwargs,
     assert_agrees_to_ulp,
@@ -1627,7 +1629,10 @@ def test_a_value_read_across_disjoint_blocks_is_a_cross_mesh_copy(
 def test_a_two_block_solve_publishes_the_single_device_values(
     *, regime: RegimeName, exact_layout: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Independent solves agree at array scale; actual copies preserve every byte."""
+    """Independent solves agree at array scale and simulate the same choices.
+
+    Actual copies preserve every byte.
+    """
     copied_periods: set[int] = set()
     original_transfer = transfers_module.apply_value_transfer
 
@@ -1672,6 +1677,7 @@ def test_a_two_block_solve_publishes_the_single_device_values(
         _assert_exact_two_block_values(values=placed.values, regime=regime)
         _assert_exact_two_block_values(values=reference.values, regime=regime)
 
+    last_period = max(placed.values)
     for period in placed.values:
         if regime in placed.values[period]:
             actual = np.asarray(placed.values[period][regime])
@@ -1680,14 +1686,38 @@ def test_a_two_block_solve_publishes_the_single_device_values(
             if exact_layout:
                 np.testing.assert_array_equal(actual, expected)
             else:
+                # Two device layouts are two compiled programs; a last-bit
+                # difference compounds backward, one allowance per period to go.
                 assert_agrees_to_ulp(
                     got=actual,
                     expected=expected,
-                    n_ulp=4,
+                    n_ulp=int(INVARIANCE_EPS_MULTIPLE) * (last_period - period),
                     operand_magnitude=float(
                         max(np.abs(actual).max(), np.abs(expected).max())
                     ),
                 )
+
+    initial_conditions = {
+        "wealth": jnp.linspace(8.0, 72.0, 8),
+        "type1": jnp.array([0, 1] * 4),
+        "age": jnp.zeros(8),
+        "regime_id": jnp.full(8, _TwoBlockRegimeId.first),
+    }
+    placed_panel, reference_panel = (
+        model.simulate(
+            params=params,
+            initial_conditions=initial_conditions,
+            solution=solution,
+            log_level="off",
+            seed=0,
+        ).to_dataframe()
+        for model, solution in zip(models, (placed, reference), strict=True)
+    )
+    pd.testing.assert_frame_equal(
+        placed_panel.drop(columns="value"),
+        reference_panel.drop(columns="value"),
+        check_exact=True,
+    )
 
 
 def _nbegm_toy(*, distributed_kind: bool) -> Model:

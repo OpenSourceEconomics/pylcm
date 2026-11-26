@@ -32,8 +32,8 @@ class ParetoObjective:
     the members' action values are traded off in taking it:
 
     ```{math}
-        a^*(x) = \arg\max_{a\,:\,F(x,a)} \sum_s \lambda_s(x)\, Q^s(x, a),
-        \qquad V^s(x) = Q^s(x, a^*(x)).
+        a^*(x) = \arg\max_{a\,:\,F(x,a)} \sum_\kappa \lambda_\kappa(x)\, Q^\kappa(x, a),
+        \qquad V^\kappa(x) = Q^\kappa(x, a^*(x)).
     ```
 
     Declaring it rather than writing the sum as an ordinary function is what
@@ -46,7 +46,7 @@ class ParetoObjective:
     """
 
     weights: Mapping[str, UserFunction | float]
-    r"""One weight $\lambda_s$ per member, keyed by member name.
+    r"""One weight $\lambda_\kappa$ per member, keyed by member name.
 
     A `float` is a constant. A callable is a function of the regime's STATES
     and of `period` / `age`; every other argument it names becomes a free

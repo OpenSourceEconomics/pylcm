@@ -281,15 +281,22 @@ def test_a_capture_without_recorded_layouts_still_replays_logically(
     """Dropping the layout block leaves the logical entry point working.
 
     The logical replay runs where the backend places the restored arrays, on one
-    device, so it reproduces the same model solved on that device exactly. The
-    captured solve spread `kind` over four devices and compiled different
-    per-device programs, which may round differently in the last place.
+    device. A capture taken from a one-device solve therefore replays to that
+    solve's value exactly. The four-device capture replays its period on one
+    device, a different program from the four per-device ones its solve ran, so
+    it agrees with that solve to the last units in the last place.
     """
     body = """
     import lcm
+    from tests.simulation._profile_comparison import assert_values_agree
 
-    os.environ.pop("LCM_CAPTURE_PERIOD")
-    os.environ.pop("LCM_CAPTURE_DIR")
+    rewrite(lambda payload: payload.pop(period_capture.LAYOUTS_KEY))
+    four_device = period_replay.replay_period(directory=directory)
+    assert_values_agree(
+        got=four_device.output.value, expected=solution.values[1]["alive"]
+    )
+
+    os.environ["LCM_CAPTURE_DIR"] = str(root / "one-device")
     one_device = toy.build_model(
         variant="brute",
         n_periods=4,
@@ -299,8 +306,9 @@ def test_a_capture_without_recorded_layouts_still_replays_logically(
         distributed_kind=True,
         execution_config=lcm.ExecutionConfig(devices=(0,)),
     ).solve(params=toy.build_params(), log_level="off")
+    payload_path = root / "one-device" / "alive@1" / period_capture._PAYLOAD_NAME
     rewrite(lambda payload: payload.pop(period_capture.LAYOUTS_KEY))
-    replay = period_replay.replay_period(directory=directory)
+    replay = period_replay.replay_period(directory=payload_path.parent)
     print(
         "LOGICAL",
         replay.output.value.devices() == {jax.devices()[0]},

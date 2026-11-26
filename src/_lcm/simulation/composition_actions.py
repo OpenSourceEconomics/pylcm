@@ -186,7 +186,7 @@ def install_composition_simulation_queries(
         full_queries[owner, period] = ScalarPolicyQueries(
             definitions=definitions, root=root, period=period
         )
-        # A deciding member bound for a later stage acts there, not here.
+        # A member who leaves for a later stage acts there, not here.
         actors.update(
             (definitions[query].read.target, period)
             for targets in definitions[root].composition_action_targets.values()

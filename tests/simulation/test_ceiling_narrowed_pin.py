@@ -19,6 +19,7 @@ from lcm import (
 )
 from lcm.solvers import GridSearch
 from tests.simulation._callback_types import WorkspacePlanning
+from tests.simulation._profile_comparison import assert_public_frames
 from tests.test_models.deterministic.regression import (
     START_AGE,
     LaborSupply,
@@ -123,6 +124,11 @@ def test_simulate_ceiled_pin_plans_the_ceiling_width(
 def test_simulate_ceiled_pin_matches_explicit_narrow_pin_panel(
     arms: tuple[tuple[pd.DataFrame, set[int]], tuple[pd.DataFrame, set[int]]],
 ) -> None:
-    """The simulated panel is identical to the one from an explicit pin of 2."""
+    """The simulated panel is the one from an explicit pin of 2.
+
+    States, actions, regimes and agents agree exactly. The value agrees to the last
+    units in the last place: the ceiled pin plans the same widths but compiles its
+    own program, which may round the value differently.
+    """
     (control, _), (ceiled, _) = arms
-    pd.testing.assert_frame_equal(ceiled, control, check_exact=True)
+    assert_public_frames(got=ceiled, expected=control, mode="independently_compiled")

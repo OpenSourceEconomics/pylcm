@@ -14,7 +14,7 @@
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "2",
-  "source_inventory_sha256": "a24905307325962c13c04bb0d6ee046bcf2030d47e43d0a0a7a305e1f0c04cca",
+  "source_inventory_sha256": "972df8601fda54365bcd881a1c0c8a9e239d9c99fa5e14640d4300553c28764b",
   "sources": [
     {
       "path": "src/_lcm/constraints/bounds.py",
@@ -322,7 +322,7 @@
     },
     {
       "path": "src/_lcm/regime_building/Q_and_F.py",
-      "sha256": "f29e6e61c29f2843034918cd7ad6b5605f4a9a83b84f228898d1330ed93d7f62"
+      "sha256": "9d8855f89eed1b3b325143739493439a2404644a7f93ef9e8867ce3c551ea643"
     },
     {
       "path": "src/_lcm/regime_building/age_normalization.py",
@@ -334,7 +334,7 @@
     },
     {
       "path": "src/_lcm/regime_building/collective.py",
-      "sha256": "9ed419451ac69a907e9bc6051846fc83245e8a92590261e5c9e3cd3de80cb2a3"
+      "sha256": "3cab5668d6e58e85c8c69b3ad0406da1d3e141d3a1fb6d01e66c43e529bf2539"
     },
     {
       "path": "src/_lcm/regime_building/decoupled.py",
@@ -346,7 +346,7 @@
     },
     {
       "path": "src/_lcm/regime_building/processing.py",
-      "sha256": "76d62e64ea1f07d895824cc406d82ec726a41e33992a5cfeae7a2858dbd89fa3"
+      "sha256": "bb9bb494b29b8e817e8ca29c8d3141dfdeb1ac58f05631ac80b49599dc74b5ec"
     },
     {
       "path": "src/_lcm/regime_building/zero_safe.py",
@@ -514,7 +514,7 @@
     },
     {
       "path": "src/_lcm/simulation/simulate.py",
-      "sha256": "aca22fd6ec2d7503ad306e061a12d856657c8f608be0627728f0f429db5ec992"
+      "sha256": "554aa3231256109b44a5094418f39a38df1462c244874464b7a00999b59736ea"
     },
     {
       "path": "src/_lcm/simulation/solution_copies.py",
@@ -554,7 +554,7 @@
     },
     {
       "path": "src/_lcm/solution/collective_action_reduction.py",
-      "sha256": "b7bdd190ee06dc4ce5478cbccf836fa7fd3809e8220e1b549e2fa9c9f32cf3b4"
+      "sha256": "e587a4083ced7536fe8fad480e002ba72e308512dcb97ec42457f4618c99e2f7"
     },
     {
       "path": "src/_lcm/solution/continuation_arguments.py",
@@ -722,7 +722,7 @@
     },
     {
       "path": "src/lcm/regime.py",
-      "sha256": "9d6e9541b91a3373a8f35bb26ccd9d7205f063e104edc43b159385e36bfb5a39"
+      "sha256": "54bd4c809a0e46e2b63ac5532eb76e6cb52e8e7217f104cb06ef12913568c517"
     },
     {
       "path": "src/lcm/result.py",

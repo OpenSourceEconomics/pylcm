@@ -4684,7 +4684,7 @@ def _prepare_numerical_solution_phase(
     elif laws[regime_name].terminal:
         compute_regime_transition_probs = None
         validation_regime_transition_probs = None
-        # The terminal kernel builds one `U^s`-and-`F` per member and stacks
+        # The terminal kernel builds one `U^κ`-and-`F` per member and stacks
         # the utilities on a trailing member axis.
         Q_and_F_functions = MappingProxyType(
             dict.fromkeys(
@@ -10062,7 +10062,7 @@ def _build_Q_and_F_per_period(
             # continuation is actually interpolated this period.
             # `partition_continuation_targets` splits the graph targets into
             # exactly that set and the stateless one, whose rank-zero value
-            # enters `E[V^s]` weighted by the regime transition alone.
+            # enters `E[V^κ]` weighted by the regime transition alone.
             period_targets=stateful_targets,
             scalar_targets=scalar_targets,
             transitions=transitions,

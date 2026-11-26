@@ -35,6 +35,7 @@ from lcm.exceptions import (
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import (
+    ContinuousState,
     DiscreteAction,
     DiscreteState,
     FloatND,
@@ -64,6 +65,43 @@ def _next_regime(period: int) -> ScalarInt:
     return jnp.where(period >= 4, RegimeId.dead, RegimeId.working_life)
 
 
+def _unchanged_wealth(wealth: ContinuousState) -> ContinuousState:
+    return wealth
+
+
+def _next_wealth_with_bonus(
+    *, wealth: ContinuousState, policy_bonus: float
+) -> ContinuousState:
+    return wealth + policy_bonus
+
+
+def _utility_with_bonus(
+    *, wealth: ContinuousState, health: DiscreteState, policy_bonus: float
+) -> FloatND:
+    return wealth + health + policy_bonus
+
+
+def _utility_of_wealth(wealth: ContinuousState) -> FloatND:
+    return wealth
+
+
+def _dead_utility() -> float:
+    return 0.0
+
+
+def _bonus_of_runtime_age(age: float) -> float:
+    """Return pylcm's runtime `age` as the policy bonus."""
+    return age
+
+
+def _age_signature(age: float) -> float:
+    return age
+
+
+def _is_under_thirty(age: float) -> bool:
+    return age < 30.0
+
+
 def _make_model(policy_bonus: UserFunction) -> Model:
     working_life = UserRegime(
         states={
@@ -72,17 +110,15 @@ def _make_model(policy_bonus: UserFunction) -> Model:
         },
         state_transitions={
             "health": fixed_transition("health"),
-            "wealth": lambda wealth: wealth,
+            "wealth": _unchanged_wealth,
         },
         functions={
-            "utility": lambda wealth, health, policy_bonus: (
-                wealth + health + policy_bonus
-            ),
+            "utility": _utility_with_bonus,
             "policy_bonus": policy_bonus,
         },
     )
     dead = UserRegime(
-        functions={"utility": lambda: 0.0},
+        functions={"utility": _dead_utility},
     )
     return Model(
         regimes={"working_life": working_life, "dead": dead},
@@ -115,12 +151,12 @@ def _make_next_state_model(policy_bonus: UserFunction) -> Model:
     working_life = UserRegime(
         states={"wealth": LinSpacedGrid(start=0, stop=2000, n_points=11)},
         state_transitions={
-            "wealth": lambda wealth, policy_bonus: wealth + policy_bonus,
+            "wealth": _next_wealth_with_bonus,
         },
-        functions={"utility": lambda wealth: wealth, "policy_bonus": policy_bonus},
+        functions={"utility": _utility_of_wealth, "policy_bonus": policy_bonus},
     )
     dead = UserRegime(
-        functions={"utility": lambda: 0.0},
+        functions={"utility": _dead_utility},
     )
     return Model(
         regimes={"working_life": working_life, "dead": dead},
@@ -161,9 +197,9 @@ def test_age_specialized_next_state_matches_runtime_age_baseline() -> None:
         )
         return result.to_dataframe()["wealth"].to_numpy()
 
-    baseline = _simulated_wealth(lambda age: age)
+    baseline = _simulated_wealth(_bonus_of_runtime_age)
     specialized = _simulated_wealth(
-        AgeSpecializedFunction(build=_bonus_of_age, signature=lambda age: age)
+        AgeSpecializedFunction(build=_bonus_of_age, signature=_age_signature)
     )
     np.testing.assert_allclose(specialized, baseline, atol=1e-6)
 
@@ -177,11 +213,13 @@ def test_age_specialized_bonus_matches_runtime_age_baseline() -> None:
     """
     params = {"discount_factor": 0.95}
     baseline = (
-        _make_model(lambda age: age).solve(params=params, log_level="debug").values
+        _make_model(_bonus_of_runtime_age)
+        .solve(params=params, log_level="debug")
+        .values
     )
     specialized = (
         _make_model(
-            AgeSpecializedFunction(build=_bonus_of_age, signature=lambda age: age)
+            AgeSpecializedFunction(build=_bonus_of_age, signature=_age_signature)
         )
         .solve(params=params, log_level="debug")
         .values
@@ -206,7 +244,7 @@ def test_additional_target_depending_on_age_specialized_function_is_rejected() -
     age's policy. It must raise instead.
     """
     model = _make_next_state_model(
-        AgeSpecializedFunction(build=_bonus_of_age, signature=lambda age: age)
+        AgeSpecializedFunction(build=_bonus_of_age, signature=_age_signature)
     )
     result = model.simulate(
         params={"discount_factor": 0.95},
@@ -270,7 +308,7 @@ def _f1_make_model(boost: UserFunction) -> Model:
         functions={"utility": _f1_utility, "boost": boost},
     )
     dead = UserRegime(
-        functions={"utility": lambda: 0.0},
+        functions={"utility": _dead_utility},
     )
     return Model(
         regimes={"working_life": working, "dead": dead},
@@ -312,7 +350,7 @@ def test_simulation_continuation_resolves_age_specialized_helper_per_age() -> No
 
     baseline = _invest_at_age35(_f1_boost_runtime)
     specialized = _invest_at_age35(
-        AgeSpecializedFunction(build=_f1_boost_of_age, signature=lambda age: age < 30.0)
+        AgeSpecializedFunction(build=_f1_boost_of_age, signature=_is_under_thirty)
     )
     assert baseline == "yes"
     assert specialized == baseline
@@ -356,7 +394,7 @@ def _make_specialized_constraint_model(wealth_cap: UserFunction) -> Model:
         functions={"utility": _utility_of_consumption},
     )
     dead = UserRegime(
-        functions={"utility": lambda: 0.0},
+        functions={"utility": _dead_utility},
     )
     return Model(
         regimes={"working_life": working_life, "dead": dead},
@@ -377,7 +415,7 @@ def _make_specialized_constraint_model(wealth_cap: UserFunction) -> Model:
 
 def _simulate_specialized_constraint_model() -> SimulationResult:
     model = _make_specialized_constraint_model(
-        AgeSpecializedFunction(build=_cap_of_age, signature=lambda age: age)
+        AgeSpecializedFunction(build=_cap_of_age, signature=_age_signature)
     )
     return model.simulate(
         params={"discount_factor": 0.95},
@@ -435,7 +473,7 @@ def _simulate_with_falling_cap(
     *, ages: list[float], wealth: list[float], log_level: LogLevel
 ) -> SimulationResult:
     model = _make_specialized_constraint_model(
-        AgeSpecializedFunction(build=_cap_falling_with_age, signature=lambda age: age)
+        AgeSpecializedFunction(build=_cap_falling_with_age, signature=_age_signature)
     )
     return model.simulate(
         params={"discount_factor": 0.95},
@@ -505,7 +543,7 @@ def _solve_with_cap(
 
 def _solve_specialized() -> Mapping[int, Mapping[RegimeName, FloatND]]:
     return _solve_with_cap(
-        AgeSpecializedFunction(build=_cap_binding_at_age, signature=lambda age: age)
+        AgeSpecializedFunction(build=_cap_binding_at_age, signature=_age_signature)
     )
 
 
@@ -588,7 +626,7 @@ def _start_pool_partition(*, cohorts_route: bool) -> list[tuple[int, list[int]]]
     resolves its own cap, so each start period has a pool of its own.
     """
     model = _make_specialized_constraint_model(
-        AgeSpecializedFunction(build=_cap_falling_with_age, signature=lambda age: age)
+        AgeSpecializedFunction(build=_cap_falling_with_age, signature=_age_signature)
     )
     regime = model._regimes["working_life"]
     ages = np.full(10, 25.0)

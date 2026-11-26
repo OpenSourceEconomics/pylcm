@@ -1293,9 +1293,9 @@ def get_Q_and_F_collective(
     separate — both builders call
     `_get_compute_CE`, which takes the member axis as a parameter.
 
-    Per member `s`, computes `Q^s = W(u^s, CE^s)` with the regime's Koopmans
+    Per member `κ`, computes `Q^κ = W(u^κ, CE^κ)` with the regime's Koopmans
     aggregator `W`, applied elementwise when one is shared by every member and
-    on each member's slice otherwise; `CE^s` aggregates member `s`'s
+    on each member's slice otherwise; `CE^κ` aggregates member `κ`'s
     continuation under its certainty equivalent. Each
     transition target must itself be a collective regime with the identical
     `members` tuple (validated at model processing), so its
@@ -1322,12 +1322,12 @@ def get_Q_and_F_collective(
             `utility`, plus the shared `H`.
         constraints: Immutable mapping of constraint names to internal user
             functions.
-        period_targets: Carry targets whose continuation enters E[V^s] this
+        period_targets: Carry targets whose continuation enters E[V^κ] this
             period (all collective with the identical member tuple), read
             at the next states their laws produce.
         scalar_targets: Graph targets active next period that carry no state.
             Their value function has the member axis alone, so there is no
-            next state to interpolate at and each enters E[V^s] as a single
+            next state to interpolate at and each enters E[V^κ] as a single
             degenerate node weighted only by the regime transition probability.
         transitions: Immutable mapping of transition names to transition
             functions.
@@ -1341,7 +1341,7 @@ def get_Q_and_F_collective(
             value arrays (state axes only; the member axis is not an
             interpolation axis).
         koopmans_aggregator: The regime's Bellman aggregator, combining each
-            member's utility and certainty equivalent into `Q^s`.
+            member's utility and certainty equivalent into `Q^κ`.
         objective_aggregator: The aggregator the members' action is chosen
             on, applied to every member, or `None` when the Bellman aggregator
             also chooses.
@@ -1609,7 +1609,7 @@ class _CollectiveQAndF:
         CE, _, *landing_counts = continuation
         CE = cast("FloatND", CE)
 
-        # Q^s = W_s(u^s, CE^s): each member's aggregator reads its own slice
+        # Q^κ = W_κ(u^κ, CE^κ): each member's aggregator reads its own slice
         # of the trailing member axis.
         Q_arr = self.koopmans_aggregator(
             utility=U_stack,
@@ -1646,7 +1646,7 @@ class _CollectiveQAndF:
 def get_member_aggregator(*, aggregators: tuple[EconFunction, ...]) -> EconFunction:
     """Combine each member's Koopmans aggregator into one over the member axis.
 
-    Member `s` is aggregated as `W_s(utility=utility[..., s], CE=CE[..., s])`
+    Member `κ` is aggregated as `W_κ(utility=utility[..., κ], CE=CE[..., κ])`
     with its own further arguments, and the results are stacked on the trailing
     member axis. The combination's further arguments are the union of the
     members', so `W_kwargs` is assembled for it as for any one aggregator.
@@ -2316,7 +2316,7 @@ def _get_compute_CE(
     """Build the closure that aggregates next period's value into `CE`.
 
     The single continuation-aggregation site of the engine: the per-member
-    Bellman `Q^s` of every regime and the NaN diagnostics all call the closure
+    Bellman `Q^κ` of every regime and the NaN diagnostics all call the closure
     this returns, so they cannot disagree. The
     continuation is a lottery over the stochastic nodes of every reachable target
     regime, weighted by that target's regime-transition probability:

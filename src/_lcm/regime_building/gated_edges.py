@@ -4,13 +4,13 @@ Gated edges unlock MIXED singleton/collective regime topologies. A source
 regime declares, per target regime, a `GatedEdge`. At the END of each
 period `t`'s solve — after every period-`t` regime is solved, so their value
 arrays are still live — the engine folds, for each declared edge and each
-source member `s`, a gated continuation object on the TARGET regime's
+source member `κ`, a gated continuation object on the TARGET regime's
 period-`t` grid:
 
-    Wbar^s(x) = jnp.where( gate(x), V_target^{leg_s}(x), V_fallback^s(pi_s(x)) )
+    Wbar^κ(x) = jnp.where( gate(x), V_target^{leg_κ}(x), V_fallback^κ(pi_κ(x)) )
 
 with `gate` a boolean user function of the target's states and the edge's
-params, and `V_fallback^s` a same-period reference regime's value at a
+params, and `V_fallback^κ` a same-period reference regime's value at a
 projection, typically the source member's own singleton regime. The
 source's period `t-1` continuation then reads `Wbar` in place of the raw target
 V, threaded through the ordinary transition machinery (`next_regime_to_V_arr`).
@@ -704,7 +704,7 @@ def _build_target_dag_pool(
     laws (an edge projects INTO the target's state space, a transition role) and
     the target's own processed functions. The collective Koopmans aggregator
     `H` is left out: it consumes engine-injected continuation values
-    (`Q^s = H(u^s, E[V'^s])`), not target-grid quantities, so it is not a node an
+    (`Q^κ = H(u^κ, E[V'^κ])`), not target-grid quantities, so it is not a node an
     edge callable may read.
 
     Args:

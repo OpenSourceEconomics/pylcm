@@ -1494,7 +1494,7 @@ def acting_kinds(
     contexts: Mapping[RegimeName, SolverBuildContext],
     readers: tuple[tuple[RegimeName, Mapping[str, QueryNode], str, int], ...],
 ) -> Mapping[tuple[RegimeName, int], QueryKind]:
-    """Return the problem each deciding member acts in: its decision's price.
+    """Return the problem each member who leaves acts in: its decision's price.
 
     Each reader is a source with a composition action, its simulated query graph, the
     graph's root and its period. A destination can be entered in one period both by

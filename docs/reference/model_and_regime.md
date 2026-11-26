@@ -322,10 +322,10 @@ next-period transitions stay in `Model(edges=...)`.
   either way. A projected continuous state follows its destination grid's `off_grid`
   rule, as a realised next state does, in the solve and in the simulation alike. Under
   `"clip_state"`, the destination's problem is priced, its shock laws are read and the
-  deciding member lands at the state capped to the grid's outer nodes. Under `"raise"`,
-  a read that the decision on the composition evaluates outside the grid raises
-  `OffGridStateError`, even where the members then stay. A read where the composition
-  action is unavailable, or at a shock node of zero mass, does not raise.
+  member who leaves lands at the state capped to the grid's outer nodes. Under
+  `"raise"`, a read that the decision on the composition evaluates outside the grid
+  raises `OffGridStateError`, even where the members then stay. A read where the
+  composition action is unavailable, or at a shock node of zero mass, does not raise.
   `"extrapolate"` and `"clip_lookup"` keep the projected state. A `"clip_state"` or
   `"raise"` grid whose points are supplied at run time is refused when the model is
   built.
@@ -440,8 +440,8 @@ with a `state`, because it cannot return a changed state or a separation destina
 `available` reads states, parameters and observed shocks, and precedes unsafe benchmark
 evaluation. `observes` adds destination information available at the decision on the
 composition. Hidden destination shocks are priced before the source's choice and
-revealed when the deciding member takes the destination's action. Partial observation of
-a correlated group is refused; see the adopted
+revealed when the member who leaves takes the destination's action. Partial observation
+of a correlated group is refused; see the adopted
 [contract for IID shocks and the composition action](../development/iid-exits-redesign.md).
 
 A `utility_adjustment`, a transfer's `default` and `available` are the same in the solve

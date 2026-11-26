@@ -69,6 +69,7 @@ from tests.regime_building.test_nonterminal_collective_solve import (
 from tests.regime_building.test_nonterminal_collective_solve import (
     _make_couple_regimes,
 )
+from tests.simulation._profile_comparison import assert_values_agree
 from tests.test_models.deterministic.regression import (
     DEFAULT_CONSUMPTION_GRID,
     DEFAULT_WEALTH_GRID,
@@ -137,6 +138,22 @@ def masked_max_and_argmax(
     return masked.max(axis=1), masked.argmax(axis=1)
 
 
+def assert_same_decision(*, got: PolicyLookup, expected: PolicyLookup) -> None:
+    """The same actions exactly, and the value to the last units in the last place.
+
+    Keeping different intermediates compiles a different decision program, which
+    may evaluate the action values inside the reduction and round them differently.
+    """
+    assert got.actions is not None
+    assert expected.actions is not None
+    assert tuple(got.actions) == tuple(expected.actions)
+    for name in expected.actions:
+        np.testing.assert_array_equal(
+            np.asarray(got.actions[name]), np.asarray(expected.actions[name])
+        )
+    assert_values_agree(got=got.value, expected=expected.value)
+
+
 def test_intermediates_are_absent_unless_requested(solved: Solved) -> None:
     got = lookup(solved=solved, period=0)
     assert (got.Q, got.F, got.U, got.CE) == (None, None, None, None)
@@ -154,7 +171,7 @@ def test_no_intermediates_dispatch_the_decision_without_its_parts(
     expected = lookup(solved=solved, period=0, keep_intermediates=ALL_INTERMEDIATES)
     monkeypatch.setattr(lcm.model, "with_kept_action_parts", _refuse)
     got = lookup(solved=solved, period=0, keep_intermediates=())
-    np.testing.assert_array_equal(np.asarray(got.value), np.asarray(expected.value))
+    assert_same_decision(got=got, expected=expected)
 
 
 @pytest.mark.parametrize(
@@ -167,7 +184,7 @@ def test_lookup_keeps_exactly_the_requested_intermediates(
     """Each requested intermediate equals the full request's; the others are None."""
     full = lookup(solved=solved, period=0, keep_intermediates=ALL_INTERMEDIATES)
     got = lookup(solved=solved, period=0, keep_intermediates=keep_intermediates)
-    np.testing.assert_array_equal(np.asarray(got.value), np.asarray(full.value))
+    assert_same_decision(got=got, expected=full)
     for name in ALL_INTERMEDIATES:
         if name in keep_intermediates:
             np.testing.assert_array_equal(
@@ -268,22 +285,7 @@ def test_requesting_action_values_leaves_actions_and_value_unchanged(
     with_values = lookup(
         solved=solved, period=period, keep_intermediates=ALL_INTERMEDIATES
     )
-    assert plain.actions is not None
-    assert with_values.actions is not None
-    np.testing.assert_array_equal(
-        np.stack(
-            [
-                *(np.asarray(with_values.actions[n]) for n in plain.actions),
-                np.asarray(with_values.value)[..., 0],
-            ]
-        ),
-        np.stack(
-            [
-                *(np.asarray(plain.actions[n]) for n in plain.actions),
-                np.asarray(plain.value)[..., 0],
-            ]
-        ),
-    )
+    assert_same_decision(got=with_values, expected=plain)
 
 
 @pytest.mark.parametrize("period", [1, N_PERIODS - 1])

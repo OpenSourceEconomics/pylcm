@@ -1,9 +1,9 @@
 """Collective-regime readout: every member's value at the shared argmax.
 
-A collective regime carries one action-value array `Q^s` per member. It
+A collective regime carries one action-value array `Q^κ` per member. It
 chooses the action that maximizes the Pareto-weighted *scalarization*
-`O = Σ_s λ_s Q^s` over the feasible set. It then reads off *each member's
-own* `Q^s` at that common argmax — NOT the scalarized value `O`. The members
+`O = Σ_κ λ_κ Q^κ` over the feasible set. It then reads off *each member's
+own* `Q^κ` at that common argmax — NOT the scalarized value `O`. The members
 maximize the weighted objective, but each member's value is its own utility
 stream under that joint choice.
 
@@ -11,7 +11,7 @@ This module is a pure, engine-topology-free building block: it takes already-com
 per-member `Q` arrays and the feasibility mask and returns the per-member
 `V` plus the all-infeasible flag `D` (the dissolution / empty-feasible-set marker,
 kept distinct from a numeric `-inf` that can arise on-path). The terminal and
-non-terminal solve kernels call it after building their `Q^s`.
+non-terminal solve kernels call it after building their `Q^κ`.
 
 Under EV1 taste shocks a collective regime has one deciding member, the member
 with the positive Pareto weight. `decider_smoothed_readout` publishes that
@@ -130,8 +130,8 @@ def collective_readout(
     that single choice:
 
     ```{math}
-        a^*(x) = \arg\max_{a\,:\,F(x,a)} \sum_s \lambda_s\, Q^s(x, a),
-        \qquad V^s(x) = Q^s(x, a^*(x)).
+        a^*(x) = \arg\max_{a\,:\,F(x,a)} \sum_\kappa \lambda_\kappa\, Q^\kappa(x, a),
+        \qquad V^\kappa(x) = Q^\kappa(x, a^*(x)).
     ```
 
     All members share the same argmax `a*` (the members' joint choice). Ties in
@@ -142,20 +142,20 @@ def collective_readout(
     value. So the order in which the actions are declared cannot change a value.
     It can change which of those actions is simulated. A NaN member
     value ranks below every number, and `-0` equals `+0`. A NaN objective at a
-    feasible action makes every `V^s` NaN. A cell with no feasible action yields
+    feasible action makes every `V^κ` NaN. A cell with no feasible action yields
     `D = True` (the dissolution / empty-`F` marker) and the `-inf` sentinel in
-    every `V^s`, which the caller routes through the dissolution fallback and
+    every `V^κ`, which the caller routes through the dissolution fallback and
     never reads as a value.
 
     Args:
         member_Q: Mapping member name -> its action-value array, each of
             shape `(*state_axes, *action_axes)` (identical shape across members).
-        feasibility: Boolean mask of the same shape as each `Q^s`; `True` where
+        feasibility: Boolean mask of the same shape as each `Q^κ`; `True` where
             the (state, action) is feasible.
-        weights: Mapping member name -> Pareto weight `λ_s` (scalar or an array
+        weights: Mapping member name -> Pareto weight `λ_κ` (scalar or an array
             broadcastable to the state axes). Should sum to 1 across members,
             though this is not enforced (a caller may pass unnormalized weights).
-        action_axes: The axes of `Q^s` / `feasibility` to maximize over (the
+        action_axes: The axes of `Q^κ` / `feasibility` to maximize over (the
             action dimensions). The remaining axes are the state axes retained in the
             output.
 
@@ -300,7 +300,7 @@ def decider_smoothed_readout(
     ```{math}
         V^d = \sigma \log \sum_j e^{Q^d_c(j) / \sigma}, \qquad
         P(j) = \frac{e^{Q^d_c(j) / \sigma}}{\sum_k e^{Q^d_c(k) / \sigma}}, \qquad
-        V^s = \sum_j P(j)\, Q^s(j, c^*(j)) \quad (s \neq d).
+        V^\kappa = \sum_j P(j)\, Q^\kappa(j, c^*(j)) \quad (\kappa \neq d).
     ```
 
     The deciding member's value is its expected maximum. Every other member's
@@ -378,15 +378,15 @@ def _weighted_sum(
     member_Q: Mapping[str, FloatND],
     weights: Mapping[str, FloatND | float],
 ) -> FloatND:
-    """Scalarize the per-member Q into the Pareto-weighted objective Σ_s λ_s Q^s.
+    """Scalarize the per-member Q into the Pareto-weighted objective Σ_κ λ_κ Q^κ.
 
     Zero-safe: a member excluded from the scalarization via a
-    zero Pareto weight may still hold an admissible on-path `-inf` `Q^s` (e.g.
+    zero Pareto weight may still hold an admissible on-path `-inf` `Q^κ` (e.g.
     a feasible zero-consumption action for that partner); `weight * Q` would
     then be `0.0 * -inf = nan`, poisoning the objective — and, via the
     argmax, the WRONG member's `Q` would decide the members' choice.
     Each term goes through `zero_safe_weighted_term` so a zero-weight
-    member contributes exactly `0.0` regardless of its own `Q^s`.
+    member contributes exactly `0.0` regardless of its own `Q^κ`.
     """
     names = list(member_Q)
 

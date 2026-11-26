@@ -2299,9 +2299,9 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     )
     current_shocks: Mapping[str, FloatND | IntND] = MappingProxyType({})
     if prepared_decision is not None:
-        # The immutable original-source pass already made the one Full choice
-        # and revealed a deciding member's final Participating action. Only this final
-        # actor advances below; it must never make another Full decision here.
+        # The immutable original-source pass already made the one Full choice and
+        # revealed the final Participating action of a member who leaves. Only this
+        # final actor advances below; it must never make another Full decision here.
         current_shocks = prepared_decision.physical
         V_arr = prepared_decision.value
         optimal_actions = run_simulation_operation(
