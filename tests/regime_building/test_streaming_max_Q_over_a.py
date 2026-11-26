@@ -2,6 +2,8 @@
 
 import functools
 import inspect
+import math
+import re
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import NotRequired, TypedDict, cast
@@ -23,6 +25,7 @@ from _lcm.regime_building.max_Q_over_a import (
     get_max_Q_over_a,
     get_streaming_max_Q_over_a,
 )
+from _lcm.regime_building.Q_and_F import _expected_continuation_over_nodes
 from _lcm.solution.action_streaming import build_streaming_collective_max_Q_over_a
 from _lcm.solution.collective_action_reduction import (
     COLLECTIVE_HARD_MAX_REDUCTION,
@@ -1293,3 +1296,96 @@ def test_single_solve_reduces_value_and_nan_flag_decision_adds_identity() -> Non
     assert _action_reduce_operand_kinds(jaxpr=decision.jaxpr, n_actions=n_actions) == [
         ("b", "i", "i")
     ]
+
+
+_LOTTERY_NODES = (2, 5, 3, 5)
+_N_WEALTH_NODES = 50
+
+
+# keyword-only-exempt: library-callback=jax.vmap
+def _lottery_action_value(
+    consumption: FloatND,
+    wealth: FloatND,
+    transition_row: IntND,
+    next_values: FloatND,
+    transition_probs: FloatND,
+) -> FloatND:
+    """One action's value: the next value of one member averaged over a lottery."""
+    position = jnp.clip(
+        (wealth - consumption) * (_N_WEALTH_NODES - 1) / 10.0,
+        0.0,
+        _N_WEALTH_NODES - 1.001,
+    )
+    lower = jnp.floor(position).astype(jnp.int32)
+    share = position - lower
+    values = (1 - share) * next_values[lower] + share * next_values[lower + 1]
+    weights = jnp.ones(_LOTTERY_NODES)
+    for axis, n_nodes in enumerate(_LOTTERY_NODES):
+        shape = [1] * len(_LOTTERY_NODES)
+        shape[axis] = n_nodes
+        weights = weights * transition_probs[transition_row, :n_nodes].reshape(shape)
+    continuation = _expected_continuation_over_nodes(
+        values=values,
+        weights=weights,
+        shifts=jnp.zeros(_LOTTERY_NODES, dtype=jnp.int32),
+        n_members=1,
+    )
+    return jnp.log(consumption) + 0.95 * continuation[0]
+
+
+# keyword-only-exempt: library-callback=jax.vmap
+def _lottery_cell_value(
+    wealth: FloatND,
+    transition_row: IntND,
+    consumption: FloatND,
+    next_values: FloatND,
+    transition_probs: FloatND,
+) -> FloatND:
+    """The best action's value at one cell."""
+    action_values = jax.vmap(
+        _lottery_action_value, in_axes=(0, None, None, None, None)
+    )(consumption, wealth, transition_row, next_values, transition_probs)
+    return jnp.max(action_values)
+
+
+def _materialized_integer_sizes(*, hlo_text: str) -> list[int]:
+    """Element counts of the integer arrays the compiled program stores.
+
+    An array is stored when it is the result of an instruction of the entry
+    computation or of a loop body; values inside a fused computation are not.
+    """
+    result_types = [
+        line.partition(" = ")[2].split(" fusion(")[0]
+        for line in hlo_text.splitlines()
+        if " fusion(" in line.partition(" = ")[2]
+    ]
+    return [
+        math.prod(int(d) for d in dims.split(","))
+        for result_type in result_types
+        for dims in re.findall(r"[su]\d+\[([\d,]+)\]", result_type)
+    ]
+
+
+@pytest.mark.requires(device="gpu")
+def test_lottery_expectation_stores_no_integer_per_cell_action_and_node() -> None:
+    """The lottery mean of one member stores no exponent per cell, action and node.
+
+    The two-pass mean reads each node's term exponent in both passes. The
+    compiled solve recomputes it in the second pass from the node values it
+    already holds, rather than storing one integer per cell, action and node
+    between the two passes.
+    """
+    n_cells, n_actions = 4096, 256
+    arguments = (
+        jnp.linspace(0.1, 10.0, n_cells),
+        jnp.arange(n_cells) % _LOTTERY_NODES[0],
+        jnp.linspace(0.01, 10.0, n_actions),
+        jnp.ones((_N_WEALTH_NODES, *_LOTTERY_NODES, 1)),
+        jnp.full((_LOTTERY_NODES[0], max(_LOTTERY_NODES)), 0.2),
+    )
+    kernel = jax.vmap(_lottery_cell_value, in_axes=(0, 0, None, None, None))
+    hlo_text = jax.jit(kernel).lower(*arguments).compile().as_text()
+    assert hlo_text is not None
+    per_node = n_cells * n_actions * math.prod(_LOTTERY_NODES)
+
+    assert per_node not in _materialized_integer_sizes(hlo_text=hlo_text)

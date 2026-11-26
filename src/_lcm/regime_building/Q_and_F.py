@@ -4999,11 +4999,17 @@ def _expected_continuation_over_nodes(
     `-inf` must not turn the average into a `nan`, which dissolution makes
     routine rather than exotic.
 
-    The node axes are flattened into one leading axis and reduced away, leaving
-    the member axis. This covers a target with no lottery at all as well: the
-    empty product is the weight `1.0` at scale `0`, and the reduction is then
-    bitwise identity on the values, so the no-lottery case needs no branch of
-    its own.
+    Each member's values are flattened over the node axes and reduced on their
+    own, and the means are stacked on the member axis. This covers a target
+    with no lottery at all as well: the empty product is the weight `1.0` at
+    scale `0`, and the reduction is then bitwise identity on the values, so the
+    no-lottery case needs no branch of its own.
+
+    The member axis is taken off before the mean rather than carried through
+    it. Carried as an axis of length one, it lets the compiler store each
+    node's exponent between the mean's two passes, one integer per cell,
+    action and node; reduced per member, the second pass recomputes it from the
+    node values.
 
     Args:
         values: Next period's value at this target's lottery nodes, the node
@@ -5016,11 +5022,17 @@ def _expected_continuation_over_nodes(
         The weighted mean over the nodes, keeping the trailing member axis.
 
     """
-    return zero_safe_average(
-        a=jnp.asarray(values).reshape(-1, n_members),
-        axis=0,
-        weights=jnp.asarray(weights).reshape(-1),
-        shifts=jnp.asarray(shifts).reshape(-1),
+    values = jnp.asarray(values)
+    return jnp.stack(
+        [
+            zero_safe_average(
+                a=values[..., member].reshape(-1),
+                weights=jnp.asarray(weights).reshape(-1),
+                shifts=jnp.asarray(shifts).reshape(-1),
+            )
+            for member in range(n_members)
+        ],
+        axis=-1,
     )
 
 
