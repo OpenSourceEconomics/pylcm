@@ -137,6 +137,11 @@ fragments keep format version 3.
   indexed by period, and the simulated frame gains a `stage` column. A simulation that
   reaches a state without a feasible action names the period in its
   `NoFeasibleActionError`, not the step.
+- `Model.lookup_policy` reads each target's value where its edge lands, as the solve
+  and the simulation do. A composite state's start codes enter where its starting
+  regime decides, and its member laws read the period of their stage. An `available`
+  of a composition action that reads only `period` or `age` is decided at its own
+  period, so the parameters of an available composition action stay in the template.
 - A period is economic time and a step one stage of one period; every public name says
   which it holds. `Model.n_periods`, `SimulationResult.n_periods`,
   `InitialNodes(by_period=...)` and the `period=` of `Model.lookup_policy`,

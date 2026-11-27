@@ -18,6 +18,7 @@ import lcm.exceptions
 from _lcm.solution import period_replay
 from _lcm.time import ModelTime, coordinate_at
 from _lcm.typing import DataclassInstance
+from _lcm.utils.namespace import flatten_regime_namespace
 from _lcm_regime_finder.model_snapshot import read_model
 from lcm import component_jobs
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
@@ -3683,3 +3684,348 @@ def test_a_staged_transition_check_reads_the_period_of_its_step(
     model = _staged_model(clock="staged", regimes=regimes, edges=edges)
     with pytest.raises(error, match=r"\bages? 1\b"):
         model.validate_transitions(params={})
+
+
+@lcm.categorical(ordered=False)
+class SkipId:
+    choose: ScalarInt
+    end: ScalarInt
+    wait_a: ScalarInt
+    wait_b: ScalarInt
+
+
+def _eight_and_bits(*, a: DiscreteState, b: DiscreteState) -> FloatND:
+    return 8.0 + a + b
+
+
+def _b_is_the_period(*, period: Period) -> DiscreteState:
+    return period
+
+
+def _skip_model(
+    *,
+    n_stages: int,
+    source_stage: int,
+    target_stage: int,
+    source_period: int = 0,
+    next_b: Callable[..., DiscreteState] | None = None,
+    composite: bool = False,
+    by_age: bool = False,
+    enable_jit: bool = True,
+) -> lcm.Model:
+    """`choose` decides once and lands in the terminal `end`; `wait_*` fill stages.
+
+    `choose` holds two bits, `a` kept and `b` kept unless `next_b` is given; its
+    utility is the labor code plus both bits and that of `end` eight plus both.
+    """
+    crossing = target_stage <= source_stage
+    last = source_period + crossing
+    stages: dict[str, list[RegimeName]] = {f"stage_{j}": [] for j in range(n_stages)}
+    stages[f"stage_{source_stage}"].append("choose")
+    stages[f"stage_{target_stage}"].append("end")
+    for name in ("wait_a", "wait_b"):
+        empty = next((s for s, names in stages.items() if not names), "stage_0")
+        stages[empty].append(name)
+    bits = {"a": lcm.DiscreteGrid(Labor), "b": lcm.DiscreteGrid(Labor)}
+    origin = 60 + source_period if by_age else source_period
+    horizon: ClockKwargs = (
+        {"ages": lcm.AgeGrid(start=60, inclusive_stop=60 + last, step="Y")}
+        if by_age
+        else {"n_periods": last + 1}
+    )
+    starts = {origin: ("choose", "wait_a", "wait_b")}
+    return lcm.Model(
+        **horizon,
+        stages={stage: tuple(names) for stage, names in stages.items()},
+        regimes={
+            "choose": lcm.Regime(
+                states=bits,
+                actions={"labor": lcm.DiscreteGrid(Labor)},
+                state_transitions={
+                    "a": lcm.fixed_transition("a"),
+                    "b": lcm.fixed_transition("b") if next_b is None else next_b,
+                },
+                functions={"utility": _bits_utility},
+            ),
+            "end": lcm.Regime(states=bits, functions={"utility": _eight_and_bits}),
+            "wait_a": lcm.Regime(functions={"utility": _waiting}),
+            "wait_b": lcm.Regime(functions={"utility": _waiting}),
+        },
+        regime_id_class=SkipId,
+        initial_nodes=lcm.InitialNodes(by_age=starts)
+        if by_age
+        else lcm.InitialNodes(by_period=starts),
+        edges={
+            "choose": {
+                "end": (origin,) if by_age else lcm.Periods(values=(source_period,))
+            }
+        },
+        fixed_params={"discount_factor": 0.5} if crossing else {},
+        composite_states={
+            "bits": lcm.CompositeState(
+                members=("a", "b"), start_codes={"a": (0,), "b": (0,)}
+            )
+        }
+        if composite
+        else {},
+        enable_jit=enable_jit,
+    )
+
+
+def _skip_values(*, crossing: bool, next_b: int) -> tuple[float, float]:
+    """The action values of `choose` at bits (0, 0) when the law sets `b` to `next_b`.
+
+    Labor 1 sets `next_b` and labor 0 leaves `b` at 0 unless the law ignores labor;
+    `end` is worth eight plus its bits, discounted by one half when it is next period.
+    """
+    beta = 0.5 if crossing else 1.0
+    return beta * 8.0, 1.0 + beta * (8.0 + next_b)
+
+
+@pytest.mark.parametrize(
+    ("n_stages", "source_stage", "target_stage"),
+    [(3, 0, 2), (2, 1, 1), (3, 1, 0), (3, 0, 1)],
+    ids=[
+        "skips-a-stage",
+        "next-period-same-stage",
+        "skips-into-next-period",
+        "adjacent",
+    ],
+)
+@pytest.mark.parametrize("enable_jit", [True, False], ids=["jit", "eager"])
+def test_a_lookup_reads_each_target_where_its_edge_lands(
+    *, n_stages: int, source_stage: int, target_stage: int, enable_jit: bool
+) -> None:
+    """`lookup_policy` reads a target's value at its next occurrence, as the solve."""
+    model = _skip_model(
+        n_stages=n_stages,
+        source_stage=source_stage,
+        target_stage=target_stage,
+        enable_jit=enable_jit,
+    )
+    solution = model.solve(params={}, log_level="off")
+    Q = _skip_values(crossing=target_stage <= source_stage, next_b=0)
+    for kept in ((), ("Q",)):
+        result = model.lookup_policy(
+            params={},
+            solution=solution,
+            period=0,
+            regime_name="choose",
+            states={
+                "a": jnp.zeros(1, dtype=jnp.int32),
+                "b": jnp.zeros(1, dtype=jnp.int32),
+            },
+            keep_intermediates=kept,
+        )
+        np.testing.assert_array_equal(np.asarray(result.value).ravel(), [Q[1]])
+        assert result.actions is not None
+        np.testing.assert_array_equal(np.asarray(result.actions["labor"]).ravel(), [1])
+        if kept:
+            np.testing.assert_array_equal(np.asarray(result.Q).ravel(), Q)
+
+
+def _simulated_choose_and_end(
+    *, model: lcm.Model, source_period: int, by_age: bool
+) -> tuple[float, float, int]:
+    """Simulate one agent from `choose` at bits (0, 0): both values, `end`'s period."""
+    frame = model.simulate(
+        params={},
+        initial_conditions={
+            "regime_id": jnp.asarray([SkipId.choose], dtype=jnp.int32),
+            "a": jnp.zeros(1, dtype=jnp.int32),
+            "b": jnp.zeros(1, dtype=jnp.int32),
+            "age" if by_age else "period": jnp.asarray(
+                [60 + source_period if by_age else source_period]
+            ),
+        },
+        seed=11,
+        log_level="off",
+    ).to_dataframe()
+    source = frame.loc[frame["regime_name"] == "choose"].iloc[0]
+    end = frame.loc[frame["regime_name"] == "end"].iloc[0]
+    return float(source["value"]), float(end["value"]), int(end["period"])
+
+
+@pytest.mark.parametrize(
+    ("n_stages", "source_stage", "target_stage", "by_age"),
+    [
+        (2, 1, 0, True),
+        (3, 1, 2, False),
+        (3, 2, 0, False),
+        (3, 1, 1, False),
+        (2, 0, 1, False),
+    ],
+    ids=["crossing-by-age", "later-stage", "last-stage", "same-stage", "first-stage"],
+)
+@pytest.mark.parametrize(
+    "next_b", [None, _labor_kept], ids=["kept", "action-dependent"]
+)
+def test_a_composite_state_starts_in_the_stage_of_its_regime(
+    *,
+    n_stages: int,
+    source_stage: int,
+    target_stage: int,
+    by_age: bool,
+    next_b: Callable[..., DiscreteState] | None,
+) -> None:
+    """The start tuples are seeded where the starting regime decides, not at step 0."""
+    crossing = target_stage <= source_stage
+    model = _skip_model(
+        n_stages=n_stages,
+        source_stage=source_stage,
+        target_stage=target_stage,
+        next_b=next_b,
+        composite=True,
+        by_age=by_age,
+    )
+    b_next = 0 if next_b is None else 1
+    assert _simulated_choose_and_end(model=model, source_period=0, by_age=by_age) == (
+        _skip_values(crossing=crossing, next_b=b_next)[1],
+        8.0 + b_next,
+        int(crossing),
+    )
+
+
+@pytest.mark.parametrize(
+    ("n_stages", "source_stage", "target_stage"),
+    [(2, 0, 1), (3, 0, 2), (3, 1, 2), (1, 0, 0)],
+    ids=["first-stage", "skips-a-stage", "later-stage", "one-stage"],
+)
+@pytest.mark.parametrize("by_age", [False, True], ids=["period", "age"])
+@pytest.mark.parametrize("enable_jit", [True, False], ids=["jit", "eager"])
+def test_a_composite_member_law_reads_the_period_once(
+    *,
+    n_stages: int,
+    source_stage: int,
+    target_stage: int,
+    by_age: bool,
+    enable_jit: bool,
+) -> None:
+    """A member law setting `b` to the period sets it to 1 in period 1, any stage."""
+    crossing = target_stage <= source_stage
+    model = _skip_model(
+        n_stages=n_stages,
+        source_stage=source_stage,
+        target_stage=target_stage,
+        source_period=1,
+        next_b=_b_is_the_period,
+        composite=True,
+        by_age=by_age,
+        enable_jit=enable_jit,
+    )
+    assert _simulated_choose_and_end(model=model, source_period=1, by_age=by_age) == (
+        _skip_values(crossing=crossing, next_b=1)[1],
+        9.0,
+        1 + crossing,
+    )
+
+
+@lcm.categorical(ordered=False)
+class OfferId:
+    source: ScalarInt
+    destination: ScalarInt
+    idle_a: ScalarInt
+    idle_b: ScalarInt
+
+
+def _offer_utility() -> FloatND:
+    return jnp.asarray(8.0)
+
+
+def _offer_cost(*, penalty: FloatND) -> FloatND:
+    return -penalty
+
+
+def _open_in_period_zero(*, period: Period) -> BoolND:
+    return period == 0
+
+
+def _open_in_period_one(*, period: Period) -> BoolND:
+    return period == 1
+
+
+def _open_in_period_two(*, period: Period) -> BoolND:
+    return period == 2
+
+
+def _open_at_age_61(*, age: Age) -> BoolND:
+    return age == 61
+
+
+@pytest.mark.parametrize(
+    ("n_stages", "source_stage", "period", "available", "open_"),
+    [
+        (2, 1, 1, _open_in_period_one, True),
+        (3, 2, 2, _open_in_period_two, True),
+        (2, 1, 1, _open_in_period_zero, False),
+        (1, 0, 1, _open_in_period_one, True),
+        (2, 1, 1, _open_at_age_61, True),
+    ],
+    ids=["open", "open-third-stage", "closed", "one-stage", "by-age"],
+)
+def test_a_time_only_availability_is_proved_at_the_period_of_its_step(
+    *,
+    n_stages: int,
+    source_stage: int,
+    period: int,
+    available: Callable[..., BoolND],
+    open_: bool,
+) -> None:
+    """A composition action open in its period keeps its parameters and is taken.
+
+    One closed there is pruned: its cost's parameter leaves the template.
+    """
+    stages: dict[str, list[RegimeName]] = {f"stage_{j}": [] for j in range(n_stages)}
+    stages[f"stage_{source_stage}"].extend(("source", "destination"))
+    for name in ("idle_a", "idle_b"):
+        empty = next((s for s, names in stages.items() if not names), "stage_0")
+        stages[empty].append(name)
+    model = lcm.Model(
+        ages=lcm.AgeGrid(start=60, inclusive_stop=60 + period, step="Y"),
+        stages={stage: tuple(names) for stage, names in stages.items()},
+        regimes={
+            "source": lcm.Regime(
+                functions={"utility": _waiting},
+                composition_action=lcm.CompositionAction(
+                    destinations={
+                        "self": lcm.Destination(
+                            regime="destination",
+                            projection={},
+                            utility_adjustment=_offer_cost,
+                        )
+                    },
+                    rule=lcm.PCOnActions(),
+                    available=available,
+                ),
+            ),
+            "destination": lcm.Regime(functions={"utility": _offer_utility}),
+            "idle_a": lcm.Regime(functions={"utility": _waiting}),
+            "idle_b": lcm.Regime(functions={"utility": _waiting}),
+        },
+        regime_id_class=OfferId,
+        initial_nodes=lcm.InitialNodes(
+            by_age={60 + period: ("source", "idle_a", "idle_b")}
+        ),
+        edges={},
+    )
+    template = flatten_regime_namespace(model.get_params_template())
+    assert (
+        "source__composition_action__destinations__self__utility_adjustment__penalty"
+        in template
+    ) == open_
+    params: UserParams = (
+        {
+            "source": {
+                "composition_action": {
+                    "destinations": {"self": {"utility_adjustment": {"penalty": 1.0}}}
+                }
+            }
+        }
+        if open_
+        else {}
+    )
+    values = model.solve(params=params, log_level="off").values
+    step = model.step_of(period=period, regime_name="source")
+    np.testing.assert_array_equal(
+        np.asarray(values[step]["source"]).ravel(), [7.0 if open_ else 0.0]
+    )

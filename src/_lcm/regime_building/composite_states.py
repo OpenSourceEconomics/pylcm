@@ -38,6 +38,7 @@ from _lcm.regime_building.reachable_states import (
     ReachableStates,
     enumerate_reachable_states,
 )
+from _lcm.time import stage_position
 from _lcm.typing import (
     DataclassInstance,
     EconFunctionArg,
@@ -235,6 +236,8 @@ def lower_composite_states(
                 }
             ),
             period_mask=period_masks[regime_name],
+            n_stages=dense._time.n_stages,  # noqa: SLF001
+            stage=stage_position(ages=dense._time, regime=regime_name),  # noqa: SLF001
         )
         if regime_name in carriers
         else regime
@@ -490,8 +493,19 @@ class _CompositeEncoder:
     shape: tuple[int, ...]
     """Number of codes of every member."""
 
+    n_stages: int
+    """Number of stages in every period."""
+
+    stage: int
+    """Position of the source regime's stage within its period."""
+
     def __call__(self, **kwargs: EconFunctionArg) -> IntND:
         values = kwargs | dict(self.bound)
+        if "period" in self.law_args:
+            # The encoder reads the period, as a declared law does; the engine's
+            # member laws it holds read the source's step and decode it themselves.
+            period = cast("IntND", values["period"])
+            values["period"] = period * self.n_stages + self.stage
         nexts = self.laws(**{arg: values[arg] for arg in self.law_args})
         return _read_flat(table=self.encoding, shape=self.shape, index=nexts)
 
@@ -595,6 +609,8 @@ def _rewrite_regime(
     value_inputs: frozenset[ReferenceName],
     fixed: FlatRegimeParams,
     period_mask: np.ndarray,
+    n_stages: int,
+    stage: int,
 ) -> Regime:
     """Hold the composite state in place of the members in one carrying regime."""
     name, members = lowering.name, lowering.members
@@ -630,6 +646,8 @@ def _rewrite_regime(
             value_inputs=value_inputs,
             fixed=fixed,
             encoding=jnp.asarray(lowering.encoding),
+            n_stages=n_stages,
+            stage=stage,
         )
     check = _ReachableAtPeriod(
         mask=jnp.asarray(period_mask.ravel(), dtype=jnp.int32),
@@ -662,6 +680,8 @@ def _composite_law(
     value_inputs: frozenset[ReferenceName],
     fixed: FlatRegimeParams,
     encoding: IntND,
+    n_stages: int,
+    stage: int,
 ) -> StateTransitionEntry:
     """Return the identity law, one encoder, or one encoder per target."""
     if not engine_transitions or all(
@@ -692,6 +712,8 @@ def _composite_law(
             bound=MappingProxyType({a: fixed[a] for a in parameters if a in fixed}),
             encoding=encoding.ravel(),
             shape=tuple(encoding.shape),
+            n_stages=n_stages,
+            stage=stage,
         )
         _publish(
             target=encoder,

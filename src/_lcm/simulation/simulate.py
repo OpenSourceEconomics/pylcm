@@ -1667,41 +1667,53 @@ def _restore_agent_order(
 
 def _require_next_period_values(
     *,
-    next_period_values: Mapping[RegimeName, FloatND],
+    period_to_regime_to_V_arr: StoredValues,
+    ages: TimeAxis,
     required_targets: tuple[RegimeName, ...],
     source_regime_name: RegimeName,
     source_period: int,
 ) -> MappingProxyType[RegimeName, FloatND]:
     """Validate and select the solution-graph continuation values a decision needs.
 
+    Each target's value is read where the edge into it lands, at the target's next
+    occurrence.
+
     Args:
-        next_period_values: The caller-supplied value-function arrays for the
-            target period (`source_period + 1`), keyed by regime name.
+        period_to_regime_to_V_arr: The caller-supplied value-function arrays,
+            keyed by step and regime name.
+        ages: The model's time axis.
         required_targets: This source's retained *solution*-graph targets —
-            every one must have an entry in `next_period_values`.
+            every one must have a value at its landing step.
         source_regime_name: The source regime making the decision.
-        source_period: The source period (0-indexed).
+        source_period: The source step (0-indexed).
 
     Returns:
         Immutable mapping of just the required targets to their value arrays.
 
     Raises:
-        InvalidSimulationInputError: If any required target is missing from
-            `next_period_values`.
+        InvalidSimulationInputError: If any required target has no value at its
+            landing step.
 
     """
-    missing = tuple(sorted(set(required_targets) - next_period_values.keys()))
+    landed = {
+        target: period_to_regime_to_V_arr.get(
+            landing_step(ages=ages, step=source_period, target=target),
+            MappingProxyType({}),
+        )
+        for target in required_targets
+    }
+    missing = tuple(sorted(t for t, values in landed.items() if t not in values))
     if missing:
         msg = (
             f"Missing continuation values for source regime '{source_regime_name}' "
-            f"at period {source_period} (target period {source_period + 1}). "
+            f"in {describe_step(ages=ages, step=source_period)}. "
             f"Required solution-graph targets: {required_targets}. "
             f"Missing: {missing}. Supply a solution produced by this model or "
             f"provide all required arrays."
         )
         raise InvalidSimulationInputError(msg)
     return MappingProxyType(
-        {target: next_period_values[target] for target in required_targets}
+        {target: landed[target][target] for target in required_targets}
     )
 
 
@@ -2176,23 +2188,10 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         regime_states=states[regime_name],
         base=base_state_action_space,
     )
-    # The decision reads each target's value where its edge lands, at the target's
-    # next occurrence. In the last period no continuation is consumed.
-    next_period_values = MappingProxyType(
-        {
-            target: landed[target]
-            for target in regimes
-            if target
-            in (
-                landed := period_to_regime_to_V_arr.get(
-                    landing_step(ages=ages, step=period, target=target),
-                    MappingProxyType({}),
-                )
-            )
-        }
-    )
+    # In the last period no continuation is consumed.
     next_regime_to_V_arr = _require_next_period_values(
-        next_period_values=next_period_values,
+        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+        ages=ages,
         required_targets=decision_targets_next_period,
         source_regime_name=regime_name,
         source_period=period,
@@ -2238,7 +2237,11 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                                 period=period + 1,
                             )
                             for target in regime.gated_edges
-                            if target in next_period_values
+                            # A gated edge lands at the next step.
+                            if target
+                            in period_to_regime_to_V_arr.get(
+                                period + 1, MappingProxyType({})
+                            )
                         }
                     ),
                 },

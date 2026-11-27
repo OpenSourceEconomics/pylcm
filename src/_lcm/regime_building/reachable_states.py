@@ -108,9 +108,11 @@ def enumerate_reachable_states(
     evaluator = _SuccessorEvaluator(regimes=regimes, members=members, ages=ages)
     by_node: dict[tuple[int, RegimeName], set[Codes]] = {}
     starts = set(itertools.product(*(tuple(start_codes[m]) for m in members)))
+    # An agent starts in its regime's own stage of the period.
     for age, name in initial_nodes:
         if name in carriers:
-            by_node.setdefault((period_of_age[age], name), set()).update(starts)
+            start = landing_step(ages=ages, step=period_of_age[age] - 1, target=name)
+            by_node.setdefault((start, name), set()).update(starts)
     edges = _edges(regimes=regimes, carriers=carriers, ages=ages)
     for period in range(len(ages.exact_values) - 1):
         for source, target, phase_name in edges.get(period, ()):

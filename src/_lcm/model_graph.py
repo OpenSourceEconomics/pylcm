@@ -35,6 +35,7 @@ from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
     _SupportedStochasticTransition,
 )
+from _lcm.regime_building.value_adapter import ValueAdapter
 from _lcm.regime_law import (
     RegimeLaw,
     RegimeLaws,
@@ -463,8 +464,16 @@ def _composition_action_is_statically_unavailable(
     names = set(inspect.signature(predicate).parameters)
     if names - {"period", "age"}:
         return False
+    # A finalized predicate reads the step `period` through its clock; a declared
+    # one reads the period of that step.
+    read_through_clock = (
+        isinstance(predicate, ValueAdapter) and predicate.clock is not None
+    )
     inputs = {
-        "period": jnp.asarray(period // stages_per_period(ages), dtype=jnp.int32),
+        "period": jnp.asarray(
+            period if read_through_clock else period // stages_per_period(ages),
+            dtype=jnp.int32,
+        ),
         "age": ages.values[period],
     }
     value = jnp.asarray(predicate(**{name: inputs[name] for name in names}))

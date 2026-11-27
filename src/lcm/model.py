@@ -5658,7 +5658,8 @@ class Model:
             regime_name
         ]
         next_V = _require_next_period_values(
-            next_period_values=V_arrs.get(period + 1, MappingProxyType({})),
+            period_to_regime_to_V_arr=V_arrs,
+            ages=self._time,
             required_targets=(
                 ()
                 if period == self.n_steps - 1
