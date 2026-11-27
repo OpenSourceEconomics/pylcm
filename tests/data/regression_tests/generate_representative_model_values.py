@@ -40,6 +40,10 @@ and the same with `JAX_ENABLE_X64=0`, `--precision 32` and the `f32` directory.
 The script refuses to overwrite an existing archive or host record. It also refuses
 to write when `lcm` was not imported from `--source-root`, when the precision JAX runs
 at differs from `--precision`, or when the backend is not the CPU.
+
+`--solution-output tests/data/regression_tests/solution.pkl` with `--precision 64`, and
+`<old>` added to `PYTHONPATH`, instead writes the solved values `test_regression_test`
+compares with at either precision.
 """
 
 import argparse
@@ -51,7 +55,9 @@ import shlex
 import subprocess
 from collections.abc import Iterator, Mapping
 from pathlib import Path
+from types import MappingProxyType
 
+import cloudpickle
 import jax
 import jax.numpy as jnp
 import jaxlib
@@ -78,7 +84,7 @@ REPRESENTATIVE_MODELS = (
 )
 PROVENANCE = "__provenance__"
 SIMULATION_SEED = 12345
-_N_SUBJECTS = 4
+_N_AGENTS = 4
 
 
 def representative_outputs(name: str) -> dict[str, np.ndarray]:
@@ -140,9 +146,20 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--precision", type=int, choices=(32, 64), required=True)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--solution-output", type=Path)
     args = parser.parse_args()
     source_root = args.source_root.resolve()
+    if (args.output is None) == (args.solution_output is None):
+        parser.error("Exactly one of --output and --solution-output is required.")
+    if args.solution_output is not None:
+        _fail_if_not_probing(
+            lcm_file=Path(lcm.__file__).resolve(),
+            source_root=source_root,
+            precision=args.precision,
+        )
+        write_regression_solution(args.solution_output)
+        return
     if args.output.exists() or host_file(args.output).exists():
         raise FileExistsError(f"A frozen output already exists beside {args.output}.")
     lcm_file = Path(lcm.__file__).resolve()
@@ -189,6 +206,46 @@ def main() -> None:
     print(f"wrote {len(arrays)} arrays to {args.output}")  # noqa: T201
 
 
+def write_regression_solution(output: Path) -> None:
+    """Write the solved values `test_regression_test` compares with to `output`.
+
+    The values of the test's own model and parameters are stored as read-only
+    mappings of period to regime to value array, so the file names no pylcm class.
+    """
+    from tests.test_models.deterministic.regression import (  # noqa: PLC0415 - test models are importable only from a checkout
+        get_model,
+        get_params,
+    )
+
+    if output.exists():
+        raise FileExistsError(f"A frozen output already exists at {output}.")
+    n_periods = 4
+    values = (
+        get_model(n_periods=n_periods)
+        .solve(
+            params=get_params(
+                n_periods=n_periods,
+                discount_factor=0.95,
+                disutility_of_work=1.0,
+                interest_rate=0.05,
+            ),
+            log_level="off",
+        )
+        .values
+    )
+    with output.open("wb") as stream:
+        cloudpickle.dump(
+            MappingProxyType(
+                {
+                    period: MappingProxyType(dict(by_regime))
+                    for period, by_regime in values.items()
+                }
+            ),
+            stream,
+        )
+    print(f"wrote the solved values of {len(values)} periods to {output}")  # noqa: T201
+
+
 def _fail_if_not_probing(*, lcm_file: Path, source_root: Path, precision: int) -> None:
     """Refuse a run that would record outputs of another tree, precision or backend."""
     if not lcm_file.is_relative_to(source_root):
@@ -213,14 +270,14 @@ def _git(source_root: Path, *args: str) -> str:
 
 def _representative_case(name: str) -> tuple[Model, UserParams, UserInitialConditions]:
     """Build one representative model with its params and initial conditions."""
-    starting_wealth = jnp.linspace(5.0, 40.0, _N_SUBJECTS)
-    regime_ids = jnp.zeros(_N_SUBJECTS, dtype=jnp.int32)
+    starting_wealth = jnp.linspace(5.0, 40.0, _N_AGENTS)
+    regime_ids = jnp.zeros(_N_AGENTS, dtype=jnp.int32)
     if name == "tiny":
         return (
             tiny.get_model(n_periods=3),
             tiny.get_params(n_periods=3),
             {
-                "age": jnp.full(_N_SUBJECTS, 25.0),
+                "age": jnp.full(_N_AGENTS, 25.0),
                 "wealth": starting_wealth,
                 "regime_id": regime_ids,
             },
@@ -230,9 +287,9 @@ def _representative_case(name: str) -> tuple[Model, UserParams, UserInitialCondi
             precautionary_savings_health.get_model(retirement_age=20),
             precautionary_savings_health.get_params(retirement_age=20),
             {
-                "age": jnp.full(_N_SUBJECTS, 18.0),
+                "age": jnp.full(_N_AGENTS, 18.0),
                 "wealth": starting_wealth,
-                "health": jnp.linspace(0.2, 0.8, _N_SUBJECTS),
+                "health": jnp.linspace(0.2, 0.8, _N_AGENTS),
                 "regime_id": regime_ids,
             },
         )
@@ -241,8 +298,8 @@ def _representative_case(name: str) -> tuple[Model, UserParams, UserInitialCondi
             iskhakov_et_al_2017.get_model(n_periods=4),
             iskhakov_et_al_2017.get_params(n_periods=4),
             {
-                "age": jnp.full(_N_SUBJECTS, 40.0),
-                "wealth": jnp.linspace(20.0, 200.0, _N_SUBJECTS),
+                "age": jnp.full(_N_AGENTS, 40.0),
+                "wealth": jnp.linspace(20.0, 200.0, _N_AGENTS),
                 "regime_id": regime_ids,
             },
         )
@@ -252,9 +309,7 @@ def _representative_case(name: str) -> tuple[Model, UserParams, UserInitialCondi
     return (
         model,
         collective_household.get_params(),
-        collective_household.get_initial_conditions(
-            n_subjects=_N_SUBJECTS, model=model
-        ),
+        collective_household.get_initial_conditions(n_agents=_N_AGENTS, model=model),
     )
 
 

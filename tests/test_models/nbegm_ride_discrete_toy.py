@@ -490,7 +490,9 @@ def build_model(  # noqa: C901, PLR0912
             "alive": StochasticTransition(func=prob_health_action),
         }
     if action_in_costate:
-        extra_states["streak"] = LinSpacedGrid(start=0.0, stop=4.0, n_points=5)
+        extra_states["streak"] = LinSpacedGrid(
+            start=0.0, stop=4.0, n_points=5, off_grid="extrapolate"
+        )
         extra_state_transitions["streak"] = {
             "alive": next_streak,
             "dead": next_streak,
@@ -500,7 +502,9 @@ def build_model(  # noqa: C901, PLR0912
             tracker_law = next_tracker_unprobeable
         else:
             tracker_law = next_tracker_smooth if costate_smooth else next_tracker_step
-        extra_states["tracker"] = LinSpacedGrid(start=0.0, stop=4.0, n_points=5)
+        extra_states["tracker"] = LinSpacedGrid(
+            start=0.0, stop=4.0, n_points=5, off_grid="extrapolate"
+        )
         extra_state_transitions["tracker"] = {
             "alive": tracker_law,
             "dead": tracker_law,

@@ -104,22 +104,27 @@ not be the head checkout; all three checkouts must agree on the lock file and
 scenario-owned sources. The output directory must not already exist and must lie outside
 the harness, base, and head checkouts.
 
-The harness measures ten named scenarios. Four are GridSearch routes: singleton hard
-max, singleton EV1, collective GridSearch with value-dependent inputs, and distributed
-co-map. The other six are the full 18-regime ACA baseline at each combination of 3 or 6
-asset points and 16, 64, or 256 consumption points, named
-`aca-a<assets>-c<consumption>`. Pass `--scenario` once per name to measure a subset;
-omitting it measures all ten. The distributed row always uses exactly four CPU devices;
-the other rows use the requested backend. Use at least two repeats so execution
-alternates base--head on even repeats and head--base on odd repeats; four repeats are
-the balanced evidence profile.
+The harness measures ten named scenarios. Four are GridSearch routes:
+
+- `singleton-hard-max`: hard max in a regime with one member
+- `singleton-ev1`: EV1 taste shocks in a regime with one member
+- `collective-gs-vd`: GridSearch in a regime with several members, with value-dependent
+  inputs
+- `distributed-co-map`: distributed co-map
+
+The other six are the full 18-regime ACA baseline at each combination of 3 or 6 asset
+points and 16, 64, or 256 consumption points, named `aca-a<assets>-c<consumption>`. Pass
+`--scenario` once per name to measure a subset; omitting it measures all ten. The
+distributed row always uses exactly four CPU devices; the other rows use the requested
+backend. Use at least two repeats so execution alternates base--head on even repeats and
+head--base on odd repeats; four repeats are the balanced evidence profile.
 
 Every pair must pass numerical value parity and exact output shape, dtype, and sharding
 parity. The harness also requires non-empty HLO and compiler-memory status for every
 compiled core, host high-water-mark evidence, and measured peak device memory on GPU
 (with an explicit not-applicable record on CPU). It verifies the native execution
-declaration for every named target: singleton hard max and distributed co-map stream
-`action_product`; EV1 and collective GridSearch keep canonical dense action reducers
+declaration for every named target. The hard max and the distributed co-map stream
+`action_product`. EV1 and the GridSearch with several members keep dense action reducers
 while the planner tiles their state cells. The reported `streamed` flag means action
 reduction, so a planned core can have `streamed=False`. It also rejects communication
 collectives in the distributed co-map head. Raw timings, compiler and device memory, HLO
@@ -130,9 +135,9 @@ output directory; `summary.json` is the entry point for review.
 
 | File                             | What it benchmarks                                                                                             |
 | -------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `bench_precautionary_savings.py` | Solve (varying grid sizes), simulate (varying subjects), solve+simulate, lin vs irreg grid comparison          |
+| `bench_precautionary_savings.py` | Solve (varying grid sizes), simulate (varying agents), solve+simulate, lin vs irreg grid comparison            |
 | `bench_mahler_yum.py`            | Mahler & Yum (2024) replication, configured fp64 GPU series `capacity-half-planned-v2` (planner-chosen widths) |
-| `bench_aca_baseline.py`          | Reduced ACA benchmark: 18 regimes, tiny continuous grids, 2 preference types, and 1,000 subjects (GPU only)    |
+| `bench_aca_baseline.py`          | Reduced ACA benchmark: 18 regimes, tiny continuous grids, 2 preference types, and 1,000 agents (GPU only)      |
 
 The reduced ACA benchmark preserves the 18-regime structure while using its benchmark
 profile. Production ACA runs use the production grid configuration and 3 preference

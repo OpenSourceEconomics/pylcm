@@ -13,7 +13,7 @@ from _lcm.processes.joint_normal_lowering import (
     joint_normal_declarations,
 )
 from _lcm.regime_building.processing import compute_merged_discrete_categories
-from _lcm.time import TimeAxis
+from _lcm.time import TimeAxis, stages_per_period, step_count
 from _lcm.typing import ActionName, ProcessName, RegimeName, RegimeNamesToIds, StateName
 from lcm.grids import DiscreteGrid
 from lcm.phased import Phased
@@ -41,8 +41,8 @@ class ResultMetadata:
     n_periods: int
     """Number of periods in the simulation."""
 
-    n_subjects: int
-    """Number of subjects simulated."""
+    n_agents: int
+    """Number of agents simulated."""
 
     regime_to_states: MappingProxyType[RegimeName, tuple[StateName, ...]]
     """Immutable mapping of regime names to their state variable names."""
@@ -73,22 +73,15 @@ class ResultMetadata:
     ]
     """Immutable mapping of (regime_name, var_name) to per-regime categories."""
 
-    regime_to_member_axis: MappingProxyType[RegimeName, tuple[str, ...] | None] = (
-        MappingProxyType({})
+    regime_to_members: MappingProxyType[RegimeName, tuple[str, ...]] = MappingProxyType(
+        {}
     )
     """Immutable mapping of regime names to their ordered member names.
 
-    `None` for a singleton regime. Captured at `SimulationResult.__init__` time
-    (when `regimes` is always fully populated) so `to_dataframe` can tell a
-    collective regime's recorded `value` apart from a singleton's even after
-    `save()` has dropped the `Regime` objects themselves — see
-    `_lcm.simulation.result_dataframe._process_regime`.
-
-    The default is empty, so a saved artifact whose metadata payload carries no
-    such mapping still loads. Every regime then reads as a singleton, which is
-    the only reading available; a regime whose recorded value does carry a
-    member axis is reported by `_lcm.simulation.result_dataframe`, naming
-    this field, instead of being published under a wrong column layout.
+    Captured at `SimulationResult.__init__` time (when `regimes` is always fully
+    populated) so `to_dataframe` can split a regime's recorded `value` into its
+    members' columns even after `save()` has dropped the `Regime` objects
+    themselves — see `_lcm.simulation.result_dataframe._process_regime`.
     """
 
     member_names_to_ids: MappingProxyType[str, int] = MappingProxyType({})
@@ -187,7 +180,7 @@ def _compute_metadata(
 
     `nested_policy_regimes` names the regimes whose solve published a
     `NestedEGMSimPolicy`. It is a property of the solved MODEL, not of the
-    simulated subjects, so the dataframe schema it gates stays data-independent.
+    simulated agents, so the dataframe schema it gates stays data-independent.
     """
     regime_names = tuple(regimes.keys())
 
@@ -237,23 +230,22 @@ def _compute_metadata(
                 grid.categories if values is None else values
             )
 
-    regime_to_member_axis: dict[RegimeName, tuple[str, ...] | None] = {
-        regime_name: regime.member_axis for regime_name, regime in regimes.items()
+    regime_to_members = {
+        regime_name: regime.members for regime_name, regime in regimes.items()
     }
     member_names_to_ids = next(
         (regime.member_names_to_ids for regime in regimes.values()),
         MappingProxyType({}),
     )
 
-    n_periods = ages.n_periods
-    n_subjects = _get_n_subjects(raw_results)
+    n_agents = _get_n_agents(raw_results)
 
     return ResultMetadata(
         regime_names=regime_names,
         state_names=tuple(sorted(all_states)),
         action_names=tuple(sorted(all_actions)),
-        n_periods=n_periods,
-        n_subjects=n_subjects,
+        n_periods=step_count(ages) // stages_per_period(ages),
+        n_agents=n_agents,
         regime_to_states=MappingProxyType(regime_to_states),
         regime_to_actions=MappingProxyType(regime_to_actions),
         regime_to_publishes_nested_policy=MappingProxyType(
@@ -262,7 +254,7 @@ def _compute_metadata(
         discrete_categories=MappingProxyType(discrete_categories),
         discrete_ordered=MappingProxyType(discrete_ordered),
         regime_discrete_categories=MappingProxyType(regime_discrete_categories),
-        regime_to_member_axis=MappingProxyType(regime_to_member_axis),
+        regime_to_members=MappingProxyType(regime_to_members),
         member_names_to_ids=member_names_to_ids,
         regime_to_joint_normals=MappingProxyType(
             {name: _output_joint_laws(regime) for name, regime in regimes.items()}
@@ -291,12 +283,12 @@ def _output_joint_laws(
     return MappingProxyType(laws)
 
 
-def _get_n_subjects(
+def _get_n_agents(
     raw_results: MappingProxyType[
         RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
     ],
 ) -> int:
-    """Extract number of subjects from raw results."""
+    """Extract number of agents from raw results."""
     for regime_results in raw_results.values():
         if regime_results:
             first_result = next(iter(regime_results.values()))

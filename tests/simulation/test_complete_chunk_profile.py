@@ -50,7 +50,7 @@ def test_complete_profile_covers_actual_stages_and_retained_records_without_allo
     runtimes: list[SimulationRuntime] = []
     host_dispatch = ProfiledSimulationOperations.dispatch
     core_dispatch = SimulationRuntime.dispatch
-    chunk_dispatch = simulation._simulate_subject_chunk
+    chunk_dispatch = simulation._simulate_agent_chunk
     inside_chunk = [False]
 
     def observe_chunk(
@@ -82,7 +82,7 @@ def test_complete_profile_covers_actual_stages_and_retained_records_without_allo
     with monkeypatch.context() as capture:
         capture.setattr(ProfiledSimulationOperations, "dispatch", observe_host)
         capture.setattr(SimulationRuntime, "dispatch", observe_core)
-        capture.setattr(simulation, "_simulate_subject_chunk", observe_chunk)
+        capture.setattr(simulation, "_simulate_agent_chunk", observe_chunk)
         result = model.simulate(
             params=params,
             initial_conditions=initial,
@@ -91,7 +91,7 @@ def test_complete_profile_covers_actual_stages_and_retained_records_without_allo
             log_level="off",
         )
     assert "_generate_windowed_simulation_keys" in stages
-    assert "_advance_states_for_subjects" in stages
+    assert "_advance_states_for_agents" in stages
     assert "_lookup_values_from_indices" in stages
     record_bytes = sum(
         leaf.nbytes
@@ -121,20 +121,20 @@ def test_complete_profile_covers_actual_stages_and_retained_records_without_allo
             regimes=model._regimes,
             flat_params=result.flat_params,
             base_spaces=spaces,
-            values=result.period_to_regime_to_V_arr,
+            values=result.step_to_regime_to_V_arr,
             ages=model.ages,
             initial_conditions=initial,
             regime_names_to_ids=model.regime_names_to_ids,
-            n_subjects=width,
+            n_agents=width,
             population=3,
             original_population=3,
-            widths={"subject": width},
+            widths={"agent": width},
             independent_taste=False,
             log_level="off",
         )
     assert stages <= {stage.name for stage in profile.stages}
     assert sum(profile.output_reservation.values()) >= record_bytes
-    assert profile.n_subjects == width
+    assert profile.n_agents == width
     assert profile.padded_population == -(-3 // width) * width
     if width == 2:
         assert {

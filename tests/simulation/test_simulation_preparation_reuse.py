@@ -40,7 +40,7 @@ type SuppliedCase = tuple[Model, UserParams, UserInitialConditions, SolutionResu
 
 class _PlacementArguments(TypedDict):
     arguments: Mapping[ReferenceName, HostArray]
-    subject_arg_names: tuple[ReferenceName, ...]
+    agent_arg_names: tuple[ReferenceName, ...]
     value_reads: tuple[ValueRead, ...]
     devices: tuple[jax.Device, ...]
     budget_bytes: int
@@ -193,7 +193,7 @@ def test_operand_low_budget_refuses_before_placement(
     with pytest.raises(ExecutionPlanningError, match="before allocation"):
         operand_placement.place_simulation_arguments(
             arguments={"state": np.ones(8, dtype=np.float64)},
-            subject_arg_names=("state",),
+            agent_arg_names=("state",),
             value_reads=(),
             devices=(device,),
             budget_bytes=1,
@@ -454,7 +454,7 @@ def test_operand_admission_rechecks_growing_live_inventory(
     monkeypatch.setattr(operand_placement, "_place_operand_leaf", observed)
     kwargs: _PlacementArguments = {
         "arguments": {"state": value},
-        "subject_arg_names": ("state",),
+        "agent_arg_names": ("state",),
         "value_reads": (),
         "devices": (device,),
         "budget_bytes": 256,
@@ -481,7 +481,7 @@ def test_operand_admission_exact_boundary_and_occurrences(delta: int) -> None:
     required = 4 * value.nbytes  # two copies, each destination plus scratch
     kwargs: _LivePlacementArguments = {
         "arguments": {"a": value, "b": value},
-        "subject_arg_names": ("a", "b"),
+        "agent_arg_names": ("a", "b"),
         "value_reads": (),
         "devices": (device,),
         "budget_bytes": required + delta,
@@ -526,18 +526,18 @@ def test_metadata_paths_under_jit_vmap_and_scan() -> None:
     np.testing.assert_array_equal(scanned, expected)
 
 
-@pytest.mark.parametrize("subjects", [1, 3, 7])
+@pytest.mark.parametrize("agents", [1, 3, 7])
 @pytest.mark.parametrize("seed", [11, 19])
 def test_public_shape_seed_and_state_mutations(
     *,
     supplied_case: SuppliedCase,
-    subjects: int,
+    agents: int,
     seed: int,
 ) -> None:
     """A scalar Bellman oracle fixes choices/values independently of preparation."""
     model, params, initial, solution = supplied_case
-    changed = {name: jnp.repeat(value, subjects) for name, value in initial.items()}
-    changed["income"] = jnp.linspace(1.75, 2.25, subjects)
+    changed = {name: jnp.repeat(value, agents) for name, value in initial.items()}
+    changed["income"] = jnp.linspace(1.75, 2.25, agents)
     first = model.simulate(
         params=params,
         initial_conditions=changed,
@@ -560,11 +560,11 @@ def test_public_shape_seed_and_state_mutations(
         [float(income) + 1.0 for income in changed["income"]],
         dtype=canonical_float_dtype(),
     )
-    np.testing.assert_array_equal(current.V_arr, expected)
-    np.testing.assert_array_equal(current.actions["saving"], np.ones(subjects))
-    np.testing.assert_array_equal(current.in_regime, np.ones(subjects, dtype=bool))
+    np.testing.assert_array_equal(current.V_arr, expected[:, None])
+    np.testing.assert_array_equal(current.actions["saving"], np.ones(agents))
+    np.testing.assert_array_equal(current.in_regime, np.ones(agents, dtype=bool))
     np.testing.assert_array_equal(
-        first.raw_results["done"][1].in_regime, np.ones(subjects, dtype=bool)
+        first.raw_results["done"][1].in_regime, np.ones(agents, dtype=bool)
     )
     for regime, periods in first.raw_results.items():
         for period, record in periods.items():

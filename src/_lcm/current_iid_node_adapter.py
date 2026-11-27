@@ -34,6 +34,7 @@ from _lcm.current_iid import CurrentIIDDrawPlan, _draw_base_value
 from _lcm.engine import PeriodRegimeSimulationData
 from _lcm.processes.iid import _IIDProcess
 from _lcm.shock_registry import ShockBinding
+from _lcm.simulation.agent_groups import AgentRows
 from _lcm.simulation.current_iid_overrides import (
     ShockPathsInput,
     SimulationInitialConditionsInput,
@@ -43,9 +44,8 @@ from _lcm.simulation.initial_conditions import resolve_initial_periods
 from _lcm.simulation.memory import SimulationMemory, run_simulation_producer
 from _lcm.simulation.random import create_simulation_key, draw_random_seed
 from _lcm.simulation.random_address import AddressWords, RandomAddress, draw_row_keys
-from _lcm.simulation.subject_groups import SubjectRows
 from _lcm.simulation.time_inputs import lower_initial_time
-from _lcm.time import TimeAxis
+from _lcm.time import TimeAxis, step_count
 from _lcm.transition_plans import TargetTransitionPlans
 from _lcm.typing import PRNGKeyND, RegimeNamesToIds
 from lcm._solver_api.contract import ValueArraySchema
@@ -106,7 +106,7 @@ class NodeAxisInputs:
     entries: Mapping[ShockName, ShockOverride]
     """Original entry-only vectors."""
     paths: Mapping[ShockName, ShockOverride]
-    """Original common or subject-by-period banks, superseding entries."""
+    """Original common or agent-by-period banks, superseding entries."""
     starts: np.ndarray
     """Entry periods in original caller order."""
     ages: TimeAxis
@@ -124,7 +124,7 @@ class NodeAxisInputs:
                     (
                         (values.ndim == 1 and values.size > 0)
                         or (
-                            values.ndim == 2  # noqa: PLR2004 - subject-by-period bank
+                            values.ndim == 2  # noqa: PLR2004 - agent-by-period bank
                             and values.shape[0] == len(self.starts)
                             and values.shape[1] > 0
                         )
@@ -247,7 +247,7 @@ class NodeAxisInputs:
         period: int,
         regime_ids: IntND,
         in_source: BoolND,
-        subject_slice: slice | SubjectRows,
+        agent_slice: slice | AgentRows,
         regime_names_to_ids: RegimeNamesToIds,
         argument_names: tuple[str, ...],
         transition_plans: TargetTransitionPlans,
@@ -264,9 +264,9 @@ class NodeAxisInputs:
         if not names:
             return MappingProxyType({})
         rows = (
-            subject_slice.rows
-            if isinstance(subject_slice, SubjectRows)
-            else np.arange(subject_slice.start or 0, subject_slice.stop)
+            agent_slice.rows
+            if isinstance(agent_slice, AgentRows)
+            else np.arange(agent_slice.start or 0, agent_slice.stop)
         )
         physical = self.realise(
             key=key,
@@ -437,7 +437,7 @@ class NodeAxisAdapter:
         if replayed is None:
             return result
         schemas = replayed.metadata.value_schemas
-        result._period_to_regime_to_V_arr = MappingProxyType(  # noqa: SLF001
+        result._step_to_regime_to_V_arr = MappingProxyType(  # noqa: SLF001
             {
                 period: MappingProxyType(
                     {
@@ -448,7 +448,7 @@ class NodeAxisAdapter:
                         for regime_name, value in regimes.items()
                     }
                 )
-                for period, regimes in result.period_to_regime_to_V_arr.items()
+                for period, regimes in result.step_to_regime_to_V_arr.items()
             }
         )
         result._solution = (  # noqa: SLF001
@@ -886,20 +886,18 @@ def _realise_group_paths(
     ages: TimeAxis,
 ) -> Mapping[ShockName, FloatND]:
     """Realise fresh addressed paths; supplied records use the consumption bank."""
-    n_subjects, n_periods = len(starts), ages.n_periods
+    n_agents, n_steps = len(starts), step_count(ages)
     keys = {
-        name: _addressed_keys(
-            key=key, name=name, n_subjects=n_subjects, n_periods=n_periods
-        )
+        name: _addressed_keys(key=key, name=name, n_agents=n_agents, n_steps=n_steps)
         for name in group.shocks
     }
 
     physical, valid = _cell_program(group_name=group_name, group=group, kinds=())(
         cell_keys=keys,
         periods=jnp.broadcast_to(
-            jnp.arange(n_periods, dtype=jnp.int32), (n_subjects, n_periods)
+            jnp.arange(n_steps, dtype=jnp.int32), (n_agents, n_steps)
         ),
-        ages=jnp.broadcast_to(jnp.asarray(ages.values), (n_subjects, n_periods)),
+        ages=jnp.broadcast_to(jnp.asarray(ages.values), (n_agents, n_steps)),
         supplied={},
         enabled={},
     )
@@ -933,7 +931,7 @@ def _cell_program(
     kinds: tuple[tuple[ShockName, type[BaseInnovations | PhysicalValues]], ...],
     flattened: bool = False,
 ) -> Callable[..., tuple[Mapping[ShockName, FloatND], BoolND]]:
-    """Return the compiled per-(subject, period) realisation of one shock group.
+    """Return the compiled per-(agent, period) realisation of one shock group.
 
     Built once per group and override kinds, so a repeated simulate reuses the
     traced program instead of wrapping a fresh closure in `jax.jit`.
@@ -1008,10 +1006,10 @@ def _cell_program(
 
 
 def _addressed_keys(
-    *, key: PRNGKeyND, name: ShockName, n_subjects: int, n_periods: int
+    *, key: PRNGKeyND, name: ShockName, n_agents: int, n_steps: int
 ) -> PRNGKeyND:
     """Address one shock's keys by original row and period, rows by periods."""
-    rows = np.arange(n_subjects, dtype=np.uint64)
+    rows = np.arange(n_agents, dtype=np.uint64)
     words = np.asarray(RandomAddress(kind="shock", name=name).words(), dtype=np.uint32)
 
     def period_keys(period: jax.Array) -> PRNGKeyND:
@@ -1023,7 +1021,7 @@ def _addressed_keys(
             period=period,
         )
 
-    return jax.vmap(period_keys, out_axes=1)(jnp.arange(n_periods, dtype=jnp.uint32))
+    return jax.vmap(period_keys, out_axes=1)(jnp.arange(n_steps, dtype=jnp.uint32))
 
 
 def _broadcast(

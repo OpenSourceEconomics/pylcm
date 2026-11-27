@@ -135,10 +135,10 @@ def snapshot_artifact_ref(ref: ArtifactRef) -> ArtifactRef:
     """Reconstruct one exact public artifact address and its nested key."""
     if type(ref) is not ArtifactRef:
         raise TypeError("Artifact addresses must be exact ArtifactRef objects.")
-    _require_nonnegative_exact_int(ref.period, label="ArtifactRef.period")
+    _require_nonnegative_exact_int(ref.step, label="ArtifactRef.period")
     _require_nonempty_exact_str(ref.regime, label="ArtifactRef.regime")
     return ArtifactRef(
-        period=ref.period,
+        step=ref.step,
         regime=ref.regime,
         key=snapshot_artifact_key(ref.key),
     )
@@ -249,7 +249,7 @@ def own_value_store(
                 entries[(period, regime_name)] = _CanonicalValueEntry(value=value)
     store = object.__new__(ValueStore)
     object.__setattr__(store, "_entries", MappingProxyType(entries))
-    object.__setattr__(store, "_regimes_by_period", MappingProxyType(regimes_by_period))
+    object.__setattr__(store, "_regimes_by_step", MappingProxyType(regimes_by_period))
     return store
 
 
@@ -305,7 +305,7 @@ def snapshot_solution_metadata(metadata: SolutionMetadata) -> SolutionMetadata:
         raise TypeError("Solution metadata must be exact SolutionMetadata.")
     _validate_solution_metadata_fields(metadata)
     retention = metadata.retention
-    n_periods = metadata.n_periods
+    n_periods = metadata.n_steps
     regime_names = tuple(metadata.regime_names)
     model_instance_id = metadata.model_instance_id
     params_fingerprint = metadata.params_fingerprint
@@ -358,7 +358,7 @@ def snapshot_solution_metadata(metadata: SolutionMetadata) -> SolutionMetadata:
     )
     return SolutionMetadata(
         retention=retention,
-        n_periods=n_periods,
+        n_steps=n_periods,
         regime_names=regime_names,
         solver_types=solver_types,
         model_instance_id=model_instance_id,
@@ -804,7 +804,7 @@ def _validate_solution_metadata_fields(
     """Reject noncanonical metadata before any value is compared or hashed."""
     if type(metadata.retention) is not ResultRetention:
         raise TypeError("Solution metadata retention must be exact ResultRetention.")
-    _require_positive_exact_int(metadata.n_periods, label="solution n_periods")
+    _require_positive_exact_int(metadata.n_steps, label="solution n_periods")
     _require_exact_names(metadata.regime_names, label="solution regime_names")
     for field_name in (
         "model_instance_id",

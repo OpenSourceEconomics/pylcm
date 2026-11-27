@@ -103,11 +103,17 @@ The family, the counts and the exactness rules are those of the paper's Suppleme
 The checker follows the model's declared functions, constraints and conditional laws. A
 state is kept wherever a current calculation reads it, or a calculation in a successor
 period needs it. A state that is absent from current utility can still affect an offer
-probability or a future state, and it is kept for that reason. An exit's availability is
-such a calculation: the source check binds each exit to the dependency graph as the
-model declares it, so a report in which an exit no longer reads the states its
-availability reads fails the check. Every layout of the family solves the same decision
-problem on the coordinates it keeps.
+probability or a future state, and it is kept for that reason. The availability of a
+composition action is such a calculation. The source check binds each composition action
+to the dependency graph as the model declares it. A report in which a composition action
+no longer reads the states that its availability reads fails the check. Every layout of
+the family solves the same decision problem on the coordinates it keeps. Values are the
+same in every layout, and so is the set of best actions at every node. Simulated
+histories are the same only if one action is best at every node a history reaches. Where
+several actions are tied for every member, the engine takes the first in grid order, and
+layouts may order the grid differently. Regimes pool only when every action they share
+has the same grid in each of them, so a pooled regime offers each of its members exactly
+its own choices.
 
 These checks are relative to the captured declarations and to the model's pure-function
 contracts. The checker does not prove that arbitrary Python functions carry their
@@ -120,15 +126,15 @@ interval; see [economic time and computational periods](period_time.md).
 In a model with collective regimes, the checker holds to these rules:
 
 - A collective regime pools only with regimes that have the same members, so never with
-  a single-agent regime.
-- Regimes pool only when their exits are equal: the same rule, tie, comparison,
-  renegotiation and settlement, the same targets with the same roles, the same observed
-  shocks and the same availability.
+  a regime with one member.
+- Regimes pool only when their composition actions are equal: the same rule, tie, Pareto
+  weight state and transfer, the same destinations with the same roles, the same
+  observed shocks and the same availability.
 - Work and storage count one action value and one stored value per member, as the solve
   computes them.
-- The state an exit's `Renegotiate` moves stays in its regime whole: it is kept in every
-  period and never split into status lanes, because renegotiation compares the stay
-  values at its codes within the period.
+- The Pareto weight state of a `PCOnWeight` rule stays in its regime whole. It is kept
+  in every period and never split into status lanes, because the rule compares the
+  values of staying at its nodes within the period.
 
 ### Which layout is recommended?
 

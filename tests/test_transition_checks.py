@@ -112,7 +112,7 @@ def _terminal_regime() -> UserRegime:
     )
 
 
-def _model_with_state_probs(next_health_func) -> Model:
+def _model_with_state_probs(next_health_func: Callable[..., FloatND]) -> Model:
     alive = UserRegime(
         states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=_Health)},
         actions={"consumption": CONSUMPTION_GRID},
@@ -628,7 +628,10 @@ def _income(wealth: ContinuousState) -> FloatND:
 
 
 def _model_with_function_reading_health_probs(
-    *, next_health_func, phased: bool = False, **model_options: Unpack[_ModelOptions]
+    *,
+    next_health_func: Callable[..., FloatND],
+    phased: bool = False,
+    **model_options: Unpack[_ModelOptions],
 ) -> Model:
     """Build a model whose `health` law reads regime-function outputs.
 
@@ -1140,7 +1143,7 @@ def _phase_demand_model(
             ("simulate", model.graph.simulation),
         )
         for period in range(len(_PHASE_DEMAND_AGES) - 1)
-        for target in graph.targets(period=period, source="source")
+        for target in graph.targets(step=period, source="source")
     )
     assert observed == demanded
     return model, demanded
@@ -1542,7 +1545,7 @@ def _late_entry_model(*, bad_period: int) -> Model:
 
     The solve phase reaches `late` from `source` at ages 0 and 1, so `late` is
     solved at ages 1 and 2. The simulate phase reaches `late` only at age 1, so
-    simulated subjects occupy it at age 2 alone. The shared health law of `late`
+    simulated agents occupy it at age 2 alone. The shared health law of `late`
     reads `probability_row`, whose simulate variant is invalid at `bad_period`.
     """
     health = DiscreteGrid(category_class=_Health)
@@ -1595,8 +1598,8 @@ def _late_entry_model(*, bad_period: int) -> Model:
     return model
 
 
-def test_shared_state_law_is_not_simulate_checked_where_no_subject_is() -> None:
-    """A simulate variant invalid only where no simulated subject is passes.
+def test_shared_state_law_is_not_simulate_checked_where_no_agent_is() -> None:
+    """A simulate variant invalid only where no simulated agent is passes.
 
     `late` is solved at age 1, but the simulation first reaches it at age 2,
     so the simulate evaluation of its shared law has no demand at age 1.

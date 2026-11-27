@@ -104,7 +104,14 @@ from _lcm.solution.feasibility import (
     reduce_bound_input_status,
     validate_runtime_bound_status,
 )
-from _lcm.time import TimeAxis, format_age
+from _lcm.time import (
+    TimeAxis,
+    describe_step,
+    format_age,
+    period_of_step,
+    stage_of_step,
+    step_count,
+)
 from _lcm.transition_plans import (
     LotteryLifetime,
     TargetTransitionPlans,
@@ -386,14 +393,14 @@ def regime_probability_flags(
 ) -> jax.Array:
     """Use exactly the regime validator's existing numerical predicates.
 
-    `rows` restricts every predicate to the rows it marks — the subjects a
-    realized law is evaluated for; `None` checks every row.
+    `rows` restricts every predicate to the rows it marks — the agents an
+    actual law is evaluated for; `None` checks every row.
     """
     if rows is None:
         all_probs = jnp.stack(probabilities)
         counted = jnp.ones(all_probs.shape[1:], dtype=bool)
     else:
-        # A law constant across subjects yields scalars; spread it over the rows.
+        # A law constant across agents yields scalars; spread it over the rows.
         *spread, counted = jnp.broadcast_arrays(*probabilities, rows)
         all_probs = jnp.stack(spread)
     return jnp.stack(
@@ -610,15 +617,15 @@ def validate_off_grid_transitions(
         and not mandatory_only
         and logger.isEnabledFor(logging.DEBUG)
     )
-    for period in range(ages.n_periods - 1):
+    for step in range(step_count(ages) - 1):
         for name, regime in regimes.items():
             if regime.solution.counts_raise_landings:
                 continue
             for law, reachability, realized in _regime_laws_at_period(
-                regime=regime, regime_name=name, period=period
+                regime=regime, regime_name=name, period=step
             ):
                 phase = regime.simulation if realized else regime.solution
-                for target in reachability.targets(period=period, source=name):
+                for target in reachability.targets(step=step, source=name):
                     target_phase = (
                         regimes[target].simulation
                         if realized
@@ -649,7 +656,7 @@ def validate_off_grid_transitions(
                         process_grid_resolver=process_grid_resolver,
                     )
                     axes = _state_action_space_for_period(
-                        regime=regimes[target], base=base, period=period + 1
+                        regime=regimes[target], base=base, period=step + 1
                     ).states
                     points = {
                         state: axes[state] if state in axes else grid.to_jax()
@@ -662,14 +669,18 @@ def validate_off_grid_transitions(
                         law=law,
                         points=points,
                         target_axes=axes,
-                        period=period,
+                        period=step,
                         flat_params=flat_params,
                         ages=ages,
                         summary=summary,
                         process_grid_resolver=process_grid_resolver,
                     )
                     counts = _validate_off_grid_bound_status(
-                        counts=counts, phase=phase, regime_name=name, period=period
+                        counts=counts,
+                        phase=phase,
+                        regime_name=name,
+                        period=step,
+                        ages=ages,
                     )
                     for index, (state, grid) in enumerate(grids.items()):
                         if grid.off_grid == "raise" and int(counts[index, 1]):
@@ -678,8 +689,9 @@ def validate_off_grid_transitions(
                                     count=int(counts[index, 1]),
                                     regime=name,
                                     target=target,
-                                    period=period,
+                                    period=period_of_step(ages=ages, step=step),
                                     state=state,
+                                    stage=stage_of_step(ages=ages, step=step),
                                     phase="simulate" if realized else "solve",
                                 )
                             )
@@ -688,10 +700,11 @@ def validate_off_grid_transitions(
                             rule=grid.off_grid,
                             regime=name,
                             target=target,
-                            period=period,
+                            period=period_of_step(ages=ages, step=step),
                             state=state,
                             phase="simulate" if realized else "solve",
                             logger=logger,
+                            stage=stage_of_step(ages=ages, step=step),
                         )
 
 
@@ -701,12 +714,14 @@ def _validate_off_grid_bound_status(
     phase: SolutionPhase | SimulationPhase,
     regime_name: RegimeName,
     period: int,
+    ages: TimeAxis,
 ) -> IntND:
     """Validate canonical bound integrity before interpreting reached landings."""
     if isinstance(counts, _CurrentIIDOffGridCounts):
         if bool(counts.invalid_law):
             raise ShockDeclarationError(
-                f"Invalid current IID law in regime {regime_name!r}, period {period}."
+                f"Invalid current IID law in regime {regime_name!r}, "
+                f"{describe_step(ages=ages, step=period)}."
             )
         counts = counts.counts
     if isinstance(counts, BoundedResult):
@@ -1538,12 +1553,12 @@ def validate_regime_transition_probs_all_periods(
     if logger is not None and not validation_enabled(logger):
         return
 
-    for period in range(ages.n_periods - 1):
+    for step in range(step_count(ages) - 1):
         for regime_name, regime in regimes.items():
             if regime.terminal:
                 continue
             laws = _regime_laws_at_period(
-                regime=regime, regime_name=regime_name, period=period
+                regime=regime, regime_name=regime_name, period=step
             )
             for law, reachability, realized in laws:
                 try:
@@ -1553,10 +1568,10 @@ def validate_regime_transition_probs_all_periods(
                             flat_params, regime_name=regime_name
                         ),
                         active_regimes_next_period=reachability.targets(
-                            period=period, source=regime_name
+                            step=step, source=regime_name
                         ),
                         regime_name=regime_name,
-                        period=period,
+                        period=step,
                         ages=ages,
                         summary=summary,
                         process_grid_resolver=process_grid_resolver,
@@ -1578,8 +1593,8 @@ def _regime_laws_at_period(
     """The regime laws to validate at one period, with the graph of each.
 
     Solved periods check the solve law against its own targets; visited periods
-    of a `Phased` regime also check the realized law. The flag marks the
-    realized law.
+    of a `Phased` regime also check the actual law. The flag marks the actual
+    law.
     """
     laws = []
     solved = regime.solution.validation_regime_transition_probs
@@ -1615,7 +1630,7 @@ def _validate_regime_transition_single(
     variables it accepts, taken from the rows its operation evaluates:
 
     - the period's own nodes of an age-specialized state;
-    - for a realized law, also the simulate grid of each carried-only state.
+    - for an actual law, also the simulate grid of each carried-only state.
 
     A failing law is checked once more on the economically feasible rows alone,
     where the regime's constraints hold, because the operation masks the
@@ -2049,10 +2064,10 @@ def validate_realized_regime_transition_probs(
     period: int,
     memory: SimulationMemory | None,
 ) -> None:
-    """Validate a realized regime law on the subjects it moves, at every log level.
+    """Validate an actual regime law on the agents it moves, at every log level.
 
     Runs on the full output of the law, before any projection onto the
-    retained targets and before the draw, over exactly the `rows` of subjects
+    retained targets and before the draw, over exactly the `rows` of agents
     standing in the source regime. Every predicate of the grid validation
     applies: finite values, values in [0, 1], unit mass and zero mass outside
     the declared targets.
@@ -2082,7 +2097,7 @@ def _format_sum_violation(
     """Format a human-readable description of probability sum violations.
 
     Args:
-        sum_all: Array of probability sums (per-subject).
+        sum_all: Array of probability sums (per-agent).
         state_action_values: Optional immutable mapping of state/action names to arrays,
             included in the output to show which inputs cause violations.
 
@@ -2100,9 +2115,9 @@ def _format_sum_violation(
     failing_sums = sum_all[failing_mask]
     n_failing = int(failing_indices.shape[0])
     n_show = min(n_failing, 5)
-    # The subject column holds integer row indices; every other column floats.
+    # The agent column holds integer row indices; every other column floats.
     data: dict[str, list[int] | list[float]] = {
-        "subject": failing_indices[:n_show].tolist(),
+        "agent": failing_indices[:n_show].tolist(),
     }
     if state_action_values is not None:
         for name, arr in state_action_values.items():
@@ -2159,9 +2174,9 @@ def validate_state_transitions_all_periods(  # noqa: C901
     if not any(r.stochastic_state_transitions for r in regimes.values()):
         return
 
-    for period in range(ages.n_periods - 1):
+    for step in range(step_count(ages) - 1):
         for regime_name, regime in regimes.items():
-            if period not in regime.active_periods:
+            if step not in regime.active_periods:
                 continue
             if regime.terminal:
                 continue
@@ -2182,9 +2197,9 @@ def validate_state_transitions_all_periods(  # noqa: C901
                 )
             )
             state_action_space = _state_action_space_for_period(
-                regime=regime, base=state_action_space, period=period
+                regime=regime, base=state_action_space, period=step
             )
-            age = ages.values[period]  # noqa: PD011
+            age = ages.values[step]  # noqa: PD011
             # The regime functions a law may read are evaluated as the solve
             # does: not partialled over fixed params, so bind both.
             function_params = MappingProxyType(
@@ -2199,7 +2214,7 @@ def validate_state_transitions_all_periods(  # noqa: C901
                 for phase_law, functions, extra_grids in _demanded_phase_contexts(
                     transition=transition,
                     regime=regime,
-                    period=period,
+                    period=step,
                     state_action_space=state_action_space,
                 ):
                     try:
@@ -2215,7 +2230,7 @@ def validate_state_transitions_all_periods(  # noqa: C901
                             state_action_space=state_action_space,
                             regime_name=regime_name,
                             age=age,
-                            period=period,
+                            period=step,
                             logger=logger,
                             summary=summary,
                             memory=memory,
@@ -2270,9 +2285,9 @@ def validate_discrete_state_laws_all_periods(
         if name in phase.state_names
     ):
         return
-    for period in range(ages.n_periods - 1):
+    for step in range(step_count(ages) - 1):
         for regime_name, regime in regimes.items():
-            if regime.terminal or period not in regime.active_periods:
+            if regime.terminal or step not in regime.active_periods:
                 continue
             regime_params = regime_kernel_params(flat_params, regime_name=regime_name)
             state_action_space = _state_action_space_for_period(
@@ -2285,7 +2300,7 @@ def validate_discrete_state_laws_all_periods(
                     if summary is None
                     else summary.state_action_space(regime=regime, params=regime_params)
                 ),
-                period=period,
+                period=step,
             )
             current_memory = (
                 summary.memory
@@ -2296,8 +2311,9 @@ def validate_discrete_state_laws_all_periods(
                 _validate_discrete_state_laws(
                     regimes=regimes,
                     regime_name=regime_name,
-                    period=period,
-                    age=ages.values[period],  # noqa: PD011
+                    period=step,
+                    ages=ages,
+                    age=ages.values[step],  # noqa: PD011
                     state_action_space=state_action_space,
                     params=MappingProxyType(
                         {**regime.resolved_fixed_params, **regime_params}
@@ -2320,6 +2336,7 @@ def _validate_discrete_state_laws(  # noqa: C901
     regimes: MappingProxyType[RegimeName, Regime],
     regime_name: RegimeName,
     period: int,
+    ages: TimeAxis,
     age: float | ScalarInt | ScalarFloat,
     state_action_space: StateActionSpace,
     params: FlatRegimeParams,
@@ -2343,8 +2360,8 @@ def _validate_discrete_state_laws(  # noqa: C901
     for side, phase in (("solve", regime.solution), ("simulate", regime.simulation)):
         if period not in phase.feasibility_pools_by_period:
             continue
-        # A simulation phase without a realized law of its own realizes the
-        # solve law.
+        # A simulation phase without an actual law of its own uses the solve
+        # law.
         regime_law = (
             regime.solution.validation_regime_transition_probs
             if phase.validation_regime_transition_probs is None
@@ -2356,7 +2373,7 @@ def _validate_discrete_state_laws(  # noqa: C901
             **_phase_extra_grids(regime=regime, phase=side),
             **state_action_space.actions,
         }
-        for target in phase.reachability.targets(period=period, source=regime_name):
+        for target in phase.reachability.targets(step=period, source=regime_name):
             # A carried state has a simulation grid but no solve axis, so each
             # side reads its target's grids from the same phase.
             target_phase = (
@@ -2557,7 +2574,7 @@ def _validate_discrete_state_laws(  # noqa: C901
                     target_grid=target_grid,
                     description=(
                         f"In regime '{regime_name}' at age {format_age(age)} "
-                        f"(period {period}), "
+                        f"({describe_step(ages=ages, step=period)}), "
                         f"the law '{name}' to regime '{target}'"
                     ),
                     value_dependent=regime.solution.counts_raise_landings,
@@ -3026,17 +3043,17 @@ def validate_joint_transitions_all_periods(
     # pytree signature cannot be checked during ``Regime`` construction.  Compare
     # every active period and both phases in this one preflight instead.  Values
     # may differ, but tree structure, event shapes, and dtypes are a static JIT/AOT
-    # contract and must not depend on period or perceived/realized phase.
+    # contract and must not depend on the period or on the phase (solve or simulate).
     support_schemas: dict[tuple[RegimeName, RegimeName, str], _SupportSchema] = {}
     current_memory = (
         summary.memory if summary is not None and summary.memory is not None else memory
     )
 
-    for period in range(ages.n_periods - 1):
-        period_int32 = jnp.int32(period)
-        age = ages.values[period]  # noqa: PD011
+    for step in range(step_count(ages) - 1):
+        period_int32 = jnp.int32(step)
+        age = ages.values[step]  # noqa: PD011
         for regime_name, regime in regimes.items():
-            if regime.terminal or period not in regime.active_periods:
+            if regime.terminal or step not in regime.active_periods:
                 continue
             # The weight and support DAGs are built here, not partialled over
             # fixed params, while the kernel params hold only the free ones: bind
@@ -3061,7 +3078,7 @@ def validate_joint_transitions_all_periods(
                 )
             )
             state_action_space = _state_action_space_for_period(
-                regime=regime, base=state_action_space, period=period
+                regime=regime, base=state_action_space, period=step
             )
             # A carried state has no solve grid axis, so a simulate-phase law
             # reading one is not resolvable on the solution state-action space.
@@ -3076,9 +3093,9 @@ def validate_joint_transitions_all_periods(
                 ("solve", regime.solution),
                 ("simulate", regime.simulation),
             ):
-                targets = phase.reachability.targets(period=period, source=regime_name)
+                targets = phase.reachability.targets(step=step, source=regime_name)
                 functions = _phase_functions(
-                    regime=regime, phase=phase_name, period=period
+                    regime=regime, phase=phase_name, period=step
                 )
                 for target in targets:
                     plan = phase.transition_plans.get(target)
@@ -3133,7 +3150,7 @@ def validate_joint_transitions_all_periods(
                             n_cells=n_cells,
                             regime_params=joint_params,
                             period=period_int32,
-                            period_index=period,
+                            period_index=step,
                             age=age,
                             regime_name=regime_name,
                             phase_name=phase_name,
@@ -3678,7 +3695,7 @@ def _state_transition_unused_in_period(
 ) -> bool:
     """Return whether a state transition has no edge `phase` demands this period.
 
-    - the simulate phase in a period no simulated subject occupies the regime
+    - the simulate phase in a period no simulated agent occupies the regime
       ⇒ unused, whatever the law's target
     - a coarse (`target_regime_name is None`) law otherwise ⇒ used; an empty
       `period_targets` is a fact about *which regime* is reached, not about
@@ -3694,7 +3711,7 @@ def _state_transition_unused_in_period(
         return True
     if transition.target_regime_name is None:
         return False
-    period_targets = owner.reachability.targets(period=period, source=regime.name)
+    period_targets = owner.reachability.targets(step=period, source=regime.name)
     return transition.target_regime_name not in period_targets
 
 
@@ -3993,9 +4010,9 @@ def _evaluate_state_probability_law(
     )
     placed = place_simulation_arguments(
         arguments=arguments,
-        subject_arg_names=(),
+        agent_arg_names=(),
         value_reads=(),
-        devices=memory.subject_devices,
+        devices=memory.agent_devices,
         budget_bytes=memory.budget_bytes,
         live_footprint=memory.snapshot(),
         budget_devices=memory.devices,
@@ -4005,13 +4022,13 @@ def _evaluate_state_probability_law(
         footprints=(memory.snapshot(additional=arguments), argument_buffers)
     )
     external = resident_bytes_by_device(
-        live=live, arguments=argument_buffers, devices=memory.subject_devices
+        live=live, arguments=argument_buffers, devices=memory.agent_devices
     )
     output_sharding = simulation_value_sharding(
         stored_sharding=jax.sharding.make_single_device_sharding(
-            memory.subject_devices[0]
+            memory.agent_devices[0]
         ),
-        devices=(memory.subject_devices[0],),
+        devices=(memory.agent_devices[0],),
     )
     executable = memory.producers.admit_producer(
         function=partial(
@@ -4020,7 +4037,7 @@ def _evaluate_state_probability_law(
             func=func,
         ),
         arguments=jax.tree.map(_abstract_transition_operand, dict(placed)),
-        devices=memory.subject_devices,
+        devices=memory.agent_devices,
         output_sharding=output_sharding,
         budget_bytes=memory.budget_bytes,
         resident_bytes=max(external.values()),
@@ -4037,9 +4054,9 @@ def _evaluate_admitted_transition_producer(
     """Place, profile, admit, and complete one transition validation producer."""
     placed = place_simulation_arguments(
         arguments=arguments,
-        subject_arg_names=(),
+        agent_arg_names=(),
         value_reads=(),
-        devices=memory.subject_devices,
+        devices=memory.agent_devices,
         budget_bytes=memory.budget_bytes,
         live_footprint=memory.snapshot(),
         budget_devices=memory.devices,
@@ -4049,18 +4066,18 @@ def _evaluate_admitted_transition_producer(
         footprints=(memory.snapshot(additional=arguments), argument_buffers)
     )
     external = resident_bytes_by_device(
-        live=live, arguments=argument_buffers, devices=memory.subject_devices
+        live=live, arguments=argument_buffers, devices=memory.agent_devices
     )
     output_sharding = simulation_value_sharding(
         stored_sharding=jax.sharding.make_single_device_sharding(
-            memory.subject_devices[0]
+            memory.agent_devices[0]
         ),
-        devices=(memory.subject_devices[0],),
+        devices=(memory.agent_devices[0],),
     )
     executable = memory.producers.admit_producer(
         function=function,
         arguments=jax.tree.map(_abstract_transition_operand, dict(placed)),
-        devices=memory.subject_devices,
+        devices=memory.agent_devices,
         output_sharding=output_sharding,
         budget_bytes=memory.budget_bytes,
         resident_bytes=max(external.values()),

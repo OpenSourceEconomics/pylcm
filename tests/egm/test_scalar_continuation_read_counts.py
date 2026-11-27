@@ -1,5 +1,6 @@
 """Scalar owned rows count one attempt for each actual paired continuation query."""
 
+import functools
 from collections.abc import Mapping
 from typing import TypedDict
 
@@ -62,8 +63,10 @@ def test_scalar_owned_read_counts_actual_first_node_and_rescore_activity() -> No
     )
     assert isinstance(kernel, _EGMPeriodKernel)
     program = kernel.core_programs()["main"]
-    assert isinstance(program.function, _RegimeMassGuardedCore)
-    core = program.function.core
+    assert isinstance(program.function, functools.partial)
+    guard = program.function.keywords["_member_axis_core"]
+    assert isinstance(guard, _RegimeMassGuardedCore)
+    core = guard.core
     assert isinstance(core, _EGMCore)
     query = core.next_query
     assert isinstance(query, ScalarEGMQuery)

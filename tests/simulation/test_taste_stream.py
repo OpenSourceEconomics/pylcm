@@ -138,15 +138,15 @@ def test_discrete_domain_edits_preserve_named_taste_addresses(change: str) -> No
 
 
 @pytest.mark.parametrize("start", [0, 5, 2**32 - 2, 2**32 + 7])
-def test_keys_use_both_subject_words_and_match_scalar_oracle(start: int) -> None:
+def test_keys_use_both_agent_words_and_match_scalar_oracle(start: int) -> None:
     key = jax.random.key(17, impl="threefry2x32")
     real = start + 3
     actual = taste_stream.draw_taste_shock_keys(
         key=key,
         address_words=_address(),
-        subject_start=_words(start),
-        last_real_subject=_words(real - 1),
-        subject_count=5,
+        agent_start=_words(start),
+        last_real_agent=_words(real - 1),
+        agent_count=5,
     )
     expected = _oracle_keys(
         key=key, address=_address(), start=start, count=5, real=real
@@ -166,9 +166,9 @@ def test_uint64_overflow_and_padded_start_repeat_the_last_real_key(
     actual = taste_stream.draw_taste_shock_keys(
         key=key,
         address_words=_address(),
-        subject_start=_words(start),
-        last_real_subject=_words(last),
-        subject_count=5,
+        agent_start=_words(start),
+        last_real_agent=_words(last),
+        agent_count=5,
     )
     expected = _oracle_keys(
         key=key, address=_address(), start=start, count=5, real=last + 1
@@ -178,14 +178,14 @@ def test_uint64_overflow_and_padded_start_repeat_the_last_real_key(
     )
 
 
-def test_empty_chunk_preserves_the_typed_key_shape_without_a_subject() -> None:
+def test_empty_chunk_preserves_the_typed_key_shape_without_an_agent() -> None:
     key = jax.random.key(17, impl="threefry2x32")
     actual = taste_stream.draw_taste_shock_keys(
         key=key,
         address_words=_address(),
-        subject_start=_words(2**64 - 1),
-        last_real_subject=_words(2**64 - 1),
-        subject_count=0,
+        agent_start=_words(2**64 - 1),
+        last_real_agent=_words(2**64 - 1),
+        agent_count=0,
     )
     assert actual.shape == (0,)
     assert actual.dtype == key.dtype
@@ -201,7 +201,7 @@ def test_cached_ordinary_keys_follow_current_threefry_partition_mode() -> None:
     memory = SimulationMemory(
         budget_bytes=2**24,
         devices=devices,
-        subject_devices=devices,
+        agent_devices=devices,
         operations=operations,
         inputs=measure_buffer_footprint(tree=key),
     )
@@ -212,15 +212,15 @@ def test_cached_ordinary_keys_follow_current_threefry_partition_mode() -> None:
                 key=key,
                 names=["taste_shock"],
                 n_initial_states=8,
-                subject_slice=slice(4, 8),
-                original_n_subjects=7,
+                agent_slice=slice(4, 8),
+                original_n_agents=7,
             )
             actual_carry, actual = generate_simulation_keys(
                 key=key,
                 names=["taste_shock"],
                 n_initial_states=8,
-                subject_slice=slice(4, 8),
-                original_n_subjects=7,
+                agent_slice=slice(4, 8),
+                original_n_agents=7,
                 memory=memory,
             )
             references.append(np.asarray(jax.random.key_data(expected_carry)).copy())
@@ -244,16 +244,16 @@ def test_chunk_keys_equal_their_full_population_window() -> None:
     full = taste_stream.draw_taste_shock_keys(
         key=key,
         address_words=_address(),
-        subject_start=_words(0),
-        last_real_subject=_words(6),
-        subject_count=10,
+        agent_start=_words(0),
+        last_real_agent=_words(6),
+        agent_count=10,
     )
     chunk = taste_stream.draw_taste_shock_keys(
         key=key,
         address_words=_address(),
-        subject_start=_words(4),
-        last_real_subject=_words(6),
-        subject_count=6,
+        agent_start=_words(4),
+        last_real_agent=_words(6),
+        agent_count=6,
     )
     np.testing.assert_array_equal(
         jax.random.key_data(chunk), jax.random.key_data(full[4:])
@@ -264,13 +264,13 @@ def test_one_compilation_accepts_dynamic_age_chunk_and_population_addresses() ->
     function = taste_stream.draw_taste_shock_keys
     key = jax.random.key(31, impl="threefry2x32")
     compiled = (
-        jax.jit(function, static_argnames=("subject_count",))
+        jax.jit(function, static_argnames=("agent_count",))
         .lower(
             key=key,
             address_words=_address(),
-            subject_start=_words(0),
-            last_real_subject=_words(6),
-            subject_count=4,
+            agent_start=_words(0),
+            last_real_agent=_words(6),
+            agent_count=4,
         )
         .compile()
     )
@@ -281,8 +281,8 @@ def test_one_compilation_accepts_dynamic_age_chunk_and_population_addresses() ->
         actual = compiled(
             key=key,
             address_words=address,
-            subject_start=_words(start),
-            last_real_subject=_words(real - 1),
+            agent_start=_words(start),
+            last_real_agent=_words(real - 1),
         )
         expected = _oracle_keys(
             key=key, address=address, start=start, count=4, real=real

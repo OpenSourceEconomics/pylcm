@@ -39,7 +39,7 @@ from tests.simulation.test_runtime_helpers import bind_eager_simulation
 def _simulate_dissolution_cohort(
     *, own_member: str | None
 ) -> tuple[SimulationResult, PeriodToRegimeToVArr]:
-    """Simulate the 3-subject dissolution miniature with one role for every row."""
+    """Simulate the 3-agent dissolution miniature with one role for every row."""
     ages, regimes, regime_names_to_ids, flat_params, solution = _solve_dissolution()
     conditions = {
         "wage": jnp.array([1.0, 2.0, 3.0]),

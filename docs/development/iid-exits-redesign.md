@@ -72,7 +72,7 @@ the former matrix.
 Default `simulate` decides from the solution rather than re-deriving or auditing it:
 
 - a plain DC-EGM regime reads its solved policy at the realized state (policy-first);
-  only subjects whose read fails the cheap acceptance checks — row support, finite value
+  only agents whose read fails the cheap acceptance checks — row support, finite value
   and action, the intrinsic budget, constraint feasibility — take the action-grid argmax
 - a regime reading a named current-IID shock is a node-state regime (decision 65): the
   shock is an internal node state, and a realized draw between nodes reads the
@@ -161,7 +161,7 @@ Target taste draws stay hidden at the source choice. Shared innovations retain i
 in base space and use the law at each evaluated state. A formation query cannot silently
 use an unobserved participation shock.
 
-Simulation uses immutable original subject rows and typed, versioned addresses. Each
+Simulation uses immutable original agent rows and typed, versioned addresses. Each
 period permits one same-period move, one final-regime action and one scheduled
 transition, with no transition after the terminal period. Moves retain the row's shock
 overrides. Regime order, chunking and group edits cannot move an address.
@@ -360,12 +360,13 @@ discrete-action combination, then append one source taste component per exit in
 declaration order. The source regime's existing taste address supplies that one roster;
 continuous/global stay action IDs do not create additional independent tastes. Solve
 takes the logsum over admitted stay-combination maxima and admitted exit payoffs.
-Built-in dissolution (`Unilateral` and `MutualConsent`) admits its exit only when the
-kept stay set is empty; an exit roster position is masked otherwise. Consent admits
-formation only after its existing strict Raw comparisons pass. Simulation selects the
-route with the same source draw and publishes the selected unshocked value. Target taste
-remains hidden at the source, priced at its own logsum, then drawn at the destination
-address in its acting pass. A collective regime with an exit refuses EV1 taste shocks.
+Built-in dissolution (`PCOnActions`, `PCOnWeight` and `MutualConsent`) admits its exit
+only when the kept stay set is empty; an exit roster position is masked otherwise.
+Consent admits formation only after its existing strict Raw comparisons pass. Simulation
+selects the route with the same source draw and publishes the selected unshocked value.
+Target taste remains hidden at the source, priced at its own logsum, then drawn at the
+destination address in its acting pass. A collective regime with an exit refuses EV1
+taste shocks.
 
 Keep target prescribed-policy information separate from caller pricing information.
 Additional caller knowledge does not change the target's participation policy. Evaluate
@@ -443,9 +444,9 @@ Each real state cell evaluates complete joint node rows, applies its phase-speci
 and invokes the canonical feasible action reducer before the weighted sum. Hard maximum
 and EV1 keep that order. Node coordinates are temporary operands, with exact resolved
 support and algorithm identity; stored values retain only real state axes. Ordinary
-state tiling, hard-max action streaming and state/subject sharding use the existing
-native program and admission paths. Every retained period's support bank and published
-physical simulation bank contributes to memory admission.
+state tiling, hard-max action streaming and state/agent sharding use the existing native
+program and admission paths. Every retained period's support bank and published physical
+simulation bank contributes to memory admission.
 
 Group law parameters use direct `params[group][slot]` leaves, including fixed slots. Law
 helpers use their transitive dependency closure. Shared economic or report helpers

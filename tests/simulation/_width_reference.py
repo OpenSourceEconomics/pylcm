@@ -36,7 +36,7 @@ def legal_widths(*, axis: Axis, ceiling: int | None = None) -> tuple[int, ...]:
         and (ceiling is None or width <= ceiling)
     )
     if not values:
-        raise NoLegalWidthError(f"subject: no legal width under ceiling {ceiling}")
+        raise NoLegalWidthError(f"agent: no legal width under ceiling {ceiling}")
     return values
 
 

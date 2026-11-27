@@ -18,14 +18,9 @@ from _lcm.execution.reductions import (
     OuterCandidateAccumulator,
     WeightedExpectationResult,
 )
-from _lcm.solution.action_reduction import HARD_MAX_REDUCTION, HardMaxResult
 from _lcm.solution.collective_action_reduction import (
     COLLECTIVE_HARD_MAX_REDUCTION,
     CollectiveHardMaxResult,
-)
-from _lcm.solution.logsumexp_action_reduction import (
-    LOGSUMEXP_REDUCTION,
-    LogSumExpResult,
 )
 from lcm.typing import BoolND, FloatND, Int1D, IntND
 from tests.conftest import DECIMAL_PRECISION, assert_agrees_to_ulp
@@ -36,7 +31,6 @@ from tests.solution._reduced_maximum_probe import (
 _N_STATES = 3
 _N_ACTIONS = 10
 _N_MEMBERS = 2
-_SCALE = 0.5
 _PARTITIONS = ((4, 4, 2), (3, 3, 3, 1))
 
 
@@ -85,103 +79,14 @@ def _action_ids() -> Int1D:
     return jnp.arange(_N_ACTIONS, dtype=jnp.int32)
 
 
-def _dense_hard_max(
-    *, values: FloatND, feasible: BoolND
-) -> tuple[np.ndarray, np.ndarray]:
-    """Scan the whole axis once, keeping the smallest identity among equals."""
-    observed = np.asarray(values)
-    live = np.asarray(feasible)
-    best_value = np.full(_N_STATES, -np.inf, dtype=observed.dtype)
-    best_identity = np.full(_N_STATES, -1, dtype=np.int32)
-    for state in range(_N_STATES):
-        for position in range(_N_ACTIONS):
-            if not live[state, position]:
-                continue
-            candidate = observed[state, position]
-            if best_identity[state] == -1 or candidate > best_value[state]:
-                best_value[state] = candidate
-                best_identity[state] = position
-    return best_value, best_identity
-
-
-def _folded_hard_max(*, partition: tuple[int, ...]) -> HardMaxResult:
-    """Fold the action axis in the blocks one partition cuts."""
-    values, feasible, action_ids = _values(), _feasible(), _action_ids()
-    accumulator = HARD_MAX_REDUCTION.initialize(value_template=jnp.zeros(_N_STATES))
-    for start, stop in _blocks(partition=partition):
-        accumulator = HARD_MAX_REDUCTION.add(
-            accumulator=accumulator,
-            values=values[:, start:stop],
-            feasible=feasible[:, start:stop],
-            action_ids=action_ids[start:stop],
-        )
-    return HARD_MAX_REDUCTION.finalize(accumulator=accumulator)
-
-
-@pytest.mark.parametrize("partition", _PARTITIONS, ids=("width-four", "width-three"))
-def test_hard_max_block_fold_matches_the_dense_maximum(
-    *, partition: tuple[int, ...]
-) -> None:
-    """Blockwise hard max publishes the maximum a single pass would."""
-    expected, _identity = _dense_hard_max(values=_values(), feasible=_feasible())
-
-    aaae(
-        np.asarray(_folded_hard_max(partition=partition).best_value),
-        expected,
-        decimal=DECIMAL_PRECISION,
-    )
-
-
-@pytest.mark.parametrize("partition", _PARTITIONS, ids=("width-four", "width-three"))
-def test_hard_max_block_fold_selects_the_dense_winner_identity(
-    *, partition: tuple[int, ...]
-) -> None:
-    """The winning global identity is the one a single pass selects, exactly."""
-    _value, expected = _dense_hard_max(values=_values(), feasible=_feasible())
-
-    np.testing.assert_array_equal(
-        np.asarray(_folded_hard_max(partition=partition).best_global_action_id),
-        expected,
-    )
-
-
-def _dense_logsumexp(*, values: FloatND) -> np.ndarray:
-    """Sum the unshifted exponential mass over the whole axis at once."""
-    observed = np.asarray(values)
-    scale = observed.dtype.type(_SCALE)
-    return scale * np.log(np.exp(observed / scale).sum(axis=-1))
-
-
-def _folded_logsumexp(*, partition: tuple[int, ...]) -> LogSumExpResult:
-    """Fold the branch axis at one scale in the blocks a partition cuts."""
-    values = _values()
-    scale = jnp.asarray(_SCALE, dtype=values.dtype)
-    accumulator = LOGSUMEXP_REDUCTION.initialize(value_template=jnp.zeros(_N_STATES))
-    for start, stop in _blocks(partition=partition):
-        accumulator = LOGSUMEXP_REDUCTION.add(
-            accumulator=accumulator,
-            values=values[:, start:stop],
-            scale=scale,
-        )
-    return LOGSUMEXP_REDUCTION.finalize(accumulator=accumulator, scale=scale)
-
-
-@pytest.mark.parametrize("partition", _PARTITIONS, ids=("width-four", "width-three"))
-def test_logsumexp_block_fold_matches_the_dense_smoothed_maximum(
-    *, partition: tuple[int, ...]
-) -> None:
-    """Blockwise log-sum-exp agrees with one unshifted pass to a few ULP."""
-    assert_agrees_to_ulp(
-        got=np.asarray(_folded_logsumexp(partition=partition).smoothed_value),
-        expected=_dense_logsumexp(values=_values()),
-        n_ulp=16,
-    )
-
-
 def _dense_collective(
     *, objectives: FloatND, member_values: FloatND, feasible: BoolND
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Scan the whole axis once for the household winner and its readouts."""
+    """Scan the whole axis once for the household winner and its readouts.
+
+    Ties in the objective go to the larger value of the first member, then of
+    the second, then to the smallest identity.
+    """
     observed = np.asarray(objectives)
     own = np.asarray(member_values)
     live = np.asarray(feasible)
@@ -192,9 +97,10 @@ def _dense_collective(
         for position in range(_N_ACTIONS):
             if not live[state, position]:
                 continue
-            candidate = observed[state, position]
-            if best_identity[state] == -1 or candidate > best_objective[state]:
-                best_objective[state] = candidate
+            candidate = (observed[state, position], *own[state, position])
+            incumbent = (best_objective[state], *best_own[state])
+            if best_identity[state] == -1 or candidate > incumbent:
+                best_objective[state] = candidate[0]
                 best_identity[state] = position
                 best_own[state] = own[state, position]
     return best_objective, best_identity, best_own

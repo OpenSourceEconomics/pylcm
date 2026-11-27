@@ -9,9 +9,9 @@ import numpy as np
 import pytest
 
 from _lcm.simulation import random as simulation_random
+from _lcm.simulation.agent_groups import AgentRows
 from _lcm.simulation.random import generate_simulation_keys
 from _lcm.simulation.random_address import RandomAddress, inverse_cdf_index
-from _lcm.simulation.subject_groups import SubjectRows
 
 
 def test_address_encoding_matches_independent_compact_utf8_json() -> None:
@@ -79,14 +79,14 @@ def test_grouped_keys_follow_original_rows_on_both_sides_of_uint32() -> None:
         key=root,
         names=["wage"],
         n_initial_states=start + 4,
-        subject_slice=slice(start, start + 4),
+        agent_slice=slice(start, start + 4),
         period=2,
     )
     _, grouped = generate_simulation_keys(
         key=root,
         names=["wage"],
         n_initial_states=start + 4,
-        subject_slice=SubjectRows(
+        agent_slice=AgentRows(
             rows=np.asarray([start + 3, start, start + 2], dtype=np.uint64)
         ),
         period=2,
@@ -136,7 +136,7 @@ def test_named_keys_survive_inserting_and_permuting_other_names() -> None:
 def test_named_draws_preserve_the_root_and_existing_rows_when_population_grows() -> (
     None
 ):
-    """Appending subjects cannot change another subject's base innovations."""
+    """Appending agents cannot change another agent's base innovations."""
     key = jax.random.key(41)
     small_root, small = generate_simulation_keys(
         key=key, names=["health"], n_initial_states=3
@@ -163,21 +163,21 @@ def test_addressed_chunks_use_uint64_original_rows(period: int) -> None:
         key=key,
         names=["health"],
         n_initial_states=start + 4,
-        subject_slice=slice(start, start + 4),
+        agent_slice=slice(start, start + 4),
         period=period,
     )
     _, first = generate_simulation_keys(
         key=key,
         names=["health"],
         n_initial_states=start + 4,
-        subject_slice=slice(start, start + 2),
+        agent_slice=slice(start, start + 2),
         period=period,
     )
     _, second = generate_simulation_keys(
         key=key,
         names=["health"],
         n_initial_states=start + 4,
-        subject_slice=slice(start + 2, start + 4),
+        agent_slice=slice(start + 2, start + 4),
         period=period,
     )
     np.testing.assert_array_equal(
@@ -192,7 +192,7 @@ def test_addressed_chunks_use_uint64_original_rows(period: int) -> None:
     assert np.unique(jax.random.key_data(combined["key_health"]), axis=0).shape[0] == 4
 
 
-def test_generate_simulation_keys():
+def test_generate_simulation_keys() -> None:
     """Each per-name key stream split from a seed key is mutually distinct."""
     key = jax.random.key(0)
     stochastic_next_functions = ["a", "b"]
@@ -211,18 +211,18 @@ def test_generate_simulation_keys():
     assert jnp.linalg.matrix_rank(matrix) == 2
 
 
-def test_generate_simulation_keys_pads_with_last_real_key():
+def test_generate_simulation_keys_pads_with_last_real_key() -> None:
     """Padding the dispatch size leaves real keys unchanged; pad slots reuse the last.
 
-    When `original_n_subjects < n_initial_states`, the per-subject split is sized to
-    the real subject count, so the leading real keys (and the carry key) are
+    When `original_n_agents < n_initial_states`, the per-agent split is sized to
+    the real agent count, so the leading real keys (and the carry key) are
     identical to an unpadded call; the trailing pad slots duplicate the last real
-    subject's key.
+    agent's key.
     """
     key = jax.random.key(0)
     real = generate_simulation_keys(key=key, names=["a"], n_initial_states=3)
     padded = generate_simulation_keys(
-        key=key, names=["a"], n_initial_states=5, original_n_subjects=3
+        key=key, names=["a"], n_initial_states=5, original_n_agents=3
     )
 
     real_data = jax.random.key_data(real[1]["key_a"])
@@ -234,18 +234,18 @@ def test_generate_simulation_keys_pads_with_last_real_key():
     assert jnp.array_equal(jax.random.key_data(padded[0]), jax.random.key_data(real[0]))
 
 
-def test_generate_simulation_keys_slice_selects_chunk_from_padded_stream():
-    """`subject_slice` extracts a chunk's keys from the padded full population."""
+def test_generate_simulation_keys_slice_selects_chunk_from_padded_stream() -> None:
+    """`agent_slice` extracts a chunk's keys from the padded full population."""
     key = jax.random.key(0)
     full = generate_simulation_keys(
-        key=key, names=["a"], n_initial_states=5, original_n_subjects=3
+        key=key, names=["a"], n_initial_states=5, original_n_agents=3
     )
     chunk = generate_simulation_keys(
         key=key,
         names=["a"],
         n_initial_states=5,
-        original_n_subjects=3,
-        subject_slice=slice(2, 4),
+        original_n_agents=3,
+        agent_slice=slice(2, 4),
     )
 
     assert jnp.array_equal(

@@ -16,9 +16,8 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import (
     AgeGrid,
     CollectiveUtility,
+    Decoupled,
     DiscreteGrid,
-    Exit,
-    ExitTarget,
     InitialNodes,
     Model,
     ParetoObjective,
@@ -26,11 +25,12 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.exceptions import InvalidParamsError, UnsupportedOperationError
-from lcm.exits import Unilateral
+from lcm.exceptions import InvalidParamsError, NoFeasibleActionError
+from lcm.shocks import Normal, ShockGroup, UserNodes
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import (
     BoolND,
+    ContinuousState,
     DiscreteAction,
     DiscreteState,
     FloatND,
@@ -38,12 +38,10 @@ from lcm.typing import (
     UserFunction,
     UserParamsNode,
 )
-from tests.conftest import DECIMAL_PRECISION, assert_agrees_to_ulp
+from tests.conftest import DECIMAL_PRECISION
 from tests.simulation.initial_conditions.test_own_member_required import (
     ConsentRegimeId,
     _make_consent_regimes,
-    _u_married_f,
-    _u_married_m,
 )
 from tests.test_models import taste_shocks_toy
 
@@ -93,32 +91,6 @@ def _reference_household_V(
             at_best = np.take_along_axis(q[name], best_c[:, :, None], axis=2)[..., 0]
             values[name] = np.sum(probabilities * at_best, axis=1)
     return np.stack([values[name] for name in names], axis=-1)
-
-
-def test_household_of_one_decider_agrees_with_the_single() -> None:
-    """A household of one member with weight 1 has the single's smoothed value.
-
-    The same model written once with a plain utility and once as a household
-    of one: the published values agree to within 16 units in the last place.
-    """
-    single = taste_shocks_toy.get_model().solve(
-        params=taste_shocks_toy.get_params(
-            scale=_SCALE, discount_factor=_DISCOUNT_FACTOR
-        ),
-        log_level="debug",
-    )
-    household = taste_shocks_toy.get_household_model(weights={"x": 1.0}).solve(
-        params=taste_shocks_toy.get_household_params(
-            scale=_SCALE, discount_factor=_DISCOUNT_FACTOR
-        ),
-        log_level="debug",
-    )
-
-    assert_agrees_to_ulp(
-        got=np.asarray(household.values[0]["alive"])[..., 0],
-        expected=np.asarray(single.values[0]["alive"]),
-        n_ulp=16,
-    )
 
 
 @pytest.mark.parametrize(
@@ -218,7 +190,6 @@ def _couple(
     utility_m: UserFunction,
     constraints: dict[str, UserFunction] | None = None,
     with_power: bool = False,
-    exit_declaration: Exit | None = None,
 ) -> Regime:
     return Regime(
         states={"power": DiscreteGrid(category_class=Power)} if with_power else {},
@@ -231,7 +202,6 @@ def _couple(
             )
         },
         taste_shocks=ExtremeValueTasteShocks(),
-        exit=exit_declaration,
     )
 
 
@@ -319,23 +289,58 @@ def _utility_m_prefers_b(choice: DiscreteAction) -> FloatND:
     return jnp.where(choice == Choice.a, 2.0, 7.0)
 
 
-def test_a_decider_without_a_finite_action_takes_the_first_action() -> None:
-    """With every action worth `-inf` to her, she takes `a` with probability one.
+def _discounted(*, utility: FloatND, CE: FloatND, discount_factor: FloatND) -> FloatND:
+    return utility + discount_factor * CE
 
-    Her value is `-inf`; his is his value of `a`, the action her simulated
-    draw takes when no action is worth anything to her, not his 7 at `b`.
+
+def _discounted_value(
+    *, utility: FloatND, CE: FloatND, discount_factor: FloatND
+) -> FloatND:
+    return discount_factor * CE + utility
+
+
+@pytest.mark.parametrize("decoupled", [False, True], ids=["plain", "decoupled"])
+def test_a_decider_without_a_finite_alternative_leaves_every_member_minus_inf(
+    *, decoupled: bool
+) -> None:
+    """With every alternative worth `-inf` to her, the node is worth `-inf` to both.
+
+    Specification, section 14.5a: if every feasible alternative of the deciding
+    member is worth `-inf`, the node has the value `-inf` for every member and
+    no choice probabilities, so his 2 at `a` and 7 at `b` do not count; a
+    simulation that reaches the node fails, as at a node with no feasible action.
     """
-    model = _couple_model(
-        _couple(
-            objective=ParetoObjective(weights={"f": 1.0, "m": 0.0}),
-            utility_f=_utility_f_minus_inf_everywhere,
-            utility_m=_utility_m_prefers_b,
-        )
+    couple = _couple(
+        objective=ParetoObjective(weights={"f": 1.0, "m": 0.0}),
+        utility_f=_utility_f_minus_inf_everywhere,
+        utility_m=_utility_m_prefers_b,
     )
+    if decoupled:
+        couple = couple.replace(
+            koopmans_aggregator=Decoupled(
+                objective=_discounted, value=_discounted_value
+            )
+        )
+    model = _couple_model(couple)
+    params = _couple_params(scale=0.5)
 
-    solution = model.solve(params=_couple_params(scale=0.5), log_level="debug")
+    solution = model.solve(params=params, log_level="off")
 
-    assert np.asarray(solution.values[0]["couple"]).tolist() == [-np.inf, 2.0]
+    assert np.asarray(solution.values[0]["couple"]).tolist() == [-np.inf, -np.inf]
+    with pytest.raises(NoFeasibleActionError, match="no feasible action"):
+        model.simulate(
+            params=params,
+            solution=solution,
+            initial_conditions={
+                "age": jnp.zeros(1),
+                "regime_id": jnp.zeros(1, dtype=jnp.int32),
+                "own_member": jnp.asarray(
+                    [model.member_names_to_ids["f"]], dtype=jnp.int32
+                ),
+            },
+            seed=0,
+            log_level="off",
+        )
 
 
 @pytest.mark.parametrize(
@@ -404,59 +409,161 @@ def test_a_weight_with_one_decider_at_every_cell_is_admitted() -> None:
     ]
 
 
-def test_a_household_with_taste_shocks_whose_decision_an_exit_reads_is_refused() -> (
-    None
-):
-    """A single's consented exit into a taste-shock household is refused.
+def _u_married_f_works(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    return 2.0 * wage + work
 
-    Her consent reads the household's decision, which is not implemented under
-    taste shocks; the message names the household.
+
+def _u_married_m_rests(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    return wage + 1.0 - work
+
+
+def test_a_single_consents_on_the_values_of_a_taste_shock_household() -> None:
+    """Her consent reads the household's values under its decider's logit.
+
+    She decides in the household: her married value is her log-sum
+    `2 w + s log(1 + e^(1/s))`, his is his mean value `w + 1 - P(work)`. At wage
+    1 both exceed their single values, 1 and 0.5, and she marries; at wage 2 his
+    single 5 exceeds his married value, and she stays single at her 2.
     """
+    scale = 0.5
     regimes = _make_consent_regimes()
-    married = regimes["married"]
-    regimes["married"] = married.replace(
+    regimes["married"] = regimes["married"].replace(
         functions={
             "utility": CollectiveUtility(
-                utilities={"f": _u_married_f, "m": _u_married_m},
+                utilities={"f": _u_married_f_works, "m": _u_married_m_rests},
                 objective=ParetoObjective(weights={"f": 1.0, "m": 0.0}),
             )
         },
         taste_shocks=ExtremeValueTasteShocks(),
     )
+    model = Model(
+        regimes=regimes,
+        n_periods=1,
+        regime_id_class=ConsentRegimeId,
+        initial_nodes=InitialNodes(by_period={0: "single_f"}),
+        edges={},
+    )
 
-    with pytest.raises(UnsupportedOperationError, match="'married' is a household"):
-        Model(
-            regimes=regimes,
-            n_periods=1,
-            regime_id_class=ConsentRegimeId,
-            initial_nodes=InitialNodes(by_period={0: "single_f"}),
-            edges={},
-        )
+    solution = model.solve(
+        params={"married": {"taste_shocks": {"scale": scale}}}, log_level="off"
+    )
 
-
-def test_taste_shocks_in_a_household_with_an_exit_are_refused() -> None:
-    """A household that may exit compares member values its smoothing does not own."""
-    with pytest.raises(NotImplementedError, match="exit"):
-        _couple(
-            objective=ParetoObjective(weights={"f": 1.0, "m": 0.0}),
-            utility_f=_utility_f_one,
-            utility_m=_utility_m_prefers_a,
-            exit_declaration=Exit(
-                targets={
-                    "f": ExitTarget(regime="single", projection={}),
-                    "m": ExitTarget(regime="single", projection={}),
-                },
-                rule=Unilateral(),
-            ),
-        )
+    aaae(
+        solution.values[0]["single_f"][..., 0],
+        [2.0 + scale * np.log1p(np.exp(1.0 / scale)), 2.0],
+        decimal=DECIMAL_PRECISION,
+    )
 
 
-def test_taste_shocks_in_a_household_with_current_period_shocks_are_refused() -> None:
-    """The smoothed household reduction under an observed shock is not covered."""
+def _u_single_m_works(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    return 0.9 * (2.0 - wage) * work
+
+
+def test_a_consent_reads_a_taste_shock_counterparty_at_its_log_sum() -> None:
+    """He consents where his married value exceeds his log-sum as a single.
+
+    At wage 1 his married value 1 exceeds both of his single action values, 0
+    and 0.9, but not their log-sum `log(1 + e^0.9)`: he refuses, and she keeps
+    her single value 1. At wage 2 his log-sum `log 2` is below his married value
+    2, and she marries at her 4.
+    """
+    regimes = _make_consent_regimes()
+    regimes["single_m"] = regimes["single_m"].replace(
+        actions=regimes["single_f"].actions,
+        functions={"utility": _u_single_m_works},
+        taste_shocks=ExtremeValueTasteShocks(),
+    )
+    model = Model(
+        regimes=regimes,
+        n_periods=1,
+        regime_id_class=ConsentRegimeId,
+        initial_nodes=InitialNodes(by_period={0: "single_f"}),
+        edges={},
+    )
+
+    solution = model.solve(
+        params={"single_m": {"taste_shocks": {"scale": 1.0}}}, log_level="off"
+    )
+
+    aaae(solution.values[0]["single_f"][..., 0], [1.0, 4.0], decimal=DECIMAL_PRECISION)
+
+
+_EPS_NODES = np.asarray([-1.5, 0.5, 2.5])
+_EPS_WEIGHTS = np.asarray([0.25, 0.5, 0.25])
+
+
+def _utility_f_with_eps(*, choice: DiscreteAction, eps: FloatND) -> FloatND:
+    return jnp.where(choice == Choice.a, 1.0 + eps, 3.0)
+
+
+def _utility_m_with_eps(*, choice: DiscreteAction, eps: FloatND) -> FloatND:
+    return jnp.where(choice == Choice.a, 5.0, 1.0 - eps)
+
+
+def _couple_model_with_current_shock() -> Model:
     couple = _couple(
         objective=ParetoObjective(weights={"f": 1.0, "m": 0.0}),
-        utility_f=_utility_f_one,
-        utility_m=_utility_m_prefers_a,
+        utility_f=_utility_f_with_eps,
+        utility_m=_utility_m_with_eps,
+    ).replace(shocks=("innovation",))
+    couple_terminal = Regime(
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _terminal_zero, "m": _terminal_zero}
+            )
+        },
     )
-    with pytest.raises(NotImplementedError, match="`shocks`"):
-        couple.replace(shocks=("meeting",))
+    return Model(
+        edges={"couple": {"couple_terminal": 0}},
+        regimes={"couple": couple, "couple_terminal": couple_terminal},
+        ages=_AGES,
+        regime_id_class=RegimeId,
+        initial_nodes={0: "couple"},
+        shocks={
+            "innovation": ShockGroup(
+                shocks={"eps": Normal(mu=0, sigma=1)},
+                nodes=UserNodes(nodes=_EPS_NODES[:, None], weights=_EPS_WEIGHTS),
+            )
+        },
+    )
+
+
+def test_taste_shocks_in_a_household_with_current_period_shocks() -> None:
+    """At each shock node she decides by her logit; the values integrate over nodes.
+
+    Her value is the node-weighted mean of her log-sum over `a` (`1 + eps`) and
+    `b` (3); his is the node-weighted mean of his value under her choice
+    probabilities, 5 at `a` and `1 - eps` at `b`. Each simulated row publishes
+    both members' values at her drawn choice and its drawn `eps`.
+    """
+    model = _couple_model_with_current_shock()
+    params = _couple_params(scale=0.5)
+    q_a = 1.0 + _EPS_NODES
+    logsum = 0.5 * np.logaddexp(q_a / 0.5, 3.0 / 0.5)
+    p_a = np.exp((q_a - logsum) / 0.5)
+    expected = [
+        _EPS_WEIGHTS @ logsum,
+        _EPS_WEIGHTS @ (p_a * 5.0 + (1.0 - p_a) * (1.0 - _EPS_NODES)),
+    ]
+
+    solution = model.solve(params=params, log_level="off")
+    roles = model.member_names_to_ids
+    frame = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions={
+            "age": jnp.zeros(64),
+            "regime_id": jnp.zeros(64, dtype=jnp.int32),
+            "own_member": jnp.asarray([roles["f"], roles["m"]] * 32, dtype=jnp.int32),
+        },
+        seed=3,
+        log_level="off",
+    ).to_dataframe()
+    first = frame[frame["period"] == 0]
+    takes_a = (first["choice"].astype(str) == "a").to_numpy()
+    eps = first["eps"].to_numpy()
+
+    aaae(solution.values[0]["couple"], expected, decimal=DECIMAL_PRECISION)
+    assert 0 < takes_a.sum() < takes_a.size
+    aaae(first["value_f"], np.where(takes_a, 1.0 + eps, 3.0), decimal=DECIMAL_PRECISION)
+    aaae(first["value_m"], np.where(takes_a, 5.0, 1.0 - eps), decimal=DECIMAL_PRECISION)

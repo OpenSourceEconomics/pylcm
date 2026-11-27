@@ -1,12 +1,18 @@
 """Reject ambiguous time declarations before DAG compilation or specialization."""
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
+from types import MappingProxyType
+from typing import cast
 
+from _lcm.model_graph import GraphEdges
 from _lcm.params.temporal import temporal_parameter_names
+from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.schedules import RegimeTransitionLaw
 from _lcm.regime_law import RegimeLaws
-from _lcm.time import TimeAxis, coordinate_kind
+from _lcm.time import ModelTime, TimeAxis, coordinate_kind, format_age
 from _lcm.utils.functools import is_user_function
+from lcm.composition_actions import CompositionAction, Consent
+from lcm.consumption_savings_regime import _EGMFamilyRegime
 from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
 from lcm.regime import (
@@ -17,6 +23,7 @@ from lcm.regime import (
     StateEntry,
     StateTransitionEntry,
 )
+from lcm.shocks import ShockGroup, ShockGroupName
 from lcm.transition import (
     AgeSpecializedFunction,
     AgeSpecializedGrid,
@@ -24,6 +31,7 @@ from lcm.transition import (
     PeriodSpecializedFunction,
     PeriodSpecializedGrid,
 )
+from lcm.typing import RegimeName, UserAge
 
 # A declaration the walk visits: a regime slot value or a regime law, or a
 # mapping of them.
@@ -100,3 +108,202 @@ def validate_time_declarations(
                         f"{sorted(conflicts)} name a state or DAG node; "
                         "only parameter arguments may be declared."
                     )
+
+
+def validate_stages(  # noqa: C901, PLR0912 - one pass over the regimes' edges and composition actions
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    laws: RegimeLaws,
+    edges: GraphEdges,
+    time: ModelTime,
+    shocks: Mapping[ShockGroupName, ShockGroup],
+) -> MappingProxyType[RegimeName, frozenset[int]]:
+    """Refuse declarations that break the order of the stages within a period.
+
+    An edge lands at its target's next occurrence: in a later stage of the source's
+    period without discounting, else in the next period with one discount. At each age,
+    a source's edges all land in its period or all cross into the next one; one whose
+    edges stay in its period at some age declares no Koopmans aggregator and uses no
+    endogenous-grid solver. A gated edge and its fallbacks land in the next stage, and
+    an edge skips no stage of a target with continuous stochastic processes. A
+    composition action enters a regime of its own stage or of a later stage of its
+    period, and observes no shock that such a regime draws.
+
+    Returns:
+        The regimes whose edges land in their own period at some age, each with
+        the periods in which its edges cross into the next period instead.
+
+    """
+    if not time.stages:
+        return MappingProxyType({})
+    stage_of = time.stage_of
+    names = [name for name, _ in time.stages]
+    problems: list[str] = []
+    linked: dict[RegimeName, frozenset[int]] = {}
+    for name, regime in regimes.items():
+        stage = stage_of[name]
+        targets = sorted(
+            {
+                target
+                for phase_edges in (edges.solve, edges.simulate)
+                for target in phase_edges.get(name, {})
+            }
+        )
+        by_age: dict[UserAge, set[RegimeName]] = {}
+        for phase_edges in (edges.solve, edges.simulate):
+            for target, ages in phase_edges.get(name, {}).items():
+                for age in ages:
+                    by_age.setdefault(age, set()).add(target)
+        within_ages = set()
+        for age, at_age in sorted(by_age.items()):
+            within = sorted(target for target in at_age if stage_of[target] > stage)
+            if within:
+                within_ages.add(age)
+            if within and len(within) < len(at_age):
+                crossing = sorted(at_age - set(within))
+                problems.append(
+                    f"at {coordinate_kind(time)} {format_age(float(age))}, the edges "
+                    f"of '{name}' in stage '{names[stage]}' land in its period, "
+                    f"into {within}, and in the next period, into {crossing}; "
+                    "a source's edges at one age either all stay in its period or "
+                    "all cross into the next one"
+                    + "".join(
+                        _pass_through(
+                            regime=target,
+                            stages=_sat_out(
+                                names=names, stage=stage, landing=stage_of[target]
+                            ),
+                        )
+                        for target in crossing
+                    )
+                )
+        skipped = {
+            target: _sat_out(names=names, stage=stage, landing=stage_of[target])
+            for target in targets
+        }
+        for target in laws[name].gated_edges:
+            gated = (
+                target,
+                *(
+                    route.regime
+                    for leg in laws[name].gated_edges[target].legs.values()
+                    for route in (leg.solve_fallback, leg.simulate_fallback)
+                ),
+            )
+            problems.extend(
+                f"the gated edge '{name}' -> '{target}' lands in '{landing}' of "
+                f"stage '{names[stage_of[landing]]}'; a gated edge and its "
+                "fallbacks land in the next stage"
+                + _pass_through(
+                    regime=landing,
+                    stages=_sat_out(
+                        names=names, stage=stage, landing=stage_of[landing]
+                    ),
+                )
+                for landing in gated
+                if stage_of[landing] != (stage + 1) % time.n_stages
+            )
+        for target, sat_out in skipped.items():
+            processes = sorted(
+                state
+                for state, grid in regimes[target].states.items()
+                if isinstance(grid, _ContinuousStochasticProcess)
+            )
+            if sat_out and processes:
+                problems.append(
+                    f"'{target}' sits out stage '{sat_out[0]}' on the edge from "
+                    f"'{name}', so its continuous stochastic processes "
+                    f"{processes} are not drawn there"
+                    + _pass_through(regime=target, stages=sat_out)
+                )
+        composition_action_ = regime.composition_action
+        destinations = (
+            ()
+            if composition_action_ is None
+            else (
+                *(
+                    target.regime
+                    for target in composition_action_.destinations.values()
+                ),
+                *(
+                    (composition_action_.rule.counterparty.regime,)
+                    if isinstance(composition_action_.rule, Consent)
+                    else ()
+                ),
+            )
+        )
+        for destination in destinations:
+            if stage_of[destination] < stage:
+                problems.append(
+                    f"the composition action of '{name}' in stage '{names[stage]}' "
+                    "reads "
+                    f"'{destination}' of the earlier stage "
+                    f"'{names[stage_of[destination]]}'"
+                )
+            drawn = sorted(
+                set(cast("CompositionAction", composition_action_).observes)
+                & {
+                    shock
+                    for group in regimes[destination].shocks
+                    if group in shocks
+                    for shock in shocks[group].shocks
+                }
+            )
+            if stage_of[destination] > stage and drawn:
+                problems.append(
+                    f"the composition action of '{name}' in stage '{names[stage]}' "
+                    "observes "
+                    f"{drawn} of '{destination}', drawn in its later stage "
+                    f"'{names[stage_of[destination]]}'; draw the shock in stage "
+                    f"'{names[stage]}' and carry it as a state"
+                )
+        if not within_ages or laws[name].terminal:
+            continue
+        crossing = frozenset(by_age) - within_ages
+        linked[name] = frozenset(
+            step // time.n_stages
+            for step, label in enumerate(time.exact_values)
+            if label in crossing
+        )
+        if regime.koopmans_aggregator is not None:
+            problems.append(
+                f"'{name}' declares a Koopmans aggregator in stage "
+                f"'{names[stage]}'; its edges land in its period, which they "
+                "reach without discounting"
+            )
+        if isinstance(regime, _EGMFamilyRegime):
+            problems.append(
+                f"'{name}' uses an endogenous-grid solver in stage "
+                f"'{names[stage]}'; only a regime whose edges cross into the next "
+                "period may"
+            )
+    if problems:
+        raise ModelInitializationError(
+            "The model's stages are inconsistent: "
+            + "; ".join(dict.fromkeys(problems))
+            + "."
+        )
+    return MappingProxyType(linked)
+
+
+def _sat_out(*, names: Sequence[str], stage: int, landing: int) -> list[str]:
+    """Return the stages an edge from `stage` skips before it lands in `landing`."""
+    if landing <= stage:
+        return [*names[stage + 1 :], *names[:landing]]
+    return list(names[stage + 1 : landing])
+
+
+def _pass_through(*, regime: RegimeName, stages: Sequence[str]) -> str:
+    """Advise declaring the pass-through of a regime that sits out `stages`."""
+    if not stages:
+        return ""
+    where = (
+        f"stage '{stages[0]}'"
+        if len(stages) == 1
+        else f"each of the stages {list(stages)}"
+    )
+    return (
+        f"; declare the pass-through of '{regime}' in {where} explicitly (a "
+        "regime with the same states, one action, no shock, zero utility and "
+        "the value handed through) and let the edge land in it"
+    )

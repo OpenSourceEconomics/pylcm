@@ -25,8 +25,8 @@ code to model equations; a shorter language is not an aim of its own.
 - A **stage** is a decision inside a period.
 - A **step** is a pair (period, stage). The recursion and the solver run over steps.
 
-The documentation uses these words; the model language has no stage object. Its `period`
-counts steps, which are periods wherever each period has one stage.
+The model language declares stages with `Model(stages=...)`; `period` in model code is
+economic time, and the engine counts steps.
 
 ### One noun: regime
 
@@ -49,7 +49,7 @@ For member $m$ of regime $r$, with successor $r^+$ in the next step, outside tar
 projection $g_r^m$ and observed shocks $e_{\text{obs}}$:
 
 ```{math}
-Q_r^m(x, a, e) = W_r\big(u_r^m(x, a, e),\ \mathrm{CE}_r[V_{r^+}^m(x') \mid x, a, e]\big),
+Q_r^m(x, a, e) = W_r^m\big(u_r^m(x, a, e),\ \mathrm{CE}_r^m[V_{r^+}^m(x') \mid x, a, e]\big),
 \qquad
 V_r(x) = \mathrm{E}_e\big[L_r[Q_r(x, \cdot, e);\ O_r(x, e_{\text{obs}})]\big],
 ```
@@ -59,8 +59,9 @@ O_r^m = \mathrm{E}_{\text{hidden}}\big[S_q^m(g_r^m(x), e_{\text{obs}}, e_{\text{
 + \text{adjustment}.
 ```
 
-$W_r$ and $\mathrm{CE}_r$ are the regime's, the same for every member. A household uses
-the linear expectation.
+$W_r^m$ and $\mathrm{CE}_r^m$ are declared on the regime, either once for every member
+or per member, so members of one household may differ in patience or risk attitude.
+Member $m$'s certainty equivalent is taken over its own continuation.
 
 In the engine $S$, $V$ and $P$ are the `Raw`, `Full` and `Participating` policy queries.
 
@@ -115,43 +116,33 @@ one.
 - Public names say member: `MemberRoute`, `target_member`,
   `ProjectedRegimeValue.member`, `own_member`, `Model.member_names_to_ids` and the value
   axis `"member"`.
-- Two engine paths remain, one for a regime declared with a plain utility function and
-  one for a household; `Regime.member_axis` marks the household. A household declared
-  with one named member stays on the household path, a ready object for the measurements
-  that precede one engine path. Values, fingerprints and saved formats of models without
-  a household are those of the engine before this decision.
+- The engine has one path. Every regime runs as the household of its members, a regime
+  declared with a plain utility function as the household of `"self"`, and every value
+  array ends in a member axis, of length one for one member. The engine does not branch
+  on the number of members; the exceptions are the solver capability
+  `supports_several_members` and the rules that are defined for two members.
 - A household admits taste shocks when exactly one member has a positive Pareto weight.
   That member decides: its value is its own expected maximum; every other member's value
   is the mean of its own action values under the decider's choice probabilities, at the
-  decider's best continuous action. Taste shocks stay refused in a household with an
-  exit, with current-period shocks, or whose decision another regime's exit reads.
+  decider's best continuous action. A regime with taste shocks has no exit or formation
+  of its own; another regime's exit reads the decider's expected maximum and every other
+  member's mean value.
 
 ## Not shipped
 
 None of these is implemented:
 
-- **One engine path**, on which a regime with one member has a member axis of length
-  one. It follows three measurements on a one-member model run on the household path:
-  the bit differences against the single path, the working memory of the streamed solve,
-  and the number of places where the member axis must be removed for saved results and
-  cache keys to keep their shape.
 - **Publish once and gather**: each regime publishes $S$ and $V$ once per step, with one
   axis per observed shock, and readers gather from it. It needs no change of the model
   language and is accepted on its own. Until then each reader tabulates, once per
   period, the destinations it reads at grid points, and evaluates every other read at
   its exact point.
-- **$W$ and $\mathrm{CE}$ per member**, so that members of one household differ in
-  patience or risk attitude. It comes with the one engine path; a household still
-  refuses a nonlinear certainty equivalent.
-- **The endogenous-grid method for households.** With one engine path its condition is
-  that the regime has one member. The weaker condition "exactly one member decides" is
-  not sufficient: the Euler inversion needs the decider's continuation to be the
-  decider's own optimised value, and in a game with alternating moves the continuation
-  is read at the other member's policy.
+- **The endogenous-grid method for a regime with several members.** The endogenous-grid
+  solvers solve a regime of one member. The weaker condition "exactly one member
+  decides" is not sufficient: the Euler inversion needs the decider's continuation to be
+  the decider's own optimised value, and in a game with alternating moves the
+  continuation is read at the other member's policy.
 - **A user-written rule.** pylcm ships the rules listed above.
-- **A public stage object**, so that `period` in model code means economic time and a
-  model with stages no longer writes their mapping to ages and their discounting by
-  hand. It comes with the one engine path.
 - **Value comparisons no shipped rule expresses**: a value compared with a threshold, a
   parameter or a third regime's value; a comparison between members of one household; a
   read of next period's integrated value.
@@ -169,6 +160,10 @@ None of these is implemented:
 - The `bench_collective_household` benchmarks measure the rule form; their history
   breaks there.
 - A saved solution that holds participation surfaces does not load.
+- The member axis is part of every value array, so the solver API, the saved-solution
+  schema and format, the component-fragment format, the model fingerprint and the
+  chunk-profile identity carry new versions, and a saved simulation result carries a
+  format version. Files written under other versions do not load.
 - Moves that read only states keep their gates and fallbacks; a fallback attached to an
   incoming edge exists only for such moves.
 
@@ -193,8 +188,8 @@ gathering addresses.
   landing regime.
 - **Publish once and gather in the same change.** It is an engine change that needs no
   change of the model language, and its acceptance is separate.
-- **A household with one named member on the single path.** Keeping it on the household
-  path gives the measurements of the one engine path a ready test object.
+- **A second engine path for regimes declared with a plain utility function.** One path
+  serves every number of members; such a regime is the household of `"self"`.
 
 ## Parts of ADR 2 and ADR 3 that remain in force
 

@@ -9,16 +9,26 @@ leaves off the final mesh and serves repeated requests from its cache; each
 new exact node solve must publish its child status and counts exactly once.
 """
 
+import logging
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import NotRequired, Unpack
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from pandas.testing import assert_frame_equal
+from typing_extensions import TypedDict
 
+from _lcm.egm.nested_floor import PreparedNestedFloor
+from _lcm.egm.outer_candidates import OuterCandidateResult
+from _lcm.egm.outer_interpolation import LocalCubicOuterInterpolant
 from _lcm.egm.outer_refinement import AdaptiveMeshResult
+from _lcm.engine import StateActionSpace
 from _lcm.solution import nnbegm
+from _lcm.solution.contract import ContinuationPayload
 from _lcm.solution.feasibility import (
     ChildStatusKernelOutput,
     ContinuationReadCounts,
@@ -27,6 +37,8 @@ from _lcm.solution.feasibility import (
 )
 from _lcm.solution.nbegm import _RideAlongNBEGMPeriodKernel
 from _lcm.solution.nnbegm import _InheritedChildSummary, _NNBEGMPeriodKernel
+from _lcm.time import TimeAxis
+from _lcm.typing import FlatParams, PytreeValue
 from lcm import (
     AgeGrid,
     ConsumptionSavingsRegime,
@@ -51,8 +63,15 @@ from lcm.solvers import (
     OUTER_CANDIDATE_AXIS,
     AdaptiveOuterMesh,
     FiniteOuterGrid,
+    OuterSearch,
 )
-from lcm.typing import ContinuousState, FloatND
+from lcm.typing import (
+    ContinuousState,
+    Float1D,
+    FloatND,
+    RegimeName,
+    UserFunction,
+)
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, assert_agrees_to_ulp
 from tests.solution import test_nbegm_query_actual_resources as fixture
 from tests.solution._child_status_witness import (
@@ -64,10 +83,52 @@ from tests.solution._child_status_witness import (
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 
+class _KernelArguments(TypedDict):
+    compiled_cores: Mapping[str, Callable[..., PytreeValue]]
+    state_action_space: StateActionSpace
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND]
+    next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload]
+    flat_params: FlatParams
+    period: int
+    ages: TimeAxis
+    logger: logging.Logger
+
+
+class _OuterKernelArguments(_KernelArguments, closed=True):
+    """The keyword arguments of `_NNBEGMPeriodKernel.__call__`."""
+
+
+class _InnerKernelArguments(_KernelArguments, closed=True):
+    """The keyword arguments of `_RideAlongNBEGMPeriodKernel.__call__`."""
+
+    prepared_source_floor: NotRequired[PreparedNestedFloor | None]
+
+
+class _AdjusterNodeArguments(TypedDict, closed=True):
+    node: FloatND
+    adjuster_cores: Mapping[str, Callable[..., PytreeValue]]
+    state_action_space: StateActionSpace
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND]
+    next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload]
+    flat_params: FlatParams
+    period: int
+    ages: TimeAxis
+    logger: logging.Logger
+    prepared_source_floor: NotRequired[PreparedNestedFloor | None]
+
+
+class _RefineArguments(TypedDict, closed=True):
+    initial_nodes: Float1D
+    solve_at: Callable[[Float1D], FloatND]
+    config: AdaptiveOuterMesh
+    interpolant: NotRequired[LocalCubicOuterInterpolant | None]
+    fail_closed: NotRequired[bool]
+
+
 def make_literal_parent_model(
     *,
-    resources,
-    outer_search=None,
+    resources: UserFunction,
+    outer_search: OuterSearch | None = None,
     enable_jit: bool = True,
     execution_config: ExecutionConfig | None = None,
 ) -> Model:
@@ -155,7 +216,7 @@ def make_literal_parent_model(
     return model
 
 
-def _row(*, name, output) -> ExecutedRow:
+def _row(*, name: str, output: KernelOutput) -> ExecutedRow:
     slots = tuple(
         tuple(bool(np.asarray(flag)) for flag in status)
         for status in (getattr(output, "query_status", None) or ())
@@ -173,7 +234,11 @@ def _row(*, name, output) -> ExecutedRow:
 @pytest.mark.parametrize("runtime_checks", [False, True])
 @pytest.mark.parametrize("disable_jit", [False, True])
 def test_public_literal_parent_preserves_executed_child_summaries(
-    *, monkeypatch, runtime_checks, disable_jit, retention
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    runtime_checks: bool,
+    disable_jit: bool,
+    retention: ResultRetention,
 ) -> None:
     # The eager case also builds an eager model. A jitted model still lowers and
     # compiles every period program ahead of time, and under `jax.disable_jit`
@@ -188,7 +253,9 @@ def test_public_literal_parent_preserves_executed_child_summaries(
     stack = []
     observed = []
 
-    def observe_inner(self, **kwargs):
+    def observe_inner(
+        self: _RideAlongNBEGMPeriodKernel, **kwargs: Unpack[_InnerKernelArguments]
+    ) -> KernelOutput:
         output = native_inner(self, **kwargs)
         if stack and self.regime_name == "parent":
             rows = stack[-1]
@@ -200,7 +267,9 @@ def test_public_literal_parent_preserves_executed_child_summaries(
             )
         return output
 
-    def observe_outer(self, **kwargs):
+    def observe_outer(
+        self: _NNBEGMPeriodKernel, **kwargs: Unpack[_OuterKernelArguments]
+    ) -> KernelOutput:
         if self.regime_name != "parent":
             return native_outer(self, **kwargs)
         rows = []
@@ -240,7 +309,7 @@ def test_public_literal_parent_preserves_executed_child_summaries(
 @pytest.mark.parametrize("retention", list(ResultRetention))
 @pytest.mark.parametrize("runtime_checks", [False, True])
 def test_public_literal_parent_rejects_actual_nonfinite_child_budget(
-    *, runtime_checks, retention
+    *, runtime_checks: bool, retention: ResultRetention
 ) -> None:
     """The host must report the actual child failure, with logging/checks irrelevant."""
     model = make_literal_parent_model(resources=fixture.child_nan_resources)
@@ -253,7 +322,9 @@ def test_public_literal_parent_rejects_actual_nonfinite_child_budget(
         )
 
 
-def _native_row(*, slots, counts):
+def _native_row(
+    *, slots: tuple[tuple[bool, ...], ...], counts: tuple[int, ...] | None
+) -> FeasibilityKernelOutput:
     """Build one executed literal inner result with native scalar summaries."""
     return FeasibilityKernelOutput(
         value=jnp.zeros(2),
@@ -392,29 +463,33 @@ def _observe_adaptive_parent(patch: pytest.MonkeyPatch) -> _AdaptiveExecution:
     nodes: list[float] = []
     parents: list[bool] = []
 
-    def refine(**kwargs):
+    def refine(**kwargs: Unpack[_RefineArguments]) -> AdaptiveMeshResult:
         mesh = native_refine(**kwargs)
         execution.meshes.append(mesh)
         return mesh
 
     # keyword-only-exempt: library-callback=_lcm.egm.outer_refinement.refine_outer_mesh
-    def request(self, nodes_arr):
+    def request(self: nnbegm._AdaptiveNodeSolver, nodes_arr: Float1D) -> FloatND:
         execution.requests.append(tuple(float(node) for node in np.asarray(nodes_arr)))
         return native_request(self, nodes_arr)
 
-    def dispatch(*, n_items, width):
+    def dispatch(*, n_items: int, width: int | None) -> tuple[tuple[int, int], ...]:
         bounds = native_dispatch(n_items=n_items, width=width)
         execution.dispatches.append(tuple(stop - start for start, stop in bounds))
         return bounds
 
-    def solve_node(self, **kwargs):
+    def solve_node(
+        self: _NNBEGMPeriodKernel, **kwargs: Unpack[_AdjusterNodeArguments]
+    ) -> OuterCandidateResult:
         nodes.append(float(kwargs["node"]))
         try:
             return native_node(self, **kwargs)
         finally:
             nodes.pop()
 
-    def inner(self, **kwargs):
+    def inner(
+        self: _RideAlongNBEGMPeriodKernel, **kwargs: Unpack[_InnerKernelArguments]
+    ) -> KernelOutput:
         output = native_inner(self, **kwargs)
         if parents and self.regime_name == "parent":
             node = nodes[-1] if nodes else None
@@ -422,7 +497,9 @@ def _observe_adaptive_parent(patch: pytest.MonkeyPatch) -> _AdaptiveExecution:
             execution.rows.append((node, _row(name=name, output=output)))
         return output
 
-    def outer(self, **kwargs):
+    def outer(
+        self: _NNBEGMPeriodKernel, **kwargs: Unpack[_OuterKernelArguments]
+    ) -> KernelOutput:
         if self.regime_name != "parent":
             return native_outer(self, **kwargs)
         parents.append(True)
@@ -489,7 +566,7 @@ def _require_adaptive_transport(
 @pytest.mark.parametrize("retention", list(ResultRetention))
 @pytest.mark.parametrize("runtime_checks", [False, True])
 def test_public_literal_adaptive_parent_preserves_every_executed_node(
-    *, runtime_checks, retention
+    *, runtime_checks: bool, retention: ResultRetention
 ) -> None:
     """A converged adaptive mesh publishes the child slots of every new node solve."""
     model = make_literal_parent_model(
@@ -534,7 +611,7 @@ def adaptive_reference_values() -> dict[int, dict[str, np.ndarray]]:
 
 @pytest.mark.parametrize("transform", list(_TRANSFORMS))
 def test_public_literal_adaptive_parent_transport_survives_execution_transforms(
-    *, transform, adaptive_reference_values
+    *, transform: str, adaptive_reference_values: dict[int, dict[str, np.ndarray]]
 ) -> None:
     """Eager, tiled and covered execution publish the same law and the same values."""
     enable_jit, execution_config = _TRANSFORMS[transform]
@@ -583,7 +660,7 @@ def final_pass_probe() -> float:
     return probes[0]
 
 
-def _nan_child_budget_only_at(node: float):
+def _nan_child_budget_only_at(node: float) -> UserFunction:
     """Return the healthy child budget, NaN only within `_NAN_RADIUS` of `node`."""
 
     def resources(*, liquid: ContinuousState, stock: ContinuousState) -> FloatND:
@@ -596,7 +673,7 @@ def _nan_child_budget_only_at(node: float):
 
 @pytest.mark.parametrize("runtime_checks", [False, True])
 def test_public_literal_adaptive_parent_reports_a_failed_excluded_probe(
-    *, runtime_checks, final_pass_probe
+    *, runtime_checks: bool, final_pass_probe: float
 ) -> None:
     """A probe solved and then left off the mesh still reports its child failure."""
     model = make_literal_parent_model(
@@ -617,7 +694,7 @@ def test_public_literal_adaptive_parent_reports_a_failed_excluded_probe(
 
 
 def test_public_literal_adaptive_parent_replays_with_both_debug_snapshots(
-    *, tmp_path
+    *, tmp_path: Path
 ) -> None:
     """Split replay matches automatic simulation; both debug snapshots persist."""
     model = make_literal_parent_model(
@@ -637,7 +714,7 @@ def test_public_literal_adaptive_parent_replays_with_both_debug_snapshots(
     (solve_dir,) = sorted((tmp_path / "solve").glob("solve_snapshot_*/"))
     solve_snapshot = load_snapshot(solve_dir)
     assert isinstance(solve_snapshot, SolveSnapshot)
-    snapshot_values = solve_snapshot.period_to_regime_to_V_arr
+    snapshot_values = solve_snapshot.step_to_regime_to_V_arr
     assert snapshot_values is not None
     for period, regimes in solution.values.items():
         for name, value in regimes.items():

@@ -125,7 +125,7 @@ def test_the_root_set_names_every_slot_of_the_regime_that_carries_it() -> None:
     """`couple_ir`'s roots name its utilities, regime transition and incoming gate.
 
     An incoming fallback is rooted once per phase, because the value an agent
-    expects and the state a settlement realizes may be declared separately.
+    expects and the state a transfer realizes may be declared separately.
     """
     roots = broadcast.root_functions(
         regime_name="couple_ir",

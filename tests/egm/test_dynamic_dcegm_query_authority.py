@@ -104,7 +104,7 @@ def test_dc_query_authority_authenticates_full_constraints_and_actual_numeric_po
             regimes=model_regimes, flat_params=flat_params, ages=model.ages
         )
         assert (
-            ArtifactRef(period=0, regime="child", key=EGM_CONTINUATION)
+            ArtifactRef(step=0, regime="child", key=EGM_CONTINUATION)
             in result.artifact_descriptors
         )
     else:

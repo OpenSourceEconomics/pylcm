@@ -101,6 +101,7 @@ from _lcm.solution.contract import (
     TwoMarginSolver,
     _BoundLiquidMargin,
     _BoundOuterContinuousMargin,
+    one_member_utility_name,
 )
 from _lcm.solution.feasibility import (
     ChildStatusKernelOutput,
@@ -110,6 +111,11 @@ from _lcm.solution.feasibility import (
     count_current_feasibility,
     merge_continuation_read_counts,
     merge_query_input_status,
+)
+from _lcm.solution.member_axis import (
+    drop_member_axis,
+    publishes_value,
+    with_member_axis,
 )
 from _lcm.solution.nbegm import (
     NBEGM,
@@ -584,7 +590,9 @@ class NNBEGM(TwoMarginSolver):
                     adjuster_context,
                     nbegm_source_query_model=inner_models["adjuster"],
                 )
-            adjuster_group = bound.inner.build_period_kernels(
+            # The inner kernels publish values without the member axis; the
+            # republished programs append it.
+            adjuster_group = bound.inner.build_inner_period_kernels(
                 context=adjuster_context, materializer=materializer
             )
             no_adjustment_func = (
@@ -615,7 +623,7 @@ class NNBEGM(TwoMarginSolver):
                     keeper_context,
                     nbegm_source_query_model=inner_models["keeper"],
                 )
-            keeper_group = bound.inner.build_period_kernels(
+            keeper_group = bound.inner.build_inner_period_kernels(
                 context=keeper_context, materializer=materializer
             )
             _merge_nnbegm_reader_contracts(
@@ -838,6 +846,7 @@ class NNBEGM(TwoMarginSolver):
                     branch_fixed_cost=branch_aggregation_by_period[period][0],
                     branch_scale_function=branch_aggregation_by_period[period][1],
                     query_model=query_model,
+                    members=context.members,
                 )
                 for period, adjuster_kernel in adjuster_by_period.items()
             }
@@ -1162,7 +1171,7 @@ class _NNBEGMPeriodKernel:
     depend on one call's params), and `period`/`age`."""
 
     replay_state_names: frozenset[StateName]
-    """The states a replay reads at each subject."""
+    """The states a replay reads at each agent."""
 
     branch_fixed_cost: UniformObservedFixedCost | None
     """The uniform observed fixed-cost aggregator, or `None` for the
@@ -1190,6 +1199,13 @@ class _NNBEGMPeriodKernel:
     Filled once the model's continuation templates are known, so the reads name
     leaves that exist. Each republished adjuster program takes them under its
     own graph key.
+    """
+
+    members: tuple[str, ...]
+    """The regime's members, the axis the published value carries.
+
+    Every republished program appends it; the inner kernels read their programs'
+    values without it, and the kernel appends it to the collapsed value.
     """
 
     _core_programs: MappingProxyType[str, CoreProgram] = field(
@@ -1275,6 +1291,9 @@ class _NNBEGMPeriodKernel:
                     ),
                     retained_artifact_payload_types=(retained_artifact_payload_types),
                 )
+                programs[graph_key] = with_member_axis(
+                    program=programs[graph_key], members=self.members
+                )
         object.__setattr__(self, "_core_programs", MappingProxyType(programs))
 
     @property
@@ -1345,7 +1364,7 @@ class _NNBEGMPeriodKernel:
             period=period,
             ages=ages,
         )
-        return self._solve_outer(
+        result = self._solve_outer(
             replay_capability=replay_capability,
             keeper_result=keeper_result,
             retain_replay="keeper:replay" in compiled_cores,
@@ -1358,6 +1377,7 @@ class _NNBEGMPeriodKernel:
             ages=ages,
             logger=logger,
         )
+        return replace(result, value=jnp.expand_dims(result.value, -1))
 
     def _solve_outer(
         self,
@@ -1377,6 +1397,22 @@ class _NNBEGMPeriodKernel:
         """Run the outer search against the solved keeper; concrete per subclass."""
         raise NotImplementedError
 
+    def _role_cores(
+        self, *, compiled_cores: Mapping[str, Callable[..., PytreeValue]], role: str
+    ) -> Mapping[str, Callable[..., PytreeValue]]:
+        """Select one role's inner cores, each value read without the member axis."""
+        cores = _subcores(compiled_cores=compiled_cores, role=role)
+        return MappingProxyType(
+            {
+                name: functools.partial(
+                    _core_without_member_axis, core=core, members=self.members
+                )
+                if publishes_value(program=self._core_programs[f"{role}:{name}"])
+                else core
+                for name, core in cores.items()
+            }
+        )
+
     def _solve_keeper(
         self,
         *,
@@ -1391,7 +1427,9 @@ class _NNBEGMPeriodKernel:
     ) -> KernelOutput:
         """Run the keeper inner solve — the state-dependent no-adjustment branch."""
         return self.keeper_kernel(
-            compiled_cores=_subcores(compiled_cores=compiled_cores, role="keeper"),
+            compiled_cores=self._role_cores(
+                compiled_cores=compiled_cores, role="keeper"
+            ),
             state_action_space=state_action_space,
             next_regime_to_V_arr=next_regime_to_V_arr,
             next_regime_to_continuation=next_regime_to_continuation,
@@ -1784,7 +1822,9 @@ class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
             keeper_carry=keeper_carry,
         )
         inherited = _InheritedChildSummary.of(keeper_result)
-        adjuster_cores = _subcores(compiled_cores=compiled_cores, role="adjuster")
+        adjuster_cores = self._role_cores(
+            compiled_cores=compiled_cores, role="adjuster"
+        )
         nodes = list(self.outer_grid_values)
         for chunk_start, chunk_stop in _dispatch_bounds(
             n_items=len(nodes), width=self.outer_dispatch_width
@@ -2059,7 +2099,9 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         cache: dict[float, OuterCandidateResult] = {}
         solve_nodes = _AdaptiveNodeSolver(
             kernel=self,
-            adjuster_cores=_subcores(compiled_cores=compiled_cores, role="adjuster"),
+            adjuster_cores=self._role_cores(
+                compiled_cores=compiled_cores, role="adjuster"
+            ),
             cache=cache,
             dispatch_width=self.outer_dispatch_width,
             state_action_space=state_action_space,
@@ -2333,23 +2375,23 @@ def _nnbegm_query_period_groups(
     # the stock the continuation is read at, not the raw node the outer
     # search picked.
     grouped_periods: dict[Hashable, list[int]] = {}
-    for period in context.regimes_to_active_periods[context.regime_name]:
+    for step in context.regimes_to_active_periods[context.regime_name]:
         targets = (
             ()
-            if period == context.solution_reachability.n_periods - 1
+            if step == context.solution_reachability.n_steps - 1
             else context.solution_reachability.targets(
-                period=period, source=context.regime_name
+                step=step, source=context.regime_name
             )
         )
         key = solver_period_group_key(
             context=context,
-            period=period,
+            period=step,
             continuation_targets=targets,
             solver_path=("nnbegm",),
         )
         if query_model is not None:
             key = (key, query_model.authority)
-        grouped_periods.setdefault(key, []).append(period)
+        grouped_periods.setdefault(key, []).append(step)
 
     return inner_models, grouped_periods
 
@@ -2461,9 +2503,9 @@ def _with_declared_nested_reads(
         return kernel
     reachable = frozenset(
         ()
-        if period == context.solution_reachability.n_periods - 1
+        if period == context.solution_reachability.n_steps - 1
         else context.solution_reachability.targets(
-            period=period, source=context.regime_name
+            step=period, source=context.regime_name
         )
     )
     return replace(
@@ -2650,7 +2692,7 @@ def _fail_if_the_solve_grid_cannot_reconstruct_a_candidate(
     period, which is the price of not letting a published policy depend on how
     loudly the run was asked to talk.
 
-    A failure first met at a realized off-grid subject is a different case and
+    A failure first met at a realized off-grid agent is a different case and
     keeps its drop-and-announce behaviour: there the state landed awkwardly,
     which the model author cannot be expected to have precluded.
     """
@@ -2723,6 +2765,16 @@ def _fail_if_the_outer_search_leaves_the_outer_state_domain(
         f"search to that domain or widen the grid of {outer_state!r}."
     )
     raise ModelInitializationError(msg)
+
+
+def _core_without_member_axis(
+    *,
+    core: Callable[..., PytreeValue],
+    members: tuple[str, ...],
+    **arguments: PytreeValue,
+) -> PytreeValue:
+    """Run one compiled inner core and read its value without the member axis."""
+    return drop_member_axis(output=core(**arguments), members=members)
 
 
 def _subcores(
@@ -2845,7 +2897,7 @@ def _nested_inverse_marginal(
         "marginal_continuation",
     ):
         return closed_form
-    utility = context.functions.get("utility")
+    utility = context.functions.get(one_member_utility_name(members=context.members))
     if utility is None or tuple(inspect.signature(utility).parameters) != (
         inner_action,
     ):

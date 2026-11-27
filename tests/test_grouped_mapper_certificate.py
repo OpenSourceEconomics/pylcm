@@ -46,8 +46,11 @@ def test_grouped_mapper_population_is_independent() -> None:
         direct_flow.action_grid_mutation_specs(repo_root=root),
     )
     # The ValueDependentConstraint removal deleted
-    # value_access:grid_same_period_shifted with the same-period value access.
-    assert tuple(map(len, populations)) == (411, 94, 37, 10)
+    # value_access:grid_same_period_shifted with the same-period value access;
+    # admitting household EV1 deleted streaming_classifier:collective_ev1_admitted;
+    # removing the single hard max's dead fold deleted its three
+    # streaming_hard_max filter, merge and signed-zero controls.
+    assert tuple(map(len, populations)) == (362, 94, 37, 10)
     grouped = direct_flow.grouped_mapper_mutation_specs(repo_root=root)
     assert len(grouped) == 18
     digest = hashlib.sha256(("\n".join(sorted(grouped)) + "\n").encode()).hexdigest()

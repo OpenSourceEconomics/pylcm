@@ -1,6 +1,6 @@
 """The `terminal_rows` knob on `SimulationResult.to_dataframe`.
 
-A subject that enters a terminal regime keeps its frozen state and is
+An agent that enters a terminal regime keeps its frozen state and is
 re-emitted in every later period the regime is active. `to_dataframe`
 collapses those post-entry duplicates by default (`terminal_rows="first"`);
 `"all"` emits the full absorbing representation.
@@ -18,7 +18,7 @@ from lcm.typing import FunctionName
 from lcm_examples.epstein_zin import EZRegimeId, HealthStatus, get_model, get_params
 
 N_PERIODS = 4
-N_SUBJECTS = 20
+N_AGENTS = 20
 
 
 @pytest.fixture(scope="module")
@@ -27,44 +27,44 @@ def result() -> SimulationResult:
     return model.simulate(
         params=get_params(risk_aversion=0.5),
         initial_conditions={
-            "age": jnp.full(N_SUBJECTS, 25.0),
-            "wealth": jnp.linspace(1.0, 10.0, N_SUBJECTS),
-            "health": jnp.full(N_SUBJECTS, HealthStatus.good, dtype=jnp.int32),
-            "regime_id": jnp.full(N_SUBJECTS, EZRegimeId.alive, dtype=jnp.int32),
+            "age": jnp.full(N_AGENTS, 25.0),
+            "wealth": jnp.linspace(1.0, 10.0, N_AGENTS),
+            "health": jnp.full(N_AGENTS, HealthStatus.good, dtype=jnp.int32),
+            "regime_id": jnp.full(N_AGENTS, EZRegimeId.alive, dtype=jnp.int32),
         },
         log_level="debug",
         seed=42,
     )
 
 
-def test_first_keeps_exactly_one_terminal_row_per_subject(result: SimulationResult):
-    """Each subject that enters `dead` appears there exactly once."""
+def test_first_keeps_exactly_one_terminal_row_per_agent(
+    result: SimulationResult,
+) -> None:
+    """Each agent that enters `dead` appears there exactly once."""
     df = result.to_dataframe(terminal_rows="first")
-    dead_rows_per_subject = (
-        df.query("regime_name == 'dead'").groupby("subject_id").size()
-    )
-    assert (dead_rows_per_subject == 1).all()
-    assert len(dead_rows_per_subject) == N_SUBJECTS  # survival ends at 0.0
+    dead_rows_per_agent = df.query("regime_name == 'dead'").groupby("agent_id").size()
+    assert (dead_rows_per_agent == 1).all()
+    assert len(dead_rows_per_agent) == N_AGENTS  # survival ends at 0.0
 
 
-def test_first_is_all_minus_post_entry_terminal_rows(result: SimulationResult):
-    """`"first"` equals `"all"` with each subject's post-entry `dead` rows dropped."""
+def test_first_is_all_minus_post_entry_terminal_rows(result: SimulationResult) -> None:
+    """`"first"` equals `"all"` with each agent's post-entry `dead` rows dropped."""
     df_all = result.to_dataframe(terminal_rows="all")
-    entry_period = df_all["subject_id"].map(
-        df_all.query("regime_name == 'dead'").groupby("subject_id")["period"].min()
+    entry_period = df_all["agent_id"].map(
+        df_all.query("regime_name == 'dead'").groupby("agent_id")["period"].min()
     )
     expected = df_all.loc[df_all["period"] <= entry_period].reset_index(drop=True)
     df_first = result.to_dataframe(terminal_rows="first")
     pd.testing.assert_frame_equal(df_first, expected)
 
 
-def test_all_emits_every_covered_period(result: SimulationResult):
-    """`"all"` keeps the absorbing representation: one row per subject and period."""
+def test_all_emits_every_covered_period(result: SimulationResult) -> None:
+    """`"all"` keeps the absorbing representation: one row per agent and period."""
     df = result.to_dataframe(terminal_rows="all")
-    assert len(df) == N_SUBJECTS * N_PERIODS
+    assert len(df) == N_AGENTS * N_PERIODS
 
 
-def test_first_is_the_default(result: SimulationResult):
+def test_first_is_the_default(result: SimulationResult) -> None:
     """`to_dataframe()` collapses post-entry terminal rows by default."""
     pd.testing.assert_frame_equal(
         result.to_dataframe(), result.to_dataframe(terminal_rows="first")
@@ -74,11 +74,9 @@ def test_first_is_the_default(result: SimulationResult):
 def test_first_composes_with_integer_codes(result: SimulationResult) -> None:
     """The filter applies identically under `use_categorical_codes=True`."""
     df = result.to_dataframe(use_categorical_codes=True, terminal_rows="first")
-    dead_rows_per_subject = (
-        df.loc[df["regime_name"] == "dead"].groupby("subject_id").size()
-    )
-    assert (dead_rows_per_subject == 1).all()
-    assert len(dead_rows_per_subject) == N_SUBJECTS
+    dead_rows_per_agent = df.loc[df["regime_name"] == "dead"].groupby("agent_id").size()
+    assert (dead_rows_per_agent == 1).all()
+    assert len(dead_rows_per_agent) == N_AGENTS
 
 
 @pytest.mark.parametrize("df_additional_targets", [None, []])
@@ -89,15 +87,15 @@ def test_saved_terminal_panel_matches_default_and_loaded_projection(
     df_additional_targets: list[FunctionName] | None,
     use_categorical_codes: bool,
 ) -> None:
-    """Saved and restored panels keep one entry row per terminal subject."""
+    """Saved and restored panels keep one entry row per terminal agent."""
     model = get_model(certainty_equivalent=PowerMean())
     simulation = model.simulate(
         params=get_params(risk_aversion=0.5),
         initial_conditions={
-            "age": jnp.full(N_SUBJECTS, 25.0),
-            "wealth": jnp.linspace(1.0, 10.0, N_SUBJECTS),
-            "health": jnp.full(N_SUBJECTS, HealthStatus.good, dtype=jnp.int32),
-            "regime_id": jnp.full(N_SUBJECTS, EZRegimeId.alive, dtype=jnp.int32),
+            "age": jnp.full(N_AGENTS, 25.0),
+            "wealth": jnp.linspace(1.0, 10.0, N_AGENTS),
+            "health": jnp.full(N_AGENTS, HealthStatus.good, dtype=jnp.int32),
+            "regime_id": jnp.full(N_AGENTS, EZRegimeId.alive, dtype=jnp.int32),
         },
         log_level="off",
         seed=42,
@@ -107,14 +105,14 @@ def test_saved_terminal_panel_matches_default_and_loaded_projection(
     )
     first_period = (
         all_rows.loc[all_rows["regime_name"] == "dead"]
-        .groupby("subject_id")["period"]
+        .groupby("agent_id")["period"]
         .min()
     )
     expected = all_rows.loc[
-        all_rows["period"] <= all_rows["subject_id"].map(first_period)
+        all_rows["period"] <= all_rows["agent_id"].map(first_period)
     ].reset_index(drop=True)
-    assert len(all_rows) == N_SUBJECTS * N_PERIODS
-    assert len(first_period) == N_SUBJECTS
+    assert len(all_rows) == N_AGENTS * N_PERIODS
+    assert len(first_period) == N_AGENTS
     assert len(expected) < len(all_rows)
     pd.testing.assert_frame_equal(
         simulation.to_dataframe(use_categorical_codes=use_categorical_codes),

@@ -2,7 +2,7 @@
 
 `productmap` maps over the Cartesian product of its named arguments,
 `tiled_productmap` evaluates that product in blocks, `vmap_1d` maps over named
-arguments jointly, `simulation_spacemap` maps the per-subject axes simulation
+arguments jointly, `simulation_spacemap` maps the per-agent axes simulation
 needs, and `map_over_leading_axis` maps one leading axis of a pytree.
 """
 

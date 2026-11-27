@@ -31,7 +31,7 @@ def _memory(
     return SimulationMemory(
         budget_bytes=2**24,
         devices=devices,
-        subject_devices=devices,
+        agent_devices=devices,
         operations=ProfiledSimulationOperations() if operations is None else operations,
         inputs=measure_buffer_footprint(tree=roots),
     )
@@ -47,8 +47,8 @@ def _invoke(
     return generate_taste_shock_keys(
         key=key,
         address_words=tuple(range(8)),
-        subject_slice=slice(4, 10),
-        original_n_subjects=8,
+        agent_slice=slice(4, 10),
+        original_n_agents=8,
         memory=memory,
     )
 
@@ -150,8 +150,8 @@ def test_dynamic_age_and_global_row_words_reuse_one_taste_executable() -> None:
         result = generate_taste_shock_keys(
             key=key,
             address_words=address,
-            subject_slice=slice(start, start + 6),
-            original_n_subjects=population,
+            agent_slice=slice(start, start + 6),
+            original_n_agents=population,
             memory=memory,
         )
         assert len(memory.operations.cache) == 1

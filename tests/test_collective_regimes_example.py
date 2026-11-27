@@ -4,7 +4,8 @@ import jax.numpy as jnp
 import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm.exits import Unilateral
+from lcm import CollectiveUtility
+from lcm.composition_actions import PCOnActions
 from lcm.solver_api import ResultRetention
 from lcm_examples.collective_regimes import (
     get_dissolution_model,
@@ -28,13 +29,13 @@ def test_shared_decision_values_are_the_members_values_at_one_argmax() -> None:
 
 
 def test_participation_constraints_dissolve_only_the_middle_wage_cell() -> None:
-    """The source prices each actual route; dissolution pays the exit's cost."""
+    """The source prices each actual route; divorce pays the divorce cost."""
     model = get_dissolution_model()
     solution = model.solve(params=get_params(), log_level="debug")
 
-    # Work keeps wages one and three feasible for both partners. Wage two has
-    # no participating action, so the household's own exit moves both partners
-    # to their single regimes, (5.5, 1), and pays the divorce cost (0.5, 0.2):
+    # Work keeps wages one and three feasible for both partners. Wage two has no
+    # participating action, so the household's own composition action moves both
+    # partners to their single regimes, (5.5, 1), and pays the divorce cost (0.5, 0.2):
     # (5.0, 0.8).
     aaae(
         solution.values[0]["married"],
@@ -44,8 +45,7 @@ def test_participation_constraints_dissolve_only_the_middle_wage_cell() -> None:
 
 
 def test_dissolution_routes_the_simulated_person_to_their_single_regime() -> None:
-    """The female cohort takes her own exit target when no household action is
-    feasible."""
+    """The female cohort leaves for her target when no couple action is feasible."""
     model = get_dissolution_model()
     solution = model.solve(
         params=get_params(),
@@ -59,7 +59,7 @@ def test_dissolution_routes_the_simulated_person_to_their_single_regime() -> Non
             model.regime_names_to_ids["married"],
             dtype=jnp.int32,
         ),
-        # Every subject starts in the collective regime, so each one occupies a
+        # Every agent starts in the collective regime, so each one occupies a
         # household role from the first period on, and that role decides which
         # fallback a dissolving row takes.
         "own_member": jnp.full(
@@ -87,8 +87,8 @@ def test_dissolution_routes_the_simulated_person_to_their_single_regime() -> Non
     )
 
 
-def test_the_household_exit_routes_without_retained_dissolution_artifacts() -> None:
-    """The household's own exit routes each original role directly."""
+def test_separation_routes_without_retained_dissolution_artifacts() -> None:
+    """The household's own composition action routes each original role directly."""
     model = get_dissolution_model()
     params = get_params()
     solution = model.solve(
@@ -108,7 +108,7 @@ def test_the_household_exit_routes_without_retained_dissolution_artifacts() -> N
         seed=0,
         log_level="off",
     ).to_dataframe()
-    arrived = frame.loc[frame["period"] == 1].sort_values("subject_id")
+    arrived = frame.loc[frame["period"] == 1].sort_values("agent_id")
     np.testing.assert_array_equal(
         arrived["regime_name"],
         ["married_with_participation", "single_f", "married_with_participation"],
@@ -118,5 +118,27 @@ def test_the_household_exit_routes_without_retained_dissolution_artifacts() -> N
 def test_dissolution_follows_the_eckstein_keane_lifshitz_rule() -> None:
     """Either partner can leave, and a partner exactly indifferent leaves."""
     model = get_dissolution_model()
-    declaration = model.user_regimes["married_with_participation"].exit
-    assert getattr(declaration, "rule", None) == Unilateral(tie="leave")
+    declaration = model.user_regimes["married_with_participation"].composition_action
+    assert getattr(declaration, "rule", None) == PCOnActions(tie="leave")
+
+
+def test_dissolution_households_rank_work_and_leisure_strictly() -> None:
+    """Every member ranks work and leisure strictly at every wage node.
+
+    The wage never moves and no transition reads `work`, so the flow utilities
+    alone order the two choices and the simulated choice is the unique best one.
+    """
+    model = get_dissolution_model()
+    for name, regime in model.user_regimes.items():
+        if "work" not in regime.actions:
+            continue
+        utility = regime.functions["utility"]
+        assert isinstance(utility, CollectiveUtility)
+        for member, function in utility.utilities.items():
+            assert callable(function)
+            for wage in (1.0, 2.0, 3.0):
+                assert function(wage=wage, work=0) != function(wage=wage, work=1), (
+                    name,
+                    member,
+                    wage,
+                )

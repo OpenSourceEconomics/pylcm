@@ -168,7 +168,7 @@ def test_runtime_checks_control_invalid_state_probabilities(
             runtime_checks=runtime_checks,
             seed=0,
         )
-        assert result.n_subjects == len(initial["health"])
+        assert result.n_agents == len(initial["health"])
 
 
 _SELECTED_DEVICE_SCRIPT = textwrap.dedent(

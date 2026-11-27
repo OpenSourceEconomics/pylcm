@@ -21,8 +21,11 @@ from _lcm.execution.value_transfer import (
     ValueConsumerAddress,
     ValueInputChannel,
 )
-from _lcm.simulation.exit_replay import _query_arguments
-from _lcm.simulation.exits import OriginalExitOutput, ParticipatingExitOutput
+from _lcm.simulation.composition_actions import (
+    OriginalCompositionOutput,
+    ParticipatingCompositionOutput,
+)
+from _lcm.simulation.composition_replay import _query_arguments
 from _lcm.simulation.replay_inputs import place_replay_payload, replay_payload_reads
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.value_reads import PeriodSimulationReads
@@ -287,12 +290,12 @@ def test_finite_policy_transfer_refuses_before_its_ordered_copy_allocates(
     np.testing.assert_array_equal(source, policy.candidate_inner_action)
 
 
-@pytest.mark.parametrize("subject_ids", [(3,), (3, 1)])
+@pytest.mark.parametrize("agent_ids", [(3,), (3, 1)])
 def test_host_replay_has_no_allocation_on_an_excluded_default_device(
     *,
     monkeypatch: pytest.MonkeyPatch,
     request: pytest.FixtureRequest,
-    subject_ids: tuple[int, ...],
+    agent_ids: tuple[int, ...],
 ) -> None:
     """A NumPy artifact moves directly to the requested ordered destination."""
     dtype = np.float64 if jax.config.x64_enabled else np.float32
@@ -300,7 +303,7 @@ def test_host_replay_has_no_allocation_on_an_excluded_default_device(
     reads = replay_payload_reads(
         payload=original, key=SIMULATION_POLICY, period=0, regime="alive", core="replay"
     )
-    devices = tuple(jax.devices()[index] for index in subject_ids)
+    devices = tuple(jax.devices()[index] for index in agent_ids)
     owner = PeriodSimulationReads(
         period=0, devices=devices, reads_by_unit={"alive": reads}, release_enabled=True
     )
@@ -333,13 +336,13 @@ def test_host_replay_has_no_allocation_on_an_excluded_default_device(
         ),
     )
     request.node.user_properties.append(("allocation_stages", repr(allocations)))
-    assert allocations == [subject_ids]
+    assert allocations == [agent_ids]
     if isinstance(placed.sharding, jax.NamedSharding):
         assert tuple(device.id for device in placed.sharding.mesh.devices.flat) == (
-            subject_ids
+            agent_ids
         )
     else:
-        assert tuple(device.id for device in placed.devices()) == subject_ids
+        assert tuple(device.id for device in placed.devices()) == agent_ids
     np.testing.assert_array_equal(placed, [2.0, 5.0, 9.0])
     owner.commit(unit="alive", outputs=placed + 1)
     owner.finish()
@@ -347,9 +350,9 @@ def test_host_replay_has_no_allocation_on_an_excluded_default_device(
     np.testing.assert_array_equal(original, [2.0, 5.0, 9.0])
 
 
-@pytest.mark.parametrize("subject_ids", [(3,), (3, 1)])
+@pytest.mark.parametrize("agent_ids", [(3,), (3, 1)])
 def test_external_reader_consumes_the_exact_validated_placed_cell(
-    *, subject_ids: tuple[int, ...]
+    *, agent_ids: tuple[int, ...]
 ) -> None:
     """Keep authority while payload and node copies use the reader's device order."""
     model = _model(solver=ReferenceSolver())
@@ -357,7 +360,7 @@ def test_external_reader_consumes_the_exact_validated_placed_cell(
     prepared = model._resolve_solution_result(
         solution=solution, flat_params=model._process_params(_PARAMS)
     )[2][0]["active"]
-    devices = tuple(jax.devices()[index] for index in subject_ids)
+    devices = tuple(jax.devices()[index] for index in agent_ids)
     owner = PeriodSimulationReads(
         period=0,
         devices=devices,
@@ -378,7 +381,7 @@ def test_external_reader_consumes_the_exact_validated_placed_cell(
     assert placed.metadata_identity == consumed.metadata_identity
     assert original.authority_identities == placed.authority_identities
     assert placed.authority_identities == consumed.authority_identities
-    assert placed.device_ids == consumed.device_ids == subject_ids
+    assert placed.device_ids == consumed.device_ids == agent_ids
     assert original.values.dtype == placed.values.dtype == consumed.values.dtype
     np.testing.assert_array_equal(original.values, placed.values)
     np.testing.assert_array_equal(placed.values, consumed.values)
@@ -396,7 +399,7 @@ def test_external_reader_consumes_the_exact_validated_placed_cell(
                 if isinstance(value.sharding, jax.NamedSharding)
                 else tuple(device.id for device in value.devices())
             )
-            assert actual == subject_ids
+            assert actual == agent_ids
     owner.commit(unit="active", outputs=())
     owner.finish()
 
@@ -443,27 +446,27 @@ def test_repeated_host_replay_occurrences_reuse_the_same_addressed_copy() -> Non
     np.testing.assert_array_equal(original, [True, False, True])
 
 
-@pytest.mark.parametrize("subject_ids", [(0, 1, 2, 3), (3, 1)])
-def test_a_physical_copy_uses_the_ordered_subject_devices_and_last_regime_lifetime(
-    *, subject_ids: tuple[int, ...]
+@pytest.mark.parametrize("agent_ids", [(0, 1, 2, 3), (3, 1)])
+def test_a_physical_copy_uses_the_ordered_agent_devices_and_last_regime_lifetime(
+    *, agent_ids: tuple[int, ...]
 ) -> None:
     """Full gathers and proper-submesh copies preserve originals and share once."""
     devices = jax.devices()
-    stored_devices = devices if len(subject_ids) == 4 else [devices[0], devices[2]]
+    stored_devices = devices if len(agent_ids) == 4 else [devices[0], devices[2]]
     mesh = jax.sharding.Mesh(np.asarray(stored_devices), ("stored",))
     stored = jax.device_put(jnp.arange(8), jax.NamedSharding(mesh, jax.P("stored")))
     first = _read(unit="first")
     second = _read(unit="second")
-    subject_devices = tuple(devices[index] for index in subject_ids)
+    agent_devices = tuple(devices[index] for index in agent_ids)
     owner = PeriodSimulationReads(
         period=0,
-        devices=subject_devices,
+        devices=agent_devices,
         reads_by_unit={"first": (first,), "second": (second,)},
         release_enabled=True,
     )
     copied = owner.read(unit="first", read=first, value=stored)
     assert isinstance(copied.sharding, jax.NamedSharding)
-    assert tuple(copied.sharding.mesh.devices.flat) == subject_devices
+    assert tuple(copied.sharding.mesh.devices.flat) == agent_devices
     assert not shares_a_buffer(first=copied, second=stored)
     np.testing.assert_array_equal(copied, np.arange(8))
     owner.commit(unit="first", outputs=copied + 1)
@@ -560,7 +563,7 @@ def test_collective_queries_share_original_value_copies_on_an_ordered_submesh(  
     owned = solution._engine_view
     assert isinstance(owned, OwnedSolutionView)
     devices = jax.devices()
-    subject_devices = (devices[3], devices[1])
+    agent_devices = (devices[3], devices[1])
     originals = {
         period: {
             target: jax.device_put(value, devices[2])
@@ -570,7 +573,7 @@ def test_collective_queries_share_original_value_copies_on_an_ordered_submesh(  
     }
     before = jax.tree.map(np.asarray, originals)
     regime = model._regimes["married_ir"]
-    plan = regime.simulation.exit_queries[1]
+    plan = regime.simulation.composition_queries[1]
     assert plan.full is not None
     families = (
         ("exit_full", plan.full, regime.simulation.programs.exit_full[1]),
@@ -611,7 +614,7 @@ def test_collective_queries_share_original_value_copies_on_an_ordered_submesh(  
     assert all(read.target.period == 2 for read in reads)
     owner = PeriodSimulationReads(
         period=1,
-        devices=subject_devices,
+        devices=agent_devices,
         reads_by_unit={"married_ir": reads},
         release_enabled=True,
     )
@@ -631,7 +634,7 @@ def test_collective_queries_share_original_value_copies_on_an_ordered_submesh(  
             device_memory_bytes=None,
         ),
         enable_jit=True,
-        subject_devices=subject_devices,
+        agent_devices=agent_devices,
     )
     states = {"wage": jnp.asarray([1.0, 2.0, 3.0, 1.0])}
     params = model._process_params(_DISSOLUTION_PARAMS)
@@ -680,7 +683,7 @@ def test_collective_queries_share_original_value_copies_on_an_ordered_submesh(  
             original = originals[read.target.period][read.target.regime]
             assert copied.dtype == original.dtype
             assert isinstance(copied.sharding, jax.NamedSharding)
-            assert tuple(copied.sharding.mesh.devices.flat) == subject_devices
+            assert tuple(copied.sharding.mesh.devices.flat) == agent_devices
             assert not shares_a_buffer(first=copied, second=original)
             np.testing.assert_array_equal(copied, original)
             assert np.any(np.asarray(original) != 0)
@@ -699,10 +702,12 @@ def test_collective_queries_share_original_value_copies_on_an_ordered_submesh(  
         if family == "exit_participating":
             arguments.update(held_bases={}, produced={})
         output = runtime.dispatch(
-            program=program, arguments=arguments, period=1, n_subjects=4
+            program=program, arguments=arguments, period=1, n_agents=4
         )
         jax.block_until_ready(output)
-        answer = cast("OriginalExitOutput | ParticipatingExitOutput", output)[0]
+        answer = cast(
+            "OriginalCompositionOutput | ParticipatingCompositionOutput", output
+        )[0]
         np.testing.assert_array_equal(answer[3], np.ones(4, dtype=bool))
         if family == "exit_participating":
             np.testing.assert_array_equal(answer[2], [True, False, True, True])
@@ -720,9 +725,11 @@ def test_collective_queries_share_original_value_copies_on_an_ordered_submesh(  
                 [[2.95, 1.95], [6.9, 2.7], [8.85, 5.85], [2.95, 1.95]],
                 rtol=10.0**-DECIMAL_PRECISION,
             )
-            exits = tuple(queries.definitions[queries.root].exit_targets)
-            assert exits
-            rejected = np.isin(np.asarray(answer[1]), exits)
+            composition_actions = tuple(
+                queries.definitions[queries.root].composition_action_targets
+            )
+            assert composition_actions
+            rejected = np.isin(np.asarray(answer[1]), composition_actions)
             np.testing.assert_array_equal(rejected, [False, True, False, False])
         outputs.append(output)
         assert all(not copied.is_deleted() for copied in copies.values())

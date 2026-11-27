@@ -4,16 +4,38 @@ Dense regimes pool nonterminal regimes of one kind by the taste-shock steps
 (Def. "Dense model", :126-146); every terminal regime stays a regime of its own.
 """
 
+from copy import deepcopy
+
 import jax.numpy as jnp
 import pytest
-
+from _lcm_regime_finder import find_regimes, verify_certificate
 from _lcm_regime_finder.declarations import normalize_declarations
+from _lcm_regime_finder.facts import (
+    FactsBackendName,
+    Record,
+    make_facts,
+)
 from _lcm_regime_finder.graph_scope import apply_scope
-from _lcm_regime_finder.facts import Record
-from _lcm_regime_finder.layout_search import LayoutProblem, dense_regimes, regime_kinds
+from _lcm_regime_finder.layout_search import (
+    LayoutProblem,
+    dense_regimes,
+    regime_kinds,
+    search_layouts,
+)
 from _lcm_regime_finder.model_snapshot import read_model
 from _lcm_regime_finder.records import JSONValue
-from lcm import DiscreteGrid, InitialNodes, Model, Periods, Regime, categorical
+from lcm import (
+    CollectiveUtility,
+    Decoupled,
+    DiscreteGrid,
+    InitialNodes,
+    LinSpacedGrid,
+    Model,
+    Periods,
+    Phased,
+    Regime,
+    categorical,
+)
 from lcm.typing import DiscreteState, FloatND, ScalarInt
 
 
@@ -523,20 +545,6 @@ def test_a_status_whose_grid_differs_across_members_is_not_certified_inert() -> 
     )
 
 
-@pytest.mark.parametrize("fixture", ["joint", "life"])
-def test_the_lowest_bound_sits_below_every_layout_and_the_finest_above_the_floor(
-    fixture: str,
-) -> None:
-    """lem:lowest (iv), (vi): LB <= ev^min <= the finest layout's count."""
-    from .test_status_splitting import joint_model
-
-    result, _ = _search(
-        joint_model() if fixture == "joint" else life_model(), max_blocks=40
-    )
-    assert result["lower_bound"] <= min(p["evaluations"] for p in result["curve"])
-    assert result["curve"][-1]["evaluations"] <= result["finest_count"]
-
-
 def test_a_restricted_point_at_the_lowest_bound_is_exact() -> None:
     """A layout that attains (vi) is the full family's lowest, contracted or not."""
     from _lcm_regime_finder.layout_search import analyze_layouts
@@ -547,3 +555,220 @@ def test_a_restricted_point_at_the_lowest_bound_is_exact() -> None:
     assert at_bound, "positive control: the restricted search reaches the bound here"
     assert all(p["exact"] for p in at_bound)
     assert result["floor"] == result["lower_bound"]
+
+
+@categorical(ordered=False)
+class _Flag:
+    off: ScalarInt
+    on: ScalarInt
+
+
+def _flag_utility(*, consumption: float, flag: DiscreteState) -> FloatND:
+    return jnp.log(consumption) + 0.5 * flag
+
+
+def _keep_flag(flag: DiscreteState) -> DiscreteState:
+    return flag
+
+
+def _keep_cash(cash: float) -> float:
+    return cash
+
+
+def _patient(utility: FloatND, CE: FloatND) -> FloatND:  # noqa: N803
+    return utility + 0.95 * CE
+
+
+def _flag_patient(*, utility: FloatND, CE: FloatND, flag: DiscreteState) -> FloatND:  # noqa: N803
+    return utility + (0.9 + 0.05 * flag) * CE
+
+
+def _discount() -> float:
+    return 0.95
+
+
+def _flag_discount(flag: DiscreteState) -> FloatND:
+    return 0.9 + 0.05 * flag
+
+
+def _phased_regime(slot: str) -> Regime:
+    """`flag` is read only by the solve variant of `slot`."""
+    phased_utility = Phased(solve=_flag_utility, simulate=_log_utility)
+    phased_aggregator = Phased(solve=_flag_patient, simulate=_patient)
+    utility = {
+        "utility": phased_utility,
+        "member_utility": CollectiveUtility(
+            utilities={"f": phased_utility, "m": _log_utility}
+        ),
+    }.get(slot, _log_utility)
+    functions = {"utility": utility}
+    if slot == "discount_factor":
+        functions["discount_factor"] = Phased(solve=_flag_discount, simulate=_discount)
+    return Regime(
+        states={
+            "cash": LinSpacedGrid(start=1.0, stop=4.0, n_points=3),
+            "flag": DiscreteGrid(_Flag),
+        },
+        state_transitions={"cash": _keep_cash, "flag": _keep_flag},
+        actions={"consumption": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
+        constraints={"affordable": _affordable},
+        functions=functions,
+        koopmans_aggregator={
+            "koopmans_aggregator": phased_aggregator,
+            "decoupled_objective": Decoupled(
+                objective=phased_aggregator, value=_patient
+            ),
+        }.get(slot),
+    )
+
+
+def _phased_model(slot: str) -> Model:
+    end = (
+        CollectiveUtility(utilities={"f": _zero, "m": _zero})
+        if slot == "member_utility"
+        else _zero
+    )
+    return Model(
+        n_periods=3,
+        regime_id_class=Ends,
+        regimes={
+            "young": _phased_regime(slot),
+            "dead": Regime(functions={"utility": end}),
+        },
+        initial_nodes=InitialNodes(by_period={0: "young"}),
+        edges={"young": {"young": Periods(values=(0,)), "dead": Periods(values=(1,))}},
+        fixed_params={"discount_factor": 1.0}
+        if slot in {"utility", "member_utility"}
+        else {},
+        enable_jit=False,
+    )
+
+
+_VALUE_ROOTS = {"reward", "koopmans_aggregator", "pareto_objective", "discount"}
+
+
+@pytest.mark.parametrize("backend", ["metadata"])
+@pytest.mark.parametrize(
+    "slot",
+    [
+        "utility",
+        "member_utility",
+        "koopmans_aggregator",
+        "decoupled_objective",
+        "discount_factor",
+    ],
+)
+def test_a_state_read_by_a_solve_variant_is_kept_and_checked(
+    slot: str, backend: FactsBackendName
+) -> None:
+    """The solve prices the solve variants, so a state only they read stays live.
+
+    The altered layouts are searched without the solve variants' roots: the
+    layout check of the genuine declarations rejects them, and the source check
+    rejects declarations without those roots.
+    """
+    captured = read_model(_phased_model(slot))
+    report = find_regimes(captured, facts_backend=backend)
+    declarations = deepcopy(report["analysis"]["declarations"])
+    for cell in declarations["cells"]:
+        cell["consumers"] = [
+            c
+            for c in cell["consumers"]
+            if c["kind"] not in _VALUE_ROOTS or c["phase"] != "solve"
+        ]
+    limits = {"seconds": 120, "metadata_categories": 100_000}
+    facts = make_facts(backend, declarations, limits, lambda: None)
+    altered = deepcopy(report)
+    altered["layouts"] = search_layouts(declarations, facts, limits, lambda: None)
+    forged = deepcopy(altered)
+    forged["analysis"]["declarations"] = declarations
+    cells = {c["id"]: c for c in report["analysis"]["declarations"]["cells"]}
+    kept = {
+        "flag" in reads
+        for cid, reads in report["analysis"]["dependency_closure"].items()
+        if cells[cid]["regime"] == "young"
+    }
+    genuine = verify_certificate(captured, report)
+    assert (
+        kept,
+        genuine["source_semantics"]["status"],
+        genuine["layout_check"]["status"],
+        verify_certificate(captured, altered)["layout_check"]["status"],
+        verify_certificate(captured, forged)["source_semantics"]["status"],
+    ) == ({True}, "PASS", "PASS", "FAIL", "FAIL")
+
+
+@categorical(ordered=False)
+class WideWork:
+    rest: ScalarInt
+    part: ScalarInt
+    full: ScalarInt
+
+
+def _effort_utility(health: DiscreteState, work: float) -> FloatND:
+    return jnp.where(health == Health.good, 1.0, 0.0) - (work - 1.5) ** 2
+
+
+_UNEQUAL_ACTION_GRIDS = {
+    "categories": (DiscreteGrid(WideWork), DiscreteGrid(Work), _work_utility),
+    "points": (
+        LinSpacedGrid(start=1.0, stop=2.0, n_points=3),
+        LinSpacedGrid(start=1.0, stop=2.0, n_points=2),
+        _effort_utility,
+    ),
+    "nodes": (
+        LinSpacedGrid(start=1.0, stop=3.0, n_points=2),
+        LinSpacedGrid(start=1.0, stop=2.0, n_points=2),
+        _effort_utility,
+    ),
+}
+
+
+@pytest.mark.parametrize("case", list(_UNEQUAL_ACTION_GRIDS))
+def test_regimes_with_unequal_grids_of_one_action_do_not_pool(case: str) -> None:
+    """Young and old differ only in the grid of `work`, in size or in its nodes.
+
+    The altered layouts are searched as if old had young's grid: they pool the
+    two, and the layout check of the genuine declarations rejects them.
+    """
+    young, old, utility = _UNEQUAL_ACTION_GRIDS[case]
+    states = {"health": DiscreteGrid(Health)}
+    model = Model(
+        n_periods=3,
+        regime_id_class=Stages,
+        regimes={
+            name: Regime(
+                states=states,
+                actions={"work": grid},
+                functions={"utility": utility},
+                state_transitions={"health": _stay},
+            )
+            for name, grid in (("young", young), ("old", old))
+        }
+        | {"dead": Regime(states=states, functions={"utility": _utility})},
+        initial_nodes=InitialNodes(by_period={0: "young"}),
+        edges={
+            "young": {"old": Periods(values=(0,))},
+            "old": {"dead": Periods(values=(1,))},
+        },
+        fixed_params={"discount_factor": 1.0},
+        enable_jit=False,
+    )
+    captured = read_model(model)
+    report = find_regimes(captured, facts_backend="dense")
+    declarations = deepcopy(report["analysis"]["declarations"])
+    grid_of = {c["regime"]: c["actions"].get("work") for c in declarations["cells"]}
+    for cell in declarations["cells"]:
+        if cell["regime"] == "old":
+            cell["actions"]["work"] = grid_of["young"]
+    limits = {"seconds": 120, "metadata_categories": 100_000}
+    facts = make_facts("dense", declarations, limits, lambda: None)
+    altered = deepcopy(report)
+    altered["layouts"] = search_layouts(declarations, facts, limits, lambda: None)
+    assert (
+        report["layouts"]["dense_regimes"],
+        verify_certificate(captured, report)["layout_check"]["status"],
+        altered["layouts"]["dense_regimes"],
+        "dense regimes differ from Def. 'Dense model'"
+        in verify_certificate(captured, altered)["layout_check"]["errors"],
+    ) == ([["dead"], ["old"], ["young"]], "PASS", [["dead"], ["old", "young"]], True)

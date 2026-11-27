@@ -1,6 +1,6 @@
 """An exhaustive scalar feasibility oracle independent of pylcm's feasibility code.
 
-For every subject the oracle enumerates the full cartesian product of the regime's
+For every agent the oracle enumerates the full cartesian product of the regime's
 declared action-grid points and calls the user's constraint functions one scalar
 combination at a time. No vmap, no jit and no engine helper is involved, so the
 oracle can arbitrate the vectorized kernel.
@@ -36,11 +36,11 @@ def exhaustive_scalar_feasibility(
     initial_conditions: pd.DataFrame,
     params: UserParams,
 ) -> np.ndarray:
-    """Return the per-subject feasibility mask by brute-force scalar enumeration.
+    """Return the per-agent feasibility mask by brute-force scalar enumeration.
 
     Args:
         model: The unsolved model whose user regimes declare the constraints.
-        initial_conditions: One row per subject with `regime_name`, `age` and the
+        initial_conditions: One row per agent with `regime_name`, `age` and the
             regime's states in user vocabulary (categorical labels allowed).
         params: User parameters as passed to `Model.simulate`.
 
@@ -52,7 +52,7 @@ def exhaustive_scalar_feasibility(
     for _, row in initial_conditions.iterrows():
         regime_name = str(row["regime_name"])
         regime = model.user_regimes[regime_name]
-        subject = _subject_kwargs(model=model, regime_name=regime_name, row=row)
+        agent = _agent_kwargs(model=model, regime_name=regime_name, row=row)
         action_grids = {
             name: _grid_points(grid) for name, grid in regime.actions.items()
         }
@@ -66,7 +66,7 @@ def exhaustive_scalar_feasibility(
                     _call_scalar(
                         func=constraint,
                         available={
-                            **subject,
+                            **agent,
                             **combo,
                             **_params_for(
                                 params=params,
@@ -93,7 +93,7 @@ def _grid_points(grid: ActionEntry) -> list[int | float]:
     raise NotImplementedError(msg)
 
 
-def _subject_kwargs(
+def _agent_kwargs(
     *, model: Model, regime_name: RegimeName, row: pd.Series
 ) -> dict[ReferenceName, UserParamsLeaf]:
     regime = model.user_regimes[regime_name]

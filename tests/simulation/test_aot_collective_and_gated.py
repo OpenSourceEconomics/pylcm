@@ -1,9 +1,9 @@
 """Runtime-compiled simulation of collective and gated-edge models.
 
-Simulation prepares programs from the population and live argument shapes on each
-call. Collective continuation values retain their trailing member axis; a
-consented exit moves a subject within the period into the collective target.
-Repeated calls reuse the compiled decisions and exit programs for those shapes.
+Simulation prepares programs from the population and live argument shapes on each call.
+Collective continuation values retain their trailing member axis; a consented
+composition action moves an agent within the period into the collective target. Repeated
+calls reuse the compiled decisions and composition action programs for those shapes.
 
 Both models below are small enough that every simulated value is an exact
 arithmetic expression, stated in the factory's docstring.
@@ -29,7 +29,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.exits import Exit, ExitTarget
+from lcm.composition_actions import CompositionAction, Destination
 from lcm.typing import DiscreteAction, DiscreteState, FloatND, ScalarInt
 from tests.collective_fixtures import (
     TWO_MEMBER_V_PERIOD_0,
@@ -38,19 +38,19 @@ from tests.collective_fixtures import (
 )
 from tests.conftest import DECIMAL_PRECISION
 
-_N_SUBJECTS = 2
+_N_AGENTS = 2
 
 _DISCOUNT_FACTOR = 0.95
 
-# Each subject's own period-0 value at education low and high, in subject order:
+# Each agent's own period-0 value at education low and high, in agent order:
 # her married value where she moves, her single value where she stays.
 CONSENT_OWN_VALUE_PERIOD_0 = (5.85, 13.4)
 
-# The regime each subject acts in at period 0: the low-education subject moves
+# The regime each agent acts in at period 0: the low-education agent moves
 # into the couple, the high-education one stays single.
 CONSENT_PERIOD_0_REGIMES = ("married", "single")
 
-# The regime each subject occupies at period 1: the low-education subject
+# The regime each agent occupies at period 1: the low-education agent
 # stays married, the high-education one keeps her outside option.
 CONSENT_PERIOD_1_REGIMES = ("married_terminal", "single_terminal")
 
@@ -60,12 +60,12 @@ def test_collective_model_simulates_under_the_runtime_program(
 ) -> None:
     """A collective runtime program keeps both members' values.
 
-    Each subject's period-0 row carries both members' values at the
+    Each agent's period-0 row carries both members' values at the
     household argmax, and they are the same numbers the model solves to.
     """
     compiled = _capture_compiled_dispatches(monkeypatch=monkeypatch)
     model, params = make_two_member_model()
-    initial_conditions = make_couple_initial_conditions(n_subjects=_N_SUBJECTS)
+    initial_conditions = make_couple_initial_conditions(n_agents=_N_AGENTS)
 
     result = model.simulate(
         params=params,
@@ -83,13 +83,13 @@ def test_collective_model_simulates_under_the_runtime_program(
     )
 
 
-def test_consent_exit_model_simulates_under_the_runtime_program(
+def test_consent_composition_action_model_simulates_under_the_runtime_program(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A consented-exit runtime program keeps its values and routes.
+    """A consented-composition action runtime program keeps its values and routes.
 
-    Each subject's own period-0 value is her married value where both consent
-    and her single value where she does not, and each subject then acts in the
+    Each agent's own period-0 value is her married value where both consent
+    and her single value where she does not, and each agent then acts in the
     regime the consent selects.
     """
     compiled = _capture_compiled_dispatches(monkeypatch=monkeypatch)
@@ -97,8 +97,8 @@ def test_consent_exit_model_simulates_under_the_runtime_program(
     params = {"discount_factor": _DISCOUNT_FACTOR}
     initial_conditions = {
         "education": jnp.array([Education.low, Education.high], dtype=jnp.int32),
-        "age": jnp.zeros(_N_SUBJECTS),
-        "regime_id": jnp.full(_N_SUBJECTS, ConsentRegimeId.single, dtype=jnp.int32),
+        "age": jnp.zeros(_N_AGENTS),
+        "regime_id": jnp.full(_N_AGENTS, ConsentRegimeId.single, dtype=jnp.int32),
     }
 
     result = model.simulate(
@@ -124,21 +124,21 @@ def test_consent_exit_model_simulates_under_the_runtime_program(
     assert tuple(routed) == CONSENT_PERIOD_1_REGIMES
 
 
-def test_exit_programs_reuse_compilation_for_a_repeated_population(
+def test_composition_action_programs_reuse_compilation_for_a_repeated_population(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A second forward call reuses the exit programs the first one built.
+    """A second forward call reuses the composition action programs the first one built.
 
-    The consented exit is evaluated inside the compiled simulation program,
-    so the first call must compile and the repeated one must dispatch the same
+    The consented composition action is evaluated inside the compiled simulation
+    program, so the first call must compile and the repeated one must dispatch the same
     executables without tracing, lowering or compiling anything.
     """
     model = _make_consent_model()
     params = {"discount_factor": _DISCOUNT_FACTOR}
     initial_conditions = {
         "education": jnp.array([Education.low, Education.high], dtype=jnp.int32),
-        "age": jnp.zeros(_N_SUBJECTS),
-        "regime_id": jnp.full(_N_SUBJECTS, ConsentRegimeId.single, dtype=jnp.int32),
+        "age": jnp.zeros(_N_AGENTS),
+        "regime_id": jnp.full(_N_AGENTS, ConsentRegimeId.single, dtype=jnp.int32),
     }
     solution = model.solve(params=params, log_level="debug")
     compiled = _capture_compiled_dispatches(monkeypatch=monkeypatch)
@@ -224,7 +224,7 @@ class ConsentRegimeId:
 
 
 def _make_consent_model() -> Model:
-    """Build a singleton source whose consented exit enters a collective target.
+    """Build a one-member source that can enter a collective target by consent.
 
     `single` may move at age 0 into the two-member `married` as its member `f`,
     whose counterparty `m` compares with the value of `partner`. Both consent
@@ -234,10 +234,10 @@ def _make_consent_model() -> Model:
 
     - `married` then `married_terminal`, both payoffs increasing in `work`, so work
       wins: $V^f = 3 w (1 + 0.95) = (5.85, 11.7)$ and $V^m = (1.95, 3.9)$.
-    - `single` without its exit: $V = w + 0.95 (2 + 10 e) = (2.9, 13.4)$.
+    - `single` without its composition action: $V = w + 0.95 (2 + 10 e) = (2.9, 13.4)$.
     - `partner`: $V = -10 + 0.95 (2 + 10 e) = (-8.1, 1.4)$, so he always consents.
     - She consents where $5.85 > 2.9$, at low education, and not where
-      $11.7 < 13.4$, at high: the low subject moves, the high one stays.
+      $11.7 < 13.4$, at high: the low agent moves, the high one stays.
 
     Returns:
         The model.
@@ -248,9 +248,9 @@ def _make_consent_model() -> Model:
         state_transitions={"education": fixed_transition("education")},
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _single_utility},
-        exit=Exit(
-            targets={
-                "self": ExitTarget(
+        composition_action=CompositionAction(
+            destinations={
+                "self": Destination(
                     regime="married",
                     role="f",
                     projection={"education": _identity_education},
@@ -336,5 +336,5 @@ def _married_utility_m(*, education: DiscreteState, work: DiscreteAction) -> Flo
 
 
 def _identity_education(education: DiscreteState) -> DiscreteState:
-    """Education is carried unchanged into the regime the exit reads or enters."""
+    """Keep education unchanged in the regime the composition action reads or enters."""
     return education

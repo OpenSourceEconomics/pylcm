@@ -105,7 +105,7 @@ else:
     result = subprocess.run(
         ["jq", "-r", query], input=json.dumps(data), text=True, check=False,
     )
-    sys.exit(result.returncode)
+    sys.composition_action(result.returncode)
 """
 
 

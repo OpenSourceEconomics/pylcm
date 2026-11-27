@@ -112,7 +112,7 @@ def test_public_gpu_lower_period_candidate_matches_solve(
         if _candidate_address(manifest=manifest) in dispatched
         and dispatched_keys[_candidate_address(manifest=manifest)]
         == manifest["primary_key"]
-        and _candidate_address(manifest=manifest)[1] < model.n_periods - 1
+        and _candidate_address(manifest=manifest)[1] < model.n_steps - 1
         and bool(manifest["primary_donated"]) == (retention is ResultRetention.VALUES)
     ]
     assert matches, "No genuine primary continuation candidate reached dispatch"

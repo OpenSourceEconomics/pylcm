@@ -63,6 +63,7 @@ from lcm.solvers import (
 )
 from lcm.typing import (
     Float1D,
+    Float2D,
     FloatND,
     ReferenceName,
     RegimeName,
@@ -70,7 +71,7 @@ from lcm.typing import (
     ScalarInt,
     StateName,
 )
-from tests.test_solver_api_out_of_tree import TerminalPublisher
+from tests.test_solver_api_out_of_tree import TerminalPublisher, dead_utility
 
 
 class _DonatedKwargs(TypedDict):
@@ -148,9 +149,9 @@ def _next_wealth(wealth: ScalarFloat) -> ScalarFloat:
 
 def _counting_value(
     *, wealth: Float1D, count: FloatND
-) -> tuple[Float1D, _ReadableCounter[FloatND]]:
+) -> tuple[Float2D, _ReadableCounter[FloatND]]:
     """Publish wealth plus the running count, and the count incremented."""
-    return wealth + count, _ReadableCounter(count=count + 1.0)
+    return (wealth + count)[:, None], _ReadableCounter(count=count + 1.0)
 
 
 # keyword-only-exempt: library-callback=lcm.solvers.CoreProgram.argument_builder
@@ -167,7 +168,7 @@ def _counting_arguments(
 class _CountingCore(Protocol):
     def __call__(
         self, *, wealth: Float1D, count: FloatND
-    ) -> tuple[Float1D, _ReadableCounter[FloatND]]: ...
+    ) -> tuple[Float2D, _ReadableCounter[FloatND]]: ...
 
 
 class _CountingArguments(TypedDict):
@@ -304,7 +305,7 @@ def _model(*, solver_class: type[_CounterSolver]) -> Model:
         | {
             "dead": Regime(
                 states={"wealth": _WEALTH},
-                functions={"utility": lambda wealth: 0.0 * wealth},
+                functions={"utility": dead_utility},
                 solver=TerminalPublisher(parent=solver_class()),
             )
         },

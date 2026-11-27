@@ -2,51 +2,24 @@
 
 Cold-path machinery used only when `validate_V` detects NaN in a solved
 value-function array. `_build_compute_intermediates_per_period` produces
-one JIT-compiled closure per period that productmaps
-`get_compute_intermediates` over the full state-action space and fuses
-the compute step with on-device reductions (`_wrap_with_reduction`).
+one JIT-compiled closure per period that productmaps the intermediates of the
+period's action kernel (`get_intermediates`) over the full state-action space
+and fuses the compute step with on-device reductions (`_wrap_with_reduction`).
 The fused output is consumed by `_enrich_with_diagnostics` in
 `_lcm.utils.error_handling`.
 """
 
-from collections.abc import Callable, Hashable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import cast, no_type_check
+from typing import no_type_check
 
 import jax
 import jax.numpy as jnp
 
-from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.engine import StateActionSpace
-from _lcm.reachability import PhaseReachability
-from _lcm.regime_building.age_normalization import (
-    AgeGridSchedule,
-    continuation_group_key,
-    continuation_info_lookup,
-    expand_groups_to_periods,
-    group_periods_by_key,
-    resolve_periodized_nodes,
-)
-from _lcm.regime_building.Q_and_F import (
-    GatedContinuationSchedule,
-    Intermediates,
-    get_compute_intermediates,
-    partition_continuation_targets,
-)
-from _lcm.regime_building.V import VInterpolationInfo
-from _lcm.transition_plans import TargetTransitionPlans
-from _lcm.typing import (
-    ActionName,
-    ConstraintFunctionsMapping,
-    EconFunction,
-    EconFunctionsMapping,
-    QualifiedName,
-    RegimeName,
-    RegimeTransitionFunction,
-    StateName,
-    TransitionFunctionsMapping,
-)
+from _lcm.regime_building.Q_and_F import Intermediates, get_intermediates
+from _lcm.typing import ActionName, QAndFFunction, RegimeName, StateName
 from _lcm.utils.dispatchers import productmap
 from lcm.typing import BoolND, FloatND, IntND
 
@@ -60,156 +33,47 @@ type DiagnosticReductions = MappingProxyType[
 
 def _build_compute_intermediates_per_period(
     *,
-    active_periods: tuple[int, ...],
-    flat_param_names: frozenset[QualifiedName],
-    phase_reachability: PhaseReachability,
-    source_regime_name: RegimeName,
-    functions: EconFunctionsMapping,
-    constraints: ConstraintFunctionsMapping,
-    transitions: TransitionFunctionsMapping,
-    transition_plans: TargetTransitionPlans,
-    compute_regime_transition_probs: RegimeTransitionFunction,
-    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    Q_and_F_functions: MappingProxyType[int, QAndFFunction],
     state_action_space: StateActionSpace,
     enable_jit: bool,
-    koopmans_aggregator: EconFunction,
-    certainty_equivalent: CertaintyEquivalent | None,
-    grid_schedule: AgeGridSchedule | None = None,
-    period_to_regime_v_interp: (
-        MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
-    ) = None,
-    gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
-        MappingProxyType({})
-    ),
 ) -> MappingProxyType[int, Callable[..., DiagnosticReductions]]:
     """Build diagnostic intermediate closures for each period of a non-terminal regime.
 
-    Each closure fuses a productmap over the full state-action space with
-    on-device reductions (matching the `max_Q_over_a` productmap pattern)
-    and is JIT-compiled. Periods sharing the same target configuration
-    reuse a single scalar closure. The caller is responsible for handling
-    terminal regimes. Used in the error path when `validate_V` detects NaN.
+    Each closure fuses a productmap of the period's kernel intermediates over the
+    full state-action space with on-device reductions and is JIT-compiled.
+    Periods sharing one kernel share one closure. The caller builds the kernels
+    for the full value arrays the diagnostics are handed, so no co-mapped axis has
+    been sliced off them.
 
     Args:
-        flat_param_names: Frozenset of flat parameter names for the regime.
-        phase_reachability: Static graph for the solution phase.
-        source_regime_name: Regime whose continuation targets are requested.
-        functions: Immutable mapping of internal user functions.
-        constraints: Immutable mapping of constraint functions.
-        transitions: Immutable mapping of regime-to-regime transition
-            functions.
-        transition_plans: Immutable mapping of target regime names to their
-            transition laws.
-        compute_regime_transition_probs: Regime transition probability
-            function for the current regime.
-        regime_to_v_interpolation_info: Mapping of regime names to
-            V-interpolation info.
+        Q_and_F_functions: Immutable mapping of period to the action kernel the
+            diagnostics recompute.
         state_action_space: State-action space used for productmap sizing.
         enable_jit: Whether to JIT-compile the fused closure.
-        koopmans_aggregator: The regime's Bellman aggregator, with params
-            renamed to qnames.
-        certainty_equivalent: Nonlinear certainty equivalent declared by the
-            regime, or `None`.
-        gated_continuations: Mapping of target regime names to the gated-edge
-            continuation spec that target's leaf is read under. Empty for a
-            regime without gated edges.
 
     Returns:
         Immutable mapping of period index to fused closure.
 
     """
-    state_batch_sizes = dict.fromkeys(state_action_space.state_names, 0)
-
-    # `continuation_info` mirrors `_build_Q_and_F_per_period.continuation_info` so a
-    # NaN diagnostic recomputes intermediates on the *same* period-specific target
-    # grid the primary solve used, not the representative grid. `group_key` mirrors
-    # `_build_Q_and_F_per_period.group_key`'s grouping, the stateless-target
-    # partition included — a diagnostic that grouped periods differently from the
-    # solve would explain a value the solve never computed.
-    continuation_info = continuation_info_lookup(
-        period_to_regime_v_interp=period_to_regime_v_interp,
-        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-    )
-    group_key = continuation_group_key(
-        phase_reachability=phase_reachability,
-        source_regime_name=source_regime_name,
-        functions=functions,
-        constraints=constraints,
-        grid_schedule=grid_schedule,
-        continuation_info=continuation_info,
-        gated_reference_regimes=MappingProxyType(
-            {
-                target: schedule.reference_regimes
-                for target, schedule in gated_continuations.items()
-            }
-        ),
-    )
-
-    configs = group_periods_by_key(active_periods=active_periods, key=group_key)
-
     variable_names = (
         *state_action_space.state_names,
         *state_action_space.action_names,
     )
-    built: dict[
-        tuple[tuple[RegimeName, ...], Hashable], Callable[..., DiagnosticReductions]
-    ] = {}
-    for key, periods in configs.items():
-        targets = key[0]
-        representative_period = periods[0]
-        stateful_targets, scalar_targets = partition_continuation_targets(
-            targets=targets,
-            regime_to_v_interpolation_info=continuation_info(representative_period),
-        )
-        # The combiner compiled for the period the source LANDS in, matching
-        # `_build_Q_and_F_per_period`: a leg fallback on an age-specialized
-        # grid is read on that period's nodes.
-        landing_period = representative_period + 1
-        period_gated_continuations = MappingProxyType(
-            {
-                target: schedule.by_period[landing_period]
-                for target, schedule in gated_continuations.items()
-                if landing_period in schedule.by_period
-            }
-        )
-        compute_intermediates = get_compute_intermediates(
-            flat_param_names=flat_param_names,
-            functions=cast(
-                "EconFunctionsMapping",
-                resolve_periodized_nodes(
-                    mapping=functions, period=representative_period
-                ),
-            ),
-            constraints=cast(
-                "ConstraintFunctionsMapping",
-                resolve_periodized_nodes(
-                    mapping=constraints, period=representative_period
-                ),
-            ),
-            period_targets=stateful_targets,
-            scalar_targets=scalar_targets,
-            transitions=transitions,
-            transition_plans=transition_plans,
-            compute_regime_transition_probs=compute_regime_transition_probs,
-            regime_to_v_interpolation_info=continuation_info(representative_period),
-            koopmans_aggregator=koopmans_aggregator,
-            certainty_equivalent=certainty_equivalent,
-            # The diagnostics are handed the full value arrays and map over
-            # every state, so none of the solve kernel's co-mapped axes have
-            # been sliced off here.
-            co_map_state_names=(),
-            gated_continuations=period_gated_continuations,
-        )
+    built: dict[int, Callable[..., DiagnosticReductions]] = {}
+    for kernel in Q_and_F_functions.values():
+        if id(kernel) in built:
+            continue
         mapped = _productmap_over_state_action_space(
-            func=compute_intermediates,
+            func=get_intermediates(Q_and_F=kernel),
             action_names=state_action_space.action_names,
             state_names=state_action_space.state_names,
-            state_batch_sizes=state_batch_sizes,
+            state_batch_sizes=dict.fromkeys(state_action_space.state_names, 0),
         )
         fused = _wrap_with_reduction(func=mapped, variable_names=variable_names)
-        built[key] = jax.jit(fused) if enable_jit else fused
-
-    return expand_groups_to_periods(grouped_periods=configs, built_by_group=built)
+        built[id(kernel)] = jax.jit(fused) if enable_jit else fused
+    return MappingProxyType(
+        {period: built[id(kernel)] for period, kernel in Q_and_F_functions.items()}
+    )
 
 
 def _wrap_with_reduction(
@@ -274,9 +138,9 @@ class _ReducedIntermediates:
         # the solver masks them before the max, so a NaN there never
         # propagates to V_arr — reporting it would conflate causes.
         nan_arrays: dict[str, FloatND] = {
-            "U_nan": jnp.isnan(U_arr).astype(float) * F_float,
-            "CE_nan": jnp.isnan(CE).astype(float) * F_float,
-            "Q_nan": jnp.isnan(Q_arr).astype(float) * F_float,
+            "U_nan": _nan_at_cell(values=U_arr, mask=F_float) * F_float,
+            "CE_nan": _nan_at_cell(values=CE, mask=F_float) * F_float,
+            "Q_nan": _nan_at_cell(values=Q_arr, mask=F_float) * F_float,
         }
 
         out: dict[str, FloatND | MappingProxyType[RegimeName, FloatND]] = {}
@@ -301,6 +165,15 @@ class _ReducedIntermediates:
             {k: jnp.mean(v) for k, v in regime_probs.items()}
         )
         return MappingProxyType(out)
+
+
+def _nan_at_cell(*, values: FloatND, mask: FloatND) -> FloatND:
+    """Return 1.0 where a cell's value is NaN, at the shape of the cell mask.
+
+    In a regime with several members, the values carry a trailing member axis
+    the mask does not. Such a cell counts as NaN where any member's value is.
+    """
+    return jnp.any(jnp.isnan(values).reshape(*mask.shape, -1), axis=-1).astype(float)
 
 
 def _productmap_over_state_action_space(

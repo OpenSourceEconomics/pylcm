@@ -1,12 +1,12 @@
-import itertools
-import math
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from functools import partial
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from jax import Array, device_put, devices, grad, jit, make_jaxpr, vmap
+from jax import Array, device_put, devices, jit, make_jaxpr
+from jax.core import ShapedArray
 from jax.extend.core import Jaxpr
 from numpy.testing import assert_array_equal
 
@@ -18,111 +18,13 @@ from _lcm.regime_building.argmax import (
     _float_order_key,
     _move_axes_to_back,
     _reduce_float_keys,
-    argmax_and_max,
     max_and_smallest_id,
 )
-from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
-from _lcm.solution.collective_action_reduction import COLLECTIVE_HARD_MAX_REDUCTION
-from tests.solution._reduced_maximum_probe import (
-    count_equalities_with_a_reduced_maximum,
+from _lcm.regime_building.collective import (
+    collective_argmax_and_readout,
+    decider_choice,
 )
-
-# Test jitted functions
-jitted_argmax = jit(argmax_and_max, static_argnames=["axis", "initial"])
-
-
-def test_argmax_1d_with_mask() -> None:
-    a = jnp.arange(10.0)
-    mask = jnp.array([1, 0, 0, 1, 1, 0, 0, 0, 0, 0], dtype=bool)
-    _argmax, _max = jitted_argmax(a=a, where=mask, initial=-1.0)
-    assert _argmax == 4
-    assert _max == 4
-
-
-def test_argmax_2d_with_mask() -> None:
-    a = jnp.arange(10.0).reshape(2, 5)
-    mask = jnp.array([1, 0, 0, 1, 1, 0, 0, 0, 0, 0], dtype=bool).reshape(a.shape)
-
-    _argmax, _max = jitted_argmax(a=a, axis=None, where=mask, initial=-1.0)
-    assert _argmax == 4
-    assert _max == 4
-
-    _argmax, _max = jitted_argmax(a=a, axis=0, where=mask, initial=-1.0)
-    assert_array_equal(_argmax, jnp.array([0, 0, 0, 0, 0]))
-    assert_array_equal(_max, jnp.array([0, -1, -1, 3, 4]))
-
-    _argmax, _max = jitted_argmax(a=a, axis=1, where=mask, initial=-1.0)
-    assert_array_equal(_argmax, jnp.array([4, 0]))
-    assert_array_equal(_max, jnp.array([4, -1]))
-
-
-def test_argmax_1d_no_mask() -> None:
-    a = jnp.arange(10.0)
-    _argmax, _max = jitted_argmax(a=a)
-    assert _argmax == 9
-    assert _max == 9
-
-
-def test_argmax_2d_no_mask() -> None:
-    a = jnp.arange(10.0).reshape(2, 5)
-
-    _argmax, _max = jitted_argmax(a=a, axis=None)
-    assert _argmax == 9
-    assert _max == 9
-
-    _argmax, _max = jitted_argmax(a=a, axis=0)
-    assert_array_equal(_argmax, jnp.array([1, 1, 1, 1, 1]))
-    assert_array_equal(_max, jnp.array([5, 6, 7, 8, 9]))
-
-    _argmax, _max = jitted_argmax(a=a, axis=1)
-    assert_array_equal(_argmax, jnp.array([4, 4]))
-    assert_array_equal(_max, jnp.array([4, 9]))
-
-    _argmax, _max = jitted_argmax(a=a, axis=(0, 1))
-    assert _argmax == 9
-    assert _max == 9
-
-
-def test_argmax_3d_no_mask() -> None:
-    a = jnp.arange(24.0).reshape(2, 3, 4)
-
-    _argmax, _max = jitted_argmax(a=a, axis=None)
-    assert _argmax == 23
-    assert _max == 23
-
-    _argmax, _max = jitted_argmax(a=a, axis=0)
-    assert_array_equal(_argmax, jnp.array([[1, 1, 1, 1], [1, 1, 1, 1], [1, 1, 1, 1]]))
-    assert_array_equal(
-        _max,
-        jnp.array([[12, 13, 14, 15], [16, 17, 18, 19], [20, 21, 22, 23]]),
-    )
-
-    _argmax, _max = jitted_argmax(a=a, axis=1)
-    assert_array_equal(_argmax, jnp.array([[2, 2, 2, 2], [2, 2, 2, 2]]))
-    assert_array_equal(_max, jnp.array([[8, 9, 10, 11], [20, 21, 22, 23]]))
-
-    _argmax, _max = jitted_argmax(a=a, axis=2)
-    assert_array_equal(_argmax, jnp.array([[3, 3, 3], [3, 3, 3]]))
-    assert_array_equal(_max, jnp.array([[3, 7, 11], [15, 19, 23]]))
-
-    _argmax, _max = jitted_argmax(a=a, axis=(0, 1))
-    assert_array_equal(_argmax, jnp.array([5, 5, 5, 5]))
-    assert_array_equal(_max, jnp.array([20, 21, 22, 23]))
-
-    _argmax, _max = jitted_argmax(a=a, axis=(0, 2))
-    assert_array_equal(_argmax, jnp.array([7, 7, 7]))
-    assert_array_equal(_max, jnp.array([15, 19, 23]))
-
-    _argmax, _max = jitted_argmax(a=a, axis=(1, 2))
-    assert_array_equal(_argmax, jnp.array([11, 11]))
-    assert_array_equal(_max, jnp.array([11, 23]))
-
-
-def test_argmax_with_ties() -> None:
-    # If multiple maxima exist, argmax will select the first index.
-    a = jnp.zeros((2, 2, 2))
-    _argmax, _ = jitted_argmax(a=a, axis=(1, 2))
-    assert_array_equal(_argmax, jnp.array([0, 0]))
+from _lcm.solution.collective_action_reduction import COLLECTIVE_HARD_MAX_REDUCTION
 
 
 def test_move_axes_to_back_1d() -> None:
@@ -178,196 +80,6 @@ def test_flatten_last_n_axes_3d() -> None:
     assert_array_equal(got, a.reshape(8))
 
 
-def test_argmax_and_max_identity_is_not_matched_against_a_separately_reduced_max() -> (
-    None
-):
-    """The argmax and the max it reports come out of one reduction."""
-    a = jnp.array([[-1650.6389, -14.865698, -14.989168, -7401.933]])
-    where = jnp.array([[True, True, True, False]])
-
-    jaxpr = make_jaxpr(
-        partial(argmax_and_max, axis=1, initial=-jnp.inf),
-    )(a=a, where=where).jaxpr
-
-    assert count_equalities_with_a_reduced_maximum(jaxpr) == 0
-
-
-@pytest.mark.parametrize(
-    ("a", "where", "expected_index"),
-    [
-        ([10.0, 3.0, 7.0], [False, True, True], 2),
-        ([-jnp.inf, 4.0, 9.0, 9.0], [True, True, True, True], 2),
-        ([0.5, 8.0, -1.0], [False, True, False], 1),
-    ],
-    ids=["position-zero-infeasible", "tie-after-position-zero", "single-feasible"],
-)
-def test_argmax_and_max_index_attains_the_reported_max_under_jit_and_vmap(
-    *, a: list[float], where: list[bool], expected_index: int
-) -> None:
-    """In a batch, each row's index attains its max; it is never a stray zero."""
-    rows = jnp.asarray([a, a], dtype=jnp.float32)
-    masks = jnp.asarray([where, where])
-
-    index, _ = vmap(
-        jit(partial(argmax_and_max, axis=0, initial=-jnp.inf)),
-    )(a=rows, where=masks)
-
-    assert_array_equal(index, jnp.array([expected_index, expected_index]))
-
-
-def _admitted_maximum(*, value: float, feasible: bool, initial: float | None) -> float:
-    """Maximum over one candidate and `initial`, written out without tensor code.
-
-    An infeasible candidate is not admitted; `initial` always is, and a missing
-    `initial` stands for minus infinity. A feasible NaN candidate is the result.
-    """
-    if feasible and math.isnan(value):
-        return math.nan
-    admitted = [value] if feasible else []
-    admitted.append(-math.inf if initial is None else initial)
-    return max(admitted)
-
-
-def _expected_one_candidate_maxima(
-    *,
-    a: np.ndarray,
-    where: np.ndarray | bool | list[list[bool]] | None,
-    initial: float | None,
-) -> np.ndarray:
-    feasible = np.broadcast_to(True if where is None else np.asarray(where), a.shape)
-    expected = np.empty_like(a)
-    for cell in np.ndindex(a.shape):
-        expected[cell] = _admitted_maximum(
-            value=float(a[cell]), feasible=bool(feasible[cell]), initial=initial
-        )
-    return expected
-
-
-ONE_CANDIDATE_CASES = list(
-    itertools.product(
-        [-8.0, -0.0, 0.0, 1.0, 8.0, float("nan")],
-        [None, False, True],
-        [None, -math.inf, -2.0, 0.0, 2.0],
-    )
-)
-
-
-@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
-@pytest.mark.parametrize("axis", [None, ()], ids=["scalar", "empty-axes"])
-@pytest.mark.parametrize(("value", "where", "initial"), ONE_CANDIDATE_CASES)
-def test_argmax_and_max_of_one_candidate_respects_where_and_initial(
-    *,
-    compiled: bool,
-    axis: tuple[int, ...] | None,
-    value: float,
-    where: bool | None,
-    initial: float | None,
-) -> None:
-    """A cell with no axis to reduce has one candidate, admitted only where feasible."""
-    reduce = jitted_argmax if compiled else argmax_and_max
-    a = jnp.asarray(value)
-    mask = None if where is None else jnp.asarray(where)
-    index, maximum = reduce(a=a, axis=axis, where=mask, initial=initial)
-    expected = _expected_one_candidate_maxima(
-        a=np.asarray(a), where=where, initial=initial
-    )
-    assert_array_equal(
-        np.stack([np.asarray(index, dtype=float), np.asarray(maximum)]),
-        np.stack([np.zeros_like(expected), expected]),
-    )
-
-
-@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
-@pytest.mark.parametrize("where", [None, False, True, [[True, False, True]]], ids=str)
-def test_argmax_and_max_over_empty_axes_keeps_each_cell_and_broadcasts_where(
-    *, compiled: bool, where: bool | list[list[bool]] | None
-) -> None:
-    """Reducing over no axes leaves every cell, each masked by its own feasibility."""
-    reduce = jitted_argmax if compiled else argmax_and_max
-    a = jnp.asarray([[-2.0, 1.0, 4.0], [7.0, float("nan"), -0.0]])
-    mask = None if where is None else jnp.asarray(where)
-    index, maximum = reduce(a=a, axis=(), where=mask, initial=0.0)
-    expected = _expected_one_candidate_maxima(a=np.asarray(a), where=where, initial=0.0)
-    assert_array_equal(
-        np.stack([np.asarray(index, dtype=float), np.asarray(maximum)]),
-        np.stack([np.zeros_like(expected), expected]),
-    )
-
-
-@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
-def test_argmax_and_max_of_mapped_scalar_cells_masks_at_the_feasibility_boundary(
-    *, compiled: bool
-) -> None:
-    """Mapped over cells, each scalar candidate is admitted exactly when `x >= 0`.
-
-    The smallest normal numbers on either side of zero sit at the boundary;
-    subnormals are avoided because the backend may flush them to zero.
-    """
-    tiny = jnp.finfo(jnp.asarray(0.0).dtype).tiny
-    x = jnp.asarray([-1.0, 0.0, 1.0, -tiny, tiny])
-    assert bool(x[3] < 0)
-    assert bool(x[4] > 0)
-
-    # keyword-only-exempt: library-callback=jax.vmap
-    def one_cell(value: Array, feasible: Array) -> tuple[Array, Array]:
-        return argmax_and_max(a=value, where=feasible, initial=-jnp.inf)
-
-    mapped = vmap(one_cell)
-    reduce = jit(mapped) if compiled else mapped
-    index, maximum = reduce(x + 2, x >= 0)
-    expected = _expected_one_candidate_maxima(
-        a=np.asarray(x + 2), where=np.asarray(x >= 0), initial=-math.inf
-    )
-    assert_array_equal(
-        np.stack([np.asarray(index, dtype=float), np.asarray(maximum)]),
-        np.stack([np.zeros_like(expected), expected]),
-    )
-
-
-@pytest.mark.parametrize(
-    ("feasible", "initial", "expected"),
-    [
-        (False, -math.inf, 0.0),
-        (True, -math.inf, 1.0),
-        (False, -7.0, 0.0),
-        (True, -7.0, 1.0),
-        (True, 3.0, 0.0),
-        (True, 1.0, 0.5),
-    ],
-)
-def test_argmax_and_max_of_one_candidate_differentiates_like_jnp_max(
-    *, feasible: bool, initial: float, expected: float
-) -> None:
-    """The candidate's derivative is 1 above `initial`, 0 below, 1/2 at a tie."""
-    derivative = grad(
-        lambda x: argmax_and_max(a=x, where=jnp.asarray(feasible), initial=initial)[1]
-    )
-    assert_array_equal(np.asarray(derivative(jnp.asarray(1.0))), expected)
-
-
-@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
-@pytest.mark.parametrize("feasible", [False, True])
-def test_singleton_action_axis_includes_finite_initial(
-    *, compiled: bool, feasible: bool
-) -> None:
-    """A finite floor competes with each singleton action, including masked actions."""
-    a = jnp.asarray([[-8.0], [-2.0], [4.0]])
-    reduce = jitted_argmax if compiled else argmax_and_max
-    index, maximum = reduce(a=a, axis=1, where=jnp.asarray(feasible), initial=-2.0)
-    expected = [-2, -2, 4] if feasible else [-2, -2, -2]
-    assert_array_equal(maximum, expected)
-    assert_array_equal(index, [0, 0, 0])
-
-
-@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
-def test_empty_action_axis_returns_initial(*, compiled: bool) -> None:
-    """An empty action grid returns the floor and the no-action index zero."""
-    reduce = jitted_argmax if compiled else argmax_and_max
-    index, maximum = reduce(a=jnp.empty((2, 0)), axis=1, initial=-2.0)
-    assert_array_equal(index, [0, 0])
-    assert_array_equal(maximum, [-2.0, -2.0])
-
-
 @pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
 def test_singleton_pair_keeps_the_identity_of_the_winning_candidate(
     *, compiled: bool
@@ -404,36 +116,12 @@ def test_singleton_floor_preserves_subnormal_bits_and_identity(
     values = jnp.asarray(encoded.view(dtype))
     ids = jnp.full(values.shape, 7, dtype=jnp.int32)
     reduce = partial(max_and_smallest_id, initial=0.0)
-    public = partial(argmax_and_max, axis=1, initial=0.0)
     if compiled:
         reduce = jit(reduce)
-        public = jit(public)
     maximum, identity = reduce(values=values, ids=ids)
-    index, public_maximum = public(a=values)
     expected_bits = np.asarray(magnitudes + [0] * (len(magnitudes) + 2), dtype=uint)
     assert_array_equal(np.asarray(maximum).view(uint), expected_bits)
-    assert_array_equal(np.asarray(public_maximum).view(uint), expected_bits)
     assert_array_equal(identity, [7] * 4 + [NO_ID] * 4 + [7, 7])
-    assert_array_equal(index, np.zeros(len(encoded), dtype=np.int32))
-
-
-@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
-def test_paired_float_order_retains_nan_mask_and_infinity_conventions(
-    *, compiled: bool
-) -> None:
-    """Masked NaNs do not compete; admitted NaNs poison value and reset index."""
-    values = jnp.asarray([[-jnp.inf, jnp.inf], [jnp.nan, 1.0], [1.0, jnp.nan]])
-    reduce = partial(argmax_and_max, axis=1, initial=-jnp.inf)
-    if compiled:
-        reduce = jit(reduce)
-    index, maximum = reduce(
-        a=values, where=jnp.asarray([[True, True], [False, True], [True, False]])
-    )
-    assert_array_equal(index, [1, 1, 0])
-    assert_array_equal(maximum, [jnp.inf, 1, 1])
-    index, maximum = reduce(a=values)
-    assert_array_equal(index, [1, 0, 0])
-    assert_array_equal(maximum, [jnp.inf, jnp.nan, jnp.nan])
 
 
 def test_paired_combiner_does_not_recompute_float_order_keys() -> None:
@@ -493,17 +181,8 @@ def _keys_read_by_reduction_and_tie_mask(values: Array) -> tuple[Array, Array]:
 _ACTION_IDS = jnp.arange(4, dtype=jnp.int32)
 
 _PAIRED_REDUCTION_CALLERS = {
-    "argmax_and_max": lambda v: argmax_and_max(
-        a=v, axis=1, where=v > 0, initial=-jnp.inf
-    ),
     "max_and_smallest_id": lambda v: max_and_smallest_id(
         values=v, ids=jnp.broadcast_to(_ACTION_IDS, v.shape), initial=0.0
-    ),
-    "action_reduction": lambda v: HARD_MAX_REDUCTION.add(
-        accumulator=HARD_MAX_REDUCTION.initialize(value_template=v[:, 0]),
-        values=v,
-        feasible=v > 0,
-        action_ids=_ACTION_IDS,
     ),
     "collective_action_reduction": lambda v: COLLECTIVE_HARD_MAX_REDUCTION.add(
         accumulator=COLLECTIVE_HARD_MAX_REDUCTION.initialize(member_template=v[:, :2]),
@@ -527,7 +206,15 @@ _PAIRED_REDUCTION_CALLERS = {
 
 @pytest.mark.parametrize(
     ("caller", "expected"),
-    [*((name, [1]) for name in _PAIRED_REDUCTION_CALLERS), ("second-reader", [2])],
+    [
+        *(
+            # The collective block is reduced, then merged into the accumulator
+            # by a second paired reduction over the two partial winners.
+            (name, [1, 1] if name == "collective_action_reduction" else [1])
+            for name in _PAIRED_REDUCTION_CALLERS
+        ),
+        ("second-reader", [2]),
+    ],
 )
 def test_float_order_keys_have_exactly_one_reader(
     *, caller: str, expected: list[int]
@@ -604,3 +291,71 @@ def test_paired_max_rejects_unsupported_float_widths(
         reduce = jit(reduce)
     with pytest.raises(ValueError, match="16-, 32- and 64-bit IEEE"):
         reduce(values=values, ids=jnp.asarray([7, 3], dtype=jnp.int32))
+
+
+def _dense_household_readout(v: Array) -> tuple[Array, ...]:
+    index, values, dissolution = collective_argmax_and_readout(
+        member_Q={"f": v, "m": -v},
+        feasibility=v > 0,
+        weights={"f": 0.5, "m": 0.5},
+        action_axes=(1,),
+    )
+    return index, values["f"], values["m"], dissolution
+
+
+def _decider_choice(v: Array) -> tuple[Array, ...]:
+    return decider_choice(
+        Q=jnp.stack([v, -v], axis=-1),
+        feasibility=v > 0,
+        weights=jnp.asarray([1.0, 0.0]),
+        n_discrete_action_axes=1,
+    )
+
+
+def _streamed_household_block(v: Array) -> tuple[Array, ...]:
+    return COLLECTIVE_HARD_MAX_REDUCTION.add(
+        accumulator=COLLECTIVE_HARD_MAX_REDUCTION.initialize(member_template=v[:, :2]),
+        objectives=v,
+        member_values=jnp.stack([v, -v], axis=-1),
+        feasible=v > 0,
+        action_ids=_ACTION_IDS,
+    )
+
+
+_REDUCTION_PRIMITIVES = frozenset(
+    {"reduce", "reduce_or", "reduce_and", "reduce_max", "reduce_min", "reduce_sum"}
+)
+
+
+def _action_axis_reductions(*, jaxpr: Jaxpr, n_actions: int) -> int:
+    """Count the reductions over a trailing action axis of `n_actions` elements."""
+    count = 0
+    for nested in _nested_jaxprs(jaxpr):
+        for eqn in nested.eqns:
+            shape = cast("ShapedArray", eqn.invars[0].aval).shape if eqn.invars else ()
+            count += (
+                eqn.primitive.name in _REDUCTION_PRIMITIVES
+                and shape[-1:] == (n_actions,)
+                and len(shape) - 1
+                in eqn.params.get("dimensions", eqn.params.get("axes", ()))
+            )
+    return count
+
+
+@pytest.mark.parametrize(
+    "reducer",
+    [_dense_household_readout, _decider_choice, _streamed_household_block],
+    ids=["dense-readout", "decider-choice", "streamed-block"],
+)
+def test_household_reduction_reads_the_action_values_once(
+    *, reducer: Callable[[Array], tuple[Array, ...]]
+) -> None:
+    """One reduction over the action axis carries the NaN rule and feasibility.
+
+    A second reduction over the actions, for the NaN rule or for whether any
+    action is feasible, is a second reader of the action values, and the
+    compiler then stores them for every cell and action.
+    """
+    jaxpr = make_jaxpr(reducer)(jnp.linspace(-1.0, 1.0, 12).reshape(3, 4)).jaxpr
+
+    assert _action_axis_reductions(jaxpr=jaxpr, n_actions=4) == 1

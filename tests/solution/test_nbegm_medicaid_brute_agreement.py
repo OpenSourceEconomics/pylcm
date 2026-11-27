@@ -23,7 +23,7 @@ from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargi
 from lcm.exceptions import NBEGMCaseError
 from lcm.regime import Regime
 from lcm.solvers import NBEGM, GridSearch
-from lcm.typing import FloatND, RegimeName, UserFunction, UserParams
+from lcm.typing import ContinuousState, FloatND, RegimeName, UserFunction, UserParams
 from tests.test_models import nbegm_medicaid_toy as toy
 
 _LIQUID = np.linspace(0.1, 30.0, 120)
@@ -83,7 +83,7 @@ def test_grid_search_executes_the_output_declared_by_case_pieces() -> None:
     )
 
 
-def test_nbegm_matches_brute_through_a_recurring_jump_every_age():
+def test_nbegm_matches_brute_through_a_recurring_jump_every_age() -> None:
     """The case-piece solve equals brute at every working age, jump and all.
 
     The Medicaid jump recurs in every period's continuation, so each period both
@@ -107,7 +107,7 @@ def test_nbegm_matches_brute_through_a_recurring_jump_every_age():
         )
 
 
-def test_nbegm_matches_brute_in_the_constrained_low_asset_region():
+def test_nbegm_matches_brute_in_the_constrained_low_asset_region() -> None:
     """Where the borrowing constraint binds, the case-piece value tracks brute.
 
     At low liquid wealth the agent consumes all cash-on-hand and saves nothing.
@@ -130,7 +130,7 @@ def test_nbegm_matches_brute_in_the_constrained_low_asset_region():
         )
 
 
-def test_nbegm_matches_brute_multiperiod_without_a_value_jump():
+def test_nbegm_matches_brute_multiperiod_without_a_value_jump() -> None:
     """With equal subsidies (no jump) the case-piece solve equals brute every age.
 
     This isolates the multi-period EGM propagation through the masking-and-envelope
@@ -152,7 +152,7 @@ def test_nbegm_matches_brute_multiperiod_without_a_value_jump():
         )
 
 
-def test_nbegm_reproduces_the_medicaid_value_drop_at_the_boundary():
+def test_nbegm_reproduces_the_medicaid_value_drop_at_the_boundary() -> None:
     """Value drops as assets cross the Medicaid limit, matching the brute oracle.
 
     Just below the limit the agent receives the larger subsidy, so the value is
@@ -166,8 +166,8 @@ def test_nbegm_reproduces_the_medicaid_value_drop_at_the_boundary():
     above = np.argmin(np.abs(_LIQUID - 8.5))
     nbegm_alive = np.asarray(nbegm[period]["alive"])
     brute_alive = np.asarray(brute[period]["alive"])
-    nbegm_drop = float(nbegm_alive[below] - nbegm_alive[above])
-    brute_drop = float(brute_alive[below] - brute_alive[above])
+    nbegm_drop = float(nbegm_alive[below, 0] - nbegm_alive[above, 0])
+    brute_drop = float(brute_alive[below, 0] - brute_alive[above, 0])
     assert nbegm_drop > 0.0
     np.testing.assert_allclose(nbegm_drop, brute_drop, atol=2e-2)
 
@@ -231,7 +231,7 @@ def _build_model(
     )
 
 
-def test_nbegm_rejects_a_piece_with_a_hidden_where():
+def test_nbegm_rejects_a_piece_with_a_hidden_where() -> None:
     """A smooth piece hiding `jnp.where` fails the smoothness gate at model build."""
 
     predicate = lcm.case_boundary(
@@ -240,11 +240,11 @@ def test_nbegm_rejects_a_piece_with_a_hidden_where():
     )
 
     @lcm.piece(output="subsidy", when=predicate)
-    def subsidy_when(subsidy_high):
+    def subsidy_when(subsidy_high: float) -> FloatND:
         return jnp.where(subsidy_high > 0.0, subsidy_high, 0.0)
 
     @lcm.piece(output="subsidy", otherwise=predicate)
-    def subsidy_otherwise(subsidy_low):
+    def subsidy_otherwise(subsidy_low: float) -> FloatND:
         return jnp.asarray(subsidy_low)
 
     with pytest.raises(NBEGMCaseError, match="smoothness gate"):
@@ -263,11 +263,11 @@ def _build_nbegm_with_boundary(
     predicate = lcm.case_boundary(condition=condition, kind=kind)
 
     @lcm.piece(output="subsidy", when=predicate)
-    def subsidy_when(subsidy_high):
+    def subsidy_when(subsidy_high: float) -> FloatND:
         return jnp.asarray(subsidy_high)
 
     @lcm.piece(output="subsidy", otherwise=predicate)
-    def subsidy_otherwise(subsidy_low):
+    def subsidy_otherwise(subsidy_low: float) -> FloatND:
         return jnp.asarray(subsidy_low)
 
     return _build_model(
@@ -291,12 +291,14 @@ def _build_nbegm_with_boundary(
         lcm.ref("liquid") < 10.0,
     ],
 )
-def test_nbegm_accepts_each_ordering_and_operand_direction(condition):
+def test_nbegm_accepts_each_ordering_and_operand_direction(
+    condition: lcm.Condition,
+) -> None:
     """All four orderings lower consistently in either operand direction."""
     _build_nbegm_with_boundary(condition=condition, kind="jump")
 
 
-def test_nbegm_accepts_a_state_independent_computed_threshold():
+def test_nbegm_accepts_a_state_independent_computed_threshold() -> None:
     """A named DAG output may compute the boundary from flat parameters."""
 
     def limit(raw_limit: float) -> FloatND:
@@ -307,11 +309,11 @@ def test_nbegm_accepts_a_state_independent_computed_threshold():
     )
 
     @lcm.piece(output="subsidy", when=predicate)
-    def subsidy_when(subsidy_high):
+    def subsidy_when(subsidy_high: float) -> FloatND:
         return jnp.asarray(subsidy_high)
 
     @lcm.piece(output="subsidy", otherwise=predicate)
-    def subsidy_otherwise(subsidy_low):
+    def subsidy_otherwise(subsidy_low: float) -> FloatND:
         return jnp.asarray(subsidy_low)
 
     _build_model(
@@ -322,7 +324,7 @@ def test_nbegm_accepts_a_state_independent_computed_threshold():
     )
 
 
-def test_nbegm_rejects_a_non_jump_boundary_kind():
+def test_nbegm_rejects_a_non_jump_boundary_kind() -> None:
     """Case boundaries declare `kind='jump'`; a continuous kink is rejected."""
     with pytest.raises(NBEGMCaseError, match="declare `kind='jump'`"):
         _build_nbegm_with_boundary(
@@ -331,7 +333,7 @@ def test_nbegm_rejects_a_non_jump_boundary_kind():
         )
 
 
-def test_nbegm_rejects_a_boundary_on_another_variable():
+def test_nbegm_rejects_a_boundary_on_another_variable() -> None:
     """The case boundary must partition the declared liquid state."""
     with pytest.raises(NBEGMCaseError, match="must compare the liquid state"):
         _build_nbegm_with_boundary(
@@ -340,7 +342,7 @@ def test_nbegm_rejects_a_boundary_on_another_variable():
         )
 
 
-def test_nbegm_rejects_a_state_dependent_subsidy_piece():
+def test_nbegm_rejects_a_state_dependent_subsidy_piece() -> None:
     """A subsidy piece reading the liquid state is rejected — pieces are pure.
 
     The one-asset core evaluates each piece from the flat params alone, so a piece
@@ -355,11 +357,11 @@ def test_nbegm_rejects_a_state_dependent_subsidy_piece():
     )
 
     @lcm.piece(output="subsidy", when=predicate)
-    def subsidy_when(*, liquid, subsidy_high):
+    def subsidy_when(*, liquid: ContinuousState, subsidy_high: float) -> FloatND:
         return subsidy_high * jnp.ones_like(liquid)
 
     @lcm.piece(output="subsidy", otherwise=predicate)
-    def subsidy_otherwise(subsidy_low):
+    def subsidy_otherwise(subsidy_low: float) -> FloatND:
         return jnp.asarray(subsidy_low)
 
     with pytest.raises(NBEGMCaseError, match="read only the flat params"):
@@ -370,7 +372,7 @@ def test_nbegm_rejects_a_state_dependent_subsidy_piece():
         )
 
 
-def test_nbegm_rejects_a_piece_whose_helper_hides_a_where():
+def test_nbegm_rejects_a_piece_whose_helper_hides_a_where() -> None:
     """A piece with a clean AST but a `jnp.where` in a called helper is rejected.
 
     The AST gate sees only an innocuous helper call, so a piece can smuggle a
@@ -378,7 +380,7 @@ def test_nbegm_rejects_a_piece_whose_helper_hides_a_where():
     hidden `select_n`, failing the model build.
     """
 
-    def hidden_subsidy_helper(subsidy_high):
+    def hidden_subsidy_helper(subsidy_high: float) -> FloatND:
         return jnp.where(subsidy_high > 0.0, subsidy_high, 0.0)
 
     predicate = lcm.case_boundary(
@@ -387,11 +389,11 @@ def test_nbegm_rejects_a_piece_whose_helper_hides_a_where():
     )
 
     @lcm.piece(output="subsidy", when=predicate)
-    def subsidy_when(subsidy_high):
+    def subsidy_when(subsidy_high: float) -> FloatND:
         return hidden_subsidy_helper(subsidy_high)
 
     @lcm.piece(output="subsidy", otherwise=predicate)
-    def subsidy_otherwise():
+    def subsidy_otherwise() -> FloatND:
         return jnp.asarray(0.0)
 
     with pytest.raises(NBEGMCaseError, match="smoothness gate"):

@@ -125,7 +125,7 @@ def test_common_path_decisions_match_policy_lookup() -> None:
     )
 
 
-def test_individual_paths_keep_original_subject_order_and_late_entry() -> None:
+def test_individual_paths_keep_original_agent_order_and_late_entry() -> None:
     model = _model()
     paths = jnp.array([[1.0, -1.0, 2.0], [-1.0, 1.0, -2.0]])
     result = model.simulate(
@@ -138,7 +138,7 @@ def test_individual_paths_keep_original_subject_order_and_late_entry() -> None:
     df = result.to_dataframe(use_categorical_codes=True).reset_index()
     for _, row in df.query("regime_name == 'alive'").iterrows():
         np.testing.assert_array_equal(
-            row["shock"], paths[int(row["subject_id"]), int(row["period"])]
+            row["shock"], paths[int(row["agent_id"]), int(row["period"])]
         )
         np.testing.assert_array_equal(row["choice"], row["shock"])
 
@@ -149,7 +149,7 @@ def test_individual_paths_keep_original_subject_order_and_late_entry() -> None:
         (jnp.array([0.0, 0.0]), "shock.*period 2"),
         (jnp.array([0.0, jnp.nan, 0.0]), "shock.*period 1"),
         (jnp.array([0.0, jnp.inf, 0.0]), "shock.*period 1"),
-        (jnp.zeros((3, 3)), "shock.*subjects"),
+        (jnp.zeros((3, 3)), "shock.*agents"),
         (jnp.zeros((2, 3, 1)), "shock.*shape"),
     ],
 )
@@ -311,7 +311,7 @@ def test_given_paths_preserve_dated_transition_bindings(
         initial_nodes={(20, 21): "alive"},
         fixed_params=schedule if kind == "fixed" else {},
         execution_config=ExecutionConfig(
-            axis_widths={"subject": 3}, device_memory_bytes=budget
+            axis_widths={"agent": 3}, device_memory_bytes=budget
         ),
         regimes={
             "alive": Regime(
@@ -353,15 +353,15 @@ def test_given_paths_preserve_dated_transition_bindings(
         seed=7,
         log_level="off",
     ).to_dataframe(use_categorical_codes=True)
-    for subject, expected in ((0, [1.0, 0.1, 2.3, 3.1]), (1, [2.0, 4.2, 5.0])):
+    for agent, expected in ((0, [1.0, 0.1, 2.3, 3.1]), (1, [2.0, 4.2, 5.0])):
         np.testing.assert_allclose(
-            frame.loc[frame["subject_id"] == subject, "wealth"], expected, rtol=1e-5
+            frame.loc[frame["agent_id"] == agent, "wealth"], expected, rtol=1e-5
         )
 
 
 @pytest.mark.parametrize("width", [1, 3])
 @pytest.mark.parametrize("budget", [None, 100_000_000])
-def test_given_paths_survive_budgeted_subject_chunks(
+def test_given_paths_survive_budgeted_agent_chunks(
     *, width: int, budget: int | None
 ) -> None:
     paths = np.array(
@@ -380,7 +380,7 @@ def test_given_paths_survive_budgeted_subject_chunks(
     }
     model = _model(
         execution=ExecutionConfig(
-            axis_widths={"subject": width}, device_memory_bytes=budget
+            axis_widths={"agent": width}, device_memory_bytes=budget
         )
     )
     solution = model.solve(params={"discount_factor": 0.9}, log_level="off")
@@ -398,7 +398,7 @@ def test_given_paths_survive_budgeted_subject_chunks(
             .reset_index()
         )
         rows = df.query("regime_name == 'alive'")
-        expected = paths[rows.subject_id.to_numpy(), rows.period.to_numpy()]
+        expected = paths[rows.agent_id.to_numpy(), rows.period.to_numpy()]
         np.testing.assert_array_equal(rows.shock, expected)
         np.testing.assert_array_equal(rows.choice, expected)
 
@@ -607,15 +607,15 @@ def _fractional_entry_model(
 
 
 def _alive_records(df: pd.DataFrame) -> np.ndarray:
-    """Rows of (subject, period, shock, choice) for the alive regime, sorted."""
+    """Rows of (agent, period, shock, choice) for the alive regime, sorted."""
     alive = (
         df.reset_index()
         .query("regime_name == 'alive'")
-        .sort_values(["subject_id", "period"])
+        .sort_values(["agent_id", "period"])
     )
     return np.column_stack(
         [
-            alive["subject_id"].to_numpy(dtype=float),
+            alive["agent_id"].to_numpy(dtype=float),
             alive["period"].to_numpy(dtype=float),
             alive["shock"].to_numpy(dtype=float),
             alive["choice"].to_numpy(dtype=float),
@@ -628,10 +628,10 @@ def _expected_alive_records(
 ) -> np.ndarray:
     """Myopic oracle: the unique optimum on the action grid equals the shock."""
     rows = []
-    for subject, start in enumerate(starts):
+    for agent, start in enumerate(starts):
         for period in range(int(start), n_periods):
-            level = history[period] if history.ndim == 1 else history[subject, period]
-            rows.append((subject, period, level, level))
+            level = history[period] if history.ndim == 1 else history[agent, period]
+            rows.append((agent, period, level, level))
     return np.array(rows, dtype=float)
 
 
@@ -640,9 +640,7 @@ _ENTRY_HISTORY = np.array([[-1.0, 1.0, 2.0], [2.0, -2.0, 1.0], [1.0, -1.0, -2.0]
 
 @pytest.fixture(scope="module")
 def fractional_entry_model() -> Model:
-    return _fractional_entry_model(
-        execution=ExecutionConfig(axis_widths={"subject": 2})
-    )
+    return _fractional_entry_model(execution=ExecutionConfig(axis_widths={"agent": 2}))
 
 
 @pytest.mark.parametrize("one_ulp_below", [False, True], ids=["exact", "one-ulp-below"])
@@ -696,9 +694,7 @@ def test_fractional_late_entry_column_holds_across_execution_routes(
     """Eager execution, budgets and input containers keep entry dating."""
     model = _fractional_entry_model(
         enable_jit=enable_jit,
-        execution=ExecutionConfig(
-            axis_widths={"subject": 2}, device_memory_bytes=budget
-        ),
+        execution=ExecutionConfig(axis_widths={"agent": 2}, device_memory_bytes=budget),
     )
     ages = np.array([_LATE_AGE, 20.0, _LATE_AGE])
     if container == "dataframe":
@@ -779,10 +775,10 @@ def _phased_model(
     enable_jit: bool = False,
     budget: int | None = None,
 ) -> Model:
-    """Agents believe they move to `believed`; simulated subjects move to `dead`.
+    """Agents believe they move to `believed`; simulated agents move to `dead`.
 
     With `partial_visit`, `alive` is also valued at age 21 although no simulated
-    subject is alive then.
+    agent is alive then.
     """
     if partial_visit:
         ages = AgeGrid(start=20, inclusive_stop=22, step="Y")
@@ -814,7 +810,7 @@ def _phased_model(
         edges=edges,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(
-            axis_widths={"subject": 3}, device_memory_bytes=budget
+            axis_widths={"agent": 3}, device_memory_bytes=budget
         ),
     )
 
@@ -828,11 +824,11 @@ def _phased_initial() -> dict[str, jax.Array]:
 
 
 def _phased_panel(df: pd.DataFrame) -> np.ndarray:
-    """Rows of (subject, period, regime id, shock, choice), NaN where undeclared."""
-    frame = df.reset_index().sort_values(["subject_id", "period"])
+    """Rows of (agent, period, regime id, shock, choice), NaN where undeclared."""
+    frame = df.reset_index().sort_values(["agent_id", "period"])
     return np.column_stack(
         [
-            frame["subject_id"].to_numpy(dtype=float),
+            frame["agent_id"].to_numpy(dtype=float),
             frame["period"].to_numpy(dtype=float),
             frame["regime_name"]
             .astype(str)
@@ -847,9 +843,9 @@ def _phased_panel(df: pd.DataFrame) -> np.ndarray:
 def _expected_phased_panel(entry_shocks: np.ndarray) -> np.ndarray:
     """Alive at period 0 choosing the supplied shock, then dead at period 1."""
     rows = []
-    for subject, level in enumerate(entry_shocks):
-        rows.append((subject, 0, 0.0, level, level))
-        rows.append((subject, 1, 2.0, np.nan, np.nan))
+    for agent, level in enumerate(entry_shocks):
+        rows.append((agent, 0, 0.0, level, level))
+        rows.append((agent, 1, 2.0, np.nan, np.nan))
     return np.array(rows, dtype=float)
 
 
@@ -878,7 +874,7 @@ def test_phased_history_skips_regime_valued_only_in_solve(
     )
 
 
-def test_phased_individual_history_keeps_subject_rows() -> None:
+def test_phased_individual_history_keeps_agent_rows() -> None:
     levels = np.array([-1.0, 1.0, -2.0, 2.0, 0.0])
     df = (
         _phased_model(enable_jit=True, budget=100_000_000)
@@ -934,7 +930,7 @@ def lognormal_belief_model() -> Model:
 def test_column_used_only_by_a_solve_only_regime_is_not_validated(
     *, lognormal_belief_model: Model, ignored: float | None, order: tuple[int, ...]
 ) -> None:
-    """A same-named shock in a regime no subject visits does not constrain paths."""
+    """A same-named shock in a regime no agent visits does not constrain paths."""
     levels = np.array([-2.0, -1.0, 0.0, 1.0, 2.0])[list(order)]
     path = (
         levels[:, None]
@@ -1014,7 +1010,7 @@ def test_phased_local_draw_is_dated_at_the_destination_period(
         shocks={"cost_shock": _cost_shock()},
         enable_jit=True,
         execution_config=ExecutionConfig(
-            axis_widths={"subject": 3}, device_memory_bytes=budget
+            axis_widths={"agent": 3}, device_memory_bytes=budget
         ),
     )
     wealth = np.arange(2.0, 7.0)
@@ -1029,7 +1025,7 @@ def test_phased_local_draw_is_dated_at_the_destination_period(
         seed=7,
         log_level="off",
     ).to_dataframe(use_categorical_codes=True)
-    terminal = df.reset_index().query("period == 1").sort_values("subject_id")
+    terminal = df.reset_index().query("period == 1").sort_values("agent_id")
     np.testing.assert_array_equal(
         terminal[["regime_name", "wealth"]].to_numpy(),
         np.column_stack((np.full(5, "dead", dtype=object), wealth - 0.5)),
@@ -1076,7 +1072,7 @@ class PairHealth:
 
 
 def _pair_model(*, a: Regime, b: Regime) -> Model:
-    """Two regimes entered at age 20 that never exchange subjects."""
+    """Two regimes entered at age 20 that never exchange agents."""
     return Model(
         ages=AgeGrid(start=20, inclusive_stop=22, step="Y"),
         regime_id_class=PairRegimeId,
@@ -1090,11 +1086,11 @@ def _pair_model(*, a: Regime, b: Regime) -> Model:
 
 
 def _pair_panel(*, df: pd.DataFrame, column: str) -> np.ndarray:
-    """Return the `(subject, period)` panel of `column` in regimes `a` and `b`."""
+    """Return the `(agent, period)` panel of `column` in regimes `a` and `b`."""
     rows = (
         df.reset_index()
         .query("regime_name != 'dead'")
-        .sort_values(["subject_id", "period"])
+        .sort_values(["agent_id", "period"])
     )
     return rows[column].to_numpy().reshape(2, 2)
 
@@ -1120,8 +1116,8 @@ def _pair_initial(**states: jax.Array) -> dict[str, jax.Array]:
     }
 
 
-def test_paths_are_checked_against_each_subjects_own_regime_support() -> None:
-    """A value outside one regime's support is admissible for a subject in another."""
+def test_paths_are_checked_against_each_agents_own_regime_support() -> None:
+    """A value outside one regime's support is admissible for an agent in another."""
     paths = np.array([[0.5, -0.5, 0.0], [2.5, 2.0, 0.0]])
     df = (
         _uniform_pair_model()
@@ -1137,7 +1133,7 @@ def test_paths_are_checked_against_each_subjects_own_regime_support() -> None:
     np.testing.assert_array_equal(_pair_panel(df=df, column="shock"), paths[:, :2])
 
 
-def test_value_read_outside_the_subjects_own_regime_support_is_rejected() -> None:
+def test_value_read_outside_the_agents_own_regime_support_is_rejected() -> None:
     with pytest.raises(
         InvalidSimulationInputError, match=r"shock.*period 1 in regime 'a'"
     ):
@@ -1151,7 +1147,7 @@ def test_value_read_outside_the_subjects_own_regime_support_is_rejected() -> Non
 
 
 def test_unread_cell_of_a_late_entrant_may_be_missing() -> None:
-    """The period before a subject enters is never read, so NaN there is accepted."""
+    """The period before an agent enters is never read, so NaN there is accepted."""
     paths = np.array([[1.0, -1.0, 2.0], [np.nan, 1.0, -2.0]])
     df = (
         _model()
@@ -1166,7 +1162,7 @@ def test_unread_cell_of_a_late_entrant_may_be_missing() -> None:
         .reset_index()
         .query("regime_name == 'alive'")
     )
-    expected = paths[df["subject_id"].to_numpy(), df["period"].to_numpy()]
+    expected = paths[df["agent_id"].to_numpy(), df["period"].to_numpy()]
     np.testing.assert_array_equal(df["shock"], expected)
 
 
@@ -1179,8 +1175,8 @@ def _health_utility(health: DiscreteState) -> ScalarFloat:
     return health.astype(jnp.float32)
 
 
-def test_paths_seed_only_subjects_whose_regime_draws_the_state() -> None:
-    """A subject whose regime carries health deterministically keeps its entry."""
+def test_paths_seed_only_agents_whose_regime_draws_the_state() -> None:
+    """An agent whose regime carries health deterministically keeps its entry."""
     health = DiscreteGrid(category_class=PairHealth)
     model = _pair_model(
         a=Regime(
@@ -1263,10 +1259,6 @@ class TwoEntryRegimeId:
     dead: ScalarInt
 
 
-def _shock_utility(*, shock: ContinuousState) -> ScalarFloat:
-    return shock
-
-
 def _two_entry_model(
     *, enable_jit: bool = False, width: int = 1, budget: int | None = None
 ) -> Model:
@@ -1290,7 +1282,7 @@ def _two_entry_model(
         regime_id_class=TwoEntryRegimeId,
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(
-            axis_widths={"subject": width}, device_memory_bytes=budget
+            axis_widths={"agent": width}, device_memory_bytes=budget
         ),
         initial_nodes={20: ("short", "long", "dead")},
         regimes={
@@ -1315,7 +1307,7 @@ def _two_entry_initial(names: tuple[str, ...]) -> dict[str, jax.Array]:
 def _two_entry_expected_rows(
     *, names: tuple[str, ...], path: np.ndarray
 ) -> list[tuple[int, int, str, float | None]]:
-    """Enumerate each subject's literal trajectory and the level it reads."""
+    """Enumerate each agent's literal trajectory and the level it reads."""
     visits = {
         "short": ((0, "short"), (1, "dead")),
         "long": ((0, "long"), (1, "long"), (2, "dead")),
@@ -1323,14 +1315,14 @@ def _two_entry_expected_rows(
     }
     return [
         (
-            subject,
+            agent,
             period,
             regime,
             None
             if regime == "dead"
-            else float(path[period] if path.ndim == 1 else path[subject, period]),
+            else float(path[period] if path.ndim == 1 else path[agent, period]),
         )
-        for subject, name in enumerate(names)
+        for agent, name in enumerate(names)
         for period, regime in visits[name]
     ]
 
@@ -1348,12 +1340,12 @@ def _two_entry_observed_rows(
         )
         .to_dataframe(use_categorical_codes=True)
         .reset_index()
-        .sort_values(["subject_id", "period"])
+        .sort_values(["agent_id", "period"])
     )
     return [
-        (int(subject), int(period), regime, None if regime == "dead" else float(shock))
-        for subject, period, regime, shock in zip(
-            frame.subject_id, frame.period, frame.regime_name, frame.shock, strict=True
+        (int(agent), int(period), regime, None if regime == "dead" else float(shock))
+        for agent, period, regime, shock in zip(
+            frame.agent_id, frame.period, frame.regime_name, frame.shock, strict=True
         )
     ]
 
@@ -1363,7 +1355,7 @@ def _two_entry_observed_rows(
 def test_history_ending_where_the_population_stops_reading_simulates(
     *, individual: bool, route: str
 ) -> None:
-    """A history may end where every actual subject stops reading the shock.
+    """A history may end where every actual agent stops reading the shock.
 
     Another regime the simulation graph allows at entry would read further, but
     nobody occupies it.

@@ -9,7 +9,7 @@ import jax.numpy as jnp
 from _lcm.policy_queries import PolicyAnswer
 from _lcm.typing import PytreeValue
 from _lcm.utils.functools import call_with_declared_arguments
-from lcm.exits import ExitRole
+from lcm.composition_actions import MemberName
 from lcm.typing import (
     Bool1D,
     BoolND,
@@ -41,13 +41,19 @@ class RenegotiationQueries:
         *,
         arguments: Mapping[ReferenceName, PytreeValue],
         outside: Float1D,
+        undefined: Bool1D,
         active: BoolND,
     ) -> tuple[IntND, BoolND]:
-        """Return the selected node index and whether the pair stays."""
+        """Return the selected node index and whether the pair stays.
+
+        A member whose destination has no feasible action (`undefined`) accepts
+        every node with a feasible action, whatever the rule's `tie`.
+        """
         answers = tuple(cast("PolicyAnswer", arguments[name]) for name in self.operands)
         values = jnp.stack(tuple(answer[0] for answer in answers))
         support = jnp.stack(tuple(answer[2] for answer in answers))
         willing = values >= outside if self.tie == "stay" else values > outside
+        willing |= undefined
         willing &= support[:, None]
         incumbent = jnp.asarray(arguments[self.state], dtype=jnp.int32)
         current = willing[incumbent]
@@ -67,19 +73,20 @@ class RenegotiationQueries:
 
 
 @dataclass(frozen=True, kw_only=True)
-class SettlementQueries:
-    """Read the settlement nearest the default that the stayer accepts."""
+class TransferQueries:
+    """Read the transfer nearest the default that the stayer accepts."""
 
     points: tuple[float, ...]
-    """Candidate settlements, increasing in favour of the first member."""
+    """Candidate transfers, increasing in favour of the first member."""
     default: Callable[..., PytreeValue]
-    """Source-context default settlement, clipped to the candidates' range."""
-    targets: tuple[Mapping[ExitRole, tuple[str, int | None]], ...]
+    """Source-context default transfer, clipped to the candidates' range."""
+    targets: tuple[Mapping[MemberName, tuple[str, int]], ...]
     """Per candidate, each member's outside read and destination member index."""
-    adjustments: tuple[Mapping[ExitRole, Callable[..., PytreeValue]], ...]
-    """Per candidate, each member's source-context adjustment at that settlement."""
+    adjustments: tuple[Mapping[MemberName, Callable[..., PytreeValue]], ...]
+    """Per candidate, each member's source-context adjustment at that transfer."""
     tie: Literal["stay", "leave"]
-    """Whether the member who wants to leave still leaves when indifferent."""
+    """What a member prefers when its stay value equals the value of its outside
+    option."""
 
     def select(
         self,
@@ -91,28 +98,25 @@ class SettlementQueries:
         supported: Bool1D,
         default: ScalarFloat,
     ) -> tuple[IntND, BoolND, BoolND]:
-        """Return the accepted settlement and whether the pair separates there.
+        """Return the accepted transfer and whether the pair separates there.
 
         Row 0 of `outside` and `supported` is the default and row `1 + k` candidate
         `k`; the returned index counts the same rows. Only a pair in which exactly
-        one member refuses at the default settles. The other member, the stayer,
-        accepts separation where its outside value is at least its stay value,
-        whatever the rule's `tie`, and every destination is supported. The
-        settlement is the first of these that the stayer accepts:
+        one member refuses at the default separates at a candidate transfer. A
+        member prefers its outside option when the value of that option is larger
+        than its stay value, or equal under `tie="leave"`. The other member, the
+        stayer, accepts separation where it prefers its outside option and every
+        destination is supported. Willing to stay at the default, it never accepts
+        there, so the transfer is the accepted candidate nearest the default
+        strictly on the stayer's side. The pair separates there if the member who
+        wants to leave prefers its outside option.
 
-        - the default, at distance zero: the stayer, willing to stay there, is
-          exactly indifferent, which happens only under `tie="stay"`;
-        - the candidate nearest the default strictly on the stayer's side.
-
-        The pair separates there if the member who wants to leave still gains under
-        `tie`, as it always does at the default.
-
-        Also returns whether every outside value the decision reads is resolved.
-        `resolved` holds this per candidate and member; the caller checks the
-        default's. A pair in which not exactly one member refuses reads no candidate.
-        Otherwise the decision reads the stayer's value at every supported candidate
-        on its side up to the accepted one, or all of them when none accepts, and the
-        leaver's value at the accepted one.
+        Also returns whether every value of an outside option the decision reads
+        is resolved. `resolved` holds this per candidate and member; the caller
+        checks the default's. A pair in which not exactly one member refuses reads
+        no candidate. Otherwise the decision reads the stayer's value at every
+        supported candidate on its side up to the accepted one, or all of them when
+        none accepts, and the leaver's value at the accepted one.
         """
         candidates = jnp.asarray(self.points)
         points = jnp.concatenate((jnp.reshape(default, (1,)), candidates))
@@ -124,12 +128,9 @@ class SettlementQueries:
                 jnp.where(stayer == 0, candidates > default, candidates < default),
             )
         )
-        accepts = side & supported & (outside[:, stayer] >= inside[stayer])
-        gains = (
-            outside[:, leaver] > inside[leaver]
-            if self.tie == "stay"
-            else outside[:, leaver] >= inside[leaver]
-        )
+        prefers = outside > inside if self.tie == "stay" else outside >= inside
+        accepts = side & supported & prefers[:, stayer]
+        gains = prefers[:, leaver]
         distance = jnp.abs(points - default)
         ranked = jnp.where(accepts, distance, jnp.inf)
         nearest = jnp.argmin(ranked)
@@ -146,7 +147,7 @@ class SettlementQueries:
 
 @dataclass(frozen=True, kw_only=True)
 class ClippedDefault:
-    """Evaluate the default settlement and clip it to the candidates' range."""
+    """Evaluate the default transfer and clip it to the candidates' range."""
 
     function: Callable[..., PytreeValue]
     """Bound source-context default."""
@@ -160,13 +161,13 @@ class ClippedDefault:
             call_with_declared_arguments(function=self.function, operands=operands)
         )
         if value.shape != ():
-            raise ValueError("A settlement default must be scalar.")
+            raise ValueError("A transfer default must be scalar.")
         return jnp.clip(value, self.low, self.high)
 
 
 @dataclass(frozen=True, kw_only=True)
-class FixedSettlement:
-    """Bind one candidate settlement without a free model parameter."""
+class FixedTransfer:
+    """Bind one candidate transfer without a free model parameter."""
 
     value: float
 

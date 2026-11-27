@@ -80,7 +80,7 @@ class MockRegime(UserRegime):
         # Match UserRegime's defaults for fields MockRegime callers don't touch
         object.__setattr__(self, "derived_categoricals", MappingProxyType({}))
         object.__setattr__(self, "joint_transitions", MappingProxyType({}))
-        object.__setattr__(self, "exit", None)
+        object.__setattr__(self, "composition_action", None)
         object.__setattr__(self, "description", "")
 
     # keyword-only-exempt: primary-argument=phase

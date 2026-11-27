@@ -1,5 +1,6 @@
 """A plain EGM row values its reconstructed action at the declared-law landing."""
 
+import functools
 import math
 from collections.abc import Sequence
 from typing import cast
@@ -133,7 +134,9 @@ def test_parent_values_the_reconstructed_action_through_its_nonlinear_law(
         "saving": {"koopmans_aggregator": {"discount_factor": 0.5}},
         "done": {},
     }
-    got = np.asarray(model.solve(params=params, log_level="off").values[0]["saving"])
+    got = np.asarray(model.solve(params=params, log_level="off").values[0]["saving"])[
+        ..., 0
+    ]
     # Terminal marginals at landings 1 and 7 are 1 and 1/7. The source law's
     # derivatives are 1 and 5, so Euler consumptions are 2 and 14/5.
     expected = []
@@ -178,7 +181,9 @@ def test_scalar_valuation_coverage_obeys_the_reconstructed_action_mask(
         model=model, params=params, regime_name="parent", period=0
     )
     assert isinstance(kernel, _EGMPeriodKernel)
-    guard = kernel.core_programs()["main"].function
+    program_function = kernel.core_programs()["main"].function
+    assert isinstance(program_function, functools.partial)
+    guard = program_function.keywords["_member_axis_core"]
     assert isinstance(guard, _RegimeMassGuardedCore)
     core = guard.core
     assert isinstance(core, _EGMCore)
@@ -257,7 +262,7 @@ def test_scalar_valuation_coverage_obeys_the_reconstructed_action_mask(
         else:
             solution = model.solve(params=params, runtime_checks=False, log_level="off")
             np.testing.assert_allclose(
-                solution.values[0]["parent"],
+                np.asarray(solution.values[0]["parent"])[..., 0],
                 np.log([0.1375, 2.475]),
                 rtol=100.0
                 * np.finfo(np.asarray(solution.values[0]["parent"]).dtype).eps,

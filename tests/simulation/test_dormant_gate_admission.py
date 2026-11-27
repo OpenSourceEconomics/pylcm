@@ -1,8 +1,8 @@
 """Budgeted admission derives gate requirements from the forward inventory.
 
-A registered gated regime that no subject can occupy owes no gate programs, so
+A registered gated regime that no agent can occupy owes no gate programs, so
 its declaration must not veto a memory-budgeted simulation of the regimes that
-subjects do occupy. A gated regime subjects can occupy still needs its compiled
+agents do occupy. A gated regime agents can occupy still needs its compiled
 gate stages.
 """
 
@@ -105,7 +105,7 @@ def _model(
         execution_config=(
             ExecutionConfig(
                 devices=(0,),
-                axis_widths={"subject": width},
+                axis_widths={"agent": width},
                 device_memory_bytes=2**30,
             )
             if budgeted
@@ -140,7 +140,7 @@ def _check_panel(*, result: SimulationResult) -> None:
         np.testing.assert_array_equal(
             np.asarray(record.states["wealth"]), [1.0, 1.5, 2.0]
         )
-        np.testing.assert_array_equal(np.asarray(record.V_arr), value)
+        np.testing.assert_array_equal(np.asarray(record.V_arr)[..., 0], value)
     for record in result.raw_results.get("latent", {}).values():
         assert not np.asarray(record.in_regime).any()
 
@@ -167,7 +167,7 @@ def exercise(
     for budgeted, model in models.items():
         solved[budgeted] = model.solve(params={"discount_factor": 0.5}, log_level="off")
         np.testing.assert_array_equal(
-            np.asarray(solved[budgeted].values[0]["main"]), [1.5, 2.25, 3.0]
+            np.asarray(solved[budgeted].values[0]["main"])[..., 0], [1.5, 2.25, 3.0]
         )
         if not promote:
             latent = model._regimes["latent"]

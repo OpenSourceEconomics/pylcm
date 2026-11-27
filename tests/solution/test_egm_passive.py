@@ -263,7 +263,7 @@ def _get_params(*, skill_level: float | None = None) -> UserParams:
     }
 
 
-def test_passive_state_matches_dense_brute_force():
+def test_passive_state_matches_dense_brute_force() -> None:
     """DC-EGM with an off-grid passive transition matches dense brute force.
 
     Both solvers share the wealth and skill grids; working moves skill off the
@@ -284,7 +284,7 @@ def test_passive_state_matches_dense_brute_force():
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["working_life"])
         dcegm_V = np.asarray(dcegm_solution[period]["working_life"])
-        assert brute_V.shape == dcegm_V.shape == (80, 7)
+        assert brute_V.shape == dcegm_V.shape == (80, 7, 1)
         np.testing.assert_allclose(
             dcegm_V[n_brute_unstable_nodes:, :],
             brute_V[n_brute_unstable_nodes:, :],
@@ -294,7 +294,7 @@ def test_passive_state_matches_dense_brute_force():
         )
 
 
-def test_on_node_passive_value_reproduces_skill_free_solution():
+def test_on_node_passive_value_reproduces_skill_free_solution() -> None:
     """A passive value landing exactly on a node reads that node's rows exactly.
 
     With an identity skill transition every child passive value is a grid

@@ -34,6 +34,7 @@ from _lcm.execution.value_transfer import (
     ValueInputChannel,
     ValueTransferKind,
 )
+from _lcm.regime_building.collective import ParetoWeights
 from _lcm.regime_building.max_Q_over_a import (
     get_max_Q_over_a,
     get_streaming_max_Q_over_a,
@@ -42,11 +43,12 @@ from _lcm.simulation import chunk_admission
 from _lcm.simulation.chunk_planning import SimulationChunkProfile
 from _lcm.simulation.operand_placement import _OperandValue
 from _lcm.simulation.residency import DeviceBufferFootprint
-from _lcm.simulation.simulate import SubjectChunkKwargs, SubjectChunkResults
+from _lcm.simulation.simulate import AgentChunkKwargs, AgentChunkResults
 from _lcm.typing import ArgumentTree, PytreeValue, ShapeDtypePytree
 from _lcm.variables import from_regime
 from lcm import (
     AgeGrid,
+    CollectiveUtility,
     DiscreteGrid,
     ExecutionConfig,
     InvariantBlockSchedule,
@@ -70,6 +72,7 @@ from lcm.typing import (
     BoolND,
     ContinuousAction,
     ContinuousState,
+    DiscreteAction,
     DiscreteState,
     FloatND,
     FunctionName,
@@ -86,6 +89,7 @@ from tests.conftest import (
     assert_general_values_agree,
 )
 from tests.simulation import test_type_grouped_simulation as grouped_simulation
+from tests.single_member import SELF, SELF_PARETO_WEIGHTS, with_member_axis
 from tests.test_continuous_assets_aca_vocabulary import (
     TAUCHEN_AND_LOG_NORMAL,
 )
@@ -105,13 +109,15 @@ class _MaxQArguments(TypedDict, closed=True):
     state_names: tuple[StateName, ...]
     cell_width_keyword: str
     untiled_state_names: tuple[StateName, ...]
+    members: tuple[str, ...]
+    pareto_weights: ParetoWeights
 
 
 class _DispatchArguments(TypedDict, closed=True):
     program: CoreProgram
     arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]
     period: int
-    n_subjects: int
+    n_agents: int
     residency: NotRequired[simulation_runtime.SimulationDispatchContext | None]
 
 
@@ -119,18 +125,18 @@ class _PrepareArguments(TypedDict, closed=True):
     program: CoreProgram
     arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree]
     period: int
-    n_subjects: int
+    n_agents: int
     widths: Mapping[str, int]
 
 
 class _ProfileArguments(TypedDict, closed=True):
-    n_subjects: int
+    n_agents: int
     widths: Mapping[str, int]
 
 
 class _PlacementArguments(TypedDict, closed=True):
     arguments: Mapping[str, _OperandValue]
-    subject_arg_names: tuple[ReferenceName, ...]
+    agent_arg_names: tuple[ReferenceName, ...]
     value_reads: tuple[ValueRead, ...]
     devices: tuple[jax.Device, ...]
     budget_bytes: NotRequired[int | None]
@@ -192,7 +198,7 @@ class _RegimeId:
 def _law(*, source: int) -> StochasticTransition:
     """Living regime `source` moves to `r0` / `r1` at age 0 and ends at age 1."""
 
-    def probabilities(age):
+    def probabilities(age: FloatND) -> FloatND:
         weight = 0.25 if source == 0 else 0.75
         return jnp.where(
             age < 1, jnp.array([weight, 1 - weight, 0]), jnp.array([0.0, 0.0, 1.0])
@@ -207,17 +213,22 @@ _EDGES = {
 }
 
 
-def _landing(*, assets, decision, pref_type, spousal_income):
+def _landing(
+    *,
+    assets: ContinuousState,
+    decision: DiscreteAction,
+    pref_type: DiscreteState,
+    spousal_income: DiscreteState,
+) -> FloatND:
     return 15 - assets + (decision - 1) + (pref_type - spousal_income + 1) / 4
 
 
-def _fixed_type_landing(*, assets, decision, pref_type: DiscreteState, spousal_income):
-    return _landing(
-        assets=assets,
-        decision=decision,
-        pref_type=pref_type,
-        spousal_income=spousal_income,
-    )
+def _next_assets(landing: FloatND) -> ContinuousState:
+    return landing
+
+
+def _next_spousal_income(spousal_income: DiscreteState) -> DiscreteState:
+    return (spousal_income + 2) % 3
 
 
 def _regime(
@@ -226,30 +237,38 @@ def _regime(
     identity: bool,
     fixed_type: bool = False,
     bounds: tuple[float, float] = (-4, 19),
+    household: bool = False,
 ) -> Regime:
     """A living regime whose savings land inside the closed asset `bounds`.
 
     Next-period assets mirror current assets around the middle of `bounds`, so
-    every grid node on `bounds` keeps a feasible decision.
+    every grid node on `bounds` keeps a feasible decision. A `household` has two
+    members whose utilities differ in the decision.
     """
     low, high = bounds
     shift = low + high - 15
-    landing = _fixed_type_landing if fixed_type else _landing
-    if shift:
-        base = landing
 
-        def landing(*, assets, decision, pref_type, spousal_income):
-            return shift + base(
-                assets=assets,
-                decision=decision,
-                pref_type=pref_type,
-                spousal_income=spousal_income,
-            )
+    def landing(
+        *,
+        assets: ContinuousState,
+        decision: DiscreteAction,
+        pref_type: DiscreteState,
+        spousal_income: DiscreteState,
+    ) -> FloatND:
+        return shift + _landing(
+            assets=assets,
+            decision=decision,
+            pref_type=pref_type,
+            spousal_income=spousal_income,
+        )
 
-        if fixed_type:
-            landing.__annotations__["pref_type"] = DiscreteState
-
-    def utility(*, assets, decision, pref_type, spousal_income):
+    def utility(
+        *,
+        assets: ContinuousState,
+        decision: DiscreteAction,
+        pref_type: DiscreteState,
+        spousal_income: DiscreteState,
+    ) -> FloatND:
         desired = ((pref_type + 2 * spousal_income + source) % 3) - 1
         return (
             -10
@@ -260,26 +279,42 @@ def _regime(
             + source / 2
         )
 
-    if fixed_type:
-        # The identity law is annotated from the grid, so every reader of the
-        # fixed type states the same annotation.
-        utility.__annotations__["pref_type"] = DiscreteState
+    def partner(
+        *,
+        assets: ContinuousState,
+        decision: DiscreteAction,
+        pref_type: DiscreteState,
+        spousal_income: DiscreteState,
+    ) -> FloatND:
+        own = utility(
+            assets=assets,
+            decision=decision,
+            pref_type=pref_type,
+            spousal_income=spousal_income,
+        )
+        return own + (decision - 1) / 8
+
+    def feasible(landing: FloatND) -> BoolND:
+        return (landing >= low) & (landing <= high)
+
+    def next_pref_type(pref_type: DiscreteState) -> DiscreteState:
+        return (pref_type + 1 + source) % 3
 
     return Regime(
         actions={"decision": DiscreteGrid(_Three)},
         functions={
-            "utility": utility,
-            "landing": landing,
+            "utility": CollectiveUtility(utilities={"a": utility, "b": partner})
+            if household
+            else utility,
+            "landing": landing if shift else _landing,
         },
-        constraints={"feasible": lambda landing: (landing >= low) & (landing <= high)},
+        constraints={"feasible": feasible},
         state_transitions={
-            "assets": fixed_transition("assets")
-            if identity
-            else lambda landing: landing,
+            "assets": fixed_transition("assets") if identity else _next_assets,
             "pref_type": fixed_transition("pref_type")
             if fixed_type
-            else lambda pref_type: (pref_type + 1 + source) % 3,
-            "spousal_income": lambda spousal_income: (spousal_income + 2) % 3,
+            else next_pref_type,
+            "spousal_income": _next_spousal_income,
         },
     )
 
@@ -297,20 +332,35 @@ def _model(
     fixed_type: bool = False,
     invariant_block_widths: dict[str, int] | None = None,
     schedule: InvariantBlockSchedule = InvariantBlockSchedule.PERIOD_MAJOR,
+    household: bool = False,
 ) -> Model:
+    def terminal(
+        *,
+        assets: ContinuousState,
+        pref_type: DiscreteState,
+        spousal_income: DiscreteState,
+    ) -> FloatND:
+        return -40 + pref_type + spousal_income / 4 - (assets - 5) ** 2 / 8
+
     return Model(
         regimes={
-            "r0": _regime(
-                source=0, identity=identity, fixed_type=fixed_type, bounds=bounds
-            ),
-            "r1": _regime(
-                source=1, identity=identity, fixed_type=fixed_type, bounds=bounds
-            ),
+            name: _regime(
+                source=source,
+                identity=identity,
+                fixed_type=fixed_type,
+                bounds=bounds,
+                household=household,
+            )
+            for source, name in enumerate(("r0", "r1"))
+        }
+        | {
             "terminal": Regime(
                 functions={
-                    "utility": lambda assets, pref_type, spousal_income: (
-                        -40 + pref_type + spousal_income / 4 - (assets - 5) ** 2 / 8
+                    "utility": CollectiveUtility(
+                        utilities={"a": terminal, "b": terminal}
                     )
+                    if household
+                    else terminal
                 },
             ),
         },
@@ -333,13 +383,13 @@ def _model(
             axis_widths={
                 "action_product": widths[0],
                 "cell": widths[1],
-                "subject": 432,
+                "agent": 432,
             },
             device_memory_bytes=budget,
             invariant_block_widths=invariant_block_widths or {},
             invariant_block_schedule=schedule,
         ),
-        # The tests start subjects in both living regimes at both living ages.
+        # The tests start agents in both living regimes at both living ages.
         initial_nodes={(0, 1): ("r0", "r1")},
         edges=_EDGES,
     )
@@ -420,23 +470,28 @@ def _require_eight() -> None:
 
 
 def _assert_assets_shards(value: jax.Array) -> None:
-    assert value.shape == (3, 3, 24)
+    """Assets is split over the eight devices; a trailing member axis is whole."""
+    members = value.shape[3:]
+    assert value.shape == (3, 3, 24, *members)
     assert isinstance(value.sharding, jax.NamedSharding)
-    assert value.sharding.spec == jax.P(None, None, "assets")
+    assert value.sharding.spec in (
+        jax.P(None, None, "assets"),
+        jax.P(None, None, "assets", *(None for _ in members)),
+    )
     shards = value.addressable_shards
     assert len(shards) == 8
     mesh_order = [device.id for device in value.sharding.mesh.devices.flat]
     covered = []
-    global_ids = np.arange(216).reshape(3, 3, 24)
+    global_ids = np.arange(value.size).reshape(value.shape)
     for shard in shards:
         position = mesh_order.index(shard.device.id)
-        assert shard.data.shape == (3, 3, 3)
+        assert shard.data.shape == (3, 3, 3, *members)
         got = global_ids[shard.index]
         np.testing.assert_array_equal(
             got, global_ids[:, :, 3 * position : 3 * (position + 1)]
         )
         covered.extend(got.ravel().tolist())
-    assert sorted(covered) == list(range(216))
+    assert sorted(covered) == list(range(value.size))
 
 
 @pytest.mark.parametrize("streamed", [False, True])
@@ -455,12 +510,14 @@ def test_trailing_untiled_axis_is_restored_inside_max_q(*, streamed: bool) -> No
         ) ** 2, jnp.asarray(pref_type >= 0)
 
     kwargs: _MaxQArguments = {
-        "Q_and_F": q,
+        "Q_and_F": with_member_axis(q),
         "batch_sizes": dict.fromkeys(("pref_type", "spousal_income", "assets"), 0),
         "action_names": ("decision",),
         "state_names": ("pref_type", "spousal_income", "assets"),
         "cell_width_keyword": "cell_width",
         "untiled_state_names": ("assets",),
+        "members": SELF,
+        "pareto_weights": SELF_PARETO_WEIGHTS,
     }
     builder = (
         partial(get_streaming_max_Q_over_a, action_width_keyword="action_width")
@@ -488,7 +545,7 @@ def test_trailing_untiled_axis_is_restored_inside_max_q(*, streamed: bool) -> No
         + 10 * np.arange(3)[None, :, None]
         + np.arange(-4, 20)[None, None, :]
     )
-    np.testing.assert_array_equal(result, expected)
+    np.testing.assert_array_equal(result[0], expected[..., np.newaxis])
 
 
 @pytest.mark.parametrize(
@@ -536,7 +593,7 @@ def test_eight_assets_shards_use_full_reads_and_match_exact_bellman_reference(  
     def observe_birth(**call: Unpack[ExecuteWithPendingWorkKwargs]) -> PytreeValue:
         output = execute(**call)
         for leaf in jax.tree.leaves(output):
-            if isinstance(leaf, jax.Array) and leaf.shape == (3, 3, 24):
+            if isinstance(leaf, jax.Array) and leaf.shape == (3, 3, 24, 1):
                 _assert_assets_shards(leaf)
                 born.append(leaf.shape)
         return output
@@ -560,7 +617,7 @@ def test_eight_assets_shards_use_full_reads_and_match_exact_bellman_reference(  
             originals.append((value, snapshot))
             expected = np.array(
                 [float(x) for x in exact[period, regime].values()], dtype=snapshot.dtype
-            ).reshape(3, 3, 24)
+            ).reshape(3, 3, 24, 1)
             assert_agrees_to_ulp(got=snapshot, expected=expected, n_ulp=8)
             assert_agrees_to_ulp(
                 got=snapshot,
@@ -688,7 +745,7 @@ def _record_profiled_executables(
     )
 
 
-def _observe_subject_programs(*, monkeypatch: pytest.MonkeyPatch) -> list[int]:
+def _observe_agent_programs(*, monkeypatch: pytest.MonkeyPatch) -> list[int]:
     """Observe required input shards and the exact inferred output layouts."""
     runtime_class = simulation_runtime.SimulationRuntime
     place = simulation_runtime.place_simulation_arguments
@@ -703,7 +760,7 @@ def _observe_subject_programs(*, monkeypatch: pytest.MonkeyPatch) -> list[int]:
         **call: Unpack[_PlacementArguments],
     ) -> MappingProxyType[str, _OperandValue]:
         placed = place(**call)
-        for name in call["subject_arg_names"]:
+        for name in call["agent_arg_names"]:
             for value in jax.tree.leaves(placed.get(name, ())):
                 if not isinstance(value, jax.Array) or not value.ndim:
                     continue
@@ -767,15 +824,15 @@ def _assert_seventeen_rows(
     reference_solution: SolutionResult,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Inspect actual 24-row subject shards, then compare the 17 returned rows."""
+    """Inspect actual 24-row agent shards, then compare the 17 returned rows."""
 
-    run_chunk = simulation._simulate_subject_chunk
+    run_chunk = simulation._simulate_agent_chunk
     padded_calls = []
 
-    def observe_chunk(**call: Unpack[SubjectChunkKwargs]) -> SubjectChunkResults:
+    def observe_chunk(**call: Unpack[AgentChunkKwargs]) -> AgentChunkResults:
         result = run_chunk(**call)
-        assert call["original_n_subjects"] == 17
-        assert call["n_subjects"] == 24
+        assert call["original_n_agents"] == 17
+        assert call["n_agents"] == 24
         assert result["r0"][0].V_arr.shape[0] == 24
         padded_calls.append(24)
         return result
@@ -790,8 +847,8 @@ def _assert_seventeen_rows(
     params = {"discount_factor": 0.5}
     for seed in (0, 42):
         with monkeypatch.context() as probe:
-            probe.setattr(simulation, "_simulate_subject_chunk", observe_chunk)
-            placed_counts = _observe_subject_programs(monkeypatch=probe)
+            probe.setattr(simulation, "_simulate_agent_chunk", observe_chunk)
+            placed_counts = _observe_agent_programs(monkeypatch=probe)
             result = model.simulate(
                 params=params,
                 solution=solution,
@@ -807,7 +864,7 @@ def _assert_seventeen_rows(
             seed=seed,
             log_level="off",
         )
-        assert result.n_subjects == control.n_subjects == 17
+        assert result.n_agents == control.n_agents == 17
         assert jax.tree.structure(result.raw_results) == jax.tree.structure(
             control.raw_results
         )
@@ -886,20 +943,28 @@ _NONUNIFORM_GRIDS = {
 }
 
 
-@pytest.mark.parametrize("grid", sorted(_NONUNIFORM_GRIDS))
+@pytest.mark.parametrize(
+    ("grid", "household"),
+    [*((grid, False) for grid in sorted(_NONUNIFORM_GRIDS)), ("piecewise_log", True)],
+)
 def test_nonuniform_fixed_grid_shards_solve_and_simulate_like_one_device(
-    *, grid: str
+    *, grid: str, household: bool
 ) -> None:
     """Sharding a grid with fixed non-uniform nodes partitions the solve without
-    changing it: values and the simulated panel agree with the one-device solve.
+    changing it: values and the simulated panel agree with the one-device solve,
+    for a single and for a household of two members.
     """
     _require_eight()
     params = {"discount_factor": 0.5}
     assets = _NONUNIFORM_GRIDS[grid]
     points = np.asarray(assets.to_jax()).tolist()
     bounds = (points[0], points[-1])
-    reference_model = _model(devices=(0,), sharded=False, grid=assets, bounds=bounds)
-    model = _model(devices=tuple(range(8)), grid=assets, bounds=bounds)
+    reference_model = _model(
+        devices=(0,), sharded=False, grid=assets, bounds=bounds, household=household
+    )
+    model = _model(
+        devices=tuple(range(8)), grid=assets, bounds=bounds, household=household
+    )
     reference_solution = reference_model.solve(params=params, log_level="off")
     # Every node keeps a feasible decision whose landing lies on the grid, so a
     # non-finite value would be a defect, not an infeasible state.
@@ -981,6 +1046,12 @@ def test_budget_below_full_replica_refuses_without_transfer_and_preserves_owner(
         np.testing.assert_array_equal(value, snapshot)
 
 
+def _liquid_utility(
+    *, liquid: ContinuousState, pref_type: DiscreteState, spousal_income: DiscreteState
+) -> FloatND:
+    return liquid + pref_type + spousal_income
+
+
 def test_renamed_trailing_axis_maps_blocks_in_mesh_order() -> None:
     """Cheap canonical/layout check; the public producer is tested separately."""
 
@@ -991,11 +1062,7 @@ def test_renamed_trailing_axis_maps_blocks_in_mesh_order() -> None:
             "pref_type": DiscreteGrid(_Three),
             "spousal_income": DiscreteGrid(_Three),
         },
-        functions={
-            "utility": lambda liquid, pref_type, spousal_income: (
-                liquid + pref_type + spousal_income
-            )
-        },
+        functions={"utility": _liquid_utility},
     )
     variables = from_regime(
         user_regime=regime, sharded_state_names=frozenset({"liquid"})
@@ -1007,7 +1074,7 @@ def test_renamed_trailing_axis_maps_blocks_in_mesh_order() -> None:
         jax.P(None, None, "liquid"),
     )
     index_map = sharding.devices_indices_map((3, 3, 24))
-    global_ids = np.arange(216).reshape(3, 3, 24)
+    global_ids = np.arange(216).reshape(3, 3, 24, 1)
     for position, device in enumerate(mesh_devices):
         np.testing.assert_array_equal(
             global_ids[index_map[device]],
@@ -1054,7 +1121,7 @@ def _renamed_public_model(*, original: Model) -> Model:
         execution_config=ExecutionConfig(
             devices=tuple(reversed(range(8))),
             sharded_states=("liquid",),
-            axis_widths={"action_product": 3, "cell": 9, "subject": 432},
+            axis_widths={"action_product": 3, "cell": 9, "agent": 432},
             device_memory_bytes=2**30,
         ),
         initial_nodes=initial_nodes_of(model=original),
@@ -1072,16 +1139,19 @@ def _assert_renamed_values(
         for regime, value in values.items():
             _assert_assets_shards(value)
             actual = renamed.values[period][regime]
-            assert actual.shape == (3, 3, 24)
+            assert actual.shape == (3, 3, 24, 1)
             assert isinstance(actual.sharding, jax.NamedSharding)
-            assert actual.sharding.spec == jax.P(None, None, "liquid")
+            assert actual.sharding.spec in (
+                jax.P(None, None, "liquid"),
+                jax.P(None, None, "liquid", None),
+            )
             assert tuple(
                 device.id for device in actual.sharding.mesh.devices.flat
             ) == tuple(range(8))
             assert len(actual.addressable_shards) == 8
-            cells = np.arange(216).reshape(3, 3, 24)
+            cells = np.arange(216).reshape(3, 3, 24, 1)
             for shard in actual.addressable_shards:
-                assert shard.data.shape == (3, 3, 3)
+                assert shard.data.shape == (3, 3, 3, 1)
                 position = shard.device.id
                 np.testing.assert_array_equal(
                     cells[shard.index], cells[:, :, 3 * position : 3 * (position + 1)]
@@ -1089,7 +1159,7 @@ def _assert_renamed_values(
             assert_agrees_to_ulp(got=actual, expected=value, n_ulp=8)
             expected = np.array(
                 [float(x) for x in exact[period, regime].values()], dtype=actual.dtype
-            ).reshape(3, 3, 24)
+            ).reshape(3, 3, 24, 1)
             assert_agrees_to_ulp(got=actual, expected=expected, n_ulp=8)
 
 
@@ -1130,7 +1200,7 @@ def test_public_state_rename_and_reversed_device_selection_preserve_solve_and_rn
             seed=seed,
             log_level="off",
         )
-        assert result.n_subjects == renamed_result.n_subjects == 17
+        assert result.n_agents == renamed_result.n_agents == 17
         assert isinstance(result.raw_results, MappingProxyType)
         assert isinstance(renamed_result.raw_results, MappingProxyType)
         assert tuple(renamed_result.raw_results) == tuple(result.raw_results)
@@ -1208,7 +1278,7 @@ def test_shared_native_all_gather_releases_after_both_consumers_are_ready(  # no
             assert copied.is_fully_replicated
             assert len(copied.addressable_shards) == 8
             assert all(
-                shard.data.shape == (3, 3, 24) for shard in copied.addressable_shards
+                shard.data.shape == (3, 3, 24, 1) for shard in copied.addressable_shards
             )
             aliased = scheduler.shares_a_buffer(first=copied, second=stored)
             record_property("native_all_gather_aliases_source", aliased)
@@ -1348,7 +1418,7 @@ def test_tauchen_and_log_normal_nodes_solve_like_the_unsharded_model(
             got = np.asarray(value)
             want = np.transpose(
                 np.asarray(control.values[period][regime]),
-                [control_names.index(name) for name in names],
+                [*(control_names.index(name) for name in names), len(names)],
             )
             assert np.isfinite(want).all()
             max_abs = max(max_abs, float(np.max(np.abs(got - want))))
@@ -1433,7 +1503,7 @@ def test_type_grouped_simulation_over_assets_shards_equals_the_unblocked_panel(
 ) -> None:
     """Sharded blocked/grouped simulation keeps exact structure and eight-ULP values.
 
-    The groups are unbalanced, one is empty in period 1, and the subject axis
+    The groups are unbalanced, one is empty in period 1, and the agent axis
     divides no group evenly by the device count.
     """
     _require_eight()
@@ -1473,8 +1543,8 @@ def test_type_grouped_simulation_over_assets_shards_equals_the_unblocked_panel(
 
     assert got.plan_summary is not None
     assert want.plan_summary is not None
-    assert got.plan_summary.subject_grouping == "pref_type"
-    assert want.plan_summary.subject_grouping is None
+    assert got.plan_summary.agent_grouping == "pref_type"
+    assert want.plan_summary.agent_grouping is None
     grouped_simulation._assert_general_panels_agree(got=got, want=want)
 
 
@@ -1512,8 +1582,8 @@ def test_block_major_components_over_assets_shards_equal_period_major_values(
     }
     for period in want.values:
         for regime in want.values[period]:
-            got_value = got.value(period=period, regime=regime)
-            want_value = want.value(period=period, regime=regime)
+            got_value = got.value(step=period, regime=regime)
+            want_value = want.value(step=period, regime=regime)
             assert got_value.sharding == want_value.sharding
             assert np.asarray(got_value).tobytes() == np.asarray(want_value).tobytes()
 

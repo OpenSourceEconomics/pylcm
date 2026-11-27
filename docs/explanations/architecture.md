@@ -323,10 +323,10 @@ _lcm/regime_building/
 ├── next_state.py         ← compose per-state transitions into a single
 │                            next_state function for simulation
 ├── ndimage.py            ← map-coordinates wrapper for continuous interp
-├── collective.py         ← the member value gather at the household
-│                            argmax
-├── gated_edges.py        ← the gated-edge objects behind mutual-consent
-│                            marriage / dissolution routing
+├── collective.py         ← every member's value at the argmax of the
+│                            Pareto objective
+├── gated_edges.py        ← the gated-edge objects: state-dependent
+│                            routing across member layouts
 ├── fixed_process_laws.py ← bind process laws supplied through fixed_params
 │                            into the process grids
 ├── transition_invariants.py
@@ -436,8 +436,7 @@ _lcm/solution/
 ├── contract.py            ← the seam a solver meets the loop through
 ├── grid_search.py, egm.py, dcegm.py, negm.py, nbegm.py, nnbegm.py
 │                          ← the shipped solvers; shipped_solvers.py lists them
-├── action_reduction.py, action_streaming.py, logsumexp_action_reduction.py,
-│   collective_action_reduction.py
+├── action_reduction.py, action_streaming.py, collective_action_reduction.py
 │                          ← the blockwise reductions over the action product
 ├── model_authority.py, replay_validation.py, native_values.py, period_capture.py,
 │   period_replay.py       ← what a replay route may assume, and the preflight of it
@@ -451,10 +450,10 @@ _lcm/solution/
 └── validate_V.py          ← per-period NaN / Inf validation
 
 _lcm/simulation/
-├── simulate.py         ← the forward loop over periods, regimes and subjects
+├── simulate.py         ← the forward loop over periods, regimes and agents
 ├── programs.py, program_types.py, program_arguments.py, policy_programs.py
 │                       ← the per-regime work, declared as planner-owned programs
-├── runtime.py, compile.py, unit_executor.py, subject_devices.py, subject_parallel.py
+├── runtime.py, compile.py, unit_executor.py, agent_devices.py, agent_parallel.py
 │                       ← lowering, the prepared-route probe, and device-local dispatch
 ├── chunk_*.py, memory.py, residency.py, value_reads.py, value_placement.py,
 │   entry_*.py, operand_placement.py, host_operations.py, solution_copies.py
@@ -601,10 +600,10 @@ the first selected device. This staging device is explicit even when device zero
 excluded. Padding profiles the unchanged last-row repeat and concatenate operation
 against its represented compiler reservation. Completed leaves remain owned and charged
 before the next leaf is admitted; the full canonical input mapping remains live
-throughout padding. Subsequent subject placement uses the ordered simulation devices
-after padding. Series and DataFrame values are assembled on the host and use the same
-upload admission. Automatic solves retain and charge these simulation inputs alongside
-their solve inputs.
+throughout padding. Subsequent agent placement uses the ordered simulation devices after
+padding. Series and DataFrame values are assembled on the host and use the same upload
+admission. Automatic solves retain and charge these simulation inputs alongside their
+solve inputs.
 
 Foreign eager value stores use an explicit call-local allocator for every private JAX
 copy. Each copy preserves the source shape, dtype, sharding and device order, and admits
@@ -631,20 +630,20 @@ archive cache or consumed-view memo. Budgeted foreign artifact authorities, nati
 artifact payloads and arbitrary lazy decoders remain unprofiled and are refused before
 their copying or upload callbacks. Their unbudgeted behavior is unchanged.
 
-## Forward simulation: subjects, gates and the prepared route
+## Forward simulation: agents, gates and the prepared route
 
 Simulation's own vocabulary is about the *population* axis, which solve does not have.
 
-### Subject parallelism is declared, not inferred
+### Agent parallelism is declared, not inferred
 
-`SubjectShardable` (`simulation/subject_parallel.py`) is an explicit capability, not a
-shape coincidence: a program declaring it promises that its named argument subtrees
-carry the independent subject axis, that every output leaf retains that axis, and that
-no operation crosses subjects. Merely having an array whose leading extent equals the
-population is *not* this declaration — parameter arrays and solution reads are shared
-even when their first dimension happens to match.
+`AgentShardable` (`simulation/agent_parallel.py`) is an explicit capability, not a shape
+coincidence: a program declaring it promises that its named argument subtrees carry the
+independent agent axis, that every output leaf retains that axis, and that no operation
+crosses agents. Merely having an array whose leading extent equals the population is
+*not* this declaration — parameter arrays and solution reads are shared even when their
+first dimension happens to match.
 
-`declared_subject_shard_arg_names` reads the declaration off the innermost callable,
+`declared_agent_shard_arg_names` reads the declaration off the innermost callable,
 seeing through the `functools.partial` wrappers the model layer puts around a body to
 bind fixed params, and drops every name a binding has already consumed, so only
 arguments still supplied per dispatch are offered for partitioning. A positional binding
@@ -655,12 +654,12 @@ The two halves of a gated edge use this to split differently:
 
 - The **gate fold** (`_GateFoldBody`) reads the next period's value arrays on each
   target's own regime-level grids and writes the substituted continuation over those
-  same grids. No operand and no output carries a subject axis, so it declares `()` — the
+  same grids. No operand and no output carries an agent axis, so it declares `()` — the
   empty tuple — and is *replicated* wherever the population is spread over several
   devices.
-- The **gate route** declares `_GATE_ROUTE_SUBJECT_ARG_NAMES` — `next_states`,
-  `new_subject_regime_ids`, `subjects_in_regime`, `own_member`, `new_own_member` — and
-  is *partitioned* across the subject devices. The grids the fold published stay shared
+- The **gate route** declares `_GATE_ROUTE_AGENT_ARG_NAMES` — `next_states`,
+  `new_agent_regime_ids`, `agents_in_regime`, `own_member`, `new_own_member` — and is
+  *partitioned* across the agent devices. The grids the fold published stay shared
   operands of it.
 
 ### The prepared unbudgeted dispatch route
@@ -678,14 +677,14 @@ own configuration is immutable for its lifetime and therefore deliberately absen
 the key — a different execution config, device order, width or JIT disposition is a
 different runtime with its own empty cache.
 
-Without a budget the runtime still derives a subject tile width rather than using a
-fixed one: `_unbudgeted_subject_width` caps one tile's argument slice at a constant byte
-block, weighing only the operands the materialized program already holds abstractly, so
-the result depends on nothing but the model's shapes, dtypes and the population size and
-is identical on every backend. It never falls below the fixed default width, and it
-passes through the same admissible-width check, so axis alignment, the floor and the
-extent clamp are unchanged. Width is a lowering specialization only: a wider tile moves
-no value and no RNG stream.
+Without a budget the runtime still derives an agent tile width rather than using a fixed
+one: `_unbudgeted_agent_width` caps one tile's argument slice at a constant byte block,
+weighing only the operands the materialized program already holds abstractly, so the
+result depends on nothing but the model's shapes, dtypes and the population size and is
+identical on every backend. It never falls below the fixed default width, and it passes
+through the same admissible-width check, so axis alignment, the floor and the extent
+clamp are unchanged. Width is a lowering specialization only: a wider tile moves no
+value and no RNG stream.
 
 ## The solver seam: keys and routes
 

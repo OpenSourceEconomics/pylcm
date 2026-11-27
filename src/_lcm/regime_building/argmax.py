@@ -1,7 +1,8 @@
-"""Argmax and max over the trailing action axes of a Q array.
+"""Maxima paired with the identity of the element attaining them.
 
-`argmax_and_max` flattens the requested number of trailing axes, reduces over
-the flat axis, and returns the winning flat index alongside its value.
+`max_and_smallest_id` and `max_lexicographic_and_smallest_id` reduce values
+over their trailing axis and return the smallest identity attaining the maximum;
+`max_and_any_nan` returns the maximum alone.
 """
 
 from functools import partial
@@ -19,94 +20,6 @@ type _FloatBitsND = Int[jax.Array, "..."]
 
 # Identity of no element; it loses every tie against a real identity.
 NO_ID = jnp.iinfo(jnp.int32).max
-
-
-def argmax_and_max(
-    *,
-    a: FloatND,
-    axis: int | tuple[int, ...] | None = None,
-    initial: float | None = None,
-    where: BoolND | None = None,
-) -> tuple[IntND, FloatND]:
-    """Compute the argmax of an n-dim array along axis.
-
-    If multiple maxima exist, the first index will be selected.
-
-    Args:
-        a: Multidimensional array.
-        axis: Axis along which to compute the argmax. If None, the argmax is computed
-            over all axes.
-        initial: The minimum value of an output element. Must be present to
-            allow computation on empty slice. See ~numpy.ufunc.reduce for details.
-        where: Elements to compare for the maximum. See ~numpy.ufunc.reduce
-            for details.
-
-    Returns:
-        - The argmax indices. Array with the same shape as a, except for the dimensions
-          specified in axis, which are dropped. The value corresponds to an index that
-          can be translated into a tuple of indices using jnp.unravel_index.
-        - The corresponding maximum values.
-
-    """
-    if axis is None:
-        axis = tuple(range(a.ndim))
-    elif isinstance(axis, int):
-        axis = (axis,)
-
-    if a.ndim == 0 or len(axis) == 0:
-        return _argmax_and_max_of_one_candidate(a=a, where=where, initial=initial)
-
-    a = _move_axes_to_back(a=a, axes=axis)
-    a = _flatten_last_n_axes(a=a, n=len(axis))
-
-    if where is not None and where.ndim != 0:
-        where = _move_axes_to_back(a=where, axes=axis)
-        where = _flatten_last_n_axes(a=where, n=len(axis))
-
-    where = (
-        jnp.ones(a.shape, dtype=bool)
-        if where is None
-        else jnp.broadcast_to(where, a.shape)
-    )
-    is_nan = jnp.isnan(a)
-    comparable = where & ~is_nan
-    lowest = -jnp.inf
-    positions = jnp.broadcast_to(jnp.arange(a.shape[-1], dtype=jnp.int32), a.shape)
-    _max, _argmax = max_and_smallest_id(
-        values=jnp.where(comparable, a, lowest),
-        ids=jnp.where(comparable, positions, NO_ID),
-        initial=lowest if initial is None else initial,
-    )
-    # A NaN among the compared elements makes the max NaN and the index zero; an
-    # `initial` above every element is the max and also reports index zero.
-    any_nan = jnp.any(where & is_nan, axis=-1)
-    _max = jnp.where(any_nan, jnp.full_like(_max, jnp.nan), _max)
-    _argmax = jnp.where(any_nan | (_argmax == NO_ID), 0, _argmax)
-
-    return _argmax, _max
-
-
-def _argmax_and_max_of_one_candidate(
-    *, a: FloatND, where: BoolND | None, initial: float | None
-) -> tuple[IntND, FloatND]:
-    """Return the index and value of each cell of `a` when nothing is reduced.
-
-    Every cell has one candidate, its own value, at index zero. The value is the
-    larger of the candidate and `initial` where `where` admits the candidate, and
-    `initial` elsewhere; without `initial`, `-inf` stands in. A
-    feasible NaN stays NaN. No reduction is involved, so a candidate above
-    `initial` keeps its exact bits.
-    """
-    floor = jnp.asarray(-jnp.inf if initial is None else initial, dtype=a.dtype)
-    admitted = (
-        jnp.ones(a.shape, dtype=bool)
-        if where is None
-        else jnp.broadcast_to(where, a.shape)
-    )
-    return (
-        jnp.zeros(a.shape, dtype=jnp.int32),
-        jnp.where(admitted, jnp.maximum(a, floor), floor),
-    )
 
 
 def max_and_smallest_id(
@@ -226,6 +139,146 @@ def _larger_float_key_then_smaller_id(
         jnp.where(right_key > left_key, right_id, left_id),
     )
     return key, jnp.where(valid, identity, left_id)
+
+
+def max_lexicographic_and_smallest_id(
+    *, values: tuple[FloatND, ...], ids: IntND, where: BoolND
+) -> tuple[tuple[FloatND, ...], IntND, BoolND]:
+    """Return the lexicographic maximum over the last axis, its id and a NaN flag.
+
+    Elements are ranked on `values[0]`; ties go to the larger `values[1]`, then
+    `values[2]`, and so on; full ties go to the smaller `int32` id. The order is
+    total, so the winner does not depend on how the axis is split or merged.
+    Within each position a NaN ranks below every number, and `-0` and `+0` are
+    equal. An element outside `where` ranks below every element inside it.
+
+    One reduction carries the order keys of every position beside the id, so the
+    winner's values are decoded from their keys rather than gathered. They are
+    the winner's own bits, except that a NaN comes back as some NaN. Where no
+    element is inside `where`, every value is NaN and the id is `NO_ID`.
+
+    The flag tells whether an element inside `where` has a NaN `values[0]`. It
+    is an operand of the same reduction, so `values[0]` has no second reader:
+    a separate NaN reduction would let the compiler store the values' producer
+    for every element instead of evaluating it inside the reduction.
+
+    Differentiating through the reduction raises
+    `UnsupportedDifferentiationError`.
+    """
+    return _lexicographic_max_no_derivative(values, ids, where)
+
+
+# keyword-only-exempt: library-callback=jax.custom_jvp
+def _lexicographic_max(
+    values: tuple[FloatND, ...], ids: IntND, where: BoolND
+) -> tuple[tuple[FloatND, ...], IntND, BoolND]:
+    """Reduce `(flag, key, ..., key, id)` tuples over the last axis, no derivative."""
+    no_id = jnp.asarray(NO_ID, dtype=jnp.int32)
+    keys = tuple(_ranked_key(values=value, where=where) for value in values)
+    any_nan, *best_keys, best_id = jax.lax.reduce(
+        (where & jnp.isnan(values[0]), *keys, jnp.where(where, ids, no_id)),
+        (
+            jnp.zeros((), dtype=bool),
+            *(_lowest_key(key.dtype) for key in keys),
+            no_id,
+        ),
+        _nan_or_lexicographically_larger,
+        (ids.ndim - 1,),
+    )
+    return (
+        tuple(
+            jax.lax.bitcast_convert_type(_reverse_negative_bits(key), value.dtype)
+            for key, value in zip(best_keys, values, strict=True)
+        ),
+        best_id,
+        any_nan,
+    )
+
+
+_lexicographic_max_no_derivative = without_derivative(_lexicographic_max)
+
+
+def max_and_any_nan(*, values: FloatND, where: BoolND) -> tuple[FloatND, BoolND]:
+    """Return the maximum over the last axis and whether a value there is NaN.
+
+    Only elements inside `where` count. A NaN ranks below every number, and so
+    does an element outside `where`; with no number inside `where` the maximum
+    is NaN. Of `-0` and `+0` the maximum is `+0`. One reduction carries the order
+    key and the NaN flag, so `values` has no second reader and the compiler
+    evaluates them inside the reduction.
+
+    Differentiating through the reduction raises
+    `UnsupportedDifferentiationError`.
+    """
+    return _max_and_any_nan_no_derivative(values, where)
+
+
+# keyword-only-exempt: library-callback=jax.custom_jvp
+def _max_and_any_nan(values: FloatND, where: BoolND) -> tuple[FloatND, BoolND]:
+    """Reduce `(flag, key)` pairs over the last axis, without a derivative."""
+    keys = _ranked_key(values=values, where=where)
+    any_nan, best_key = jax.lax.reduce(
+        (where & jnp.isnan(values), keys),
+        (jnp.zeros((), dtype=bool), _lowest_key(keys.dtype)),
+        _nan_or_larger_key,
+        (values.ndim - 1,),
+    )
+    return (
+        jax.lax.bitcast_convert_type(_reverse_negative_bits(best_key), values.dtype),
+        any_nan,
+    )
+
+
+_max_and_any_nan_no_derivative = without_derivative(_max_and_any_nan)
+
+
+# keyword-only-exempt: library-callback=jax.lax.reduce
+def _nan_or_larger_key(
+    left: tuple[BoolND, _FloatBitsND], right: tuple[BoolND, _FloatBitsND]
+) -> tuple[BoolND, _FloatBitsND]:
+    """OR the NaN flags; keep the larger key."""
+    return left[0] | right[0], jnp.maximum(left[1], right[1])
+
+
+def _ranked_key(*, values: FloatND, where: BoolND) -> _FloatBitsND:
+    """Order key of each value; NaN and elements outside `where` take the lowest."""
+    keys = _float_order_key(values)
+    infinity_key = _float_infinity_key(values.dtype)
+    is_number = (keys >= ~infinity_key) & (keys <= infinity_key)
+    return jnp.where(where & is_number, keys, _lowest_key(keys.dtype))
+
+
+def _lowest_key(dtype: np.dtype[np.generic]) -> _FloatBitsND:
+    """Return the key just below `-inf`'s; it decodes to a NaN."""
+    infinity_key = _float_infinity_key(jnp.dtype(f"float{dtype.itemsize * 8}"))
+    return jnp.asarray(~infinity_key - 1, dtype=dtype)
+
+
+# keyword-only-exempt: library-callback=jax.lax.reduce
+def _nan_or_lexicographically_larger(
+    left: tuple[BoolND | _FloatBitsND | IntND, ...],
+    right: tuple[BoolND | _FloatBitsND | IntND, ...],
+) -> tuple[BoolND | _FloatBitsND | IntND, ...]:
+    """OR the leading NaN flags; keep the lexicographically larger remainder."""
+    return (left[0] | right[0], *_lexicographically_larger(left[1:], right[1:]))
+
+
+# keyword-only-exempt: library-callback=jax.lax.reduce
+def _lexicographically_larger(
+    left: tuple[_FloatBitsND | IntND, ...], right: tuple[_FloatBitsND | IntND, ...]
+) -> tuple[_FloatBitsND | IntND, ...]:
+    """Keep the tuple whose first unequal key is larger, else the smaller id."""
+    right_wins = right[-1] < left[-1]
+    for left_key, right_key in zip(left[-2::-1], right[-2::-1], strict=True):
+        right_wins = jnp.where(
+            _float_keys_equal(left=left_key, right=right_key),
+            right_wins,
+            right_key > left_key,
+        )
+    return tuple(
+        jnp.where(right_wins, right_item, left_item)
+        for left_item, right_item in zip(left, right, strict=True)
+    )
 
 
 def _move_axes_to_back(

@@ -19,6 +19,7 @@ from _lcm.execution.core_program import ReducedAxis, TiledOutputAxis
 from _lcm.execution.footprint import per_device_footprint
 from _lcm.execution.workspace_planning import workspace_width_candidates
 from _lcm.processes.grid_resolution import ProcessGridResolver
+from _lcm.simulation.agent_groups import grouped_extent
 from _lcm.simulation.chunk_inputs import (
     SimulationCallInputs,
     prepare_simulation_call_inputs,
@@ -48,14 +49,13 @@ from _lcm.simulation.residency import (
     union_buffer_footprints,
 )
 from _lcm.simulation.runtime import SimulationRuntime
-from _lcm.simulation.subject_groups import grouped_extent
 from _lcm.solution.backward_induction import _abstract_value_key, _hashable_metadata
 from _lcm.solution.host_values import (
     StoredValues,
     is_device_read_view,
     planning_stand_in,
 )
-from _lcm.time import TimeAxis
+from _lcm.time import TimeAxis, step_count
 from _lcm.typing import (
     FlatParams,
     RegimeName,
@@ -76,7 +76,7 @@ class PreparedSimulationChunks:
     budget_note: str = ""
     """Clause naming the budget and the remedies, appended to a chunk refusal."""
     reserves_population_carry: bool = False
-    """Whether the width was admitted beside every subject's carry, as simulating
+    """Whether the width was admitted beside every agent's carry, as simulating
     values kept off the device period by period across several chunks needs."""
 
     def require_chunk(
@@ -165,8 +165,8 @@ def prepare_simulation_chunks(
 
     `max_compilation_workers` bounds the threads compiling each profiled
     candidate's forward programs, as it does for the solve's compilation waves.
-    `group_sizes` holds the number of real subjects of each code when the
-    regimes group subjects by an invariant state: no candidate then exceeds the
+    `group_sizes` holds the number of real agents of each code when the
+    regimes group agents by an invariant state: no candidate then exceeds the
     largest group, and each candidate is profiled for every group's chunks.
     """
     runtime = next(iter(regimes.values())).simulation.programs.executor
@@ -178,7 +178,7 @@ def prepare_simulation_chunks(
             "Chunk admission requires a budgeted simulation runtime."
         )
     if not budgeted_simulation_programs_ready(
-        regimes=regimes, n_periods=ages.n_periods, enable_jit=runtime.enable_jit
+        regimes=regimes, n_steps=step_count(ages), enable_jit=runtime.enable_jit
     ):
         raise ExecutionPlanningError(
             "Budgeted chunk admission requires compiled decision programs; "
@@ -208,7 +208,7 @@ def prepare_simulation_chunks(
         budget_bytes=runtime.execution.device_memory_bytes,
         budget_note=runtime.execution.device_memory_cap_note(),
         devices=devices,
-        subject_devices=runtime.subject_devices,
+        agent_devices=runtime.agent_devices,
         operations=runtime.operations,
         inputs=inputs,
     )
@@ -228,7 +228,7 @@ def prepare_simulation_chunks(
     )
     memory.close_unit()
     population = initial_conditions["regime_id"].shape[0]
-    alignment = len(runtime.subject_devices)
+    alignment = len(runtime.agent_devices)
     resident = resident_bytes_by_device(
         live=memory.inputs,
         arguments=DeviceBufferFootprint(spans=MappingProxyType({})),
@@ -265,18 +265,18 @@ def prepare_simulation_chunks(
     reserves_population_carry = (
         group_sizes is None
         and is_device_read_view(values)
-        and plan.profile.n_subjects < plan.profile.padded_population
+        and plan.profile.n_agents < plan.profile.padded_population
     )
     if reserves_population_carry:
         carry = _population_carry_bytes(
             initial_conditions=initial_conditions,
-            subject_devices=runtime.subject_devices,
+            agent_devices=runtime.agent_devices,
         )
         prefetch = _prefetch_bytes(
             regimes=regimes,
             values=planning_stand_in(values),
             policies=planning_stand_in(policies),
-            n_periods=ages.n_periods,
+            n_steps=step_count(ages),
             devices=devices,
         )
         try:
@@ -297,11 +297,11 @@ def prepare_simulation_chunks(
         except ExecutionPlanningError as error:
             msg = (
                 "Simulating values kept off the device in several chunks runs every "
-                "chunk through a period before the next, so every subject's state "
+                "chunk through a period before the next, so every agent's state "
                 f"stays on the device: about {dict(sorted(carry.items(), key=str))!r} "
                 "bytes, and the next period's reads are copied early: about "
                 f"{dict(sorted(prefetch.items(), key=str))!r} bytes, beside a chunk's "
-                "workspace. Simulate fewer subjects per call or raise "
+                "workspace. Simulate fewer agents per call or raise "
                 "ExecutionConfig.device_memory_bytes."
                 f"{runtime.execution.device_memory_cap_note()}"
             )
@@ -318,11 +318,11 @@ def prepare_simulation_chunks(
 def _population_carry_bytes(
     *,
     initial_conditions: Mapping[str, jax.Array],
-    subject_devices: tuple[jax.Device, ...],
+    agent_devices: tuple[jax.Device, ...],
 ) -> dict[jax.Device, int]:
-    """Estimate each subject device's share of every subject's carry.
+    """Estimate each agent device's share of every agent's carry.
 
-    A carry holds a subject's states, regime and role, all shaped like its
+    A carry holds an agent's states, regime and role, all shaped like its
     initial conditions, and two route trackers of one 32-bit integer each; its
     keys are per chunk. The estimate charges the whole population, the running
     chunk included, whose carry its own profile also charges.
@@ -331,8 +331,8 @@ def _population_carry_bytes(
     total = sum(int(column.nbytes) for column in initial_conditions.values())
     # Role (when the initial conditions name none) and the two route trackers.
     total += 3 * population * 4
-    share = math.ceil(total / len(subject_devices))
-    return dict.fromkeys(subject_devices, share)
+    share = math.ceil(total / len(agent_devices))
+    return dict.fromkeys(agent_devices, share)
 
 
 def _prefetch_bytes(
@@ -340,7 +340,7 @@ def _prefetch_bytes(
     regimes: Mapping[RegimeName, Regime],
     values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
     policies: Mapping[int, Mapping[RegimeName, SimulationPolicy]] | None,
-    n_periods: int,
+    n_steps: int,
     devices: tuple[jax.Device, ...],
 ) -> dict[jax.Device, int]:
     """Estimate each device's bytes of the largest read set one period copies early.
@@ -350,21 +350,21 @@ def _prefetch_bytes(
     Every argument is a planning stand-in: nothing is read.
     """
     by_id = {device.id: device for device in devices}
-    active_by_period = forward_regimes_by_period(regimes=regimes, n_periods=n_periods)
+    active_by_period = forward_regimes_by_period(regimes=regimes, n_steps=n_steps)
     largest: dict[jax.Device, int] = {}
-    for period in range(1, n_periods):
-        active = active_by_period[period]
+    for step in range(1, n_steps):
+        active = active_by_period[step]
         arrays = [
             values[target_period][regime]
             for target_period, regime in period_read_targets(
-                active=active, period=period, values=values
+                active=active, period=step, values=values
             )
             if regime in values.get(target_period, {})
         ]
         arrays.extend(
             leaf
             for name in active
-            for leaf in jax.tree.leaves((policies or {}).get(period, {}).get(name))
+            for leaf in jax.tree.leaves((policies or {}).get(step, {}).get(name))
             if isinstance(leaf, jax.Array | jax.ShapeDtypeStruct)
         )
         need: dict[jax.Device, int] = {}
@@ -389,7 +389,7 @@ def _simulation_chunk_profile_key(
     ages: TimeAxis,
     initial_conditions: Mapping[str, jax.Array],
     regime_names_to_ids: RegimeNamesToIds,
-    n_subjects: int,
+    n_agents: int,
     population: int,
     original_population: int,
     widths: Mapping[str, int],
@@ -426,7 +426,7 @@ def _simulation_chunk_profile_key(
       that leaves every covered shape untouched (extremely unlikely given how
       regimes are constructed) would not be distinguished by this key.
     """
-    version = 5  # bump when any component below changes meaning
+    version = 6  # bump when any component below changes meaning
     key_version = ("chunk-profile-key", version)
     program_identity = (
         tuple(sorted(regimes)),
@@ -435,7 +435,7 @@ def _simulation_chunk_profile_key(
             for name, regime in regimes.items()
         ),
         _hashable_metadata(regime_names_to_ids),
-        ages.n_periods,
+        step_count(ages),
     )
     axes_and_widths = tuple(sorted(widths.items()))
     argument_metadata = (
@@ -451,9 +451,9 @@ def _simulation_chunk_profile_key(
         _abstract_value_key(value=initial_conditions),
         _abstract_value_key(value=ages.values),
     )
-    population_metadata = (n_subjects, population, original_population, group_sizes)
+    population_metadata = (n_agents, population, original_population, group_sizes)
     devices_and_backend = (
-        tuple((device.platform, device.id) for device in runtime.subject_devices),
+        tuple((device.platform, device.id) for device in runtime.agent_devices),
         runtime.enable_jit,
         runtime.execution.simulation_sharding,
         runtime.execution.device_ids,
@@ -515,12 +515,12 @@ class _ChunkProfiler:
             return self.population
         return grouped_extent(sizes=self.group_sizes, alignment=alignment)
 
-    def __call__(self, *, n_subjects: int) -> SimulationChunkProfile:
+    def __call__(self, *, n_agents: int) -> SimulationChunkProfile:
         """Return a fitting common inner choice, or the smallest required bound."""
         budget = self.runtime.execution.device_memory_bytes
         if budget is None:
             raise ExecutionPlanningError("Chunk profiling requires a device budget.")
-        axes = _common_axes(regimes=self.regimes, n_subjects=n_subjects)
+        axes = _common_axes(regimes=self.regimes, n_agents=n_agents)
         choices = workspace_width_candidates(
             axes=axes,
             fixed_widths=self.runtime.execution.axis_widths,
@@ -530,7 +530,7 @@ class _ChunkProfiler:
         best = None
         best_peak = math.inf
         for widths in choices:
-            profile = self.profile_widths(n_subjects=n_subjects, widths=widths)
+            profile = self.profile_widths(n_agents=n_agents, widths=widths)
             peak = max(
                 _required_bytes(
                     profile=profile, resident=self.resident, devices=self.devices
@@ -547,7 +547,7 @@ class _ChunkProfiler:
         return best
 
     def profile_widths(
-        self, *, n_subjects: int, widths: Mapping[str, int]
+        self, *, n_agents: int, widths: Mapping[str, int]
     ) -> SimulationChunkProfile:
         """Profile exactly one whole inner map without reopening its search.
 
@@ -572,7 +572,7 @@ class _ChunkProfiler:
             "ages": self.ages,
             "initial_conditions": self.initial_conditions,
             "regime_names_to_ids": self.regime_names_to_ids,
-            "n_subjects": n_subjects,
+            "n_agents": n_agents,
             "population": self.population,
             "original_population": self.original_population,
             "widths": widths,
@@ -599,44 +599,44 @@ class _ChunkProfiler:
         )
 
 
-def _resolve_subject_anchor_width(
+def _resolve_agent_anchor_width(
     *,
     configured: Mapping[str, int],
     population: int,
     alignment: int,
     budget: int,
 ) -> int:
-    """Return the pinned subject width, or auto-resolve one (AUTO_ANCHOR).
+    """Return the pinned agent width, or auto-resolve one (AUTO_ANCHOR).
 
     A pinned width is clamped to the population and aligned to the device
     count. Without a pin, the existing single-axis workspace search proposes
-    the widest representable subject width the budget admits as the frontier's
+    the widest representable agent width the budget admits as the frontier's
     starting anchor, exactly as it always has for an unpinned budgeted call.
     A unit population needs no search. This anchor only seeds the frontier and
     the fallback width map; the outer-cohort planner still profiles the actual
     admitted extent before accepting it.
     """
-    if "subject" in configured:
-        extent = min(configured["subject"], population)
+    if "agent" in configured:
+        extent = min(configured["agent"], population)
         return -(-extent // alignment) * alignment
     if population == 1:
         return 1
     outer = TiledOutputAxis(
-        name="subject",
-        state_names=("subject",),
+        name="agent",
+        state_names=("agent",),
         extent=population,
-        width_keyword="__lcm_subject_width__",
+        width_keyword="__lcm_agent_width__",
         alignment=alignment,
     )
-    return workspace_width_candidates(axes=(outer,), budget_bytes=budget)[0]["subject"]
+    return workspace_width_candidates(axes=(outer,), budget_bytes=budget)[0]["agent"]
 
 
 def _independent_outer_candidates(
-    *, population: int, alignment: int, subject_width: int
+    *, population: int, alignment: int, agent_width: int
 ) -> tuple[int, ...]:
     """Return the doubling integer frontier, deduplicated in anchor-first order.
 
-    The anchor is the inner subject width; each further candidate doubles the
+    The anchor is the inner agent width; each further candidate doubles the
     previous one until a candidate covers the whole population, and every
     candidate is rounded up to the device alignment. The frontier is finite and
     ordered geometrically; admission chooses the order in which to profile it.
@@ -644,7 +644,7 @@ def _independent_outer_candidates(
     candidates: dict[int, None] = {}
     scale = 1
     while True:
-        extent = min(scale * subject_width, population)
+        extent = min(scale * agent_width, population)
         candidates[-(-extent // alignment) * alignment] = None
         if extent >= population:
             return tuple(candidates)
@@ -659,7 +659,7 @@ def _independent_anchor_widths(
 ) -> tuple[Mapping[str, int], ...]:
     """Generate two maps and retain pins absent from a scalar anchor's axes.
 
-    A subject pin remains relevant when the larger candidate introduces that axis.
+    An agent pin remains relevant when the larger candidate introduces that axis.
     Existing axes keep the enumerator's admissible clamp, without inventing axes
     for scalar programs or reopening the map at the larger extent.
     """
@@ -696,18 +696,18 @@ def _plan_independent_chunks(
         raise ExecutionPlanningError("Independent chunk admission needs a budget.")
     configured = profiler.runtime.execution.axis_widths
     population = profiler.planning_population(alignment=alignment)
-    subject_width = _resolve_subject_anchor_width(
+    agent_width = _resolve_agent_anchor_width(
         configured=configured,
         population=population,
         alignment=alignment,
         budget=budget,
     )
     candidates = _independent_outer_candidates(
-        population=population, alignment=alignment, subject_width=subject_width
+        population=population, alignment=alignment, agent_width=agent_width
     )
     anchor = candidates[0]
     largest = candidates[-1]
-    axes = _common_axes(regimes=profiler.regimes, n_subjects=anchor)
+    axes = _common_axes(regimes=profiler.regimes, n_agents=anchor)
     choices = _independent_anchor_widths(
         axes=axes,
         configured=configured,
@@ -715,7 +715,7 @@ def _plan_independent_chunks(
     )
     attempts: list[ChunkCandidateReceipt] = []
     selected = _profile_independent_candidate(
-        profiler=profiler, n_subjects=largest, widths=choices[0], attempts=attempts
+        profiler=profiler, n_agents=largest, widths=choices[0], attempts=attempts
     )
     reason = "largest candidate admitted; smaller profiles skipped"
     map_reason = "preferred anchor-derived map admitted at largest candidate"
@@ -733,10 +733,10 @@ def _plan_independent_chunks(
             original_population=profiler.original_population,
             entry_population=profiler.population,
             alignment=alignment,
-            subject_width=subject_width,
+            agent_width=agent_width,
             candidates=candidates,
             attempts=tuple(attempts),
-            selected_subjects=selected.profile.n_subjects,
+            selected_agents=selected.profile.n_agents,
             axis_widths=tuple(sorted(selected.profile.axis_widths.items())),
             stopping_reason=reason,
             anchor_map_reason=map_reason,
@@ -774,7 +774,7 @@ def _admit_anchor_then_descend(
         if index:
             map_reason = "full anchor rejected; bootstrap profiled"
         selected = _profile_independent_candidate(
-            profiler=profiler, n_subjects=anchor, widths=widths, attempts=attempts
+            profiler=profiler, n_agents=anchor, widths=widths, attempts=attempts
         )
         if selected is not None:
             break
@@ -794,7 +794,7 @@ def _admit_anchor_then_descend(
             continue
         larger = _profile_independent_candidate(
             profiler=profiler,
-            n_subjects=extent,
+            n_agents=extent,
             widths=frozen_widths,
             attempts=attempts,
         )
@@ -808,15 +808,15 @@ def _admit_anchor_then_descend(
 def _profile_independent_candidate(
     *,
     profiler: _ChunkProfiler,
-    n_subjects: int,
+    n_agents: int,
     widths: Mapping[str, int],
     attempts: list[ChunkCandidateReceipt],
 ) -> SimulationChunkPlan | None:
     """Profile once, keeping scalar evidence and no rejected executable owners."""
     started = perf_counter()
-    profile = profiler.profile_widths(n_subjects=n_subjects, widths=widths)
+    profile = profiler.profile_widths(n_agents=n_agents, widths=widths)
     elapsed = perf_counter() - started
-    if profile.n_subjects != n_subjects or dict(profile.axis_widths) != dict(widths):
+    if profile.n_agents != n_agents or dict(profile.axis_widths) != dict(widths):
         raise ExecutionPlanningError(
             "Independent chunk profile changed its extent or widths."
         )
@@ -848,9 +848,9 @@ def _profile_independent_candidate(
         )
     attempts.append(
         ChunkCandidateReceipt(
-            n_subjects=n_subjects,
+            n_agents=n_agents,
             padded_population=profile.padded_population,
-            chunk_count=profile.padded_population // n_subjects,
+            chunk_count=profile.padded_population // n_agents,
             axis_widths=tuple(sorted(profile.axis_widths.items())),
             admitted=admitted,
             devices=tuple(devices),
@@ -866,7 +866,7 @@ def _profile_independent_candidate(
 
 
 def _common_axes(
-    *, regimes: Mapping[str, Regime], n_subjects: int
+    *, regimes: Mapping[str, Regime], n_agents: int
 ) -> tuple[ReducedAxis | TiledOutputAxis, ...]:
     """Build a deliberately common axis policy from actual program declarations."""
     axes: dict[str, ReducedAxis | TiledOutputAxis] = {}
@@ -883,8 +883,8 @@ def _common_axes(
             for program in family.values():
                 for declared in program.requirements.axes:
                     axis = (
-                        replace(declared, extent=n_subjects)
-                        if declared.name == "subject"
+                        replace(declared, extent=n_agents)
+                        if declared.name == "agent"
                         else declared
                     )
                     if axis.extent == 1:

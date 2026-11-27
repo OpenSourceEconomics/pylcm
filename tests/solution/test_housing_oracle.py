@@ -6,8 +6,11 @@ bequest is the closed-form CRRA value, the working value rises in both assets, a
 comparative statics (a costlier house trade, a richer income) move value the right way.
 """
 
+from collections.abc import Mapping
+
 import numpy as np
 
+from lcm.typing import FloatND, RegimeName
 from tests.conftest import X64_ENABLED
 from tests.test_models.deterministic.housing import get_model, get_params
 
@@ -15,46 +18,48 @@ from tests.test_models.deterministic.housing import get_model, get_params
 _RTOL = 1e-12 if X64_ENABLED else 1e-5
 
 
-def _solve(**param_overrides):
+def _solve(**param_overrides: float) -> Mapping[int, Mapping[RegimeName, FloatND]]:
     model = get_model()
     params = get_params(**param_overrides)
     return model.solve(params=params, log_level="debug").values
 
 
-def test_lifecycle_regimes_appear_in_the_right_periods():
+def test_lifecycle_regimes_appear_in_the_right_periods() -> None:
     """The working regime is 2-D (liquid, housing) until the terminal dead period."""
     solution = _solve()
-    assert np.asarray(solution[0]["working"]).shape == (12, 8)
-    assert np.asarray(solution[2]["working"]).shape == (12, 8)
+    assert np.asarray(solution[0]["working"]).shape == (12, 8, 1)
+    assert np.asarray(solution[2]["working"]).shape == (12, 8, 1)
     assert "working" not in solution[3]
-    assert np.asarray(solution[3]["dead"]).shape == (12, 8)
+    assert np.asarray(solution[3]["dead"]).shape == (12, 8, 1)
 
 
-def test_terminal_bequest_is_the_closed_form_crra_value():
+def test_terminal_bequest_is_the_closed_form_crra_value() -> None:
     """The dead regime carries the closed-form CRRA value of liquid plus housing."""
     crra = 1.458
     solution = _solve(crra=crra)
     liquid = np.linspace(0.01, 50.0, 12)[:, None]
     housing = np.linspace(0.01, 50.0, 8)[None, :]
     expected = (liquid + housing) ** (1.0 - crra) / (1.0 - crra)
-    np.testing.assert_allclose(np.asarray(solution[3]["dead"]), expected, rtol=_RTOL)
+    np.testing.assert_allclose(
+        np.asarray(solution[3]["dead"]), expected[..., None], rtol=_RTOL
+    )
 
 
-def test_working_value_increases_in_both_assets():
+def test_working_value_increases_in_both_assets() -> None:
     """More liquid wealth and a bigger house are both weakly valuable."""
     working = np.asarray(_solve()[0]["working"])
     assert np.all(np.diff(working, axis=0) >= -1e-9)
     assert np.all(np.diff(working, axis=1) >= -1e-9)
 
 
-def test_higher_transaction_cost_does_not_raise_working_value():
+def test_higher_transaction_cost_does_not_raise_working_value() -> None:
     """A costlier house trade can only shrink the agent's opportunity set."""
     low = np.asarray(_solve(transaction_cost=0.20)[0]["working"])
     high = np.asarray(_solve(transaction_cost=0.60)[0]["working"])
     assert np.all(high <= low + 1e-9)
 
 
-def test_higher_income_raises_working_value():
+def test_higher_income_raises_working_value() -> None:
     """A richer income strictly raises the working value function."""
     low = np.asarray(_solve(income=1.0)[0]["working"])
     high = np.asarray(_solve(income=2.0)[0]["working"])

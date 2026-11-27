@@ -51,7 +51,7 @@ def _runtime(*, budget: int, enable_jit: bool = True) -> SimulationRuntime:
             device_memory_bytes=budget,
         ),
         enable_jit=enable_jit,
-        subject_devices=(jax.devices()[0],),
+        agent_devices=(jax.devices()[0],),
     )
 
 
@@ -94,16 +94,16 @@ class _ControlledCompiler:
 
     program: MaterializedCoreProgram
     enable_jit: bool
-    subject_width: int
+    agent_width: int
     abstract_inputs: bool
-    subject_devices: tuple[jax.Device, ...]
+    agent_devices: tuple[jax.Device, ...]
     compilations: list[int]
     executable_widths: dict[int, int]
-    shard_subjects: bool = False
+    shard_agents: bool = False
 
     def __call__(self, widths: Mapping[str, int]) -> CompiledSimulationProgram:
-        assert self.subject_devices == (jax.devices()[0],)
-        width = widths["subject"]
+        assert self.agent_devices == (jax.devices()[0],)
+        width = widths["agent"]
         self.compilations.append(width)
         # The controlled peak includes this still-owned shape-only state operand.
         # A real Compiled object publishes its actual kept input-sharding tree.
@@ -165,19 +165,19 @@ def test_cached_candidates_are_rechecked_after_retained_outputs_grow(
     )
     outputs = [
         executor.dispatch(
-            program=program, arguments={"state": state}, period=0, n_subjects=4
+            program=program, arguments={"state": state}, period=0, n_agents=4
         )
     ]
     provider.arrays.append(jnp.ones(20, dtype=jnp.uint8))
     outputs.append(
         executor.dispatch(
-            program=program, arguments={"state": state}, period=0, n_subjects=4
+            program=program, arguments={"state": state}, period=0, n_agents=4
         )
     )
     provider.arrays.append(jnp.ones(40, dtype=jnp.uint8))
     with pytest.raises(ExecutionPlanningError, match="No workspace-width candidate"):
         executor.dispatch(
-            program=program, arguments={"state": state}, period=0, n_subjects=4
+            program=program, arguments={"state": state}, period=0, n_agents=4
         )
     # The first four-byte output is decisive: without the unit's output metadata,
     # external=30 would admit width 2 (peak 67), whereas actual external=34 does not.
@@ -228,12 +228,10 @@ def test_real_compiler_peak_excludes_only_actual_argument_buffers(
         budget_devices=(jax.devices()[0],),
     )
     result = executor.dispatch(
-        program=_program(), arguments={"state": state}, period=0, n_subjects=4
+        program=_program(), arguments={"state": state}, period=0, n_agents=4
     )
     compiled = next(iter(runtime.cache.values()))
-    actual_peak = compiler_peak_bytes(
-        compiled=compiled.executable, widths={"subject": 4}
-    )
+    actual_peak = compiler_peak_bytes(compiled=compiled.executable, widths={"agent": 4})
     assert actual_peak > 0
     assert observations == [(retained.nbytes, actual_peak)]
     np.testing.assert_array_equal(result, np.arange(4.0) + 1)
@@ -248,7 +246,7 @@ def test_unit_owns_raw_outputs_until_explicit_close() -> None:
         budget_devices=(jax.devices()[0],),
     )
     result = executor.dispatch(
-        program=_program(), arguments={"state": state}, period=0, n_subjects=4
+        program=_program(), arguments={"state": state}, period=0, n_agents=4
     )
     reference = weakref.ref(result)
     del result
@@ -259,7 +257,7 @@ def test_unit_owns_raw_outputs_until_explicit_close() -> None:
     assert reference() is None
     with pytest.raises(ExecutionPlanningError, match="closed"):
         executor.dispatch(
-            program=_program(), arguments={"state": state}, period=0, n_subjects=4
+            program=_program(), arguments={"state": state}, period=0, n_agents=4
         )
 
 
@@ -270,7 +268,7 @@ def test_budgeted_dispatch_requires_a_call_scoped_live_inventory() -> None:
             program=_program(),
             arguments={"state": jnp.arange(4.0)},
             period=0,
-            n_subjects=4,
+            n_agents=4,
         )
 
 
@@ -286,7 +284,7 @@ def test_ready_unit_outputs_reach_the_host_inventory() -> None:
         on_output=outputs.append,
     )
     result = executor.dispatch(
-        program=_program(), arguments={"state": state}, period=0, n_subjects=4
+        program=_program(), arguments={"state": state}, period=0, n_agents=4
     )
     assert len(outputs) == 1, "The host owner did not receive the raw core output"
     assert outputs[0] is result
@@ -318,6 +316,6 @@ def test_budgeted_unprofiled_adapters_refuse_before_dispatch(*, adapter: str) ->
     )
     with pytest.raises(ExecutionPlanningError, match="no profiled workspace bound"):
         executor.dispatch(
-            program=program, arguments={"state": state}, period=0, n_subjects=4
+            program=program, arguments={"state": state}, period=0, n_agents=4
         )
     assert runtime.cache == {}

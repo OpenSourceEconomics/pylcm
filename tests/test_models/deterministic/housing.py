@@ -215,10 +215,16 @@ def get_model(
     """
     ages = AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y")
     liquid_grid = LinSpacedGrid(
-        start=borrowing_floor, stop=liquid_max, n_points=n_liquid
+        start=borrowing_floor,
+        stop=liquid_max,
+        n_points=n_liquid,
+        off_grid="extrapolate",
     )
     housing_grid = LinSpacedGrid(
-        start=borrowing_floor, stop=housing_max, n_points=n_housing
+        start=borrowing_floor,
+        stop=housing_max,
+        n_points=n_housing,
+        off_grid="extrapolate",
     )
     working = Regime(
         actions={

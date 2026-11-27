@@ -21,11 +21,10 @@ publishes $-\\infty$ in the first sweep and a runner-up value in the second, so
 the sweep is sensitive to a dropped grid point wherever it is dropped — in the
 solver, in the product map, or upstream in the state-action space.
 
-The singleton, collective, and taste-shock reductions are separate code paths and
-all are swept. The native program graph selects streaming only for the ordinary
-hard-max production routes: collective and EV1 production remains deliberately dense,
-while their sealed streaming implementations are non-production references. The
-taste-shock sweep uses candidate-distinct deterministic noise
+Every regime is a household, a single one of one member. The hard-max and
+taste-shock reductions are separate code paths and both are swept. The native
+program graph selects streaming for the hard-max route; the taste-shock route is
+always dense. The taste-shock sweep uses candidate-distinct deterministic noise
 at the production draw seam, so it checks the continuous winner, the noisy
 discrete winner, the row-major flat index, and the returned unshocked value.
 `test_dropping_one_candidate_is_visible_to_the_sweep` masks one cell inside the
@@ -41,18 +40,18 @@ The standard-library AST
 proof rejects any extra assignment, branch, slice, index, mask, `where`, rank,
 gap, support-size, shape, or axis transformation. The collective path permits
 only the independently checked split of the trailing member axis and pins
-the shared scalarization, argmax, and gather implementations exactly. The three
-taste-shock routes additionally pin masking, continuous reduction, the reference
-streamed branch-hard-max then dynamically bound log-sum-exp composition,
-per-discrete-cell mean-zero Gumbel noise, and flat-index reconstruction, including the
-deep shared helper bodies. The construction and correctness of Q/F values
+the shared scalarization, argmax, and gather implementations exactly. The two
+taste-shock routes additionally pin masking, the decider's continuous reduction
+that carries every member's value, the discrete log-sum-exp and zero-safe member
+means, per-discrete-cell mean-zero Gumbel noise, and flat-index reconstruction,
+including the deep shared helper bodies. The construction and correctness of Q/F values
 and feasibility—including user DAGs, constraints, transitions, interpolation,
 and continuation arithmetic—is outside this certificate
 and remains owned by its dedicated semantic tests.
 
 The executable sweep remains deliberately finite: two action grids, six
 candidates, six strict winner orderings, and all 63 nonempty feasibility masks on
-the ordinary and collective routes; the taste-shock routes use singleton,
+the hard-max routes; the taste-shock routes use one-candidate,
 intermediate, spread, and full supports for every winning candidate. It is an
 executable sanity check, not the universal proof. The modeller's grid
 specification and off-grid discretization error remain outside the claim.
@@ -83,7 +82,7 @@ from _lcm.simulation import taste_stream as taste_stream_module
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.solution import action_streaming as action_streaming_module
 from _lcm.solution import grid_search as grid_search_module
-from _lcm.solution.action_reduction import HardMaxResult
+from _lcm.solution.collective_action_reduction import CollectiveHardMaxResult
 from _lcm.typing import ArtifactPayload, PRNGKeyND, PytreeValue, QAndFArg
 from lcm import (
     AgeGrid,
@@ -163,8 +162,8 @@ class _KernelOutputArguments(TypedDict, closed=True):
 class _TasteKeyArguments(TypedDict, closed=True):
     key: PRNGKeyND
     address_words: tuple[int, ...]
-    subject_slice: slice
-    original_n_subjects: int
+    agent_slice: slice
+    original_n_agents: int
     memory: SimulationMemory | None
     period: NotRequired[int]
 
@@ -179,6 +178,16 @@ class _EvaluateBlockArguments(TypedDict, closed=True):
     n_actions: int
     block_width: int
     block_offsets: jax.Array
+    n_members: int
+
+
+class _HouseholdFoldArguments(TypedDict, closed=True):
+    """The household arguments the streamed fold builder forwards unchanged."""
+
+    block_width: int
+    members: tuple[str, ...]
+    weights: Mapping[str, FloatND | float]
+    publishes_identity: bool
 
 
 class _EvaluateBlock(Protocol):
@@ -508,35 +517,6 @@ def test_the_action_product_map_is_unbatched() -> None:
 
 
 @pytest.mark.parametrize(
-    ("kernel", "reducer"),
-    [
-        ("_HardMaxQOverA.__call__", "max"),
-        ("_HardMaxArgmaxQOverA.__call__", "argmax_and_max"),
-    ],
-)
-def test_the_singleton_reduction_covers_every_action_axis(
-    *, kernel: str, reducer: str
-) -> None:
-    """The singleton value is a full reduction: masked, and over no named axis.
-
-    A reduction with no `axis=` covers the whole action product. An `axis=` here
-    would leave some action axis unsearched and change the published rank, and
-    `where=F_arr` is what makes the mask remove infeasible candidates only —
-    never representable ones. Solve and simulate reduce with different callables
-    and each owes the obligation separately.
-    """
-    tree = _parse("src/_lcm/regime_building/max_Q_over_a.py")
-    node = _definition(tree=tree, qualname=kernel)
-    reductions = [
-        call
-        for call in _calls_named(node=node, name=reducer)
-        if _chain(_keyword(call=call, name="where")) == "F_arr"
-    ]
-
-    assert [_keyword(call=call, name="axis") for call in reductions] == [None]
-
-
-@pytest.mark.parametrize(
     "kernel", ["_HardMaxQOverA.__call__", "_HardMaxArgmaxQOverA.__call__"]
 )
 def test_the_collective_reduction_treats_every_feasibility_axis_as_an_action(
@@ -562,31 +542,39 @@ def test_the_collective_reduction_treats_every_feasibility_axis_as_an_action(
 
 
 def test_the_taste_shock_reduction_covers_every_action_axis() -> None:
-    """Continuous axes are maximized out and every remaining axis is smoothed.
+    """Continuous axes are maximized out and every discrete cell is smoothed.
 
-    With taste shocks the discrete axes are aggregated by `logsum` rather than
-    by `max`, but the candidate set is unchanged: the continuous axes run from
-    the first non-discrete axis to the last, and the smoothing runs over all of
-    what is left.
+    With taste shocks the decider's discrete cells are aggregated by `logsum`
+    rather than by `max`, but the candidate set is unchanged: the continuous
+    cells span every axis from the first non-discrete one to the last, the
+    discrete cells every axis before it, and the smoothing runs over all
+    discrete cells.
     """
-    tree = _parse("src/_lcm/regime_building/max_Q_over_a.py")
-    kernel = _definition(tree=tree, qualname="_SmoothedMaxQOverA.__call__")
+    tree = _parse("src/_lcm/regime_building/collective.py")
+    choice = _definition(tree=tree, qualname="decider_choice")
     assigned = {
         target.id: ast.unparse(child.value)
-        for child in ast.walk(kernel)
+        for child in ast.walk(choice)
         if isinstance(child, ast.Assign)
         for target in child.targets
-        if isinstance(target, ast.Name) and target.id == "continuous_axes"
+        if isinstance(target, ast.Name)
+        and target.id in {"n_discrete_cells", "n_continuous_cells"}
     }
-    smoothing = _calls_named(node=kernel, name="logsum_and_softmax")[0]
+    expected = _definition(tree=tree, qualname="decider_expected_values")
+    smoothing = _calls_named(node=expected, name="logsum_and_softmax")[0]
     axes = _keyword(call=smoothing, name="axes")
 
     assert (
-        assigned["continuous_axes"],
+        assigned,
         ast.unparse(axes) if axes is not None else None,
     ) == (
-        "tuple(range(self.n_discrete_action_axes, Q_arr.ndim))",
-        "tuple(range(Qc.ndim))",
+        {
+            "n_discrete_cells": "math.prod(feasibility.shape[:n_discrete_action_axes])",
+            "n_continuous_cells": (
+                "math.prod(feasibility.shape[n_discrete_action_axes:])"
+            ),
+        },
+        "(0,)",
     )
 
 
@@ -600,7 +588,7 @@ def test_no_obligation_rests_on_an_undeclared_source() -> None:
 def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation() -> None:
     """The universal bound is a route-local data-flow proof, not a value sample.
 
-    Literal parses add the shared singleton and collective reducer definitions to
+    Literal parses add the shared hard-max and taste-shock reducer definitions to
     the same generated source inventory as the route builders. The verifier then
     requires exact source arrays at each reducer and rejects any non-allowlisted
     statement in the certified corridor.
@@ -878,9 +866,6 @@ def test_streamed_reducer_sources_are_literal_certificate_obligations() -> None:
     assert isinstance(
         _parse("src/_lcm/solution/collective_action_reduction.py"), ast.Module
     )
-    assert isinstance(
-        _parse("src/_lcm/solution/logsumexp_action_reduction.py"), ast.Module
-    )
     assert isinstance(_parse("src/_lcm/solution/period_replay.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/programs.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/program_types.py"), ast.Module)
@@ -916,15 +901,11 @@ def test_direct_flow_certificate_names_every_supported_route() -> None:
     result = verify_direct_candidate_flow(repo_root=_SRC_ROOT.parent)
 
     assert set(result["routes"]) == {
-        "singleton_solve",
-        "singleton_streamed_solve",
-        "singleton_action_partitioned_solve",
-        "singleton_simulate",
         "collective_solve",
         "collective_streamed_solve",
+        "collective_action_partitioned_solve",
         "collective_simulate",
         "taste_shock_solve",
-        "taste_shock_streamed_solve",
         "taste_shock_simulate",
         "finite_policy_simulate",
     }
@@ -985,7 +966,6 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
         "taste_shock_simulate:attribute_with_signature",
         "taste_shock_solve:attribute_q_and_f",
         "taste_shock_simulate:attribute_q_and_f",
-        "singleton_simulate:attribute_argmax_and_max",
         "collective_solve:attribute_collective_readout",
         "collective_simulate:attribute_collective_argmax",
         "solve:attribute_productmap",
@@ -1068,17 +1048,14 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
         "streaming_width_builder:collision_validation_removed",
         "streaming_provider:co_map_route_disabled",
         "streaming_provider:co_map_reference_guard_bypassed",
-        "streaming_classifier:collective_ev1_admitted",
         "streaming_classifier:ev1_without_discrete_action_admitted",
         "streaming_classifier:jit_disabled_gate_reintroduced",
         "streaming_classifier:trivial_product_admitted",
         "streaming_classifier:category_suffix_selected",
         "streaming_classifier:ev1_reason_changed",
-        "streaming_classifier:collective_reason_changed",
         "streaming_classifier:ev1_gate_bypassed",
-        "streaming_classifier:collective_resource_gate_bypassed",
         "streaming_classifier:ev1_precedes_trivial_product",
-        "streaming_classifier:collective_precedes_co_map",
+        "streaming_classifier:household_sent_dense",
         "streaming_co_map:inner_state_reincluded",
         "streaming_co_map:state_order_reversed",
         "streaming_co_map:continuation_axes_broadcast",
@@ -1087,24 +1064,6 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
         "streaming_dispatch:bypass_compiled_core",
         "streaming_collective:builder_dissolution_inverted",
         "streaming_collective:builder_member_axis_sliced",
-        "streaming_ev1:runtime_scale_constant",
-        "streaming_ev1:scale_signature_dropped",
-        "streaming_ev1:published_value_negated",
-        "streaming_ev1:scale_rebound",
-        "streaming_ev1:continuous_extent_changed",
-        "streaming_ev1:skip_last_block",
-        "streaming_ev1:admit_padded_tail",
-        "streaming_ev1:admit_padded_branch_tail",
-        "streaming_ev1:branch_identity_shifted",
-        "streaming_ev1:branch_transition_ignored",
-        "streaming_ev1:branch_value_negated",
-        "streaming_ev1:last_branch_not_flushed",
-        "streaming_ev1:reverse_block_order",
-        "streaming_logsumexp:filter_first_branch",
-        "streaming_logsumexp:ignore_right_partial",
-        "streaming_logsumexp:scale_dropped_at_finalize",
-        "streaming_logsumexp:semantic_key_changed",
-        "streaming_logsumexp:bind_negates_scale",
         "terminal_wrapper:native_graph_dropped",
         "terminal_wrapper:native_graph_filtered",
         "terminal_wrapper:duplicate_legacy_authority",
@@ -1114,17 +1073,13 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
         "streaming_resolver:arguments_filtered",
         "streaming_resolver:specialization_drops_axes",
         "streaming_resolver:output_roles_dropped",
-        "streaming_blocks:skip_last_block",
         "streaming_blocks:admit_padded_tail",
         "streaming_blocks:block_local_action_ids",
         "streaming_blocks:reverse_coordinate_decode",
-        "streaming_hard_max:filter_last_identity",
         "streaming_collective_blocks:skip_last_block",
-        "streaming_collective_blocks:admit_padded_tail",
+        "streaming_collective_blocks:feasibility_mask_dropped",
         "streaming_collective_blocks:block_local_action_ids",
         "streaming_collective_blocks:objective_uses_first_member",
-        "streaming_hard_max:ignore_right_partial",
-        "streaming_hard_max:signed_zero_normalization_bypassed",
         "streaming_hard_max:semantic_key_changed",
         "native_graph:solve_collection_bypasses_central_validator",
         "native_graph:materialized_program_filtered",
@@ -1190,9 +1145,6 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
         f"streaming_collective_blocks:candidate_index_{index}"
         for index in range(len(_CANDIDATES))
     )
-    required.update(
-        f"streaming_ev1:candidate_index_{index}" for index in range(len(_CANDIDATES))
-    )
 
     assert required <= names
     # Independent literals make both cardinality and family identity part of this
@@ -1202,10 +1154,10 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
         for name in names
         if not name.startswith(("simulation_adapter:", "public_shell:"))
     }
-    assert len(original_names) == 376
+    assert len(original_names) == 327
     assert (
         hashlib.sha256(("\n".join(sorted(original_names)) + "\n").encode()).hexdigest()
-        == "39e2aff2d982dde0ee2c6486eb9f1f783c5fe6648eeb35ed06d0e1303e55af69"
+        == "66d817f877b0ef3da4269807395d1ea96a20c8d03daef3df49e88b43eefda0bc"
     )
     historical_names = {
         name
@@ -1216,17 +1168,17 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate() 
             ("simulation_adapter:initial_physical_", "public_shell:")
         )
     }
-    assert len(historical_names) == 394
+    assert len(historical_names) == 345
     assert (
         hashlib.sha256(
             ("\n".join(sorted(historical_names)) + "\n").encode()
         ).hexdigest()
-        == "2f8d45afccfc746ab2fc3ad14505c7f087d4571092e83dedf2ce6dfc3780ff3b"
+        == "beec45a5615b3b5e9f48bfa84169d60aa238955c3f27021e6020e7fff336bdd3"
     )
-    assert len(names) == 411
+    assert len(names) == 362
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "ce4f0914b5cf4530600d46264ffe50b13254137d44de1abe78b5f787c9957612"
+        == "06e2d12297b5811c6808bdd7056ee03ab896f19a8b48ddbd0cdcfa043fdf882c"
     )
 
 
@@ -1418,7 +1370,7 @@ def _build_model(
     constraints: Mapping[str, Callable[..., BoolND]],
     terminal_utility: Callable[..., FloatND] | CollectiveUtility,
     taste_shocks: bool = False,
-    subject_width: int | None = None,
+    agent_width: int | None = None,
 ) -> Model:
     """Build the one-decision model the sweeps solve.
 
@@ -1427,7 +1379,7 @@ def _build_model(
         constraints: The acting regime's constraints.
         terminal_utility: The terminal regime's utility declaration.
         taste_shocks: Whether the acting singleton declares EV1 taste shocks.
-        subject_width: Optional explicit forward subject width.
+        agent_width: Optional explicit forward agent width.
 
     Returns:
         The built model.
@@ -1454,7 +1406,7 @@ def _build_model(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(
-            axis_widths={} if subject_width is None else {"subject": subject_width}
+            axis_widths={} if agent_width is None else {"agent": agent_width}
         ),
         initial_nodes={0: "acting"},
         edges={"acting": {"done": 0}},
@@ -1492,7 +1444,7 @@ def _dedup_terminal_utility(wealth: ContinuousState) -> FloatND:
     return wealth
 
 
-def _build_dedup_collision_model(*, subject_width: int | None = None) -> Model:
+def _build_dedup_collision_model(*, agent_width: int | None = None) -> Model:
     """Build same-shaped regimes whose runtime argmax partials must remain distinct."""
     wealth_grid = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)
 
@@ -1516,7 +1468,7 @@ def _build_dedup_collision_model(*, subject_width: int | None = None) -> Model:
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=DedupRegimeId,
         execution_config=ExecutionConfig(
-            axis_widths={} if subject_width is None else {"subject": subject_width}
+            axis_widths={} if agent_width is None else {"agent": agent_width}
         ),
         initial_nodes={0: ("left", "right")},
         edges={"left": {"done": 0}, "right": {"done": 0}},
@@ -1545,7 +1497,7 @@ def _simulate_dedup_model(*, model: Model, params: _ModelParams) -> pd.DataFrame
         log_level="debug",
     )
     frame = result.to_dataframe(use_categorical_codes=True)
-    return frame[frame["period"] == 0].sort_values("subject_id")
+    return frame[frame["period"] == 0].sort_values("agent_id")
 
 
 def _solve_acting(
@@ -1560,7 +1512,7 @@ def _solve_acting(
         function_name: Params key of the function reading the two targets.
 
     Returns:
-        The acting regime's period-0 value array.
+        The acting regime's period-0 value array, with its member axis last.
     """
     params = _mutable_params_template(model=model)
     params["acting"][function_name]["target_work"] = work
@@ -1660,7 +1612,11 @@ def test_every_declared_candidate_can_be_the_only_feasible_one(
         function_name="only_target",
     )
 
-    aaae(V_arr, _WEALTH_VALUES + consumption + 10.0 * work, decimal=DECIMAL_PRECISION)
+    aaae(
+        V_arr[..., 0],
+        _WEALTH_VALUES + consumption + 10.0 * work,
+        decimal=DECIMAL_PRECISION,
+    )
 
 
 @pytest.mark.parametrize(("work", "consumption"), _CANDIDATES)
@@ -1680,7 +1636,7 @@ def test_every_declared_candidate_can_win_the_maximization(
         function_name="utility",
     )
 
-    aaae(V_arr, _WEALTH_VALUES, decimal=DECIMAL_PRECISION)
+    aaae(V_arr[..., 0], _WEALTH_VALUES, decimal=DECIMAL_PRECISION)
 
 
 @pytest.mark.parametrize(("work", "consumption"), _CANDIDATES)
@@ -1719,7 +1675,7 @@ def _simulate_acting(
         function_name: Params key of the function reading the two targets.
 
     Returns:
-        Mapping of each action name to its published value, one entry per subject.
+        Mapping of each action name to its published value, one entry per agent.
     """
     params = _mutable_params_template(model=model)
     params["acting"][function_name]["target_work"] = work
@@ -1851,14 +1807,14 @@ def _period_zero_action_views(
     raw = {name: raw_period.actions[name].tolist() for name in action_names}
 
     frame = result.to_dataframe(use_categorical_codes=True)
-    frame = frame[frame["period"] == 0].sort_values("subject_id")
+    frame = frame[frame["period"] == 0].sort_values("agent_id")
     ordinary = {name: frame[name].to_numpy().tolist() for name in action_names}
 
     enriched_frame = result.to_dataframe(
         additional_targets=["utility"], use_categorical_codes=True
     )
     enriched_frame = enriched_frame[enriched_frame["period"] == 0].sort_values(
-        "subject_id"
+        "agent_id"
     )
     enriched = {name: enriched_frame[name].to_numpy().tolist() for name in action_names}
     return raw, ordinary, enriched
@@ -2070,7 +2026,7 @@ def test_singleton_solve_matches_reference_over_every_nonempty_feasibility_mask(
             observed = _solve_mask_case(
                 model=masked_singleton_model, mask=mask, ranks=ranks
             )
-            aaae(observed, _WEALTH_VALUES + value, decimal=DECIMAL_PRECISION)
+            aaae(observed[..., 0], _WEALTH_VALUES + value, decimal=DECIMAL_PRECISION)
 
 
 def test_singleton_simulate_matches_reference_over_every_nonempty_feasibility_mask(
@@ -2220,7 +2176,7 @@ def test_collapsing_plain_callable_dedup_keys_changes_the_published_candidate(
         log_level="debug",
     )
     frame = result.to_dataframe(use_categorical_codes=True)
-    period_0 = frame[frame["period"] == 0].sort_values("subject_id")
+    period_0 = frame[frame["period"] == 0].sort_values("agent_id")
 
     observed = list(
         zip(
@@ -2232,9 +2188,9 @@ def test_collapsing_plain_callable_dedup_keys_changes_the_published_candidate(
     assert observed != [(0, 1.0), (1, 3.0)]
 
 
-def test_padded_heterogeneous_candidates_remain_subject_aligned() -> None:
-    """Padding and trimming preserve each subject's selected candidate."""
-    model = _build_dedup_collision_model(subject_width=2)
+def test_padded_heterogeneous_candidates_remain_agent_aligned() -> None:
+    """Padding and trimming preserve each agent's selected candidate."""
+    model = _build_dedup_collision_model(agent_width=2)
     result = model.simulate(
         params=_supplied_params(params=_dedup_params(model)),
         initial_conditions={
@@ -2250,14 +2206,14 @@ def test_padded_heterogeneous_candidates_remain_subject_aligned() -> None:
     assert raw.actions["consumption"].tolist() == [1.0, 3.0, 1.0]
 
     period_0 = result.to_dataframe(use_categorical_codes=True)
-    period_0 = period_0[period_0["period"] == 0].sort_values("subject_id")
+    period_0 = period_0[period_0["period"] == 0].sort_values("agent_id")
     assert period_0["work"].to_numpy().tolist() == [0, 1, 0]
     assert period_0["consumption"].to_numpy().tolist() == [1.0, 3.0, 1.0]
 
     enriched = result.to_dataframe(
         additional_targets=["utility"], use_categorical_codes=True
     )
-    enriched = enriched[enriched["period"] == 0].sort_values("subject_id")
+    enriched = enriched[enriched["period"] == 0].sort_values("agent_id")
     assert enriched["work"].to_numpy().tolist() == [0, 1, 0]
     assert enriched["consumption"].to_numpy().tolist() == [1.0, 3.0, 1.0]
 
@@ -2282,7 +2238,7 @@ def test_additional_targets_preserve_unbatched_selected_candidates() -> None:
     frame = result.to_dataframe(
         additional_targets=["utility"], use_categorical_codes=True
     )
-    period_0 = frame[frame["period"] == 0].sort_values("subject_id")
+    period_0 = frame[frame["period"] == 0].sort_values("agent_id")
     assert period_0["work"].to_numpy().tolist() == [0, 1, 0]
     assert period_0["consumption"].to_numpy().tolist() == [1.0, 3.0, 1.0]
 
@@ -2359,11 +2315,11 @@ def _simulate_zero_weight_fold(model: Model) -> tuple[list[int], list[int], list
     )
     raw = result.raw_results["src"][0].actions["work"].tolist()
     frame = result.to_dataframe(use_categorical_codes=True)
-    frame = frame[frame["period"] == 0].sort_values("subject_id")
+    frame = frame[frame["period"] == 0].sort_values("agent_id")
     enriched = result.to_dataframe(
         additional_targets=["utility"], use_categorical_codes=True
     )
-    enriched = enriched[enriched["period"] == 0].sort_values("subject_id")
+    enriched = enriched[enriched["period"] == 0].sort_values("agent_id")
     return (
         raw,
         frame["work"].to_numpy().tolist(),
@@ -2400,22 +2356,22 @@ def test_negating_kernel_output_reverses_the_public_candidate(
     assert shifted == ([0], [0], [0])
 
 
-_RNG_N_SUBJECTS = 20
-_RNG_SUBJECT_BATCH_SIZE = 7
+_RNG_N_AGENTS = 20
+_RNG_AGENT_BATCH_SIZE = 7
 _RNG_RANKS = (2.0, 1.0, 0.0, 2.0, 1.0, 0.0)
 _RNG_MASK = tuple(True for _ in _CANDIDATES)
 
 
 def _simulate_seeded_taste_routing(*, model: Model) -> tuple[list[int], list[int]]:
-    """Publish raw and DataFrame choices for one fixed subject-key stream."""
+    """Publish raw and DataFrame choices for one fixed agent-key stream."""
     result = model.simulate(
         params=_supplied_params(
             params=_params_for_mask(model=model, mask=_RNG_MASK, ranks=_RNG_RANKS)
         ),
         initial_conditions={
-            "age": jnp.zeros(_RNG_N_SUBJECTS),
-            "wealth": jnp.ones(_RNG_N_SUBJECTS),
-            "regime_id": jnp.full(_RNG_N_SUBJECTS, RegimeId.acting),
+            "age": jnp.zeros(_RNG_N_AGENTS),
+            "wealth": jnp.ones(_RNG_N_AGENTS),
+            "regime_id": jnp.full(_RNG_N_AGENTS, RegimeId.acting),
         },
         log_level="debug",
         seed=409,
@@ -2424,12 +2380,12 @@ def _simulate_seeded_taste_routing(*, model: Model) -> tuple[list[int], list[int
     frame = result.to_dataframe(
         additional_targets=["utility"], use_categorical_codes=True
     )
-    period_0 = frame[frame["period"] == 0].sort_values("subject_id")
+    period_0 = frame[frame["period"] == 0].sort_values("agent_id")
     return raw, period_0["work"].to_numpy().tolist()
 
 
-def test_seeded_taste_keys_preserve_subject_identity_across_batching() -> None:
-    """A fixed subject keeps its taste draw under chunking and runtime dispatch."""
+def test_seeded_taste_keys_preserve_agent_identity_across_batching() -> None:
+    """A fixed agent keeps its taste draw under chunking and runtime dispatch."""
     unbatched, chunked = (
         _simulate_seeded_taste_routing(
             model=_build_model(
@@ -2437,10 +2393,10 @@ def test_seeded_taste_keys_preserve_subject_identity_across_batching() -> None:
                 constraints={"candidate_mask": _candidate_mask},
                 terminal_utility=lambda: jnp.array(0.0),
                 taste_shocks=True,
-                subject_width=width,
+                agent_width=width,
             )
         )
-        for width in (None, _RNG_SUBJECT_BATCH_SIZE)
+        for width in (None, _RNG_AGENT_BATCH_SIZE)
     )
 
     assert unbatched == chunked
@@ -2457,7 +2413,7 @@ def test_reassigning_taste_keys_changes_the_public_candidate(
         constraints={"candidate_mask": _candidate_mask},
         terminal_utility=lambda: jnp.array(0.0),
         taste_shocks=True,
-        subject_width=_RNG_SUBJECT_BATCH_SIZE,
+        agent_width=_RNG_AGENT_BATCH_SIZE,
     )
     baseline = _simulate_seeded_taste_routing(model=model)
     original = taste_stream_module.generate_taste_shock_keys
@@ -2491,7 +2447,7 @@ def test_taste_shock_solve_matches_reference_for_every_candidate_and_support(
                 model=masked_taste_shock_model, mask=mask, ranks=ranks
             )
             aaae(
-                observed,
+                observed[..., 0],
                 _WEALTH_VALUES + solved,
                 decimal=DECIMAL_PRECISION,
             )
@@ -2623,16 +2579,16 @@ def _simulation_fold_masking_the_last_action_cell(
     *,
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
     action_names: tuple[ActionName, ...],
-    block_width: int,
-) -> Callable[..., HardMaxResult]:
+    **fold_arguments: Unpack[_HouseholdFoldArguments],
+) -> Callable[..., CollectiveHardMaxResult]:
     """Build the simulation fold with one candidate hidden; leave solve unchanged.
 
     The simulation module owns the patched builder binding. The solve module keeps
     its original builder, and terminal folds without actions pass through untouched.
     """
     return cast(
-        "Callable[..., HardMaxResult]",
-        action_streaming_module.build_streaming_max_Q_over_a(
+        "Callable[..., CollectiveHardMaxResult]",
+        action_streaming_module.build_streaming_collective_max_Q_over_a(
             Q_and_F=(
                 functools.partial(
                     _q_and_f_masking_the_last_action_cell, Q_and_F=Q_and_F
@@ -2641,7 +2597,7 @@ def _simulation_fold_masking_the_last_action_cell(
                 else Q_and_F
             ),
             action_names=action_names,
-            block_width=block_width,
+            **fold_arguments,
         ),
     )
 
@@ -2651,7 +2607,7 @@ def test_masking_the_only_simulate_candidate_raises() -> None:
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(
             simulation_programs_module,
-            "build_streaming_max_Q_over_a",
+            "build_streaming_collective_max_Q_over_a",
             _simulation_fold_masking_the_last_action_cell,
         )
         model = _build_model(
@@ -2679,7 +2635,7 @@ def test_masking_one_simulate_candidate_leaves_the_others_alone() -> None:
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(
             simulation_programs_module,
-            "build_streaming_max_Q_over_a",
+            "build_streaming_collective_max_Q_over_a",
             _simulation_fold_masking_the_last_action_cell,
         )
         model = _build_model(
@@ -2773,7 +2729,7 @@ def test_dropping_one_candidate_leaves_every_other_candidate_alone() -> None:
     )
 
     aaae(
-        V_arr,
+        V_arr[..., 0],
         _WEALTH_VALUES + _CONSUMPTION_VALUES[0] + 10.0 * _WORK_VALUES[0],
         decimal=DECIMAL_PRECISION,
     )
@@ -2837,8 +2793,8 @@ _S02_IMPORTED_HELPERS = (
     ("src/_lcm/solution/continuation_reads.py", "continuation_leaf_reads"),
     ("src/_lcm/solution/feasibility.py", "reduce_bound_input_status"),
     ("src/_lcm/utils/dispatchers.py", "_map_with_bound_summary"),
-    ("src/_lcm/simulation/subject_parallel.py", "shard_subject_function"),
-    ("src/_lcm/simulation/subject_parallel.py", "_evaluate_local_subjects"),
+    ("src/_lcm/simulation/agent_parallel.py", "shard_agent_function"),
+    ("src/_lcm/simulation/agent_parallel.py", "_evaluate_local_agents"),
     ("src/_lcm/solution/kernel_output.py", "consume_kernel_output"),
 )
 
@@ -2897,7 +2853,7 @@ def test_s02_query_status_sources_have_literal_inventory_obligations() -> None:
     assert isinstance(_parse("src/_lcm/egm/outer_envelope.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/egm/query_data.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/regime_building/Q_and_F.py"), ast.Module)
-    assert isinstance(_parse("src/_lcm/simulation/subject_parallel.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/simulation/agent_parallel.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/solution/egm.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/solution/kernel_output.py"), ast.Module)
 
@@ -3252,8 +3208,8 @@ _CURRENT_IID_ADAPTER_MUTATIONS = (
     (
         "omit_solve_status",
         "src/_lcm/current_iid.py",
-        "return jnp.sum(terms), jnp.any(support & empty), ~valid",
-        "return jnp.sum(terms), jnp.any(support & empty), False",
+        "return jnp.sum(terms, axis=0), jnp.any(support & empty), ~valid",
+        "return jnp.sum(terms, axis=0), jnp.any(support & empty), False",
     ),
     (
         "omit_replay_status",

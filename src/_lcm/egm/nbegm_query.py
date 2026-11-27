@@ -151,6 +151,7 @@ def build_nbegm_query(
         ),
         build_preferences=get_preferences_builder(
             functions=functions,
+            utility_name=model.utility_name,
             action_name=bound.action,
             scale_grid=model.offsets,
         ),
@@ -214,7 +215,7 @@ class NBEGMQuery:
     def input_names(self) -> frozenset[ReferenceName]:
         """Include every interval/floor/predicate dependency in branch grouping."""
         bound = self.model.authority.bound
-        internal = {bound.action, bound.post_decision, "utility", "CE"}
+        internal = {bound.action, bound.post_decision, self.model.utility_name, "CE"}
         finite = self.model.authority.finite_outer
         if finite is not None:
             if self.finite_queries is None:

@@ -66,7 +66,7 @@ class SimulationStageProfile:
 class SimulationChunkProfile:
     """Compiled stages plus conservative future storage for one chunk extent."""
 
-    n_subjects: int
+    n_agents: int
     padded_population: int
     stages: tuple[SimulationStageProfile, ...]
     fixed_reservation: MappingProxyType[jax.Device, int]
@@ -85,11 +85,11 @@ class SimulationChunkProfile:
     def __post_init__(self) -> None:
         """Validate the chunk extent, its reservations and its specialization."""
         if (
-            type(self.n_subjects) is not int
-            or self.n_subjects <= 0
+            type(self.n_agents) is not int
+            or self.n_agents <= 0
             or type(self.padded_population) is not int
-            or self.padded_population < self.n_subjects
-            or self.padded_population % self.n_subjects
+            or self.padded_population < self.n_agents
+            or self.padded_population % self.n_agents
         ):
             raise ExecutionPlanningError(
                 "A simulation chunk must divide its positive padded population."
@@ -136,7 +136,7 @@ class ChunkDeviceReceipt:
 class ChunkCandidateReceipt:
     """One bounded profile attempt, containing no executable or caller owner."""
 
-    n_subjects: int
+    n_agents: int
     padded_population: int
     chunk_count: int
     axis_widths: tuple[tuple[str, int], ...]
@@ -158,10 +158,10 @@ class IndependentChunkReceipt:
     original_population: int
     entry_population: int
     alignment: int
-    subject_width: int
+    agent_width: int
     candidates: tuple[int, ...]
     attempts: tuple[ChunkCandidateReceipt, ...]
-    selected_subjects: int
+    selected_agents: int
     axis_widths: tuple[tuple[str, int], ...]
     stopping_reason: str
     anchor_map_reason: str

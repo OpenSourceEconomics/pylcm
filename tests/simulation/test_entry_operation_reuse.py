@@ -56,11 +56,11 @@ def test_padded_public_calls_reuse_entry_code_and_accept_new_shapes(
     frontier = chunk_admission._independent_outer_candidates
 
     def force_anchor(
-        *, population: int, alignment: int, subject_width: int
+        *, population: int, alignment: int, agent_width: int
     ) -> tuple[int, ...]:
         return (
             frontier(
-                population=population, alignment=alignment, subject_width=subject_width
+                population=population, alignment=alignment, agent_width=agent_width
             )[0],
         )
 

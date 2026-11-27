@@ -121,7 +121,7 @@ def period_read_targets(
 ) -> frozenset[tuple[int, RegimeName]]:
     """Return the stored values `period` declares it reads, by `(period, regime)`.
 
-    Every regime a subject can occupy at the period counts. Which policy or replay
+    Every regime an agent can occupy at the period counts. Which policy or replay
     reader a regime uses does not change these targets, so none is needed;
     nothing is read to find them.
     """

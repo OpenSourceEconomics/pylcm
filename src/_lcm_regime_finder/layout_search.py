@@ -18,19 +18,28 @@ def regime_kinds(declarations: Record) -> dict[str, Record]:
 
     A regime is terminal if none of its cells has a successor. Its kind is its
     stage, solver, operators (aggregator, certainty equivalent, Pareto
-    objective), members and exit (rule, tie, comparison, renegotiation,
-    settlement, targets with roles, observed shocks, availability), so a
+    objective), members in their order, composition action (rule, tie, Pareto
+    weight state, transfer, destinations with roles, observed shocks,
+    availability) and the own-state list of a composition action whose Pareto
+    weight moves (the Pareto weight state and the nodes of its grid), so a
     collective regime never pools with a single-agent one and regimes with
-    different exits never pool; its law is its taste-shock declaration. It has a
-    discrete choice if it has a categorical action coordinate.
+    different composition actions or unequal lists never pool; its law is its
+    taste-shock declaration. It has a discrete choice if it has a categorical
+    action coordinate. Nonterminal regimes of one kind that declare an action on
+    unequal grids (kind and category values, or the declared grid of a
+    continuous action) are split by that grid, so regimes pool only if the grids
+    of every action they share are equal.
     """
     domains = declarations["domains"]
     kinds: dict[str, Record] = {}
+    grids: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
     for cell in declarations["cells"]:
         operators = cell.get("operators", {})
+        lists = {name: domains[cell["states"][name]].get("values", cell["states"][name])
+                 for name in cell.get("renegotiated_states", [])}
         key = canonical([cell.get("stage"), cell.get("solver_identity"),
                          {k: v for k, v in operators.items() if k != "taste_shocks"},
-                         cell.get("member_axis"), cell.get("exit_identity")])
+                         cell.get("members"), cell.get("composition_action_identity"), lists])
         record = kinds.setdefault(cell["regime"], {
             "terminal": True, "key": key, "taste_shocks": operators.get("taste_shocks"),
             "discrete_choice": False})
@@ -39,6 +48,17 @@ def regime_kinds(declarations: Record) -> dict[str, Record]:
         record["terminal"] = record["terminal"] and cell["terminal"]
         record["discrete_choice"] = record["discrete_choice"] or any(
             domains[did].get("kind") == "categorical" for did in cell["actions"].values())
+        for name, did in cell["actions"].items():
+            grids[cell["regime"]][name].add(canonical([domains[did].get("kind"), domains[did].get("values", did)]))
+    seen: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for regime, record in kinds.items():
+        if not record["terminal"]:
+            for name, grid in grids[regime].items():
+                seen[record["key"], name].add(canonical(sorted(grid)))
+    split = {regime: {name: sorted(grid) for name, grid in grids[regime].items() if len(seen[record["key"], name]) > 1}
+             for regime, record in kinds.items()}
+    for regime, record in kinds.items():
+        record["key"] = canonical([record["key"], split[regime]])
     return kinds
 
 
@@ -73,7 +93,7 @@ def dense_regimes(kinds: Mapping[str, Record]) -> list[tuple[str, ...]]:
 
 def member_count(cell: Record) -> int:
     """A collective regime stores one value and one action value per member."""
-    return len(cell.get("member_axis") or ()) or 1
+    return len(cell.get("members") or ()) or 1
 
 
 type Point = tuple[tuple[str, int], ...]

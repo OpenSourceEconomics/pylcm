@@ -15,6 +15,8 @@ plus terms in the other states, so the chosen hours are `20` at level `0.5` and
 """
 
 import functools
+from collections.abc import Callable
+from pathlib import Path
 from types import MappingProxyType
 
 import jax
@@ -100,6 +102,10 @@ def _stay_health(*, health: DiscreteState) -> DiscreteState:
     return health
 
 
+def _zero_utility() -> float:
+    return 0.0
+
+
 def _next_regime(*, age: float) -> ScalarInt:
     return jnp.where(age >= 1, _RegimeId.dead, _RegimeId.alive)
 
@@ -121,7 +127,7 @@ def _model() -> Model:
         },
         functions={"utility": _utility},
     )
-    dead = Regime(functions={"utility": lambda: 0.0})
+    dead = Regime(functions={"utility": _zero_utility})
     return Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(exact_values=(0, 1, 2)),
@@ -143,7 +149,7 @@ _PARAMS: UserParams = {
     "alive": {"utility": {"bonus": jnp.array([0.0, 0.2])}},
 }
 
-# Three subjects, one per node of every value grid.
+# Three agents, one per node of every value grid.
 _VALUE_START = {
     "experience": np.array([0, 4, 10]),
     "level": np.array([0.5, 1.0, 2.0]),
@@ -213,7 +219,7 @@ def test_to_dataframe_value_grid_column_casts_to_float_for_arithmetic(
 ) -> None:
     """`.astype(float)` turns a value-grid column into numbers for moments.
 
-    Each row holds the value of the node its subject occupies.
+    Each row holds the value of the node its agent occupies.
     """
     numbers = (
         _first_alive_rows(value_frame)[["experience", "level", "hours"]]
@@ -252,7 +258,9 @@ def test_initial_values_simulate_as_their_codes() -> None:
 
 
 @pytest.mark.parametrize("container", [pd.Series, jnp.asarray])
-def test_initial_values_accept_series_and_jax_arrays(container) -> None:
+def test_initial_values_accept_series_and_jax_arrays(
+    container: Callable[[list[float]], pd.Series | jax.Array],
+) -> None:
     """A Series or a JAX array of values is matched like a NumPy array."""
     start = {
         **_VALUE_START,
@@ -649,7 +657,7 @@ def test_value_array_coordinates_are_values_or_labels(
     *, solution: SolutionResult, name: str, expected: list[_Label]
 ) -> None:
     """A value grid's coordinates are its values, a label grid's its labels."""
-    array = solution.value_array(period=0, regime="alive")
+    array = solution.value_array(step=0, regime="alive")
     assert array[name].to_numpy().tolist() == expected
 
 
@@ -658,13 +666,13 @@ def test_value_array_coordinates_with_categorical_codes_are_codes(
     *, solution: SolutionResult, name: str
 ) -> None:
     """`use_categorical_codes=True` gives every discrete coordinate as codes."""
-    array = solution.value_array(period=0, regime="alive", use_categorical_codes=True)
+    array = solution.value_array(step=0, regime="alive", use_categorical_codes=True)
     assert array[name].to_numpy().tolist() == list(range(len(array[name])))
 
 
 def test_value_array_selects_by_value(solution: SolutionResult) -> None:
     """`.sel` picks a value-grid node by its value."""
-    array = solution.value_array(period=0, regime="alive")
+    array = solution.value_array(step=0, regime="alive")
     np.testing.assert_array_equal(
         array.sel(experience=4, level=2.0),
         np.asarray(solution.values[0]["alive"])[1, 2],
@@ -673,10 +681,18 @@ def test_value_array_selects_by_value(solution: SolutionResult) -> None:
 
 def test_value_array_matches_simulated_values(solution: SolutionResult) -> None:
     """The value at each starting node equals the simulated value there."""
-    array = solution.value_array(period=0, regime="alive")
+    array = solution.value_array(step=0, regime="alive")
     frame = _first_alive_rows(_reference())
     got = [
-        float(array.sel(experience=experience, level=level, rank=rank, health=health))
+        float(
+            array.sel(
+                experience=experience,
+                level=level,
+                rank=rank,
+                health=health,
+                member="self",
+            )
+        )
         for experience, level, rank, health in zip(
             _VALUE_START["experience"],
             _VALUE_START["level"],
@@ -688,7 +704,7 @@ def test_value_array_matches_simulated_values(solution: SolutionResult) -> None:
     aaae(got, frame["value"].to_numpy(), DECIMAL_PRECISION)
 
 
-def test_saved_frame_keeps_value_grid_categories(tmp_path) -> None:
+def test_saved_frame_keeps_value_grid_categories(tmp_path: Path) -> None:
     """The Feather table `save` writes keeps a value grid's numeric categories."""
     result = _MODEL.simulate(
         params=_PARAMS, initial_conditions=_VALUE_START, log_level="off", seed=0

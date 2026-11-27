@@ -1,9 +1,9 @@
 """Canonical evaluator pool for model-bound DC-EGM queries."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from _lcm.continuation import EGMQuerySpec
-from _lcm.typing import EconFunction, EconFunctionsMapping
+from _lcm.typing import EconFunction, EconFunctionsMapping, FunctionName
 from lcm.typing import Float1D
 
 
@@ -19,6 +19,10 @@ class DCEGMQueryModel:
     """Processed canonical aggregator reused by the solution phase."""
     offsets: Float1D
     """One supplied saving-offset vector, without cell or period expansion."""
+    utility_name: FunctionName = field(
+        default="utility", metadata={"fingerprint_omit_if_default": True}
+    )
+    """Name of the utility function of the regime's one member."""
 
     literal_nodes: Float1D | None = None
     """Original physical savings nodes for an installed literal floor.

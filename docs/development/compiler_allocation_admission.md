@@ -71,7 +71,7 @@ between the admitted plan and the pool.
 ## Captured CPU witness
 
 The implementation base is `1f554a30c49ad6ddfaa8ead541ad40431e7d7235`. The public
-witness uses two actions, two subjects, a sorting feasibility constraint, a 16,384-byte
+witness uses two actions, two agents, a sorting feasibility constraint, a 16,384-byte
 budget, Python 3.14.7, JAX/JAXLIB 0.11.1, CPU, and float64.
 
 | Captured counter                         |   Bytes |

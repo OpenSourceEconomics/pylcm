@@ -431,7 +431,7 @@ def _impute_pension_wealth(*, wealth: ContinuousState) -> ContinuousState:
 
 
 def _next_pension_wealth(*, pension_wealth: ContinuousState) -> ContinuousState:
-    """Carry the true per-subject pension value through simulation."""
+    """Carry the true per-agent pension value through simulation."""
     return pension_wealth
 
 
@@ -520,7 +520,7 @@ def _model(
 
 
 def _initial_conditions() -> dict[str, jax.Array]:
-    """Return two subjects at exact policy-grid nodes."""
+    """Return two agents at exact policy-grid nodes."""
     return {
         "wealth": jnp.asarray([1.0, 3.0]),
         "productivity": jnp.asarray([0.5, 1.0]),
@@ -544,7 +544,7 @@ def _solve(
 def _refs(*, key: ArtifactKey) -> tuple[ArtifactRef, ...]:
     """Return the active-regime addresses for one artifact key."""
     return tuple(
-        ArtifactRef(period=period, regime="active", key=key)
+        ArtifactRef(step=period, regime="active", key=key)
         for period in range(_N_PERIODS)
     )
 
@@ -1064,7 +1064,7 @@ def test_reference_solver_scopes_planned_cores_to_requested_retention() -> None:
     for period in range(_N_PERIODS):
         remaining = _N_PERIODS - period
         np.testing.assert_array_equal(
-            solution.value(period=period, regime="active"),
+            np.asarray(solution.value(step=period, regime="active"))[..., 0],
             np.broadcast_to(
                 remaining * wealth,
                 (len(_WEALTH_GRID.to_jax()), len(_PRODUCTIVITY_GRID.to_jax())),
@@ -1153,7 +1153,7 @@ def test_period_replay_preserves_exact_artifact_selection(
     assert set(replay.output.auxiliary) == {SCRATCH_KEY}
     np.testing.assert_array_equal(
         np.asarray(replay.output.value),
-        np.asarray(solution.value(period=0, regime="active")),
+        np.asarray(solution.value(step=0, regime="active")),
     )
 
 
@@ -1236,7 +1236,7 @@ def test_external_reader_rejects_non_finite_actions_with_validation_off(
 
 
 def test_external_reader_broadcasts_a_valid_scalar_action() -> None:
-    """Validation preserves the public scalar-to-subject broadcasting contract."""
+    """Validation preserves the public scalar-to-agent broadcasting contract."""
     model = _model(solver=_ScalarActionSolver(kind="finite"))
 
     panel = model.simulate(
@@ -1279,7 +1279,7 @@ def test_custom_reader_is_jax_transformable() -> None:
     solution = _solve(model=model)
     route = model._regimes["active"].simulation.external_replay_route
     assert isinstance(route, ReferenceReplayRoute)
-    ref = ArtifactRef(period=0, regime="active", key=POLICY_KEY)
+    ref = ArtifactRef(step=0, regime="active", key=POLICY_KEY)
     authority = solution._artifact_authority[ref]
     snapshot = ReplayRouteSnapshot(
         artifacts=MappingProxyType({POLICY_KEY: solution.replay_artifacts[ref]}),
@@ -1287,7 +1287,7 @@ def test_custom_reader_is_jax_transformable() -> None:
         metadata=solution.metadata,
     )
     context = SimulationBuildContext(
-        period=0,
+        step=0,
         regime_name="active",
         state_names=("wealth", "productivity"),
         action_names=("consumption",),
@@ -1302,7 +1302,7 @@ def test_custom_reader_is_jax_transformable() -> None:
     requirements = route.requirements(
         context=ReplayModelContext(
             regime_name="active",
-            period=0,
+            step=0,
             state_names=context.state_names,
             action_names=context.action_names,
             state_nodes=context.state_nodes,
@@ -1343,7 +1343,7 @@ def test_persisted_solution_loads_lazily_and_replays_in_a_fresh_model(
 
     assert isinstance(restored.values, ValueStore)
     assert all(
-        restored.values.load_state(period=period, regime="active") is LoadState.UNLOADED
+        restored.values.load_state(step=period, regime="active") is LoadState.UNLOADED
         for period in range(_N_PERIODS)
     )
     assert all(
@@ -1351,9 +1351,9 @@ def test_persisted_solution_loads_lazily_and_replays_in_a_fresh_model(
         for ref in (*policy_refs, *optional_refs)
     )
 
-    restored.value(period=0, regime="active")
+    restored.value(step=0, regime="active")
 
-    assert restored.values.load_state(period=0, regime="active") is LoadState.LOADED
+    assert restored.values.load_state(step=0, regime="active") is LoadState.LOADED
     assert all(
         restored.replay_artifacts.load_state(ref) is LoadState.UNLOADED
         for ref in policy_refs
@@ -1383,7 +1383,7 @@ def test_persisted_solution_loads_lazily_and_replays_in_a_fresh_model(
     route = fresh_model._regimes["active"].simulation.external_replay_route
     assert isinstance(route, ReferenceReplayRoute)
     _assert_replay_validation_stages(route=route)
-    assert {context.period for context in route.audit.requirement_contexts} == set(
+    assert {context.step for context in route.audit.requirement_contexts} == set(
         range(_N_PERIODS)
     )
 
@@ -1416,7 +1416,7 @@ def _assert_replay_validation_stages(*, route: ReferenceReplayRoute) -> None:
         strict=True,
     ):
         assert placed is consumed
-        assert original.period == placed.period
+        assert original.step == placed.step
         assert original.regime_name == placed.regime_name
         assert original.state_names == placed.state_names
         assert original.action_names == placed.action_names
@@ -1928,7 +1928,7 @@ def test_external_lazy_decoder_error_is_normalized_before_simulation() -> None:
     """Private decoder failures cross the public boundary as invalid input."""
     model = _model(solver=ReferenceSolver())
     solution = _solve(model=model)
-    ref = ArtifactRef(period=0, regime="active", key=POLICY_KEY)
+    ref = ArtifactRef(step=0, regime="active", key=POLICY_KEY)
     malformed = dataclasses.replace(
         solution,
         replay_artifacts=ArtifactStore(
@@ -1961,7 +1961,7 @@ def test_external_authority_and_route_context_use_each_periods_state_nodes() -> 
     for period in range(_N_PERIODS):
         expected = tuple(np.linspace(1.0 + period, 3.0 + period, 3))
         for key in (POLICY_KEY, SCRATCH_KEY):
-            ref = ArtifactRef(period=period, regime="active", key=key)
+            ref = ArtifactRef(step=period, regime="active", key=key)
             axes = {
                 axis.name: axis
                 for axis in solution.metadata.artifact_descriptors[ref].named_axes
@@ -1970,7 +1970,7 @@ def test_external_authority_and_route_context_use_each_periods_state_nodes() -> 
         requirement = next(
             context
             for context in route.audit.requirement_contexts
-            if context.period == period
+            if context.step == period
         )
         np.testing.assert_array_equal(requirement.state_nodes["wealth"], expected)
 
@@ -1983,7 +1983,7 @@ def test_external_authority_and_route_context_use_each_periods_state_nodes() -> 
 
     _assert_replay_validation_stages(route=route)
     for context in route.audit.validation_contexts:
-        expected = np.linspace(1.0 + context.period, 3.0 + context.period, 3)
+        expected = np.linspace(1.0 + context.step, 3.0 + context.step, 3)
         np.testing.assert_array_equal(context.state_nodes["wealth"], expected)
 
 
@@ -2030,7 +2030,7 @@ def test_fresh_replay_context_uses_solve_axes_with_a_carried_state(
     )
     pension = panel.query("regime_name == 'active'").pivot(
         index="period",
-        columns="subject_id",
+        columns="agent_id",
         values="pension_wealth",
     )
     np.testing.assert_array_equal(
@@ -2043,7 +2043,7 @@ def test_structurally_invalid_custom_artifact_is_rejected_before_simulation() ->
     """Generic preflight refuses a replay leaf outside its model authority."""
     model = _model(solver=ReferenceSolver())
     solution = _solve(model=model)
-    ref = ArtifactRef(period=0, regime="active", key=POLICY_KEY)
+    ref = ArtifactRef(step=0, regime="active", key=POLICY_KEY)
     policy = cast("Policy", solution.replay_artifacts[ref])
     malformed = dataclasses.replace(
         solution,
@@ -2066,7 +2066,7 @@ def test_mathematically_invalid_custom_artifact_is_rejected_by_the_route() -> No
     """Plugin validation runs during preflight, before a reader enters simulation."""
     model = _model(solver=ReferenceSolver())
     solution = _solve(model=model)
-    ref = ArtifactRef(period=0, regime="active", key=POLICY_KEY)
+    ref = ArtifactRef(step=0, regime="active", key=POLICY_KEY)
     policy = cast("Policy", solution.replay_artifacts[ref])
     wrong_tie_winner = Policy(values=jnp.zeros_like(policy.values))
     malformed = dataclasses.replace(
@@ -2091,7 +2091,7 @@ def test_invalid_later_replay_artifact_fails_before_any_period_execution(
     """A later cell's validator still runs before entering the forward loop."""
     model = _model(solver=ReferenceSolver())
     solution = _solve(model=model)
-    ref = ArtifactRef(period=_N_PERIODS - 1, regime="active", key=POLICY_KEY)
+    ref = ArtifactRef(step=_N_PERIODS - 1, regime="active", key=POLICY_KEY)
     policy = cast("Policy", solution.replay_artifacts[ref])
     malformed = dataclasses.replace(
         solution,
@@ -2111,7 +2111,7 @@ def test_invalid_later_replay_artifact_fails_before_any_period_execution(
     route = model._regimes["active"].simulation.external_replay_route
     assert isinstance(route, ReferenceReplayRoute)
     assert route.audit.reader_snapshots == []
-    assert [context.period for context in route.audit.validation_contexts] == list(
+    assert [context.step for context in route.audit.validation_contexts] == list(
         range(_N_PERIODS)
     )
 
@@ -2347,7 +2347,7 @@ def test_artifact_ledger_rejects_unaccounted_and_undeclared_standard_refs() -> N
         )
 
     injected_ref = ArtifactRef(
-        period=0,
+        step=0,
         regime="active",
         key=ArtifactKey(type_id="pylcm.egm.continuation", schema_version=1),
     )
@@ -2355,7 +2355,7 @@ def test_artifact_ledger_rejects_unaccounted_and_undeclared_standard_refs() -> N
         solution,
         retained_continuations=ArtifactStore(
             dict(solution.retained_continuations)
-            | {injected_ref: solution.value(period=0, regime="active")}
+            | {injected_ref: solution.value(step=0, regime="active")}
         ),
     )
 
@@ -2388,7 +2388,7 @@ def test_a_diagnostic_omission_without_a_descriptor_is_refused(
     """Diagnostics are described like every other artifact, so a bare omission fails."""
     model = _model(solver=ReferenceSolver())
     solution = _solve(model=model)
-    ref = ArtifactRef(period=0, regime="active", key=key)
+    ref = ArtifactRef(step=0, regime="active", key=key)
     malformed = dataclasses.replace(
         solution,
         omissions={**solution.omissions, ref: reason},
@@ -2423,7 +2423,7 @@ class _StringSubclass(str):
             id="solver-plugin-id",
         ),
         pytest.param(
-            lambda: ArtifactRef(period=True, regime="active", key=POLICY_KEY),
+            lambda: ArtifactRef(step=True, regime="active", key=POLICY_KEY),
             id="artifact-ref-period-bool",
         ),
     ],
@@ -2618,7 +2618,7 @@ def test_declared_value_reads_feed_the_core_the_stored_next_values() -> None:
         best_next_value = float(expected.max())
     for period, expected in expected_by_period.items():
         np.testing.assert_array_almost_equal(
-            np.asarray(solution.values[period]["active"]),
+            np.asarray(solution.values[period]["active"])[..., 0],
             expected,
             decimal=DECIMAL_PRECISION,
         )

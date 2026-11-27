@@ -181,7 +181,7 @@ _PARAMS = {
 
 
 def _closed_form(process: Process) -> dict[int, np.ndarray]:
-    """`alive`'s value per period, indexed `(income, liquid)`."""
+    """`alive`'s value of its one member per period, indexed `(income, liquid)`."""
     nodes, probs = _income_nodes_and_probs(process)
     expected_shock = probs @ np.exp(nodes)
     liquid = np.asarray(LIQUID_GRID.to_jax(), dtype=np.float64)[None, :]
@@ -216,13 +216,13 @@ def _alive_values(model: Model) -> dict[int, np.ndarray]:
     if "income" not in order:
         n_nodes = len(_income_nodes_and_probs("iid")[0])
         return {
-            period: np.tile(np.asarray(values["alive"]), (n_nodes, 1))
+            period: np.tile(np.asarray(values["alive"])[..., 0], (n_nodes, 1))
             for period, values in solution.values.items()
             if "alive" in values
         }
     axes = [order.index(name) for name in ("income", "liquid")]
     return {
-        period: np.transpose(np.asarray(values["alive"]), axes)
+        period: np.transpose(np.asarray(values["alive"])[..., 0], axes)
         for period, values in solution.values.items()
         if "alive" in values
     }
@@ -307,8 +307,8 @@ def test_entering_dead_lands_on_one_of_the_draws_outcomes(
         seed=0,
     )
     df = result.to_dataframe()
-    alive = df.query("regime_name == 'alive' and period == 1").set_index("subject_id")
-    dead = df.query("regime_name == 'dead' and period == 2").set_index("subject_id")
+    alive = df.query("regime_name == 'alive' and period == 1").set_index("agent_id")
+    dead = df.query("regime_name == 'dead' and period == 2").set_index("agent_id")
     common = alive.index.intersection(dead.index)
     nodes, _ = _income_nodes_and_probs(process)
     saved = (

@@ -321,10 +321,10 @@ result = model.simulate(
 df = result.to_dataframe(additional_targets=["liquid_savings"])
 ```
 
-The two demonstration subjects choose `illiquid_investment` values 2 and 0, so the
-example contains both the adjuster and the no-adjustment keeper. State and action
-values, including `consumption` and `illiquid_investment`, are already ordinary result
-columns; `additional_targets` is only for derived DAG outputs such as `liquid_savings`.
+The two demonstration agents choose `illiquid_investment` values 2 and 0, so the example
+contains both the adjuster and the no-adjustment keeper. State and action values,
+including `consumption` and `illiquid_investment`, are already ordinary result columns;
+`additional_targets` is only for derived DAG outputs such as `liquid_savings`.
 
 For a worked `NNBEGM` declaration — an `NBEGM` liquid solve nested inside an outer
 search — see `lcm_examples.mahler_yum_2024.paper`, which builds one at production scale.

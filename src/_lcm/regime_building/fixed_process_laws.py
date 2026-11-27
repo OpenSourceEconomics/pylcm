@@ -276,7 +276,7 @@ def _fail_if_a_process_law_field_varies(
         f"plain grid per age and rejects a stochastic process. Fix the law "
         f"across ages and carry the age variation in a deterministic function "
         f"that reads `age` and the process's draw. A quantity varying across "
-        f"subjects belongs in such a function too, never in the process's law."
+        f"agents belongs in such a function too, never in the process's law."
     )
     raise InvalidParamsError(msg)
 
@@ -297,7 +297,7 @@ def _as_process_field(*, value: ParamsLeaf, qname: QualifiedName) -> float:
     Raises:
         InvalidParamsError: If the leaf is not a scalar, or is a Boolean. A
             process's law is one number per field, so an array — an age-varying
-            or per-subject one — has no field to become.
+            or per-agent one — has no field to become.
 
     """
     array = jnp.asarray(value)

@@ -4,7 +4,7 @@ The DC-EGM solve recovers the optimal continuous action off the action grid:
 Euler inversion plus the upper envelope give it exactly at each node of the
 endogenous (resources-space) grid. `EGMSimPolicy` is the per-period snapshot of
 those nodes — a refined off-grid policy interpolant under the selected envelope
-convention, which a simulated subject's continuous action *could* be read from
+convention, which a simulated agent's continuous action *could* be read from
 at its resources, rather than an argmax snapped to the action grid. Between
 nodes the read carries the interpolation error of a finite row; the envelope
 gate below buys branch faithfulness at the switches, not exactness within a
@@ -12,15 +12,15 @@ branch.
 
 A requesting solve can retain it alongside the value-function arrays. Forward
 simulation requests it only for a regime whose declared route names this class
-as its `payload_type` (`SimulationPhase.replay_route`): the subject's row —
+as its `payload_type` (`SimulationPhase.replay_route`): the agent's row —
 indexed by
-its discrete states — is interpolated at the subject's resources, replacing the
+its discrete states — is interpolated at the agent's resources, replacing the
 action-grid argmax value of the continuous action, subject to a post-read
 feasibility check (in-support, finite, positive, within the intrinsic budget).
 
 Regimes with discrete actions publish one conditional row per discrete-action
 combination — value and policy per branch, on that branch's own endogenous
-grid. Simulation then *re-decides* the branch at the subject's state: each
+grid. Simulation then *re-decides* the branch at the agent's state: each
 branch's conditional value is interpolated at that branch's own resources
 (discrete-only constraints mask infeasible branches to `-inf`), the feasible
 branch of highest interpolated value wins, and only the winner's policy is
@@ -126,7 +126,7 @@ class EGMSimPolicy:
     Shared with the period's `EGMCarry.value`: the row's combo-conditional
     value function on the refined resources grid. Simulation compares the
     interpolated conditional values across discrete-action rows to re-decide
-    the branch at the subject's state.
+    the branch at the agent's state.
     """
 
     marginal_utility: FloatND
@@ -227,7 +227,7 @@ class NBEGMGridPolicy:
     """Inner NBEGM action on the regime state grid.
 
     A standalone ride-along NB-EGM regime retains it as its simulation policy,
-    read at each subject's realized state (`NBEGMPolicyRead`). A nested outer
+    read at each agent's realized state (`NBEGMPolicyRead`). A nested outer
     solver stacks one instance per candidate before publishing the joint replay
     payload. A discrete inner envelope additionally retains every branch's
     conditional action and value; smooth solves leave those optional banks

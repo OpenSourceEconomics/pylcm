@@ -85,12 +85,12 @@ def test_every_simulate_metric_reads_one_measurement_per_cohort(
         *, bench_module: str, bench_class: str, warm_samples: int
     ) -> dict[str, float | list[float]]:
         measured.append((bench_module, bench_class))
-        n_subjects = getattr(bench_collective_household, bench_class).n_subjects
+        n_agents = getattr(bench_collective_household, bench_class).n_agents
         return {
-            "compilation_time": 10.0 * n_subjects,
-            "peak_cpu_mem": 20.0 * n_subjects,
-            "peak_gpu_mem_automatic_solve_simulate": 30.0 * n_subjects,
-            "warm_samples": [3.0 * n_subjects, 1.0 * n_subjects, 2.0 * n_subjects][
+            "compilation_time": 10.0 * n_agents,
+            "peak_cpu_mem": 20.0 * n_agents,
+            "peak_gpu_mem_automatic_solve_simulate": 30.0 * n_agents,
+            "warm_samples": [3.0 * n_agents, 1.0 * n_agents, 2.0 * n_agents][
                 :warm_samples
             ],
         }
@@ -106,10 +106,10 @@ def test_every_simulate_metric_reads_one_measurement_per_cohort(
     module = "benchmarks.asv.bench_collective_household"
     assert measured == [(module, "_Simulate1000"), (module, "_Simulate100000")]
     assert simulate.params == [1_000, 100_000]
-    for n_subjects in simulate.params:
-        assert simulate.track_compilation_time(cache, n_subjects) == 10.0 * n_subjects
-        assert simulate.track_peak_cpu_mem(cache, n_subjects) == 20.0 * n_subjects
-        assert simulate.track_execution_time(cache, n_subjects) == 2.0 * n_subjects
+    for n_agents in simulate.params:
+        assert simulate.track_compilation_time(cache, n_agents) == 10.0 * n_agents
+        assert simulate.track_peak_cpu_mem(cache, n_agents) == 20.0 * n_agents
+        assert simulate.track_execution_time(cache, n_agents) == 2.0 * n_agents
     assert gpu_peak.track_gpu_peak_mem(cache) == 30.0 * 100_000
     assert not hasattr(simulate, "peakmem_execution")
 

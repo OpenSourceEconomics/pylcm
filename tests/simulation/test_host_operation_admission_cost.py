@@ -41,7 +41,7 @@ from _lcm.execution.workspace_planning import (
     plan_axis_free_workspace,
     plan_workspace,
 )
-from _lcm.simulation import exit_replay, host_operations
+from _lcm.simulation import composition_replay, host_operations
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.operand_placement import place_simulation_arguments
 from _lcm.simulation.residency import (
@@ -156,7 +156,7 @@ def test_every_budgeted_helper_admits_through_the_axis_free_plan(  # noqa: C901,
     original_dispatch = host_operations.ProfiledSimulationOperations.dispatch
     original_axis_free = host_operations.plan_axis_free_workspace
     original_producer = host_operations.ProfiledSimulationOperations.admit_producer
-    original_query = exit_replay._dispatch
+    original_query = composition_replay._dispatch
 
     def counted_query(
         *,
@@ -164,7 +164,7 @@ def test_every_budgeted_helper_admits_through_the_axis_free_plan(  # noqa: C901,
         family: str,
         period: int,
         arguments: Mapping[str, PytreeValue],
-        n_subjects: int,
+        n_agents: int,
         memory: SimulationMemory | None,
         roots: PytreeValue,
     ) -> PytreeValue:
@@ -175,7 +175,7 @@ def test_every_budgeted_helper_admits_through_the_axis_free_plan(  # noqa: C901,
             family=family,
             period=period,
             arguments=arguments,
-            n_subjects=n_subjects,
+            n_agents=n_agents,
             memory=memory,
             roots=roots,
         )
@@ -188,7 +188,7 @@ def test_every_budgeted_helper_admits_through_the_axis_free_plan(  # noqa: C901,
             law_valid = frame_payload[CurrentIIDDrawFrame._fields.index("valid")]
             holders = np.asarray(arguments["_holders"])
             assert holders.dtype == np.bool_
-            assert holders.shape == (n_subjects,)
+            assert holders.shape == (n_agents,)
             consumer = (family, period, tuple(np.flatnonzero(holders).tolist()))
             key = (
                 id(answer[3]),
@@ -208,7 +208,7 @@ def test_every_budgeted_helper_admits_through_the_axis_free_plan(  # noqa: C901,
         if not recording["on"]:
             return original_dispatch(self, **kwargs)
         counts["dispatch"] += 1
-        if kwargs["function"] is exit_replay._answer_status:
+        if kwargs["function"] is composition_replay._answer_status:
             arguments = kwargs["arguments"]
             key = (
                 id(arguments["valid"]),
@@ -274,7 +274,7 @@ def test_every_budgeted_helper_admits_through_the_axis_free_plan(  # noqa: C901,
     monkeypatch.setattr(
         host_operations.ProfiledSimulationOperations, "admit_producer", counted_producer
     )
-    monkeypatch.setattr(exit_replay, "_dispatch", counted_query)
+    monkeypatch.setattr(composition_replay, "_dispatch", counted_query)
     monkeypatch.setattr(
         host_operations, "plan_workspace", counted_frontier, raising=False
     )
@@ -582,7 +582,7 @@ def _place(
     """Place the same operands under the two spellings of the live inventory."""
     return place_simulation_arguments(
         arguments=arguments,
-        subject_arg_names=("states",),
+        agent_arg_names=("states",),
         value_reads=(),
         devices=(device,),
         budget_bytes=budget_bytes,
@@ -638,7 +638,7 @@ def test_a_budgeted_placement_still_requires_a_live_inventory() -> None:
     with pytest.raises(ExecutionPlanningError, match="live budget inventory"):
         place_simulation_arguments(
             arguments=arguments,
-            subject_arg_names=("states",),
+            agent_arg_names=("states",),
             value_reads=(),
             devices=(device,),
             budget_bytes=2**30,

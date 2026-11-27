@@ -2,8 +2,8 @@
 
 The formation toy lives through three periods before its terminal one. The first
 two read a living next period and so trace the same chunk program; the third
-reads the terminal regimes and traces another. A single who marries is paid a
-gift, an exit adjustment the engine binds anew in every period.
+reads the terminal regimes and traces another. The singles, which declare the
+formation exit, are the query roots.
 """
 
 from collections import Counter
@@ -14,17 +14,17 @@ import jax
 import numpy as np
 import pytest
 
-from _lcm import exit_queries
+from _lcm import composition_queries
 from _lcm.solution import backward_induction as backward
 from lcm.shocks import QuasiMonteCarlo
 from tests.conftest import assert_agrees_to_ulp
 from tests.solution.test_formation_read_classes import _model, _solve
 
-_ROOTS = ("couple", "single_f", "single_m")
+_ROOTS = ("single_f", "single_m")
 
 
 def _four_period_values() -> dict[str, np.ndarray]:
-    return _solve(_model(nodes=QuasiMonteCarlo(n=8, seed=0), n_periods=4, gift=True))
+    return _solve(_model(nodes=QuasiMonteCarlo(n=8, seed=0), n_periods=4))
 
 
 def test_periods_with_one_query_structure_lower_their_chunk_program_once(
@@ -65,7 +65,10 @@ def test_a_shared_chunk_program_reproduces_each_period_s_own(
     shared = _four_period_values()
     tokens = count()
     monkeypatch.setattr(
-        exit_queries, "_traced_structure", lambda **_: next(tokens), raising=False
+        composition_queries,
+        "_traced_structure",
+        lambda **_: next(tokens),
+        raising=False,
     )
     own = _four_period_values()
     assert_agrees_to_ulp(

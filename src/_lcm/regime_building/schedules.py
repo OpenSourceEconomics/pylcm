@@ -16,7 +16,7 @@ This module is the single place that reads it for that purpose:
 Availability alone solves nothing. `resolve_demand` expands the declared starts
 into two sets of `(period, regime)` pairs:
 
-- H, the visited pairs: those a subject can physically visit;
+- H, the visited pairs: those an agent can physically visit;
 - S, the valued pairs: H and every pair whose value a problem in S reads.
 
 S is the coverage every later stage reads. Support comes only from the
@@ -50,7 +50,7 @@ from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
     _SupportedStochasticTransition,
 )
-from _lcm.time import TimeAxis, coordinate_kind
+from _lcm.time import TimeAxis, coordinate_kind, landing_step, step_count
 from _lcm.typing import AnnotationForm, EconFunctionArg, RegimeName
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.initial_nodes import InitialNodes, UserInitialNodes
@@ -164,8 +164,8 @@ class RegimeSchedules:
     ] = MappingProxyType({})
     """Typed Raw/Participating Q/F contexts, distinct from stored Full demand."""
 
-    exit_acting_nodes: frozenset[tuple[int, RegimeName]] = frozenset()
-    """Potential final regimes acting once after an original subject exits."""
+    composition_acting_nodes: frozenset[tuple[int, RegimeName]] = frozenset()
+    """Potential final regimes, acting once after a composition action lands."""
 
     @property
     def query_periods_by_phase(
@@ -202,7 +202,7 @@ class RegimeSchedules:
     @property
     def acting_periods_by_regime(self) -> MappingProxyType[RegimeName, tuple[int, ...]]:
         """Retain physical transitions for original occupants and final actors."""
-        physical = self.visited_nodes | self.exit_acting_nodes
+        physical = self.visited_nodes | self.composition_acting_nodes
         return MappingProxyType(
             {
                 name: tuple(sorted(p for p, n in physical if n == name))
@@ -327,7 +327,7 @@ def resolve_regime_schedules(
     Nothing is lowered here: `lower_demanded_transitions` lowers only the laws
     demand selects. `laws` maps each regime to its graph-bound `RegimeLaw`.
     """
-    all_periods = tuple(range(ages.n_periods))
+    all_periods = tuple(range(step_count(ages)))
     coverage: dict[RegimeName, tuple[int, ...]] = {}
     support: dict[
         PhaseKey, dict[RegimeName, MappingProxyType[int, tuple[str, ...]]]
@@ -348,9 +348,9 @@ def resolve_regime_schedules(
                 "Mapping[int, CaseLaw]", transition.resolve(ages=ages).law_by_period
             )
             law_by_period = {
-                period: law
-                for period, law in resolved.items()
-                if period < ages.n_periods - 1
+                step: law
+                for step, law in resolved.items()
+                if step < step_count(ages) - 1
             }
         else:
             law_by_period = dict.fromkeys(all_periods[:-1], transition)
@@ -363,32 +363,32 @@ def resolve_regime_schedules(
                 for age in selected
             }
             law_by_period = {
-                period: law
-                for period, law in law_by_period.items()
-                if ages.exact_values[period] in edge_ages
+                step: law
+                for step, law in law_by_period.items()
+                if ages.exact_values[step] in edge_ages
             }
         coverage[name] = tuple(law_by_period)
         side_by_phase = {
             phase: {
-                period: _phase_side(law=law, side=side)
-                for period, law in law_by_period.items()
+                step: _phase_side(law=law, side=side)
+                for step, law in law_by_period.items()
             }
             for phase, side in zip(_PHASES, ("solve", "simulate"), strict=True)
         }
         for phase, side_by_period in side_by_phase.items():
             support[phase][name] = MappingProxyType(
                 {
-                    period: _edge_support(
+                    step: _edge_support(
                         law=law,
                         source=name,
-                        period=period,
+                        period=step,
                         ages=ages,
                         regime_names=tuple(laws),
                         source_ages=None
                         if source_ages_by_phase is None
                         else source_ages_by_phase[phase],
                     )
-                    for period, law in side_by_period.items()
+                    for step, law in side_by_period.items()
                 }
             )
         gated = regime_law.gated_edges
@@ -396,8 +396,8 @@ def resolve_regime_schedules(
         simulation_support = support["simulation"][name]
         value_reads["solution"][name] = MappingProxyType(
             {
-                period: _fallbacks(gated_edges=gated, targets=targets, side="solve")
-                for period, targets in solution_support.items()
+                step: _fallbacks(gated_edges=gated, targets=targets, side="solve")
+                for step, targets in solution_support.items()
             }
         )
         value_reads["simulation"][name] = MappingProxyType(
@@ -405,8 +405,8 @@ def resolve_regime_schedules(
         )
         landings[name] = MappingProxyType(
             {
-                period: _fallbacks(gated_edges=gated, targets=targets, side="simulate")
-                for period, targets in simulation_support.items()
+                step: _fallbacks(gated_edges=gated, targets=targets, side="simulate")
+                for step, targets in simulation_support.items()
             }
         )
         law_by_period_by_regime[name] = MappingProxyType(law_by_period)
@@ -435,6 +435,7 @@ def lower_demanded_transitions(
     schedules: RegimeSchedules,
     declared_transitions: Mapping[RegimeName, RegimeTransitionLaw],
     code_by_name: Mapping[str, int],
+    n_stages: int = 1,
 ) -> MappingProxyType[RegimeName, EngineLaw | None]:
     """Lower each regime's law over the periods demand requires, only.
 
@@ -449,6 +450,10 @@ def lower_demanded_transitions(
     parameters of every declared case keep their slots regardless, since the
     `edges` parameter template is read off the declarations, not off the
     lowered laws.
+
+    With several stages per period, a lowered law dispatches on the period of the
+    step, which is what the law reads: a regime acts in one stage, so each of its
+    steps is one period.
     """
     lowered: dict[RegimeName, EngineLaw | None] = {}
     visited_periods = schedules.acting_periods_by_regime
@@ -459,19 +464,26 @@ def lower_demanded_transitions(
         law_by_period, solve_periods = _lowering_inputs(
             schedules=schedules, name=name, declared=declared
         )
+        simulate_periods = visited_periods[name]
         if schedules.context_periods_by_regime[name]:
             _fail_if_conflicting_annotations(
                 regime_name=name,
                 laws=_demanded_sides(
                     law_by_period=law_by_period,
                     solve_periods=solve_periods,
-                    simulate_periods=visited_periods[name],
+                    simulate_periods=simulate_periods,
                 ),
             )
+        if n_stages > 1:
+            law_by_period = {
+                period // n_stages: law for period, law in law_by_period.items()
+            }
+            solve_periods = tuple(period // n_stages for period in solve_periods)
+            simulate_periods = tuple(period // n_stages for period in simulate_periods)
         lowered[name] = _lower(
             law_by_period=law_by_period,
             solve_periods=solve_periods,
-            simulate_periods=visited_periods[name],
+            simulate_periods=simulate_periods,
             code_by_name=code_by_name,
         )
     return MappingProxyType(lowered)
@@ -608,7 +620,7 @@ def _lower(
     )
 
 
-def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and typed query contexts
+def resolve_demand(  # noqa: C901, PLR0915 - shared fixed point for occupancy, values and typed query contexts
     *,
     schedules: RegimeSchedules,
     initial_nodes: frozenset[tuple[UserAge, RegimeName]],
@@ -617,7 +629,7 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
     policy_reads_by_phase: Mapping[
         str, Mapping[tuple[int, RegimeName, str], tuple[tuple[RegimeName, str], ...]]
     ] = MappingProxyType({}),
-    exit_targets_by_period: Mapping[
+    composition_targets_by_period: Mapping[
         tuple[int, RegimeName], tuple[RegimeName, ...]
     ] = MappingProxyType({}),
 ) -> RegimeSchedules:
@@ -646,8 +658,14 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
         name: frozenset(periods)
         for name, periods in schedules.coverage_by_regime.items()
     }
+    # An agent starts in its regime's own stage of the period.
     work: deque[tuple[bool, int, RegimeName, str]] = deque(
-        (True, period_by_age[age], name, "`initial_nodes`")
+        (
+            True,
+            landing_step(ages=ages, step=period_by_age[age] - 1, target=name),
+            name,
+            "`initial_nodes`",
+        )
         for age, name in sorted(initial_nodes, key=repr)
     )
     visited: set[tuple[int, RegimeName]] = set()
@@ -660,6 +678,34 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
         "simulation": set(),
     }
     acting: set[tuple[int, RegimeName]] = set()
+
+    def landing(*, period: int, target: RegimeName, requester: str) -> int:
+        """The step an edge from `period` into `target` lands at, if any."""
+        step = landing_step(ages=ages, step=period, target=target)
+        if step >= step_count(ages):
+            raise ModelInitializationError(
+                f"{requester} lands in '{target}' at its next occurrence, which "
+                "lies beyond the last period."
+            )
+        return step
+
+    def read_policies(
+        *, phase: str, period: int, reads: tuple[tuple[RegimeName, str], ...]
+    ) -> None:
+        """Queue the composition action's reads of `period`.
+
+        A composition action reads a regime of its own stage as a policy query
+        at its step. It reads a regime of a later stage of its period as a
+        value, at that regime's occurrence.
+        """
+        for target, kind in reads:
+            occurrence = landing_step(ages=ages, step=period - 1, target=target)
+            if occurrence == period:
+                query_work.append((phase, period, target, kind))
+            else:
+                requester = f"a composition action's read of '{target}'"
+                work.append((False, occurrence, target, requester))
+
     while work or query_work:
         if not work:
             phase, period, name, kind = query_work.popleft()
@@ -679,16 +725,23 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
                     )
                 )
             queried[phase].add((period, name, kind))
-            query_work.extend(
-                (phase, period, target, target_kind)
-                for target, target_kind in policy_reads_by_phase.get(phase, {}).get(
+            read_policies(
+                phase=phase,
+                period=period,
+                reads=policy_reads_by_phase.get(phase, {}).get(
                     (period, name, kind), ()
-                )
+                ),
             )
             # Actual Q/F reads next-period Full continuation, even when no
-            # subject ever occupies this current-period query context.
+            # agent ever occupies this current-period query context.
+            requester = f"the continuation of {kind}[{name}]"
             work.extend(
-                (False, period + 1, target, f"the continuation of {kind}[{name}]")
+                (
+                    False,
+                    landing(period=period, target=target, requester=requester),
+                    target,
+                    requester,
+                )
                 for target in (
                     *support["solution"].get(name, {}).get(period, ()),
                     *value_reads["solution"].get(name, {}).get(period, ()),
@@ -718,30 +771,46 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
                 )
             )
         done.add((period, name))
-        query_work.extend(
-            (required_phase, period, target, kind)
-            for target, kind in policy_reads_by_phase.get(required_phase, {}).get(
+        read_policies(
+            phase=required_phase,
+            period=period,
+            reads=policy_reads_by_phase.get(required_phase, {}).get(
                 (period, name, "Full"), ()
-            )
+            ),
         )
         if physical:
-            for target in exit_targets_by_period.get((period, name), ()):
+            for target in composition_targets_by_period.get((period, name), ()):
+                occurrence = landing_step(ages=ages, step=period - 1, target=target)
+                # An agent who leaves for a later stage is there at its step.
+                if occurrence != period:
+                    requester = f"the composition action of '{name}'"
+                    work.append((True, occurrence, target, requester))
+                    continue
                 if (period, target) in acting:
                     continue
                 acting.add((period, target))
+                actor = f"the final actor {target!r} of a composition action"
                 work.extend(
-                    (True, period + 1, successor, f"the final exit actor {target!r}")
+                    (
+                        True,
+                        landing(period=period, target=successor, requester=actor),
+                        successor,
+                        actor,
+                    )
                     for successor in (
                         *support["simulation"].get(target, {}).get(period, ()),
                         *schedules.landings_by_regime.get(target, {}).get(period, ()),
                     )
                 )
+                routing = (
+                    f"the routing of the final actor {target!r} of a composition action"
+                )
                 work.extend(
                     (
                         False,
-                        period + 1,
+                        landing(period=period, target=reference, requester=routing),
                         reference,
-                        f"the routing of final exit actor {target!r}",
+                        routing,
                     )
                     for reference in value_reads["simulation"]
                     .get(target, {})
@@ -751,7 +820,12 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
         if physical:
             work.append((False, period, name, requester))
             work.extend(
-                (True, period + 1, target, here)
+                (
+                    True,
+                    landing(period=period, target=target, requester=here),
+                    target,
+                    here,
+                )
                 for target in (
                     *support["simulation"].get(name, {}).get(period, ()),
                     *schedules.landings_by_regime.get(name, {}).get(period, ()),
@@ -775,7 +849,15 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
             pair=f"({ages.exact_values[period]}, '{name}')",
             here=here,
         )
-        work.extend((False, period + 1, target, kinds[target]) for target in reads)
+        work.extend(
+            (
+                False,
+                landing(period=period, target=target, requester=kinds[target]),
+                target,
+                kinds[target],
+            )
+            for target in reads
+        )
 
     return dataclasses.replace(
         schedules,
@@ -802,7 +884,7 @@ def resolve_demand(  # noqa: C901 - shared fixed point for occupancy, values and
         query_nodes_by_phase=MappingProxyType(
             {phase: frozenset(nodes) for phase, nodes in queried.items()}
         ),
-        exit_acting_nodes=frozenset(acting),
+        composition_acting_nodes=frozenset(acting),
     )
 
 
@@ -877,7 +959,7 @@ def _unavailable_message(
     age = ages.exact_values[period]
     reason = (
         "which is nonterminal at the last age: no next age exists"
-        if period == ages.n_periods - 1
+        if period == step_count(ages) - 1
         else f"where `edges` declares no {side}edge out of '{name}' at that age"
     )
     return f"{requester} requires '{name}' at age {age}, {reason}."
@@ -1448,15 +1530,15 @@ def _dispatch(
     role: OutputRole,
     kind: str,
 ) -> Callable[..., FloatND | IntND]:
-    n_periods = max(law_by_period) + 2
+    n_steps = max(law_by_period) + 2
     position = {id(law): index for index, law in enumerate(laws)}
     cases = tuple(in_role(func=case, role=role, kind=kind) for case in cases)
     return _period_dispatch(
         cases=cases,
         case_names=tuple(_argument_names(case) for case in cases),
         case_by_period=tuple(
-            position[id(law_by_period[period])] if period in law_by_period else 0
-            for period in range(n_periods)
+            position[id(law_by_period[step])] if step in law_by_period else 0
+            for step in range(n_steps)
         ),
     )
 

@@ -221,7 +221,7 @@ def _get_params(solver: str) -> UserParams:
     }
 
 
-def test_dcegm_resources_reading_process_matches_dense_brute_force():
+def test_dcegm_resources_reading_process_matches_dense_brute_force() -> None:
     """DC-EGM with a process-reading `resources` matches dense brute force.
 
     The wage node enters the budget as income through the regime's own
@@ -240,7 +240,7 @@ def test_dcegm_resources_reading_process_matches_dense_brute_force():
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["alive"])
         dcegm_V = np.asarray(dcegm_solution[period]["alive"])
-        assert brute_V.shape == dcegm_V.shape == (N_WAGE_NODES, 120)
+        assert brute_V.shape == dcegm_V.shape == (N_WAGE_NODES, 120, 1)
         interior = slice(N_BRUTE_LOW_NODES, 120 - N_BRUTE_HIGH_NODES)
         np.testing.assert_allclose(
             dcegm_V[:, interior],

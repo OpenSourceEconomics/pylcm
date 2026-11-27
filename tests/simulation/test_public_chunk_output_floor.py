@@ -35,14 +35,14 @@ def test_public_chunk_selection_refuses_the_irreducible_retained_output_floor(
     }
     solution = model.solve(params=params, log_level="off")
     full_chunks: list[int] = []
-    run_chunk = simulation._simulate_subject_chunk
+    run_chunk = simulation._simulate_agent_chunk
 
     def observe_chunk(**call: Unpack[SimulationChunkInputs]) -> ChunkResults:
         full_chunks.append(call["initial_regime_ids"].shape[0])
         return run_chunk(**call)
 
     with monkeypatch.context() as capture:
-        capture.setattr(simulation, "_simulate_subject_chunk", observe_chunk)
+        capture.setattr(simulation, "_simulate_agent_chunk", observe_chunk)
         expected = model.simulate(
             params=params,
             solution=solution,
@@ -75,16 +75,16 @@ def test_public_chunk_selection_refuses_the_irreducible_retained_output_floor(
 
     # keyword-only-exempt: library-callback=_ChunkProfiler.profile_widths
     def observe_profile(
-        self: _ChunkProfiler, *, n_subjects: int, widths: Mapping[str, int]
+        self: _ChunkProfiler, *, n_agents: int, widths: Mapping[str, int]
     ) -> SimulationChunkProfile:
-        candidates.append(n_subjects)
-        return profile_widths(self, n_subjects=n_subjects, widths=widths)
+        candidates.append(n_agents)
+        return profile_widths(self, n_agents=n_agents, widths=widths)
 
     def forbid_chunk[Ignored](**_call: Ignored) -> Never:
         raise AssertionError("A chunk allocated before its retained output bank fit")
 
     monkeypatch.setattr(_ChunkProfiler, "profile_widths", observe_profile)
-    monkeypatch.setattr(simulation, "_simulate_subject_chunk", forbid_chunk)
+    monkeypatch.setattr(simulation, "_simulate_agent_chunk", forbid_chunk)
     with pytest.raises(ExecutionPlanningError, match="no anchor map fits"):
         budgeted.simulate(
             params=params,

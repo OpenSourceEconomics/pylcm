@@ -259,7 +259,7 @@ def _builder(model_name: str) -> Callable[[float], tuple[Model, _Params]]:
             )
             params = get_benchmark_params(model=model)[2]
             initial_conditions = get_benchmark_initial_conditions(
-                model=model, n_subjects=1000, seed=0
+                model=model, n_agents=1000, seed=0
             )
             return model, {
                 **params,
@@ -341,7 +341,7 @@ def _values(result: _Result) -> dict[str, NDArray[np.generic]]:
             f"sim/{column}": frame[column].astype(str).to_numpy(dtype=str)
             for column in frame.columns
         }
-        values = result.period_to_regime_to_V_arr
+        values = result.step_to_regime_to_V_arr
         return arrays | {
             f"{period}/{regime}": np.asarray(values[period][regime])
             for period in sorted(values)
@@ -365,7 +365,7 @@ def _fingerprint(arrays: Mapping[str, NDArray[np.generic]]) -> str:
 
 def _block(result: _Result) -> None:
     if isinstance(result, lcm.SimulationResult):
-        jax.block_until_ready(result.period_to_regime_to_V_arr)
+        jax.block_until_ready(result.step_to_regime_to_V_arr)
         return
     values = result if isinstance(result, Mapping) else result.values
     jax.block_until_ready(values)

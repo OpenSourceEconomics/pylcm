@@ -31,7 +31,7 @@
         "structural_semantics": "unchanged; no arbitrary tolerance for ownership/feasibility/branch decisions",
         "published_values": "Existing repository contracts, not blanket cross-device bit identity",
         "process_replay": "Preserve supported eager rounding and parameter binding; validate exact admitted dataflow before executing stages",
-        "rng": "Fixed-seed subject/regime/taste-shock identity invariant across tiling, chunks and empty regimes",
+        "rng": "Fixed-seed agent/regime/taste-shock identity invariant across tiling, chunks and empty regimes",
         "oracle": "Grid-conditional or independent eager/source behavior for unchanged execution transformations; state which oracle is used.",
         "candidate_set_error": {
           "assessed_by": "refinement_oracle",

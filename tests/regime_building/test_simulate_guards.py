@@ -18,7 +18,7 @@ Five boundary conditions on the collective-regimes forward-simulation path
   (no scalar `value` column anywhere): builds the frame from the
   per-member value columns.
 - A STATELESS collective regime's simulated `V_arr` / argmax index: carries
-  the subject axis that a stateful collective or a stateless singleton
+  the agent axis that a stateful collective or a stateless singleton
   regime always carries.
 
 Each test pins the required behaviour and fails loudly on the defect it
@@ -143,8 +143,8 @@ def _prob_one(age: FloatND) -> FloatND:
     return jnp.ones_like(age, dtype=float)
 
 
-def _u_zero_collective(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
-    return 0.0 * wage * work
+def _u_effort_collective(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    return -0.25 * work + 0.0 * wage
 
 
 def _always_open(wage: ContinuousState) -> BoolND:
@@ -167,7 +167,7 @@ def _make_shared_fallback_regimes() -> dict[str, Regime]:
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
-                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+                utilities={"f": _u_effort_collective, "m": _u_effort_collective}
             )
         },
     )
@@ -176,7 +176,7 @@ def _make_shared_fallback_regimes() -> dict[str, Regime]:
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
-                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+                utilities={"f": _u_effort_collective, "m": _u_effort_collective}
             )
         },
     )
@@ -259,23 +259,23 @@ _REGIME_IDS = MappingProxyType(
     {
         "single_f": jnp.int32(0),
         "single_m": jnp.int32(1),
-        "single_None": jnp.int32(2),
+        "single_self": jnp.int32(2),
         "married": jnp.int32(3),
     }
 )
 
 
-def _leg(source_member: str | None) -> ResolvedMemberRoute:
+def _leg(source_member: str) -> ResolvedMemberRoute:
     """One leg sending its member home to that member's own regime."""
     return ResolvedMemberRoute(
-        route=str(source_member),
+        route=source_member,
         source_member=source_member,
-        target_component_index=None,
+        target_component_index=0,
         target_member=source_member,
         fallback=ResolvedProjectedRegimeValue(
             regime=f"single_{source_member}",
             projection={},
-            member_index=None,
+            member_index=0,
         ),
     )
 
@@ -336,11 +336,11 @@ def test_a_singleton_sources_sole_leg_answers_for_every_row() -> None:
     the one it declares rather than being refused for matching none.
     """
     fallback_id, open_role, closed_role = _outcomes(
-        legs=(_leg(None),), roles=[NO_ROLE, _ROLE_IDS["f"]]
+        legs=(_leg("self"),), roles=[NO_ROLE, _ROLE_IDS["f"]]
     )
 
     np.testing.assert_array_equal(
-        np.asarray(fallback_id), [int(_REGIME_IDS["single_None"])] * 2
+        np.asarray(fallback_id), [int(_REGIME_IDS["single_self"])] * 2
     )
     np.testing.assert_array_equal(np.asarray(open_role), [NO_ROLE, NO_ROLE])
     np.testing.assert_array_equal(np.asarray(closed_role), [NO_ROLE, NO_ROLE])
@@ -468,13 +468,13 @@ def test_to_dataframe_all_collective_result_has_no_scalar_value_column() -> None
     df = result.to_dataframe()
     assert "value" not in df.columns
     assert {"value_f", "value_m"} <= set(df.columns)
-    assert len(df) == 4  # 2 subjects x 2 periods
+    assert len(df) == 4  # 2 agents x 2 periods
     assert df["value_f"].notna().all()
     assert df["value_m"].notna().all()
 
 
 # A stateless collective regime's V_arr / argmax index must carry the
-# subject axis.
+# agent axis.
 
 
 def _u_stateless_f(work: DiscreteAction) -> FloatND:
@@ -504,13 +504,13 @@ def _stateless_collective_laws() -> dict[RegimeName, RegimeLawDeclaration | Tran
     }
 
 
-def test_stateless_collective_regime_simulate_carries_subject_axis() -> None:
-    """A stateless collective regime's simulated V_arr carries the subject axis.
+def test_stateless_collective_regime_simulate_carries_agent_axis() -> None:
+    """A stateless collective regime's simulated V_arr carries the agent axis.
 
-    `argmax_and_max_Q_over_a` has no per-subject state array to vmap over, so it
+    `argmax_and_max_Q_over_a` has no per-agent state array to vmap over, so it
     returns a single `(n_members,)` V_arr and a 0-d argmax index. Those must
-    be broadcast to the subject axis: `V_arr` is `(n_subjects, n_members)`
-    and every subject's own values/actions round-trip correctly.
+    be broadcast to the agent axis: `V_arr` is `(n_agents, n_members)`
+    and every agent's own values/actions round-trip correctly.
     """
     ages = AgeGrid(start=0, inclusive_stop=1, step="Y")
     regimes_dict = _make_stateless_collective_regime()
@@ -531,15 +531,15 @@ def test_stateless_collective_regime_simulate_carries_subject_axis() -> None:
     )
     solution = _bi_result.value_functions
     _sim_policies = _bi_result.simulation_policies
-    assert solution[0]["stateless_couple"].shape == (2,)  # solve: no subject axis
+    assert solution[0]["stateless_couple"].shape == (2,)  # solve: no agent axis
 
-    n_subjects = 3
+    n_agents = 3
     initial_conditions = MappingProxyType(
         {
-            "age": jnp.zeros(n_subjects),
-            "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
+            "age": jnp.zeros(n_agents),
+            "regime_id": jnp.zeros(n_agents, dtype=jnp.int32),
             "own_member": jnp.full(
-                n_subjects,
+                n_agents,
                 regimes["stateless_couple"].member_names_to_ids["f"],
                 dtype=jnp.int32,
             ),
@@ -557,12 +557,12 @@ def test_stateless_collective_regime_simulate_carries_subject_axis() -> None:
         seed=0,
     )
     period_0 = result.raw_results["stateless_couple"][0]
-    assert period_0.V_arr.shape == (n_subjects, 2)
+    assert period_0.V_arr.shape == (n_agents, 2)
     np.testing.assert_allclose(
-        np.asarray(period_0.V_arr), [[10.0, 0.0]] * n_subjects, rtol=1e-6
+        np.asarray(period_0.V_arr), [[10.0, 0.0]] * n_agents, rtol=1e-6
     )
     np.testing.assert_array_equal(np.asarray(period_0.actions["work"]), [1, 1, 1])
-    assert period_0.in_regime.shape == (n_subjects,)
+    assert period_0.in_regime.shape == (n_agents,)
 
 
 def test_stateless_collective_without_any_action_finalizes() -> None:
@@ -598,8 +598,8 @@ def test_stateless_collective_without_any_action_finalizes() -> None:
 
 def test_stateful_collective_regime_simulate_shape_is_byte_identical() -> None:
     """Regression pin: a STATEFUL collective regime (has its own state axis,
-    e.g. `_make_couple_regimes`'s `wage`) already carries the subject axis
-    from its per-subject state arrays, and the stateless-collective branch
+    e.g. `_make_couple_regimes`'s `wage`) already carries the agent axis
+    from its per-agent state arrays, and the stateless-collective branch
     leaves it alone. Reuses `_make_all_collective_regimes` (has a `wage` state).
     """
     ages, regimes, regime_names_to_ids, flat_params, solution = _solve_all_collective()

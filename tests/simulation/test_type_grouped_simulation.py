@@ -1,11 +1,11 @@
-"""Grouping subjects by an invariant type preserves their rows and choices.
+"""Grouping agents by an invariant type preserves their rows and choices.
 
 `ExecutionConfig(invariant_block_widths={"pref_type": 1})` also groups the
 simulated population by `pref_type` whenever the forward phase provably never
 changes it. Each group is simulated in its own chunks, reading every
-continuation that carries `pref_type` through that type's block. Subjects keep
+continuation that carries `pref_type` through that type's block. Agents keep
 the random keys of their original rows, and the result restores the original
-subject order. Values computed with different program shapes can differ by one
+agent order. Values computed with different program shapes can differ by one
 ULP at the array's scale; states, actions and random draws stay byte-identical.
 A model whose simulate phase does not preserve the type keeps the ungrouped route.
 """
@@ -23,9 +23,14 @@ import pytest
 from numpy.typing import ArrayLike
 
 import tests.conftest as test_config
+from _lcm.execution.value_transfer import (
+    MaterializedTransferObserver,
+    ResolvedValueTransfer,
+)
 from _lcm.simulation import value_reads
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.random import generate_simulation_keys
+from _lcm.typing import ArgumentTree
 from lcm import (
     AgeGrid,
     AgeRange,
@@ -158,7 +163,7 @@ def _model(
     outside: bool = False,
     blocked: bool = False,
     budget: int | None = None,
-    subject_width: int = 3,
+    agent_width: int = 3,
     pref_law: Phased | None = None,
 ) -> Model:
     """Build a life cycle with type-dependent survival and health.
@@ -168,9 +173,9 @@ def _model(
             `dead` keeps `pref_type`; otherwise every type shares one dead value.
         outside: Whether a type-free regime `outside` is an admissible start;
             it never enters `work`. Requires a type-free `dead`.
-        blocked: Whether `pref_type` is blocked, which also groups subjects.
+        blocked: Whether `pref_type` is blocked, which also groups agents.
         budget: Explicit device budget, or `None` to run unbudgeted.
-        subject_width: Outer and inner subject width.
+        agent_width: Outer and inner agent width.
         pref_law: The law of `pref_type` in `work`; `None` declares the identity.
 
     Returns:
@@ -236,7 +241,7 @@ def _model(
         },
         execution_config=ExecutionConfig(
             invariant_block_widths={"pref_type": 1} if blocked else {},
-            axis_widths={"subject": subject_width},
+            axis_widths={"agent": agent_width},
             device_memory_bytes=budget,
         ),
     )
@@ -428,10 +433,10 @@ def _assert_general_panels_agree(
                     )
 
 
-def _subject_grouping(*, result: SimulationResult) -> str | None:
+def _agent_grouping(*, result: SimulationResult) -> str | None:
     """Return the grouping state the call's plan reports."""
     assert result.plan_summary is not None
-    return result.plan_summary.subject_grouping
+    return result.plan_summary.agent_grouping
 
 
 def _archived_solution(
@@ -470,16 +475,16 @@ def test_plan_groups_original_rows_by_code_and_restores_their_order() -> None:
     the first code, a short tail repeats its group's last row, and every original
     row maps to the position its own output lands at.
     """
-    from _lcm.simulation.subject_groups import (  # noqa: PLC0415
-        SubjectGroupingRoute,
-        plan_subject_groups,
+    from _lcm.simulation.agent_groups import (  # noqa: PLC0415
+        AgentGroupingRoute,
+        plan_agent_groups,
     )
 
-    route = SubjectGroupingRoute(
+    route = AgentGroupingRoute(
         state_name="pref_type", codes=(0, 1, 2), value_axis_names=MappingProxyType({})
     )
     codes = np.asarray((0, 2, 0, 0, 2, 0, 0, 2, 0, 0, 7), dtype=np.int32)
-    plan = plan_subject_groups(route=route, codes=codes, n_real=11, width=3)
+    plan = plan_agent_groups(route=route, codes=codes, n_real=11, width=3)
     assert [(chunk.code, chunk.rows.tolist()) for chunk in plan.chunks] == [
         (0, [0, 2, 3]),
         (0, [5, 6, 8]),
@@ -491,7 +496,7 @@ def test_plan_groups_original_rows_by_code_and_restores_their_order() -> None:
 
 def test_rowed_keys_are_the_full_population_keys_of_those_rows() -> None:
     """A chunk of arbitrary original rows draws exactly those rows' keys."""
-    from _lcm.simulation.subject_groups import SubjectRows  # noqa: PLC0415
+    from _lcm.simulation.agent_groups import AgentRows  # noqa: PLC0415
 
     key = jax.random.key(3)
     rows = np.asarray([9, 0, 4, 4], dtype=np.int32)
@@ -500,7 +505,7 @@ def test_rowed_keys_are_the_full_population_keys_of_those_rows() -> None:
         key=key,
         names=["x"],
         n_initial_states=11,
-        subject_slice=SubjectRows(rows=rows),
+        agent_slice=AgentRows(rows=rows),
     )
     np.testing.assert_array_equal(
         jax.random.key_data(rowed["key_x"]),
@@ -536,8 +541,8 @@ def test_grouped_panel_preserves_rows_choices_and_values(
     want = _simulate(model=reference, params=params, initial=initial, solution=solution)
     got = _simulate(model=grouped, params=params, initial=initial, solution=solution)
 
-    assert _subject_grouping(result=got) == "pref_type"
-    assert _subject_grouping(result=want) is None
+    assert _agent_grouping(result=got) == "pref_type"
+    assert _agent_grouping(result=want) is None
     _assert_panels_identical(got=got, want=want, allow_value_rounding=True)
 
 
@@ -545,7 +550,7 @@ def test_grouped_panel_preserves_rows_choices_and_values(
 def test_type_free_starts_keep_their_panel_rows(
     *, budget: int | None, tmp_path: Path
 ) -> None:
-    """Subjects starting where the type is irrelevant simulate the same rows.
+    """Agents starting where the type is irrelevant simulate the same rows.
 
     They hold a code outside the grid, never occupy a regime carrying the type,
     and read only the shared type-free values.
@@ -559,14 +564,14 @@ def test_type_free_starts_keep_their_panel_rows(
     want = _simulate(model=reference, params=params, initial=initial, solution=solution)
     got = _simulate(model=grouped, params=params, initial=initial, solution=solution)
 
-    assert _subject_grouping(result=got) == "pref_type"
+    assert _agent_grouping(result=got) == "pref_type"
     _assert_panels_identical(got=got, want=want, raw_rows="in_regime")
 
 
 def test_a_population_without_the_type_column_simulates_grouped(
     tmp_path: Path,
 ) -> None:
-    """With every subject outside, the type is never supplied and nothing changes."""
+    """With every agent outside, the type is never supplied and nothing changes."""
     params = _params(typed_dead=False)
     reference = _model(typed_dead=False, outside=True)
     grouped = _model(typed_dead=False, outside=True, blocked=True)
@@ -578,7 +583,7 @@ def test_a_population_without_the_type_column_simulates_grouped(
     want = _simulate(model=reference, params=params, initial=initial, solution=solution)
     got = _simulate(model=grouped, params=params, initial=initial, solution=solution)
 
-    assert _subject_grouping(result=got) == "pref_type"
+    assert _agent_grouping(result=got) == "pref_type"
     _assert_panels_identical(got=got, want=want, raw_rows="in_regime")
 
 
@@ -616,7 +621,7 @@ def test_the_comparator_sees_a_changed_seed_and_changed_params(
     got_changed = _simulate(
         model=grouped, params=changed, initial=initial, solution=changed_solution
     )
-    assert _subject_grouping(result=got_changed) == "pref_type"
+    assert _agent_grouping(result=got_changed) == "pref_type"
     with pytest.raises(AssertionError):
         _assert_panels_identical(got=got_changed, want=want, allow_value_rounding=True)
     _assert_panels_identical(
@@ -648,7 +653,7 @@ def test_blocked_solve_then_grouped_simulation_equals_the_unblocked_route() -> N
         solution=grouped.solve(params=params, log_level="off"),
     )
 
-    assert _subject_grouping(result=got) == "pref_type"
+    assert _agent_grouping(result=got) == "pref_type"
     _assert_general_panels_agree(got=got, want=want)
 
 
@@ -671,12 +676,21 @@ def test_a_group_moves_only_its_type_block_of_each_typed_continuation(
     original_apply = value_reads.apply_value_transfer
     original_before = SimulationMemory.before_transfer
 
-    def apply(*, value, transfer, **kwargs):
+    def apply(
+        *,
+        value: ArgumentTree,
+        transfer: ResolvedValueTransfer,
+        **kwargs: MaterializedTransferObserver | None,
+    ) -> jax.Array:
         result = original_apply(value=value, transfer=transfer, **kwargs)
         applied.append((transfer, np.asarray(value).nbytes, result.shape))
         return result
 
-    def before(*memory, transfer, live_values):
+    def before(
+        *memory: SimulationMemory,
+        transfer: ResolvedValueTransfer,
+        live_values: tuple[jax.Array, ...],
+    ) -> None:
         charged.append(transfer)
         return original_before(*memory, transfer=transfer, live_values=live_values)
 
@@ -711,7 +725,12 @@ def test_type_free_continuations_are_read_whole(
     applied = []
     original_apply = value_reads.apply_value_transfer
 
-    def apply(*, value, transfer, **kwargs):
+    def apply(
+        *,
+        value: ArgumentTree,
+        transfer: ResolvedValueTransfer,
+        **kwargs: MaterializedTransferObserver | None,
+    ) -> jax.Array:
         applied.append(transfer)
         return original_apply(value=value, transfer=transfer, **kwargs)
 
@@ -742,7 +761,7 @@ def test_simulation_stays_ungrouped_when_the_simulate_phase_may_change_the_type(
     want = _simulate(model=reference, params=params, initial=initial, solution=solution)
     got = _simulate(model=blocked, params=params, initial=initial, solution=solution)
 
-    assert _subject_grouping(result=got) is None
+    assert _agent_grouping(result=got) is None
     _assert_panels_identical(got=got, want=want)
 
 
@@ -757,8 +776,8 @@ def test_realized_off_grid_counts_hold_each_genuine_row_once(
 ) -> None:
     """Repeated chunk tails and alignment rows never add to realized counts.
 
-    Eleven subjects in chunks of three leave short tails in both routes; every
-    subject starts at the top of the wealth grid and consumption is barely valued,
+    Eleven agents in chunks of three leave short tails in both routes; every
+    agent starts at the top of the wealth grid and consumption is barely valued,
     so later exterior handoffs to `work` and to `dead` occur. The logged total
     equals the exterior raw states the public panel holds.
     """

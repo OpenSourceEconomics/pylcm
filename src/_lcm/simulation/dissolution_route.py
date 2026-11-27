@@ -1,20 +1,20 @@
-"""Send a household with no feasible action to its gate's dissolution route.
+"""Send an agent with no feasible action to its gate's dissolution route.
 
-A gated edge decides at the end of period `t` whether a household enters its
+A gated edge decides at the end of period `t` whether an agent enters its
 target regime at `t + 1`. Whether the target has a feasible action at the state
-the household lands on is answered where the household actually is: the
+the agent lands on is answered where the agent actually is: the
 target's own decision at `t + 1` evaluates every action at the realised state,
 exactly as it does when choosing one. An off-grid landing can differ from both
 neighbouring grid nodes in either direction, so no node-level answer is right
 in general.
 
-A household that finds no feasible action there takes, in that same period, the
+An agent that finds no feasible action there takes, in that same period, the
 dissolution route of the gate it came through: the fallback regime of its own
 leg, at that leg's projection of its realised state, carrying the fallback's
 role. That is the closed branch of its gate.
 
-Only the gate a household actually passed through its open branch hands it a
-route, and only once. A household that landed in the regime through a closed
+Only the gate an agent actually passed through its open branch hands it a
+route, and only once. An agent that landed in the regime through a closed
 branch has already taken its gate's route; one that reached it through no gated
 edge (an initial condition, or an ungated transition) never had one; and one
 that already took a route this period has used it. Regime identity cannot tell
@@ -41,7 +41,7 @@ from _lcm.simulation.gated_routing import (
     _per_row_leg_outcomes,
     bind_provenance_params,
 )
-from _lcm.simulation.transitions import _advance_states_for_subjects
+from _lcm.simulation.transitions import _advance_states_for_agents
 from _lcm.typing import FlatParams, RegimeName, RegimeNamesToIds, StatesPerRegime
 from lcm.typing import Bool1D, Int1D, ScalarFloat, ScalarInt
 
@@ -56,18 +56,18 @@ def empty_gated_entries(*, regime_ids: Int1D) -> Int1D:
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class DissolutionFallback:
-    """One household sent to its dissolution route for want of a feasible action."""
+    """One agent sent to its dissolution route for want of a feasible action."""
 
-    subject_id: int
-    """The subject's row in the simulated population."""
+    agent_id: int
+    """The agent's row in the simulated population."""
     period: int
-    """The period in which the household found no feasible action."""
+    """The period in which the agent found no feasible action."""
     regime: RegimeName
     """The regime it had entered."""
     state: MappingProxyType[str, float | str]
     """Its full realised state in that regime, in declared coordinates."""
     source: RegimeName
-    """The regime whose gate the household passed open, which supplies the route."""
+    """The regime whose gate the agent passed open, which supplies the route."""
     fallback: RegimeName
     """The fallback regime of its own leg, where it acts this period instead."""
 
@@ -81,9 +81,9 @@ class RerouteOutcome:
     """
 
     states: StatesPerRegime
-    subject_regime_ids: Int1D
+    agent_regime_ids: Int1D
     own_member: Int1D
-    new_subject_regime_ids: Int1D
+    new_agent_regime_ids: Int1D
     new_own_member: Int1D
     entered_through: Int1D
     """Open-branch entries after rerouting: every rerouted row's is used up."""
@@ -101,9 +101,9 @@ def reroute_rows_without_feasible_action(
     entered_through: Int1D,
     source_roles: Int1D,
     states: StatesPerRegime,
-    subject_regime_ids: Int1D,
+    agent_regime_ids: Int1D,
     own_member: Int1D,
-    new_subject_regime_ids: Int1D,
+    new_agent_regime_ids: Int1D,
     new_own_member: Int1D,
     regime_names_to_ids: RegimeNamesToIds,
     flat_params: FlatParams,
@@ -122,9 +122,9 @@ def reroute_rows_without_feasible_action(
         source_roles: Each row's role in the previous period, which selects its
             leg of the gate.
         states: The current-period state carrier.
-        subject_regime_ids: Current-period regime membership.
+        agent_regime_ids: Current-period regime membership.
         own_member: Current-period roles.
-        new_subject_regime_ids: Next-period regime membership as accumulated.
+        new_agent_regime_ids: Next-period regime membership as accumulated.
         new_own_member: Next-period roles as accumulated.
         regime_names_to_ids: Mapping from regime names to ids.
         flat_params: Model parameters for all regimes.
@@ -139,7 +139,7 @@ def reroute_rows_without_feasible_action(
     # projections with that write.
     original_target_states = dict(states[regime_name])
     rerouted = jnp.zeros_like(empty)
-    fallback_ids = jnp.full_like(subject_regime_ids, -1)
+    fallback_ids = jnp.full_like(agent_regime_ids, -1)
     for source_name, source in regimes.items():
         edge = source.gated_edges.get(regime_name)
         if edge is None:
@@ -169,7 +169,7 @@ def reroute_rows_without_feasible_action(
                 },
                 axis_size=int(empty.shape[0]),
             )
-            states = _advance_states_for_subjects(
+            states = _advance_states_for_agents(
                 states_per_regime=states,
                 next_states_per_regime=MappingProxyType(
                     {
@@ -178,21 +178,19 @@ def reroute_rows_without_feasible_action(
                         )
                     }
                 ),
-                subject_indices=rows,
+                agent_indices=rows,
             )
-        subject_regime_ids = jnp.where(rows, own_fallback_id, subject_regime_ids)
-        new_subject_regime_ids = jnp.where(
-            rows, own_fallback_id, new_subject_regime_ids
-        )
+        agent_regime_ids = jnp.where(rows, own_fallback_id, agent_regime_ids)
+        new_agent_regime_ids = jnp.where(rows, own_fallback_id, new_agent_regime_ids)
         own_member = jnp.where(rows, closed_role, own_member)
         new_own_member = jnp.where(rows, closed_role, new_own_member)
         fallback_ids = jnp.where(rows, own_fallback_id, fallback_ids)
         rerouted = rerouted | rows
     return RerouteOutcome(
         states=states,
-        subject_regime_ids=subject_regime_ids,
+        agent_regime_ids=agent_regime_ids,
         own_member=own_member,
-        new_subject_regime_ids=new_subject_regime_ids,
+        new_agent_regime_ids=new_agent_regime_ids,
         new_own_member=new_own_member,
         entered_through=jnp.where(rerouted, NO_GATED_ENTRY, entered_through),
         rerouted=rerouted,
@@ -206,7 +204,7 @@ def record_open_entries(
     target_ids: tuple[int, ...],
     closed_masks: tuple[Bool1D, ...],
     routed_ids: Int1D,
-    subjects_in_regime: Bool1D,
+    agents_in_regime: Bool1D,
     new_entered_through: Int1D,
 ) -> Int1D:
     """Mark the rows this source's gates let through their open branch.
@@ -222,19 +220,19 @@ def record_open_entries(
         target_ids: The ids of the gated targets, one per closed mask.
         closed_masks: Each gated target's closed-branch mask, in `target_ids` order.
         routed_ids: Next-period regime membership after routing.
-        subjects_in_regime: Rows of the source regime this period.
+        agents_in_regime: Rows of the source regime this period.
         new_entered_through: The next period's entries as accumulated so far.
 
     Returns:
         The next period's entries with this source's rows written.
     """
-    entered = jnp.zeros_like(subjects_in_regime)
-    closed = jnp.zeros_like(subjects_in_regime)
+    entered = jnp.zeros_like(agents_in_regime)
+    closed = jnp.zeros_like(agents_in_regime)
     for target_id, mask in zip(target_ids, closed_masks, strict=True):
         entered = entered | (routed_ids == target_id)
         closed = closed | mask
     return jnp.where(
-        subjects_in_regime,
+        agents_in_regime,
         jnp.where(entered & ~closed, source_id, NO_GATED_ENTRY),
         new_entered_through,
     )
@@ -248,18 +246,18 @@ def log_dissolution_fallbacks(
     n_rows: int,
     recorded: bool,
 ) -> None:
-    """Report how many households took the route in one regime-period.
+    """Report how many agents took the route in one regime-period.
 
     This is every dissolution the realised state forces, an ordinary event of
     the model rather than an anomaly, so it is reported once per regime-period
-    at info level. The per-household record is
+    at info level. The per-agent record is
     on `SimulationResult.dissolution_fallbacks` when runtime checks are on;
     without them the count is raised to a warning, since nothing else records
-    the households.
+    the agents.
     """
     log = logger.info if recorded else logger.warning
     log(
-        "%d subject(s) in regime '%s', period %d have no feasible action at their "
+        "%d agent(s) in regime '%s', period %d have no feasible action at their "
         "realised state and take their gate's dissolution route this period%s.",
         n_rows,
         regime_name,

@@ -43,7 +43,7 @@ class InvariantBlockSchedule(Enum):
     BLOCK_MAJOR = "block_major"
     """Solve each code through all of its periods before the next code.
 
-    Simulation of that code's subjects follows while its values are still on
+    Simulation of that code's agents follows while its values are still on
     the device; its values are then retained on the host and its device
     buffers deleted.
     """
@@ -185,9 +185,10 @@ class ExecutionConfig:
     A state every regime prunes leaves no axis to spread and is refused.
 
     A discrete state always qualifies. A continuous state qualifies only on a narrow
-    route: it must be the sole sharded state, a model-level `LinSpacedGrid` retained in
-    every regime, solved everywhere with `GridSearch` under a singleton hard-max, and
-    the regimes must carry no members, gated edges or taste shocks. Model construction
+    route: it must be the sole sharded state, a model-level continuous grid with fixed
+    nodes retained in every regime, solved everywhere with `GridSearch` under a
+    hard maximum, and the regimes must carry no gated edges, taste shocks or
+    `Decoupled` aggregator. Model construction
     checks every requirement and the error lists what a rejected model violates.
     """
 
@@ -254,15 +255,14 @@ class ExecutionConfig:
     Only width 1 and one state are supported. Model construction refuses, before
     anything is lowered, a state that is not provably invariant, a sharded state, a
     state no regime declares, and regimes the route does not serve: another solver,
-    taste shocks, collective regimes, gated edges, edge-reference reads and a
-    non-discrete grid for the state. Terminal regimes, which read no continuation, are
-    solved unblocked.
+    taste shocks, gated edges, edge-reference reads and a non-discrete grid for the
+    state. Terminal regimes, which read no continuation, are solved unblocked.
 
     When the simulate phase provably keeps the state fixed too, and no regime
     declares taste shocks, gated edges or a policy replay, `simulate` groups
-    subjects by their starting code: each code's subjects run in chunks of their
+    agents by their starting code: each code's agents run in chunks of their
     own and read each value carrying the state through that code's block. Each
-    subject keeps its original random keys and output row, so the panel is the
+    agent keeps its original random keys and output row, so the panel is the
     ungrouped one. Otherwise simulation is ungrouped.
     """
 
@@ -276,7 +276,7 @@ class ExecutionConfig:
       the solve returns.
     - `BLOCK_MAJOR` solves one code through all of its periods, then the next
       code. A combined `simulate` (no `solution` passed) runs that code's
-      subjects while its values are still on the device. The code's values are
+      agents while its values are still on the device. The code's values are
       then copied to the host and its device buffers deleted, so the device
       holds one code's values at a time. The result is still complete: each
       value is assembled from the retained codes, on the layout the
@@ -303,7 +303,8 @@ class ExecutionConfig:
       then holds at most the values of three periods: the one being solved, the
       one it reads and one whose copy is still finishing. Reading a value or
       policy returns a device copy, so results, reads and simulated panels are
-      those of device storage, bit for bit. The copy runs on every backend, CPU
+      those of device storage, bit for bit. Storage does not reorder the action
+      grid. The copy runs on every backend, CPU
       included.
     - A directory buffers the values on disk, for when host memory is short too.
       Values and policies travel as under `"host"` and are then written, from a
@@ -344,10 +345,13 @@ class ExecutionConfig:
     whole action blocks, each device of the regime's action group reduces its
     own run with the exact hard maximum, and the devices exchange one compact
     accumulator per state cell — best value, winning action identity and
-    feasibility — which every device merges in partition order. Values and
-    the winning actions equal the unpartitioned solve: ties go to the lowest
-    action identity, feasible `-inf` stays distinct from an all-infeasible
-    cell, and signed zeros and NaNs keep their usual conventions.
+    feasibility, and a collective regime's member values at its winner — which every
+    device merges in partition order. Values equal the unpartitioned solve. The
+    winning action is also the same, because both routes give a tie to the
+    members in declared order and then to the lowest action identity, and the
+    partition does not change identities. Feasible `-inf` stays distinct from
+    an all-infeasible cell, and signed zeros and NaNs keep their usual
+    conventions.
 
     The regime's devices form a mesh of its sharded-state axes times this
     count, so a regime without a sharded state uses exactly this many devices
@@ -358,8 +362,8 @@ class ExecutionConfig:
     A count of one is the ordinary route. Model construction refuses, before anything is
     lowered, a count larger than the visible devices or the action product, a regime
     that does not exist, and regimes the route does not serve: terminal regimes, another
-    solver, taste shocks, collective regimes, gated edges, a discrete sharded state, and
-    a fixed action width that leaves a device without a block.
+    solver, taste shocks, gated edges, a discrete sharded state, and a fixed action
+    width that leaves a device without a block.
     """
 
     devices: (
@@ -367,11 +371,11 @@ class ExecutionConfig:
     ) = None
     """Device ids the model may use, or `None` for every device JAX reports."""
 
-    simulation_sharding: Literal["legacy", "subjects"] = "legacy"
-    """Use solve-derived placement, or shard forward subjects on every device.
+    simulation_sharding: Literal["legacy", "agents"] = "legacy"
+    """Use solve-derived placement, or shard forward agents on every device.
 
-    The subjects mode puts each compiled subject tile loop inside a device shard.
-    Its subject width is a per-device upper bound, independent of solve axes.
+    The agents mode puts each compiled agent tile loop inside a device shard.
+    Its agent width is a per-device upper bound, independent of solve axes.
     """
 
     donate_buffers: bool = True

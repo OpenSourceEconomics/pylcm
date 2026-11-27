@@ -14,7 +14,7 @@ from _lcm.simulation.residency import DeviceBufferFootprint, measure_buffer_foot
 from _lcm.typing import FootprintTree, PytreeValue
 from lcm.exceptions import ExecutionPlanningError
 
-_SUBJECT_COUNT = 262_144
+_AGENT_COUNT = 262_144
 _MISSING_REGIME = -2_147_483_648
 
 
@@ -36,7 +36,7 @@ def _input() -> _RetainedInput:
     """Use one explicit actual device without pinning global topology."""
     return _RetainedInput(
         state=jax.device_put(
-            np.arange(_SUBJECT_COUNT, dtype=np.int32), jax.devices()[0]
+            np.arange(_AGENT_COUNT, dtype=np.int32), jax.devices()[0]
         ).block_until_ready()
     )
 
@@ -53,7 +53,7 @@ def _dispatch(
     return operations.dispatch(
         function=_empty_membership,
         arguments={"state": owner.state},
-        subject_arg_names=("state",),
+        agent_arg_names=("state",),
         devices=devices,
         live_footprint=owner,
         budget_devices=devices,
@@ -76,11 +76,9 @@ def test_shape_only_operation_preserves_distinct_retained_input_and_output() -> 
         owner.state.nbytes + result.nbytes
     )
     assert not owner.state.is_deleted()
+    np.testing.assert_array_equal(owner.state, np.arange(_AGENT_COUNT, dtype=np.int32))
     np.testing.assert_array_equal(
-        owner.state, np.arange(_SUBJECT_COUNT, dtype=np.int32)
-    )
-    np.testing.assert_array_equal(
-        result, np.full(_SUBJECT_COUNT, _MISSING_REGIME, dtype=np.int32)
+        result, np.full(_AGENT_COUNT, _MISSING_REGIME, dtype=np.int32)
     )
     (profile,) = operations.cache.values()
     analysis = profile.executable.memory_analysis()
@@ -133,6 +131,4 @@ def test_unused_retained_input_is_charged_before_output_execution(
     assert analysis is not None
     assert analysis.argument_size_in_bytes >= owner.state.nbytes
     assert profile.peak_bytes > budget
-    np.testing.assert_array_equal(
-        owner.state, np.arange(_SUBJECT_COUNT, dtype=np.int32)
-    )
+    np.testing.assert_array_equal(owner.state, np.arange(_AGENT_COUNT, dtype=np.int32))

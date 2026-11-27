@@ -1,9 +1,9 @@
 """Consent pricing evaluates observed couple rows once and runs its cells in lanes.
 
-A formation exit that observes every couple shock fixes the couple target's rows
-to one physical point, so one representative row prices all of them. The cells of
-a query chunk and the rows of an information support run as batched lanes; a lane
-whose guard is false reads stand-in inputs and its answer is discarded.
+A formation composition action that observes every couple shock fixes the couple
+target's rows to one physical point, so one representative row prices all of them. The
+cells of a query chunk and the rows of an information support run as batched lanes; a
+lane whose guard is false reads stand-in inputs and its answer is discarded.
 """
 
 import re
@@ -20,20 +20,19 @@ from _lcm import policy_queries, query_information
 from _lcm.typing import PytreeValue
 from lcm import (
     CollectiveUtility,
+    CompositionAction,
     Consent,
     Counterparty,
+    Destination,
     DiscreteGrid,
     ExecutionConfig,
-    Exit,
-    ExitTarget,
     InitialNodes,
     Model,
+    PCOnActions,
     Periods,
     Regime,
-    Unilateral,
     categorical,
 )
-from lcm.exceptions import RegimeInitializationError
 from lcm.shocks import Discrete, GaussHermite, Law, Normal, Product, ShockGroup
 from lcm.solver_api import KernelOutput
 from lcm.typing import BoolND, FloatND, IntND, ScalarInt
@@ -97,9 +96,14 @@ def _divergent_couple_f(
 ) -> FloatND:
     """Counts up to experience; at the unavailable sentinel -1 it never stops."""
     target = experience_f.astype(consumption.dtype)
-    steps = jax.lax.while_loop(
-        lambda count: count != target, lambda count: count + 1, jnp.zeros_like(target)
-    )
+
+    def short(count: FloatND) -> BoolND:
+        return count != target
+
+    def step(count: FloatND) -> FloatND:
+        return count + 1
+
+    steps = jax.lax.while_loop(short, step, jnp.zeros_like(target))
     return _couple_f(consumption=consumption, work_f=work_f) + 0 * steps
 
 
@@ -112,7 +116,7 @@ def _experience(experience: IntND) -> IntND:
 
 
 def _sentinel_experience(experience: IntND) -> IntND:
-    """The couple state only where the formation exit is available."""
+    """The couple state only where the formation composition action is available."""
     return jnp.where(experience > 0, experience, -1)
 
 
@@ -136,23 +140,6 @@ def _match_sigma(experience_f: IntND) -> FloatND:
     return 0.3 + 0.01 * experience_f
 
 
-def _level(level: IntND) -> IntND:
-    return level
-
-
-def _flipped_level(level: IntND) -> IntND:
-    return 1 - level
-
-
-def _no_level(experience: IntND) -> IntND:
-    return 0 * experience
-
-
-def _level_sigma(level: IntND) -> FloatND:
-    """Zero spread at level zero: the wage there reveals no base."""
-    return 0.5 * level
-
-
 def _group(*, name: str, n: int, law: Law) -> ShockGroup:
     if isinstance(law, Discrete):
         return ShockGroup(shocks={name: law})
@@ -163,38 +150,30 @@ def _model(
     *,
     n_match: int = 2,
     match_law: Law | None = None,
-    joint_match: bool = False,
     marry_available: Callable[..., BoolND] | None = None,
     couple_projection: Callable[..., IntND] = _experience,
     couple_f: Callable[..., FloatND] = _couple_f,
-    wage_level: bool = False,
     width: int = _WIDTH,
     dissolution: bool = False,
 ) -> Model:
     """Singles may marry by consent, observing every shock of the couple.
 
-    With `wage_level`, single_f and the couple carry a binary `level` whose value
-    sets the wage spread, and marriage flips it. With `dissolution`, the couple
-    may dissolve into lone singles: its dissolution queries then sit below the
-    formation's pinned couple rows, each with its own wage rows.
+    With `dissolution`, the couple may dissolve into lone singles: its dissolution
+    queries then sit below the formation's pinned couple rows, each with its own
+    wage rows.
     """
     experience = DiscreteGrid(values=jnp.arange(6))
     work = DiscreteGrid(values=jnp.arange(2))
-    level = {"level": DiscreteGrid(values=jnp.arange(2))} if wage_level else {}
-    keep_level = {"level": _level} if wage_level else {}
     singles = {
         f"single_{member}": Regime(
-            states={"experience": experience, **(level if member == "f" else {})},
+            states={"experience": experience},
             actions={"work": work},
             functions={"utility": _single_f if member == "f" else _single_m},
             shocks=("wage_f",) if member == "f" else ("wage_m",),
-            state_transitions={
-                "experience": _next_experience,
-                **(keep_level if member == "f" else {}),
-            },
-            exit=Exit(
-                targets={
-                    "self": ExitTarget(
+            state_transitions={"experience": _next_experience},
+            composition_action=CompositionAction(
+                destinations={
+                    "self": Destination(
                         regime="couple",
                         role=member,
                         projection={
@@ -202,15 +181,6 @@ def _model(
                             if member == "f"
                             else _experience,
                             "experience_m": _experience,
-                            **(
-                                {
-                                    "level": _flipped_level
-                                    if member == "f"
-                                    else _no_level
-                                }
-                                if wage_level
-                                else {}
-                            ),
                         },
                     )
                 },
@@ -218,14 +188,7 @@ def _model(
                     counterparty=Counterparty(
                         regime="single_m" if member == "f" else "single_f",
                         role="m" if member == "f" else "f",
-                        projection={
-                            "experience": _experience,
-                            **(
-                                {"level": _no_level}
-                                if wage_level and member == "m"
-                                else {}
-                            ),
-                        },
+                        projection={"experience": _experience},
                     )
                 ),
                 available=marry_available if member == "f" else None,
@@ -237,7 +200,7 @@ def _model(
     regimes = {
         **singles,
         "couple": Regime(
-            states={"experience_f": experience, "experience_m": experience, **level},
+            states={"experience_f": experience, "experience_m": experience},
             actions={"work_f": work, "work_m": work},
             functions={
                 "utility": CollectiveUtility(utilities={"f": couple_f, "m": _couple_m}),
@@ -246,10 +209,9 @@ def _model(
             state_transitions={
                 "experience_f": _next_f,
                 "experience_m": _next_m,
-                **keep_level,
             },
             shocks=("wage_f", "wage_m", "match"),
-            exit=_dissolve() if dissolution else None,
+            composition_action=_dissolve() if dissolution else None,
         ),
         **(_alone(experience=experience, work=work) if dissolution else {}),
     }
@@ -257,42 +219,31 @@ def _model(
         regimes[f"{name}_terminal"] = replace(
             regime,
             state_transitions={},
-            exit=replace(
-                regime.exit,
-                targets={
+            composition_action=replace(
+                regime.composition_action,
+                destinations={
                     member: replace(target, regime=f"{target.regime}_terminal")
-                    for member, target in regime.exit.targets.items()
+                    for member, target in regime.composition_action.destinations.items()
                 },
                 rule=replace(
-                    regime.exit.rule,
+                    regime.composition_action.rule,
                     counterparty=replace(
-                        regime.exit.rule.counterparty,
-                        regime=f"{regime.exit.rule.counterparty.regime}_terminal",
+                        regime.composition_action.rule.counterparty,
+                        regime=f"{regime.composition_action.rule.counterparty.regime}_terminal",
                     ),
                 ),
             )
-            if regime.exit is not None and isinstance(regime.exit.rule, Consent)
+            if regime.composition_action is not None
+            and isinstance(regime.composition_action.rule, Consent)
             else None,
         )
     law = Normal(mu=0.0, sigma=0.3) if match_law is None else match_law
-    match = (
-        ShockGroup(
-            shocks={"match": law, "bonus": Normal(mu=0.0, sigma=0.1)},
-            nodes=Product(match=GaussHermite(n=n_match), bonus=GaussHermite(n=2)),
-        )
-        if joint_match
-        else _group(name="match", n=n_match, law=law)
-    )
     return Model(
         regimes=regimes,
         shocks={
-            "wage_f": _group(
-                name="wage_f",
-                n=2,
-                law=Normal(mu=0.0, sigma=_level_sigma if wage_level else 0.5),
-            ),
+            "wage_f": _group(name="wage_f", n=2, law=Normal(mu=0.0, sigma=0.5)),
             "wage_m": _group(name="wage_m", n=2, law=Normal(mu=0.0, sigma=0.4)),
-            "match": match,
+            "match": _group(name="match", n=n_match, law=law),
         },
         n_periods=2,
         regime_id_class=_DissolvingRegimes if dissolution else _Regimes,
@@ -330,10 +281,10 @@ def _experience_m(experience_m: IntND) -> IntND:
     return experience_m
 
 
-def _dissolve() -> Exit:
-    return Exit(
-        targets={
-            member: ExitTarget(
+def _dissolve() -> CompositionAction:
+    return CompositionAction(
+        destinations={
+            member: Destination(
                 regime=f"alone_{member}",
                 projection={
                     "experience": _experience_f if member == "f" else _experience_m
@@ -341,12 +292,12 @@ def _dissolve() -> Exit:
             )
             for member in ("f", "m")
         },
-        rule=Unilateral(tie="leave"),
+        rule=PCOnActions(tie="leave"),
     )
 
 
 def _alone(*, experience: DiscreteGrid, work: DiscreteGrid) -> dict[str, Regime]:
-    """Singles without a formation exit, so dissolving cannot re-marry."""
+    """Singles without a formation composition action, so dissolving cannot re-marry."""
     return {
         f"alone_{member}": Regime(
             states={"experience": experience},
@@ -425,7 +376,7 @@ def test_halving_the_chunk_doubles_the_support_rows_per_step(
 def _narrowed_step(
     *, halvings: int, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[tuple[int, int, int], dict[str, np.ndarray]]:
-    """Solve with every exit kernel narrowed `halvings` times.
+    """Solve with every composition action kernel narrowed `halvings` times.
 
     Returns single_f's period-0 chunk, support rows per step and compiled step
     workspace in bytes, and every value.
@@ -541,8 +492,11 @@ def _assert_same_values(
 def test_unavailable_lanes_never_reach_their_used_neighbours(
     *, couple_f: Callable[..., FloatND], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A lane whose exit is unavailable maps to -1, where the couple utility is
-    -inf or never stops; batched lanes finish and match the scalar branches."""
+    """A lane with no available composition action maps to -1; batched lanes finish.
+
+    There the couple utility is -inf or never stops. The batched lanes match the
+    scalar branches.
+    """
 
     def poisoned() -> Model:
         return _model(
@@ -640,19 +594,6 @@ def test_representative_landings_count_once_per_present_copy() -> None:
     np.testing.assert_array_equal(scaled, [[4, 2], [0, 0], [2**31 - 1, 4]])
 
 
-def test_partly_observed_group_keeps_its_rows(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The exit observes match but not bonus, which shares match's joint group:
-    those rows genuinely differ, so they are all evaluated."""
-
-    def model() -> Model:
-        return _model(joint_match=True)
-
-    _assert_same_values(
-        got=_values(model()),
-        expected=_unpinned_scalar_values(model=model, monkeypatch=monkeypatch),
-    )
-
-
 def test_state_dependent_observed_law_pins_exactly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -666,18 +607,3 @@ def test_state_dependent_observed_law_pins_exactly(
         got=_values(model()),
         expected=_unpinned_scalar_values(model=model, monkeypatch=monkeypatch),
     )
-
-
-def test_caller_law_that_can_differ_is_refused_at_build(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """At level zero the single's wage has no spread, so it fixes no base, while
-    the couple at the flipped level one draws a wage: the rows differ."""
-    with pytest.raises(RegimeInitializationError, match="informativeness"):
-        _model(wage_level=True)
-    monkeypatch.setattr(query_information, "_refuse_pinning", lambda **_: None)
-    pinned = _values(_model(wage_level=True))
-    expected = _unpinned_scalar_values(
-        model=lambda: _model(wage_level=True), monkeypatch=monkeypatch
-    )
-    assert any(not np.allclose(pinned[name], value) for name, value in expected.items())

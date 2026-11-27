@@ -325,9 +325,16 @@ def direct_oracle_period(  # noqa: PLR0915
     replay_arguments = dict(
         _materialize_replay(kernel=kernel, context=context).arguments
     )
-    replay_arguments.update(
+    replay_keywords = (
         getattr(core_program_graph(kernel=kernel)["replay"].function, "keywords", None)
         or {}
+    )
+    replay_arguments.update(
+        {
+            name: value
+            for name, value in replay_keywords.items()
+            if not name.startswith("_member_axis_")
+        }
     )
     kwargs = {
         name: _economic_argument(value)

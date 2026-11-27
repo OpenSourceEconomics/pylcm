@@ -158,7 +158,9 @@ def _canonical_query(
     )
     kernel = model._regimes["parent"].solution.period_kernels[0]
     assert isinstance(kernel, _EGMPeriodKernel)
-    function = kernel.core_programs()["main"].function
+    wrapper = kernel.core_programs()["main"].function
+    assert isinstance(wrapper, functools.partial)
+    function = wrapper.keywords["_member_axis_core"]
     assert isinstance(function, _RegimeMassGuardedCore)
     assert isinstance(function.core, _EGMCore)
     query = function.core.next_dc_query

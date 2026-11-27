@@ -1,0 +1,524 @@
+"""Inventory the actual original-choice, route and revealed-action programs."""
+
+import logging
+from collections.abc import Callable, Mapping
+from typing import cast
+
+import jax
+import numpy as np
+
+from _lcm.engine import Regime
+from _lcm.execution.core_program import CoreBuildContext
+from _lcm.regime_building.collective import role_code
+from _lcm.simulation.chunk_operations import _regime_mask
+from _lcm.simulation.chunk_profile_inventory import ChunkProfileInventory, abstract_tree
+from _lcm.simulation.composition_actions import route_original_agents
+from _lcm.simulation.composition_replay import (
+    _answer_status,
+    _final_decision,
+    _moving_actor_rows,
+    _original_bases,
+    _original_produced,
+    _query_reached_landing_totals,
+    composition_action_bindings,
+)
+from _lcm.simulation.current_iid_overrides import (
+    CurrentIIDOverrideSchema,
+    current_iid_override_prototype,
+)
+from _lcm.simulation.forward_program_profiles import (
+    PreparedDecisionProfile,
+    _concrete_widths,
+    _profile_program,
+)
+from _lcm.simulation.operand_placement import agent_operand_sharding
+from _lcm.simulation.random_address import draw_window_keys
+from _lcm.simulation.taste_stream import draw_taste_shock_keys
+from _lcm.simulation.value_placement import simulation_value_sharding
+from _lcm.solution.backward_induction import (
+    CompilationWave,
+    _resolve_compilation_workers,
+)
+from _lcm.time import TimeAxis
+from _lcm.typing import FlatParams, PytreeValue, RegimeNamesToIds, ShapeDtypePytree
+from lcm.exceptions import ExecutionPlanningError
+from lcm.shocks import Discrete
+from lcm.typing import RegimeName
+
+type _Carrier = Mapping[str, Mapping[str, jax.ShapeDtypeStruct]]
+type _Answer = tuple[jax.ShapeDtypeStruct, ...]
+type _Frame = tuple[ShapeDtypePytree, ...]
+type _RouteOutput = tuple[
+    jax.ShapeDtypeStruct,
+    jax.ShapeDtypeStruct,
+    _Carrier,
+    jax.ShapeDtypeStruct,
+    jax.ShapeDtypeStruct,
+]
+
+
+def profile_composition_period(  # noqa: C901, PLR0915 - retain replay's ordered owner walk
+    *,
+    inventory: ChunkProfileInventory,
+    regimes: Mapping[RegimeName, Regime],
+    period: int,
+    states: _Carrier,
+    regime_ids: jax.ShapeDtypeStruct,
+    roles: jax.ShapeDtypeStruct,
+    regime_names_to_ids: RegimeNamesToIds,
+    flat_params: FlatParams,
+    values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
+    ages: TimeAxis,
+    key: jax.ShapeDtypeStruct,
+    taste_key: jax.ShapeDtypeStruct | None,
+    n_agents: int,
+    widths: Mapping[str, int],
+    logger: logging.Logger,
+    max_compilation_workers: int | None = None,
+    current_iid_override_schema: CurrentIIDOverrideSchema = (),
+) -> tuple[
+    _Carrier,
+    jax.ShapeDtypeStruct,
+    jax.ShapeDtypeStruct,
+    Mapping[str, PreparedDecisionProfile],
+]:
+    """Compile independent frontiers of composition decisions, then adopt profiles.
+
+    Full decisions read the original carrier. Revealed decisions
+    read their routed outputs, so their wave starts only after those compiled
+    output layouts and the resulting bases are known. The ordered inventory
+    adopts actual compiled outputs and complete reports from the shared cache.
+    """
+    actors = {
+        name: regime
+        for name, regime in regimes.items()
+        if period in regime.simulation.composition_queries
+    }
+    if not actors:
+        return states, regime_ids, roles, {}
+    bindings = composition_action_bindings(actors=actors, period=period)
+    devices = inventory.runtime.agent_devices
+    agent = agent_operand_sharding(devices=devices)
+    shared = simulation_value_sharding(stored_sharding=agent, devices=devices)
+    codes = {
+        name: jax.ShapeDtypeStruct(
+            jax.typeof(code).shape,
+            jax.typeof(code).dtype,
+            weak_type=jax.typeof(code).weak_type,
+            sharding=shared,
+        )
+        for name, code in regime_names_to_ids.items()
+    }
+
+    def window(
+        *, function: Callable[..., PytreeValue], root: jax.ShapeDtypeStruct
+    ) -> jax.ShapeDtypeStruct:
+        return cast(
+            "jax.ShapeDtypeStruct",
+            inventory.operation(
+                function=function,
+                arguments={
+                    "key": root,
+                    "address_words": jax.ShapeDtypeStruct(
+                        (8,), np.uint32, sharding=shared
+                    ),
+                    "agent_start": jax.ShapeDtypeStruct(
+                        (2,), np.uint32, sharding=shared
+                    ),
+                    "last_real_agent": jax.ShapeDtypeStruct(
+                        (2,), np.uint32, sharding=shared
+                    ),
+                    "period": jax.ShapeDtypeStruct((), np.uint32, sharding=shared),
+                },
+                static_arguments={"agent_count": n_agents},
+                agent_outputs=True,
+            ),
+        )
+
+    keys = {
+        shock: window(function=draw_window_keys, root=key)
+        for binding in bindings.values()
+        for shock in binding.group.shocks
+    }
+    tastes = {
+        name: window(
+            function=draw_taste_shock_keys, root=key if taste_key is None else taste_key
+        )
+        for name, regime in actors.items()
+        if regime.has_taste_shocks
+    }
+    params = {name: dict(flat_params.get(name, {})) for name in bindings}
+    overrides = current_iid_override_prototype(
+        schema=current_iid_override_schema,
+        names=tuple(
+            shock for binding in bindings.values() for shock in binding.group.shocks
+        ),
+        n_agents=n_agents,
+        sharding=agent,
+    )
+
+    def native(
+        *,
+        name: str,
+        family: str,
+        columns: _Carrier,
+        holders: jax.ShapeDtypeStruct,
+        bases: ShapeDtypePytree = None,
+        produced: ShapeDtypePytree = None,
+        wave: CompilationWave | None = None,
+    ) -> tuple[ShapeDtypePytree, ...]:
+        regime = actors[name]
+        plan = regime.simulation.composition_queries[period]
+        queries = plan.full if family == "exit_full" else plan.participating[name]
+        if queries is None:
+            raise ExecutionPlanningError("An incoming-only actor has no Full program.")
+        context = queries.definitions[queries.root].context
+        arguments = queries.arguments(
+            context=CoreBuildContext(
+                state_action_space=context.state_action_space,
+                next_regime_to_V_arr=values.get(period + 1, {}),
+                next_regime_to_continuation={},
+                flat_params=flat_params,
+                period=period,
+                ages=ages,
+                same_period_regime_to_V_arr=values.get(period, {}),
+                edge_regime_to_V_arr=values.get(period + 1, {}),
+            ),
+            fixed_flat_params=plan.fixed_flat_params,
+        )
+        inputs = {
+            "states": columns[name],
+            "keys": keys,
+            "overrides": overrides,
+            "_holders": holders,
+            **(
+                {}
+                if family == "exit_full"
+                else {
+                    "taste_keys": {queries.root: tastes[name]} if name in tastes else {}
+                }
+            ),
+            "query_arguments": {
+                query: {
+                    key: abstract_tree(tree=value, sharding=shared)
+                    for key, value in row.items()
+                }
+                for query, row in arguments.items()
+            },
+            "group_params": abstract_tree(tree=params, sharding=shared),
+            **({"held_bases": bases} if bases is not None else {}),
+            **({"produced": produced} if produced is not None else {}),
+        }
+        program = getattr(regime.simulation.programs, family)[period]
+        if wave is not None:
+            # The prepass discards these lowered-only descriptors. Ordered
+            # profiling below uses the compiled executable's actual layouts.
+            concrete_widths = _concrete_widths(
+                program=program, n_agents=n_agents, widths=widths
+            )
+            return cast(
+                "tuple[ShapeDtypePytree, ...]",
+                inventory.runtime.lower_abstract(
+                    program=program,
+                    arguments=inputs,
+                    period=period,
+                    n_agents=n_agents,
+                    widths=concrete_widths,
+                    wave=wave,
+                    label=(
+                        f"{name} {family} (period {period}, widths={concrete_widths!r})"
+                    ),
+                ),
+            )
+        profile = _profile_program(
+            runtime=inventory.runtime,
+            program=program,
+            arguments=inputs,
+            period=period,
+            n_agents=n_agents,
+            widths=widths,
+        )
+        return cast(
+            "tuple[ShapeDtypePytree, ...]",
+            inventory.compiled(
+                name=f"core:{family}",
+                executable=profile.executable,
+                memory=profile.memory,
+                arguments=profile.arguments,
+            ),
+        )
+
+    def check(
+        *, answer: _Answer, frame: _Frame, holders: jax.ShapeDtypeStruct, landings: bool
+    ) -> None:
+        inventory.operation(
+            function=_answer_status,
+            arguments={
+                "valid": answer[3],
+                "support": answer[2],
+                "law_valid": frame[6],
+                "holders": holders,
+            },
+        )
+        if landings:
+            inventory.operation(
+                function=_query_reached_landing_totals,
+                arguments={"counts": answer[4], "holders": holders},
+            )
+
+    originals: dict[str, tuple[_Answer, _Frame]] = {}
+    projections = {}
+    adjustments = {}
+    routes = []
+    full_holders = {}
+    for name, regime in actors.items():
+        queries = regime.simulation.composition_queries[period].full
+        if queries is None:
+            continue
+        holders = cast(
+            "jax.ShapeDtypeStruct",
+            inventory.operation(
+                function=_regime_mask,
+                arguments={"regime_ids": regime_ids, "regime_id": codes[name]},
+                agent_arg_names=("regime_ids",),
+                agent_outputs=True,
+            ),
+        )
+        full_holders[name] = holders
+    if full_holders:
+        with _compilation_wave(
+            max_compilation_workers=max_compilation_workers, logger=logger
+        ) as wave:
+            for name, holders in full_holders.items():
+                native(
+                    name=name,
+                    family="exit_full",
+                    columns=states,
+                    holders=holders,
+                    wave=wave,
+                )
+    for name, regime in actors.items():
+        queries = regime.simulation.composition_queries[period].full
+        if queries is None:
+            continue
+        holders = full_holders[name]
+        output = native(name=name, family="exit_full", columns=states, holders=holders)
+        answer, frame = cast("_Answer", output[0]), cast("_Frame", output[1])
+        originals[name] = (answer, frame)
+        check(
+            answer=answer,
+            frame=frame,
+            holders=holders,
+            landings=bool(queries.landing_checks),
+        )
+        projected = cast("Mapping[str, ShapeDtypePytree]", output[2])
+        paid = cast("Mapping[str, ShapeDtypePytree]", output[3])
+        for identifier, members in queries.definitions[
+            queries.root
+        ].composition_action_targets.items():
+            for member, query in members.items():
+                target = queries.definitions[query].read
+                address = f"{name}:{query}"
+                projections[address], adjustments[address] = (
+                    projected[query],
+                    paid[query],
+                )
+                destination = regimes[target.target]
+                routes.append(
+                    (
+                        name,
+                        target.target,
+                        identifier,
+                        None
+                        if member == "self"
+                        else regime.member_names_to_ids[member],
+                        role_code(
+                            name=target.role or None,
+                            role_ids=destination.member_names_to_ids,
+                        ),
+                        address,
+                    )
+                )
+    decisions = {name: answer[1] for name, (answer, _) in originals.items()}
+    final_ids, final_roles, final_states, moved, paid = cast(
+        "_RouteOutput",
+        inventory.operation(
+            function=route_original_agents,
+            arguments={
+                "original_regime_ids": regime_ids,
+                "original_roles": roles,
+                "original_states": states,
+                "decisions": decisions,
+                "projections": projections,
+                "adjustments": adjustments,
+                "regime_ids": codes,
+            },
+            static_arguments={"routes": tuple(routes)},
+            agent_arg_names=(
+                "original_regime_ids",
+                "original_roles",
+                "original_states",
+                "decisions",
+                "projections",
+                "adjustments",
+            ),
+            agent_outputs=True,
+        ),
+    )
+    bases = inventory.operation(
+        function=_original_bases,
+        arguments={
+            "regime_ids": regime_ids,
+            "bases": {name: frame[2] for name, (_, frame) in originals.items()},
+            "regime_names_to_ids": codes,
+        },
+        agent_arg_names=("regime_ids", "bases"),
+        agent_outputs=True,
+    )
+    produced = inventory.operation(
+        function=_original_produced,
+        arguments={
+            "regime_ids": regime_ids,
+            "availability": {name: frame[7] for name, (_, frame) in originals.items()},
+            "regime_names_to_ids": codes,
+        },
+        static_arguments={
+            "physical_names": tuple(
+                (name, tuple(cast("Mapping[str, jax.ShapeDtypeStruct]", frame[0])))
+                for name, (_, frame) in originals.items()
+            ),
+        },
+        agent_arg_names=("regime_ids", "availability"),
+        agent_outputs=True,
+    )
+    moving_holders = {}
+    for name in actors:
+        holders = cast(
+            "jax.ShapeDtypeStruct",
+            inventory.operation(
+                function=_moving_actor_rows,
+                arguments={
+                    "moved": moved,
+                    "regime_ids": final_ids,
+                    "regime_id": codes[name],
+                },
+                agent_arg_names=("moved", "regime_ids"),
+                agent_outputs=True,
+            ),
+        )
+        moving_holders[name] = holders
+    with _compilation_wave(
+        max_compilation_workers=max_compilation_workers, logger=logger
+    ) as wave:
+        for name, holders in moving_holders.items():
+            native(
+                name=name,
+                family="exit_participating",
+                columns=final_states,
+                holders=holders,
+                bases=bases,
+                produced=produced,
+                wave=wave,
+            )
+    prepared = {}
+    for name, regime in actors.items():
+        holders = moving_holders[name]
+        output = native(
+            name=name,
+            family="exit_participating",
+            columns=final_states,
+            holders=holders,
+            bases=bases,
+            produced=produced,
+        )
+        answer, frame = cast("_Answer", output[0]), cast("_Frame", output[1])
+        check(
+            answer=answer,
+            frame=frame,
+            holders=holders,
+            landings=bool(
+                regime.simulation.composition_queries[period]
+                .participating[name]
+                .landing_checks
+            ),
+        )
+        source_answer, source_frame = originals.get(name, (answer, frame))
+        names = regime.simulation.composition_queries[period].physical_names
+        source_physical = cast("Mapping[str, jax.ShapeDtypeStruct]", source_frame[0])
+        target_physical = cast("Mapping[str, jax.ShapeDtypeStruct]", frame[0])
+        reporting_sources = {name} | {
+            source for source, target, *_ in routes if target == name
+        }
+        prepared[name] = cast(
+            "PreparedDecisionProfile",
+            inventory.operation(
+                function=_final_decision,
+                arguments={
+                    "moved": moved,
+                    "roles": final_roles,
+                    "paid": paid,
+                    "source_indices": source_answer[1],
+                    "source_value": source_answer[0],
+                    "source_physical": {key: source_physical[key] for key in names},
+                    "target_indices": answer[1],
+                    "target_value": answer[0],
+                    "target_physical": {key: target_physical[key] for key in names},
+                    "original_regime_ids": regime_ids,
+                    "regime_names_to_ids": codes,
+                    "original_physical": {
+                        source: original[0]
+                        for source, (_, original) in originals.items()
+                        if source in reporting_sources
+                    },
+                    "original_available": {
+                        source: original[7]
+                        for source, (_, original) in originals.items()
+                        if source in reporting_sources
+                    },
+                },
+                static_arguments={
+                    "actor_name": name,
+                    "categorical_names": tuple(
+                        shock
+                        for binding in bindings.values()
+                        for shock, law in binding.group.shocks.items()
+                        if isinstance(law, Discrete)
+                    ),
+                    "member_ids": tuple(
+                        role_code(name=member, role_ids=regime.member_names_to_ids)
+                        for member in regime.members
+                    ),
+                },
+                agent_arg_names=(
+                    "moved",
+                    "roles",
+                    "paid",
+                    "source_indices",
+                    "source_value",
+                    "source_physical",
+                    "target_indices",
+                    "target_value",
+                    "target_physical",
+                    "original_regime_ids",
+                    "original_physical",
+                    "original_available",
+                ),
+                agent_outputs=True,
+            ),
+        )
+    return final_states, final_ids, final_roles, prepared
+
+
+def _compilation_wave(
+    *, max_compilation_workers: int | None, logger: logging.Logger
+) -> CompilationWave:
+    """Use the forward compiler's worker and publication contract for one frontier."""
+    return CompilationWave(
+        n_workers=_resolve_compilation_workers(
+            max_compilation_workers=max_compilation_workers
+        ),
+        logger=logger,
+        log_kernel_memory=False,
+        compiled={},
+        compile_phase="simulation_compilation",
+    )

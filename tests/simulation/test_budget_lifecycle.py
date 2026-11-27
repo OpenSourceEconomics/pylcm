@@ -126,7 +126,7 @@ def _inspect_route_inventory[Result](
     program: CoreProgram,
     arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
     period: int,
-    n_subjects: int,
+    n_agents: int,
     residency: SimulationDispatchContext | None = None,
 ) -> Result:
     if program.name == ROUTE_PROGRAM and observed.raw_outputs:
@@ -153,7 +153,7 @@ def _inspect_route_inventory[Result](
         program=program,
         arguments=arguments,
         period=period,
-        n_subjects=n_subjects,
+        n_agents=n_agents,
         residency=residency,
     )
 
@@ -163,7 +163,7 @@ def _assert_transition_inventory(
 ) -> None:
     """Run the public stateful-target model with exact route-time owner observations."""
     observed = _ObservedStateMerge(
-        original=transitions_module._advance_states_for_subjects,
+        original=transitions_module._advance_states_for_agents,
         raw_outputs=[],
         merged_carrier=[],
         reached=[],

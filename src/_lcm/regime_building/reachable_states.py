@@ -30,7 +30,7 @@ from dags import concatenate_functions
 
 from _lcm.engine import Regime, SimulationPhase, SolutionPhase
 from _lcm.grids import Grid
-from _lcm.time import TimeAxis
+from _lcm.time import TimeAxis, describe_step, landing_step
 from _lcm.typing import (
     FlatRegimeParams,
     FunctionName,
@@ -40,6 +40,7 @@ from _lcm.typing import (
 )
 from lcm.exceptions import ModelInitializationError
 from lcm.grids import DiscreteGrid
+from lcm.transition import _period_by_age
 from lcm.typing import ScalarFloat, ScalarInt, UserAge
 
 type Phase = SolutionPhase | SimulationPhase
@@ -103,19 +104,24 @@ def enumerate_reachable_states(
     _fail_if_start_codes_are_invalid(
         regimes=regimes, carriers=carriers, members=members, start_codes=start_codes
     )
-    period_of_age = {age: period for period, age in enumerate(ages.exact_values)}
+    period_of_age = _period_by_age(ages)
     evaluator = _SuccessorEvaluator(regimes=regimes, members=members, ages=ages)
     by_node: dict[tuple[int, RegimeName], set[Codes]] = {}
     starts = set(itertools.product(*(tuple(start_codes[m]) for m in members)))
+    # An agent starts in its regime's own stage of the period.
     for age, name in initial_nodes:
         if name in carriers:
-            by_node.setdefault((period_of_age[age], name), set()).update(starts)
-    edges = _edges(regimes=regimes, carriers=carriers)
+            start = landing_step(ages=ages, step=period_of_age[age] - 1, target=name)
+            by_node.setdefault((start, name), set()).update(starts)
+    edges = _edges(regimes=regimes, carriers=carriers, ages=ages)
     for period in range(len(ages.exact_values) - 1):
         for source, target, phase_name in edges.get(period, ()):
             tuples = by_node.get((period, source))
             if tuples:
-                by_node.setdefault((period + 1, target), set()).update(
+                by_node.setdefault(
+                    (landing_step(ages=ages, step=period, target=target), target),
+                    set(),
+                ).update(
                     evaluator.successors(
                         phase_name=phase_name,
                         source=source,
@@ -188,9 +194,12 @@ def _fail_if_start_codes_are_invalid(
 
 
 def _edges(
-    *, regimes: Mapping[RegimeName, Regime], carriers: frozenset[RegimeName]
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    carriers: frozenset[RegimeName],
+    ages: TimeAxis,
 ) -> dict[int, tuple[tuple[RegimeName, RegimeName, str], ...]]:
-    """Return each period's carrier-to-carrier edges of either phase.
+    """Return each step's carrier-to-carrier edges of either phase.
 
     Refuses an edge entering a carrier from a regime without the states, since the
     enumeration has no tuple to start that edge from.
@@ -198,20 +207,21 @@ def _edges(
     edges: dict[int, set[tuple[RegimeName, RegimeName, str]]] = {}
     for phase_name in ("solution", "simulation"):
         reachability = getattr(next(iter(regimes.values())), phase_name).reachability
-        for period in range(reachability.n_periods - 1):
-            for source in sorted(reachability.active_regimes_by_period[period]):
-                for target in reachability.targets(period=period, source=source):
+        for step in range(reachability.n_steps - 1):
+            for source in sorted(reachability.active_regimes_by_period[step]):
+                for target in reachability.targets(step=step, source=source):
                     if target not in carriers:
                         continue
                     if source not in carriers:
                         msg = (
-                            f"Edge {source} -> {target} at period {period} enters a "
+                            f"Edge {source} -> {target} at "
+                            f"{describe_step(ages=ages, step=step)} enters a "
                             "regime carrying the enumerated states from one without "
                             "them."
                         )
                         raise ModelInitializationError(msg)
-                    edges.setdefault(period, set()).add((source, target, phase_name))
-    return {period: tuple(sorted(e)) for period, e in sorted(edges.items())}
+                    edges.setdefault(step, set()).add((source, target, phase_name))
+    return {step: tuple(sorted(e)) for step, e in sorted(edges.items())}
 
 
 class _SuccessorEvaluator:

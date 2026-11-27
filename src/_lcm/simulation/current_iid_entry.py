@@ -21,11 +21,15 @@ from _lcm.current_iid import (
 from _lcm.engine import Regime
 from _lcm.shock_overrides import CurrentIIDOverride, supplied_group_values
 from _lcm.shock_registry import ShockBinding, law_input_validity
+from _lcm.simulation.agent_groups import AgentRows
+from _lcm.simulation.composition_actions import (
+    _observe_query_frame,
+    query_producing_bindings,
+)
 from _lcm.simulation.current_iid_overrides import (
     CurrentIIDOverrides,
     gather_current_iid_overrides,
 )
-from _lcm.simulation.exits import _observe_query_frame, query_producing_bindings
 from _lcm.simulation.memory import (
     SimulationMemory,
     run_simulation_operation,
@@ -33,7 +37,6 @@ from _lcm.simulation.memory import (
 )
 from _lcm.simulation.random import create_simulation_key
 from _lcm.simulation.random_address import RandomAddress, draw_row_keys
-from _lcm.simulation.subject_groups import SubjectRows
 from _lcm.time import TimeAxis
 from _lcm.typing import FlatParams, PRNGKeyND, PytreeValue, QAndFArg
 from lcm.exceptions import ShockDeclarationError, UnsupportedOperationError
@@ -532,7 +535,7 @@ def _entry_overrides(
             bank=bank,
             names=names,
             period=int(period),
-            subject_slice=SubjectRows(rows=np.asarray(indices)[positions]),
+            agent_slice=AgentRows(rows=np.asarray(indices)[positions]),
         )
         for name, item in gathered.items():
             if not np.all(np.asarray(item.active)):
@@ -773,10 +776,10 @@ def _mapped_entry_work(
     """Resolve observed producers while refusing seedless hidden policy selection."""
     work = {}
     for period in sorted({int(periods[index]) for index in indices}):
-        exit_plan = regime.simulation.exit_queries.get(period)
-        if exit_plan is None or exit_plan.full is None:
+        composition_plan = regime.simulation.composition_queries.get(period)
+        if composition_plan is None or composition_plan.full is None:
             continue
-        queries = exit_plan.full
+        queries = composition_plan.full
         bindings = query_producing_bindings(queries=queries)
         groups = tuple(
             group
@@ -788,14 +791,14 @@ def _mapped_entry_work(
             and not bindings[group].group.shocks.keys() & local_names
         )
         if groups:
-            work[period] = (queries, groups, exit_plan.fixed_flat_params)
+            work[period] = (queries, groups, composition_plan.fixed_flat_params)
         if not seeded:
             hidden = (
                 {
                     name
-                    for actor in exit_plan.final_actors
+                    for actor in composition_plan.final_actors
                     for binding in query_producing_bindings(
-                        queries=exit_plan.participating[actor]
+                        queries=composition_plan.participating[actor]
                     ).values()
                     for name in binding.group.shocks
                 }

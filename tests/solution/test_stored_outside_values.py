@@ -24,7 +24,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm import exit_queries, outside_values, policy_queries, query_information
+from _lcm import composition_queries, outside_values, policy_queries, query_information
 from _lcm.current_iid import (
     CURRENT_IID_ARGUMENT,
     CURRENT_IID_NODES_ARGUMENT,
@@ -44,16 +44,16 @@ from _lcm.time import TimeAxis
 from _lcm.typing import FlatParams, PytreeValue, QAndFKwargs
 from lcm import (
     CollectiveUtility,
+    CompositionAction,
+    Destination,
     DiscreteGrid,
     ExecutionConfig,
-    Exit,
-    ExitTarget,
     InitialNodes,
     LinSpacedGrid,
     Model,
+    PCOnActions,
     Periods,
     Regime,
-    Unilateral,
     categorical,
 )
 from lcm.exceptions import ExecutionPlanningError, OffGridStateError
@@ -350,14 +350,14 @@ def _fragile_earnings(*, wealth: FloatND, work: IntND, unseen: FloatND) -> Float
     return jnp.sqrt(wealth - 0.25) + work * 0.3 + unseen**2
 
 
-def _exit_to_destination(
+def _composition_action_to_destination(
     *, projection: Callable[..., FloatND] = _wealth, observes: tuple[str, ...] = ()
-) -> Exit:
-    return Exit(
-        targets={
-            "self": ExitTarget(regime="destination", projection={"wealth": projection})
+) -> CompositionAction:
+    return CompositionAction(
+        destinations={
+            "self": Destination(regime="destination", projection={"wealth": projection})
         },
-        rule=Unilateral(),
+        rule=PCOnActions(),
         observes=observes,
     )
 
@@ -380,7 +380,9 @@ def _terminal_pair(
                 states={"wealth": _wealth_grid()},
                 functions={"utility": source_utility},
                 shocks=source_shocks,
-                exit=_exit_to_destination(projection=projection, observes=observes),
+                composition_action=_composition_action_to_destination(
+                    projection=projection, observes=observes
+                ),
             ),
             "destination": Regime(
                 states={"wealth": _wealth_grid()},
@@ -404,14 +406,15 @@ def _terminal_pair(
 
 
 def _pair_over_two_periods() -> Model:
-    """The source's exit reads a destination that integrates `unseen` and carries
-    its wealth into a terminal period.
+    """The source's composition action reads a destination that integrates `unseen`.
+
+    The destination carries its wealth into a terminal period.
     """
     source = Regime(
         states={"wealth": _wealth_grid()},
         functions={"utility": _plain_source_utility},
         state_transitions={"wealth": _keep_wealth},
-        exit=_exit_to_destination(),
+        composition_action=_composition_action_to_destination(),
     )
     destination = Regime(
         states={"wealth": _wealth_grid()},
@@ -424,7 +427,9 @@ def _pair_over_two_periods() -> Model:
         regimes={
             "source": source,
             "destination": destination,
-            "source_terminal": replace(source, state_transitions={}, exit=None),
+            "source_terminal": replace(
+                source, state_transitions={}, composition_action=None
+            ),
             "destination_terminal": replace(destination, state_transitions={}),
         },
         shocks={"unseen": _gauss(name="unseen", n=2, sigma=_UNSEEN_SIGMA)},
@@ -453,7 +458,7 @@ def _tabulate(
         if node.read.kind is QueryKind.RAW and node.read.target == target
     )
     assert read.outside_value is not None
-    definitions, key = exit_queries.bind_exit_query_graph(
+    definitions, key = composition_queries.bind_composition_query_graph(
         contexts={target: read.context},
         canonical_regimes=model._regimes,
         root=target,
@@ -555,7 +560,7 @@ def test_a_table_without_observed_shocks_is_the_problem_s_value(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The source observes none of the destination's shocks, and the destination
-    has no exit, so its table is its solved value at every grid cell.
+    has no composition action, so its table is its solved value at every grid cell.
     """
     values, _, solved = _solve_with_table(
         model=_pair_over_two_periods(),
@@ -607,7 +612,9 @@ def test_a_table_entry_is_the_problem_value_at_its_observed_node(
         + np.maximum(1.0 + seen, 0.5)[None, :]
         + np.sum(weights * unseen**2)
     )
-    np.testing.assert_array_almost_equal(values, expected, decimal=DECIMAL_PRECISION)
+    np.testing.assert_array_almost_equal(
+        values[..., 0], expected, decimal=DECIMAL_PRECISION
+    )
 
 
 def test_a_table_marks_a_failed_cell_nan_and_keeps_its_neighbours(
@@ -631,7 +638,7 @@ def test_a_table_marks_a_failed_cell_nan_and_keeps_its_neighbours(
         expected = np.sqrt(wealth - 0.25) + 0.3 + np.sum(weights * unseen**2)
     # A cell without support would read minus infinity instead of its value.
     np.testing.assert_array_almost_equal(
-        np.where(support, values, -np.inf), expected, decimal=DECIMAL_PRECISION
+        np.where(support, values[..., 0], -np.inf), expected, decimal=DECIMAL_PRECISION
     )
 
 
@@ -708,11 +715,11 @@ def _solve_arm(
         return cast("int", chunk)
 
     with monkeypatch.context() as patch:
-        patch.setattr(exit_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
+        patch.setattr(composition_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
         patch.setattr(outside_values, "read_outside_value", gathered)
         patch.setattr(policy_queries, "_evaluate_query_action", evaluated)
         if chunk is not None:
-            patch.setattr(exit_queries, "default_chunk_size", chunk_size)
+            patch.setattr(composition_queries, "default_chunk_size", chunk_size)
         built = model()
         arm.tables.update(
             name
@@ -1081,13 +1088,13 @@ def _kept_pair(
                 states={"wealth": _wealth_grid()},
                 functions={"utility": source_utility},
                 shocks=observes,
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
                             regime="destination", projection={"wealth": _wealth}
                         )
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                     observes=observes,
                     available=available,
                 ),
@@ -1151,7 +1158,7 @@ def test_a_failed_kept_node_fails_no_read_of_another_node(
     )
     assert (bool(stored.tables), point.tables) == (True, set())
     np.testing.assert_array_almost_equal(
-        point.values["0/source"],
+        point.values["0/source"][..., 0],
         intercept + np.linspace(0, 1, 3),
         decimal=DECIMAL_PRECISION,
     )
@@ -1196,7 +1203,9 @@ def test_a_table_marks_only_the_failed_kept_node_nan(
         np.broadcast_arrays(np.nan, 3.0 + np.add.outer(wealth, 0.2 * other)), axis=-1
     )
     assert support.all()
-    np.testing.assert_array_almost_equal(values, expected, decimal=DECIMAL_PRECISION)
+    np.testing.assert_array_almost_equal(
+        values[..., 0], expected, decimal=DECIMAL_PRECISION
+    )
 
 
 def test_a_failed_law_fails_every_kept_node(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1276,12 +1285,12 @@ def _leaving_destination(
             else _poor_at_the_top
         },
         state_transitions={"wealth": landing},
-        exit=Exit(
-            targets={
-                member: ExitTarget(regime="elsewhere", projection={"wealth": _wealth})
+        composition_action=CompositionAction(
+            destinations={
+                member: Destination(regime="elsewhere", projection={"wealth": _wealth})
                 for member in members
             },
-            rule=Unilateral(),
+            rule=PCOnActions(),
         ),
     )
 
@@ -1300,32 +1309,34 @@ def _leaving_model(
         states={"wealth": _wealth_grid()},
         functions={"utility": _plain_source_utility},
         state_transitions={"wealth": _keep_wealth},
-        exit=Exit(
-            targets={
-                "self": ExitTarget(
+        composition_action=CompositionAction(
+            destinations={
+                "self": Destination(
                     regime="destination",
                     role="f" if collective else None,
                     projection={"wealth": projection},
                 )
             },
-            rule=Unilateral(),
+            rule=PCOnActions(),
         ),
     )
-    elsewhere = replace(source, exit=None)
+    elsewhere = replace(source, composition_action=None)
     destination = _leaving_destination(collective=collective, landing=landing)
     terminal = replace(
         destination,
         states={"wealth": LinSpacedGrid(start=0, stop=1, n_points=3, off_grid="raise")},
         constraints={},
         state_transitions={},
-        exit=None,
+        composition_action=None,
     )
     return Model(
         regimes={
             "source": source,
             "destination": destination,
             "elsewhere": elsewhere,
-            "source_terminal": replace(source, state_transitions={}, exit=None),
+            "source_terminal": replace(
+                source, state_transitions={}, composition_action=None
+            ),
             "destination_terminal": terminal,
             "elsewhere_terminal": replace(elsewhere, state_transitions={}),
         },
@@ -1385,7 +1396,7 @@ def test_the_leaving_destination_on_the_grid_solves_both_modes_alike(
     point = _solve_arm(model=model, stored=False, monkeypatch=monkeypatch, params=_BETA)
     stored = _solve_arm(model=model, stored=True, monkeypatch=monkeypatch, params=_BETA)
     destination = point.values["0/destination"].reshape(3, -1)
-    elsewhere = point.values["0/elsewhere"][:, None]
+    elsewhere = point.values["0/elsewhere"]
     assert (destination[2] == elsewhere[2]).all()
     assert (destination[:2] > elsewhere[:2]).all()
     assert "_outside:destination" in stored.tables

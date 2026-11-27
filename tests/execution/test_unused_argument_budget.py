@@ -95,7 +95,7 @@ def _simulation_runtime(*, budget: int) -> SimulationRuntime:
             device_memory_bytes=budget,
         ),
         enable_jit=True,
-        subject_devices=(jax.devices()[0],),
+        agent_devices=(jax.devices()[0],),
     )
 
 
@@ -108,7 +108,7 @@ def test_simulation_refuses_a_shape_only_live_input_over_budget(
         name="shape_only_transition",
         function=_shape_only_simulation,
         argument_builder=_ArgumentsBoundAtDispatch(
-            program_name="shape_only_transition", subject_arg_names=("state",)
+            program_name="shape_only_transition", agent_arg_names=("state",)
         ),
         requirements=CoreExecutionRequirements(),
         output_roles="next_state",
@@ -124,7 +124,7 @@ def test_simulation_refuses_a_shape_only_live_input_over_budget(
         program=program,
         arguments={"state": source},
         period=0,
-        n_subjects=source.size,
+        n_agents=source.size,
         residency=context,
     )
     assert isinstance(output, jax.Array)
@@ -148,7 +148,7 @@ def test_simulation_refuses_a_shape_only_live_input_over_budget(
             program=program,
             arguments={"state": source},
             period=0,
-            n_subjects=source.size,
+            n_agents=source.size,
             residency=context,
         )
     assert executions == []

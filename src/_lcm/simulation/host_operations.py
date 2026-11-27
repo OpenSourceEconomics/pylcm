@@ -39,8 +39,8 @@ from _lcm.execution.workspace_planning import (
 from _lcm.post_decision_bound import PostDecisionBoundSpec
 from _lcm.shock_registry import ShockBinding
 from _lcm.simulation.operand_placement import (
+    agent_operand_sharding,
     place_simulation_arguments,
-    subject_operand_sharding,
 )
 from _lcm.simulation.program_types import SimulationPrograms
 from _lcm.simulation.residency import (
@@ -137,20 +137,20 @@ class ProfiledSimulationOperations:
         *,
         function: Callable[..., PytreeValue],
         arguments: Mapping[ReferenceName, PytreeValue],
-        subject_arg_names: tuple[ReferenceName, ...],
+        agent_arg_names: tuple[ReferenceName, ...],
         devices: tuple[jax.Device, ...],
         live_footprint: Callable[[], DeviceBufferFootprint],
         budget_devices: tuple[jax.Device, ...],
         budget_bytes: int,
         static_arguments: Mapping[str, StaticArgument] = MappingProxyType({}),
-        subject_outputs: bool = False,
+        agent_outputs: bool = False,
     ) -> PytreeValue:
         """Place once, inspect current residency, and execute the admitted code."""
         static = _validated_static_arguments(
             function=function,
             arguments=arguments,
             static_arguments=static_arguments,
-            subject_outputs=subject_outputs,
+            agent_outputs=agent_outputs,
         )
         if not devices or not set(devices).issubset(budget_devices):
             raise ExecutionPlanningError(
@@ -162,7 +162,7 @@ class ProfiledSimulationOperations:
         argument_footprint = measure_buffer_footprint(tree=arguments)
         placed = place_simulation_arguments(
             arguments=MappingProxyType(dict(sorted(arguments.items()))),
-            subject_arg_names=subject_arg_names,
+            agent_arg_names=agent_arg_names,
             value_reads=(),
             devices=devices,
             budget_bytes=budget_bytes,
@@ -190,7 +190,7 @@ class ProfiledSimulationOperations:
             function=function,
             arguments=abstract,
             static_arguments=static,
-            subject_outputs=subject_outputs,
+            agent_outputs=agent_outputs,
             devices=devices,
         )
         plan = plan_axis_free_workspace(
@@ -201,9 +201,7 @@ class ProfiledSimulationOperations:
                 arguments=abstract,
                 static_arguments=static,
                 output_sharding=(
-                    subject_operand_sharding(devices=devices)
-                    if subject_outputs
-                    else None
+                    agent_operand_sharding(devices=devices) if agent_outputs else None
                 ),
             ),
             budget_bytes=budget_bytes,
@@ -219,10 +217,10 @@ class ProfiledSimulationOperations:
         *,
         function: Callable[..., PytreeValue],
         arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
-        subject_arg_names: tuple[ReferenceName, ...],
+        agent_arg_names: tuple[ReferenceName, ...],
         devices: tuple[jax.Device, ...],
         static_arguments: Mapping[str, StaticArgument] = MappingProxyType({}),
-        subject_outputs: bool = False,
+        agent_outputs: bool = False,
     ) -> _ProfiledOperation:
         """Profile already-placed shape descriptors without allocating or admitting.
 
@@ -233,10 +231,10 @@ class ProfiledSimulationOperations:
         key, abstract, static, output_sharding = _abstract_operation(
             function=function,
             arguments=arguments,
-            subject_arg_names=subject_arg_names,
+            agent_arg_names=agent_arg_names,
             devices=devices,
             static_arguments=static_arguments,
-            subject_outputs=subject_outputs,
+            agent_outputs=agent_outputs,
         )
         return self.compile_candidate(
             key=key,
@@ -251,7 +249,7 @@ class ProfiledSimulationOperations:
         *,
         function: Callable[..., PytreeValue],
         arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
-        subject_arg_names: tuple[ReferenceName, ...],
+        agent_arg_names: tuple[ReferenceName, ...],
         devices: tuple[jax.Device, ...],
         wave: CompilationWave,
         label: str,
@@ -266,10 +264,10 @@ class ProfiledSimulationOperations:
         key, abstract, static, output_sharding = _abstract_operation(
             function=function,
             arguments=arguments,
-            subject_arg_names=subject_arg_names,
+            agent_arg_names=agent_arg_names,
             devices=devices,
             static_arguments=MappingProxyType({}),
-            subject_outputs=False,
+            agent_outputs=False,
         )
         with self.lock:
             cached = self.cache.get(key)
@@ -458,10 +456,10 @@ def _abstract_operation(
     *,
     function: Callable[..., PytreeValue],
     arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
-    subject_arg_names: tuple[ReferenceName, ...],
+    agent_arg_names: tuple[ReferenceName, ...],
     devices: tuple[jax.Device, ...],
     static_arguments: Mapping[str, StaticArgument],
-    subject_outputs: bool,
+    agent_outputs: bool,
 ) -> tuple[
     Hashable,
     MappingProxyType[ReferenceName, ShapeDtypePytree],
@@ -479,15 +477,15 @@ def _abstract_operation(
         function=function,
         arguments=arguments,
         static_arguments=static_arguments,
-        subject_outputs=subject_outputs,
+        agent_outputs=agent_outputs,
     )
-    subject = subject_operand_sharding(devices=devices)
-    shared = simulation_value_sharding(stored_sharding=subject, devices=devices)
+    agent = agent_operand_sharding(devices=devices)
+    shared = simulation_value_sharding(stored_sharding=agent, devices=devices)
     abstract = MappingProxyType(
         {
             name: _abstract_operation_tree(
                 tree=value,
-                required=subject if name in subject_arg_names else shared,
+                required=agent if name in agent_arg_names else shared,
             )
             for name, value in sorted(arguments.items())
         }
@@ -496,10 +494,10 @@ def _abstract_operation(
         function=function,
         arguments=abstract,
         static_arguments=static,
-        subject_outputs=subject_outputs,
+        agent_outputs=agent_outputs,
         devices=devices,
     )
-    return key, abstract, static, subject if subject_outputs else None
+    return key, abstract, static, agent if agent_outputs else None
 
 
 def _lower_operation(
@@ -572,11 +570,11 @@ def _validated_static_arguments(
     function: Callable[..., PytreeValue],
     arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
     static_arguments: Mapping[str, StaticArgument],
-    subject_outputs: bool,
+    agent_outputs: bool,
 ) -> MappingProxyType[ReferenceName, StaticArgument]:
     """Use one pure-function and immutable-binding contract for both entry paths."""
-    if type(subject_outputs) is not bool:
-        raise ExecutionPlanningError("Subject-output metadata must be a bool.")
+    if type(agent_outputs) is not bool:
+        raise ExecutionPlanningError("Agent-output metadata must be a bool.")
     _validated_operation_function(function)
     if any(type(name) is not str for name in (*arguments, *static_arguments)):
         raise ExecutionPlanningError("Operation argument names must be strings.")
@@ -593,7 +591,7 @@ def _operation_key(
     function: Callable[..., PytreeValue],
     arguments: Mapping[ReferenceName, ShapeDtypePytree],
     static_arguments: Mapping[ReferenceName, StaticArgument],
-    subject_outputs: bool,
+    agent_outputs: bool,
     devices: tuple[jax.Device, ...],
     output_sharding: jax.sharding.Sharding | None = None,
 ) -> Hashable:
@@ -604,7 +602,7 @@ def _operation_key(
         specialization_key=tuple(
             (name, _static_identity(value)) for name, value in static_arguments.items()
         ),
-        layout_key=("simulation_host_operation", subject_outputs, output_sharding),
+        layout_key=("simulation_host_operation", agent_outputs, output_sharding),
         placement_key=devices,
     )
 
@@ -621,7 +619,7 @@ def _producer_key(
         function=function,
         arguments=arguments,
         static_arguments=MappingProxyType({}),
-        subject_outputs=False,
+        agent_outputs=False,
         devices=devices,
         output_sharding=output_sharding,
     )

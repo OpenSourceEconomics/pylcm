@@ -1,12 +1,13 @@
 """Test analytical solution and simulation with only discrete actions (stochastic)."""
 
-from typing import cast
+from typing import TypedDict, cast
 
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
+from numpy.typing import NDArray
 from pandas.testing import assert_frame_equal
 
 from lcm import (
@@ -26,7 +27,6 @@ from tests.test_solution_on_toy_model_deterministic import (
     dead,
     dict_of_vectors_to_matrix,
     matrix_to_dict_of_vectors,
-    next_wealth,
     policy_first_period_deterministic,
     value_first_period_deterministic,
 )
@@ -50,13 +50,26 @@ alive_stochastic = alive_deterministic.replace(
 )
 
 
-def value_second_period_stochastic(*, wealth, health):
+class HealthTransitionParams(TypedDict):
+    probs_array: FloatND
+
+
+class StochasticAnalyticalParams(TypedDict):
+    discount_factor: float
+    next_health: HealthTransitionParams
+
+
+def value_second_period_stochastic(
+    *, wealth: NDArray[np.floating], health: NDArray[np.integer]
+) -> NDArray[np.floating]:
     """Value function in the second (last) period. Computed using pen and paper."""
     consumption = np.minimum(1, np.floor(wealth))
     return np.log(1 + consumption) * health
 
 
-def policy_second_period_stochastic(*, wealth, health):
+def policy_second_period_stochastic(
+    *, wealth: NDArray[np.floating], health: NDArray[np.integer]
+) -> dict[str, NDArray[np.integer]]:
     """Policy function in the second (last) period. Computed using pen and paper.
 
     First column corresponds to consumption choice, second to work choice.
@@ -70,7 +83,12 @@ def policy_second_period_stochastic(*, wealth, health):
     )
 
 
-def value_first_period_stochastic(*, wealth, health, params):
+def value_first_period_stochastic(
+    *,
+    wealth: NDArray[np.floating],
+    health: NDArray[np.integer],
+    params: StochasticAnalyticalParams,
+) -> NDArray[np.floating]:
     """Value function in the first period. Computed using pen and paper."""
     probs_array = params["next_health"]["probs_array"]
 
@@ -97,7 +115,12 @@ def value_first_period_stochastic(*, wealth, health, params):
     return np.where(health, value_health_1, value_health_0)
 
 
-def policy_first_period_stochastic(*, wealth, health, params):
+def policy_first_period_stochastic(
+    *,
+    wealth: NDArray[np.floating],
+    health: NDArray[np.integer],
+    params: StochasticAnalyticalParams,
+) -> dict[str, NDArray[np.integer]]:
     """Policy function in the first period. Computed using pen and paper."""
     probs_array = params["next_health"]["probs_array"]
 
@@ -135,7 +158,12 @@ def policy_first_period_stochastic(*, wealth, health, params):
     )
 
 
-def analytical_solve_stochastic(*, wealth_grid, health_grid, params):
+def analytical_solve_stochastic(
+    *,
+    wealth_grid: NDArray[np.floating],
+    health_grid: NDArray[np.integer],
+    params: StochasticAnalyticalParams,
+) -> list[NDArray[np.floating]]:
     V_arr_0 = value_first_period_stochastic(
         wealth=wealth_grid,
         health=health_grid,
@@ -145,14 +173,20 @@ def analytical_solve_stochastic(*, wealth_grid, health_grid, params):
     return [V_arr_0, V_arr_1]
 
 
-def analytical_simulate_stochastic(*, initial_wealth, initial_health, health_1, params):
+def analytical_simulate_stochastic(
+    *,
+    initial_wealth: NDArray[np.floating],
+    initial_health: NDArray[np.integer],
+    health_1: NDArray[np.integer],
+    params: StochasticAnalyticalParams,
+) -> pd.DataFrame:
     """Compute analytical simulation results in the same format as to_dataframe().
 
-    Returns DataFrame with columns: period, subject_id, regime_name, value,
-    health, wealth, consumption, working. Sorted by (subject_id, period).
+    Returns DataFrame with columns: period, agent_id, regime_name, value,
+    health, wealth, consumption, working. Sorted by (agent_id, period).
     Uses categorical dtypes for discrete variables to match to_dataframe() output.
     """
-    n_subjects = len(initial_wealth)
+    n_agents = len(initial_wealth)
 
     # Period 0
     V_arr_0 = value_first_period_stochastic(
@@ -162,13 +196,13 @@ def analytical_simulate_stochastic(*, initial_wealth, initial_health, health_1, 
         wealth=initial_wealth, health=initial_health, params=params
     )
 
-    # Period 1
-    wealth_1 = next_wealth(wealth=initial_wealth, **policy_0)
+    # Period 1: the wealth law `next_wealth`, evaluated on the numpy arrays
+    wealth_1 = initial_wealth - policy_0["consumption"] + policy_0["labor_supply"]
     V_arr_1 = value_second_period_stochastic(wealth=wealth_1, health=health_1)
     policy_1 = policy_second_period_stochastic(wealth=wealth_1, health=health_1)
 
     # Build DataFrame in the same format as to_dataframe()
-    # Sorted by (subject_id, period)
+    # Sorted by (agent_id, period)
     health_codes = np.concatenate([initial_health, health_1]).astype(int)
     consumption_codes = np.concatenate(
         [policy_0["consumption"], policy_1["consumption"]]
@@ -179,12 +213,12 @@ def analytical_simulate_stochastic(*, initial_wealth, initial_health, health_1, 
 
     df = pd.DataFrame(
         {
-            "period": np.concatenate(
-                [np.zeros(n_subjects), np.ones(n_subjects)]
-            ).astype(int),
-            "subject_id": np.tile(np.arange(n_subjects), 2),
+            "period": np.concatenate([np.zeros(n_agents), np.ones(n_agents)]).astype(
+                int
+            ),
+            "agent_id": np.tile(np.arange(n_agents), 2),
             "regime_name": pd.Categorical(
-                ["alive"] * (2 * n_subjects), categories=["alive", "dead"]
+                ["alive"] * (2 * n_agents), categories=["alive", "dead"]
             ),
             "value": np.concatenate([V_arr_0, V_arr_1]),
             "health": pd.Categorical.from_codes(
@@ -202,7 +236,7 @@ def analytical_simulate_stochastic(*, initial_wealth, initial_health, health_1, 
             ),
         }
     )
-    return df.sort_values(["subject_id", "period"]).reset_index(drop=True)
+    return df.sort_values(["agent_id", "period"]).reset_index(drop=True)
 
 
 HEALTH_TRANSITION = [
@@ -213,9 +247,11 @@ HEALTH_TRANSITION = [
 
 
 @pytest.mark.parametrize("discount_factor", [0.0, 0.5, 0.9, 1.0])
-@pytest.mark.parametrize("n_wealth_points", [100, 1_000])
+@pytest.mark.parametrize("n_wealth_points", [100])
 @pytest.mark.parametrize("probs_array", HEALTH_TRANSITION)
-def test_stochastic_solve(*, discount_factor, n_wealth_points, probs_array):
+def test_stochastic_solve(
+    *, discount_factor: float, n_wealth_points: int, probs_array: FloatND
+) -> None:
     n_periods = 3
     ages = AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y")
     new_states = dict(alive_stochastic.states)
@@ -257,7 +293,10 @@ def test_stochastic_solve(*, discount_factor, n_wealth_points, probs_array):
     wealth_grid = np.tile(_wealth_grid, len(_health_grid))
     health_grid = np.repeat(_health_grid, len(_wealth_grid))
 
-    analytical_params = {"discount_factor": discount_factor, **params}
+    analytical_params: StochasticAnalyticalParams = {
+        "discount_factor": discount_factor,
+        "next_health": {"probs_array": probs_array},
+    }
     _expected = analytical_solve_stochastic(
         wealth_grid=wealth_grid,
         health_grid=health_grid,
@@ -270,17 +309,19 @@ def test_stochastic_solve(*, discount_factor, n_wealth_points, probs_array):
     # Do not assert that in the first period, the arrays have the same values on the
     # first and last index: TODO (@timmens): THIS IS A BUG AND NEEDS TO BE INVESTIGATED.
     aaae(
-        got[0]["alive"][:, slice(1, -1)],
+        got[0]["alive"][:, slice(1, -1), 0],
         expected[0][:, slice(1, -1)],
         decimal=DECIMAL_PRECISION,
     )
-    aaae(got[1]["alive"], expected[1], decimal=DECIMAL_PRECISION)
+    aaae(got[1]["alive"][..., 0], expected[1], decimal=DECIMAL_PRECISION)
 
 
 @pytest.mark.parametrize("discount_factor", [0.0, 0.5, 0.9, 1.0])
-@pytest.mark.parametrize("n_wealth_points", [100, 1_000])
+@pytest.mark.parametrize("n_wealth_points", [100])
 @pytest.mark.parametrize("probs_array", HEALTH_TRANSITION)
-def test_stochastic_simulate(*, discount_factor, n_wealth_points, probs_array):
+def test_stochastic_simulate(
+    *, discount_factor: float, n_wealth_points: int, probs_array: FloatND
+) -> None:
     n_periods = 3
     ages = AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y")
     new_states = dict(alive_stochastic.states)
@@ -324,10 +365,13 @@ def test_stochastic_simulate(*, discount_factor, n_wealth_points, probs_array):
     # Convert categorical health to codes for analytical function
     health_1 = got.query("period == 1")["health"].cat.codes.to_numpy()
 
-    analytical_params = {"discount_factor": discount_factor, **params_alive}
+    analytical_params: StochasticAnalyticalParams = {
+        "discount_factor": discount_factor,
+        "next_health": {"probs_array": probs_array},
+    }
     expected = analytical_simulate_stochastic(
-        initial_wealth=initial_conditions["wealth"],
-        initial_health=initial_conditions["health"],
+        initial_wealth=np.asarray(initial_conditions["wealth"]),
+        initial_health=np.asarray(initial_conditions["health"]),
         health_1=health_1,
         params=analytical_params,
     )

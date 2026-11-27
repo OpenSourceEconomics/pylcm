@@ -292,7 +292,7 @@ def test_public_lookup_prices_the_independent_spread(*, exponent_sign: int) -> N
     np.testing.assert_allclose(
         np.concatenate(
             (np.asarray(lookup.U), np.asarray(lookup.CE), np.asarray(lookup.value))
-        ),
+        )[..., 0],
         (1.0, 1.0, 1.9),
         atol=64 * float(np.finfo(dtype).eps),
         rtol=0,
@@ -439,7 +439,7 @@ def test_runtime_positive_definite_covariance_is_accepted() -> None:
         regime_name="working",
         states={name: jnp.asarray((1.0,)) for name in ("x", "y", "z")},
     )
-    np.testing.assert_allclose(lookup.value, (3.0,), atol=1e-5, rtol=0)
+    np.testing.assert_allclose(lookup.value[..., 0], (3.0,), atol=1e-5, rtol=0)
 
 
 def test_fixed_singular_law_refuses_an_off_support_initial_state() -> None:

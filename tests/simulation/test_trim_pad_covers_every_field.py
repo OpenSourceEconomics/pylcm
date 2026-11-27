@@ -1,6 +1,6 @@
-"""`trim_pad_from_raw_results` trims every per-subject dataclass field.
+"""`trim_pad_from_raw_results` trims every per-agent dataclass field.
 
-Simulation pads the subject axis to a multiple of the batch size and removes the
+Simulation pads the agent axis to a multiple of the batch size and removes the
 pad rows once at the end. The tests derive their expectations from the dataclass,
 so coverage remains complete as the result schema evolves.
 """
@@ -15,15 +15,15 @@ import pytest
 from _lcm.engine import PeriodRegimeSimulationData
 from _lcm.simulation.initial_conditions import trim_pad_from_raw_results
 
-#: Fields holding `name -> per-subject array` mappings rather than a bare array.
+#: Fields holding `name -> per-agent array` mappings rather than a bare array.
 _MAPPING_FIELDS = frozenset({"actions", "states", "shocks"})
 
 _N_REAL = 7
 _N_PADDED = 8
 
 
-def _column(*, field: dataclasses.Field, n_rows: int):
-    """A per-subject column whose dtype satisfies `field`'s annotation.
+def _column(*, field: dataclasses.Field, n_rows: int) -> jax.Array:
+    """A per-agent column whose dtype satisfies `field`'s annotation.
 
     The dtype is read off the annotation rather than fixed, because these fields are
     beartype-checked: a `Bool1D` handed an int array is rejected at construction.
@@ -66,7 +66,7 @@ def _padded_period_data() -> PeriodRegimeSimulationData:
 
 
 def _widths(data: PeriodRegimeSimulationData) -> dict[str, int]:
-    """Leading-axis length of every per-subject array, mappings flattened."""
+    """Leading-axis length of every per-agent array, mappings flattened."""
     widths: dict[str, int] = {}
     for field in dataclasses.fields(PeriodRegimeSimulationData):
         value = getattr(data, field.name)
@@ -78,7 +78,7 @@ def _widths(data: PeriodRegimeSimulationData) -> dict[str, int]:
     return widths
 
 
-def test_the_mapping_fields_are_still_the_mapping_fields():
+def test_the_mapping_fields_are_still_the_mapping_fields() -> None:
     """Guard the assumption `_MAPPING_FIELDS` encodes, so this file cannot go stale.
 
     If the structure grows a new mapping-valued field, the builder above would hand it
@@ -93,10 +93,10 @@ def test_the_mapping_fields_are_still_the_mapping_fields():
         )
 
 
-def test_every_field_of_the_structure_is_trimmed():
+def test_every_field_of_the_structure_is_trimmed() -> None:
     """No field may survive the trim at its padded width."""
     raw = MappingProxyType({"work": MappingProxyType({0: _padded_period_data()})})
-    trimmed = trim_pad_from_raw_results(raw_results=raw, original_n_subjects=_N_REAL)
+    trimmed = trim_pad_from_raw_results(raw_results=raw, original_n_agents=_N_REAL)
     widths = _widths(trimmed["work"][0])
 
     # The test is worthless if it inspects nothing.
@@ -108,17 +108,17 @@ def test_every_field_of_the_structure_is_trimmed():
     )
 
 
-def test_an_already_trimmed_period_is_returned_untouched():
+def test_an_already_trimmed_period_is_returned_untouched() -> None:
     """The no-op path must stay a no-op -- it is keyed on `V_arr`'s width."""
     data = _period_data(_N_REAL)
     raw = MappingProxyType({"work": MappingProxyType({0: data})})
 
-    trimmed = trim_pad_from_raw_results(raw_results=raw, original_n_subjects=_N_REAL)
+    trimmed = trim_pad_from_raw_results(raw_results=raw, original_n_agents=_N_REAL)
     assert trimmed["work"][0] is data
 
 
 @pytest.mark.parametrize("skipped", sorted(_MAPPING_FIELDS | {"in_regime"}))
-def test_the_coverage_check_rejects_a_field_left_behind(skipped: str):
+def test_the_coverage_check_rejects_a_field_left_behind(skipped: str) -> None:
     """The invariant discriminates: reintroduce the defect and it must be caught.
 
     Rather than trust that `test_every_field_of_the_structure_is_trimmed` would notice,
@@ -128,7 +128,7 @@ def test_the_coverage_check_rejects_a_field_left_behind(skipped: str):
         raw_results=MappingProxyType(
             {"work": MappingProxyType({0: _padded_period_data()})}
         ),
-        original_n_subjects=_N_REAL,
+        original_n_agents=_N_REAL,
     )["work"][0]
 
     field = next(
@@ -142,7 +142,7 @@ def test_the_coverage_check_rejects_a_field_left_behind(skipped: str):
     )
     # Written past the constructor rather than through `dataclasses.replace`.
     # `PeriodRegimeSimulationData.__post_init__` rejects exactly the record this
-    # control needs to build — a per-subject field at a width its siblings do
+    # control needs to build — a per-agent field at a width its siblings do
     # not share — so constructing it normally raises before the probe is
     # reached. Setting the field afterwards produces the same object the defect
     # would have produced, without asking the structure to accept it.

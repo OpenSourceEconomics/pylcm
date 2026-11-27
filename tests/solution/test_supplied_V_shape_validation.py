@@ -36,7 +36,7 @@ def test_supplied_collective_V_passes_shape_validation_at_debug() -> None:
 
     The solver writes one trailing member axis onto a collective regime's
     value function, so the rank check counts that axis alongside the state
-    axes. Both subjects then simulate their household's per-member values:
+    axes. Both agents then simulate their household's per-member values:
     the wife's leisure taste loses to the continuation at period 0, so both
     couples work and land on the high wage.
     """
@@ -45,7 +45,7 @@ def test_supplied_collective_V_passes_shape_validation_at_debug() -> None:
 
     result = model.simulate(
         params=params,
-        initial_conditions=make_couple_initial_conditions(n_subjects=2),
+        initial_conditions=make_couple_initial_conditions(n_agents=2),
         solution=solution,
         log_level="debug",
         seed=0,
@@ -53,17 +53,17 @@ def test_supplied_collective_V_passes_shape_validation_at_debug() -> None:
 
     values = (
         result.to_dataframe()
-        .set_index(["subject_id", "period"])
+        .set_index(["agent_id", "period"])
         .sort_index()[["value_f", "value_m"]]
         .to_numpy()
     )
     aaae(
         values,
         [
-            [46.0, 92.0],  # subject 0, period 0: wage 8, works
-            [40.0, 80.0],  # subject 0, period 1: wage 40, works
-            [78.0, 156.0],  # subject 1, period 0: wage 40, works
-            [40.0, 80.0],  # subject 1, period 1: wage 40, works
+            [46.0, 92.0],  # agent 0, period 0: wage 8, works
+            [40.0, 80.0],  # agent 0, period 1: wage 40, works
+            [78.0, 156.0],  # agent 1, period 0: wage 40, works
+            [40.0, 80.0],  # agent 1, period 1: wage 40, works
         ],
         decimal=DECIMAL_PRECISION,
     )
@@ -72,7 +72,7 @@ def test_supplied_collective_V_passes_shape_validation_at_debug() -> None:
 def test_supplied_shock_V_passes_shape_validation_at_debug() -> None:
     """An IID shock state's regime supplies a value function the rank check accepts.
 
-    The stored array carries the shock's axis, and each simulated subject reads
+    The stored array carries the shock's axis, and each simulated agent reads
     the value at its own node: working pays `10 + shock` and the terminal regime
     pays a constant on top.
     """
@@ -81,7 +81,7 @@ def test_supplied_shock_V_passes_shape_validation_at_debug() -> None:
 
     result = model.simulate(
         params=params,
-        initial_conditions=make_shocked_singleton_initial_conditions(n_subjects=2),
+        initial_conditions=make_shocked_singleton_initial_conditions(n_agents=2),
         solution=solution,
         log_level="debug",
         seed=0,
@@ -91,17 +91,17 @@ def test_supplied_shock_V_passes_shape_validation_at_debug() -> None:
     entry_values = 10.0 + nodes[:2] + DISCOUNT_FACTOR * SHOCKED_TERMINAL_PAYOFF
     values = (
         result.to_dataframe()
-        .set_index(["subject_id", "period"])
+        .set_index(["agent_id", "period"])
         .sort_index()["value"]
         .to_numpy()
     )
     aaae(
         values,
         [
-            entry_values[0],  # subject 0, period 0: seeded at the lowest node
-            SHOCKED_TERMINAL_PAYOFF,  # subject 0, period 1
-            entry_values[1],  # subject 1, period 0: seeded at the second node
-            SHOCKED_TERMINAL_PAYOFF,  # subject 1, period 1
+            entry_values[0],  # agent 0, period 0: seeded at the lowest node
+            SHOCKED_TERMINAL_PAYOFF,  # agent 0, period 1
+            entry_values[1],  # agent 1, period 0: seeded at the second node
+            SHOCKED_TERMINAL_PAYOFF,  # agent 1, period 1
         ],
         decimal=DECIMAL_PRECISION,
     )
@@ -132,7 +132,7 @@ def test_supplying_a_value_function_of_the_wrong_rank_is_rejected() -> None:
     ):
         model.simulate(
             params=params,
-            initial_conditions=make_couple_initial_conditions(n_subjects=2),
+            initial_conditions=make_couple_initial_conditions(n_agents=2),
             solution=corrupted,
             log_level="debug",
             seed=0,

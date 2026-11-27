@@ -20,7 +20,7 @@ from _lcm.execution.core_program import (
     materialize_core_program,
     resolve_core_program,
 )
-from _lcm.execution.output_layout import VALUE
+from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
     ValueTransferKind,
@@ -31,7 +31,7 @@ from _lcm.regime_building.max_Q_over_a import (
     get_max_Q_over_a,
     get_streaming_max_Q_over_a,
 )
-from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
+from _lcm.solution.action_reduction import COLLECTIVE_HARD_MAX_REDUCTION
 from _lcm.solution.backward_induction import (
     _build_continuation_templates,
     _edge_kwargs,
@@ -42,9 +42,11 @@ from _lcm.solution.grid_search import (
     _GridSearchPeriodKernel,
     _value_reads,
 )
+from _lcm.time import ModelTime
 from _lcm.typing import ArgumentTree, PytreeValue, ValueTemplate
 from lcm import Model
 from lcm.typing import BoolND, FloatND, RegimeName, UserParams
+from tests.single_member import SELF, SELF_PARETO_WEIGHTS, with_member_axis
 from tests.solution.test_gated_edge_fold_reads import (
     _model as _gated_full_topology_model,
 )
@@ -220,16 +222,20 @@ def _observable_route() -> tuple[
 ]:
     """Build a dense oracle and a non-production streamed reference program."""
     dense = get_max_Q_over_a(
-        Q_and_F=_observable_Q_and_F,
+        Q_and_F=with_member_axis(_observable_Q_and_F),
         batch_sizes={},
         action_names=("choice",),
         state_names=(),
+        members=SELF,
+        pareto_weights=SELF_PARETO_WEIGHTS,
     )
     streamed = get_streaming_max_Q_over_a(
-        Q_and_F=_observable_Q_and_F,
+        Q_and_F=with_member_axis(_observable_Q_and_F),
         batch_sizes={},
         action_names=("choice",),
         state_names=(),
+        members=SELF,
+        pareto_weights=SELF_PARETO_WEIGHTS,
     )
     arguments: Mapping[str, PytreeValue] = MappingProxyType(
         {
@@ -252,19 +258,24 @@ def _observable_route() -> tuple[
                     coordinate_names=("choice",),
                     coordinate_extents=(3,),
                     canonical_order="c",
-                    reduction=HARD_MAX_REDUCTION,
+                    reduction=COLLECTIVE_HARD_MAX_REDUCTION,
                     width_keyword="_lcm_action_block_width",
                 ),
             ),
             value_reads=_value_reads(
                 regime_name="source",
+                ages=ModelTime(n_steps=2),
                 period=0,
                 target_regimes=("target",),
                 edge_reference_regimes=("outside",),
                 edge_target_regimes=("target",),
             ),
         ),
-        output_roles=VALUE,
+        # The single's value and its dissolution flag.
+        output_roles=(
+            VALUE,
+            StateAxesLeading(state_names=(), dtype=jnp.bool_, shape=()),
+        ),
         disposition=CoreExecutionDisposition.PLANNED,
     )
     program = materialize_core_program(

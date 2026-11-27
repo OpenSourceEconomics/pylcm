@@ -220,7 +220,7 @@ def test_value_only_regime_value_ignores_its_realized_route() -> None:
     """`V_perceived(w) = 1 + 1.5 w`, so `V_source(w) = 0.5 + 1.75 w` on w in {0, 1}."""
     model = _demand_model(promote=False)
     values = model.solve(params=_VALUE_ONLY_PARAMS, log_level="off").values
-    np.testing.assert_array_equal(np.asarray(values[0]["source"]), [0.5, 2.25])
+    np.testing.assert_array_equal(np.asarray(values[0]["source"])[..., 0], [0.5, 2.25])
 
 
 _VALUE_ONLY_PARAMS = {
@@ -335,7 +335,7 @@ def test_value_only_regime_with_simulate_slots_keeps_its_value(*, slot: str) -> 
         choice=_slot_choice(slot),
     )
     values = model.solve(params=_VALUE_ONLY_PARAMS, log_level="off").values
-    np.testing.assert_array_equal(np.asarray(values[0]["source"]), [0.5, 2.25])
+    np.testing.assert_array_equal(np.asarray(values[0]["source"])[..., 0], [0.5, 2.25])
 
 
 @pytest.mark.parametrize(("promote", "ages"), [(False, set()), (True, {1.0})])
@@ -626,7 +626,9 @@ def test_probability_validation_accepts_a_law_valid_on_its_own_age_grid(
     solution = _age_grid_model(earlier_root=earlier_root, valid_late_law=True).solve(
         params={"discount_factor": 0.5}, log_level="off"
     )
-    np.testing.assert_array_equal(np.asarray(solution.values[1]["working"]), [0, 5])
+    np.testing.assert_array_equal(
+        np.asarray(solution.values[1]["working"])[..., 0], [0, 5]
+    )
 
 
 def _half() -> FloatND:
@@ -705,13 +707,15 @@ def test_realized_law_is_checked_on_the_carried_state_grid(
     solution = _carried_model().solve(
         params={"discount_factor": 0.5}, log_level=log_level
     )
-    np.testing.assert_array_equal(np.asarray(solution.values[0]["working"]), [2.5, 2.5])
+    np.testing.assert_array_equal(
+        np.asarray(solution.values[0]["working"])[..., 0], [2.5, 2.5]
+    )
 
 
 @pytest.mark.parametrize("seed", [0, 9])
-@pytest.mark.parametrize("n_subjects", [2, 5])
+@pytest.mark.parametrize("n_agents", [2, 5])
 def test_realized_routing_reads_the_actual_carried_state(
-    *, n_subjects: int, seed: int
+    *, n_agents: int, seed: int
 ) -> None:
     """A carried share of 0 routes right and a share of 1 routes left, surely."""
     model = _carried_model()
@@ -721,17 +725,17 @@ def test_realized_routing_reads_the_actual_carried_state(
         params=params,
         solution=solution,
         initial_conditions={
-            "age": jnp.zeros(n_subjects),
-            "regime_id": jnp.full(n_subjects, model.regime_names_to_ids["working"]),
-            "wealth": jnp.ones(n_subjects),
-            "carried_share": jnp.asarray(np.arange(n_subjects) % 2, dtype=float),
+            "age": jnp.zeros(n_agents),
+            "regime_id": jnp.full(n_agents, model.regime_names_to_ids["working"]),
+            "wealth": jnp.ones(n_agents),
+            "carried_share": jnp.asarray(np.arange(n_agents) % 2, dtype=float),
         },
         seed=seed,
         log_level="off",
     ).to_dataframe()
-    last = panel.query("period == 1").sort_values("subject_id")
+    last = panel.query("period == 1").sort_values("agent_id")
     assert list(last["regime_name"]) == [
-        "right" if subject % 2 == 0 else "left" for subject in range(n_subjects)
+        "right" if agent % 2 == 0 else "left" for agent in range(n_agents)
     ]
 
 
@@ -821,7 +825,7 @@ def test_probability_check_skips_economically_infeasible_rows(
         .solve(params={"discount_factor": 0.5}, log_level=log_level)
         .values
     )
-    np.testing.assert_array_equal(np.asarray(values[0]["working"]), [2.5, 3.5])
+    np.testing.assert_array_equal(np.asarray(values[0]["working"])[..., 0], [2.5, 3.5])
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
@@ -836,7 +840,7 @@ def test_probability_check_skips_infeasible_rows_on_a_refined_grid(
         .values
     )
     np.testing.assert_array_equal(
-        np.asarray(values[0]["working"]), np.linspace(0.0, 1.0, n_points) + 2.5
+        np.asarray(values[0]["working"])[..., 0], np.linspace(0.0, 1.0, n_points) + 2.5
     )
 
 
@@ -864,7 +868,7 @@ def test_probability_check_rejects_a_bad_feasible_row_on_a_refined_grid(
 
 
 def test_simulation_admits_a_law_that_is_nan_only_at_infeasible_rows() -> None:
-    """Each subject consumes its whole wealth, the feasible maximum."""
+    """Each agent consumes its whole wealth, the feasible maximum."""
     model = _feasibility_model(bad_feasible=False)
     params = {"discount_factor": 0.5}
     panel = model.simulate(
@@ -878,12 +882,12 @@ def test_simulation_admits_a_law_that_is_nan_only_at_infeasible_rows() -> None:
         seed=0,
         log_level="off",
     ).to_dataframe()
-    first = panel.query("period == 0").sort_values("subject_id")
+    first = panel.query("period == 0").sort_values("agent_id")
     np.testing.assert_array_equal(first["consumption"].to_numpy(), [0.0, 1.0])
 
 
 def test_mixed_age_regime_simulates_its_visited_age() -> None:
-    """With `late_rate = 1`, every subject leaves `perceived` at age 2 for `end`."""
+    """With `late_rate = 1`, every agent leaves `perceived` at age 2 for `end`."""
     model = _mixed_age_model(calls=[])
     params = {
         "discount_factor": 0.5,
@@ -903,7 +907,7 @@ def test_mixed_age_regime_simulates_its_visited_age() -> None:
         seed=0,
         log_level="off",
     ).to_dataframe()
-    assert list(panel.sort_values(["period", "subject_id"])["regime_name"]) == [
+    assert list(panel.sort_values(["period", "agent_id"])["regime_name"]) == [
         "source",
         "source",
         "realized",

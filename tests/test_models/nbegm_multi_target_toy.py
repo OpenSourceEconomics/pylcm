@@ -192,7 +192,9 @@ def build_model(
     """
     ages = AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y")
     final_age = float(ages.exact_values[-1])
-    liquid_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_liquid)
+    liquid_grid = LinSpacedGrid(
+        start=0.1, stop=liquid_max, n_points=n_liquid, off_grid="extrapolate"
+    )
 
     def make() -> Regime:
         return _build_living_regime(

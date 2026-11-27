@@ -117,6 +117,16 @@ from lcm.collective import (  # noqa: E402
     ProjectedRegimeValue,
 )
 from lcm.composite_state import CompositeState  # noqa: E402
+from lcm.composition_actions import (  # noqa: E402
+    CompositionAction,
+    Consent,
+    Counterparty,
+    Destination,
+    MutualConsent,
+    PCOnActions,
+    PCOnWeight,
+    Transfer,
+)
 from lcm.condition import Condition, implies, ref  # noqa: E402
 from lcm.consumption_savings_regime import (  # noqa: E402
     ConsumptionSavingsRegime,
@@ -129,16 +139,6 @@ from lcm.consumption_savings_regime import (  # noqa: E402
 )
 from lcm.decoupled import Decoupled  # noqa: E402
 from lcm.execution import ExecutionConfig, InvariantBlockSchedule  # noqa: E402
-from lcm.exits import (  # noqa: E402
-    Consent,
-    Counterparty,
-    Exit,
-    ExitTarget,
-    MutualConsent,
-    Renegotiate,
-    Settlement,
-    Unilateral,
-)
 from lcm.fixed_forms import (  # noqa: E402
     cash_on_hand_with_subsidy,
     liquid_law_from_resources,
@@ -259,17 +259,17 @@ __all__ = [
     "CertaintyEquivalent",
     "CollectiveUtility",
     "CompositeState",
+    "CompositionAction",
     "Condition",
     "ConditionalAction",
     "Consent",
     "ConsumptionSavingsRegime",
     "Counterparty",
     "Decoupled",
+    "Destination",
     "DeterministicTransition",
     "DiscreteGrid",
     "ExecutionConfig",
-    "Exit",
-    "ExitTarget",
     "ExtremeValueTasteShocks",
     "FunctionDeclaration",
     "Gate",
@@ -295,6 +295,8 @@ __all__ = [
     "NormalIIDProcess",
     "NormalMixtureIIDProcess",
     "OuterContinuousMargin",
+    "PCOnActions",
+    "PCOnWeight",
     "ParetoObjective",
     "PeriodCandidate",
     "PeriodRange",
@@ -309,9 +311,7 @@ __all__ = [
     "ProjectedRegimeValue",
     "QuasiArithmeticMean",
     "Regime",
-    "Renegotiate",
     "RouwenhorstAR1Process",
-    "Settlement",
     "SimulateSnapshot",
     "SimulationResult",
     "SolveSnapshot",
@@ -320,9 +320,9 @@ __all__ = [
     "TauchenAR1Process",
     "TauchenNormalMixtureAR1Process",
     "TimeVarying",
+    "Transfer",
     "Transition",
     "UniformIIDProcess",
-    "Unilateral",
     "UnlabelledTimeParameterWarning",
     "__version__",
     "affine_breakpoint",

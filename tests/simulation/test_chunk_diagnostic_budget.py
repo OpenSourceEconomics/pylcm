@@ -169,7 +169,7 @@ def test_period_diagnostics_charge_new_carry_after_last_unit_closes(
     """Current state, membership, role and RNG arrays survive the unit handoff.
 
     The transition counts start from the period's final current membership, so
-    the array they read is the `subject_regime_ids` resident at validation.
+    the array they read is the `agent_regime_ids` resident at validation.
     """
     memories = _capture_memory(monkeypatch)
     original = simulation._validate_period_values
@@ -187,8 +187,8 @@ def test_period_diagnostics_charge_new_carry_after_last_unit_closes(
             caller[name]
             for name in (
                 "states",
-                "subject_regime_ids",
-                "new_subject_regime_ids",
+                "agent_regime_ids",
+                "new_agent_regime_ids",
                 "own_member",
                 "new_own_member",
                 "key",
@@ -203,7 +203,7 @@ def test_period_diagnostics_charge_new_carry_after_last_unit_closes(
         )
         assert not any(missing.values()), missing
         inspected.append(True)
-        validated_memberships.append(caller["subject_regime_ids"])
+        validated_memberships.append(caller["agent_regime_ids"])
         original(**arguments)
 
     def count(
@@ -248,12 +248,12 @@ def test_profiled_value_flags_and_count_preserve_owned_rows(
     flags = memory.run(
         function=diagnostics.period_value_flags,
         arguments={"values": (value,), "in_regime": (mask,)},
-        subject_arg_names=("values", "in_regime"),
+        agent_arg_names=("values", "in_regime"),
     )
     count = memory.run(
         function=diagnostics.owned_value_nan_count,
         arguments={"value": value, "in_regime": mask},
-        subject_arg_names=("value", "in_regime"),
+        agent_arg_names=("value", "in_regime"),
     )
     np.testing.assert_array_equal(flags, [[collective], [True]])
     assert int(count) == int(collective)
@@ -262,7 +262,7 @@ def test_profiled_value_flags_and_count_preserve_owned_rows(
         with pytest.raises(InvalidValueFunctionError) as original:
             simulation._validate_simulated_value(
                 value=value,
-                subject_ids_in_regime=mask,
+                agent_ids_in_regime=mask,
                 age=jnp.asarray(0, dtype=jnp.int32),
                 regime_name="alive",
                 logger=get_logger(log_level="debug"),
@@ -270,7 +270,7 @@ def test_profiled_value_flags_and_count_preserve_owned_rows(
         with pytest.raises(InvalidValueFunctionError) as profiled:
             simulation._validate_simulated_value(
                 value=value,
-                subject_ids_in_regime=mask,
+                agent_ids_in_regime=mask,
                 age=jnp.asarray(0, dtype=jnp.int32),
                 regime_name="alive",
                 logger=get_logger(log_level="debug"),
@@ -458,10 +458,10 @@ def test_diagnostic_bindings_lower_actual_operations_without_allocating(
             memory.operations.prepare_abstract(
                 function=binding.function,
                 arguments=binding.arguments,
-                subject_arg_names=binding.subject_arg_names,
+                agent_arg_names=binding.agent_arg_names,
                 static_arguments=binding.static_arguments,
-                subject_outputs=binding.subject_outputs,
-                devices=memory.subject_devices,
+                agent_outputs=binding.agent_outputs,
+                devices=memory.agent_devices,
             )
             for binding in bindings
         )
@@ -483,5 +483,5 @@ def test_diagnostic_bindings_lower_actual_operations_without_allocating(
         diagnostics.DiagnosticBinding(
             function=diagnostics.owned_value_nan_count,
             arguments=MappingProxyType({"value": value, "in_regime": mask}),
-            subject_arg_names=("value", "in_regime"),
+            agent_arg_names=("value", "in_regime"),
         )

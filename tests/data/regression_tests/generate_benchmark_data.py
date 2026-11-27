@@ -50,14 +50,14 @@ def _generate_precautionary_savings(data_dir: Path) -> None:
         rho=0.9,
     )
 
-    n_subjects = 4
+    n_agents = 4
     result = model.simulate(
         params=params,
         initial_conditions={
-            "age": jnp.full(n_subjects, 20.0),
-            "wealth": jnp.full(n_subjects, 5.0),
-            "income": jnp.full(n_subjects, 0.0),
-            "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
+            "age": jnp.full(n_agents, 20.0),
+            "wealth": jnp.full(n_agents, 5.0),
+            "income": jnp.full(n_agents, 0.0),
+            "regime_id": jnp.zeros(n_agents, dtype=jnp.int32),
         },
         seed=12345,
         log_level="off",
@@ -72,13 +72,13 @@ def _generate_mortality(data_dir: Path) -> None:
     model = mortality.get_model(n_periods=n_periods)
     params = mortality.get_params(n_periods=n_periods)
 
-    n_subjects = 4
+    n_agents = 4
     result = model.simulate(
         params=params,
         initial_conditions={
-            "age": jnp.full(n_subjects, 40.0),
-            "wealth": jnp.full(n_subjects, 100.0),
-            "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
+            "age": jnp.full(n_agents, 40.0),
+            "wealth": jnp.full(n_agents, 100.0),
+            "regime_id": jnp.zeros(n_agents, dtype=jnp.int32),
         },
         seed=12345,
         log_level="off",

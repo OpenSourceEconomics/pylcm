@@ -5,12 +5,19 @@ kernel evaluation: `Q_objective`, which the action maximizes, and `Q`, which is
 stored and published at that action. The reductions here mirror the dense ones
 in `max_Q_over_a` for that pair:
 
-- `argmax_and_readout` is the hard-max reduction at one cell, and
+- `household_argmax_and_readout` is the hard-max reduction at one cell, and
   `decoupled_logsum` the extreme-value one;
 - `get_decoupled_Q_over_a` is the reduction over the action product, as
   simulation and policy lookup run it;
 - `get_decoupled_max_Q_over_a` maps it over the state product, with the
   same tiling `get_max_Q_over_a` takes, as the solve runs it.
+
+The profiles carry a trailing member axis. Under the hard maximum the members
+choose on the Pareto-weighted sum of their objectives, and each member's stored
+value at that choice is published. Under EV1 taste shocks the one deciding member
+chooses on its own objective. Every other member's value is the mean of its
+stored profile under the deciding member's choice probabilities, as in
+`decider_smoothed_readout`.
 """
 
 import math
@@ -23,12 +30,23 @@ from dags import with_signature
 from jax import Array
 
 from _lcm.logsum import logsum_and_softmax
-from _lcm.regime_building.argmax import argmax_and_max
+from _lcm.regime_building.argmax import (
+    NO_ID,
+    max_lexicographic_and_smallest_id,
+)
+from _lcm.regime_building.collective import (
+    ParetoWeights,
+    _weighted_sum,
+    decider_choice,
+    member_tie_keys,
+    values_from_tie_keys,
+)
 from _lcm.regime_building.max_Q_over_a import (
     TASTE_SHOCK_SCALE_PARAM,
     BoundedArgmaxOutput,
     BoundedMaxOutput,
     _get_extra_param_names,
+    _stacked_pareto_weights,
     _with_bound_summary,
     draw_taste_shock_noise,
 )
@@ -53,41 +71,65 @@ from _lcm.typing import (
     MaxQOverAFunction,
     PRNGKeyND,
     QAndFArg,
+    QAndFKwargs,
     RegimeName,
     StateName,
 )
 from _lcm.utils.dispatchers import productmap, tiled_productmap
+from _lcm.zero_safe import zero_safe_weighted_term
 from lcm.typing import BoolND, FloatND, IntND
 
 
-def argmax_and_readout(
-    *, selection: FloatND, readout: FloatND, where: BoolND
+def household_argmax_and_readout(
+    *, selection: FloatND, readout: FloatND, where: BoolND, weights: FloatND
 ) -> tuple[IntND, FloatND]:
-    """Choose the first feasible maximizer of `selection` and read `readout` there.
+    """Choose on the Pareto-weighted objectives and read each member's value there.
 
-    Both arrays share one shape and are reduced over all axes:
+    `selection` and `readout` carry a trailing member axis that `where` does
+    not; the action axes are reduced:
 
-    - the index is the flat index of the first feasible maximizer of `selection`;
-    - the value is `readout` at that index;
+    - the members choose on the Pareto-weighted sum of `selection`; ties go to
+      the members' stored values in member order, the sole member with a
+      positive Pareto weight last (`member_tie_keys`), and then to the
+      smallest flat index, so the published values do not depend on the order
+      in which the actions are declared;
+    - each member's value is its `readout` at that index;
     - no feasible element gives index `-1` and value `-inf`;
-    - a NaN at any feasible element, in either array, makes the value NaN.
+    - a NaN Pareto-weighted objective at a feasible element makes every value NaN and
+      the index zero, and a NaN in a member's own profiles at a feasible element
+      makes its value NaN.
 
     Args:
-        selection: The values the element is chosen on.
-        readout: The values published at the chosen element.
+        selection: Each member's objective profile.
+        readout: Each member's stored profile.
         where: Feasibility of each element.
+        weights: The Pareto weights in member order.
 
     Returns:
-        The flat index of the chosen element and the readout there.
+        The flat index of the chosen element and each member's readout there.
 
     """
-    index, _ = argmax_and_max(a=selection, where=where, initial=-jnp.inf)
-    any_feasible = jnp.any(where)
-    feasible_nan = jnp.any(where & (jnp.isnan(selection) | jnp.isnan(readout)))
-    value = jnp.where(any_feasible, jnp.ravel(readout)[index], -jnp.inf)
+    n_members = weights.shape[0]
+    objectives = jnp.reshape(selection, (-1, n_members)).T
+    stored = jnp.reshape(readout, (-1, n_members))
+    feasible = jnp.ravel(jnp.broadcast_to(where, selection.shape[:-1]))
+    objective = _weighted_sum(
+        member_Q={str(m): objectives[m] for m in range(n_members)},
+        weights={str(m): weights[m] for m in range(n_members)},
+    )
+    (_, *keys), index, household_nan = max_lexicographic_and_smallest_id(
+        values=(objective, *member_tie_keys(readout=stored, weights=weights)),
+        ids=jnp.arange(feasible.size, dtype=jnp.int32),
+        where=feasible,
+    )
+    empty = index == NO_ID
+    member_nan = jnp.any(
+        feasible & (jnp.isnan(objectives) | jnp.isnan(stored.T)), axis=1
+    )
+    value = jnp.where(empty, -jnp.inf, values_from_tie_keys(keys=keys, weights=weights))
     return (
-        jnp.where(any_feasible, index, -1).astype(jnp.int32),
-        jnp.where(feasible_nan, jnp.nan, value),
+        jnp.where(empty, -1, jnp.where(household_nan, 0, index)).astype(jnp.int32),
+        jnp.where(household_nan | member_nan, jnp.nan, value),
     )
 
 
@@ -99,6 +141,8 @@ def get_decoupled_Q_over_a(
     publishes_index: bool,
     n_discrete_action_axes: int = 0,
     has_taste_shocks: bool = False,
+    members: tuple[str, ...],
+    pareto_weights: ParetoWeights,
 ) -> Callable[..., BoundedArgmaxOutput | BoundedMaxOutput]:
     """Get the reduction over actions of a `Decoupled` regime, at one cell.
 
@@ -112,6 +156,8 @@ def get_decoupled_Q_over_a(
         n_discrete_action_axes: Number of leading discrete-action axes, which
             taste shocks smooth over.
         has_taste_shocks: Whether the regime declares EV1 taste shocks.
+        members: Ordered member names of the regime.
+        pareto_weights: The regime's Pareto weight evaluator.
 
     Returns:
         The reduction, taking the kernel's arguments.
@@ -134,6 +180,8 @@ def get_decoupled_Q_over_a(
             parts=cast("Callable[..., QAndFParts | BoundedResult[QAndFParts]]", parts),
             publishes_index=publishes_index,
             n_discrete_action_axes=n_discrete_action_axes if has_taste_shocks else None,
+            members=members,
+            pareto_weights=pareto_weights,
         ),
         args=[
             "next_regime_to_V_arr",
@@ -160,6 +208,8 @@ def get_decoupled_max_Q_over_a(
     broadcast_state_names: tuple[StateName, ...] = (),
     n_discrete_action_axes: int = 0,
     has_taste_shocks: bool = False,
+    members: tuple[str, ...],
+    pareto_weights: ParetoWeights,
 ) -> MaxQOverAFunction[BoundedMaxOutput]:
     """Get the solve's value function of a `Decoupled` regime.
 
@@ -174,6 +224,8 @@ def get_decoupled_max_Q_over_a(
         publishes_index=False,
         n_discrete_action_axes=n_discrete_action_axes,
         has_taste_shocks=has_taste_shocks,
+        members=members,
+        pareto_weights=pareto_weights,
     )
     mapped = (
         tiled_productmap(
@@ -216,6 +268,12 @@ class _DecoupledQOverA:
     """Leading discrete-action axes the taste shocks smooth over, or `None`
     for the hard maximum."""
 
+    members: tuple[str, ...]
+    """Ordered member names of the regime."""
+
+    pareto_weights: ParetoWeights
+    """The regime's Pareto weight evaluator."""
+
     def __call__(
         self,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
@@ -232,24 +290,31 @@ class _DecoupledQOverA:
             evaluated.output if type(evaluated) is BoundedResult else evaluated,
         )
         empty = ~jnp.any(parts.F)
+        weights = _stacked_pareto_weights(
+            pareto_weights=self.pareto_weights,
+            members=self.members,
+            states_actions_params=cast("QAndFKwargs", states_actions_params),
+        )
         if self.n_discrete_action_axes is None:
-            index, value = argmax_and_readout(
+            index, value = household_argmax_and_readout(
                 selection=cast("FloatND", parts.Q_objective),
                 readout=parts.Q,
                 where=parts.F,
+                weights=weights,
             )
             return _with_bound_summary(
                 evaluated=evaluated,
                 output=(index, value) if self.publishes_index else (value, empty),
             )
-        conditional = get_conditional_profiles(
-            parts=parts, n_discrete_action_axes=self.n_discrete_action_axes
-        )
         scale = cast("FloatND", states_actions_params[TASTE_SHOCK_SCALE_PARAM])
+        smoothed = smoothed_profiles(
+            parts=parts,
+            weights=weights,
+            n_discrete_action_axes=self.n_discrete_action_axes,
+        )
+        conditional = smoothed.conditional
         if not self.publishes_index:
-            value, _ = decoupled_logsum(
-                conditional=conditional, scale=scale, parts=parts
-            )
+            value, _ = smoothed_logsum(smoothed=smoothed, scale=scale)
             return _with_bound_summary(evaluated=evaluated, output=(value, empty))
         # One draw per flat discrete combination, as the one-profile route
         # draws, so the same key gives the same shocks.
@@ -263,11 +328,17 @@ class _DecoupledQOverA:
         flat_index = (
             discrete * n_continuous + jnp.ravel(conditional.continuous_index)[discrete]
         )
+        # Without an alternative worth more than `-inf` to the deciding member,
+        # there is nothing to draw: the cell publishes no action, as one
+        # without a feasible action does.
+        worthless = jnp.all(jnp.isneginf(conditional.objective))
         return _with_bound_summary(
             evaluated=evaluated,
             output=(
-                jnp.where(empty, -1, flat_index).astype(jnp.int32),
-                jnp.where(empty, -jnp.inf, jnp.ravel(conditional.value)[discrete]),
+                jnp.where(worthless, -1, flat_index).astype(jnp.int32),
+                jnp.where(
+                    worthless, -jnp.inf, _stored_at(smoothed=smoothed, flat=discrete)
+                ),
             ),
         )
 
@@ -286,28 +357,90 @@ class ConditionalProfiles(NamedTuple):
     """Flat index of that continuous choice; zero where none is feasible."""
 
 
-def get_conditional_profiles(
-    *, parts: QAndFParts, n_discrete_action_axes: int
-) -> ConditionalProfiles:
-    """Choose the continuous actions on the objective profile, per combination."""
+class SmoothedProfiles(NamedTuple):
+    """The profiles EV1 shocks smooth, per discrete-action combination."""
+
+    conditional: ConditionalProfiles
+    """The deciding member's conditional profiles."""
+
+    stored: FloatND
+    """The stored value at each combination's choice, with the trailing member
+    axis, `-inf` where a combination has no feasible action."""
+
+    parts: QAndFParts
+    """The deciding member's own kernel parts."""
+
+    decider: IntND
+    """Member index of the deciding member, the member with the positive Pareto
+    weight."""
+
+
+def smoothed_profiles(
+    *, parts: QAndFParts, weights: FloatND, n_discrete_action_axes: int
+) -> SmoothedProfiles:
+    """Choose the continuous actions on the deciding member's objective.
+
+    The choice is made per discrete-action combination. The deciding member
+    chooses on its own objective, and ties go to the members' stored values
+    (`decider_choice`). Every member's stored value is read at that choice.
+    """
     shape = parts.F.shape[:n_discrete_action_axes]
-    objective = jnp.where(
-        parts.F, cast("FloatND", parts.Q_objective), -jnp.inf
-    ).reshape(*shape, -1)
-    continuous_index = jnp.argmax(objective, axis=-1)
-    return ConditionalProfiles(
-        objective=jnp.take_along_axis(objective, continuous_index[..., None], axis=-1)[
-            ..., 0
-        ],
-        value=jnp.where(
-            jnp.any(parts.F.reshape(*shape, -1), axis=-1),
-            jnp.take_along_axis(
-                parts.Q.reshape(*shape, -1), continuous_index[..., None], axis=-1
-            )[..., 0],
-            -jnp.inf,
-        ),
-        continuous_index=continuous_index.astype(jnp.int32),
+    n_members = parts.Q.shape[-1]
+    decider, objective, continuous_index, stored = decider_choice(
+        Q=cast("FloatND", parts.Q_objective),
+        feasibility=parts.F,
+        weights=weights,
+        n_discrete_action_axes=n_discrete_action_axes,
+        readout=parts.Q,
     )
+    return SmoothedProfiles(
+        conditional=ConditionalProfiles(
+            objective=objective.reshape(shape),
+            value=jnp.take(stored, decider, axis=-1).reshape(shape),
+            continuous_index=continuous_index.reshape(shape),
+        ),
+        stored=stored.reshape(*shape, n_members),
+        parts=parts._replace(
+            Q=jnp.take(parts.Q, decider, axis=-1),
+            Q_objective=jnp.take(cast("FloatND", parts.Q_objective), decider, axis=-1),
+        ),
+        decider=decider,
+    )
+
+
+def smoothed_logsum(
+    *, smoothed: SmoothedProfiles, scale: FloatND
+) -> tuple[FloatND, FloatND]:
+    """Return the expected stored value under EV1 shocks and the probabilities.
+
+    The deciding member's value is `decoupled_logsum` of its own profiles.
+    Every other member gets the mean of its stored value under the deciding
+    member's choice probabilities, which a combination of probability zero
+    leaves out. Where the deciding member's objective is `-inf` at every
+    combination there are no
+    probabilities, and every member's value is `-inf`.
+    """
+    value, probabilities = decoupled_logsum(
+        conditional=smoothed.conditional, scale=scale, parts=smoothed.parts
+    )
+    means = jnp.sum(
+        zero_safe_weighted_term(
+            weight=probabilities[..., None],
+            value=smoothed.stored,
+            subnormal_is_accounted_for=False,
+        ),
+        axis=tuple(range(probabilities.ndim)),
+    )
+    n_members = smoothed.stored.shape[-1]
+    values = jnp.where(jnp.arange(n_members) == smoothed.decider, value, means)
+    worthless = jnp.all(jnp.isneginf(smoothed.conditional.objective))
+    return jnp.where(worthless, -jnp.inf, values), probabilities
+
+
+def _stored_at(*, smoothed: SmoothedProfiles, flat: Array) -> FloatND:
+    """Read the stored value at one flat discrete combination."""
+    n_members = smoothed.stored.shape[-1]
+    return jnp.reshape(smoothed.stored, (-1, n_members))[flat]
 
 
 def decoupled_logsum(
@@ -384,14 +517,27 @@ class DecoupledWithActionParts:
     parts: Callable[..., QAndFParts]
     """The kernel's parts, mapped over the action product."""
 
+    members: tuple[str, ...]
+    """Ordered member names of the regime."""
+
+    pareto_weights: ParetoWeights
+    """The regime's Pareto weight evaluator."""
+
     def __call__(
         self, **kwargs: QAndFArg
     ) -> tuple[IntND, FloatND, FloatND, BoolND, FloatND, FloatND, FloatND]:
         """Return the index, the value, and `Q`, `F`, `U`, `CE`, `Q_objective`."""
         parts = self.parts(**kwargs)
         Q_objective = cast("FloatND", parts.Q_objective)
-        index, value = argmax_and_readout(
-            selection=Q_objective, readout=parts.Q, where=parts.F
+        index, value = household_argmax_and_readout(
+            selection=Q_objective,
+            readout=parts.Q,
+            where=parts.F,
+            weights=_stacked_pareto_weights(
+                pareto_weights=self.pareto_weights,
+                members=self.members,
+                states_actions_params=cast("QAndFKwargs", kwargs),
+            ),
         )
         return index, value, parts.Q, parts.F, parts.U, parts.CE, Q_objective
 
@@ -427,22 +573,35 @@ class DecoupledTasteShockLookup:
     n_discrete_action_axes: int
     """Number of leading discrete-action axes of the action product."""
 
+    members: tuple[str, ...]
+    """Ordered member names of the regime."""
+
+    pareto_weights: ParetoWeights
+    """The regime's Pareto weight evaluator."""
+
     def __call__(self, **kwargs: QAndFArg) -> tuple[FloatND | IntND | BoolND, ...]:
-        """Return the value, `Qc`, the probabilities, the index and the parts."""
+        """Return the value, `Qc`, the probabilities, the index and the parts.
+
+        The value and `Qc` carry the trailing member axis.
+        """
         parts = self.parts(**kwargs)
-        conditional = get_conditional_profiles(
-            parts=parts, n_discrete_action_axes=self.n_discrete_action_axes
-        )
-        value, probabilities = decoupled_logsum(
-            conditional=conditional,
-            scale=cast("FloatND", kwargs[TASTE_SHOCK_SCALE_PARAM]),
+        smoothed = smoothed_profiles(
             parts=parts,
+            weights=_stacked_pareto_weights(
+                pareto_weights=self.pareto_weights,
+                members=self.members,
+                states_actions_params=cast("QAndFKwargs", kwargs),
+            ),
+            n_discrete_action_axes=self.n_discrete_action_axes,
+        )
+        value, probabilities = smoothed_logsum(
+            smoothed=smoothed, scale=cast("FloatND", kwargs[TASTE_SHOCK_SCALE_PARAM])
         )
         return (
             value,
-            conditional.value,
+            smoothed.stored,
             probabilities,
-            conditional.continuous_index,
+            smoothed.conditional.continuous_index,
             parts.Q,
             parts.F,
             parts.U,

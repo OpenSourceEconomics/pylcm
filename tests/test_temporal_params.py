@@ -250,7 +250,7 @@ def test_time_varying_values_remain_differentiable_leaves() -> None:
     def total(values: FloatND) -> FloatND:
         aligned = align_time_varying(
             value=lcm.TimeVarying(values=values, periods=(1, 9, 0)),
-            ages=ModelTime(n_periods=3),
+            ages=ModelTime(n_steps=3),
             required_periods=(0, 1),
             name="wage",
         )
@@ -605,9 +605,9 @@ def test_series_time_and_categorical_axes_are_validated_together(
 
 def test_economic_profile_mapping_is_explicit_and_differentiable() -> None:
     def total(values: FloatND) -> FloatND:
-        stage_to_quarter = {0: 3, 1: 3, 2: 4, 3: 4}
+        period_to_quarter = {0: 3, 1: 3, 2: 4, 3: 4}
         profile = lcm.TimeVarying.from_profile(
-            values=values, labels=(4, 9, 3), period_to_label=stage_to_quarter
+            values=values, labels=(4, 9, 3), period_to_label=period_to_quarter
         )
         assert profile.periods == (0, 1, 2, 3)
         return jnp.sum(profile.values)
@@ -918,10 +918,10 @@ def _ceiling(*, option: DiscreteAction, ceiling: FloatND) -> BoolND:
     return option <= ceiling
 
 
-@pytest.mark.parametrize("n_subjects", [1, 3])
+@pytest.mark.parametrize("n_agents", [1, 3])
 @pytest.mark.parametrize("budget", [None, 100_000_000])
 def test_temporal_constraint_changes_the_feasible_action(
-    *, n_subjects: int, budget: int | None
+    *, n_agents: int, budget: int | None
 ) -> None:
     model = lcm.Model(
         n_periods=3,
@@ -942,7 +942,7 @@ def test_temporal_constraint_changes_the_feasible_action(
         },
         fixed_params={"discount_factor": 0.5},
         execution_config=lcm.ExecutionConfig(
-            device_memory_bytes=budget, axis_widths={"subject": 2}
+            device_memory_bytes=budget, axis_widths={"agent": 2}
         ),
     )
     result = model.simulate(
@@ -950,8 +950,8 @@ def test_temporal_constraint_changes_the_feasible_action(
             "ceiling": lcm.TimeVarying(values=jnp.array([0.0, 1.0]), periods=(0, 1))
         },
         initial_conditions={
-            "period": jnp.zeros(n_subjects, dtype=jnp.int32),
-            "regime_id": jnp.full(n_subjects, RegimeId.work),
+            "period": jnp.zeros(n_agents, dtype=jnp.int32),
+            "regime_id": jnp.full(n_agents, RegimeId.work),
         },
         seed=5,
         log_level="off",
@@ -959,8 +959,8 @@ def test_temporal_constraint_changes_the_feasible_action(
     frame = result.to_dataframe(use_categorical_codes=True)
     for period, action, value in ((0, 0, 2.5), (1, 1, 5.0)):
         rows = frame.loc[frame["period"] == period]
-        assert len(rows) == n_subjects
-        np.testing.assert_array_equal(rows["option"], jnp.full(n_subjects, action))
+        assert len(rows) == n_agents
+        np.testing.assert_array_equal(rows["option"], jnp.full(n_agents, action))
         np.testing.assert_allclose(rows["value"], value)
 
 
@@ -1462,7 +1462,7 @@ def test_nbegm_temporal_case_pieces_use_source_grants(
             for name, grant in (("below", 3.0), ("above", 1.0))
         }
         solution = model.solve(params=params, log_level="debug")
-        values.append(solution.value(period=source_period, regime="work"))
+        values.append(solution.value(step=source_period, regime="work"))
     np.testing.assert_allclose(values[1], values[0], rtol=0, atol=1e-5)
 
 
@@ -1484,7 +1484,7 @@ def test_egm_temporal_consumers_use_the_source_period(
     expected = 2.0 * np.log(consumption) + np.log(2.0 * (wealth - consumption))
     # The terminal log grid and savings interpolation approximate the closed form.
     np.testing.assert_allclose(
-        solution.value(period=source_period, regime="work"),
+        solution.value(step=source_period, regime="work")[..., 0],
         expected,
         atol=1e-3,
         rtol=0,
@@ -1537,14 +1537,17 @@ def test_egm_temporal_periods_share_a_core(solver_name: str) -> None:
     second = core_program_graph(kernel=kernels[2])["main"].function
     assert isinstance(first, partial)
     assert isinstance(second, partial)
-    assert first.func is second.func
+    assert first.keywords["_member_axis_core"] is second.keywords["_member_axis_core"]
     solution = model.solve(params=params, log_level="debug")
     wealth = np.asarray(wealth_grid.to_jax())
     for period, weight in ((0, 2.0), (2, 3.0)):
         consumption = weight / (weight + 1.0) * wealth
         expected = weight * np.log(consumption) + np.log(2.0 * (wealth - consumption))
         np.testing.assert_allclose(
-            solution.value(period=period, regime="work"), expected, atol=1e-3, rtol=0
+            solution.value(step=period, regime="work")[..., 0],
+            expected,
+            atol=1e-3,
+            rtol=0,
         )
 
 

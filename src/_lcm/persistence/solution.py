@@ -691,15 +691,15 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
             raise SolutionIntegrityError("Value manifest entry is not an object.")
         entry = cast("dict[str, JSONValue]", raw_entry)
         period = _require_nonnegative_exact_int(
-            value=entry.get("period"), label="value period"
+            value=entry.get("step"), label="value step"
         )
         regime = _require_nonempty_exact_str(
             value=entry.get("regime"), label="value regime"
         )
         coordinate = (period, regime)
-        if period >= metadata.n_periods or regime not in metadata.regime_names:
+        if period >= metadata.n_steps or regime not in metadata.regime_names:
             raise SolutionIntegrityError(
-                f"Persisted value {coordinate!r} has an invalid period or regime."
+                f"Persisted value {coordinate!r} has an invalid step or regime."
             )
         if coordinate in value_entries:
             raise SolutionIntegrityError(
@@ -707,13 +707,13 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
             )
         identity: dict[str, JSONValue] = {
             "kind": "value",
-            "period": period,
+            "step": period,
             "regime": regime,
         }
         lazy = _lazy_entry(
             path=path,
             entry=entry,
-            label=f"value at period={period}, regime={regime!r}",
+            label=f"value at step={period}, regime={regime!r}",
             identity=identity,
         )
         schema = metadata.value_schemas.get(coordinate)
@@ -782,7 +782,7 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
             )
         identity = {
             "kind": "artifact",
-            "period": ref.period,
+            "step": ref.step,
             "regime": ref.regime,
             "type_id": ref.key.type_id,
             "schema_version": ref.key.schema_version,
@@ -793,7 +793,7 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
             entry=entry,
             label=(
                 f"artifact {ref.key.type_id!r} version {ref.key.schema_version} "
-                f"at period={ref.period}, regime={ref.regime!r}"
+                f"at step={ref.step}, regime={ref.regime!r}"
             ),
             identity=identity,
         )
@@ -830,7 +830,7 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
             raise SolutionIntegrityError("Omission manifest entry is not an object.")
         entry = cast("dict[str, JSONValue]", raw_entry)
         if set(entry) != {
-            "period",
+            "step",
             "regime",
             "type_id",
             "schema_version",
@@ -911,7 +911,7 @@ def _with_standard_template(
     try:
         snapshot = diagnostics_template_snapshot(
             descriptor=descriptor,
-            label=f"Persisted solver diagnostics at ({ref.period}, {ref.regime!r})",
+            label=f"Persisted solver diagnostics at ({ref.step}, {ref.regime!r})",
         )
     except (TypeError, ValueError) as error:
         raise SolutionIntegrityError(
@@ -965,12 +965,12 @@ def _prepare_solution_for_save(  # noqa: C901, PLR0912, PLR0915
         sorted(
             (period, regime)
             for period, regime in value_coordinates
-            if period >= metadata.n_periods or regime not in metadata.regime_names
+            if period >= metadata.n_steps or regime not in metadata.regime_names
         )
     )
     if invalid_value_coordinates:
         raise IncompatibleSolutionError(
-            "Solution values contain invalid period or regime coordinates: "
+            "Solution values contain invalid step or regime coordinates: "
             f"{invalid_value_coordinates!r}."
         )
     if value_coordinates != set(metadata.value_schemas):
@@ -994,12 +994,12 @@ def _prepare_solution_for_save(  # noqa: C901, PLR0912, PLR0915
         schema = metadata.value_schemas[(period, regime)]
         identity: dict[str, JSONValue] = {
             "kind": "value",
-            "period": period,
+            "step": period,
             "regime": regime,
         }
         # A value its entry can assemble on the host is written from there,
         # never placed on a device first.
-        raw = values._raw(period=period, regime=regime)  # noqa: SLF001
+        raw = values._raw(step=period, regime=regime)  # noqa: SLF001
         host_value = raw.host_value() if isinstance(raw, _LazyEntry) else None
         prepared = _prepare_payload(
             payload=values[period][regime] if host_value is None else host_value,
@@ -1116,7 +1116,7 @@ def _prepare_solution_for_save(  # noqa: C901, PLR0912, PLR0915
                     canonical=canonical,
                     identity={
                         "kind": "artifact",
-                        "period": ref.period,
+                        "step": ref.step,
                         "regime": ref.regime,
                         "type_id": ref.key.type_id,
                         "schema_version": ref.key.schema_version,
@@ -1260,7 +1260,7 @@ def _prepare_persisted_artifacts(  # noqa: C901, PLR0912
                 )
             identity = {
                 "kind": "artifact",
-                "period": ref.period,
+                "step": ref.step,
                 "regime": ref.regime,
                 "type_id": ref.key.type_id,
                 "schema_version": ref.key.schema_version,
@@ -1540,14 +1540,14 @@ def _validate_result_ref(
     """Validate one in-memory artifact address without coercing weak types."""
     if (
         type(ref) is not ArtifactRef
-        or type(ref.period) is not int
-        or ref.period < 0
-        or ref.period >= metadata.n_periods
+        or type(ref.step) is not int
+        or ref.step < 0
+        or ref.step >= metadata.n_steps
         or type(ref.regime) is not str
         or ref.regime not in metadata.regime_names
     ):
         raise IncompatibleSolutionError(
-            f"Solution {label} has an invalid period or regime address: {ref!r}."
+            f"Solution {label} has an invalid step or regime address: {ref!r}."
         )
 
 
@@ -1700,7 +1700,7 @@ def _write_archive_contents(
 
     manifest["omissions"] = [
         {
-            "period": ref.period,
+            "step": ref.step,
             "regime": ref.regime,
             "type_id": ref.key.type_id,
             "schema_version": ref.key.schema_version,
@@ -2155,7 +2155,7 @@ def _verify_result_entries(*, result: _SolutionResultBoundary) -> None:
     values = cast("ValueStore", result.values)
     for period in values:
         for regime in values[period]:
-            raw = values._raw(period=period, regime=regime)  # noqa: SLF001
+            raw = values._raw(step=period, regime=regime)  # noqa: SLF001
             if isinstance(raw, _LazyHdf5Entry):
                 raw.verify()
     for _channel, store in _solution_stores(solution=result):
@@ -2170,7 +2170,7 @@ def _metadata_to_manifest(metadata: SolutionMetadata) -> dict[str, JSONValue]:
     return {
         "pylcm_version": metadata.pylcm_version,
         "retention": metadata.retention.value,
-        "n_periods": metadata.n_periods,
+        "n_steps": metadata.n_steps,
         "regime_names": list(metadata.regime_names),
         "solver_types": dict(metadata.solver_types),
         "model_instance_id": metadata.model_instance_id,
@@ -2197,7 +2197,7 @@ def _metadata_to_manifest(metadata: SolutionMetadata) -> dict[str, JSONValue]:
         },
         "value_schemas": [
             {
-                "period": period,
+                "step": period,
                 "regime": regime,
                 "shape": list(schema.shape),
                 "dtype": schema.dtype,
@@ -2224,7 +2224,7 @@ def _metadata_to_manifest(metadata: SolutionMetadata) -> dict[str, JSONValue]:
         ],
         "artifact_descriptors": [
             {
-                "period": ref.period,
+                "step": ref.step,
                 "regime": ref.regime,
                 "type_id": ref.key.type_id,
                 "schema_version": ref.key.schema_version,
@@ -2445,7 +2445,7 @@ def _metadata_from_manifest(  # noqa: C901, PLR0912, PLR0915
         if set(raw) != {
             "pylcm_version",
             "retention",
-            "n_periods",
+            "n_steps",
             "regime_names",
             "solver_types",
             "model_instance_id",
@@ -2474,7 +2474,7 @@ def _metadata_from_manifest(  # noqa: C901, PLR0912, PLR0915
                 raise TypeError("value schema is not an object")
             entry = cast("dict[str, JSONValue]", item)
             if set(entry) != {
-                "period",
+                "step",
                 "regime",
                 "shape",
                 "dtype",
@@ -2485,7 +2485,7 @@ def _metadata_from_manifest(  # noqa: C901, PLR0912, PLR0915
                 raise ValueError("invalid value schema fields")
             coordinate = (
                 _require_nonnegative_exact_int(
-                    value=entry.get("period"), label="value-schema period"
+                    value=entry.get("step"), label="value-schema step"
                 ),
                 _require_nonempty_exact_str(
                     value=entry.get("regime"), label="value-schema regime"
@@ -2526,7 +2526,7 @@ def _metadata_from_manifest(  # noqa: C901, PLR0912, PLR0915
                 raise TypeError("artifact descriptor is not an object")
             entry = cast("dict[str, JSONValue]", item)
             if set(entry) != {
-                "period",
+                "step",
                 "regime",
                 "type_id",
                 "schema_version",
@@ -2552,8 +2552,8 @@ def _metadata_from_manifest(  # noqa: C901, PLR0912, PLR0915
                 ),
             )
             ref = ArtifactRef(
-                period=_require_nonnegative_exact_int(
-                    value=entry.get("period"), label="artifact-descriptor period"
+                step=_require_nonnegative_exact_int(
+                    value=entry.get("step"), label="artifact-descriptor step"
                 ),
                 regime=_require_nonempty_exact_str(
                     value=entry.get("regime"), label="artifact-descriptor regime"
@@ -2670,8 +2670,8 @@ def _metadata_from_manifest(  # noqa: C901, PLR0912, PLR0915
             retention=ResultRetention(
                 _require_exact_str(value=raw.get("retention"), label="retention")
             ),
-            n_periods=_require_positive_exact_int(
-                value=raw.get("n_periods"), label="period count"
+            n_steps=_require_positive_exact_int(
+                value=raw.get("n_steps"), label="step count"
             ),
             regime_names=regimes,
             solver_types=solver_types,
@@ -2702,8 +2702,8 @@ def _artifact_ref_from_manifest(entry: dict[str, JSONValue]) -> ArtifactRef:
     """Decode one exact artifact address from an archive manifest entry."""
     try:
         return ArtifactRef(
-            period=_require_nonnegative_exact_int(
-                value=entry.get("period"), label="artifact period"
+            step=_require_nonnegative_exact_int(
+                value=entry.get("step"), label="artifact step"
             ),
             regime=_require_nonempty_exact_str(
                 value=entry.get("regime"), label="artifact regime"
@@ -2726,10 +2726,10 @@ def _artifact_ref_from_manifest(entry: dict[str, JSONValue]) -> ArtifactRef:
 def _validate_persisted_ref(
     *, ref: ArtifactRef, metadata: SolutionMetadata, label: str
 ) -> None:
-    """Require one persisted address to name a declared period and regime."""
-    if ref.period >= metadata.n_periods or ref.regime not in metadata.regime_names:
+    """Require one persisted address to name a declared step and regime."""
+    if ref.step >= metadata.n_steps or ref.regime not in metadata.regime_names:
         raise SolutionIntegrityError(
-            f"Persisted {label} {ref!r} has an invalid period or regime."
+            f"Persisted {label} {ref!r} has an invalid step or regime."
         )
 
 
@@ -3238,7 +3238,7 @@ class StreamedSolutionArchive(_SolutionArchiveFile):
         super().__init__(
             directory=directory,
             name=name,
-            record={**record, "last_completed_period": None},
+            record={**record, "last_completed_step": None},
             budget_bytes=budget_bytes,
         )
         self._written_periods: set[int] = set()
@@ -3262,7 +3262,7 @@ class StreamedSolutionArchive(_SolutionArchiveFile):
         """
         prepared = _prepare_payload(
             payload=value,
-            identity={"kind": "value", "period": period, "regime": regime},
+            identity={"kind": "value", "step": period, "regime": regime},
         )
         with self._file.lock:
             address = f"{self._counter:08d}"
@@ -3291,12 +3291,12 @@ class StreamedSolutionArchive(_SolutionArchiveFile):
         self, *, period: int, regime: RegimeName, policy: SimulationPolicy
     ) -> DiskPolicyEntry:
         """Write one simulation policy as its replay artifact; return its reader."""
-        ref = ArtifactRef(period=period, regime=regime, key=SIMULATION_POLICY)
+        ref = ArtifactRef(step=period, regime=regime, key=SIMULATION_POLICY)
         prepared = _prepare_payload(
             payload=policy,
             identity={
                 "kind": "artifact",
-                "period": period,
+                "step": period,
                 "regime": regime,
                 "type_id": SIMULATION_POLICY.type_id,
                 "schema_version": SIMULATION_POLICY.schema_version,
@@ -3331,7 +3331,7 @@ class StreamedSolutionArchive(_SolutionArchiveFile):
         """
         with self._file.lock:
             self._written_periods.add(period)
-            self._record["last_completed_period"] = min(self._written_periods)
+            self._record["last_completed_step"] = min(self._written_periods)
             self._write_record()
 
     def complete(self, *, solution: _SolutionResultBoundary) -> Path:
@@ -3368,7 +3368,7 @@ class BlockedSolutionArchive(_SolutionArchiveFile):
         super().__init__(
             directory=directory,
             name=name,
-            record={**record, "last_completed_period": None, "completed_codes": []},
+            record={**record, "last_completed_step": None, "completed_codes": []},
             budget_bytes=budget_bytes,
         )
         self._codes: tuple[int, ...] = ()
@@ -3451,7 +3451,7 @@ class BlockedSolutionArchive(_SolutionArchiveFile):
                 array = np.asarray(handle[f"{_PAYLOAD_GROUP}/{address}/leaf_0000"][()])
                 identity: dict[str, JSONValue] = {
                     "kind": "value",
-                    "period": period,
+                    "step": period,
                     "regime": regime,
                 }
                 leaf_identity = identity | {"address": address, "leaf": 0, "path": []}
@@ -3644,7 +3644,7 @@ class PeriodValueWriter:
 
         """
         if self._failed:
-            msg = f"Did not write period {period}: an earlier period's write failed."
+            msg = f"Did not write step {period}: an earlier step's write failed."
             raise ValueStorageError(msg)
         try:
             return self._write_period(period=period, values=values, policies=policies)

@@ -113,7 +113,7 @@ def _run(
     return result
 
 
-def test_the_graph_publishes_planned_values_and_replay_variants():
+def test_the_graph_publishes_planned_values_and_replay_variants() -> None:
     kernel, _ = _full_kernel()
     graph = core_program_graph(kernel=kernel)
 
@@ -169,7 +169,7 @@ def test_model_authority_rejects_a_policy_type_conflicting_with_the_route() -> N
         )
 
 
-def test_variants_publish_only_their_retained_outputs_by_their_row_axes():
+def test_variants_publish_only_their_retained_outputs_by_their_row_axes() -> None:
     """Carry and policy rows lead with the discrete and passive state axes."""
     kernel, _ = _passive_kernel()
     roles = core_program_graph(kernel=kernel)["replay"].output_roles
@@ -211,7 +211,7 @@ def test_variants_publish_only_their_retained_outputs_by_their_row_axes():
 @pytest.mark.parametrize("name", ["main", "replay"])
 def test_the_declared_roles_share_the_runtime_outputs_pytree_structure(
     *, build: Callable[[], tuple[_DCEGMPeriodKernel, OracleContext]], name: str
-):
+) -> None:
     """The role tree is the output tree with roles for leaves, aux data included."""
     kernel, context = build()
     roles = core_program_graph(kernel=kernel)[name].output_roles
@@ -221,7 +221,7 @@ def test_the_declared_roles_share_the_runtime_outputs_pytree_structure(
     assert jax.tree.structure(roles) == jax.tree.structure(outputs)
 
 
-def test_the_builder_omits_target_values_and_filters_the_carry():
+def test_the_builder_omits_target_values_and_filters_the_carry() -> None:
     kernel, context = _full_kernel()
     materialized = materialize_core_program(
         program=core_program_graph(kernel=kernel)["main"],
@@ -234,7 +234,7 @@ def test_the_builder_omits_target_values_and_filters_the_carry():
     assert set(carry) == set(kernel.stateful_targets)
 
 
-def test_the_kernel_publishes_only_the_selected_public_channels():
+def test_the_kernel_publishes_only_the_selected_public_channels() -> None:
     kernel, context = _full_kernel()
     graph = core_program_graph(kernel=kernel)
     main = materialize_core_program(
@@ -276,7 +276,7 @@ def test_the_kernel_publishes_only_the_selected_public_channels():
         np.testing.assert_array_equal(np.asarray(got), np.asarray(expected))
 
 
-def test_with_fixed_params_rebinds_the_program():
+def test_with_fixed_params_rebinds_the_program() -> None:
     kernel, _ = _full_kernel()
     program = core_program_graph(kernel=kernel)["main"]
     fixed = MappingProxyType(
@@ -296,7 +296,7 @@ def test_with_fixed_params_rebinds_the_program():
 
 def test_a_replay_lowers_the_dense_program_the_solve_ran(
     *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-):
+) -> None:
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", f"{_REGIME}@{_PERIOD}")
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
     solution = get_full_model(solver="dcegm", n_periods=_N_PERIODS).solve(
@@ -337,14 +337,14 @@ def test_a_replay_lowers_the_dense_program_the_solve_ran(
 )
 def test_a_regime_without_a_policy_read_route_omits_the_policy_as_not_applicable(
     *, retention: ResultRetention
-):
+) -> None:
     """A passive state keeps simulation on the grid argmax, whatever the retention."""
     model = _passive_model("dcegm")
     solution = model.solve(
         params=_passive_params(), log_level="off", retention=retention
     )
     period = model._regimes[_REGIME].active_periods[0]
-    policy_ref = ArtifactRef(period=period, regime=_REGIME, key=SIMULATION_POLICY)
+    policy_ref = ArtifactRef(step=period, regime=_REGIME, key=SIMULATION_POLICY)
 
     assert model._regimes[_REGIME].simulation.egm_policy_read is None
     assert not solution.replay_artifacts.project(SIMULATION_POLICY)

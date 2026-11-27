@@ -149,7 +149,7 @@ supply graph-selected cells without declaring topology themselves. Terminal regi
 no outgoing edges. A law that differs between the phases is phased inside one
 `Transition`, `Transition(targets=..., law=Phased(solve=..., simulate=...))`, on targets
 both phases share. `Model(edges=Phased(solve={...}, simulate={...}))` gives the model
-different perceived and realized edges, each phase's mapping with its own `Transition`;
+different perceived and actual edges, each phase's mapping with its own `Transition`;
 state handoffs stay phase-specific on the source regime. A lone edge in one phase,
 paired with a per-target probability mapping in the other, counts as a probability-one
 cell for its destination.
@@ -256,11 +256,10 @@ Transition-local joint lotteries are currently implemented only by `GridSearch`.
 Selecting an EGM-family solver for a regime that declares one is rejected when the model
 is built.
 
-Use `Phased` around the entire `JointTransition` for perceived and realized variants;
-both variants keep the same output names and support size. When both supports are
-literal, they must also have the same pytree structure, leaf event shapes, and dtypes.
-Support values, probability functions, and output-law implementations may differ between
-phases.
+Use `Phased` around the entire `JointTransition` for perceived and actual variants; both
+variants keep the same output names and support size. When both supports are literal,
+they must also have the same pytree structure, leaf event shapes, and dtypes. Support
+values, probability functions, and output-law implementations may differ between phases.
 
 ### What each part may read
 
@@ -350,7 +349,7 @@ select the already-resolved period objects and never call `build(age)`.
 `Phased(solve=..., simulate=...)` is the outermost wrapper for declarations that may
 differ by phase:
 
-- `Model.edges` accepts perceived and realized source–destination topology, each phase
+- `Model.edges` accepts perceived and actual source–destination topology, each phase
   with its own `Transition` laws; ordinary per-target mappings may declare different
   solve and simulate target keys, and a `Transition` law may itself be `Phased` with
   matching transition forms;
@@ -373,7 +372,7 @@ A carried state is derived during backward induction, so it adds no solve-grid a
 is seeded and evolved as a genuine simulation state. Its law of motion still belongs in
 `state_transitions`.
 
-Decisions use the solve law, while realized transitions use the simulate law. Every
+Decisions use the solve law, while actual transitions use the simulate law. Every
 simulation-visited node is solved with its own perceived continuation dependencies;
 value-only nodes do not create realized visits. Each phase supplies valid probabilities
 and state handoffs for its own edges. Use outer `Phased` state-transition mappings when

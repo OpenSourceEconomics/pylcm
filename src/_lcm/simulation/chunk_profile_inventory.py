@@ -17,7 +17,7 @@ import jax
 from _lcm.execution.workspace_planning import CompilerMemoryReservation
 from _lcm.simulation.chunk_planning import SimulationStageProfile
 from _lcm.simulation.host_operations import StaticArgument
-from _lcm.simulation.operand_placement import subject_operand_sharding
+from _lcm.simulation.operand_placement import agent_operand_sharding
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.typing import PytreeValue, ShapeDtypePytree
@@ -96,27 +96,27 @@ class ChunkProfileInventory:
         *,
         function: Callable[..., PytreeValue],
         arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
-        subject_arg_names: tuple[ReferenceName, ...] = (),
+        agent_arg_names: tuple[ReferenceName, ...] = (),
         static_arguments: Mapping[str, StaticArgument] = MappingProxyType({}),
-        subject_outputs: bool = False,
+        agent_outputs: bool = False,
         devices: tuple[jax.Device, ...] | None = None,
     ) -> ShapeDtypePytree:
         """Use the same argument placement, compiler and numerical body as dispatch."""
-        devices = self.runtime.subject_devices if devices is None else devices
-        subject = subject_operand_sharding(devices=devices)
-        shared = simulation_value_sharding(stored_sharding=subject, devices=devices)
+        devices = self.runtime.agent_devices if devices is None else devices
+        agent = agent_operand_sharding(devices=devices)
+        shared = simulation_value_sharding(stored_sharding=agent, devices=devices)
         placed = {
             name: abstract_tree(
-                tree=value, sharding=subject if name in subject_arg_names else shared
+                tree=value, sharding=agent if name in agent_arg_names else shared
             )
             for name, value in arguments.items()
         }
         compiled = self.runtime.operations.prepare_abstract(
             function=function,
             arguments=placed,
-            subject_arg_names=subject_arg_names,
+            agent_arg_names=agent_arg_names,
             static_arguments=static_arguments,
-            subject_outputs=subject_outputs,
+            agent_outputs=agent_outputs,
             devices=devices,
         )
         return self.compiled(
@@ -142,7 +142,7 @@ class ChunkProfileInventory:
                 name=name,
                 executable=executable,
                 memory=memory,
-                devices=self.runtime.subject_devices if devices is None else devices,
+                devices=self.runtime.agent_devices if devices is None else devices,
             )
         )
         # An operation may copy every argument and keep every returned leaf alive

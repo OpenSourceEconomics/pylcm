@@ -523,7 +523,9 @@ def build_model(
         )
     }
 
-    assets_grid = LinSpacedGrid(start=0.0, stop=asset_max, n_points=n_assets)
+    assets_grid = LinSpacedGrid(
+        start=0.0, stop=asset_max, n_points=n_assets, off_grid="extrapolate"
+    )
     consumption_grid = LinSpacedGrid(start=0.05, stop=asset_max, n_points=n_consumption)
     # Cubically clustered savings nodes toward the no-borrowing limit, where the
     # value function curves hardest; the floor (0) encodes `consumption <=

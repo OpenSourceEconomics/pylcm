@@ -123,7 +123,7 @@ def _construct(packet_root: Path) -> dict[str, Any]:
     policy = ExecutionConfig(
         devices=tuple(range(8)),
         sharded_states=("assets",),
-        axis_widths={"subject": 2048},
+        axis_widths={"agent": 2048},
     )
     fixed, params = _assemble(inputs=inputs, grid_config=grid)
     model = create_model(

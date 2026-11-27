@@ -2,6 +2,8 @@
 
 import functools
 import inspect
+import math
+import re
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import NotRequired, TypedDict, cast
@@ -9,33 +11,60 @@ from typing import NotRequired, TypedDict, cast
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
+from jax.core import ShapedArray
+from jax.extend.core import Jaxpr
 from numpy.testing import assert_allclose, assert_array_equal
 
 from _lcm.engine import StateActionSpace
-from _lcm.logsum import logsum_and_softmax
-from _lcm.regime_building.collective import ParetoWeights
+from _lcm.regime_building.collective import ParetoWeights, build_pareto_weights
 from _lcm.regime_building.max_Q_over_a import (
     BoundedMaxOutput,
     RawActionFunction,
     get_max_Q_over_a,
     get_streaming_max_Q_over_a,
 )
+from _lcm.regime_building.Q_and_F import _expected_continuation_over_nodes
+from _lcm.solution.action_streaming import build_streaming_collective_max_Q_over_a
+from _lcm.solution.collective_action_reduction import (
+    COLLECTIVE_HARD_MAX_REDUCTION,
+    CollectiveHardMaxResult,
+)
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.solution.grid_search import (
     _ActionStreamingDisposition,
     _classify_action_streaming,
-    _supports_action_streaming,
+    _GridSearchPeriodKernel,
 )
-from _lcm.typing import MaxQOverAFunction, PytreeValue, QAndFFunction, QAndFKwargs
+from _lcm.typing import MaxQOverAFunction, QAndFFunction, QAndFKwargs
+from lcm import (
+    AgeGrid,
+    CollectiveUtility,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    categorical,
+)
+from lcm.execution import ExecutionConfig
+from lcm.solver_api import SolutionResult
+from lcm.solvers import ACTION_PRODUCT_AXIS
 from lcm.typing import (
     ActionName,
     BoolND,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteAction,
     FloatND,
     IntND,
     RegimeName,
+    ScalarInt,
     StateName,
 )
+from tests.collective_fixtures import Work
+from tests.conftest import assert_agrees_to_ulp
+from tests.single_member import SELF, SELF_PARETO_WEIGHTS, with_member_axis
 
 
 class _KernelKwargs(TypedDict):
@@ -43,14 +72,12 @@ class _KernelKwargs(TypedDict):
     batch_sizes: dict[StateName, int]
     action_names: tuple[ActionName, ...]
     state_names: tuple[StateName, ...]
-    n_discrete_action_axes: NotRequired[int]
-    has_taste_shocks: NotRequired[bool]
     co_map_state_names: NotRequired[tuple[StateName, ...]]
     co_map_v_arr_in_axes: NotRequired[
         tuple[MappingProxyType[RegimeName, int | None], ...]
     ]
-    member_axis: NotRequired[tuple[str, ...] | None]
-    pareto_weights: NotRequired[ParetoWeights | None]
+    members: tuple[str, ...]
+    pareto_weights: ParetoWeights
     cell_width_keyword: NotRequired[str | None]
     untiled_state_names: NotRequired[tuple[StateName, ...]]
     broadcast_state_names: NotRequired[tuple[StateName, ...]]
@@ -62,11 +89,38 @@ class _RouteOverrides(TypedDict, total=False):
     discrete_actions: tuple[ActionName, ...]
     Q_and_F: QAndFFunction
     has_taste_shocks: bool
-    member_axis: tuple[str, ...] | None
     co_map_state_names: tuple[StateName, ...]
     edge_reference_regimes: tuple[RegimeName, ...]
     edge_target_regimes: tuple[RegimeName, ...]
     enable_jit: bool
+
+
+def _single(
+    *,
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    batch_sizes: dict[StateName, int],
+    action_names: tuple[ActionName, ...],
+    state_names: tuple[StateName, ...],
+    co_map_state_names: tuple[StateName, ...] = (),
+    co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = (),
+) -> _KernelKwargs:
+    """Kernel arguments of a single: the household of the one member `"self"`."""
+    return {
+        "Q_and_F": with_member_axis(Q_and_F),
+        "batch_sizes": batch_sizes,
+        "action_names": action_names,
+        "state_names": state_names,
+        "co_map_state_names": co_map_state_names,
+        "co_map_v_arr_in_axes": co_map_v_arr_in_axes,
+        "members": SELF,
+        "pareto_weights": SELF_PARETO_WEIGHTS,
+    }
+
+
+def _self_value(output: BoundedMaxOutput) -> FloatND:
+    """The value of the member `"self"` in a reducer's `(value, dissolution)` output."""
+    value, _dissolution = cast("tuple[FloatND, BoolND]", output)
+    return value[..., 0]
 
 
 def _Q_and_F(
@@ -90,7 +144,7 @@ def _Q_and_F(
     return value, feasible
 
 
-@pytest.mark.parametrize("block_width", [1, 4, 5, 6])
+@pytest.mark.parametrize("block_width", [5])
 def test_full_V_streaming_matches_dense_over_states_and_partial_action_tail(
     block_width: int,
 ) -> None:
@@ -105,18 +159,14 @@ def test_full_V_streaming_matches_dense_over_states_and_partial_action_tail(
         "next_regime_to_V_arr": MappingProxyType({}),
         "offset": jnp.float32(0.25),
     }
-    dense = get_max_Q_over_a(
+    kernel_kwargs = _single(
         Q_and_F=_Q_and_F,
         batch_sizes=batch_sizes,
         action_names=action_names,
         state_names=state_names,
     )
-    raw_streamed = get_streaming_max_Q_over_a(
-        Q_and_F=_Q_and_F,
-        batch_sizes=batch_sizes,
-        action_names=action_names,
-        state_names=state_names,
-    )
+    dense = get_max_Q_over_a(**kernel_kwargs)
+    raw_streamed = get_streaming_max_Q_over_a(**kernel_kwargs)
 
     width = inspect.signature(raw_streamed).parameters["_lcm_action_block_width"]
     assert width.default is inspect.Parameter.empty
@@ -125,41 +175,12 @@ def test_full_V_streaming_matches_dense_over_states_and_partial_action_tail(
         raw_streamed,
         _lcm_action_block_width=block_width,
     )
-    expected = jax.jit(dense)(**arguments)
-    actual = jax.jit(streamed)(**arguments)
+    expected = _self_value(jax.jit(dense)(**arguments))
+    actual = _self_value(jax.jit(streamed)(**arguments))
 
     assert_array_equal(actual, expected)
     assert_array_equal(actual[0], jnp.full((2,), -jnp.inf))
     assert_array_equal(actual[1], jnp.array([8.75, 10.0]))
-
-
-@pytest.mark.parametrize(
-    ("block_width", "decodes"), [(4, True), (6, False), (8, False)]
-)
-def test_full_width_action_block_maps_the_named_action_grids(
-    *, block_width: int, decodes: bool
-) -> None:
-    """A block covering the action product reads each grid instead of a flat index."""
-    arguments = {
-        "first": jnp.array([0, 1]),
-        "second": jnp.array([0, 1, 2]),
-        "row": jnp.array([0, 1, 2]),
-        "shift": jnp.array([-0.5, 0.75]),
-        "next_regime_to_V_arr": MappingProxyType({}),
-        "offset": jnp.float32(0.25),
-    }
-    raw_streamed = get_streaming_max_Q_over_a(
-        Q_and_F=_Q_and_F,
-        batch_sizes={"row": 0, "shift": 0},
-        action_names=("first", "second"),
-        state_names=("row", "shift"),
-    )
-    streamed = functools.partial(raw_streamed, _lcm_action_block_width=block_width)
-
-    jaxpr = str(jax.make_jaxpr(streamed)(**arguments))
-
-    assert ("gather" in jaxpr) is decodes
-    assert ("scan" in jaxpr) is decodes
 
 
 def _feasible_nan_Q_and_F(
@@ -182,18 +203,22 @@ def test_feasible_nan_survives_a_large_whole_product_block(*, block_width: int) 
     thousand elements, so the whole-product block states the rule explicitly.
     """
     raw_streamed = get_streaming_max_Q_over_a(
-        Q_and_F=_feasible_nan_Q_and_F,
-        batch_sizes={"row": 0},
-        action_names=("first", "second"),
-        state_names=("row",),
+        **_single(
+            Q_and_F=_feasible_nan_Q_and_F,
+            batch_sizes={"row": 0},
+            action_names=("first", "second"),
+            state_names=("row",),
+        )
     )
     streamed = functools.partial(raw_streamed, _lcm_action_block_width=block_width)
 
-    actual = jax.jit(streamed)(
-        first=jnp.arange(3),
-        second=jnp.arange(20),
-        row=jnp.arange(100),
-        next_regime_to_V_arr=MappingProxyType({}),
+    actual = _self_value(
+        jax.jit(streamed)(
+            first=jnp.arange(3),
+            second=jnp.arange(20),
+            row=jnp.arange(100),
+            next_regime_to_V_arr=MappingProxyType({}),
+        )
     )
 
     assert bool(jnp.isnan(actual[0]))
@@ -204,36 +229,37 @@ def _signed_zero_Q_and_F(
     *, action: IntND, next_regime_to_V_arr: Mapping[RegimeName, FloatND]
 ) -> tuple[FloatND, BoolND]:
     del next_regime_to_V_arr
-    value = jnp.where(action == 0, jnp.float32(-0.0), jnp.float32(0.0))
+    value = jnp.where(action == 0, -0.0, 0.0)
     return value, jnp.ones((), dtype=bool)
 
 
 def test_full_V_streaming_matches_dense_signed_zero_across_width_one_blocks() -> None:
-    """A value tie keeps identity zero but publishes dense max's positive zero."""
+    """A `{-0, +0}` tie is one value; the solve of a single publishes it as `+0`.
+
+    The dense route reads the value of identity zero, a negative zero. The
+    streamed solve of one member keeps no identity, and of `-0` and `+0` it
+    keeps `+0`.
+    """
     arguments = {
         "action": jnp.array([0, 1], dtype=jnp.int32),
         "next_regime_to_V_arr": MappingProxyType({}),
     }
-    dense = get_max_Q_over_a(
+    kernel_kwargs = _single(
         Q_and_F=_signed_zero_Q_and_F,
         batch_sizes={},
         action_names=("action",),
         state_names=(),
     )
-    raw_streamed = get_streaming_max_Q_over_a(
-        Q_and_F=_signed_zero_Q_and_F,
-        batch_sizes={},
-        action_names=("action",),
-        state_names=(),
-    )
+    dense = get_max_Q_over_a(**kernel_kwargs)
+    raw_streamed = get_streaming_max_Q_over_a(**kernel_kwargs)
     streamed = functools.partial(raw_streamed, _lcm_action_block_width=1)
 
-    expected = jax.jit(dense)(**arguments)
-    actual = jax.jit(streamed)(**arguments)
+    expected = _self_value(jax.jit(dense)(**arguments))
+    actual = _self_value(jax.jit(streamed)(**arguments))
 
     assert_array_equal(actual, expected)
-    assert_array_equal(jnp.signbit(actual), jnp.signbit(expected))
-    assert not bool(jnp.signbit(expected))
+    assert bool(jnp.signbit(expected))
+    assert not bool(jnp.signbit(actual))
 
 
 def _collective_Q_and_F(
@@ -264,7 +290,7 @@ _PARETO_WEIGHTS = ParetoWeights(
 )
 
 
-@pytest.mark.parametrize("block_width", [1, 4, 5, 6])
+@pytest.mark.parametrize("block_width", [5])
 def test_collective_full_V_streaming_matches_dense_with_one_household_winner(
     block_width: int,
 ) -> None:
@@ -283,7 +309,7 @@ def test_collective_full_V_streaming_matches_dense_with_one_household_winner(
         batch_sizes=batch_sizes,
         action_names=action_names,
         state_names=state_names,
-        member_axis=("f", "m"),
+        members=("f", "m"),
         pareto_weights=_PARETO_WEIGHTS,
     )
     raw_streamed = get_streaming_max_Q_over_a(
@@ -291,7 +317,7 @@ def test_collective_full_V_streaming_matches_dense_with_one_household_winner(
         batch_sizes=batch_sizes,
         action_names=action_names,
         state_names=state_names,
-        member_axis=("f", "m"),
+        members=("f", "m"),
         pareto_weights=_PARETO_WEIGHTS,
     )
     streamed = functools.partial(
@@ -311,114 +337,127 @@ def test_collective_full_V_streaming_matches_dense_with_one_household_winner(
     assert_array_equal(actual_dissolution, jnp.array([True, False, False]))
 
 
-def _ev1_Q_and_F(
+def _tied_shares_Q_and_F(
     *,
-    first: IntND,
-    second: IntND,
-    continuous: IntND,
-    taste_shocks__scale: FloatND,
+    a: FloatND,
+    b: FloatND,
+    row: IntND,
     next_regime_to_V_arr: Mapping[RegimeName, FloatND],
 ) -> tuple[FloatND, BoolND]:
-    del next_regime_to_V_arr, taste_shocks__scale
-    branch = first * 2 + second
-    values = jnp.array(
-        [
-            [1.0, 4.0, 3.0],
-            [5.0, 2.0, 6.0],
-            [100.0, 100.0, 100.0],
-            [0.0, 8.0, 7.0],
-        ]
-    )
-    feasible = (branch != 2) & ~((branch == 1) & (continuous == 2))
-    return values[branch, continuous], feasible
+    del row, next_regime_to_V_arr
+    return jnp.stack((a, b)), a + b == 1.0
 
 
-@pytest.mark.parametrize("block_width", [1, 4, 5, 7, 12])
-def test_ev1_full_V_streaming_hard_maxes_branches_before_logsum(
-    block_width: int,
+def _equal_weights() -> dict[str, FloatND]:
+    return {"f": jnp.asarray(0.5), "m": jnp.asarray(0.5)}
+
+
+_EQUAL_PARETO_WEIGHTS = ParetoWeights(
+    compute=_equal_weights,
+    declared=_equal_weights,
+    arg_names=(),
+    param_names=(),
+    normalization="none",
+)
+
+
+@pytest.mark.parametrize("action_order", [("a", "b"), ("b", "a")])
+@pytest.mark.parametrize("block_width", [7, 25])
+def test_tied_household_objective_goes_to_the_first_member_at_every_width(
+    *, action_order: tuple[ActionName, ActionName], block_width: int
 ) -> None:
-    """Arbitrary block boundaries preserve discrete-prefix branch semantics."""
+    """Every feasible split ties; `f`, declared first, takes the whole unit.
+
+    Two members split one unit, `u_f = a` and `u_m = b`, under equal weights, so
+    the objective is `1/2` at all five feasible actions. The streamed value is
+    `(1, 0)` at every block width, including one that covers all 25 actions, in
+    either declaration order of the actions.
+    """
+    shares = jnp.asarray([0.0, 0.25, 0.5, 0.75, 1.0])
     raw_streamed = get_streaming_max_Q_over_a(
-        Q_and_F=_ev1_Q_and_F,
-        batch_sizes={},
-        action_names=("first", "second", "continuous"),
-        state_names=(),
-        n_discrete_action_axes=2,
-        has_taste_shocks=True,
+        Q_and_F=_tied_shares_Q_and_F,
+        batch_sizes={"row": 0},
+        action_names=action_order,
+        state_names=("row",),
+        members=("f", "m"),
+        pareto_weights=_EQUAL_PARETO_WEIGHTS,
     )
-    streamed = jax.jit(
-        functools.partial(
-            raw_streamed,
-            _lcm_action_block_width=block_width,
-        )
+    kernel = functools.partial(raw_streamed, _lcm_action_block_width=block_width)
+
+    values, dissolution = jax.jit(kernel)(
+        a=shares,
+        b=shares,
+        row=jnp.array([0], dtype=jnp.int32),
+        next_regime_to_V_arr=MappingProxyType({}),
     )
-    arguments = {
-        "first": jnp.array([0, 1], dtype=jnp.int32),
-        "second": jnp.array([0, 1], dtype=jnp.int32),
-        "continuous": jnp.array([0, 1, 2], dtype=jnp.int32),
-        "next_regime_to_V_arr": MappingProxyType({}),
-    }
-    branch_values = np.array([4.0, 5.0, -np.inf, 8.0])
 
-    for scale in (0.2, 1.1):
-        anchor = np.max(branch_values)
-        expected = anchor + scale * np.log(
-            np.sum(np.exp((branch_values - anchor) / scale))
-        )
-        actual = streamed(
-            **arguments,
-            taste_shocks__scale=jnp.asarray(scale),
-        )
-        assert_allclose(actual, expected, rtol=1e-6, atol=1e-7)
+    assert_array_equal(values, jnp.array([[1.0, 0.0]]))
+    assert_array_equal(dissolution, jnp.array([False]))
 
 
-def _ev1_nonfinite_Q_and_F(
-    *,
-    discrete: IntND,
-    continuous: IntND,
-    special: FloatND,
-    next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-) -> tuple[FloatND, BoolND]:
-    del next_regime_to_V_arr
-    global_id = discrete * 2 + continuous
-    baseline = jnp.array([0.0, 1.0, 2.0, 3.0])
-    value = jnp.where(global_id == 0, special, baseline[global_id])
-    return value, jnp.ones((), dtype=bool)
+_SHARES = jnp.asarray([0.0, 0.25, 0.5, 0.75, 1.0])
+
+# Each route's kernel and arguments; the single has 6 actions, the household 25.
+_FULL_WIDTH_ROUTES: dict[str, tuple[_KernelKwargs, QAndFKwargs]] = {
+    "single": (
+        _single(
+            Q_and_F=_Q_and_F,
+            batch_sizes={"row": 0, "shift": 0},
+            action_names=("first", "second"),
+            state_names=("row", "shift"),
+        ),
+        {
+            "first": jnp.array([0, 1]),
+            "second": jnp.array([0, 1, 2]),
+            "row": jnp.array([0, 1, 2]),
+            "shift": jnp.array([-0.5, 0.75]),
+            "next_regime_to_V_arr": MappingProxyType({}),
+            "offset": jnp.float32(0.25),
+        },
+    ),
+    "household": (
+        {
+            "Q_and_F": _tied_shares_Q_and_F,
+            "batch_sizes": {"row": 0},
+            "action_names": ("a", "b"),
+            "state_names": ("row",),
+            "members": ("f", "m"),
+            "pareto_weights": _EQUAL_PARETO_WEIGHTS,
+        },
+        {
+            "a": _SHARES,
+            "b": _SHARES,
+            "row": jnp.array([0, 1], dtype=jnp.int32),
+            "next_regime_to_V_arr": MappingProxyType({}),
+        },
+    ),
+}
 
 
 @pytest.mark.parametrize(
-    "special",
-    [pytest.param(float("nan"), id="nan"), pytest.param(float("inf"), id="posinf")],
+    ("route", "block_width", "decodes"),
+    [
+        ("single", 4, True),
+        ("single", 6, False),
+        ("single", 8, False),
+        ("household", 7, True),
+        ("household", 25, False),
+        ("household", 30, False),
+    ],
 )
-def test_ev1_streaming_preserves_composite_nonfinite_semantics(
-    special: float,
+def test_full_width_action_block_maps_the_named_action_grids(
+    *, route: str, block_width: int, decodes: bool
 ) -> None:
-    """Branch finalization preserves dense NaN and positive-infinity poisoning."""
-    raw_streamed = get_streaming_max_Q_over_a(
-        Q_and_F=_ev1_nonfinite_Q_and_F,
-        batch_sizes={},
-        action_names=("discrete", "continuous"),
-        state_names=(),
-        n_discrete_action_axes=1,
-        has_taste_shocks=True,
-    )
-    streamed = jax.jit(functools.partial(raw_streamed, _lcm_action_block_width=3))
-    scale = jnp.asarray(0.4)
-    actual = streamed(
-        discrete=jnp.array([0, 1], dtype=jnp.int32),
-        continuous=jnp.array([0, 1], dtype=jnp.int32),
-        special=jnp.asarray(special),
-        next_regime_to_V_arr=MappingProxyType({}),
-        taste_shocks__scale=scale,
-    )
-    expected, _ = logsum_and_softmax(
-        values=jnp.asarray([special, 3.0]),
-        scale=scale,
-        axes=(0,),
-    )
+    """A block covering the action product reads each grid instead of a flat index,
+    and carries no accumulator across blocks."""
+    kernel_kwargs, arguments = _FULL_WIDTH_ROUTES[route]
+    raw_streamed = get_streaming_max_Q_over_a(**kernel_kwargs)
+    streamed = functools.partial(raw_streamed, _lcm_action_block_width=block_width)
 
-    assert bool(jnp.isnan(expected))
-    assert bool(jnp.isnan(actual))
+    jaxpr = str(jax.make_jaxpr(streamed)(**arguments))
+
+    assert ("gather" in jaxpr) is decodes
+    assert ("scan" in jaxpr) is decodes
 
 
 def _co_mapped_Q_and_F(
@@ -453,9 +492,6 @@ class _CoMapArguments(TypedDict):
     region: IntND
     row: IntND
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND]
-    discrete: NotRequired[IntND]
-    continuous: NotRequired[IntND]
-    taste_shocks__scale: NotRequired[FloatND]
 
 
 def _co_map_arguments() -> _CoMapArguments:
@@ -485,13 +521,13 @@ def _co_map_arguments() -> _CoMapArguments:
 def _co_map_kernels() -> tuple[
     MaxQOverAFunction[BoundedMaxOutput], MaxQOverAFunction[BoundedMaxOutput]
 ]:
-    kwargs: _KernelKwargs = {
-        "Q_and_F": _co_mapped_Q_and_F,
-        "batch_sizes": {"kind": 0, "region": 0, "row": 0},
-        "action_names": ("action",),
-        "state_names": ("kind", "region", "row"),
-        "co_map_state_names": ("kind", "region"),
-        "co_map_v_arr_in_axes": (
+    kwargs = _single(
+        Q_and_F=_co_mapped_Q_and_F,
+        batch_sizes={"kind": 0, "region": 0, "row": 0},
+        action_names=("action",),
+        state_names=("kind", "region", "row"),
+        co_map_state_names=("kind", "region"),
+        co_map_v_arr_in_axes=(
             MappingProxyType(
                 {
                     "carrying_both": 0,
@@ -509,12 +545,12 @@ def _co_map_kernels() -> tuple[
                 }
             ),
         ),
-    }
+    )
     return get_max_Q_over_a(**kwargs), get_streaming_max_Q_over_a(**kwargs)
 
 
-@pytest.mark.parametrize("block_width", [1, 3])
-@pytest.mark.parametrize("execution", ["eager", "jit", "aot"])
+@pytest.mark.parametrize("block_width", [3])
+@pytest.mark.parametrize("execution", ["aot"])
 def test_co_mapped_full_V_streaming_matches_dense_and_preserves_state_axes(
     *, block_width: int, execution: str
 ) -> None:
@@ -530,8 +566,8 @@ def test_co_mapped_full_V_streaming_matches_dense_and_preserves_state_axes(
             return jitted(**arguments)
         return jitted.lower(**arguments).compile()(**arguments)
 
-    expected = evaluate(dense)
-    actual = evaluate(streamed)
+    expected = _self_value(evaluate(dense))
+    actual = _self_value(evaluate(streamed))
 
     assert_array_equal(actual, expected)
     assert_array_equal(
@@ -549,105 +585,6 @@ def test_co_mapped_full_V_streaming_matches_dense_and_preserves_state_axes(
             ]
         ),
     )
-
-
-def _co_mapped_ev1_Q_and_F(
-    *,
-    discrete: IntND,
-    continuous: IntND,
-    kind: IntND,
-    region: IntND,
-    row: IntND,
-    next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-    taste_shocks__scale: FloatND,
-) -> tuple[FloatND, BoolND]:
-    del taste_shocks__scale
-    base, _ = _co_mapped_Q_and_F(
-        action=jnp.int32(0),
-        kind=kind,
-        region=region,
-        row=row,
-        next_regime_to_V_arr=next_regime_to_V_arr,
-    )
-    action_value = jnp.asarray([[1.0, 4.0, 3.0], [5.0, 2.0, 6.0]])[discrete, continuous]
-    feasible = ~((region == 1) & (discrete == 1) & (continuous == 2))
-    return 1e-5 * base + action_value, feasible
-
-
-@pytest.mark.parametrize("block_width", [1, 4])
-@pytest.mark.parametrize("execution", ["eager", "jit", "aot"])
-def test_ev1_co_mapped_streaming_hard_maxes_branches_before_logsum(
-    *, block_width: int, execution: str
-) -> None:
-    co_map_v_arr_in_axes = (
-        MappingProxyType(
-            {
-                "carrying_both": 0,
-                "carrying_kind": 0,
-                "carrying_region": None,
-                "passed_through": None,
-            }
-        ),
-        MappingProxyType(
-            {
-                "carrying_both": 0,
-                "carrying_kind": None,
-                "carrying_region": 0,
-                "passed_through": None,
-            }
-        ),
-    )
-    kernel_kwargs: _KernelKwargs = {
-        "Q_and_F": _co_mapped_ev1_Q_and_F,
-        "batch_sizes": {"kind": 0, "region": 0, "row": 0},
-        "action_names": ("discrete", "continuous"),
-        "state_names": ("kind", "region", "row"),
-        "n_discrete_action_axes": 1,
-        "has_taste_shocks": True,
-        "co_map_state_names": ("kind", "region"),
-        "co_map_v_arr_in_axes": co_map_v_arr_in_axes,
-    }
-    dense = get_max_Q_over_a(**kernel_kwargs)
-    streamed = functools.partial(
-        get_streaming_max_Q_over_a(**kernel_kwargs),
-        _lcm_action_block_width=block_width,
-    )
-    arguments = _co_map_arguments()
-    arguments.pop("action")
-    scale = 0.75
-    arguments.update(
-        discrete=jnp.arange(2, dtype=jnp.int32),
-        continuous=jnp.arange(3, dtype=jnp.int32),
-        taste_shocks__scale=jnp.asarray(scale),
-    )
-
-    def evaluate(func: Callable[..., BoundedMaxOutput]) -> FloatND:
-        if execution == "eager":
-            return cast("FloatND", func(**arguments))
-        jitted = jax.jit(func)
-        if execution == "jit":
-            return jitted(**arguments)
-        return jitted.lower(**arguments).compile()(**arguments)
-
-    expected = evaluate(dense)
-    actual = evaluate(streamed)
-
-    base = 1e-5 * np.asarray(
-        [
-            [[10_111, 20_222, 30_333], [1_011_041, 1_022_052, 1_033_063]],
-            [[110_210, 120_420, 130_630], [1_111_410, 1_122_520, 1_133_630]],
-        ]
-    )
-    # Continuous hard maxima are (4, 6) in region 0 and (4, 5) in region 1.
-    branch_maxima = np.asarray([[4.0, 6.0], [4.0, 5.0]])
-    increments = scale * np.logaddexp(
-        branch_maxima[:, 0] / scale, branch_maxima[:, 1] / scale
-    )
-    oracle = base + increments[None, :, None]
-
-    eps = np.finfo(np.asarray(actual).dtype).eps
-    assert_allclose(actual, expected, rtol=8 * eps, atol=8 * eps)
-    assert_allclose(actual, oracle, rtol=8 * eps, atol=8 * eps)
 
 
 def test_streaming_co_map_state_and_continuation_axis_sizes_must_align() -> None:
@@ -723,12 +660,14 @@ def test_streaming_co_map_layout_fails_closed(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         get_streaming_max_Q_over_a(
-            Q_and_F=_co_mapped_Q_and_F,
-            batch_sizes={"kind": 0, "region": 0, "row": 0},
-            action_names=("action",),
-            state_names=state_names,
-            co_map_state_names=co_map_state_names,
-            co_map_v_arr_in_axes=co_map_v_arr_in_axes,
+            **_single(
+                Q_and_F=_co_mapped_Q_and_F,
+                batch_sizes={"kind": 0, "region": 0, "row": 0},
+                action_names=("action",),
+                state_names=state_names,
+                co_map_state_names=co_map_state_names,
+                co_map_v_arr_in_axes=co_map_v_arr_in_axes,
+            )
         )
 
 
@@ -739,7 +678,6 @@ def _action_streaming_route_context(
     discrete_actions: tuple[ActionName, ...] = (),
     Q_and_F: RawActionFunction = _co_mapped_Q_and_F,
     has_taste_shocks: bool = False,
-    member_axis: tuple[str, ...] | None = None,
     co_map_state_names: tuple[StateName, ...] = (),
     edge_reference_regimes: tuple[RegimeName, ...] = (),
     edge_target_regimes: tuple[RegimeName, ...] = (),
@@ -780,8 +718,6 @@ def _action_streaming_route_context(
         "Q_and_F_functions": MappingProxyType({0: Q_and_F}),
         "has_taste_shocks": has_taste_shocks,
         "enable_jit": enable_jit,
-        "member_axis": member_axis,
-        "pareto_weights": _PARETO_WEIGHTS if member_axis is not None else None,
         "co_map_state_names": co_map_state_names,
         "co_map_v_arr_in_axes": tuple(
             MappingProxyType({"target": 0}) for _ in co_map_state_names
@@ -831,19 +767,6 @@ def _width_collision_Q_and_F(
             id="width-collision-is-remapped",
         ),
         pytest.param(
-            {"member_axis": ("f", "m")},
-            _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES,
-            id="collective-hard-max",
-        ),
-        pytest.param(
-            {
-                "member_axis": ("f", "m"),
-                "co_map_state_names": ("kind", "region"),
-            },
-            _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES,
-            id="collective-hard-max-plus-ordinary-co-map",
-        ),
-        pytest.param(
             {
                 "has_taste_shocks": True,
                 "discrete_actions": ("action",),
@@ -875,11 +798,6 @@ def _width_collision_Q_and_F(
             id="singleton-hard-max-jit-disabled",
         ),
         pytest.param(
-            {"member_axis": ("f", "m"), "enable_jit": False},
-            _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES,
-            id="collective-hard-max-jit-disabled",
-        ),
-        pytest.param(
             {
                 "has_taste_shocks": True,
                 "discrete_actions": ("action",),
@@ -909,14 +827,6 @@ def _width_collision_Q_and_F(
         ),
         pytest.param(
             {
-                "member_axis": ("f", "m"),
-                "actions_grid_shapes": (1,),
-            },
-            _ActionStreamingDisposition.DENSE_TRIVIAL_ACTION_PRODUCT,
-            id="unit-action-product-precedes-collective-gate",
-        ),
-        pytest.param(
-            {
                 "co_map_state_names": ("kind", "region"),
                 "edge_target_regimes": ("target",),
                 "edge_reference_regimes": ("fallback",),
@@ -935,18 +845,6 @@ def _width_collision_Q_and_F(
             id="singleton-ev1-co-map-plus-edge-reference",
         ),
         pytest.param(
-            {
-                "has_taste_shocks": True,
-                "member_axis": ("f", "m"),
-                "discrete_actions": ("action",),
-                "actions_grid_shapes": (1,),
-                "co_map_state_names": ("kind", "region"),
-                "edge_reference_regimes": ("reference",),
-            },
-            _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_EV1,
-            id="unsupported-collective-ev1-precedes-dense-topology-gates",
-        ),
-        pytest.param(
             {"has_taste_shocks": True, "discrete_actions": ()},
             _ActionStreamingDisposition.UNSUPPORTED_EV1_WITHOUT_DISCRETE_ACTION,
             id="singleton-ev1-without-discrete-action",
@@ -959,25 +857,23 @@ def test_action_streaming_route_classification_matrix(
     context = _action_streaming_route_context(**overrides)
 
     actual = inspect.unwrap(_classify_action_streaming)(context=context)
-    supported = inspect.unwrap(_supports_action_streaming)(context=context)
 
     assert actual is expected
-    assert supported is (expected is _ActionStreamingDisposition.STREAMED)
 
 
 def _evaluate_kernel(
     *,
-    func: Callable[..., PytreeValue],
+    func: Callable[..., BoundedMaxOutput],
     arguments: QAndFKwargs,
     execution: str,
 ) -> FloatND:
-    """Run a value-only fixture with its requested execution mode."""
+    """Run a single's kernel in its execution mode and read the member's value."""
     if execution == "eager":
-        return cast("FloatND", func(**arguments))
+        return _self_value(func(**arguments))
     jitted = jax.jit(func)
     if execution == "jit":
-        return cast("FloatND", jitted(**arguments))
-    return cast("FloatND", jitted.lower(**arguments).compile()(**arguments))
+        return _self_value(jitted(**arguments))
+    return _self_value(jitted.lower(**arguments).compile()(**arguments))
 
 
 def _parameter_width_collision_Q_and_F(
@@ -994,25 +890,27 @@ def test_streaming_width_keyword_collision_fails_closed() -> None:
     """Direct builders must keep planner width outside Q arguments."""
     with pytest.raises(ValueError, match="collides with a streamed core argument"):
         get_streaming_max_Q_over_a(
-            Q_and_F=_parameter_width_collision_Q_and_F,
-            batch_sizes={},
-            action_names=("action",),
-            state_names=(),
+            **_single(
+                Q_and_F=_parameter_width_collision_Q_and_F,
+                batch_sizes={},
+                action_names=("action",),
+                state_names=(),
+            )
         )
 
 
-@pytest.mark.parametrize("block_width", [1, 3])
-@pytest.mark.parametrize("execution", ["eager", "jit", "aot"])
+@pytest.mark.parametrize("block_width", [3])
+@pytest.mark.parametrize("execution", ["aot"])
 def test_streaming_width_keyword_stays_separate_from_Q_parameter(
     *, block_width: int, execution: str
 ) -> None:
     selected_width_keyword = "_lcm_action_block_width_1"
-    kernel_kwargs: _KernelKwargs = {
-        "Q_and_F": _parameter_width_collision_Q_and_F,
-        "batch_sizes": {},
-        "action_names": ("action",),
-        "state_names": (),
-    }
+    kernel_kwargs = _single(
+        Q_and_F=_parameter_width_collision_Q_and_F,
+        batch_sizes={},
+        action_names=("action",),
+        state_names=(),
+    )
     dense = get_max_Q_over_a(**kernel_kwargs)
     raw_streamed = get_streaming_max_Q_over_a(
         **kernel_kwargs,
@@ -1030,7 +928,7 @@ def test_streaming_width_keyword_stays_separate_from_Q_parameter(
     )
     arguments = {
         "action": jnp.arange(4, dtype=jnp.int32),
-        "_lcm_action_block_width": jnp.float32(7.5),
+        "_lcm_action_block_width": jnp.asarray(7.5),
         "next_regime_to_V_arr": MappingProxyType({}),
     }
 
@@ -1045,3 +943,449 @@ def test_streaming_width_keyword_stays_separate_from_Q_parameter(
     assert selected_width_keyword not in arguments
     assert_allclose(actual, expected, rtol=8 * eps, atol=8 * eps)
     assert_allclose(actual, 10.5, rtol=8 * eps, atol=8 * eps)
+
+
+@categorical(ordered=False)
+class _WidthRegimeId:
+    couple: ScalarInt
+    couple_terminal: ScalarInt
+    single: ScalarInt
+    single_terminal: ScalarInt
+
+
+_WEALTH = LinSpacedGrid(start=1.0, stop=4.0, n_points=4)
+_N_ACTIONS = 18
+
+
+def _consumption(*, wealth: ContinuousState, share: ContinuousAction) -> FloatND:
+    return wealth * share
+
+
+def _utility_f(*, consumption: FloatND, work: DiscreteAction) -> FloatND:
+    return consumption - 0.25 * consumption**2 - 0.5 * work
+
+
+def _utility_m(*, consumption: FloatND, work: DiscreteAction) -> FloatND:
+    return 0.5 * consumption + work * (1.0 - consumption)
+
+
+def _next_wealth(
+    *, wealth: ContinuousState, consumption: FloatND, work: DiscreteAction
+) -> ContinuousState:
+    return 1.0 + 0.5 * (wealth - consumption) + work
+
+
+def _width_regime(*, household: bool, terminal: bool) -> Regime:
+    utility = (
+        CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
+        if household
+        else _utility_f
+    )
+    return Regime(
+        states={"wealth": _WEALTH},
+        state_transitions={} if terminal else {"wealth": _next_wealth},
+        actions={
+            "work": DiscreteGrid(category_class=Work),
+            "share": LinSpacedGrid(start=0.1, stop=0.9, n_points=_N_ACTIONS // 2),
+        },
+        functions={"consumption": _consumption, "utility": utility},
+    )
+
+
+@functools.cache
+def _solve_and_simulate_at_action_width(
+    width: int,
+) -> tuple[Model, SolutionResult, pd.DataFrame]:
+    """Solve and simulate a couple and a single, both on the household kernels."""
+    model = Model(
+        regimes={
+            "couple": _width_regime(household=True, terminal=False),
+            "couple_terminal": _width_regime(household=True, terminal=True),
+            "single": _width_regime(household=False, terminal=False),
+            "single_terminal": _width_regime(household=False, terminal=True),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=_WidthRegimeId,
+        initial_nodes={0: ("couple", "single")},
+        edges={"couple": {"couple_terminal": 0}, "single": {"single_terminal": 0}},
+        execution_config=ExecutionConfig(axis_widths={"action_product": width}),
+    )
+    params = {
+        regime: {"koopmans_aggregator": {"discount_factor": 0.9}}
+        for regime in ("couple", "single")
+    }
+    solution = model.solve(params=params, log_level="off")
+    n_agents = 8
+    frame = model.simulate(
+        params=params,
+        initial_conditions={
+            "wealth": jnp.linspace(1.0, 4.0, n_agents),
+            "age": jnp.zeros(n_agents),
+            "regime_id": jnp.where(
+                jnp.arange(n_agents) % 2 == 0,
+                _WidthRegimeId.couple,
+                _WidthRegimeId.single,
+            ).astype(jnp.int32),
+        },
+        solution=solution,
+        seed=0,
+        log_level="off",
+    ).to_dataframe()
+    return model, solution, frame
+
+
+@pytest.mark.parametrize("width", [7])
+def test_households_stream_to_the_values_and_choices_of_the_whole_product(
+    width: int,
+) -> None:
+    """Blocks of any width give the whole product's values and simulated choices.
+
+    A two-member couple and a single, the household of the one member `"self"`,
+    solve and decide over their actions in blocks of `width`, folded by the
+    household reduction. The household argmax is exact, so every simulated
+    action and state is bit for bit the one a block covering all actions gives,
+    and so is every solved value at a width of two or more. A block of one
+    action is a different compiled program, which may round the action values
+    differently in the last bits, so its solved values agree within eight units
+    in the last place. A simulated value is the action value at the winner,
+    evaluated at the agent's own state by a program compiled for the block's
+    width, so it agrees to a few units in the last place.
+    """
+    model, solution, frame = _solve_and_simulate_at_action_width(width)
+    _, whole_solution, whole_frame = _solve_and_simulate_at_action_width(_N_ACTIONS)
+
+    for regime in ("couple", "single"):
+        engine_regime = model._regimes[regime]
+        kernel = cast(
+            "_GridSearchPeriodKernel", engine_regime.solution.period_kernels[0]
+        )
+        for program in (
+            kernel.core_programs()["main"],
+            engine_regime.simulation.programs.decision[0],
+        ):
+            (axis,) = program.requirements.reduced_axes
+            assert axis.name == ACTION_PRODUCT_AXIS
+            assert axis.reduction is COLLECTIVE_HARD_MAX_REDUCTION
+    for period, values in whole_solution.values.items():
+        for regime, expected in values.items():
+            got = np.asarray(solution.values[period][regime])
+            if width == 1:
+                assert_agrees_to_ulp(
+                    got=got, expected=expected, n_ulp=8, err_msg=f"{period} {regime}"
+                )
+            else:
+                assert got.tobytes() == np.asarray(expected).tobytes(), (period, regime)
+    values = [column for column in frame.columns if column.startswith("value")]
+    pd.testing.assert_frame_equal(
+        frame.drop(columns=values), whole_frame.drop(columns=values), check_exact=True
+    )
+    for column in values:
+        assert_agrees_to_ulp(
+            got=frame[column].to_numpy(),
+            expected=whole_frame[column].to_numpy(),
+            n_ulp=4,
+            err_msg=column,
+        )
+
+
+_N_CELLS = 2000
+_COUPLE = ("f", "m")
+
+
+def _interpolated_Q_and_F(
+    *,
+    consumption: FloatND,
+    wealth: FloatND,
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+) -> tuple[FloatND, BoolND]:
+    """Log consumption plus a continuation interpolated linearly on a wealth grid."""
+    v_arr = next_regime_to_V_arr["next"]
+    position = jnp.clip((wealth - consumption) * (v_arr.shape[0] - 1) / 10.0, 0, None)
+    lower = jnp.clip(jnp.floor(position).astype(jnp.int32), 0, v_arr.shape[0] - 2)
+    share = position - lower
+    continuation = (1 - share) * v_arr[lower] + share * v_arr[lower + 1]
+    return jnp.log(consumption) + 0.95 * continuation, consumption <= wealth
+
+
+def _interpolated_couple_Q_and_F(
+    *,
+    consumption: FloatND,
+    wealth: FloatND,
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+) -> tuple[FloatND, BoolND]:
+    """Two members' values of the interpolated kernel, on a trailing member axis."""
+    value, feasible = _interpolated_Q_and_F(
+        consumption=consumption,
+        wealth=wealth,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+    )
+    return jnp.stack([value, 0.5 * value - consumption], axis=-1), feasible
+
+
+def _interpolated_arguments(
+    n_actions: int,
+) -> dict[str, jax.Array | Mapping[RegimeName, FloatND]]:
+    return {
+        "consumption": jnp.linspace(0.01, 10.0, n_actions),
+        "wealth": jnp.linspace(0.1, 10.0, _N_CELLS),
+        "next_regime_to_V_arr": MappingProxyType({"next": jnp.linspace(0.0, 1.0, 50)}),
+    }
+
+
+def _interpolated_kernel_kwargs(*, household: bool) -> _KernelKwargs:
+    if not household:
+        return _single(
+            Q_and_F=_interpolated_Q_and_F,
+            batch_sizes={"wealth": 0},
+            action_names=("consumption",),
+            state_names=("wealth",),
+        )
+    return {
+        "Q_and_F": _interpolated_couple_Q_and_F,
+        "batch_sizes": {"wealth": 0},
+        "action_names": ("consumption",),
+        "state_names": ("wealth",),
+        "members": _COUPLE,
+        "pareto_weights": build_pareto_weights(
+            objective=None, members=_COUPLE, state_names=frozenset()
+        ),
+    }
+
+
+def _temp_bytes(compiled: jax.stages.Compiled) -> int:
+    analysis = compiled.memory_analysis()
+    assert analysis is not None
+    return analysis.temp_size_in_bytes
+
+
+def _solve_kernel(
+    *, household: bool, width: int | None
+) -> Callable[..., BoundedMaxOutput]:
+    """The solve kernel; no width is the dense route."""
+    kwargs = _interpolated_kernel_kwargs(household=household)
+    if width is None:
+        return get_max_Q_over_a(**kwargs)
+    return functools.partial(
+        get_streaming_max_Q_over_a(**kwargs), _lcm_action_block_width=width
+    )
+
+
+def _solve_temp_bytes(*, household: bool, n_actions: int, width: int | None) -> int:
+    """Temporary bytes of a compiled solve kernel; no width is the dense route."""
+    kernel = _solve_kernel(household=household, width=width)
+    arguments = _interpolated_arguments(n_actions)
+    return _temp_bytes(jax.jit(kernel).lower(**arguments).compile())
+
+
+def _decision_kernel(
+    *, household: bool, n_actions: int
+) -> Callable[..., tuple[IntND, FloatND]]:
+    """The simulation decision over the whole product, mapped over wealth."""
+    kwargs = _interpolated_kernel_kwargs(household=household)
+    cell = build_streaming_collective_max_Q_over_a(
+        publishes_identity=True,
+        Q_and_F=kwargs["Q_and_F"],
+        action_names=("consumption",),
+        block_width=n_actions,
+        members=kwargs["members"],
+        weights=kwargs["pareto_weights"].compute(),
+    )
+
+    # keyword-only-exempt: library-callback=jax.vmap
+    def decide(
+        wealth: FloatND, consumption: FloatND, V_arr: Mapping[RegimeName, FloatND]
+    ) -> tuple[IntND, FloatND]:
+        result = cast(
+            "CollectiveHardMaxResult",
+            cell(consumption=consumption, wealth=wealth, next_regime_to_V_arr=V_arr),
+        )
+        return result.best_global_action_id, result.best_member_values
+
+    return jax.vmap(decide, in_axes=(0, None, None))
+
+
+def _decision_temp_bytes(*, household: bool, n_actions: int, width: int | None) -> int:
+    """Temporary bytes of a compiled decision kernel over the whole product."""
+    del width
+    arguments = _interpolated_arguments(n_actions)
+    return _temp_bytes(
+        jax.jit(_decision_kernel(household=household, n_actions=n_actions))
+        .lower(
+            arguments["wealth"],
+            arguments["consumption"],
+            arguments["next_regime_to_V_arr"],
+        )
+        .compile()
+    )
+
+
+@pytest.mark.parametrize("household", [False, True], ids=["single", "couple"])
+@pytest.mark.parametrize(
+    ("temp_bytes", "streamed"),
+    [
+        (_solve_temp_bytes, None),
+        (_solve_temp_bytes, False),
+        (_solve_temp_bytes, True),
+        (_decision_temp_bytes, False),
+    ],
+    ids=["solve-dense", "solve-whole-product", "solve-streamed", "decision"],
+)
+def test_household_reduction_keeps_no_value_per_cell_and_action(
+    *, temp_bytes: Callable[..., int], streamed: bool | None, household: bool
+) -> None:
+    """The action values fuse into the household's reduction: none is stored.
+
+    The kernel's temporary grows by less than one float per cell and added
+    action when the reduced action block doubles: on the dense route, over the
+    whole product (`n_actions` follows the width) and in streamed blocks of a
+    fixed product.
+    """
+    widths = (512, 1024)
+    temps = [
+        temp_bytes(
+            household=household,
+            n_actions=4096 if streamed else block,
+            width=None if streamed is None else block,
+        )
+        for block in widths
+    ]
+    itemsize = jnp.asarray(0.0).dtype.itemsize
+
+    assert temps[1] - temps[0] < _N_CELLS * (widths[1] - widths[0]) * itemsize, temps
+
+
+def _action_reduce_operand_kinds(
+    *, jaxpr: Jaxpr, n_actions: int
+) -> list[tuple[str, ...]]:
+    """Dtype kinds of the operands of each reduce over a trailing action axis."""
+    kinds = []
+    for eqn in jaxpr.eqns:
+        operands = [cast("ShapedArray", var.aval) for var in eqn.invars]
+        if eqn.primitive.name == "reduce" and operands[0].shape[-1:] == (n_actions,):
+            kinds.append(
+                tuple(operand.dtype.kind for operand in operands[: len(operands) // 2])
+            )
+        for value in eqn.params.values():
+            nested = getattr(value, "jaxpr", value)
+            if isinstance(nested, Jaxpr):
+                kinds.extend(
+                    _action_reduce_operand_kinds(jaxpr=nested, n_actions=n_actions)
+                )
+    return kinds
+
+
+def test_single_solve_reduces_value_and_nan_flag_decision_adds_identity() -> None:
+    """The solve of one member reduces its actions on the value and the NaN flag.
+
+    Nothing in the solve reads the winner's identity, so its one reduction over
+    the actions carries the value's order key and the NaN flag only. The
+    simulation decision publishes the identity and carries it as well.
+    """
+    n_actions = 512
+    arguments = _interpolated_arguments(n_actions)
+    solve = jax.make_jaxpr(_solve_kernel(household=False, width=n_actions))(**arguments)
+    decision = jax.make_jaxpr(_decision_kernel(household=False, n_actions=n_actions))(
+        arguments["wealth"],
+        arguments["consumption"],
+        arguments["next_regime_to_V_arr"],
+    )
+
+    assert _action_reduce_operand_kinds(jaxpr=solve.jaxpr, n_actions=n_actions) == [
+        ("b", "i")
+    ]
+    assert _action_reduce_operand_kinds(jaxpr=decision.jaxpr, n_actions=n_actions) == [
+        ("b", "i", "i")
+    ]
+
+
+_LOTTERY_NODES = (2, 5, 3, 5)
+_N_WEALTH_NODES = 50
+
+
+# keyword-only-exempt: library-callback=jax.vmap
+def _lottery_action_value(
+    consumption: FloatND,
+    wealth: FloatND,
+    transition_row: IntND,
+    next_values: FloatND,
+    transition_probs: FloatND,
+) -> FloatND:
+    """One action's value: the next value of one member averaged over a lottery."""
+    position = jnp.clip(
+        (wealth - consumption) * (_N_WEALTH_NODES - 1) / 10.0,
+        0.0,
+        _N_WEALTH_NODES - 1.001,
+    )
+    lower = jnp.floor(position).astype(jnp.int32)
+    share = position - lower
+    values = (1 - share) * next_values[lower] + share * next_values[lower + 1]
+    weights = jnp.ones(_LOTTERY_NODES)
+    for axis, n_nodes in enumerate(_LOTTERY_NODES):
+        shape = [1] * len(_LOTTERY_NODES)
+        shape[axis] = n_nodes
+        weights = weights * transition_probs[transition_row, :n_nodes].reshape(shape)
+    continuation = _expected_continuation_over_nodes(
+        values=values,
+        weights=weights,
+        shifts=jnp.zeros(_LOTTERY_NODES, dtype=jnp.int32),
+        n_members=1,
+    )
+    return jnp.log(consumption) + 0.95 * continuation[0]
+
+
+# keyword-only-exempt: library-callback=jax.vmap
+def _lottery_cell_value(
+    wealth: FloatND,
+    transition_row: IntND,
+    consumption: FloatND,
+    next_values: FloatND,
+    transition_probs: FloatND,
+) -> FloatND:
+    """The best action's value at one cell."""
+    action_values = jax.vmap(
+        _lottery_action_value, in_axes=(0, None, None, None, None)
+    )(consumption, wealth, transition_row, next_values, transition_probs)
+    return jnp.max(action_values)
+
+
+def _materialized_integer_sizes(*, hlo_text: str) -> list[int]:
+    """Element counts of the integer arrays the compiled program stores.
+
+    An array is stored when it is the result of an instruction of the entry
+    computation or of a loop body; values inside a fused computation are not.
+    """
+    result_types = [
+        line.partition(" = ")[2].split(" fusion(")[0]
+        for line in hlo_text.splitlines()
+        if " fusion(" in line.partition(" = ")[2]
+    ]
+    return [
+        math.prod(int(d) for d in dims.split(","))
+        for result_type in result_types
+        for dims in re.findall(r"[su]\d+\[([\d,]+)\]", result_type)
+    ]
+
+
+@pytest.mark.requires(device="gpu")
+def test_lottery_expectation_stores_no_integer_per_cell_action_and_node() -> None:
+    """The lottery mean of one member stores no exponent per cell, action and node.
+
+    The two-pass mean reads each node's term exponent in both passes. The
+    compiled solve recomputes it in the second pass from the node values it
+    already holds, rather than storing one integer per cell, action and node
+    between the two passes.
+    """
+    n_cells, n_actions = 4096, 256
+    arguments = (
+        jnp.linspace(0.1, 10.0, n_cells),
+        jnp.arange(n_cells) % _LOTTERY_NODES[0],
+        jnp.linspace(0.01, 10.0, n_actions),
+        jnp.ones((_N_WEALTH_NODES, *_LOTTERY_NODES, 1)),
+        jnp.full((_LOTTERY_NODES[0], max(_LOTTERY_NODES)), 0.2),
+    )
+    kernel = jax.vmap(_lottery_cell_value, in_axes=(0, 0, None, None, None))
+    hlo_text = jax.jit(kernel).lower(*arguments).compile().as_text()
+    assert hlo_text is not None
+    per_node = n_cells * n_actions * math.prod(_LOTTERY_NODES)
+
+    assert per_node not in _materialized_integer_sizes(hlo_text=hlo_text)

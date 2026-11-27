@@ -166,7 +166,7 @@ def _reference_panel(
 ) -> list[tuple[int, str, int, int]]:
     """Enumerate the work choice once per household, projecting the original state."""
     rows = []
-    for subject_id, (original, role) in enumerate(zip(coordinates, roles, strict=True)):
+    for agent_id, (original, role) in enumerate(zip(coordinates, roles, strict=True)):
         if original != 1:
             regime, coordinate = "a", original
         elif role == "f":
@@ -175,7 +175,7 @@ def _reference_panel(
             regime, coordinate = "b", original
         actions = [action for action in (0, 1) if regime != "a" or coordinate != 1]
         work = max(actions, key=lambda action: coordinate + action)
-        rows.append((subject_id, regime, coordinate, work))
+        rows.append((agent_id, regime, coordinate, work))
     return rows
 
 
@@ -209,10 +209,10 @@ def _simulate(
 
 def _period_one_panel(*, result: SimulationResult) -> list[tuple[int, str, int, int]]:
     panel = result.to_dataframe(use_categorical_codes=True)
-    rows = panel.loc[panel["period"] == 1].sort_values("subject_id")
+    rows = panel.loc[panel["period"] == 1].sort_values("agent_id")
     return list(
         zip(
-            rows["subject_id"],
+            rows["agent_id"],
             rows["regime_name"],
             rows["x"],
             rows["work"],

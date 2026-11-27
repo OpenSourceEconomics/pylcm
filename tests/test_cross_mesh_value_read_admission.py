@@ -69,7 +69,7 @@ from tests.conftest import AttachResolvedOutputLayoutKwargs, ResidentInventoryKw
 
 
 class _ExecutionArguments(TypedDict, closed=True, total=False):
-    simulation_sharding: Literal["legacy", "subjects"]
+    simulation_sharding: Literal["legacy", "agents"]
     axis_widths: Mapping[str, int]
     device_memory_bytes: int
 
@@ -567,13 +567,13 @@ def report_indivisible_extents() -> _IndivisibleReport:
     return report
 
 
-def report_subject_sharded_simulation(*, decimal: int) -> _SimulationReport:
-    """Report the two-axis model simulated with subjects spread over the devices."""
+def report_agent_sharded_simulation(*, decimal: int) -> _SimulationReport:
+    """Report the two-axis model simulated with agents spread over the devices."""
     model = build_model(
         devices=tuple(range(_N_DEVICES)),
         sharded=("a", "b"),
-        simulation_sharding="subjects",
-        axis_widths={"subject": 4},
+        simulation_sharding="agents",
+        axis_widths={"agent": 4},
     )
     reference = _reference_model()
     mismatch = _simulation_mismatch(
@@ -859,7 +859,7 @@ def _run_in_child_process(
 def _run_in_child_process(
     *,
     entry_point: Literal[
-        "report_subject_sharded_simulation", "report_solution_round_trip"
+        "report_agent_sharded_simulation", "report_solution_round_trip"
     ],
     n_devices: int,
     arguments: str = "",
@@ -947,10 +947,10 @@ def indivisible() -> _IndivisibleReport:
 
 
 @pytest.fixture(scope="module")
-def subject_sharded() -> _SimulationReport:
-    """Return the subject-sharded simulation report from six devices."""
+def agent_sharded() -> _SimulationReport:
+    """Return the agent-sharded simulation report from six devices."""
     return _run_in_child_process(
-        entry_point="report_subject_sharded_simulation",
+        entry_point="report_agent_sharded_simulation",
         n_devices=_N_DEVICES,
         arguments=_tolerance_argument(),
     )
@@ -995,11 +995,11 @@ def test_the_two_regimes_take_meshes_of_their_own_extents(
 def test_each_regimes_value_leads_with_its_own_category_axis(
     two_axis: _PlacementReport,
 ) -> None:
-    """A regime's value carries the axis of the state it retains, and no other."""
+    """A regime's value carries the axis of the state it retains and its member axis."""
     assert (
         two_axis["value_shapes"]["working"],
         two_axis["value_shapes"]["retired"],
-    ) == ([_A_EXTENT, _N_WEALTH], [_B_EXTENT, _N_WEALTH])
+    ) == ([_A_EXTENT, _N_WEALTH, 1], [_B_EXTENT, _N_WEALTH, 1])
 
 
 def test_a_value_stored_on_another_mesh_is_read_as_a_cross_mesh_copy(
@@ -1123,11 +1123,11 @@ def test_an_extent_the_devices_do_not_divide_takes_the_largest_divisor_mesh(
     assert indivisible["smaller_mesh_devices"]["retired"] == [0]
 
 
-def test_the_two_axis_model_simulates_the_reference_over_sharded_subjects(
-    subject_sharded: _SimulationReport,
+def test_the_two_axis_model_simulates_the_reference_over_sharded_agents(
+    agent_sharded: _SimulationReport,
 ) -> None:
-    """Spreading subjects over the devices leaves the simulated frames unchanged."""
-    assert subject_sharded["simulation_matches_reference"] is True
+    """Spreading agents over the devices leaves the simulated frames unchanged."""
+    assert agent_sharded["simulation_matches_reference"] is True
 
 
 def test_a_persisted_cross_mesh_solution_simulates_the_reference_frames(

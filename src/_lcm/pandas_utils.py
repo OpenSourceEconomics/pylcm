@@ -32,10 +32,20 @@ from _lcm.params.temporal import (
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.processes.joint_normal_lowering import JointStateEntry
 from _lcm.reachability import ModelReachability
-from _lcm.regime_building.collective import NO_ROLE, build_role_vocabulary
+from _lcm.regime_building.collective import (
+    NO_ROLE,
+    build_role_vocabulary,
+    member_slots,
+)
 from _lcm.regime_law import RegimeLaws
 from _lcm.simulation.initial_conditions import MISSING_CAT_CODE, PSEUDO_STATE_NAMES
-from _lcm.time import TimeAxis, coordinate_kind, specialization_coordinate_at
+from _lcm.time import (
+    ModelTime,
+    TimeAxis,
+    coordinate_kind,
+    specialization_coordinate_at,
+    step_count,
+)
 from _lcm.typing import (
     FlatParams,
     FunctionName,
@@ -181,15 +191,15 @@ def initial_conditions_from_dataframe(  # noqa: C901, PLR0912
         initial_regimes=df["regime_name"].tolist(),
     )
 
-    n_subjects = len(df)
+    n_agents = len(df)
     state_cols = [col for col in df.columns if col not in {"regime_name", "own_member"}]
 
     # Pre-allocate result arrays (NaN default surfaces bugs for missing states)
     result_arrays: dict[str, np.ndarray] = {
         col: (
-            np.zeros(n_subjects, dtype=np.int32)
+            np.zeros(n_agents, dtype=np.int32)
             if col == "age" and ages is not None and coordinate_kind(ages) == "period"
-            else np.full(n_subjects, np.nan)
+            else np.full(n_agents, np.nan)
         )
         for col in state_cols
     }
@@ -319,7 +329,7 @@ def _role_codes_from_labels(
         ValueError: A label names no member any regime declares.
     """
     role_ids = build_role_vocabulary(
-        {name: regime.member_axis for name, regime in user_regimes.items()}
+        {name: regime.members for name, regime in user_regimes.items()}
     )
     text = labels.astype("string")
     named = text.notna()
@@ -475,7 +485,7 @@ def convert_series_in_params(
             continue
         user_regime = user_regimes[regime_name]
         regime_periods = (
-            tuple(range(ages.n_periods))
+            tuple(range(step_count(ages)))
             if required_periods_by_regime is None
             else required_periods_by_regime.get(regime_name, ())
         )
@@ -501,17 +511,6 @@ def convert_series_in_params(
                 all_funcs[name] = Phased(
                     solve=solve_funcs[name], simulate=simulate_funcs[name]
                 )
-        # The Koopmans aggregator is not a regime function; its params live
-        # under a pseudo-function key of the same name. Every aggregator the slot
-        # runs (both `Phased` variants, a `Decoupled`'s decision and value)
-        # declares its own parameters and the template carries their union, so
-        # the variant that declares each parameter is the one whose source
-        # describes how it is indexed.
-        aggregator_variants = koopmans_aggregator_variants(
-            declaration=user_regime.koopmans_aggregator
-        )
-        if aggregator_variants:
-            all_funcs["koopmans_aggregator"] = aggregator_variants[0]
         converted_regime: dict[str, _ConvertedParamsNode] = {}
         for func_param, value in regime_params.items():
             # Function lookup exists only to infer a Series leaf's indexing axes.
@@ -529,7 +528,6 @@ def convert_series_in_params(
                 param_name=param_name,
                 user_regime=user_regime,
                 all_funcs=all_funcs,
-                aggregator_variants=aggregator_variants,
             )
 
             # Runtime grid/process params are scalar — no AST inspection.
@@ -664,7 +662,7 @@ def _convert_edge_params(
                 param_name=param_name,
                 ages=ages,
                 source_periods=(
-                    tuple(range(ages.n_periods - 1))
+                    tuple(range(step_count(ages) - 1))
                     if required_periods_by_regime is None
                     else required_periods_by_regime.get(source, ())
                 ),
@@ -713,8 +711,8 @@ def _regime_param_periods(
     query_periods_by_phase: Mapping[str, Mapping[RegimeName, tuple[int, ...]]],
 ) -> tuple[int, ...]:
     """Require only slots where a declaring phase can read this parameter."""
-    periods = (
-        tuple(range(ages.n_periods))
+    steps = (
+        tuple(range(step_count(ages)))
         if required_periods_by_regime is None
         else required_periods_by_regime.get(regime_name, ())
     )
@@ -723,16 +721,16 @@ def _regime_param_periods(
         or len(parts) >= ParamsQnameDepth.TARGETREGIME__FUNC__PARAM
     )
     if is_transition:
-        periods = tuple(period for period in periods if period < ages.n_periods - 1)
+        steps = tuple(step for step in steps if step < step_count(ages) - 1)
     if reachability is None:
         return tuple(
             sorted(
-                set(periods)
+                set(steps)
                 | {
-                    period
+                    step
                     for queries in query_periods_by_phase.values()
-                    for period in queries.get(regime_name, ())
-                    if not is_transition or period < ages.n_periods - 1
+                    for step in queries.get(regime_name, ())
+                    if not is_transition or step < step_count(ages) - 1
                 }
             )
         )
@@ -743,28 +741,25 @@ def _regime_param_periods(
             param_name=parts[-1],
             user_regime=user_regime,
             all_funcs=functions,
-            aggregator_variants=koopmans_aggregator_variants(
-                declaration=user_regime.koopmans_aggregator, phase=phase
-            ),
             phase=phase,
         )
         if consumer is None or parts[-1] not in inspect.signature(consumer).parameters:
             continue
         graph = reachability.solution if phase == "solve" else reachability.simulation
         required.update(
-            period
-            for period in _phase_param_periods(
+            step
+            for step in _phase_param_periods(
                 phase=phase,
                 regime_name=regime_name,
-                periods=periods,
+                periods=steps,
                 reachability=reachability,
                 query_periods_by_phase=query_periods_by_phase,
             )
-            if (not is_transition or period < ages.n_periods - 1)
+            if (not is_transition or step < step_count(ages) - 1)
             and (
                 not is_transition
                 or len(parts) < ParamsQnameDepth.TARGETREGIME__FUNC__PARAM
-                or graph.has_edge(period=period, source=regime_name, target=parts[0])
+                or graph.has_edge(step=step, source=regime_name, target=parts[0])
             )
         )
     return tuple(sorted(required))
@@ -791,19 +786,19 @@ def _edge_param_periods(
         else tuple(declarations_by_phase.items())
     )
     for phase, declaration in variants:
-        periods = source_periods
+        steps = source_periods
         if phase is not None:
-            periods = _phase_param_periods(
+            steps = _phase_param_periods(
                 phase=phase,
                 regime_name=source,
-                periods=periods,
+                periods=steps,
                 reachability=reachability,
                 query_periods_by_phase=query_periods_by_phase,
             )
         selected = (
             declaration.law.resolve(ages=ages).law_by_period
             if isinstance(declaration.law, ByAge)
-            else dict.fromkeys(periods, declaration.law)
+            else dict.fromkeys(steps, declaration.law)
         )
         targets = (
             None
@@ -816,17 +811,17 @@ def _edge_param_periods(
             }
         )
         is_gate = len(slot) > 1 and slot[0] in declaration.gates
-        for period in periods:
-            if period >= ages.n_periods - 1:
+        for step in steps:
+            if step >= step_count(ages) - 1:
                 continue
             if targets is not None and not any(
-                period in selected for selected in targets.values()
+                step in selected for selected in targets.values()
             ):
                 continue
-            case = selected.get(period)
+            case = selected.get(step)
             if is_gate:
                 active = (
-                    period in targets.get(slot[0], ())
+                    step in targets.get(slot[0], ())
                     if targets is not None
                     else _case_names_target(case=case, target=slot[0])
                 )
@@ -837,14 +832,14 @@ def _edge_param_periods(
                     )
                     if gate is not None
                 ):
-                    required.add(period + 1)
+                    required.add(step + 1)
             elif (
-                targets is None or not slot or period in targets.get(slot[0], ())
+                targets is None or not slot or step in targets.get(slot[0], ())
             ) and any(
                 path == slot and param_name in inspect.signature(func).parameters
                 for path, func, _ in iter_edge_callables(law=case, path=(), phase=phase)
             ):
-                required.add(period)
+                required.add(step)
     return tuple(sorted(required))
 
 
@@ -892,7 +887,6 @@ def _resolve_param_consumer(
     param_name: ParameterName,
     user_regime: UserRegime,
     all_funcs: Mapping[str, _ParamConsumer],
-    aggregator_variants: tuple[UserFunction, ...],
     phase: Phase | None = None,
 ) -> tuple[UserFunction | None, FunctionName]:
     """Resolve a flattened param path to the callable declaring its Series leaf.
@@ -954,22 +948,37 @@ def _resolve_param_consumer(
         ), resolved
 
     resolved = parts[0]
-    if resolved == "koopmans_aggregator":
+    # The Koopmans aggregator is not a regime function: its params live under
+    # the shared entry `koopmans_aggregator` or, keyed by member, under each
+    # member's own entry. Every aggregator that entry runs (both `Phased`
+    # variants, a `Decoupled`'s decision and value) declares its own params, so
+    # the variant declaring a param describes how it is indexed.
+    member_aggregators = dict(
+        member_slots(
+            base="koopmans_aggregator",
+            declaration=user_regime.koopmans_aggregator,
+            members=user_regime.members,
+        )
+    )
+    if resolved in member_aggregators:
+        variants = koopmans_aggregator_variants(
+            declaration=member_aggregators[resolved], phase=phase
+        )
         return (
-            _variant_declaring(variants=aggregator_variants, param_name=param_name)
-            if aggregator_variants
+            _variant_declaring(variants=variants, param_name=param_name)
+            if variants
             else None,
-            cast("FunctionName", resolved),
+            resolved,
         )
     if resolved in _PSEUDO_KEYS_WITHOUT_A_SIGNATURE or _is_runtime_grid_param(
-        func_name=cast("FunctionName", resolved), user_regime=user_regime
+        func_name=resolved, user_regime=user_regime
     ):
-        return None, cast("FunctionName", resolved)
+        return None, resolved
     return (
         _scheduled_consumer(
             func=all_funcs.get(resolved), param_name=param_name, phase=phase
         ),
-        cast("FunctionName", resolved),
+        resolved,
     )
 
 
@@ -989,7 +998,7 @@ def _resolve_age_specialized(
     """
     if not periods:
         return functions
-    coordinate = specialization_coordinate_at(ages=ages, period=periods[0])
+    coordinate = specialization_coordinate_at(ages=ages, step=periods[0])
     return MappingProxyType(
         {
             name: func.build(coordinate)
@@ -1040,6 +1049,14 @@ def _convert_param_value(
         value unchanged.
 
     """
+    if isinstance(ages, ModelTime) and ages.n_stages > 1:
+        # A user function reads the period of the step, so a time-indexed
+        # parameter is laid out over periods.
+        if required_periods is not None:
+            required_periods = tuple(
+                sorted({step // ages.n_stages for step in required_periods})
+            )
+        ages = ages.economic
 
     recurse = functools.partial(
         _convert_param_value,
@@ -1064,7 +1081,7 @@ def _convert_param_value(
             "supply a scalar, TimeVarying, or labelled Series."
         )
     support = (
-        tuple(range(ages.n_periods)) if required_periods is None else required_periods
+        tuple(range(step_count(ages))) if required_periods is None else required_periods
     )
     if isinstance(value, TimeVarying):
         if not managed:
@@ -1293,7 +1310,7 @@ def array_from_series(
                 f"{sr.index[sr.index.duplicated()].tolist()[:8]}."
             )
         support = (
-            tuple(range(ages.n_periods))
+            tuple(range(step_count(ages)))
             if required_periods is None
             else required_periods
         )
@@ -1426,7 +1443,7 @@ def _age_level_mapping(ages: TimeAxis) -> _LevelMapping:
         labels.update({float(v): i for i, v in enumerate(ages.exact_values)})
     return _LevelMapping(
         name=coordinate_kind(ages),
-        size=ages.n_periods,
+        size=step_count(ages),
         get_code_from_label=labels.__getitem__,
     )
 
@@ -1781,7 +1798,7 @@ def _validate_state_columns(
 
 def _format_missing_state_detail(*, name: str, required_by: list[str]) -> str:
     if name in PSEUDO_STATE_NAMES:
-        return f"'{name}' (required for every subject)"
+        return f"'{name}' (required for every agent)"
     if required_by:
         return f"'{name}' (required by {sorted(required_by)})"
     return f"'{name}' (required by an initial regime)"

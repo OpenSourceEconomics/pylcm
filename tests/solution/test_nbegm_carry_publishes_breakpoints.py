@@ -10,23 +10,45 @@ marker), and the lowering template shares both fixed shapes so compiled
 parents never see a pytree change.
 """
 
+from collections.abc import Callable, Mapping
+from typing import Never, NotRequired, Unpack
+
 import jax
 import numpy as np
 import pytest
+from typing_extensions import TypedDict
 
 import _lcm.egm.continuation as cont_mod
+from _lcm.egm.carry import EGMCarry
+from _lcm.typing import EconFunctionKwargs
 from lcm.solver_api import EGM_CONTINUATION, ArtifactRef, AxisRole
+from lcm.typing import FloatND, FunctionName, ScalarFloat, StateName
 from tests.test_models import nbegm_jump_ride_along_toy as toy
 
 _CLIFF_BY_KIND = (15.0 - 1.0, 15.0 - 4.0)
 
+type _CapturedCarry = tuple[np.ndarray, np.ndarray, np.ndarray]
+
+
+class _CarryReaderArguments(TypedDict, closed=True):
+    read: cont_mod._ChildRead
+    carry: EGMCarry
+    combo_pool: EconFunctionKwargs
+    post_decision_name: FunctionName
+    stochastic_node_width: int | None
+    resolved_process_grids: NotRequired[Mapping[StateName, FloatND]]
+    risk_aversion: NotRequired[FloatND | None]
+    collect_continuation_read_counts: NotRequired[bool]
+
 
 @pytest.fixture
-def captured_carries(monkeypatch):
+def captured_carries(monkeypatch: pytest.MonkeyPatch) -> list[_CapturedCarry]:
     seen = []
     original = cont_mod._get_child_carry_reader
 
-    def spy(*args, **kwargs):
+    def spy(
+        *args: Never, **kwargs: Unpack[_CarryReaderArguments]
+    ) -> Callable[[ScalarFloat], cont_mod._ChildCarryResult]:
         carry = kwargs["carry"] if "carry" in kwargs else args[0]
         if carry.breakpoints is not None:
             jax.debug.callback(
@@ -44,8 +66,8 @@ def captured_carries(monkeypatch):
 
 
 def test_schedule_carry_breakpoints_are_the_per_kind_cliff_preimages(
-    captured_carries,
-):
+    captured_carries: list[_CapturedCarry],
+) -> None:
     """The self-read carry exposes each kind's asset-space cliff location."""
     model = toy.build_model(
         variant="nbegm",
@@ -64,8 +86,8 @@ def test_schedule_carry_breakpoints_are_the_per_kind_cliff_preimages(
 
 
 def test_schedule_carry_rows_hold_the_cliff_as_a_duplicated_abscissa(
-    captured_carries,
-):
+    captured_carries: list[_CapturedCarry],
+) -> None:
     """Each carry row samples both one-sided limits at its kind's cliff.
 
     The row's endogenous grid contains the cliff preimage twice — once per
@@ -94,7 +116,7 @@ def test_schedule_carry_rows_hold_the_cliff_as_a_duplicated_abscissa(
         assert left_value > right_value + 1e-3
 
     descriptor = solution.metadata.artifact_descriptors[
-        ArtifactRef(period=0, regime="alive", key=EGM_CONTINUATION)
+        ArtifactRef(step=0, regime="alive", key=EGM_CONTINUATION)
     ]
     node_axis = next(
         axis for axis in descriptor.named_axes if axis.name == "pylcm:egm:node"
@@ -110,7 +132,9 @@ def test_schedule_carry_rows_hold_the_cliff_as_a_duplicated_abscissa(
     assert "liquid" not in descriptor.state_roles
 
 
-def test_bridged_jump_read_publishes_plain_rows_without_breakpoints(monkeypatch):
+def test_bridged_jump_read_publishes_plain_rows_without_breakpoints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """`NBEGM(jump_read="bridged")` carries plain liquid-grid rows.
 
     Under the bridged read the parent interpolates the child value across its
@@ -122,7 +146,9 @@ def test_bridged_jump_read_publishes_plain_rows_without_breakpoints(monkeypatch)
     seen = []
     original = cont_mod._get_child_carry_reader
 
-    def spy(*args, **kwargs):
+    def spy(
+        *args: Never, **kwargs: Unpack[_CarryReaderArguments]
+    ) -> Callable[[ScalarFloat], cont_mod._ChildCarryResult]:
         carry = kwargs["carry"] if "carry" in kwargs else args[0]
         if getattr(carry, "endog_grid", None) is not None:
             seen.append((carry.breakpoints is None, int(carry.endog_grid.shape[-1])))

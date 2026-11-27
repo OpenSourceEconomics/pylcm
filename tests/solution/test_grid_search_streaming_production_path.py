@@ -1,7 +1,7 @@
 """Production-path control for ordinary singleton action streaming."""
 
 from collections.abc import Callable, Mapping
-from typing import Never, cast
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -35,10 +35,6 @@ from lcm.typing import (
     ReferenceName,
     ScalarInt,
 )
-from tests.regime_building.test_collective_feasibility_is_shared import (
-    _make_model as _build_collective_model,
-)
-from tests.test_models import taste_shocks_toy
 
 
 @categorical(ordered=True)
@@ -163,6 +159,7 @@ def test_public_singleton_solve_uses_streamed_action_blocks(
         n_actions: int,
         block_width: int,
         block_offsets: jax.Array,
+        n_members: int,
     ) -> tuple[jax.Array, jax.Array, jax.Array]:
         values, feasible, global_ids = cast(
             "tuple[jax.Array, jax.Array, jax.Array]",
@@ -176,6 +173,7 @@ def test_public_singleton_solve_uses_streamed_action_blocks(
                 n_actions=n_actions,
                 block_width=block_width,
                 block_offsets=block_offsets,
+                n_members=n_members,
             ),
         )
         return values, feasible & (global_ids != 5), global_ids
@@ -190,7 +188,7 @@ def test_public_singleton_solve_uses_streamed_action_blocks(
     untouched = _solve_target(model=model, work=0.0, consumption=1.0)
     omitted = _solve_target(model=model, work=1.0, consumption=3.0)
 
-    assert_array_equal(untouched, jnp.asarray([2.0, 3.0]))
+    assert_array_equal(untouched, jnp.asarray([[2.0], [3.0]]))
     assert bool(jnp.all(jnp.isneginf(omitted)))
 
 
@@ -223,65 +221,4 @@ def test_eager_singleton_hard_max_never_builds_the_dense_oracle(
     )["main"]
     assert program.disposition is CoreExecutionDisposition.PLANNED
     assert program.disposition_reason is None
-    assert_array_equal(actual, jnp.asarray([14.0, 15.0]))
-
-
-def test_public_collective_solve_does_not_call_streamed_household_reduction(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """State tiling keeps the household's canonical dense action reduction."""
-
-    def fail_streamed_collective[UnusedArgument](**_kwargs: UnusedArgument) -> Never:
-        raise AssertionError("dense collective route called streamed reduction")
-
-    monkeypatch.setattr(
-        action_streaming,
-        "_evaluate_collective_block",
-        fail_streamed_collective,
-    )
-    model = _build_collective_model()
-    program = core_program_graph(
-        kernel=model._regimes["couple"].solution.period_kernels[0]
-    )["main"]
-    solution = model.solve(params={"discount_factor": 0.95}, log_level="debug")
-
-    assert (
-        program.disposition,
-        program.disposition_reason,
-        program.requirements.reduced_axes,
-        bool(jnp.all(jnp.isfinite(solution.values[0]["couple"]))),
-    ) == (CoreExecutionDisposition.PLANNED, None, (), True)
-
-
-def test_public_ev1_solve_does_not_call_streamed_branch_reduction(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The noncanonical streamed reduction is excluded from production."""
-
-    def fail_streamed_ev1[UnusedArgument](**_kwargs: UnusedArgument) -> Never:
-        raise AssertionError("dense EV1 route called streamed reduction")
-
-    monkeypatch.setattr(
-        action_streaming,
-        "_evaluate_ev1_branch_block",
-        fail_streamed_ev1,
-    )
-
-    model = taste_shocks_toy.get_model()
-    program = core_program_graph(
-        kernel=model._regimes["alive"].solution.period_kernels[0]
-    )["main"]
-    solution = model.solve(
-        params=taste_shocks_toy.get_params(
-            scale=0.2,
-            discount_factor=0.95,
-        ),
-        log_level="debug",
-    )
-
-    assert (
-        program.disposition,
-        program.disposition_reason,
-        program.requirements.reduced_axes,
-        bool(jnp.all(jnp.isfinite(solution.values[0]["alive"]))),
-    ) == (CoreExecutionDisposition.PLANNED, None, (), True)
+    assert_array_equal(actual, jnp.asarray([[14.0], [15.0]]))

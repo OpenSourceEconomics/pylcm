@@ -158,15 +158,15 @@ def _publication_mismatches(
 def _choices(*, model: Model, solution: SolutionResult) -> pd.DataFrame:
     """Simulate every state of the six-cell grid in the acting regime."""
     first, second = np.meshgrid(np.array([1.0, 3.0]), np.array([2.0, 4.0, 6.0]))
-    n_subjects = first.size
+    n_agents = first.size
     return model.simulate(
         params=_params("singleton"),
         solution=solution,
         initial_conditions={
             "first": jnp.asarray(first.ravel()),
             "second": jnp.asarray(second.ravel()),
-            "age": jnp.zeros(n_subjects),
-            "regime_id": jnp.full(n_subjects, _RegimeId.acting, dtype=jnp.int32),
+            "age": jnp.zeros(n_agents),
+            "regime_id": jnp.full(n_agents, _RegimeId.acting, dtype=jnp.int32),
         },
         seed=0,
         log_level="off",

@@ -1,8 +1,8 @@
-"""Collective utilities, gates and the household's own dissolution exit.
+"""Collective utilities, gates and the household's own dissolution composition action.
 
-Current dissolution belongs to the household's own Exit. The public declaration
-paths determine roles, phases, parameter namespaces and the canonical policy problems
-the model evaluates.
+Current dissolution belongs to the household's own Composition action. The public
+declaration paths determine roles, phases, parameter namespaces and the canonical policy
+problems the model evaluates.
 """
 
 import dataclasses
@@ -35,8 +35,8 @@ from lcm import (
     categorical,
     fixed_transition,
 )
+from lcm.composition_actions import CompositionAction, Destination, PCOnActions
 from lcm.exceptions import RegimeInitializationError
-from lcm.exits import Exit, ExitTarget, Unilateral
 from lcm.regime import RegimeReplacement
 from lcm.transition import PhaseTransitionLaw, StochasticTransition
 from lcm.typing import (
@@ -57,19 +57,19 @@ from tests.regime_building.test_collective_regime_simulate import (
     _make_dissolution_regimes,
     _married_dissolution_transition,
     _prob_one,
+    _u_effort_collective,
     _u_married_ir_f,
     _u_married_ir_m,
     _u_single_f_ir,
     _u_single_m_ir,
     _u_zero,
-    _u_zero_collective,
 )
 
 
 class _Snapshot(TypedDict):
-    member_axis: tuple[str, ...] | None
+    members: tuple[str, ...]
     pareto_objective: ParetoObjective | None
-    exit: tuple[str, dict[str, ExitTarget]] | None
+    composition_action: tuple[str, dict[str, Destination]] | None
 
 
 _AGES = AgeGrid(start=0, inclusive_stop=3, step="Y")
@@ -78,8 +78,8 @@ _PARAMS = {
     "married": {"koopmans_aggregator": {"discount_factor": _BETA}},
     "married_ir": {
         "koopmans_aggregator": {"discount_factor": _BETA},
-        "exit": {
-            "targets": {
+        "composition_action": {
+            "destinations": {
                 "f": {"utility_adjustment": {"delta_f": 0.5}},
                 "m": {"utility_adjustment": {"delta_m": 0.2}},
             }
@@ -118,7 +118,7 @@ def test_collective_utility_declares_the_regimes_members() -> None:
     """The `utilities` keys are the members, in the order they are written."""
     regime = _new_vocabulary_regimes()["married_ir"]
 
-    assert regime.member_axis == ("f", "m")
+    assert regime.members == ("f", "m")
 
 
 def test_collective_utility_becomes_one_utility_function_per_member() -> None:
@@ -137,14 +137,16 @@ def test_value_dependent_transition_keeps_the_ordinary_transition_entry() -> Non
     assert isinstance(transition["married_ir"], StochasticTransition)
 
 
-def test_the_households_exit_routes_each_member_to_her_own_single_regime() -> None:
-    """Each member's exit target is her own single regime."""
-    married_exit = _new_vocabulary_regimes()["married_ir"].exit
-    assert married_exit is not None
+def test_separation_routes_each_member_to_her_own_single_regime() -> None:
+    """Each member's composition action target is her own single regime."""
+    married_composition_action = _new_vocabulary_regimes()[
+        "married_ir"
+    ].composition_action
+    assert married_composition_action is not None
 
-    assert set(married_exit.targets) == {"f", "m"}
-    assert married_exit.targets["f"].regime == "single_f"
-    assert married_exit.targets["m"].regime == "single_m"
+    assert set(married_composition_action.destinations) == {"f", "m"}
+    assert married_composition_action.destinations["f"].regime == "single_f"
+    assert married_composition_action.destinations["m"].regime == "single_m"
 
 
 def test_the_two_vocabularies_solve_to_the_same_values() -> None:
@@ -232,7 +234,7 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
-                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+                utilities={"f": _u_effort_collective, "m": _u_effort_collective}
             )
         },
     )
@@ -245,20 +247,20 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
                 utilities={"f": _u_married_ir_f, "m": _u_married_ir_m}
             )
         },
-        exit=Exit(
-            targets={
-                "f": ExitTarget(
+        composition_action=CompositionAction(
+            destinations={
+                "f": Destination(
                     regime="single_f",
                     projection={"wage": _identity_wage},
                     utility_adjustment=_dissolution_cost_f,
                 ),
-                "m": ExitTarget(
+                "m": Destination(
                     regime="single_m",
                     projection={"wage": _identity_wage},
                     utility_adjustment=_dissolution_cost_m,
                 ),
             },
-            rule=Unilateral(),
+            rule=PCOnActions(),
         ),
     )
     married_terminal = Regime(
@@ -266,7 +268,7 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
-                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+                utilities={"f": _u_effort_collective, "m": _u_effort_collective}
             )
         },
     )
@@ -295,8 +297,8 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
 def _married_transition() -> Transition:
     """`married`'s move into `married_ir` after age 0.
 
-    `married_ir` dissolves through its own exit, each member to her own single
-    regime.
+    `married_ir` dissolves through its own composition action, each member to her own
+    single regime.
     """
     return Transition(
         law=ByAge(
@@ -415,35 +417,38 @@ def _derived_snapshot(*, regime: Regime) -> _Snapshot:
     value, with the declared callables compared by identity.
     """
     return {
-        "member_axis": regime.member_axis,
+        "members": regime.members,
         "pareto_objective": regime.pareto_objective,
-        "exit": None
-        if regime.exit is None
-        else (type(regime.exit.rule).__name__, dict(regime.exit.targets)),
+        "composition_action": None
+        if regime.composition_action is None
+        else (
+            type(regime.composition_action.rule).__name__,
+            dict(regime.composition_action.destinations),
+        ),
     }
 
 
 def _expected_snapshots() -> dict[RegimeName, _Snapshot]:
-    """A plain collective source, the household's own exit and a singleton."""
+    """A plain collective source, a couple that can separate and a one-member regime."""
     plain: _Snapshot = {
-        "member_axis": None,
+        "members": ("self",),
         "pareto_objective": None,
-        "exit": None,
+        "composition_action": None,
     }
     return {
-        "married": {**plain, "member_axis": ("f", "m")},
+        "married": {**plain, "members": ("f", "m")},
         "married_ir": {
             **plain,
-            "member_axis": ("f", "m"),
-            "exit": (
-                "Unilateral",
+            "members": ("f", "m"),
+            "composition_action": (
+                "PCOnActions",
                 {
-                    "f": ExitTarget(
+                    "f": Destination(
                         regime="single_f",
                         projection={"wage": _identity_wage},
                         utility_adjustment=_dissolution_cost_f,
                     ),
-                    "m": ExitTarget(
+                    "m": Destination(
                         regime="single_m",
                         projection={"wage": _identity_wage},
                         utility_adjustment=_dissolution_cost_m,
@@ -451,7 +456,7 @@ def _expected_snapshots() -> dict[RegimeName, _Snapshot]:
                 },
             ),
         },
-        "married_terminal": {**plain, "member_axis": ("f", "m")},
+        "married_terminal": {**plain, "members": ("f", "m")},
         "single_f": plain,
     }
 
@@ -464,11 +469,11 @@ def test_the_declarations_determine_every_engine_facing_fact(
 ) -> None:
     """One regime's declarations fix the canonical facts the engine reads off it.
 
-    A collective source of a transition, one with an exit, a plain collective
-    one and a singleton: between them they cover every shape a declaration can take. The
-    snapshot is the contract that survives any change to how the decomposition
-    is performed, because it names what the decomposition must produce rather
-    than how.
+    A collective source of a transition, one with a composition action, a plain
+    collective one and a singleton: between them they cover every shape a declaration
+    can take. The snapshot is the contract that survives any change to how the
+    decomposition is performed, because it names what the decomposition must produce
+    rather than how.
     """
     snapshot = _derived_snapshot(regime=_new_vocabulary_regimes()[regime_name])
 
@@ -478,7 +483,7 @@ def test_the_declarations_determine_every_engine_facing_fact(
 @pytest.mark.parametrize(
     "slot",
     [
-        "member_axis",
+        "members",
         "pareto_objective",
         "gated_edges",
     ],
@@ -503,7 +508,7 @@ def test_a_derived_slot_cannot_be_declared(slot: str) -> None:
 @pytest.mark.parametrize(
     "slot",
     [
-        "member_axis",
+        "members",
         "pareto_objective",
         "gated_edges",
     ],
@@ -537,13 +542,17 @@ def test_regime_replacement_names_exactly_the_declared_slots() -> None:
     assert RegimeReplacement.__optional_keys__ == declared
 
 
+def _stay_alive() -> int:
+    return 0
+
+
 def test_decomposed_transition_of_an_age_schedule_is_its_engine_view() -> None:
     """A deterministic dated regime decomposes to one engine routing function."""
     law = bind_regime_law(
         ByAge.until(
             stop_age_exclusive=2,
             law=_SupportedDeterministicTransition(
-                func=lambda: 0, targets=("alive", "dead")
+                func=_stay_alive, targets=("alive", "dead")
             ),
             then="dead",
         )

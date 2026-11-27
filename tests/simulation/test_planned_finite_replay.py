@@ -1,8 +1,10 @@
 """Finite replay executes declared programs without a Cartesian decision."""
 
 import importlib
+from collections.abc import Mapping
 from functools import partial
 from types import MappingProxyType
+from typing import TypedDict, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -10,8 +12,29 @@ import numpy as np
 import pytest
 from pandas.testing import assert_frame_equal
 
+from _lcm.egm.published_policy import NNBEGMSimPolicy
+from _lcm.engine import Regime
+from _lcm.execution.core_program import CoreProgram
 from _lcm.simulation.runtime import SimulationRuntime
+from _lcm.typing import (
+    ActionName,
+    FlatRegimeParams,
+    PytreeValue,
+    QAndFKwargs,
+    RegimeName,
+    ShapeDtypePytree,
+    StateName,
+    StateOrActionName,
+)
 from lcm import ExecutionConfig, Model
+from lcm.typing import (
+    BoolND,
+    FloatND,
+    IntND,
+    ReferenceName,
+    ScalarFloat,
+    ScalarInt,
+)
 from tests.test_models import n_nbegm_discrete_toy as discrete_toy
 from tests.test_models import n_nbegm_toy as toy
 from tests.test_models.initial_nodes import initial_nodes_of
@@ -19,26 +42,49 @@ from tests.test_models.initial_nodes import initial_nodes_of
 _replay = importlib.import_module("_lcm.simulation.simulate")
 
 
-def _legacy_finite_replay(**arguments):
+class _FiniteReplayArguments(TypedDict):
+    """The `_execute_finite_replay` arguments the legacy coordinator also takes."""
+
+    regime: Regime
+    sim_policy: NNBEGMSimPolicy
+    states: Mapping[StateOrActionName, FloatND | IntND]
+    canonical_states: Mapping[StateName, FloatND | IntND]
+    flat_params: FlatRegimeParams
+    period: int
+    age: ScalarFloat | ScalarInt
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND]
+    referenced_value_kwargs: QAndFKwargs
+
+
+def _legacy_finite_replay(
+    *, n_agents: int, **arguments: Unpack[_FiniteReplayArguments]
+) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]:
     """Use the unchanged pre-program coordinator as the comparison route."""
-    n_subjects = arguments.pop("n_subjects")
-    arguments.pop("memory", None)
     actions, values = _replay._replay_nnbegm_candidates(
         optimal_actions=MappingProxyType({}),
         action_names=arguments["regime"].simulation.action_names,
         **arguments,
     )
-    return actions, values, jnp.zeros(n_subjects, dtype=bool)
+    return actions, values, jnp.zeros(n_agents, dtype=bool)
 
 
-def test_finite_replay_dispatches_reconstruction_and_ranking_programs(monkeypatch):
+def test_finite_replay_dispatches_reconstruction_and_ranking_programs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Observe actual public forward dispatch, not just a solver's metadata."""
     observed = []
     dispatched = []
     original = SimulationRuntime.dispatch
 
     # keyword-only-exempt: library-callback=SimulationRuntime.dispatch
-    def record(self, *, program, arguments, period, n_subjects):
+    def record(
+        self: SimulationRuntime,
+        *,
+        program: CoreProgram,
+        arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
+        period: int,
+        n_agents: int,
+    ) -> PytreeValue:
         observed.append((program.name, period))
         dispatched.append(program)
         return original(
@@ -46,7 +92,7 @@ def test_finite_replay_dispatches_reconstruction_and_ranking_programs(monkeypatc
             program=program,
             arguments=arguments,
             period=period,
-            n_subjects=n_subjects,
+            n_agents=n_agents,
         )
 
     monkeypatch.setattr(SimulationRuntime, "dispatch", record)
@@ -56,7 +102,7 @@ def test_finite_replay_dispatches_reconstruction_and_ranking_programs(monkeypatc
         # Unbudgeted: `record` mirrors the plain dispatch signature; budgeted units
         # dispatch with a residency context.
         execution_config=ExecutionConfig(
-            axis_widths={"subject": 1}, device_memory_bytes=None
+            axis_widths={"agent": 1}, device_memory_bytes=None
         ),
     )
     result = model.simulate(
@@ -75,7 +121,7 @@ def test_finite_replay_dispatches_reconstruction_and_ranking_programs(monkeypatc
     assert np.isfinite(rows["value"]).all()
     assert ("simulate_policy_prepare", 0) in observed
     assert ("simulate_policy_rank", 0) in observed
-    # The subjects start in `alive`, whose finite replay runs no Cartesian
+    # The agents start in `alive`, whose finite replay runs no Cartesian
     # decision; the terminal `dead` regime is also solved at period 0 and runs
     # its own.
     dead_decisions = {
@@ -90,7 +136,9 @@ def test_finite_replay_dispatches_reconstruction_and_ranking_programs(monkeypatc
 
 
 @pytest.mark.parametrize("discrete", [False, True])
-def test_planned_replay_preserves_public_legacy_frames(*, monkeypatch, discrete):
+def test_planned_replay_preserves_public_legacy_frames(
+    *, monkeypatch: pytest.MonkeyPatch, discrete: bool
+) -> None:
     """Real fixed-parameter and discrete routes keep the declared choices."""
     factory = discrete_toy if discrete else toy
     base = factory.build_model(variant="n_nbegm", n_periods=2)
@@ -100,7 +148,7 @@ def test_planned_replay_preserves_public_legacy_frames(*, monkeypatch, discrete)
         ages=base.ages,
         regime_id_class=toy.RegimeId,
         fixed_params=base.fixed_params,
-        execution_config=ExecutionConfig(axis_widths={"subject": 1}),
+        execution_config=ExecutionConfig(axis_widths={"agent": 1}),
         initial_nodes=initial_nodes_of(model=base),
     )
     params = {"discount_factor": 0.95}

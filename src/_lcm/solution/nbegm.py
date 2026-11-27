@@ -52,7 +52,9 @@ from _lcm.axis_boundaries import (
     resolve_axis_partition,
 )
 from _lcm.beartype_conf import REGIME_CONF
-from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
+from _lcm.certainty_equivalent import (
+    aggregates_nonlinearly,
+)
 from _lcm.constraints.dispositions import CompileBoundary
 from _lcm.constraints.ir import Compare, Const
 from _lcm.constraints.routes import ConstraintPlan, ConstraintRoute
@@ -179,6 +181,7 @@ from _lcm.solution.contract import (
     SolverBuildContext,
     SolverModelContext,
     _BoundLiquidMargin,
+    one_member_utility_name,
 )
 from _lcm.solution.dcegm import (
     CELL_AXIS,
@@ -210,6 +213,7 @@ from _lcm.solution.feasibility import (
     reduce_query_input_status,
     shift_savings_grid,
 )
+from _lcm.solution.member_axis import publish_member_axis
 from _lcm.solution.periodization import (
     resolve_solver_build_context,
     restrict_solver_build_context_to_period_group,
@@ -821,6 +825,23 @@ class NBEGM(OneMarginSolver):
         materializer: DatedGenerationMaterializer | None = None,
     ) -> SolutionKernels:
         """Build one case-piece EGM period adapter per active period."""
+        return publish_member_axis(
+            kernels=self.build_inner_period_kernels(
+                context=context, materializer=materializer
+            ),
+            members=context.members,
+        )
+
+    def build_inner_period_kernels(
+        self,
+        *,
+        context: SolverBuildContext,
+        materializer: DatedGenerationMaterializer | None = None,
+    ) -> SolutionKernels:
+        """Build the period kernels whose values carry no member axis.
+
+        An outer solver nesting this one appends the axis to its own programs.
+        """
         from _lcm.egm.nbegm import collect_nbegm_metadata  # noqa: PLC0415
 
         bound = cast("_BoundNBEGM", self)
@@ -967,7 +988,7 @@ class NBEGM(OneMarginSolver):
         # ride-along route above carries the Epstein-Zin kernels. Reject a
         # declared certainty equivalent here rather than silently solving the
         # additive recursion the regime did not declare.
-        if _aggregates_nonlinearly(context.certainty_equivalent):
+        if aggregates_nonlinearly(context.certainty_equivalent):
             msg = (
                 f"Regime {context.regime_name!r} declares a "
                 "`certainty_equivalent` but has no ride-along state, so NBEGM "
@@ -1522,7 +1543,7 @@ class NBEGM(OneMarginSolver):
             if key not in programs_by_key:
                 probe_arguments = _probe_arguments(context=resolved)
                 param_checks.extend(group_spec.param_checks)
-                if _aggregates_nonlinearly(resolved.certainty_equivalent):
+                if aggregates_nonlinearly(resolved.certainty_equivalent):
                     param_checks.append(
                         _deferred_probe(
                             probe=_fail_if_flow_not_single_power,
@@ -1559,7 +1580,7 @@ class NBEGM(OneMarginSolver):
                 # the combination here, at model build, rather than midway
                 # through a traced solve.
                 if (
-                    _aggregates_nonlinearly(resolved.certainty_equivalent)
+                    aggregates_nonlinearly(resolved.certainty_equivalent)
                     and statics.has_jump
                 ):
                     msg = (
@@ -1575,7 +1596,7 @@ class NBEGM(OneMarginSolver):
                 # combining it with a certainty equivalent would compare
                 # candidates under the wrong objective. Reject at model build.
                 if (
-                    _aggregates_nonlinearly(resolved.certainty_equivalent)
+                    aggregates_nonlinearly(resolved.certainty_equivalent)
                     and statics.continuation_reads_liquid
                 ):
                     msg = (
@@ -1604,9 +1625,7 @@ class NBEGM(OneMarginSolver):
                     else replace(group_spec, param_checks=()),
                     statics=statics,
                     materializer=materializer,
-                    is_epstein_zin=_aggregates_nonlinearly(
-                        context.certainty_equivalent
-                    ),
+                    is_epstein_zin=aggregates_nonlinearly(context.certainty_equivalent),
                     feasibility_constraints=group_constraints,
                     query_model=query_model,
                     current_floor=current_floor,
@@ -3322,6 +3341,7 @@ def _build_nbegm_core(
     *,
     savings_grid: Float1D,
     functions: EconFunctionsMapping,
+    utility_name: FunctionName,
     consumption_action: ActionName,
     case_spec: _NBEGMCaseSpec,
     envelope_arithmetic: ComparisonArithmetic = "ordinary",
@@ -3340,6 +3360,7 @@ def _build_nbegm_core(
         savings_grid=savings_grid,
         build_preferences=get_preferences_builder(
             functions=functions,
+            utility_name=utility_name,
             action_name=consumption_action,
             scale_grid=savings_grid,
         ),
@@ -5806,7 +5827,10 @@ def _collect_nbegm_schedule_spec(
         for name in coh_args
         if name not in state_names and name not in discrete_action_names
     )
-    utility_dag = concatenate_felicity(functions=context.functions)
+    utility_dag = concatenate_felicity(
+        functions=context.functions,
+        utility_name=one_member_utility_name(members=context.members),
+    )
     # A regime whose discount factor is a DAG function (e.g. a per-preference-type
     # beta indexed by a ride-along state) exposes it as a target; absent that, the
     # default flat `koopmans_aggregator__discount_factor` param drives discounting.
@@ -6371,6 +6395,7 @@ def _build_nbegm_continuous_core(
     *,
     savings_grid: Float1D,
     functions: EconFunctionsMapping,
+    utility_name: FunctionName,
     consumption_action: ActionName,
     schedule_spec: _NBEGMScheduleSpec,
     feasibility_constraints: tuple[_NBEGMFeasibilityConstraint, ...] = (),
@@ -6390,6 +6415,7 @@ def _build_nbegm_continuous_core(
         savings_grid=savings_grid,
         build_preferences=get_preferences_builder(
             functions=functions,
+            utility_name=utility_name,
             action_name=consumption_action,
             scale_grid=savings_grid,
         ),
@@ -6457,8 +6483,8 @@ def _build_nbegm_continuation_plan(
     solution_reachability = context.solution_reachability
     targets = (
         ()
-        if period == solution_reachability.n_periods - 1
-        else solution_reachability.targets(period=period, source=context.regime_name)
+        if period == solution_reachability.n_steps - 1
+        else solution_reachability.targets(step=period, source=context.regime_name)
     )
     stateful_targets, scalar_targets = get_egm_continuation_targets(
         targets=targets,
@@ -6470,7 +6496,7 @@ def _build_nbegm_continuation_plan(
     # `PowerMean`, takes that single argument); `None` keeps the linear read.
     risk_aversion_param_name = (
         "certainty_equivalent__risk_aversion"
-        if _aggregates_nonlinearly(context.certainty_equivalent)
+        if aggregates_nonlinearly(context.certainty_equivalent)
         else None
     )
     # A target's resources map is the child's own, read at its period `t + 1`.
@@ -10163,6 +10189,7 @@ def _build_nbegm_schedule_discrete_core(
     *,
     savings_grid: Float1D,
     functions: EconFunctionsMapping,
+    utility_name: FunctionName,
     consumption_action: ActionName,
     spec: _NBEGMScheduleDiscreteSpec,
     taste_shock_scale: float,
@@ -10185,6 +10212,7 @@ def _build_nbegm_schedule_discrete_core(
         savings_grid=savings_grid,
         build_preferences=get_preferences_builder(
             functions=functions,
+            utility_name=utility_name,
             action_name=consumption_action,
             scale_grid=savings_grid,
         ),
@@ -10350,6 +10378,7 @@ def _build_nbegm_discrete_core(
     *,
     savings_grid: Float1D,
     functions: EconFunctionsMapping,
+    utility_name: FunctionName,
     consumption_action: ActionName,
     discrete_spec: _NBEGMDiscreteSpec,
     taste_shock_scale: float,
@@ -10369,6 +10398,7 @@ def _build_nbegm_discrete_core(
         savings_grid=savings_grid,
         build_preferences=get_preferences_builder(
             functions=functions,
+            utility_name=utility_name,
             action_name=consumption_action,
             scale_grid=savings_grid,
         ),
@@ -10600,6 +10630,7 @@ def _build_nbegm_single_axis_group(
         core = _build_nbegm_schedule_discrete_core(
             savings_grid=savings_grid,
             functions=context.functions,
+            utility_name=one_member_utility_name(members=context.members),
             consumption_action=solver.continuous_action,
             spec=spec,
             taste_shock_scale=0.0,
@@ -10618,6 +10649,7 @@ def _build_nbegm_single_axis_group(
         core = _build_nbegm_continuous_core(
             savings_grid=savings_grid,
             functions=context.functions,
+            utility_name=one_member_utility_name(members=context.members),
             consumption_action=solver.continuous_action,
             schedule_spec=spec,
             feasibility_constraints=resolved_feasibility_constraints,
@@ -10636,6 +10668,7 @@ def _build_nbegm_single_axis_group(
         core = _build_nbegm_discrete_core(
             savings_grid=savings_grid,
             functions=context.functions,
+            utility_name=one_member_utility_name(members=context.members),
             consumption_action=solver.continuous_action,
             discrete_spec=spec,
             taste_shock_scale=0.0,
@@ -10651,6 +10684,7 @@ def _build_nbegm_single_axis_group(
         core = _build_nbegm_core(
             savings_grid=savings_grid,
             functions=context.functions,
+            utility_name=one_member_utility_name(members=context.members),
             consumption_action=solver.continuous_action,
             case_spec=spec,
             envelope_arithmetic=solver.envelope_arithmetic,
@@ -10898,21 +10932,6 @@ def _build_ride_along_carry_template(
             else None
         ),
         policy=jnp.zeros_like(block) if carry_policy else None,
-    )
-
-
-def _aggregates_nonlinearly(
-    certainty_equivalent: CertaintyEquivalent | None,
-) -> bool:
-    """Whether the regime aggregates its continuation nonlinearly.
-
-    Every non-terminal regime carries a certainty equivalent, so presence
-    alone does not distinguish the Epstein-Zin kernels from the
-    expected-utility ones: `LinearExpectation` is the expected-utility
-    default and takes the ordinary route.
-    """
-    return certainty_equivalent is not None and not isinstance(
-        certainty_equivalent, LinearExpectation
     )
 
 

@@ -5,6 +5,8 @@ coordinates are identified only together with a period index. Omitting the perio
 for such a state raises; age-invariant states may still omit it.
 """
 
+from typing import cast
+
 import numpy as np
 import pytest
 
@@ -36,6 +38,18 @@ def _two_state_value(*, wealth: ContinuousState, income: ContinuousState) -> Flo
     return wealth + 10.0 * income
 
 
+def _age_signature(age: float) -> float:
+    return age
+
+
+def _grid_growing_with_age(age: float) -> LinSpacedGrid:
+    return LinSpacedGrid(start=1.0 + age, stop=2.0 * (1.0 + age), n_points=2)
+
+
+def _grid_from_calendar_age(age: float) -> LinSpacedGrid:
+    return LinSpacedGrid(start=age - 9.0, stop=2.0 * (age - 9.0), n_points=2)
+
+
 def _model(
     *,
     scale: float = 2.0,
@@ -56,7 +70,7 @@ def _model(
 
     states = {
         "wealth": (
-            AgeSpecializedGrid(build=make_grid, signature=lambda age: age)
+            AgeSpecializedGrid(build=make_grid, signature=_age_signature)
             if specialized
             else make_grid(0.0)
         )
@@ -79,17 +93,19 @@ def _model(
     )
 
 
-def test_omitted_period_never_silently_labels_late_values_with_early_coordinates():
+def test_omitted_period_never_silently_labels_late_values_with_early_coordinates() -> (
+    None
+):
     """Late-period values tabulated on [2, 4] never get the early [1, 2] nodes."""
     model = _model()
     values = model.solve(params={}, log_level="off").values
-    np.testing.assert_array_equal(np.asarray(values[0]["end"]), [1.0, 2.0])
-    np.testing.assert_array_equal(np.asarray(values[1]["end"]), [2.0, 4.0])
+    np.testing.assert_array_equal(np.asarray(values[0]["end"])[..., 0], [1.0, 2.0])
+    np.testing.assert_array_equal(np.asarray(values[1]["end"])[..., 0], [2.0, 4.0])
     with pytest.raises(InvalidSimulationInputError, match="period"):
         model.state_grid(params={}, regime_name="end", state_name="wealth")
 
 
-def test_unvalued_period_is_rejected_after_changing_the_representative():
+def test_unvalued_period_is_rejected_after_changing_the_representative() -> None:
     """A period at which the regime is not valued is not a coordinate request."""
     model = _model(roots=(1,))
     got = model.state_grid(params={}, regime_name="end", state_name="wealth", period=1)
@@ -99,15 +115,20 @@ def test_unvalued_period_is_rejected_after_changing_the_representative():
 
 
 @pytest.mark.parametrize("period", [-1, 2, True, 0.0])
-def test_invalid_period_is_not_a_value_array_coordinate_request(*, period):
+def test_invalid_period_is_not_a_value_array_coordinate_request(
+    *, period: float
+) -> None:
     """Out-of-range, boolean and float periods raise."""
     with pytest.raises(InvalidSimulationInputError, match="period"):
         _model().state_grid(
-            params={}, regime_name="end", state_name="wealth", period=period
+            params={},
+            regime_name="end",
+            state_name="wealth",
+            period=cast("int", period),  # deliberately not always a valid int
         )
 
 
-def test_invariant_axis_can_still_omit_period():
+def test_invariant_axis_can_still_omit_period() -> None:
     """An age-invariant axis is the same with and without a period."""
     model = _model(specialized=False)
     for period in (None, 0, 1):
@@ -118,7 +139,7 @@ def test_invariant_axis_can_still_omit_period():
         np.testing.assert_array_equal(np.asarray(got), [1.0, 2.0])
 
 
-def test_two_state_axis_order_and_only_one_axis_age_specialized():
+def test_two_state_axis_order_and_only_one_axis_age_specialized() -> None:
     """Per-period axes reproduce the value array of a two-state regime."""
     model = _model(n_points=2, two_states=True)
     result = model.solve(params={}, log_level="off")
@@ -146,7 +167,7 @@ def test_two_state_axis_order_and_only_one_axis_age_specialized():
         )
         expected = coords["wealth"] + 10.0 * coords["income"]
         np.testing.assert_array_equal(
-            np.asarray(result.values[period]["end"]), expected
+            np.asarray(result.values[period]["end"])[..., 0], expected
         )
 
 
@@ -157,14 +178,9 @@ class RouteId:
     other: ScalarInt
 
 
-def test_a_value_only_node_is_a_valid_coordinate_request():
+def test_a_value_only_node_is_a_valid_coordinate_request() -> None:
     """A valued but never visited period still has coordinates."""
-    moving = AgeSpecializedGrid(
-        build=lambda age: LinSpacedGrid(
-            start=1.0 + age, stop=2.0 * (1.0 + age), n_points=2
-        ),
-        signature=lambda age: age,
-    )
+    moving = AgeSpecializedGrid(build=_grid_growing_with_age, signature=_age_signature)
     common = LinSpacedGrid(start=2.0, stop=4.0, n_points=2)
     model = Model(
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
@@ -200,7 +216,7 @@ def test_a_value_only_node_is_a_valid_coordinate_request():
     np.testing.assert_array_equal(np.asarray(got), [2.0, 4.0])
 
 
-def test_period_is_an_index_not_the_calendar_age():
+def test_period_is_an_index_not_the_calendar_age() -> None:
     """`period` indexes model periods; a calendar age is rejected."""
     model = Model(
         ages=AgeGrid(start=10, inclusive_stop=11, step="Y"),
@@ -214,12 +230,7 @@ def test_period_is_an_index_not_the_calendar_age():
                 functions={"utility": _identity},
                 states={
                     "wealth": AgeSpecializedGrid(
-                        build=lambda age: LinSpacedGrid(
-                            start=age - 9.0,
-                            stop=2.0 * (age - 9.0),
-                            n_points=2,
-                        ),
-                        signature=lambda age: age,
+                        build=_grid_from_calendar_age, signature=_age_signature
                     )
                 },
             )

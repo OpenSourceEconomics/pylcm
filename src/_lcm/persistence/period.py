@@ -23,6 +23,9 @@ from _lcm.persistence.solution import (
 )
 from _lcm.typing import JSONValue
 
+# Version 2 stores value arrays with the trailing member axis.
+PERIOD_ARCHIVE_SCHEMA = 2
+
 
 def write_period_archive(
     *, path: Path, metadata: Mapping[str, JSONValue], arrays: Mapping[str, np.ndarray]
@@ -47,7 +50,11 @@ def write_period_archive(
                     ),
                 )
             encoded = json.dumps(
-                {"schema": 1, "metadata": metadata, "arrays": entries},
+                {
+                    "schema": PERIOD_ARCHIVE_SCHEMA,
+                    "metadata": metadata,
+                    "arrays": entries,
+                },
                 sort_keys=True,
                 separators=(",", ":"),
                 allow_nan=False,
@@ -97,7 +104,7 @@ def read_period_archive(
         type(manifest) is not dict
         or set(manifest) != {"schema", "metadata", "arrays"}
         or type(manifest["schema"]) is not int
-        or manifest["schema"] != 1
+        or manifest["schema"] != PERIOD_ARCHIVE_SCHEMA
         or type(manifest["metadata"]) is not dict
         or type(manifest["arrays"]) is not dict
     ):

@@ -107,7 +107,7 @@ def test_runtime_joint_mean_is_not_captured_by_an_ordinary_mean_state() -> None:
     np.testing.assert_allclose(
         np.concatenate(
             (np.asarray(result.U), np.asarray(result.CE), np.asarray(result.value))
-        ),
+        )[..., 0],
         (1.0, 2.0, 1.0, 2.0, 1.9, 3.8),
         atol=tolerance,
         rtol=0,
@@ -260,7 +260,7 @@ def test_process_parameter_ownership_survives_legal_identifier_changes(
         observed.append(
             np.concatenate(
                 (np.asarray(result.U), np.asarray(result.CE), np.asarray(result.value))
-            )
+            )[..., 0]
         )
         expected.append(
             np.concatenate((expected_u, expected_ce, expected_u + 0.9 * expected_ce))
@@ -327,7 +327,7 @@ def test_two_process_groups_do_not_share_their_runtime_law() -> None:
     np.testing.assert_allclose(
         np.concatenate(
             (np.asarray(result.U), np.asarray(result.CE), np.asarray(result.value))
-        ),
+        )[..., 0],
         (11.0, 27.5, 35.75),
         atol=tolerance,
         rtol=0,
@@ -463,7 +463,7 @@ def test_shared_coordinate_spelling_keeps_each_regimes_rows(
             log_level="off",
         )
         .to_dataframe(use_categorical_codes=True)
-        .sort_values(["subject_id", "period"])
+        .sort_values(["agent_id", "period"])
     )
     np.testing.assert_allclose(
         frame["value"], _CROSS_REGIME_VALUES[case], atol=1e-6, rtol=1e-6
@@ -491,7 +491,7 @@ def test_mixed_rows_publish_their_own_physical_states(
             log_level="off",
         )
         .to_dataframe(use_categorical_codes=True)
-        .sort_values(["subject_id", "period"])
+        .sort_values(["agent_id", "period"])
     )
     published = np.concatenate(
         (
@@ -677,7 +677,7 @@ def test_cross_regime_input_and_publication_resolve_names_per_row(
             log_level="off",
         )
         .to_dataframe(use_categorical_codes=True)
-        .sort_values(["subject_id", "period"])
+        .sort_values(["agent_id", "period"])
     )
     tolerance = 128 * np.finfo(frame["value"].to_numpy().dtype).eps
     observed = [frame["value"].to_numpy()]
@@ -699,7 +699,7 @@ def test_cross_regime_input_and_publication_resolve_names_per_row(
             regime_name=regime_name,
             states={name: jnp.asarray(states[name][selected]) for name in names},
         )
-        observed.append(np.asarray(lookup.value))
+        observed.append(np.asarray(lookup.value)[..., 0])
         wanted.append(expected[selected])
         for name in names:
             observed.append(frame.loc[selected, name].to_numpy())
@@ -739,7 +739,7 @@ def test_integer_shared_coordinate_column_keeps_joint_initial_shocks(
             log_level="off",
         )
         .to_dataframe(use_categorical_codes=True)
-        .sort_values(["subject_id", "period"])
+        .sort_values(["agent_id", "period"])
     )
     observed = np.concatenate(
         (
@@ -828,7 +828,7 @@ def test_lookup_policy_accepts_internal_coordinates_at_the_solver_nodes(
         },
     )
     np.testing.assert_allclose(
-        np.asarray(lookup.value),
+        np.asarray(lookup.value)[..., 0],
         np.asarray(cross_regime_solution.values[0]["A"]).ravel(),
         atol=1e-12,
         rtol=0,

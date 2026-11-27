@@ -12,38 +12,38 @@ documentation and tests.
 
 ## Model and economic declarations
 
-| Public name                                                                                          | Canonical documentation                           |
-| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| [`lcm.Model`](model_and_regime.md#api-model)                                                         | Model assembly and execution                      |
-| [`lcm.ModelDeclarations`](runtime_and_results.md#api-model-declarations)                             | Resolved model declarations                       |
-| [`lcm.FunctionDeclaration`](runtime_and_results.md#api-model-declarations)                           | Declared function signature and inputs            |
-| [`lcm.InitialNodes`](model_and_regime.md#api-initial-nodes)                                          | Explicit coordinates of admissible starts         |
-| [`lcm.CompositeState`](model_and_regime.md#api-composite-state)                                      | Reachable tuples of discrete member states        |
-| [`lcm.PeriodCandidate`](model_and_regime.md#api-period-candidate-lowering)                           | Exact primary ranked-width request                |
-| [`lcm.LoweredPeriodCandidate`](model_and_regime.md#api-period-candidate-lowering)                    | Immutable descriptors and raw unoptimized IR      |
-| [`lcm.Regime`](model_and_regime.md#api-regime)                                                       | General regime                                    |
-| [`lcm.Exit`](model_and_regime.md#api-current-exits)                                                  | The regime's current-period move                  |
-| [`lcm.ExitTarget`](model_and_regime.md#api-current-exits)                                            | Mapped destination policy and adjustment          |
-| [`lcm.Consent`](model_and_regime.md#api-current-exits)                                               | Strict formation consent                          |
-| [`lcm.Counterparty`](model_and_regime.md#api-current-exits)                                          | Counterparty Raw policy context                   |
-| [`lcm.Unilateral`](model_and_regime.md#api-current-exits)                                            | Dissolution unless every member is willing        |
-| [`lcm.Renegotiate`](model_and_regime.md#api-current-exits)                                           | Directional discrete adjustment before separation |
-| [`lcm.MutualConsent`](model_and_regime.md#api-current-exits)                                         | Dissolution only if every member is unwilling     |
-| [`lcm.Settlement`](model_and_regime.md#api-current-exits)                                            | Division shifted before a mutual-consent exit     |
-| [`lcm.ExecutionConfig`](runtime_and_results.md#execution-configuration)                              | Devices, budget, sharded states, widths, donation |
-| [`lcm.InvariantBlockSchedule`](runtime_and_results.md#execution-configuration)                       | Period- or block-major invariant schedule         |
-| [`lcm.ConsumptionSavingsRegime`](consumption_savings.md#api-consumption-savings-regime)              | One liquid margin                                 |
-| [`lcm.NestedConsumptionSavingsRegime`](consumption_savings.md#api-nested-consumption-savings-regime) | Liquid plus outer margin                          |
-| [`lcm.LiquidMargin`](consumption_savings.md#api-liquid-margin)                                       | Liquid roles                                      |
-| [`lcm.OuterContinuousMargin`](consumption_savings.md#api-outer-continuous-margin)                    | Outer roles                                       |
-| [`lcm.NetOfAdjustmentCost`](consumption_savings.md#api-liquid-margin)                                | Resources composition                             |
-| [`lcm.post_decision_lower_bound`](consumption_savings.md#api-post-decision-lower-bounds)             | Checkable borrowing bound                         |
-| [`lcm.outer_unchanged`](consumption_savings.md#api-outer-continuous-margin)                          | Identity no-adjustment sentinel                   |
-| [`lcm.cash_on_hand_with_subsidy`](case_pieces.md)                                                    | Supported case-piece fixed form                   |
-| [`lcm.liquid_law_from_resources`](consumption_savings.md)                                            | Conventional liquid law                           |
-| [`lcm.liquid_law_from_savings`](consumption_savings.md)                                              | Conventional savings-written liquid law           |
-| [`lcm.ExtremeValueTasteShocks`](model_and_regime.md#api-extreme-value-taste-shocks)                  | EV1 discrete-choice shocks                        |
-| [`lcm.EULER_GAMMA`](model_and_regime.md#api-euler-gamma)                                             | Mean of a standard Gumbel draw                    |
+| Public name                                                                                          | Canonical documentation                                            |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| [`lcm.Model`](model_and_regime.md#api-model)                                                         | Model assembly and execution                                       |
+| [`lcm.ModelDeclarations`](runtime_and_results.md#api-model-declarations)                             | Resolved model declarations                                        |
+| [`lcm.FunctionDeclaration`](runtime_and_results.md#api-model-declarations)                           | Declared function signature and inputs                             |
+| [`lcm.InitialNodes`](model_and_regime.md#api-initial-nodes)                                          | Explicit coordinates of admissible starts                          |
+| [`lcm.CompositeState`](model_and_regime.md#api-composite-state)                                      | Reachable tuples of discrete member states                         |
+| [`lcm.PeriodCandidate`](model_and_regime.md#api-period-candidate-lowering)                           | Exact primary ranked-width request                                 |
+| [`lcm.LoweredPeriodCandidate`](model_and_regime.md#api-period-candidate-lowering)                    | Immutable descriptors and raw unoptimized IR                       |
+| [`lcm.Regime`](model_and_regime.md#api-regime)                                                       | General regime                                                     |
+| [`lcm.CompositionAction`](model_and_regime.md#api-current-exits)                                     | The members' decision on the composition                           |
+| [`lcm.Destination`](model_and_regime.md#api-current-exits)                                           | Destination regime and landing states of a member                  |
+| [`lcm.Consent`](model_and_regime.md#api-current-exits)                                               | Formation by consent                                               |
+| [`lcm.Counterparty`](model_and_regime.md#api-current-exits)                                          | The other agent at a formation                                     |
+| [`lcm.PCOnActions`](model_and_regime.md#api-current-exits)                                           | Unilateral divorce: participation constraints on actions           |
+| [`lcm.PCOnWeight`](model_and_regime.md#api-current-exits)                                            | Unilateral divorce: participation constraints on the Pareto weight |
+| [`lcm.MutualConsent`](model_and_regime.md#api-current-exits)                                         | Mutual consent divorce                                             |
+| [`lcm.Transfer`](model_and_regime.md#api-current-exits)                                              | Divorce transfer the members can shift                             |
+| [`lcm.ExecutionConfig`](runtime_and_results.md#execution-configuration)                              | Devices, budget, sharded states, widths, donation                  |
+| [`lcm.InvariantBlockSchedule`](runtime_and_results.md#execution-configuration)                       | Period- or block-major invariant schedule                          |
+| [`lcm.ConsumptionSavingsRegime`](consumption_savings.md#api-consumption-savings-regime)              | One liquid margin                                                  |
+| [`lcm.NestedConsumptionSavingsRegime`](consumption_savings.md#api-nested-consumption-savings-regime) | Liquid plus outer margin                                           |
+| [`lcm.LiquidMargin`](consumption_savings.md#api-liquid-margin)                                       | Liquid roles                                                       |
+| [`lcm.OuterContinuousMargin`](consumption_savings.md#api-outer-continuous-margin)                    | Outer roles                                                        |
+| [`lcm.NetOfAdjustmentCost`](consumption_savings.md#api-liquid-margin)                                | Resources composition                                              |
+| [`lcm.post_decision_lower_bound`](consumption_savings.md#api-post-decision-lower-bounds)             | Checkable borrowing bound                                          |
+| [`lcm.outer_unchanged`](consumption_savings.md#api-outer-continuous-margin)                          | Identity no-adjustment sentinel                                    |
+| [`lcm.cash_on_hand_with_subsidy`](case_pieces.md)                                                    | Supported case-piece fixed form                                    |
+| [`lcm.liquid_law_from_resources`](consumption_savings.md)                                            | Conventional liquid law                                            |
+| [`lcm.liquid_law_from_savings`](consumption_savings.md)                                              | Conventional savings-written liquid law                            |
+| [`lcm.ExtremeValueTasteShocks`](model_and_regime.md#api-extreme-value-taste-shocks)                  | EV1 discrete-choice shocks                                         |
+| [`lcm.EULER_GAMMA`](model_and_regime.md#api-euler-gamma)                                             | Mean of a standard Gumbel draw                                     |
 
 ## Graph inspection and regime analysis
 
@@ -227,7 +227,7 @@ surfaces remain outside that top-level namespace:
 | Public name                                                                    | Canonical documentation                                  |
 | ------------------------------------------------------------------------------ | -------------------------------------------------------- |
 | [`lcm.CollectiveUtility`](collective_regimes.md#api-collective-utility)        | One utility per member, one action                       |
-| [`lcm.ParetoObjective`](collective_regimes.md#api-pareto-objective)            | Weighted household objective                             |
+| [`lcm.ParetoObjective`](collective_regimes.md#api-pareto-objective)            | Pareto-weighted objective of the members                 |
 | [`lcm.Gate`](collective_regimes.md#api-gate)                                   | State-dependent branch on the transition into one target |
 | [`lcm.MemberRoute`](collective_regimes.md#api-member-route)                    | One source member's route across it                      |
 | [`lcm.ProjectedRegimeValue`](collective_regimes.md#api-projected-regime-value) | Another regime's value, projected                        |

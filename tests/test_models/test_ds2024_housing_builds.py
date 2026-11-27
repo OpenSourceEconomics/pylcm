@@ -17,7 +17,7 @@ Two oracles validate it on the liquid-housing interior:
 """
 
 from collections.abc import Callable, Mapping
-from typing import Literal
+from typing import Literal, Protocol
 
 import numpy as np
 import pytest
@@ -59,6 +59,12 @@ ORACLE_CELL_TOL = 0.30
 MIN_FRACTION_WITHIN = 0.95
 
 
+class _Continuation(Protocol):
+    """Next-period value at a next house level over a block of next liquid assets."""
+
+    def __call__(self, *, next_house: float, next_liquid: np.ndarray) -> np.ndarray: ...
+
+
 @pytest.mark.parametrize(
     "variant",
     [
@@ -71,7 +77,9 @@ MIN_FRACTION_WITHIN = 0.95
         "brute",
     ],
 )
-def test_ds2024_housing_builds_and_solves(variant: Literal["negm", "brute"]):
+def test_ds2024_housing_builds_and_solves(
+    variant: Literal["negm", "brute"],
+) -> None:
     """Both DS-2024 housing variants construct and solve with a finite interior."""
     model = build_model(
         variant=variant,
@@ -109,7 +117,7 @@ def brute() -> Mapping[int, Mapping[str, FloatND]]:
 @pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_ds2024_housing_negm_matches_brute_on_interior(
     brute: Mapping[int, Mapping[str, FloatND]],
-):
+) -> None:
     """The NEGM solve agrees with its grid-search twin on the liquid-housing interior.
 
     At zero depreciation the keeper holds the house, so the NEGM nest and the
@@ -133,8 +141,8 @@ def test_ds2024_housing_negm_matches_brute_on_interior(
     for period in sorted(brute):
         if "alive" not in brute[period]:
             continue
-        brute_V = np.asarray(brute[period]["alive"])
-        negm_V = np.asarray(negm[period]["alive"])
+        brute_V = np.asarray(brute[period]["alive"])[..., 0]
+        negm_V = np.asarray(negm[period]["alive"])[..., 0]
         assert brute_V.shape == negm_V.shape
         interior = (Ellipsis, slice(3, N_GRID - 2), slice(3, N_GRID - 2))
         finite = np.isfinite(brute_V[interior]) & np.isfinite(negm_V[interior])
@@ -145,18 +153,22 @@ def test_ds2024_housing_negm_matches_brute_on_interior(
     assert float((difference <= BRUTE_CELL_TOL).mean()) >= MIN_FRACTION_WITHIN
 
 
-def _pooled_interior_difference(*, pylcm_solution, oracle):
+def _pooled_interior_difference(
+    *,
+    pylcm_solution: Mapping[int, Mapping[str, FloatND]],
+    oracle: Mapping[int, np.ndarray],
+) -> np.ndarray:
     """Pooled absolute interior `V` difference between a pylcm solve and the oracle.
 
     The oracle stores the alive value as `(income, house, liquid)` and the terminal
-    as `(house, liquid)`, the same axis order as the pylcm solve, so the interior
-    slice and finite mask apply directly.
+    as `(house, liquid)`, the same axis order as the pylcm solve without its member
+    axis, so the interior slice and finite mask apply to the member's slice.
     """
     differences = []
     for period in sorted(oracle):
         if period not in pylcm_solution or "alive" not in pylcm_solution[period]:
             continue
-        pylcm_V = np.asarray(pylcm_solution[period]["alive"])
+        pylcm_V = np.asarray(pylcm_solution[period]["alive"])[..., 0]
         oracle_V = np.asarray(oracle[period])
         assert pylcm_V.shape == oracle_V.shape
         interior = (Ellipsis, slice(3, N_GRID - 2), slice(3, N_GRID - 2))
@@ -167,7 +179,7 @@ def _pooled_interior_difference(*, pylcm_solution, oracle):
 
 def test_ds2024_housing_vfi_oracle_matches_brute_at_zero_delta(
     brute: Mapping[int, Mapping[str, FloatND]],
-):
+) -> None:
     """The host VFI oracle reproduces the brute solve at zero depreciation.
 
     The oracle is a from-scratch NumPy value-function iteration; at `delta = 0` it
@@ -186,7 +198,7 @@ def test_ds2024_housing_vfi_oracle_matches_brute_at_zero_delta(
 
 
 @pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
-def test_ds2024_housing_negm_keeper_depreciation_matches_vfi_oracle():
+def test_ds2024_housing_negm_keeper_depreciation_matches_vfi_oracle() -> None:
     """At `delta = 0.10` the NEGM keeper's depreciated hold matches the VFI oracle.
 
     The keeper holds the house at the depreciated level `H' = h(1 - delta)`, which
@@ -284,7 +296,7 @@ def outer_refinement_mean() -> Callable[[int], float]:
 @_NEEDS_KERNEL
 def test_ds2024_housing_negm_finest_outer_grid_is_within_the_oracle_tolerance(
     outer_refinement_mean: Callable[[int], float],
-):
+) -> None:
     """At 17 outer nodes the pooled interior difference is within tolerance."""
     assert outer_refinement_mean(17) < ORACLE_MEAN_TOL
 
@@ -292,7 +304,7 @@ def test_ds2024_housing_negm_finest_outer_grid_is_within_the_oracle_tolerance(
 @_NEEDS_KERNEL
 def test_ds2024_housing_negm_improves_from_middle_to_finest_outer_grid(
     outer_refinement_mean: Callable[[int], float],
-):
+) -> None:
     """Refining the outer house grid from 9 to 17 nodes moves NEGM toward the truth."""
     assert outer_refinement_mean(9) > outer_refinement_mean(17)
 
@@ -300,7 +312,7 @@ def test_ds2024_housing_negm_improves_from_middle_to_finest_outer_grid(
 @_NEEDS_KERNEL
 def test_ds2024_housing_negm_improves_from_coarsest_to_middle_outer_grid(
     outer_refinement_mean: Callable[[int], float],
-):
+) -> None:
     """Refining the outer house grid from 5 to 9 nodes moves NEGM toward the truth."""
     assert outer_refinement_mean(5) > outer_refinement_mean(9)
 
@@ -308,7 +320,7 @@ def test_ds2024_housing_negm_improves_from_coarsest_to_middle_outer_grid(
 @_NEEDS_KERNEL
 def test_ds2024_housing_negm_finest_outer_grid_halves_the_coarsest_difference(
     outer_refinement_mean: Callable[[int], float],
-):
+) -> None:
     """The 17-node outer grid at least halves the 5-node difference to the truth."""
     assert outer_refinement_mean(17) < outer_refinement_mean(5) / 2
 
@@ -359,7 +371,9 @@ def _exact_state_first_period_value(
         row = terminal[upper - 1] * (1.0 - weight) + terminal[upper] * weight
         return np.interp(np.clip(next_liquid, low, high), liquid, row)
 
-    def best(*, held: float, cash: np.ndarray, continuation) -> np.ndarray:
+    def best(
+        *, held: float, cash: np.ndarray, continuation: _Continuation
+    ) -> np.ndarray:
         depreciated = held * (1.0 - delta)
         candidates = np.concatenate([[depreciated], outer])
         costs = np.concatenate(
@@ -411,7 +425,7 @@ def _exact_state_first_period_value(
 
 
 @pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
-def test_ds2024_housing_negm_does_not_exceed_exact_next_state_optimum():
+def test_ds2024_housing_negm_does_not_exceed_exact_next_state_optimum() -> None:
     """The NEGM first-period value never exceeds the exact next-state optimum.
 
     The reference solves the next period at the actual next house of every
@@ -441,6 +455,6 @@ def test_ds2024_housing_negm_does_not_exceed_exact_next_state_optimum():
         delta=delta,
     )
     interior = (Ellipsis, slice(2, n_grid - 1), slice(2, n_grid - 1))
-    excess = np.asarray(negm[0]["alive"])[interior] - reference[interior]
+    excess = np.asarray(negm[0]["alive"])[..., 0][interior] - reference[interior]
 
     assert float(excess.max()) < 0.01

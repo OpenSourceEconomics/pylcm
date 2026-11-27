@@ -91,12 +91,12 @@ def prepare_period_capture(
 ) -> CaptureContext:
     """Refuse unsupported selections before solve planning or numerical dispatch."""
     validate_capture_route(
-        periods=request.periods,
+        periods=request.steps,
         regimes=regimes,
         execution=execution,
         enable_jit=enable_jit,
     )
-    for name, period in request.periods:
+    for name, period in request.steps:
         target = request.directory / f"{name}@{period}"
         if target.exists():
             raise FileExistsError(f"Period capture target already exists: {target}")
@@ -133,11 +133,7 @@ def validate_capture_route(
         regime = regimes[name]
         kernel_type = type(regime.solution.period_kernels[period])
         route = f"{kernel_type.__module__}.{kernel_type.__qualname__}"
-        if (
-            route != _GRID_SEARCH_ROUTE
-            or regime.member_axis is not None
-            or regime.gated_edges
-        ):
+        if route != _GRID_SEARCH_ROUTE or regime.gated_edges:
             raise ValueError("Period capture supports ordinary GridSearch values only.")
 
 
@@ -209,7 +205,7 @@ def capture_public_entry(
     """
     if (
         context is None
-        or (kernel_kwargs["regime_name"], period) not in context.request.periods
+        or (kernel_kwargs["regime_name"], period) not in context.request.steps
     ):
         return None
     # Gated-edge values belong to the regimes declaring the edges. A target without
@@ -237,7 +233,7 @@ def capture_public_entry(
         "identity": context.identity,
         "regime": kernel_kwargs["regime_name"],
         "period": period,
-        "age": age_at(ages=kernel_kwargs["ages"], period=period),
+        "age": age_at(ages=kernel_kwargs["ages"], step=period),
         "layouts": plain_metadata(layouts),
         "widths": {
             name: dict(core.tile_widths) for name, core in compiled_cores.items()

@@ -57,7 +57,7 @@ from tests.conftest import assert_agrees_to_ulp
 HOURS_GRID = LinSpacedGrid(start=0.0, stop=40.0, n_points=5)
 CONSUMPTION_GRID = LinSpacedGrid(start=0.5, stop=10.0, n_points=11)
 WEALTH_GRID = LinSpacedGrid(start=1.0, stop=12.0, n_points=7)
-N_SUBJECTS = 6
+N_AGENTS = 6
 
 
 @categorical(ordered=False)
@@ -162,9 +162,9 @@ def _simulate(*, conditional: bool, inactive_value: float = 0.0) -> pd.DataFrame
     result = model.simulate(
         params=PARAMS,
         initial_conditions={
-            "wealth": jnp.linspace(1.5, 11.5, N_SUBJECTS),
-            "age": jnp.zeros(N_SUBJECTS),
-            "regime_id": jnp.full(N_SUBJECTS, RegimeId.working, dtype=jnp.int32),
+            "wealth": jnp.linspace(1.5, 11.5, N_AGENTS),
+            "age": jnp.zeros(N_AGENTS),
+            "regime_id": jnp.full(N_AGENTS, RegimeId.working, dtype=jnp.int32),
         },
         log_level="off",
     )
@@ -197,7 +197,7 @@ def test_conditional_action_simulates_like_its_pin_constraint(
     inactive_value: float,
 ) -> None:
     """Simulated actions equal those of the pin-constraint formulation."""
-    columns = ["subject_id", "period", "labor", "hours", "consumption"]
+    columns = ["agent_id", "period", "labor", "hours", "consumption"]
     conditional = _simulate(conditional=True, inactive_value=inactive_value)
     pinned = _simulate(conditional=False, inactive_value=inactive_value)
     pd.testing.assert_frame_equal(
@@ -553,9 +553,9 @@ def test_saved_solution_is_accepted_only_by_the_same_declaration(
             params=PARAMS,
             solution=loaded,
             initial_conditions={
-                "wealth": jnp.linspace(1.5, 11.5, N_SUBJECTS),
-                "age": jnp.zeros(N_SUBJECTS),
-                "regime_id": jnp.full(N_SUBJECTS, RegimeId.working, dtype=jnp.int32),
+                "wealth": jnp.linspace(1.5, 11.5, N_AGENTS),
+                "age": jnp.zeros(N_AGENTS),
+                "regime_id": jnp.full(N_AGENTS, RegimeId.working, dtype=jnp.int32),
             },
             log_level="off",
         )
@@ -565,11 +565,9 @@ def test_saved_solution_is_accepted_only_by_the_same_declaration(
                 params=PARAMS,
                 solution=loaded,
                 initial_conditions={
-                    "wealth": jnp.linspace(1.5, 11.5, N_SUBJECTS),
-                    "age": jnp.zeros(N_SUBJECTS),
-                    "regime_id": jnp.full(
-                        N_SUBJECTS, RegimeId.working, dtype=jnp.int32
-                    ),
+                    "wealth": jnp.linspace(1.5, 11.5, N_AGENTS),
+                    "age": jnp.zeros(N_AGENTS),
+                    "regime_id": jnp.full(N_AGENTS, RegimeId.working, dtype=jnp.int32),
                 },
                 log_level="off",
             )
@@ -583,7 +581,7 @@ def _scaled_utility(*, labor: IntND, hours: FloatND, scale: float) -> FloatND:
     return scale * (1 - labor) + hours
 
 
-def _unannotated_utility(*, labor, hours):
+def _unannotated_utility(*, labor, hours):  # noqa: ANN001, ANN202, RUF100 - unannotated on purpose
     return 100.0 * (1 - labor) + hours
 
 
@@ -609,7 +607,7 @@ def _array_annotated_hours_pin(*, labor: IntND, hours: FloatND) -> BoolND:
     return (labor == Labor.yes) | (hours == 0.0)
 
 
-def _unannotated_hours_pin(*, labor, hours):
+def _unannotated_hours_pin(*, labor, hours):  # noqa: ANN001, ANN202, RUF100 - unannotated on purpose
     return (labor == Labor.yes) | (hours == 0.0)
 
 
@@ -718,7 +716,7 @@ def _age_specialized_outputs(
         log_level="off",
     ).to_dataframe()
     panel = frame.loc[
-        frame["regime_name"] == "working", ["subject_id", "period", "labor", "hours"]
+        frame["regime_name"] == "working", ["agent_id", "period", "labor", "hours"]
     ].reset_index(drop=True)
     actions = {name: np.asarray(value) for name, value in lookup.actions.items()}
     return solution.values[0]["working"], actions, panel
@@ -773,15 +771,15 @@ def _period_utility(period: int) -> Callable[..., FloatND]:
 
 
 def _visited_only_utility(period: int) -> Callable[..., FloatND]:
-    """Build the simulated utility, which exists only where subjects are."""
+    """Build the simulated utility, which exists only where agents are."""
     if period != 2:
-        msg = f"No simulated utility at period {period}; subjects arrive at 2."
+        msg = f"No simulated utility at period {period}; agents arrive at 2."
         raise ValueError(msg)
     return _period_utility(period)
 
 
 def _visit_model() -> Model:
-    """Subjects start in origin at period 0 and in working at period 2. The solve
+    """Agents start in origin at period 0 and in working at period 2. The solve
     moves origin to working, the simulation moves it to dead, so working is solved
     at periods 1 and 2 but visited only at period 2."""
     working = Regime(
@@ -825,7 +823,7 @@ def _visit_model() -> Model:
 
 
 @pytest.mark.parametrize(("period", "expected"), [(1, 101.0), (2, 102.0)])
-def test_simulated_reader_is_bound_where_subjects_visit(
+def test_simulated_reader_is_bound_where_agents_visit(
     *, period: int, expected: float
 ) -> None:
     """A simulated utility built only at visited periods does not block the model,

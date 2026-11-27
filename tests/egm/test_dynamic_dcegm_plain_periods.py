@@ -42,6 +42,10 @@ from tests.egm.test_dynamic_dcegm_activation import (
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 
+def _age_signature(age: float) -> float:
+    return age
+
+
 def _resources_at_age(age: float) -> UserFunction:
     """Shift the resource intercept by one quarter per target period."""
     intercept = 1.0 + 0.25 * (age - 1.0)
@@ -87,11 +91,11 @@ def _grouping_model(
     }
     if specialization == "resources":
         functions["resources"] = AgeSpecializedFunction(
-            build=_resources_at_age, signature=lambda age: age
+            build=_resources_at_age, signature=_age_signature
         )
     if specialization == "discount":
         functions["discount_factor"] = AgeSpecializedFunction(
-            build=_discount_at_age, signature=lambda age: age
+            build=_discount_at_age, signature=_age_signature
         )
     child = ConsumptionSavingsRegime(
         liquid=margin,
@@ -156,7 +160,7 @@ def _actual_plain_core(*, model: Model, period: int) -> _EGMCore:
         assert id(function) not in seen
         seen.add(id(function))
         if isinstance(function, functools.partial):
-            function = function.func
+            function = function.keywords.get("_member_axis_core", function.func)
         elif isinstance(function, _RegimeMassGuardedCore):
             function = function.core
         else:
@@ -200,7 +204,7 @@ def test_plain_parent_dc_child_rejects_specialized_solve_aggregator(
 ) -> None:
     """Reject a custom solve aggregator before constructing an Euler reader."""
     marker = AgeSpecializedFunction(
-        build=_linear_aggregator_at_age, signature=lambda age: age
+        build=_linear_aggregator_at_age, signature=_age_signature
     )
     aggregator = Phased(solve=marker, simulate=LinearAggregator()) if phased else marker
     with pytest.raises(

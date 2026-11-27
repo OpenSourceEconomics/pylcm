@@ -27,7 +27,9 @@ INTERIOR = (Ellipsis, slice(3, N_GRID - 2))
 
 
 @pytest.mark.parametrize("variant", ["dcegm", "brute"])
-def test_ds2024_housing_fues_builds_and_solves(variant: Literal["dcegm", "brute"]):
+def test_ds2024_housing_fues_builds_and_solves(
+    variant: Literal["dcegm", "brute"],
+) -> None:
     """Both discrete-housing variants construct and solve with a finite interior."""
     model = build_model(
         variant=variant,
@@ -76,7 +78,7 @@ def test_ds2024_housing_dcegm_matches_brute_in_bulk(
     *,
     envelope: Literal["fues", "ltm", "rfc"],
     brute: Mapping[int, Mapping[str, FloatND]],
-):
+) -> None:
     """Each discrete-housing DC-EGM backend bulk-agrees with its grid-search twin.
 
     On the liquid interior the mean value difference is sub-unit and the large
@@ -92,8 +94,8 @@ def test_ds2024_housing_dcegm_matches_brute_in_bulk(
     for period in sorted(brute):
         if "alive" not in brute[period]:
             continue
-        brute_V = np.asarray(brute[period]["alive"])[INTERIOR]
-        dcegm_V = np.asarray(dcegm[period]["alive"])[INTERIOR]
+        brute_V = np.asarray(brute[period]["alive"])[..., 0][INTERIOR]
+        dcegm_V = np.asarray(dcegm[period]["alive"])[..., 0][INTERIOR]
         finite = np.isfinite(brute_V) & np.isfinite(dcegm_V)
         differences.append(np.abs(brute_V - dcegm_V)[finite])
     difference = np.concatenate(differences)

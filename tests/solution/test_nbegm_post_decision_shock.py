@@ -187,7 +187,7 @@ def test_first_period_consumption_is_the_reference_policy(
         df = model.simulate(
             params=params, initial_conditions=conditions, log_level="off", seed=0
         ).to_dataframe()
-        first = df.query("period == 0").sort_values("subject_id")
+        first = df.query("period == 0").sort_values("agent_id")
         return first["consumption"].to_numpy()
 
     got = first_consumption(model=integrated, conditions=common)

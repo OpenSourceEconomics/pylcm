@@ -178,12 +178,13 @@ def _bellman_operands(
       likely health states.
 
     The optimal consumption `c*` is found by enumerating the feasible
-    consumption grid. Arrays are indexed `(income, health, wealth)` like the
-    value leaf. The reconstruction must reproduce the solved leaf and pick a
-    strict maximizer, or the operands are not the ones the solver summed.
+    consumption grid. Both arrays are indexed `(income, health, wealth, member)`
+    like the value leaf, with the one member `"self"`. The reconstruction must
+    reproduce the solved leaf and pick a strict maximizer, or the operands are
+    not the ones the solver summed.
     """
-    leaf = np.asarray(values[period]["work"])
-    following = np.asarray(values[period + 1]["retire"], dtype=np.float64)
+    leaf = np.asarray(values[period]["work"])[..., 0]
+    following = np.asarray(values[period + 1]["retire"], dtype=np.float64)[..., 0]
     wealth = np.linspace(1.0, 5.0, 5)
     consumption = np.linspace(0.1, 2.0, 4)
     nodes, weights = np.polynomial.hermite_e.hermegauss(5)
@@ -215,7 +216,7 @@ def _bellman_operands(
         assert len(candidates) == 1 or candidates[0][0] - candidates[1][0] > tolerance
         flow[income, health, wealth_index] = candidates[0][1]
         continuation[income, health, wealth_index] = candidates[0][2]
-    return flow, continuation
+    return flow[..., None], continuation[..., None]
 
 
 def _interpolate(*, x: float, grid: np.ndarray, values: np.ndarray) -> float:
@@ -333,5 +334,5 @@ def test_model_rejects_a_per_regime_width_for_an_unknown_axis() -> None:
 
 def test_model_rejects_a_per_regime_width_for_a_simulation_only_axis() -> None:
     """Simulation plans without a regime in hand, so it takes the broadcast form."""
-    with pytest.raises(ExecutionPlanningError, match="subject"):
-        _model_with(ExecutionConfig(axis_widths={"subject": {"retire": 2}}))
+    with pytest.raises(ExecutionPlanningError, match="agent"):
+        _model_with(ExecutionConfig(axis_widths={"agent": {"retire": 2}}))

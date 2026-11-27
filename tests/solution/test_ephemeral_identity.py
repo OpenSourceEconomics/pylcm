@@ -81,7 +81,7 @@ def test_ephemeral_model_solves_and_simulates_an_opaque_callable_graph(
     solution = model.solve(params=params, log_level="off")
     np.testing.assert_allclose(
         solution.values[0]["working_life"],
-        np.log([1.0, 2.0, 3.0]),
+        np.log([[1.0], [2.0], [3.0]]),
         rtol=0,
         atol=10 ** (-test_conftest.DECIMAL_PRECISION),
     )
@@ -207,7 +207,7 @@ def test_restored_ephemeral_model_requires_a_fresh_solution() -> None:
     fresh = restored.solve(params=params, log_level="off")
     np.testing.assert_allclose(
         fresh.values[0]["working_life"],
-        np.log([1.0, 2.0, 3.0]),
+        np.log([[1.0], [2.0], [3.0]]),
         rtol=0,
         atol=10 ** (-test_conftest.DECIMAL_PRECISION),
     )
@@ -218,7 +218,7 @@ def test_ephemeral_model_cannot_publish_durable_archives(tmp_path: Path) -> None
     model, params, _ = _inputs(durable_identity=False)
     capture = PeriodCapture(
         directory=tmp_path / "captures",
-        periods=(("working_life", 0),),
+        steps=(("working_life", 0),),
         source_identity={"model": "local-model"},
     )
     with pytest.raises(UnsupportedOperationError, match="ephemeral"):

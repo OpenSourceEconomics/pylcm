@@ -20,9 +20,9 @@ from lcm import NormalIIDProcess, TauchenAR1Process
 - `*AR1Process` — an AR(1) process with a chosen discretization scheme.
 
 > **Check solver support before adding the shock.** A process can enlarge the
-> continuation-node product. EGM-family and collective regimes support narrower
-> combinations than `GridSearch`; build the intended specialized regime early and let
-> model validation check it.
+> continuation-node product. EGM-family regimes and regimes with several members support
+> narrower combinations than `GridSearch`; build the intended specialized regime early
+> and let model validation check it.
 
 A shock drawn and used within one period can instead be declared as a named `ShockGroup`
 (`Model(shocks=...)`, `Regime(shocks=...)`). In an endogenous-grid regime such a group
@@ -434,7 +434,7 @@ no state of `alive`, and an initial value supplied for it is dropped.
 The solve takes the expectation over the shock's nodes and weights inside the
 continuation, so the draw may change a next state. Nonlinear certainty equivalents apply
 their transform to each realized continuation value before averaging. The nodes serve
-only that integration: simulation draws each subject's value in each period from the
+only that integration: simulation draws each agent's value in each period from the
 shock's continuous law, since the draw enters only next period's state law and indexes
 no policy read. An IID process state declared with `simulated_draws="nodes"` keeps the
 node lottery; a `ShockGroup` has no such option. `shock_paths` accepts a plain array of
@@ -512,8 +512,9 @@ regime and survives archiving models built with these rules. Model archives pres
 their economic closures and continuation logic; rebuild from declarations when adopting
 different solver numerics. The additive declaration's dependency checks still run before
 fallback; an invalid decomposition raises a construction error. On the linear averaging
-route, gated, collective, entered or factored continuations are unsupported and raise a
-construction error; use a plain `base + shock` function there.
+route, gated continuations, continuations with several members, and entered or factored
+continuations are unsupported and raise a construction error; use a plain `base + shock`
+function there.
 
 The merged-point table and interpolation weights require temporary storage that grows
 with the target grid, integrated shock support, conditioners and retained draws. They
@@ -524,9 +525,9 @@ peak-memory benefit require a paired comparison of otherwise equivalent models.
 
 ## State-Conditioned Process Parameters
 
-The law of a process often depends on where the subject currently is: earnings
-innovations are more variable out of work than in it, wages drift and persist
-differently by education. Declare that with `StateConditioned` on the process.
+The law of a process often depends on where the agent currently is: earnings innovations
+are more variable out of work than in it, wages drift and persist differently by
+education. Declare that with `StateConditioned` on the process.
 
 ```python
 from lcm import DiscreteGrid, NormalIIDProcess, StateConditioned, categorical
@@ -617,7 +618,7 @@ What to do depends on the process:
   nodes are those of the standard normal and are scaled by each category's `sigma`, so
   nothing is shared.
 
-- **A persistent process whose conditioning state never changes for a subject**, such as
+- **A persistent process whose conditioning state never changes for an agent**, such as
   education. Standardize the state, which is common practice. With
   $m_s = \mu_s / (1 - \rho_s)$ and $v_s = \sigma_s / \sqrt{1 - \rho_s^2}$ the long-run
   mean and standard deviation of category $s$, carry $z_t = (y_t - m_s) / v_s$ as the
@@ -651,7 +652,7 @@ y_{t+1} \mid y_t, s_t \sim N(\mu_{s_t} + \rho_{s_t} y_t,\ \sigma_{s_t}^2),
 ```
 
 with an IID process dropping the $\rho y_t$ term. The law of the innovation realized
-between $t$ and $t+1$ is therefore set by where the subject is at $t$ — the employment
+between $t$ and $t+1$ is therefore set by where the agent is at $t$ — the employment
 status they are leaving, not the one they arrive in.
 
 When a process is declared in more than one regime, the values in force are the ones

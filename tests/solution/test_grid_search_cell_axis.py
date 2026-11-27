@@ -142,7 +142,7 @@ def test_public_solve_dispatches_the_planned_cell_width(
 
 @pytest.mark.parametrize("kind", ["singleton", "ev1", "collective"])
 def test_state_tiling_leaves_action_reducer_declarations_distinct(*, kind: str) -> None:
-    """Dense canonical action reductions can share the planned state-cell loop."""
+    """Streamed and dense action reductions share the planned state-cell loop."""
     model = _model(kind=kind, width=4)
     program = core_program_graph(
         kernel=model._regimes["acting"].solution.period_kernels[0]
@@ -155,7 +155,7 @@ def test_state_tiling_leaves_action_reducer_declarations_distinct(*, kind: str) 
     ) == (
         CoreExecutionDisposition.PLANNED,
         None,
-        ("action_product",) if kind == "singleton" else (),
+        () if kind == "ev1" else ("action_product",),
         (("cell", 6),),
     )
 
@@ -236,7 +236,7 @@ def test_colliding_cell_names_keep_their_economic_values() -> None:
     result = _collision_model().solve(params={"discount_factor": 0.5}, log_level="off")
     assert_agrees_to_ulp(
         got=np.asarray(result.values[0]["acting"]),
-        expected=np.asarray([331.5, 334.5]),
+        expected=np.asarray([[331.5], [334.5]]),
         n_ulp=4,
     )
 

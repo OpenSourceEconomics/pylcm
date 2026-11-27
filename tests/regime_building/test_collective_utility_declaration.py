@@ -164,7 +164,7 @@ def test_the_utilities_keys_fix_the_member_order() -> None:
         }
     )
 
-    assert regime.member_axis == ("f", "m")
+    assert regime.members == ("f", "m")
 
 
 def test_a_members_utility_may_differ_between_the_two_phases() -> None:
@@ -242,9 +242,9 @@ def test_a_plain_utility_declares_the_single_member_self() -> None:
     assert _single(utility=_u_f).members == ("self",)
 
 
-def test_a_plain_utility_declares_no_member_axis() -> None:
-    """A regime with a plain utility function carries no member axis."""
-    assert _single(utility=_u_f).member_axis is None
+def test_a_plain_utility_declares_the_member_self() -> None:
+    """A regime with a plain utility function has the one member `"self"`."""
+    assert _single(utility=_u_f).members == ("self",)
 
 
 def test_a_household_declares_its_utilities_keys_as_members() -> None:
@@ -262,7 +262,7 @@ def test_a_households_member_axis_is_its_members() -> None:
         functions={"utility": CollectiveUtility(utilities={"m": _u_m, "f": _u_f})}
     )
 
-    assert regime.member_axis == ("m", "f")
+    assert regime.members == ("m", "f")
 
 
 def test_a_household_member_named_self_is_refused_where_it_is_written() -> None:

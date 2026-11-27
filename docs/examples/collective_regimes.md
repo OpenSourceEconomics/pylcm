@@ -4,18 +4,19 @@ title: Collective regimes
 
 # Collective regimes
 
-Two small household models. The first isolates the shared argmax: one action, two
-members who value it differently. The second adds what makes a household more than a
-joint utility function — an exit whose rule reads each partner's outside option in the
-*same* period and sends each partner somewhere different when the household ends. Both
-use two- and three-point grids and one binary action, so every value below can be
-recomputed by hand; the grids are curated for exposition and tests, not calibrated.
+Two small models of a couple. The first isolates the shared argmax: one action, two
+members who value it differently. The second adds what makes a couple more than a joint
+utility function. It declares a composition action whose rule reads the value of each
+partner's outside option in the *same* period. When the couple separates, the
+composition action sends each partner to a different destination. Both models use two-
+and three-point grids and one binary action, so every value below can be recomputed by
+hand. The grids are curated for exposition and tests, not calibrated.
 
 [View source on GitHub](https://github.com/OpenSourceEconomics/pylcm/blob/main/src/lcm_examples/collective_regimes.py)
 
 ## Shared decision: one action, two values
 
-The household chooses work or leisure at a wage of 8 or 40. Member `f` gains 30 from
+The couple chooses work or leisure at a wage of 8 or 40. Member `f` gains 30 from
 leisure and consumes her wage when working; member `m` values consumption twice as
 strongly and gets nothing from leisure. One `CollectiveUtility` declares both, and its
 keys are the regime's members in the order written:
@@ -33,7 +34,7 @@ couple = Regime(
 )
 ```
 
-No `objective` is declared, so the members carry equal weight. The couple's only
+No `objective` is declared, so the members carry equal Pareto weights. The couple's only
 outgoing edge, `edges={"couple": {"couple_terminal": 0}}`, is its whole transition law.
 
 ```python
@@ -51,44 +52,45 @@ solution.values[0]["couple"]
 ```
 
 Rows are the two wage nodes, columns `f` and `m` in the order the `utilities` keys were
-written. Both entries of a row are read at one household choice, so they are not two
-separate optimizations. At the low wage node the household works — working lifts next
+written. Both entries of a row are read at one common choice, so they are not two
+separate optimizations. At the low wage node the couple works — working lifts next
 period's wage to 40, where `m`'s consumption value dominates — and `f` is carried to 46
 even though the leisure branch would have been worth 58.5 to her.
 
 ## Participation and dissolution
 
 The second model runs three ages. `married` decides at age 0;
-`married_with_participation` is the couple at age 1, where either partner may walk out;
-`married_terminal` closes the household at age 2. `single_f` and `single_m` are the
-outside options, terminal from age 1 on. The wage is fixed at 1, 2, or 3 and never
-moves, so the wage node alone decides the outcome. `f` alone is worth 5.5 at the middle
-node and 1.5 elsewhere; `m` alone is worth 1 everywhere. At age 1 each partner compares
-their own action value against that same-period outside option, net of a divorce cost of
-0.5 for `f` and 0.2 for `m`. The regime's `Exit` names where each partner goes and the
-rule that decides:
+`married_with_participation` is the couple at age 1, where either partner may leave;
+`married_terminal` is the couple at age 2, the last age. `single_f` and `single_m` are
+the outside options, terminal from age 1 on. The wage is fixed at 1, 2, or 3 and never
+changes, so the wage node alone decides the outcome. `f` alone is worth 5.5 at the
+middle node and 1.5 elsewhere; `m` alone is worth 1 everywhere. At age 1 each partner
+compares their own action value with the value of that same-period outside option, net
+of a divorce cost of 0.5 for `f` and 0.2 for `m`. The regime's `CompositionAction` names
+where each partner goes and the rule that decides, here unilateral divorce with
+participation constraints on actions:
 
 ```python
-exit = Exit(
-    targets={
-        "f": ExitTarget(
+composition_action = CompositionAction(
+    destinations={
+        "f": Destination(
             regime="single_f",
             projection={"wage": identity_wage},
             utility_adjustment=divorce_cost_f,  # -0.5
         ),
-        "m": ExitTarget(
+        "m": Destination(
             regime="single_m",
             projection={"wage": identity_wage},
             utility_adjustment=divorce_cost_m,  # -0.2
         ),
     },
-    rule=Unilateral(tie="leave"),  # stay only if both strictly prefer it
+    rule=PCOnActions(tie="leave"),  # stay only if both strictly prefer it
 )
 ```
 
 At wages 1 and 3 some action beats both outside options. At the middle node `f`'s
-outside option jumps to 5.5 - 0.5 = 5.0, and the best the household can offer her is 4,
-so the household dissolves and each partner gets their single value net of the cost:
+outside option jumps to 5.5 - 0.5 = 5.0, and the best the couple can offer her is 4, so
+the couple separates and each partner gets their single value net of the cost:
 
 ```python
 from lcm_examples.collective_regimes import get_dissolution_model
@@ -108,8 +110,8 @@ solution.values[1]["married_with_participation"]
  [6.  3. ]]
 ```
 
-`married` reaches `married_with_participation` at age 1 through a plain edge, and the
-decision to dissolve is that regime's own exit:
+`married` reaches `married_with_participation` at age 1 through a plain edge. The
+decision to stay or to separate is that regime's own composition action:
 
 ```python
 edges = {
@@ -118,16 +120,17 @@ edges = {
 }
 ```
 
-`married` produces no flow utility of its own, so its value is the continuation
-discounted at 0.95: `(1.9, 0.95)` at wage 1, `(5.7, 2.85)` at wage 3, and at the middle
-node the dissolved values net of the divorce cost,
+In `married` and `married_terminal` work pays nothing and costs each partner 0.25, so
+the couple takes leisure and its flow utility is zero. The value of `married` is
+therefore the continuation discounted at 0.95: `(1.9, 0.95)` at wage 1, `(5.7, 2.85)` at
+wage 3, and at the middle node the values after separation net of the divorce cost,
 `(0.95 × 5.0, 0.95 × 0.8) = (4.75, 0.76)`.
 
 ## Simulating one role at a time
 
-Member identity is per subject. Every subject here starts inside a collective regime, so
-each declares a role in `initial_conditions`, and that role decides which exit target
-its row takes if the household dissolves:
+Member identity is per agent. Every agent here starts inside a collective regime, so
+each declares a role in `initial_conditions`. That role decides which destination its
+row takes if the couple separates:
 
 ```python
 import jax.numpy as jnp
@@ -151,7 +154,7 @@ result.to_dataframe()
 ```
 
 ```text
-   subject_id  period                 regime_name own_member  value  value_f  value_m  wage     work  age
+   agent_id  period                 regime_name own_member  value  value_f  value_m  wage     work  age
 0           0       0                     married               f    NaN    1.900     0.95   1.0  leisure    0
 1           0       1  married_with_participation               f    NaN    2.000     1.00   1.0     work    1
 2           0       2            married_terminal               f    NaN    0.000     0.00   1.0  leisure    2
@@ -162,12 +165,12 @@ result.to_dataframe()
 7           2       2            married_terminal               f    NaN    0.000     0.00   3.0  leisure    2
 ```
 
-The middle-wage subject leaves for `single_f` at age 1; the other two stay. Collective
+The middle-wage agent leaves for `single_f` at age 1; the other two stay. Collective
 rows publish one value column per member and carry their role in `own_member`; singleton
 rows publish the scalar `value` and hold no role. A cohort has a fixed size, so a
-dissolving row does not split into two linked rows — it follows the route belonging to
-the role it carries. Seed a second cohort with `model.member_names_to_ids["m"]` to watch
-the same wage nodes from the other side.
+separating row does not split into two linked rows. It follows the destination of the
+role it carries. Seed a second cohort with `model.member_names_to_ids["m"]` to watch the
+same wage nodes from the other side.
 
 ## Structure
 
@@ -182,8 +185,8 @@ the same wage nodes from the other side.
 
 ## See also
 
-- [Households and value-dependent choice](../user_guide/collective_regimes.md) — what
-  each declaration means and what its parts may read
+- [Several members and the decision on the composition](../user_guide/collective_regimes.md)
+  — what each declaration means and what its parts may read
 - [Collective regimes](../reference/collective_regimes.md) — the exact contracts
 - [Regimes](../user_guide/regimes.ipynb) — the general model workflow
 - [Collective resource contract](../development/collective_resource_contract.md) — the

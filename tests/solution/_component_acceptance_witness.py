@@ -104,7 +104,7 @@ def reload(*, directory: Path) -> dict[str, JSONValue]:
     """Describe the saved simulation as every public reader returns it."""
     loaded = SimulationResult.load(directory=directory / "simulation")
     return {
-        **_describe(simulation=loaded, values=loaded.period_to_regime_to_V_arr),
+        **_describe(simulation=loaded, values=loaded.step_to_regime_to_V_arr),
         "simulation_load_solution_values": _value_digests(
             values=SimulationResult.load_solution(directory=directory / "simulation")
         ),

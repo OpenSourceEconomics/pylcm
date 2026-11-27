@@ -7,7 +7,7 @@ sides of the gate, a blend of the open and the closed branch — a number neithe
 branch pays, and one that can rank a source action above the one it should have
 taken. Reading each operand at the landing point and gating it there is the
 order forward simulation routes in, so the value the source maximizes and the
-branch a subject is sent down agree.
+branch an agent is sent down agree.
 
 The model below is exactly hand-computable, so every expected number is an
 integer or a half-integer rather than a tolerance-bounded approximation.
@@ -182,7 +182,7 @@ def test_source_value_is_a_value_one_branch_actually_pays() -> None:
     solution = _make_model().solve(params=_params(), log_level="debug").values
 
     np.testing.assert_array_almost_equal(
-        np.asarray(solution[0]["source"]),
+        np.asarray(solution[0]["source"][..., 0]),
         np.full(3, 8.5),
         decimal=DECIMAL_PRECISION,
     )
@@ -284,7 +284,7 @@ def test_solve_reads_integer_categories_in_a_process_fallback() -> None:
     solution = model.solve(params=_params(), log_level="debug")
 
     np.testing.assert_array_almost_equal(
-        np.asarray(solution.values[0]["source"]),
+        np.asarray(solution.values[0]["source"][..., 0]),
         np.array([[8.5, 8.5, 8.5], [10.0, 10.0, 10.0]]),
         decimal=DECIMAL_PRECISION,
     )
@@ -318,7 +318,7 @@ def test_solve_rejects_unknown_categories_in_a_process_fallback(
 
 
 def test_the_action_taken_is_the_one_the_gated_value_ranks_first() -> None:
-    """The simulated subject saves `1.5`, not `2.0`.
+    """The simulated agent saves `1.5`, not `2.0`.
 
     The two candidates are separated by a half unit of value, so this is a
     genuine reversal of the argmax rather than a rounding difference, and it is
@@ -396,7 +396,7 @@ def test_landings_that_all_fall_on_nodes_are_unaffected() -> None:
     solution = model.solve(params=_params(), log_level="debug").values
 
     np.testing.assert_array_almost_equal(
-        np.asarray(solution[0]["source"]),
+        np.asarray(solution[0]["source"][..., 0]),
         np.full(3, 8.0),
         decimal=DECIMAL_PRECISION,
     )
@@ -431,7 +431,7 @@ def test_off_grid_reject_accepts_a_target_reached_exactly() -> None:
 
     # `sick` is closed and pays the fallback 0; `healthy` is open and pays 7.
     np.testing.assert_array_almost_equal(
-        np.asarray(solution[0]["source"]),
+        np.asarray(solution[0]["source"][..., 0]),
         np.array([0.0, 7.0]),
         decimal=DECIMAL_PRECISION,
     )

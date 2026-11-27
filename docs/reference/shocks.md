@@ -154,14 +154,15 @@ group, including a block-diagonal group, retains the complete-group physical-inp
 restriction; this interface does not perform component completion.
 
 For an ordinary GridSearch simulation, `shock_paths` maps a named current shock to one
-of these records. Its array has shape `(periods,)` for a common path, or
-`(subjects, periods)` in original initial-condition row order. Mapping-form
-`initial_conditions` can include tagged `(subjects,)` entry values on current-shock
-names. An entry value applies only at that subject's actual entry period; subsequent
-periods use fresh addressed draws. A path supersedes the entry value and its tag for the
-same name. Current shocks in DataFrame inputs require the tagged mapping form. Untagged
-current-shock arrays receive an explicit migration error. Ordinary persistent states and
-transition-local state paths retain their own input interpretation.
+of these records. Its array has shape `(steps,)` for a common path, or `(agents, steps)`
+in original initial-condition row order, one step per period in a model without
+`stages`. Mapping-form `initial_conditions` can include tagged `(agents,)` entry values
+on current-shock names. An entry value applies only at that agent's actual entry period;
+subsequent periods use fresh addressed draws. A path supersedes the entry value and its
+tag for the same name. Current shocks in DataFrame inputs require the tagged mapping
+form. Untagged current-shock arrays receive an explicit migration error. Ordinary
+persistent states and transition-local state paths retain their own input
+interpretation.
 
 Shape and dtype are checked at the boundary. Law support and correlated completeness are
 enforced on the cells actually consumed; values before entry and unread tail cells do
@@ -170,7 +171,7 @@ retain their original buffers through memory admission; only the current origina
 chunk is uploaded as draw operands. Native profiles carry array-free tag/dtype
 prototypes, and changing a tag or value cannot reuse a stale interpretation.
 
-Entry checks validate an explicitly observed target-only frame at the original subject's
+Entry checks validate an explicitly observed target-only frame at the original agent's
 mapped producing context, with current parameters and the resolved clock. Fixed edge
 leaves survive runtime overrides of other slots; current-call values take precedence
 when both bind the same slot. An unavailable producer does not evaluate its numerical
@@ -185,20 +186,22 @@ Cross-regime routing and EGM replay must preserve that producing context and bin
 own information/reconstruction contracts; a supplied input does not authorize policy
 conditioning on a hidden value.
 
-Simulation rows name the final acting regime after current-period exits. They retain the
-period-entry regime's realized current shocks, including observed exit inputs, on that
-same row. A shock read by the final actor keeps its unqualified column name; when the
-period-entry regime also realized that name, `source__<name>` reports its original value
-on movers. Source-only names keep their unqualified names. In dataframes, missing
-observations and later periods without that realization contain NaN. Discrete reports
-use the declared labels, or category codes with `use_categorical_codes=True`. Raw
-categorical report arrays retain their integer dtype and use `-1` for missing codes.
+Simulation rows name the final acting regime after the decision on the composition. They
+retain the period-entry regime's realized current shocks, including the inputs its
+composition action observes, on that same row. A shock read by the final actor keeps its
+unqualified column name; when the period-entry regime also realized that name,
+`source__<name>` reports its original value on rows whose regime changed in the decision
+on the composition. Source-only names keep their unqualified names. In dataframes,
+missing observations and later periods without that realization contain NaN. Discrete
+reports use the declared labels, or category codes with `use_categorical_codes=True`.
+Raw categorical report arrays retain their integer dtype and use `-1` for missing codes.
 
 `shock_paths` supplies draws rather than recovering a missing observation. Tagged
-`BaseInnovations` hold the underlying innovation across a move; a state-dependent law
-can turn it into different source and target physical values. Tagged `PhysicalValues`
-bind the producing frame and transport its recovered base to the target law. These
-reporting columns do not alter choices, transition inputs or draws.
+`BaseInnovations` hold the underlying innovation when the decision on the composition
+changes the regime; a state-dependent law can turn it into different source and target
+physical values. Tagged `PhysicalValues` bind the producing frame and transport its
+recovered base to the target law. These reporting columns do not alter choices,
+transition inputs or draws.
 
 (current-iid-refusals)=
 
@@ -253,17 +256,17 @@ Timing is read off the regime's functions. A regime whose functions read a group
 `x` sees this period's realization, known at the choice. A regime that reads the group
 only as `next_<shock>`, from its state transitions, sees the draw after the choice: the
 group carries no axis there, and the solve integrates the transitions over its nodes and
-weights. Simulation draws each subject's value from the shock's continuous law,
-addressed like every other draw: the nodes serve only the solve's integration, and the
-draw enters only next period's state law. Utility and constraints may not read
-`next_<shock>`, and a regime reading both `x` and `next_x` of one group is refused; an
-IID process state carries a realization into the next period. Each post-decision shock
-lowers to one fixed node set, so the group needs continuous laws with fixed parameters,
-independent shocks and a deterministic unsigned rule. A group read as a value in one
-regime and only as a draw in another is refused. A `shock_paths` entry for a
-post-decision shock is a plain array of physical values, on or off the nodes, dated at
-the destination period. `repr(model)` lists, per regime, which groups carry an axis and
-which are integrated out.
+weights. Simulation draws each agent's value from the shock's continuous law, addressed
+like every other draw: the nodes serve only the solve's integration, and the draw enters
+only next period's state law. Utility and constraints may not read `next_<shock>`, and a
+regime reading both `x` and `next_x` of one group is refused; an IID process state
+carries a realization into the next period. Each post-decision shock lowers to one fixed
+node set, so the group needs continuous laws with fixed parameters, independent shocks
+and a deterministic unsigned rule. A group read as a value in one regime and only as a
+draw in another is refused. A `shock_paths` entry for a post-decision shock is a plain
+array of physical values, on or off the nodes, dated at the destination period.
+`repr(model)` lists, per regime, which groups carry an axis and which are integrated
+out.
 
 Registry declarations can be inspected and persisted. Ordinary GridSearch consumers bind
 the current law inside their node decision and fresh simulation draw. A group that an

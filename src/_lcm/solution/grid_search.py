@@ -3,9 +3,9 @@
 `GridSearch` runs the max-Q-over-a grid search. Its `build_period_kernels`
 returns one `PeriodKernel` per period. Eligible ordinary hard-max kernels declare their
 canonical action product for blockwise execution, and the engine binds the block width
-before lowering. Collective and EV1 kernels deliberately retain their canonical dense
-reduction order. Each streamed period program also names its exact value-input artifacts
-and argument paths so the engine can resolve their transfers.
+before lowering. EV1 kernels deliberately retain their canonical dense reduction
+order. Each streamed period program also names its exact value-input artifacts and
+argument paths so the engine can resolve their transfers.
 Fixed distributed states co-map ordinary continuation leaves with the streamed state
 cell. Co-map routes with separate same-period or edge-reference value channels retain
 the dense kernel. The adapter assembles the resulting `KernelOutput` outside JIT.
@@ -71,7 +71,9 @@ from _lcm.execution.value_transfer import (
     ValueInputChannel,
 )
 from _lcm.params.edges import regime_kernel_params
-from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
+from _lcm.solution.action_reduction import (
+    COLLECTIVE_HARD_MAX_REDUCTION,
+)
 from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.solution.contract import (
     ConstraintRouteContext,
@@ -92,7 +94,7 @@ from _lcm.solution.feasibility import (
     _fail_if_feasibility_count_exceeds_capacity,
     get_feasibility_count_dtype,
 )
-from _lcm.time import TimeAxis
+from _lcm.time import TimeAxis, landing_step
 from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
     FlatParams,
@@ -137,14 +139,12 @@ class _ActionStreamingDisposition(StrEnum):
 
     STREAMED = "streamed"
     DENSE_EV1_NONCANONICAL = "deliberately_dense:ev1_canonical_reduction_order"
-    DENSE_COLLECTIVE_RESOURCES = "deliberately_dense:collective_resource_regression"
     DENSE_TRIVIAL_ACTION_PRODUCT = "deliberately_dense:trivial_action_product"
     DENSE_CO_MAP_REFERENCE_CHANNEL = (
         "deliberately_dense:co_map_with_separate_reference_channel"
     )
     DENSE_OFF_GRID_RAISE_COUNT = "deliberately_dense:off_grid_raise_count"
     DENSE_DECOUPLED = "deliberately_dense:decoupled"
-    UNSUPPORTED_COLLECTIVE_EV1 = "unsupported:collective_ev1"
     UNSUPPORTED_EV1_WITHOUT_DISCRETE_ACTION = "unsupported:ev1_without_discrete_action"
 
     @property
@@ -171,8 +171,7 @@ def _select_width_keyword(*, context: SolverBuildContext, prefix: str) -> str:
     occupied.update(context.state_action_space.state_names)
     for Q_and_F in context.Q_and_F_functions.values():
         occupied.update(inspect.signature(Q_and_F).parameters)
-    if context.pareto_weights is not None:
-        occupied.update(context.pareto_weights.param_names)
+    occupied.update(context.pareto_weights.param_names)
 
     candidate = prefix
     suffix = 0
@@ -195,30 +194,32 @@ class GridSearch(Solver):
     selects a slice of the target's value function. Its expectation is then the
     same at every action, and the solve takes it once per kernel call instead of
     once per state-action candidate. This holds in every kernel: the ordinary
-    one, the exit and consent queries that solve a regime with an exit, and a
-    collective regime's, per member. `False` keeps every draw a node
-    axis of the continuation and leaves every program unchanged. Values agree
-    with the per-candidate expectation to rounding relative to the largest
-    next-period value magnitude across the draws, not relative to the expectation
-    itself: with large cancelling values, either summation order can lose a small
-    term. The simulation and `Model.lookup_policy` contract the same draws as the
-    solve, except a process draw whose weights read the subject's own value: a
-    simulated value may lie between the process's nodes, so this draw stays
-    enumerated in the simulation for every subject, even one on a node. A query
-    evaluates its regime at projected states, so it keeps that draw enumerated in
-    the solve as well. With cancelling values, the simulated choice can differ
-    from the solve's by more than a tie where only the solve contracts it. A
-    regime with a gated edge contracts in neither phase, and a query keeps every
-    draw toward a target whose `off_grid="raise"` landings it counts.
+    one, the composition and consent queries that solve a regime with a
+    composition action, and a collective regime's, per member. `False` keeps
+    every draw a node axis of the continuation and leaves every program
+    unchanged. Values agree with the per-candidate expectation to rounding
+    relative to the largest next-period value magnitude across the draws, not
+    relative to the expectation itself: with large cancelling values, either
+    summation order can lose a small term. The simulation and
+    `Model.lookup_policy` contract the same draws as the solve, except a process
+    draw whose weights read the agent's own value: a simulated value may lie
+    between the process's nodes, so this draw stays enumerated in the simulation
+    for every agent, even one on a node. A query evaluates its regime at
+    projected states, so it keeps that draw enumerated in the solve as well. With
+    cancelling values, the simulated choice can differ from the solve's by more
+    than a tie where only the solve contracts it. A regime with a gated edge
+    contracts in neither phase, and a query keeps every draw toward a target
+    whose `off_grid="raise"` landings it counts.
 
     Off by default: the ordinary kernel builds the table inside its tile loops,
     and on GPU the compiler does not hoist it, so it is rebuilt for every cell,
-    action and subject tile. A period solved in a few wide tiles gains; one split
+    action and agent tile. A period solved in a few wide tiles gains; one split
     into many narrow tiles, as fixed `axis_widths` or unbudgeted widths can force,
     loses. A query builds each table once per call, before its loops, and so
-    trades compile time and host memory for solve time: in a model with exits
-    and collective regimes, whose queries each prepare their own tables, compile
-    time and host memory rise while each period can solve faster.
+    trades compile time and host memory for solve time: in a model with
+    composition actions and collective regimes, whose queries each prepare their
+    own tables, compile time and host memory rise while each period can solve
+    faster.
     """
 
     @property
@@ -232,8 +233,8 @@ class GridSearch(Solver):
                 "joint lotteries"
             ),
             main_tradeoff=(
-                "Broad representation; eligible singleton hard-max routes stream "
-                "actions, while EV1 and collective reductions use dense actions"
+                "Broad representation; eligible hard-max routes stream actions, "
+                "while EV1 reductions use dense actions"
             ),
             reduced_axes=("action_product",),
             tiled_axes=("cell",),
@@ -241,6 +242,7 @@ class GridSearch(Solver):
             host_driven_programs=(),
             supports_ev1_taste_shocks=True,
             supports_nonlinear_certainty_equivalent=True,
+            supports_several_members=True,
         )
 
     @property
@@ -358,15 +360,16 @@ class GridSearch(Solver):
         cell_width_keyword = (
             _select_cell_width_keyword(context=context) if cell_extent > 1 else None
         )
+        n_discrete_action_axes = len(context.state_action_space.discrete_actions)
         flattened_bound_programs: set[int] = set()
-        for period, Q_and_F in context.Q_and_F_functions.items():
-            current_iid_plan = context.current_iid_plans.get(period)
+        for step, Q_and_F in context.Q_and_F_functions.items():
+            current_iid_plan = context.current_iid_plans.get(step)
             q_id = id(current_iid_plan) if current_iid_plan is not None else id(Q_and_F)
             target_regimes = (
                 ()
-                if period == context.solution_reachability.n_periods - 1
+                if step == context.solution_reachability.n_steps - 1
                 else context.solution_reachability.targets(
-                    period=period,
+                    step=step,
                     source=context.regime_name,
                 )
             )
@@ -391,19 +394,14 @@ class GridSearch(Solver):
                     "cell_width_keyword": cell_width_keyword,
                     "untiled_state_names": untiled_state_names,
                     "broadcast_state_names": broadcast_state_names,
-                    "n_discrete_action_axes": len(
-                        context.state_action_space.discrete_actions
-                    ),
-                    "has_taste_shocks": context.has_taste_shocks,
                     "co_map_state_names": context.co_map_state_names,
                     # Periods sharing one `Q_and_F` share its target tuple.
                     "co_map_v_arr_in_axes": tuple(
                         MappingProxyType({name: axes[name] for name in target_regimes})
                         for axes in context.co_map_v_arr_in_axes
                     ),
-                    "member_axis": context.member_axis,
+                    "members": context.members,
                     "pareto_weights": context.pareto_weights,
-                    "return_feasibility": True,
                 }
                 if has_objective_profile(Q_and_F=Q_and_F):
                     _fail_if_decoupled_route_is_unsupported(
@@ -421,10 +419,14 @@ class GridSearch(Solver):
                             context.state_action_space.discrete_actions
                         ),
                         has_taste_shocks=context.has_taste_shocks,
+                        members=context.members,
+                        pareto_weights=context.pareto_weights,
                     )
                 elif landing_checks_of(Q_and_F):
                     program_functions[q_id] = get_landing_counting_max_Q_over_a(
-                        **common_kwargs
+                        **common_kwargs,
+                        n_discrete_action_axes=n_discrete_action_axes,
+                        has_taste_shocks=context.has_taste_shocks,
                     )
                 elif action_partition_mesh is not None:
                     program_functions[q_id] = get_action_partitioned_max_Q_over_a(
@@ -438,7 +440,8 @@ class GridSearch(Solver):
                         cell_width_keyword=cell_width_keyword,
                         untiled_state_names=untiled_state_names,
                         broadcast_state_names=broadcast_state_names,
-                        return_feasibility=True,
+                        members=context.members,
+                        pareto_weights=context.pareto_weights,
                     )
                 else:
                     program_functions[q_id] = (
@@ -449,13 +452,17 @@ class GridSearch(Solver):
                         )
                         if stream_actions
                         else get_max_Q_over_a(
-                            **common_kwargs, current_iid_plan=current_iid_plan
+                            **common_kwargs,
+                            # A route smoothing over discrete actions is never
+                            # streamed, so only the dense reducers take these.
+                            n_discrete_action_axes=n_discrete_action_axes,
+                            has_taste_shocks=context.has_taste_shocks,
+                            current_iid_plan=current_iid_plan,
                         )
                     )
                 reducer = program_functions[q_id]
                 counted = CountedGridSearch(
                     function=cast("Callable[..., tuple[FloatND, BoolND]]", reducer),
-                    collective=context.member_axis is not None,
                     current_iid=current_iid_plan is not None,
                 )
                 program_functions[q_id] = with_signature(
@@ -477,7 +484,7 @@ class GridSearch(Solver):
                 )
                 flattened_bound_programs.add(q_id)
             argument_builder, value_reads = grid_search_query_inputs(
-                context=context, period=period
+                context=context, period=step
             )
             requirements = CoreExecutionRequirements(
                 reduced_axes=(
@@ -487,7 +494,7 @@ class GridSearch(Solver):
                             coordinate_names=action_names,
                             coordinate_extents=action_extents,
                             canonical_order="c",
-                            reduction=HARD_MAX_REDUCTION,
+                            reduction=COLLECTIVE_HARD_MAX_REDUCTION,
                             width_keyword=action_width_keyword,
                         ),
                     )
@@ -565,7 +572,7 @@ class GridSearch(Solver):
                 disposition_reason=(None if requires_plan else action_streaming.value),
                 donation_candidates=(),
             )
-            result[period] = _GridSearchPeriodKernel(
+            result[step] = _GridSearchPeriodKernel(
                 current_iid=current_iid_plan is not None,
                 _core_programs=MappingProxyType({"main": program})
                 if not context.invariant_bindings
@@ -577,15 +584,15 @@ class GridSearch(Solver):
             period_kernels=MappingProxyType(result),
             period_group_keys=MappingProxyType(
                 {
-                    period: (
+                    step: (
                         "current-iid",
-                        period,
+                        step,
                         tuple(
                             (name, nodes.fingerprint)
                             for name, _, nodes in plan.bindings
                         ),
                     )
-                    for period, plan in context.current_iid_plans.items()
+                    for step, plan in context.current_iid_plans.items()
                     if plan is not None
                 }
             ),
@@ -633,7 +640,7 @@ def _action_partition_mesh(
     """Return the regime's mesh when its action product is shared, else `None`.
 
     Model construction admits a partition request only on the ordinary
-    streamed singleton route without co-mapped states;
+    streamed route without co-mapped states;
     reaching here with anything else is an internal planning error.
     """
     if context.action_partitions == 1:
@@ -719,9 +726,7 @@ def _classify_action_streaming(
     from _lcm.solution.landing_counts import landing_checks_of  # noqa: PLC0415
 
     action_extents = context.state_action_space.actions_grid_shapes
-    if context.has_taste_shocks and context.member_axis is not None:
-        disposition = _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_EV1
-    elif context.has_taste_shocks and not context.state_action_space.discrete_actions:
+    if context.has_taste_shocks and not context.state_action_space.discrete_actions:
         disposition = (
             _ActionStreamingDisposition.UNSUPPORTED_EV1_WITHOUT_DISCRETE_ACTION
         )
@@ -736,8 +741,6 @@ def _classify_action_streaming(
         disposition = _ActionStreamingDisposition.DENSE_DECOUPLED
     elif context.has_taste_shocks:
         disposition = _ActionStreamingDisposition.DENSE_EV1_NONCANONICAL
-    elif context.member_axis is not None:
-        disposition = _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES
     elif any(map(landing_checks_of, context.Q_and_F_functions.values())):
         # The dense reduction sums each action's raw raise-rule landings over
         # the feasible actions in the pass that takes the maximum.
@@ -745,14 +748,6 @@ def _classify_action_streaming(
     else:
         disposition = _ActionStreamingDisposition.STREAMED
     return disposition
-
-
-def _supports_action_streaming(*, context: SolverBuildContext) -> bool:
-    """Return whether the classified route has a streamed solve program."""
-    return (
-        _classify_action_streaming(context=context)
-        is _ActionStreamingDisposition.STREAMED
-    )
 
 
 def grid_search_query_inputs(
@@ -763,9 +758,9 @@ def grid_search_query_inputs(
     """Share canonical Q/F operand and continuation paths without another max."""
     targets = (
         ()
-        if period == context.solution_reachability.n_periods - 1
+        if period == context.solution_reachability.n_steps - 1
         else context.solution_reachability.targets(
-            period=period, source=context.regime_name
+            step=period, source=context.regime_name
         )
     )
     references = _edge_reference_regimes_for_targets(
@@ -782,6 +777,7 @@ def grid_search_query_inputs(
         regime_name=context.regime_name,
         period=period,
         target_regimes=targets,
+        ages=context.ages,
         edge_reference_regimes=references,
         edge_target_regimes=context.edge_target_regimes,
     )
@@ -806,6 +802,7 @@ def _edge_reference_regimes_for_targets(
 def _value_reads(
     *,
     regime_name: RegimeName,
+    ages: TimeAxis,
     period: int,
     target_regimes: tuple[RegimeName, ...],
     edge_reference_regimes: tuple[RegimeName, ...],
@@ -824,7 +821,7 @@ def _value_reads(
             if target_regime in edge_target_regimes
             else ValueArtifactAddress(
                 kind=ValueArtifactKind.REGIME_VALUE,
-                period=period + 1,
+                period=landing_step(ages=ages, step=period, target=target_regime),
                 regime=target_regime,
             )
         )

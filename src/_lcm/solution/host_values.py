@@ -28,9 +28,9 @@ from lcm.typing import FloatND, RegimeName
 HOST_MEMORY_KIND: Literal["pinned_host"] = "pinned_host"
 
 # Periods whose device copies a read-through view keeps at once: a simulation
-# step reads its own period, the one its subjects land in and, replaying a
-# same-period exit, the one after that; the next period's reads, copied early
-# while this period runs, add one more.
+# step reads its own period, the one its agents land in and, replaying a
+# same-period decision on the composition, the one after that; the next period's
+# reads, copied early while this period runs, add one more.
 _CACHED_PERIODS = 4
 
 # What a read-through view reads from, hands out, and describes to planners: a
@@ -134,7 +134,7 @@ def value_storage_error(
     """Return the error for a value that did not reach its value storage."""
     of_code = "" if code is None else f"code {code} of "
     return ValueStorageError(
-        f"Could not {action} {of_code}period {period}, regime {regime!r} to "
+        f"Could not {action} {of_code}step {period}, regime {regime!r} to "
         f"{destination}."
     )
 
@@ -222,7 +222,7 @@ def admit_values_on_devices(
         f"{dict(sorted(over.items()))!r} bytes on devices whose budget is "
         f"{budget} bytes. The solve kept them off the devices with "
         "ExecutionConfig.value_storage because they do not fit together. Read "
-        "them one at a time with SolutionResult.value(period=..., regime=...), "
+        "them one at a time with SolutionResult.value(step=..., regime=...), "
         "save the result with SolutionResult.save, or raise "
         "ExecutionConfig.device_memory_bytes."
     )

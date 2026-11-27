@@ -47,7 +47,7 @@ _P: _StepParams = {
 _INTERIOR = np.s_[2:]
 
 
-def _brute_retired(*, n_consumption=200):
+def _brute_retired(*, n_consumption: int = 200) -> tuple[FloatND, np.ndarray]:
     """Brute retired value, solved with a fine consumption grid as the fair reference.
 
     The default oracle's 14-point consumption grid is too coarse to be a faithful
@@ -56,15 +56,20 @@ def _brute_retired(*, n_consumption=200):
     """
     model = get_model(n_periods=5, n_consumption=n_consumption)
     brute = model.solve(params=get_params(), log_level="debug").values
-    return jnp.asarray(brute[4]["dead"]), np.asarray(brute[3]["retired"])
+    # The step reads and publishes the value of its one member; the solve's values
+    # carry the trailing member axis.
+    return (
+        jnp.asarray(brute[4]["dead"])[..., 0],
+        np.asarray(brute[3]["retired"])[..., 0],
+    )
 
 
-def _bequest_marginal():
+def _bequest_marginal() -> FloatND:
     """Marginal value of liquid for the terminal CRRA bequest `u(liquid)`."""
     return _LIQUID_GRID ** (-_CRRA)
 
 
-def test_retired_egm_matches_brute_on_the_liquid_interior():
+def test_retired_egm_matches_brute_on_the_liquid_interior() -> None:
     """One retired EGM step from the terminal bequest matches the brute solve."""
     v_dead, brute_retired = _brute_retired()
     step = egm_one_asset_step(
@@ -84,7 +89,7 @@ def test_retired_egm_matches_brute_on_the_liquid_interior():
     assert np.max(rel) < 0.05
 
 
-def test_retired_egm_value_is_increasing_in_liquid():
+def test_retired_egm_value_is_increasing_in_liquid() -> None:
     """More liquid wealth is weakly more valuable in retirement."""
     v_dead, _brute = _brute_retired()
     step = egm_one_asset_step(
@@ -107,13 +112,13 @@ def test_retired_egm_value_is_increasing_in_liquid():
 def test_plain_egm_extrapolates_a_child_continuation_below_its_grid() -> None:
     """A landing below the child grid continues its first value segment."""
 
-    def utility(consumption):
+    def utility(consumption: FloatND) -> FloatND:
         return jnp.zeros_like(consumption)
 
-    def marginal_utility(consumption):
+    def marginal_utility(consumption: FloatND) -> FloatND:
         return jnp.ones_like(consumption)
 
-    def inverse_marginal_utility(marginal_continuation):
+    def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
         return jnp.ones_like(marginal_continuation)
 
     result = egm_one_asset_step(

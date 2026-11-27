@@ -17,7 +17,7 @@ from _lcm.simulation.forward_program_profiles import (
     ForwardProgramProfile,
     profile_forward_unit,
 )
-from _lcm.simulation.operand_placement import subject_operand_sharding
+from _lcm.simulation.operand_placement import agent_operand_sharding
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.time import TimeAxis
 from _lcm.typing import FlatParams, PytreeValue, ShapeDtypePytree, SimulationPolicy
@@ -50,7 +50,7 @@ def _profile_forward_programs(
     base_spaces: Mapping[str, StateActionSpace],
     values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
     ages: TimeAxis,
-    n_subjects: int,
+    n_agents: int,
     widths: Mapping[str, int],
     ordinary_key: jax.ShapeDtypeStruct,
     taste_key: jax.ShapeDtypeStruct | None,
@@ -61,18 +61,18 @@ def _profile_forward_programs(
     Complete chunks call `profile_forward_unit` with their evolving carrier
     instead: this entry-only form does not model state updates between programs.
     """
-    subject = subject_operand_sharding(devices=runtime.subject_devices)
+    agent = agent_operand_sharding(devices=runtime.agent_devices)
     profiles = {}
     for name, regime in regimes.items():
         columns = {
             state: jax.ShapeDtypeStruct(
-                (n_subjects,),
+                (n_agents,),
                 np.dtype(
                     jnp.int32
                     if isinstance(regime.simulation.grids[state], DiscreteGrid)
                     else canonical_float_dtype()
                 ),
-                sharding=subject,
+                sharding=agent,
             )
             for state in regime.simulation.state_names
         }
@@ -88,7 +88,7 @@ def _profile_forward_programs(
                 base_spaces=base_spaces,
                 values=values,
                 ages=ages,
-                n_subjects=n_subjects,
+                n_agents=n_agents,
                 widths=widths,
                 columns=columns,
                 ordinary_key=ordinary_key,
@@ -170,10 +170,10 @@ def test_all_core_families_profile_actual_output_schemas_without_allocation(
             regimes=result._regimes,
             flat_params=result.flat_params,
             base_spaces=spaces,
-            values=result.period_to_regime_to_V_arr,
+            values=result.step_to_regime_to_V_arr,
             ages=model.ages,
-            n_subjects=3,
-            widths={"subject": 3},
+            n_agents=3,
+            widths={"agent": 3},
             ordinary_key=ordinary_key,
             taste_key=None,
         )
@@ -241,10 +241,10 @@ def test_independent_taste_profile_keeps_its_actual_key_dtype_under_rbg(
             regimes=model._regimes,
             flat_params=result.flat_params,
             base_spaces=spaces,
-            values=result.period_to_regime_to_V_arr,
+            values=result.step_to_regime_to_V_arr,
             ages=model.ages,
-            n_subjects=2,
-            widths={"subject": 2},
+            n_agents=2,
+            widths={"agent": 2},
             ordinary_key=_key_descriptor(impl="rbg"),
             taste_key=_key_descriptor(impl="threefry2x32"),
         )

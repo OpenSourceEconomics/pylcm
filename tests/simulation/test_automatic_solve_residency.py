@@ -59,7 +59,7 @@ def test_automatic_solve_charges_original_and_canonical_inputs(
     """Inspect the actual compiler inventory, with an owner-dropping control."""
     model, params, initial = _small_grid_search_inputs(
         execution_config=ExecutionConfig(
-            device_memory_bytes=2**28, axis_widths={"subject": 2}
+            device_memory_bytes=2**28, axis_widths={"agent": 2}
         )
     )
     initial = {name: jnp.repeat(value, 3) for name, value in initial.items()}
@@ -105,7 +105,7 @@ def test_automatic_solve_charges_original_and_canonical_inputs(
             initial_conditions=initial,
             log_level="off",
         )
-        assert result.n_subjects == 3
+        assert result.n_agents == 3
         assert calls == [True]
     # Automatic solve precedes outer-chunk padding; canonical entry has three rows.
     assert len(normalized[0]["wealth"]) == 3

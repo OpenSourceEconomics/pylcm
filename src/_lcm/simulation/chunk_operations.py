@@ -1,8 +1,8 @@
 """Exact chunk-entry and publication operations with explicit admission.
 
 Population slicing stays on its actual selected source devices. Only the narrow
-result later moves to the subject layout, so a slice never first replicates the
-whole population onto the subject mesh. Dynamic positions share code by width.
+result later moves to the agent layout, so a slice never first replicates the
+whole population onto the agent mesh. Dynamic positions share code by width.
 """
 
 from typing import cast
@@ -18,7 +18,7 @@ from lcm.exceptions import ExecutionPlanningError
 def slice_population(
     *, array: jax.Array, start: int, width: int, memory: SimulationMemory | None
 ) -> jax.Array:
-    """Admit one exact valid subject window before its output is allocated."""
+    """Admit one exact valid agent window before its output is allocated."""
     if (
         type(start) is not int
         or type(width) is not int
@@ -44,8 +44,8 @@ def slice_population(
             function=_slice_population,
             arguments={"array": array, "start": np.int32(start)},
             static_arguments={"width": width},
-            subject_arg_names=("array",) if len(devices) > 1 else (),
-            subject_outputs=len(devices) > 1,
+            agent_arg_names=("array",) if len(devices) > 1 else (),
+            agent_outputs=len(devices) > 1,
             devices=devices,
             live_footprint=memory.budget_snapshot,
             budget_devices=memory.devices,
@@ -81,8 +81,8 @@ def take_population(
         memory.operations.dispatch(
             function=_take_population,
             arguments={"array": array, "rows": rows},
-            subject_arg_names=("array",) if len(devices) > 1 else (),
-            subject_outputs=len(devices) > 1,
+            agent_arg_names=("array",) if len(devices) > 1 else (),
+            agent_outputs=len(devices) > 1,
             devices=devices,
             live_footprint=memory.budget_snapshot,
             budget_devices=memory.devices,
@@ -130,8 +130,8 @@ def regime_mask(
         memory=memory,
         function=_regime_mask,
         arguments={"regime_ids": regime_ids, "regime_id": regime_id},
-        subject_arg_names=("regime_ids",),
-        subject_outputs=True,
+        agent_arg_names=("regime_ids",),
+        agent_outputs=True,
     )
 
 
@@ -144,45 +144,45 @@ def broadcast_collective(
     *,
     indices: jax.Array,
     value: jax.Array,
-    n_subjects: int,
+    n_agents: int,
     memory: SimulationMemory | None,
 ) -> tuple[jax.Array, jax.Array]:
-    """Add the subject axis to stateless singleton or collective outputs."""
+    """Add the agent axis to stateless singleton or collective outputs."""
     return run_simulation_operation(
         memory=memory,
         function=_broadcast_collective,
         arguments={"indices": indices, "value": value},
-        static_arguments={"n_subjects": n_subjects},
-        subject_outputs=True,
+        static_arguments={"n_agents": n_agents},
+        agent_outputs=True,
     )
 
 
 def _broadcast_collective(
-    *, indices: jax.Array, value: jax.Array, n_subjects: int
+    *, indices: jax.Array, value: jax.Array, n_agents: int
 ) -> tuple[jax.Array, jax.Array]:
     """Keep the original index and member-axis broadcast expressions."""
     return (
-        jnp.broadcast_to(jnp.asarray(indices), (n_subjects,)),
-        jnp.broadcast_to(value[None, ...], (n_subjects, *value.shape)),
+        jnp.broadcast_to(jnp.asarray(indices), (n_agents,)),
+        jnp.broadcast_to(value[None, ...], (n_agents, *value.shape)),
     )
 
 
 def broadcast_value(
-    *, value: jax.Array, n_subjects: int, memory: SimulationMemory | None
+    *, value: jax.Array, n_agents: int, memory: SimulationMemory | None
 ) -> jax.Array:
-    """Give a scalar terminal value the published subject extent."""
+    """Give a scalar terminal value the published agent extent."""
     return run_simulation_operation(
         memory=memory,
         function=_broadcast_value,
         arguments={"value": value},
-        static_arguments={"n_subjects": n_subjects},
-        subject_outputs=True,
+        static_arguments={"n_agents": n_agents},
+        agent_outputs=True,
     )
 
 
-def _broadcast_value(*, value: jax.Array, n_subjects: int) -> jax.Array:
+def _broadcast_value(*, value: jax.Array, n_agents: int) -> jax.Array:
     """Preserve the scalar value exactly, including its signed zero and NaN."""
-    return jnp.broadcast_to(value, (n_subjects,))
+    return jnp.broadcast_to(value, (n_agents,))
 
 
 def empty_fallback(*, mask: jax.Array, memory: SimulationMemory | None) -> jax.Array:
@@ -191,8 +191,8 @@ def empty_fallback(*, mask: jax.Array, memory: SimulationMemory | None) -> jax.A
         memory=memory,
         function=_empty_fallback,
         arguments={"mask": mask},
-        subject_arg_names=("mask",),
-        subject_outputs=True,
+        agent_arg_names=("mask",),
+        agent_outputs=True,
     )
 
 

@@ -603,8 +603,15 @@ def _args_for(
     return {name: params[name] for name in get_union_of_args([func]) - {CE_VALUE_ARG}}
 
 
-def aggregates_nonlinearly(certainty_equivalent: CertaintyEquivalent | None) -> bool:
+def aggregates_nonlinearly(
+    certainty_equivalent: CertaintyEquivalent
+    | Mapping[str, CertaintyEquivalent]
+    | None,
+) -> bool:
     """Whether this certainty equivalent is anything other than the linear one.
+
+    In a regime with several members, the certainty equivalents are keyed by
+    member. They aggregate nonlinearly when any member's does.
 
     The cut is the type, not whether a value is attached. `LinearExpectation`
     is a real class with a real `aggregate` and is what a regime that declared
@@ -614,6 +621,8 @@ def aggregates_nonlinearly(certainty_equivalent: CertaintyEquivalent | None) -> 
     equivalent is `LinearExpectation`; an unattached slot carries no nonlinear
     aggregation of its own and answers False as well.
     """
+    if isinstance(certainty_equivalent, Mapping):
+        return any(map(aggregates_nonlinearly, certainty_equivalent.values()))
     return certainty_equivalent is not None and not isinstance(
         certainty_equivalent, LinearExpectation
     )

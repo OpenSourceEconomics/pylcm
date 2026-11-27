@@ -31,8 +31,8 @@ def test_strong_binding_preserves_actual_ordered_physical_layout(
     *, device_ids: tuple[int, ...], shape: tuple[int, ...]
 ) -> None:
     devices = tuple(jax.devices()[index] for index in device_ids)
-    mesh = jax.sharding.Mesh(np.asarray(devices), ("subject",))
-    target = jax.NamedSharding(mesh, jax.P("subject") if shape else jax.P())
+    mesh = jax.sharding.Mesh(np.asarray(devices), ("agent",))
+    target = jax.NamedSharding(mesh, jax.P("agent") if shape else jax.P())
     source = jax.device_put(jnp.full(shape, 2.0), target)
     assert source.weak_type
     assert source.committed

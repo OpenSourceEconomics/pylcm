@@ -178,7 +178,7 @@ def lower_joint_normal_initial_conditions(
     coordinates and the other regime's rows keep their own values.
 
     Args:
-        initial_conditions: Per-subject inputs keyed by state name.
+        initial_conditions: Per-agent inputs keyed by state name.
         grids_by_regime: Each regime's simulation grids.
         params_by_regime: Each regime's flat parameters, for runtime laws.
         regime_names_to_ids: Regime codes, for a mapping keyed by `regime_id`.
@@ -317,7 +317,7 @@ def _physical_inputs(
     initial_conditions: UserInitialConditions | pd.DataFrame,
     rows: HostBoolArray,
 ) -> HostFloatArray:
-    """Validate physical shock columns before selecting subjects."""
+    """Validate physical shock columns before selecting agents."""
     columns = [np.asarray(initial_conditions[state]) for state in process.states]
     if rows.ndim != 1 or any(column.shape != rows.shape for column in columns):
         raise InvalidInitialConditionsError(

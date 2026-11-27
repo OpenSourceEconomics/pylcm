@@ -4,13 +4,13 @@ Gated edges unlock MIXED singleton/collective regime topologies. A source
 regime declares, per target regime, a `GatedEdge`. At the END of each
 period `t`'s solve — after every period-`t` regime is solved, so their value
 arrays are still live — the engine folds, for each declared edge and each
-source member `s`, a gated continuation object on the TARGET regime's
+source member `κ`, a gated continuation object on the TARGET regime's
 period-`t` grid:
 
-    Wbar^s(x) = jnp.where( gate(x), V_target^{leg_s}(x), V_fallback^s(pi_s(x)) )
+    Wbar^κ(x) = jnp.where( gate(x), V_target^{leg_κ}(x), V_fallback^κ(pi_κ(x)) )
 
 with `gate` a boolean user function of the target's states and the edge's
-params, and `V_fallback^s` a same-period reference regime's value at a
+params, and `V_fallback^κ` a same-period reference regime's value at a
 projection, typically the source member's own singleton regime. The
 source's period `t-1` continuation then reads `Wbar` in place of the raw target
 V, threaded through the ordinary transition machinery (`next_regime_to_V_arr`).
@@ -57,6 +57,7 @@ from _lcm.params.edges import (
     regime_kernel_params,
 )
 from _lcm.regime_building.age_normalization import PeriodizedEconFunction
+from _lcm.regime_building.collective import member_name
 from _lcm.regime_building.Q_and_F import (
     EDGE_CHANNELS_ARG,
     EDGE_FALLBACK_ARG_PREFIX,
@@ -170,8 +171,8 @@ class EdgeBranchCombiner:
     point. A state the gate ignores needs no coordinate here."""
 
     n_legs: int
-    """Length of the trailing axis the combined value carries, or 1 for a
-    singleton source, which carries none."""
+    """Length of the trailing axis the combined value carries, one per source
+    member."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -240,7 +241,7 @@ class EdgeArgProvenance:
     some order — is what makes the answer well defined:
 
     - `states` are bound from the realized candidate TARGET states (batched over
-      subjects). They mirror the solve side, where the fold is evaluated on the
+      agents). They mirror the solve side, where the fold is evaluated on the
       target regime's own state grid.
     - `params` maps each exposed argument name to the `(namespace, qname)` pair
       that resolves it, with `namespace` one of `SOURCE_PARAMS` / `TARGET_PARAMS`
@@ -375,16 +376,15 @@ class ResolvedMemberRoute:
     """The route's key in the cell's `routes`, which names its fallback's
     parameters under `params["edges"][source][target]["routes"]`."""
 
-    source_member: str | None
-    """Source member name, or `None` for a singleton source's single leg."""
+    source_member: str
+    """Source member name."""
 
-    target_component_index: int | None
-    """Index of the OPEN-branch value on the target V's trailing member
-    axis, or `None` for a singleton target."""
+    target_component_index: int
+    """Index of the OPEN-branch value on the target V's trailing member axis."""
 
     target_member: str | None = None
-    """The target regime's member as named, or `None` for a singleton
-    target — the role a subject taking the OPEN branch carries onward."""
+    """The target regime's member as named, or `None` for its member `"self"`
+    — the role an agent taking the OPEN branch carries onward."""
 
     fallback: ResolvedProjectedRegimeValue
     """The CLOSED-branch reference value the fold PRICES (regime, projection,
@@ -704,7 +704,7 @@ def _build_target_dag_pool(
     laws (an edge projects INTO the target's state space, a transition role) and
     the target's own processed functions. The collective Koopmans aggregator
     `H` is left out: it consumes engine-injected continuation values
-    (`Q^s = H(u^s, E[V'^s])`), not target-grid quantities, so it is not a node an
+    (`Q^κ = H(u^κ, E[V'^κ])`), not target-grid quantities, so it is not a node an
     edge callable may read.
 
     Args:
@@ -854,7 +854,7 @@ def _compile_edge_gate(
     target_deterministic_transitions: Mapping[
         TransitionFunctionName, TransitionFunction
     ],
-    target_member_axis: tuple[str, ...] | None,
+    target_members: tuple[str, ...],
     fence_contexts: _EdgeGateFenceContexts,
 ) -> _CompiledEdgeGate:
     """Compile and fence one edge's gate predicate against the target DAG.
@@ -876,8 +876,8 @@ def _compile_edge_gate(
         target_functions: The target regime's processed functions.
         target_deterministic_transitions: The target regime's merged
             deterministic `next_<state>` laws.
-        target_member_axis: The target regime's members, or `None` for a
-            singleton target, which fixes the value-component names.
+        target_members: The target regime's members, which fix the
+            value-component names.
         fence_contexts: Labels the fences report themselves under, and whether
             the leg-fallback projections are fenced here.
 
@@ -893,10 +893,9 @@ def _compile_edge_gate(
         target_deterministic_transitions=target_deterministic_transitions,
         edge_target=edge.target,
     )
-    target_component_names = (
-        tuple(f"V_target_{s}" for s in target_member_axis)
-        if target_member_axis is not None
-        else ("V_target",)
+    # The member `"self"`'s value component is `V_target`.
+    target_component_names = tuple(
+        member_name(base="V_target", member=member) for member in target_members
     )
 
     _fence_edge_consumer(
@@ -952,7 +951,7 @@ def get_edge_fold(
         TransitionFunctionName, TransitionFunction
     ],
     reference_v_info: Mapping[RegimeName, VInterpolationInfo],
-    target_member_axis: tuple[str, ...] | None,
+    target_members: tuple[str, ...],
 ) -> CompiledEdgeFold:
     """Build one edge's continuation: operand surfaces plus a pointwise gate.
 
@@ -974,12 +973,12 @@ def get_edge_fold(
     branches — a number neither branch pays, which can rank a source action
     above the one it should have taken. Reading each operand at the landing
     point and gating there is the same order simulation routes in, so the value
-    the source maximizes and the branch a subject is sent down agree.
+    the source maximizes and the branch an agent is sent down agree.
 
     The gate's raw boolean array never leaves this module in either form.
     Handing a grid-level one to the simulate-side value router
     (`_lcm/simulation/gated_routing.py`) would invite deciding a realized
-    subject's REGIME ROUTING by INTERPOLATING that baked boolean array and
+    agent's REGIME ROUTING by INTERPOLATING that baked boolean array and
     thresholding at 0.5, which fails in exactly the way described above.
 
     **Numerics.** The target regime's OWN value components reach `surfaces` by
@@ -1006,7 +1005,7 @@ def get_edge_fold(
             deterministic `next_<state>` laws (used to build the target DAG; not
             directly nameable as a projection argument -- see `target_functions`).
         reference_v_info: V-interpolation info per reference regime.
-        target_member_axis: The target regime's members, or `None`.
+        target_members: The target regime's members.
 
     Returns:
         The fold callable producing `Wbar` on the target grid.
@@ -1020,7 +1019,7 @@ def get_edge_fold(
         state_names=state_names,
         target_functions=target_functions,
         target_deterministic_transitions=target_deterministic_transitions,
-        target_member_axis=target_member_axis,
+        target_members=target_members,
         # This builder constructs the fallback readers, so it fences them; the
         # simulate-side gate evaluator has none of its own.
         fence_contexts=_EdgeGateFenceContexts(
@@ -1055,14 +1054,9 @@ def get_edge_fold(
     # Outer signature: the target state grids and the same-period value mapping.
     outer_arg_names = sorted({SAME_PERIOD_V_ARG} | set(state_names))
 
-    singleton_source = all(leg.source_member is None for leg in edge.legs)
-
     # Only the components a leg actually opens onto become channels.
     open_component_names = {
-        "V_target"
-        if leg.target_component_index is None
-        else target_component_names[leg.target_component_index]
-        for leg in edge.legs
+        target_component_names[leg.target_component_index] for leg in edge.legs
     }
     channels = EdgeChannels(
         component_names=tuple(
@@ -1073,7 +1067,6 @@ def get_edge_fold(
     fold = _EdgeSurfaces(
         edge_target=edge.target,
         target_component_names=target_component_names,
-        target_member_axis=target_member_axis,
         channels=channels,
         arg_names=tuple(outer_arg_names),
     )
@@ -1085,7 +1078,6 @@ def get_edge_fold(
         gate_arg_names=compiled.gate_arg_names,
         state_names=state_names,
         target_component_names=target_component_names,
-        singleton_source=singleton_source,
         projected_readers=fallback_landing_readers,
     )
     return CompiledEdgeFold(surfaces=fold, combine=combine, channels=channels)
@@ -1100,7 +1092,6 @@ def _get_edge_branch_combiner(
     gate_arg_names: tuple[ReferenceName, ...],
     state_names: tuple[StateName, ...],
     target_component_names: tuple[str, ...],
-    singleton_source: bool,
     projected_readers: tuple[ProjectedLandingReader, ...],
 ) -> EdgeBranchCombiner:
     """Build the callable that gates one edge AT a realized target-state point.
@@ -1119,11 +1110,7 @@ def _get_edge_branch_combiner(
     the SOURCE regime that declares the edge.
     """
     open_indices = tuple(
-        channels.component_index(
-            "V_target"
-            if leg.target_component_index is None
-            else target_component_names[leg.target_component_index]
-        )
+        channels.component_index(target_component_names[leg.target_component_index])
         for leg in edge.legs
     )
     fallback_names = tuple(
@@ -1144,7 +1131,6 @@ def _get_edge_branch_combiner(
         gate_state_names=gate_state_names,
         open_indices=open_indices,
         fallback_names=fallback_names,
-        singleton_source=singleton_source,
         arg_names=tuple(outer_arg_names),
     )
 
@@ -1164,7 +1150,7 @@ def get_edge_simulate_gate_evaluator(
     target_deterministic_transitions: Mapping[
         TransitionFunctionName, TransitionFunction
     ],
-    target_member_axis: tuple[str, ...] | None,
+    target_members: tuple[str, ...],
 ) -> Callable[..., BoolND]:
     """Build one edge's SIMULATE-side gate evaluator.
 
@@ -1187,11 +1173,11 @@ def get_edge_simulate_gate_evaluator(
             gate resolves target states / helper functions.
         target_deterministic_transitions: The target regime's merged
             deterministic `next_<state>` laws.
-        target_member_axis: The target regime's members, or `None`.
+        target_members: The target regime's members.
 
     Returns:
         A callable returning the recomputed boolean gate at one realized
-        candidate point (scalar per subject once `vmap`-ped by the caller),
+        candidate point (scalar per agent once `vmap`-ped by the caller),
         keyed by:
 
         - the target's state names — the realized candidate point;
@@ -1216,7 +1202,7 @@ def get_edge_simulate_gate_evaluator(
         state_names=state_names,
         target_functions=target_functions,
         target_deterministic_transitions=target_deterministic_transitions,
-        target_member_axis=target_member_axis,
+        target_members=target_members,
         # No leg-fallback context: this builder constructs no fallback reader.
         # Those projections are fenced by the identical `_fence_edge_consumer`
         # inside `build_fallback_state_projector`, which processing builds for
@@ -1298,7 +1284,7 @@ def build_fallback_state_projector(
     states plus the states it carries only in simulation
     (`Phased(solve=..., simulate=Grid)`). A carried state is no axis of the
     fallback's solved V, so the fold's reader has nothing to read on it and
-    stays on the solve states; but forward simulation carries it per subject,
+    stays on the solve states; but forward simulation carries it per agent,
     and a slot the projector skips keeps whatever the row held before the edge
     routed it there. The two consumers therefore read the same projection
     mapping over different, nested name sets, each picking its own by name.
@@ -1489,8 +1475,6 @@ class _EdgeSurfaces:
     """The edge's target regime."""
     target_component_names: tuple[str, ...]
     """The target's value components, `V_target` or `V_target_<s>`."""
-    target_member_axis: tuple[str, ...] | None
-    """The target regime's members, or `None`."""
     channels: EdgeChannels
     """Which operands become channels, and in which order."""
     arg_names: tuple[ReferenceName, ...]
@@ -1513,13 +1497,10 @@ class _EdgeSurfaces:
         # Direct (un-interpolated) reads of the target's own value, so a `-inf`
         # cell never poisons a neighbour through interpolation.
         target_V = same_period_V[self.edge_target]
-        target_components: dict[str, FloatND] = {}
-        for index, name in enumerate(self.target_component_names):
-            target_components[name] = (
-                target_V[..., index]
-                if self.target_member_axis is not None
-                else target_V
-            )
+        target_components = {
+            name: target_V[..., index]
+            for index, name in enumerate(self.target_component_names)
+        }
         surfaces = [target_components[name] for name in self.channels.component_names]
         return jnp.stack(jnp.broadcast_arrays(*surfaces), axis=-1)
 
@@ -1540,8 +1521,6 @@ class _EdgeBranchCombine:
     """Per leg, the channel index of the component the leg opens onto."""
     fallback_names: tuple[str, ...]
     """Per leg, the keyword its fallback value arrives under."""
-    singleton_source: bool
-    """Whether the source is a singleton regime, publishing one leg's value."""
     arg_names: tuple[ReferenceName, ...]
     """The published argument names, in order."""
 
@@ -1577,11 +1556,7 @@ class _EdgeBranchCombine:
                 self.open_indices, self.fallback_names, strict=True
             )
         ]
-        return (
-            component_values[0]
-            if self.singleton_source
-            else jnp.stack(component_values, axis=-1)
-        )
+        return jnp.stack(component_values, axis=-1)
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)

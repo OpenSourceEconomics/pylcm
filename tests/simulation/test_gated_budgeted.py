@@ -1,5 +1,7 @@
 """Native acceptance for planned, budgeted gated simulation."""
 
+from pathlib import Path
+
 import jax
 import numpy as np
 
@@ -29,7 +31,7 @@ def test_budgeted_gated_simulation_preserves_raw_results() -> None:
     model, params, initial = dissolution(
         execution_config=ExecutionConfig(
             devices=(0,),
-            axis_widths={"subject": 2},
+            axis_widths={"agent": 2},
             device_memory_bytes=2**30,
         )
     )
@@ -39,14 +41,14 @@ def test_budgeted_gated_simulation_preserves_raw_results() -> None:
     _assert_raw_equal(actual=actual, expected=expected)
 
 
-def test_budgeted_gated_simulation_accepts_loaded_native_flags(tmp_path) -> None:
+def test_budgeted_gated_simulation_accepts_loaded_native_flags(tmp_path: Path) -> None:
     source, params, initial = dissolution()
     solution = source.solve(params=params, log_level="off")
     loaded = load_solution(path=solution.save(path=tmp_path / "dissolution.lcm"))
     model, params, initial = dissolution(
         execution_config=ExecutionConfig(
             devices=(0,),
-            axis_widths={"subject": 2},
+            axis_widths={"agent": 2},
             device_memory_bytes=2**30,
         )
     )

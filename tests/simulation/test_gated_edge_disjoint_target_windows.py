@@ -157,7 +157,7 @@ def _build_model(*, enable_jit: bool) -> Model:
 def test_simulate_with_disjoint_edge_target_windows_lands_in_reachable_target(
     *, enable_jit: bool
 ) -> None:
-    """A period whose only live edge leads to `near` routes every subject there.
+    """A period whose only live edge leads to `near` routes every agent there.
 
     Runtime gate evaluation must not ask an edge for a period its target
     is never active in, with JIT enabled or disabled.

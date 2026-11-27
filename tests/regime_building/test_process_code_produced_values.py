@@ -312,11 +312,11 @@ def _source_params(model: Model) -> dict[str, dict[str, dict[str, float]]]:
 
 def _simulate_from_source(*, model: Model, roles: tuple[str, ...] = ()) -> pd.DataFrame:
     params = _source_params(model)
-    n_subjects = max(len(roles), 1)
+    n_agents = max(len(roles), 1)
     initial = {
-        "age": jnp.zeros(n_subjects),
+        "age": jnp.zeros(n_agents),
         "regime_id": jnp.full(
-            n_subjects, model.regime_names_to_ids["source"], dtype=jnp.int32
+            n_agents, model.regime_names_to_ids["source"], dtype=jnp.int32
         ),
     }
     if roles:
@@ -525,7 +525,7 @@ def test_foreign_discrete_declaration_leaves_process_reads_local(
         regime_id_class=ForeignId,
     )
     values = model.solve(params={"a": {}, "b": {}}, log_level="off").values[0]
-    np.testing.assert_array_equal(np.asarray(values["a"]), np.asarray(expected))
+    np.testing.assert_array_equal(np.asarray(values["a"])[..., 0], np.asarray(expected))
 
 
 def _refuse_off_node_producer(*, producer: str) -> None:

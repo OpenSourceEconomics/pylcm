@@ -1,13 +1,13 @@
 """Build the `(Q, F)` closure a period's kernels evaluate.
 
-`get_Q_and_F` composes utility, feasibility and the expected continuation over
-every reachable target into one function of states, actions and params.
-`get_Q_and_F_terminal`, `get_Q_and_F_collective` and the terminal collective
-variant are the specializations the regimes that need them get instead, and
-`get_compute_intermediates` publishes the same chain's intermediates for the
-NaN diagnostics. `get_Q_and_F_parts` publishes, from one evaluation of a
-singleton kernel, the flow utility, feasibility, certainty-equivalent
-continuation and action value that kernel returns `Q` and `F` from.
+`get_Q_and_F_collective` composes each member's utility, feasibility and
+expected continuation over every reachable target into one function of states,
+actions and params, its values on a trailing member axis;
+`get_Q_and_F_terminal_collective` is the terminal period's.
+`get_Q_and_F_parts` publishes, from one evaluation of a kernel, the flow
+utility, feasibility, certainty-equivalent continuation and action value that
+kernel returns `Q` and `F` from, and `get_intermediates` adds the regime
+transition probabilities for the NaN diagnostics.
 """
 
 import dataclasses
@@ -45,6 +45,7 @@ from _lcm.probability import (
 )
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseName
+from _lcm.regime_building.collective import member_name, member_slots
 from _lcm.regime_building.lottery_contraction import (
     LotteryContraction,
     LotteryContractionSource,
@@ -274,28 +275,16 @@ class EvaluatedQAndF(NamedTuple):
 
 
 type BoundedActionOutput = QAndFParts | tuple[FloatND, BoolND, *tuple[IntND, ...]]
-type CanonicalActionKernel = (
-    _QAndF | _TerminalQAndF | _CollectiveQAndF | _TerminalCollectiveQAndF
-)
+type CanonicalActionKernel = _CollectiveQAndF | _TerminalCollectiveQAndF
 
 
 def runtime_bound_specs(
     *, function: Callable[..., PytreeValue]
 ) -> tuple[PostDecisionBoundSpec, ...]:
     """Read canonical runtime declarations from the action kernel's owned flow."""
-    if type(function) not in (
-        _QAndF,
-        _TerminalQAndF,
-        _CollectiveQAndF,
-        _TerminalCollectiveQAndF,
-    ):
+    if type(function) not in (_CollectiveQAndF, _TerminalCollectiveQAndF):
         return ()
-    kernel = cast("CanonicalActionKernel", function)
-    flow = (
-        kernel.U_and_F
-        if isinstance(kernel, (_QAndF, _TerminalQAndF))
-        else kernel.utilities_and_F
-    )
+    flow = cast("CanonicalActionKernel", function).utilities_and_F
     return flow.bound_specs if type(flow) is _BoundUtilitiesAndF else ()
 
 
@@ -320,8 +309,7 @@ class BoundedQAndF:
             raise TypeError("An action consumer must choose parts or landing channels.")
         kernel = cast("CanonicalActionKernel", self.function)
         if self.landings and (
-            not isinstance(kernel, (_QAndF, _CollectiveQAndF))
-            or not kernel.landing_checks
+            not isinstance(kernel, _CollectiveQAndF) or not kernel.landing_checks
         ):
             raise TypeError("Landing transport requires declared canonical checks.")
         _publish_signature(
@@ -372,14 +360,10 @@ def _evaluated_action_utilities_and_F(
     )
 
 
-def _terminal_parts(*, utilities_and_F: UtilitiesAndF, collective: bool) -> QAndFParts:
+def _terminal_parts(*, utilities_and_F: UtilitiesAndF) -> QAndFParts:
     """Derive terminal parts from the already evaluated flow and predicates."""
     *utilities, F = utilities_and_F
-    U = (
-        jnp.stack(tuple(jnp.asarray(value) for value in utilities), axis=-1)
-        if collective
-        else jnp.asarray(utilities[0])
-    )
+    U = jnp.stack(tuple(jnp.asarray(value) for value in utilities), axis=-1)
     return QAndFParts(U=U, F=jnp.asarray(F), CE=jnp.zeros_like(U), Q=U)
 
 
@@ -562,180 +546,6 @@ def _normalized_regime_mixture(
     )
 
 
-def get_Q_and_F(
-    *,
-    phase_name: PhaseName = "solution",
-    flat_param_names: frozenset[QualifiedName],
-    functions: EconFunctionsMapping,
-    constraints: ConstraintFunctionsMapping,
-    period_targets: tuple[RegimeName, ...],
-    scalar_targets: tuple[RegimeName, ...] = (),
-    transitions: TransitionFunctionsMapping,
-    transition_plans: TargetTransitionPlans,
-    compute_regime_transition_probs: RegimeTransitionFunction,
-    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
-    koopmans_aggregator: EconFunction,
-    objective_aggregator: EconFunction | None = None,
-    certainty_equivalent: CertaintyEquivalent | None,
-    co_map_state_names: tuple[StateName, ...] = (),
-    continuation_functions: EconFunctionsMapping | None = None,
-    gated_continuations: Mapping[RegimeName, GatedContinuationSpec] = MappingProxyType(
-        {}
-    ),
-    count_raise_landings: bool = False,
-    bound_specs: tuple[PostDecisionBoundSpec, ...] = (),
-    lottery_contraction_source: LotteryContractionSource | None = None,
-) -> QAndFFunction:
-    """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
-
-    `age` and `period` are runtime arguments (via `**states_actions_params`),
-    not closure constants. This allows periods with the same target
-    configuration to share a single JIT-compiled function.
-
-    Q mixes two phases when it is built for the simulate phase: the *current* flow
-    (utility, feasibility, `H`) is simulate-phase, while the *continuation* is priced
-    under the agent's perceived law — the solve phase. The flow is *now*, so it is
-    realized under the true law; the belief is about the *future*, so it prices only
-    the continuation.
-
-    The continuation sub-DAG must be **phase-closed**: a transition law is a DAG node
-    like any other, and `dags` resolves its argument names against a function pool
-    transitively, so a law that depends on a `Phased` helper picks up whichever variant
-    that pool holds. The continuation therefore takes a matched pair, `transitions` +
-    `continuation_functions`; resolving a solve-phase law's helpers from the simulate
-    pool yields a sub-DAG that is neither phase and can reverse the argmax.
-
-    The flow needs no such pairing: `next_<state>` is reserved vocabulary a transition
-    produces, so no utility or constraint reads one and the flow contains no transition
-    node to resolve.
-
-    Args:
-        flat_param_names: Frozenset of flat parameter names for the regime.
-        functions: Immutable mapping of function names to internal user functions.
-            Supplies the current-period flow (utility, feasibility, `H`).
-        constraints: Immutable mapping of constraint names to internal user functions.
-        period_targets: Carry targets — reachable, active next period, and
-            carrying at least one state, so their continuation is read at the
-            next states their laws produce.
-        scalar_targets: Graph targets active next period that carry no state.
-            Their value function is rank-zero, so it enters `E[V]` as a single
-            degenerate lottery node weighted only by the regime transition
-            probability.
-        transitions: Immutable mapping of transition names to transition functions.
-        transition_plans: Immutable mapping of target regime names to their
-            transition laws.
-        compute_regime_transition_probs: Regime transition probability function
-            for solve.
-        regime_to_v_interpolation_info: Mapping of regime names to V-interpolation
-            info.
-        koopmans_aggregator: The regime's Bellman aggregator, combining
-            utility and the certainty equivalent into `Q`.
-        objective_aggregator: The aggregator the actions are chosen on, or
-            `None` when the Bellman aggregator also chooses.
-        certainty_equivalent: Nonlinear certainty equivalent declared by the
-            regime, or `None` for the linear expectation.
-        co_map_state_names: Tuple of state names co-mapped with the continuation V —
-            their axes are sliced off each `next_V_arr` leaf by the backward-induction
-            co-map, so their coordinates are dropped from the interpolation. Only fixed
-            (never-transitioning) distributed states qualify.
-        certainty_equivalent: Nonlinear certainty equivalent declared by the
-            regime, or `None`.
-        continuation_functions: Function pool the continuation sub-DAG (the state
-            transitions and the stochastic weights) is resolved against. Defaults to
-            `functions`, which is correct in the solve phase, where both pools are the
-            solve pool. The simulate phase must pass the SOLVE pool here so the agent
-            compares actions under its perceived law while the world is realized under
-            the true one.
-        gated_continuations: Mapping of target regime names to the gated-edge
-            continuation spec that target's leaf is read under. A target absent
-            from it is read as an ordinary value function.
-        count_raise_landings: Whether the kernel counts the raw landings on
-            every `off_grid="raise"` grid its continuation reads, on the branch
-            each landing is read through. A kernel finding no such grid counts
-            nothing and is the kernel built without the flag.
-        lottery_contraction_source: The source regime's state grids and action
-            names, under which every eligible draw is summed into its target's
-            value array once per call; `None` enumerates every draw.
-
-    Returns:
-        A function that computes the state-action values (Q) and the feasibilities (F)
-        for a non-terminal period, followed by the landing counts when it counts any.
-
-    """
-    # In the solve phase the two roles coincide; only simulate passes them apart.
-    continuation_pool = (
-        functions if continuation_functions is None else continuation_functions
-    )
-    # The flow reads no transition node at all: `next_<state>` is reserved vocabulary
-    # a transition produces, never something this period's utility or a constraint may
-    # read. So only the continuation needs a pool of its own, and the phase split
-    # reduces to that one sub-DAG.
-    U_and_F = _get_U_and_F(
-        functions=functions,
-        constraints=constraints,
-        bound_specs=bound_specs,
-    )
-    compute_CE, continuation_deps, continuation_arg_names = _get_compute_CE(
-        flat_param_names=flat_param_names,
-        # `continuation_pool`, NOT `functions`: the continuation is priced under
-        # the perceived (solve-phase) law, helpers included. In the solve phase the
-        # two are the same object; only simulate passes them apart.
-        functions=continuation_pool,
-        period_targets=period_targets,
-        scalar_targets=scalar_targets,
-        transitions=transitions,
-        transition_plans=transition_plans,
-        compute_regime_transition_probs=compute_regime_transition_probs,
-        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-        certainty_equivalent=certainty_equivalent,
-        co_map_state_names=co_map_state_names,
-        gated_continuations=gated_continuations,
-        count_raise_landings=count_raise_landings,
-        lottery_contraction_source=lottery_contraction_source,
-        extend_process_edges=phase_name,
-    )
-    _build_W_kwargs = _get_build_W_kwargs(
-        functions=functions, koopmans_aggregator=koopmans_aggregator
-    )
-    build_objective_kwargs = (
-        None
-        if objective_aggregator is None
-        else _get_build_W_kwargs(
-            functions=functions, koopmans_aggregator=objective_aggregator
-        )
-    )
-
-    arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
-        deps=[U_and_F, *continuation_deps],
-        include=frozenset(
-            {"next_regime_to_V_arr", "period", "age"}
-            | flat_param_names
-            | continuation_arg_names
-            | _build_W_kwargs.arg_names
-            | (
-                frozenset()
-                if build_objective_kwargs is None
-                else build_objective_kwargs.arg_names
-            )
-        ),
-        exclude=frozenset(),
-    )
-
-    return _QAndF(
-        U_and_F=U_and_F,
-        compute_CE=compute_CE,
-        koopmans_aggregator=koopmans_aggregator,
-        build_W_kwargs=_build_W_kwargs,
-        objective_aggregator=objective_aggregator,
-        build_objective_kwargs=build_objective_kwargs,
-        arg_names=tuple(arg_names_of_Q_and_F),
-        continuation_reads=_continuation_reads(
-            deps=continuation_deps, arg_names=continuation_arg_names
-        ),
-        landing_checks=cast("_ComputeCE", compute_CE).landing_checks,
-    )
-
-
 def _continuation_reads(
     *, deps: tuple[Callable[..., ArrayTree], ...], arg_names: frozenset[ReferenceName]
 ) -> frozenset[str] | None:
@@ -766,20 +576,21 @@ def has_objective_profile(*, Q_and_F: QAndFFunction) -> bool:
 
 
 def get_Q_and_F_parts(*, Q_and_F: QAndFFunction) -> Callable[..., QAndFParts]:
-    """Return the parts form of a singleton `Q_and_F` kernel.
+    """Return the parts form of a `Q_and_F` kernel.
 
     The result takes the kernel's own arguments and returns `QAndFParts` from
     the same evaluation the kernel returns `(Q, F)` from, so its `Q` and `F` are
-    the kernel's.
+    the kernel's. For a regime with several members, `U`, `CE` and `Q` carry
+    the trailing member axis.
 
     Args:
-        Q_and_F: A kernel built by `get_Q_and_F` or `get_Q_and_F_terminal`.
+        Q_and_F: A kernel built by one of the `get_Q_and_F` builders.
 
     Returns:
         The kernel's `parts` method, with the kernel's published signature.
 
     """
-    kernel = cast("_QAndF | _TerminalQAndF", Q_and_F)
+    kernel = cast("CanonicalActionKernel", Q_and_F)
     return with_signature(
         kernel.parts,
         args=list(inspect.signature(kernel).parameters),
@@ -788,300 +599,36 @@ def get_Q_and_F_parts(*, Q_and_F: QAndFFunction) -> Callable[..., QAndFParts]:
     )
 
 
-@dataclass(frozen=True, kw_only=True, eq=False)
-class _QAndF:
-    """State-action value and feasibility of a non-terminal period at one cell."""
+def get_intermediates(*, Q_and_F: QAndFFunction) -> Callable[..., Intermediates]:
+    """Return the diagnostic intermediates of a non-terminal action kernel.
 
-    U_and_F: Callable[..., UtilitiesAndF]
-    """Utility and feasibility at the cell."""
-    compute_CE: Callable[..., ContinuationAggregate]
-    """The continuation aggregator."""
-    koopmans_aggregator: EconFunction
-    """The regime's Bellman aggregator `W`."""
-    build_W_kwargs: Callable[[QAndFKwargs], dict[ReferenceName, EconFunctionArg]]
-    """Assembles `W`'s further arguments from the cell."""
-    objective_aggregator: EconFunction | None
-    """The aggregator `W_objective` the action is chosen on, or `None` when `W`
-    also chooses."""
-    build_objective_kwargs: (
-        Callable[[QAndFKwargs], dict[ReferenceName, EconFunctionArg]] | None
-    )
-    """Assembles `W_objective`'s further arguments from the cell."""
-    arg_names: tuple[ReferenceName, ...]
-    """The published argument names, in order."""
-    continuation_reads: frozenset[str] | None
-    """Every argument the continuation reads from the cell, or `None` if unknown.
-
-    A state outside it enters `Q` only through utility, feasibility and `W`, so
-    the continuation is constant along that state's axis.
-    """
-    landing_checks: tuple[LandingCheck, ...] = field(
-        default=(), metadata={"fingerprint_omit_if_default": True}
-    )
-    """The raise-rule landings the kernel counts, in the order of its third output.
-
-    Empty for a kernel that counts none, which then returns `(Q, F)` alone.
-    """
-
-    def __post_init__(self) -> None:
-        _publish_signature(
-            target=self,
-            arg_names=self.arg_names,
-            return_annotation="tuple[FloatND, BoolND]",
-            name="Q_and_F",
-        )
-
-    # The kernel is traced with whatever leaves its caller supplies -- tracers,
-    # Python scalars, arrays of either integer width -- so its annotations
-    # document the contract and are not enforced at call time.
-    @no_type_check
-    def __call__(
-        self,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **states_actions_params: QAndFArg,
-    ) -> tuple[FloatND, BoolND]:
-        """Calculate the state-action value and feasibility for a non-terminal period.
-
-        Args:
-            next_regime_to_V_arr: The next period's value function array.
-            **states_actions_params: States, actions, age, period, and flat
-                regime params.
-
-        Returns:
-            A tuple containing the arrays with state-action values and
-            feasibilities, followed by the raw landing counts of
-            `landing_checks` when the kernel counts any.
-
-        """
-        parts, landing_counts = self._evaluate(
-            next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
-        )
-        return (parts.Q, parts.F, *landing_counts)
-
-    @no_type_check
-    def parts(
-        self,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **states_actions_params: QAndFArg,
-    ) -> QAndFParts:
-        """Calculate utility, feasibility, continuation and action value at a cell.
-
-        Args:
-            next_regime_to_V_arr: The next period's value function array.
-            **states_actions_params: States, actions, age, period, and flat
-                regime params.
-
-        Returns:
-            The flow utility, feasibility, certainty-equivalent continuation and
-            state-action value.
-
-        """
-        return self._evaluate(
-            next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
-        )[0]
-
-    @no_type_check
-    def _evaluate(
-        self,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **states_actions_params: QAndFArg,
-    ) -> tuple[QAndFParts, tuple[IntND, ...]]:
-        """Evaluate the cell's parts and the raw landing counts it carries."""
-        return self._parts_from_utilities(
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            utilities_and_F=self.U_and_F(**states_actions_params),
-            states_actions_params=states_actions_params,
-        )
-
-    def _parts_from_utilities(
-        self,
-        *,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        utilities_and_F: UtilitiesAndF,
-        states_actions_params: QAndFKwargs,
-    ) -> tuple[QAndFParts, tuple[IntND, ...]]:
-        """Aggregate continuation from flow passed separately from the user inputs."""
-        # F_arr is built here, before and independently of Q (it never reads
-        # E_next_V).
-        U_arr, F_arr = cast("tuple[FloatND, BoolND]", utilities_and_F)
-        U_arr = jnp.asarray(U_arr)
-        continuation = self.compute_CE(
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            zero=jnp.zeros_like(U_arr),
-            states_actions_params=states_actions_params,
-        )
-        CE, _, *landing_counts = continuation
-        CE = cast("FloatND", CE)
-
-        Q_arr = self.koopmans_aggregator(
-            utility=U_arr,
-            CE=CE,
-            **cast(
-                "Mapping[QualifiedName, EconFunctionArg]",
-                self.build_W_kwargs(states_actions_params),
-            ),
-        )
-        Q_objective = None
-        if self.objective_aggregator is not None:
-            if self.build_objective_kwargs is None:
-                raise TypeError(
-                    "An objective aggregator requires its parameter builder."
-                )
-            Q_objective = jnp.asarray(
-                self.objective_aggregator(
-                    utility=U_arr,
-                    CE=CE,
-                    **self.build_objective_kwargs(states_actions_params),
-                )
-            )
-
-        # Handle cases when there is only one state.
-        # In that case, the parts are scalars, but we require arrays as output.
-        return QAndFParts(
-            U=jnp.asarray(U_arr),
-            F=jnp.asarray(F_arr),
-            CE=jnp.asarray(CE),
-            Q=jnp.asarray(Q_arr),
-            Q_objective=Q_objective,
-        ), cast("tuple[IntND, ...]", tuple(landing_counts))
-
-    def evaluated(
-        self,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **states_actions_params: QAndFArg,
-    ) -> EvaluatedQAndF:
-        """Evaluate canonical flow once and keep its integrity through continuation."""
-        flow = _evaluated_action_utilities_and_F(
-            function=self.U_and_F, states_actions_params=states_actions_params
-        )
-        parts, landings = self._parts_from_utilities(
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            utilities_and_F=flow.utilities_and_F,
-            states_actions_params=states_actions_params,
-        )
-        return EvaluatedQAndF(
-            parts=parts, landing_counts=landings, bound_status=flow.bound_status
-        )
-
-
-def get_compute_intermediates(
-    *,
-    flat_param_names: frozenset[QualifiedName],
-    functions: EconFunctionsMapping,
-    constraints: ConstraintFunctionsMapping,
-    period_targets: tuple[RegimeName, ...],
-    scalar_targets: tuple[RegimeName, ...] = (),
-    transitions: TransitionFunctionsMapping,
-    transition_plans: TargetTransitionPlans,
-    compute_regime_transition_probs: RegimeTransitionFunction,
-    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
-    koopmans_aggregator: EconFunction,
-    certainty_equivalent: CertaintyEquivalent | None,
-    co_map_state_names: tuple[StateName, ...],
-    gated_continuations: Mapping[RegimeName, GatedContinuationSpec] = MappingProxyType(
-        {}
-    ),
-) -> Callable[..., Intermediates]:
-    """Build a closure that computes Q_and_F intermediates for diagnostics.
-
-    Mirrors `get_Q_and_F` but returns all intermediates instead of just
-    `(Q, F)`. The caller productmaps and JIT-compiles the closure; it runs
-    only in the error path when `validate_V` detects NaN. `age` and `period`
-    are runtime arguments (passed via `states_actions_params`) so that
-    periods sharing the same target configuration share a single
-    JIT-compiled function.
+    The result takes the kernel's own arguments and returns, from the kernel's
+    own evaluation, `(U, F, CE, Q, active_regime_probs)`: the parts and the
+    transition probabilities of the targets the continuation reads. For a
+    regime with several members, `U`, `CE` and `Q` carry the trailing member
+    axis.
 
     Args:
-        flat_param_names: Frozenset of flat parameter names for the regime.
-        functions: Immutable mapping of function names to internal user functions.
-        constraints: Immutable mapping of constraint names to constraint functions.
-        period_targets: Carry targets — reachable, active next period, and
-            carrying at least one state.
-        scalar_targets: Graph stateless targets active next period, whose
-            rank-zero value enters `E[V]` weighted only by the regime transition
-            probability. Must match what `get_Q_and_F` was built with, or the
-            diagnostics disagree with the solve they explain.
-        transitions: Immutable mapping of target regime names to state transition
-            functions.
-        transition_plans: Immutable mapping of target regime names to their
-            transition laws.
-        compute_regime_transition_probs: Callable returning regime transition
-            probabilities for the current regime.
-        regime_to_v_interpolation_info: Immutable mapping of regime names to
-            V-interpolation info.
-        koopmans_aggregator: The regime's Bellman aggregator, combining
-            utility and the certainty equivalent into `Q`.
-        certainty_equivalent: Nonlinear certainty equivalent declared by the
-            regime, or `None` for the linear expectation.
-        co_map_state_names: Tuple of state names co-mapped with the
-            continuation V in the solve kernel. The diagnostics pass an empty
-            tuple: they are handed the full, un-sliced value arrays and map
-            over every state, so no axis has been sliced off to compensate for.
-        gated_continuations: Mapping of target regime names to the gated-edge
-            continuation spec that target's leaf is read under. A target absent
-            from it is read as an ordinary value function.
+        Q_and_F: A kernel built by `get_Q_and_F_collective`.
 
     Returns:
-        Closure returning `(U_arr, F_arr, CE, Q_arr, active_regime_probs)`.
+        The intermediates, with the kernel's published signature.
 
     """
-    U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
-    compute_CE, continuation_deps, continuation_arg_names = _get_compute_CE(
-        flat_param_names=flat_param_names,
-        functions=functions,
-        period_targets=period_targets,
-        scalar_targets=scalar_targets,
-        transitions=transitions,
-        transition_plans=transition_plans,
-        compute_regime_transition_probs=compute_regime_transition_probs,
-        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-        certainty_equivalent=certainty_equivalent,
-        co_map_state_names=co_map_state_names,
-        gated_continuations=gated_continuations,
-        extend_process_edges="solution",
-    )
-    _build_W_kwargs = _get_build_W_kwargs(
-        functions=functions, koopmans_aggregator=koopmans_aggregator
-    )
-
-    arg_names_of_compute_intermediates = _get_arg_names_of_Q_and_F(
-        deps=[U_and_F, *continuation_deps],
-        include=frozenset(
-            {"next_regime_to_V_arr", "period", "age"}
-            | flat_param_names
-            | continuation_arg_names
-        ),
-        exclude=frozenset(),
-    )
-
-    return _ComputeIntermediates(
-        U_and_F=U_and_F,
-        compute_CE=compute_CE,
-        koopmans_aggregator=koopmans_aggregator,
-        build_W_kwargs=_build_W_kwargs,
-        arg_names=tuple(arg_names_of_compute_intermediates),
-    )
+    return _Intermediates(kernel=cast("_CollectiveQAndF", Q_and_F))
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
-class _ComputeIntermediates:
-    """Every `Q_and_F` intermediate of a non-terminal period at one cell."""
+class _Intermediates:
+    """Every intermediate of a non-terminal action kernel at one cell."""
 
-    U_and_F: Callable[..., UtilitiesAndF]
-    """Utility and feasibility at the cell."""
-    compute_CE: Callable[..., ContinuationAggregate]
-    """The continuation aggregator."""
-    koopmans_aggregator: EconFunction
-    """The regime's Bellman aggregator `W`."""
-    build_W_kwargs: Callable[[QAndFKwargs], dict[ReferenceName, EconFunctionArg]]
-    """Assembles `W`'s further arguments from the cell."""
-    arg_names: tuple[ReferenceName, ...]
-    """The published argument names, in order."""
+    kernel: _CollectiveQAndF
+    """The kernel whose parts and regime probabilities are published."""
 
     def __post_init__(self) -> None:
         _publish_signature(
             target=self,
-            arg_names=self.arg_names,
+            arg_names=self.kernel.arg_names,
             return_annotation=(
                 "tuple[FloatND, FloatND, FloatND, FloatND, "
                 "MappingProxyType[RegimeName, FloatND]]"
@@ -1093,144 +640,39 @@ class _ComputeIntermediates:
     def __call__(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **states_actions_params: ParamsLeaf,
+        **states_actions_params: QAndFArg,
     ) -> Intermediates:
         """Compute all Q_and_F intermediates."""
-        U_arr, F_arr = self.U_and_F(**states_actions_params)
-        continuation = self.compute_CE(
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            zero=jnp.zeros_like(U_arr),
-            states_actions_params=states_actions_params,
-        )
-        CE, active_regime_probs, *_ = continuation
-
-        Q_arr = self.koopmans_aggregator(
-            utility=U_arr,
-            CE=CE,
-            **self.build_W_kwargs(states_actions_params),
-        )
-
-        return U_arr, F_arr, CE, Q_arr, active_regime_probs
-
-
-def get_Q_and_F_terminal(
-    *,
-    flat_param_names: frozenset[QualifiedName],
-    functions: EconFunctionsMapping,
-    constraints: ConstraintFunctionsMapping,
-    bound_specs: tuple[PostDecisionBoundSpec, ...] = (),
-) -> QAndFFunction:
-    """Get the state-action (Q) and feasibility (F) function for a terminal period.
-
-    `age` and `period` are runtime arguments (via `**states_actions_params`).
-
-    Args:
-        flat_param_names: Frozenset of flat parameter names for the regime.
-        functions: Immutable mapping of function names to internal user functions.
-        constraints: Immutable mapping of constraint names to internal user functions.
-
-    Returns:
-        A function that computes the state-action values (Q) and the feasibilities (F)
-        for a terminal period.
-
-    """
-    U_and_F = _get_U_and_F(
-        functions=functions, constraints=constraints, bound_specs=bound_specs
-    )
-
-    arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
-        deps=[U_and_F],
-        # While the terminal period does not depend on the value function array, we
-        # include it in the signature, such that we can treat all periods uniformly
-        # during the solution and simulation.
-        include=frozenset({"next_regime_to_V_arr", "period", "age"} | flat_param_names),
-        exclude=frozenset(),
-    )
-
-    return _TerminalQAndF(U_and_F=U_and_F, arg_names=tuple(arg_names_of_Q_and_F))
-
-
-@dataclass(frozen=True, kw_only=True, eq=False)
-class _TerminalQAndF:
-    """State-action value and feasibility of a terminal period at one cell."""
-
-    U_and_F: Callable[..., UtilitiesAndF]
-    """Utility and feasibility at the cell."""
-    arg_names: tuple[ReferenceName, ...]
-    """The published argument names, in order."""
-
-    def __post_init__(self) -> None:
-        _publish_signature(
-            target=self,
-            arg_names=self.arg_names,
-            return_annotation="tuple[FloatND, BoolND]",
-            name="Q_and_F",
-        )
-
-    @no_type_check
-    def __call__(
-        self,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        **states_actions_params: QAndFArg,
-    ) -> tuple[FloatND, BoolND]:
-        """Calculate the state-action values and feasibilities for a terminal period.
-
-        Args:
-            next_regime_to_V_arr: Unused in the terminal period; accepted so that
-                solve and simulate treat all periods uniformly.
-            **states_actions_params: States, actions, age, period, and flat
-                regime params.
-
-        Returns:
-            A tuple of the state-action value array (Q) and the feasibility
-            mask (F).
-
-        """
-        parts = self.parts(
+        parts = self.kernel.parts(
             next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
         )
-        return parts.Q, parts.F
-
-    @no_type_check
-    def parts(
-        self,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG002
-        **states_actions_params: QAndFArg,
-    ) -> QAndFParts:
-        """Calculate utility, feasibility, continuation and action value at a cell.
-
-        A terminal period has no continuation: `CE` is zero and `Q` is `U`.
-
-        Args:
-            next_regime_to_V_arr: Unused in the terminal period.
-            **states_actions_params: States, actions, age, period, and flat
-                regime params.
-
-        Returns:
-            The flow utility, feasibility, zero continuation and state-action
-            value.
-
-        """
-        return _terminal_parts(
-            utilities_and_F=self.U_and_F(**states_actions_params), collective=False
-        )
-
-    def evaluated(
-        self,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG002
-        **states_actions_params: QAndFArg,
-    ) -> EvaluatedQAndF:
-        """Return terminal parts and mandatory flags from the same actual flow pass."""
-        flow = _evaluated_action_utilities_and_F(
-            function=self.U_and_F, states_actions_params=states_actions_params
-        )
-        return EvaluatedQAndF(
-            parts=_terminal_parts(
-                utilities_and_F=flow.utilities_and_F, collective=False
+        compute_CE = cast("_ComputeCE", self.kernel.compute_CE)
+        probs = compute_CE.compute_regime_transition_probs(**states_actions_params)
+        return (
+            parts.U,
+            parts.F,
+            parts.CE,
+            parts.Q,
+            MappingProxyType(
+                {
+                    target: probs[target]
+                    for target in (
+                        *compute_CE.period_targets,
+                        *compute_CE.scalar_targets,
+                    )
+                }
             ),
-            landing_counts=(),
-            bound_status=flow.bound_status,
         )
+
+
+def _member_utility_name(member: str) -> FunctionName:
+    """Name the function holding a member's utility.
+
+    A member `<s>` of a collective regime reads `utility_<s>`. The member
+    `"self"` of a regime declared with a plain utility function reads
+    `utility`.
+    """
+    return member_name(base="utility", member=member)
 
 
 def get_Q_and_F_terminal_collective(
@@ -1243,14 +685,10 @@ def get_Q_and_F_terminal_collective(
 ) -> QAndFFunction:
     """Terminal (Q, F) for a collective regime — stacked per-member U + shared F.
 
-    Separate from `get_Q_and_F_terminal` so the singleton terminal path (shared
-    with the simulate / compute-intermediates machinery) carries none of the
-    member handling; this builder is used only at the collective solve site.
-
     Builds ONE closure over every member's `utility_<s>` target plus the
     single `feasibility` target. Feasibility is regime-level: `_get_feasibility`
-    takes no member input, so a household has one action set however many
-    felicities it carries, and the mask is a DAG target the felicities share
+    takes no member input, so the members share one action set however many
+    felicities the regime carries, and the mask is a DAG target the felicities share
     rather than one evaluated per member. The returned `Q_and_F` stacks the
     per-member utilities on a trailing member axis: for a scalar
     (state, action) cell it returns `U` of shape `(n_members,)` and a scalar
@@ -1273,7 +711,7 @@ def get_Q_and_F_terminal_collective(
     utilities_and_F = _get_U_and_F(
         functions=functions,
         constraints=constraints,
-        utility_names=tuple(f"utility_{member}" for member in members),
+        utility_names=tuple(map(_member_utility_name, members)),
         bound_specs=bound_specs,
     )
 
@@ -1308,7 +746,7 @@ class _TerminalCollectiveQAndF:
     @no_type_check
     def __call__(
         self,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG002
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
     ) -> tuple[FloatND, BoolND]:
         """Stacked per-member utilities and the shared feasibility mask.
@@ -1324,25 +762,33 @@ class _TerminalCollectiveQAndF:
             member axis) and the shared feasibility mask.
 
         """
-        parts = _terminal_parts(
-            utilities_and_F=self.utilities_and_F(**states_actions_params),
-            collective=True,
+        parts = self.parts(
+            next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
         )
         return parts.Q, parts.F
+
+    @no_type_check
+    def parts(
+        self,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG002
+        **states_actions_params: QAndFArg,
+    ) -> QAndFParts:
+        """Stacked per-member utilities, the shared mask, zero continuation and Q."""
+        return _terminal_parts(
+            utilities_and_F=self.utilities_and_F(**states_actions_params)
+        )
 
     def evaluated(
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG002
         **states_actions_params: QAndFArg,
     ) -> EvaluatedQAndF:
-        """Keep shared bound integrity from the household's terminal flow pass."""
+        """Keep shared bound integrity from the members' terminal flow pass."""
         flow = _evaluated_action_utilities_and_F(
             function=self.utilities_and_F, states_actions_params=states_actions_params
         )
         return EvaluatedQAndF(
-            parts=_terminal_parts(
-                utilities_and_F=flow.utilities_and_F, collective=True
-            ),
+            parts=_terminal_parts(utilities_and_F=flow.utilities_and_F),
             landing_counts=(),
             bound_status=flow.bound_status,
         )
@@ -1483,8 +929,7 @@ class ResolvedProjectedRegimeValue:
 
     The user declaration names a member; the
     engine resolves it to the index on the reference regime's trailing
-    member axis (`None` for a singleton reference, whose V has no such
-    axis).
+    member axis (zero for a reference with the one member `"self"`).
     """
 
     regime: RegimeName
@@ -1496,15 +941,15 @@ class ResolvedProjectedRegimeValue:
     This is the mapping the author declared on the reference.
     """
 
-    member_index: int | None
-    """Index into the reference V's trailing member axis, or `None`."""
+    member_index: int
+    """Index into the reference V's trailing member axis."""
 
     member: str | None = None
-    """The reference regime's member as named, or `None` for a singleton.
+    """The reference regime's member as named, or `None` for its member `"self"`.
 
     The index above locates the value on one regime's axis; the name is what
     the role means model-wide, and forward simulation needs the name to say
-    which role a subject carries after following this reference.
+    which role an agent carries after following this reference.
     """
 
 
@@ -1702,11 +1147,9 @@ class _SamePeriodReferenceReader:
     @no_type_check
     def __call__(self, **kwargs: ParamsLeaf) -> FloatND:
         regime_to_V = cast("Mapping[RegimeName, FloatND]", kwargs[self.v_mapping_arg])
-        V_ref = regime_to_V[self.ref.regime]
-        if self.ref.member_index is not None:
-            # A collective reference V carries a trailing member axis;
-            # read the declared member's slice (state axes only remain).
-            V_ref = V_ref[..., self.ref.member_index]
+        # Read the declared member's slice of the reference V (state axes only
+        # remain).
+        V_ref = regime_to_V[self.ref.regime][..., self.ref.member_index]
         coordinates = {
             f"{_REF_STATE_PREFIX}{state}": coordinate
             for state, coordinate in self.coordinates(**kwargs).items()
@@ -1829,7 +1272,11 @@ def get_Q_and_F_collective(
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     koopmans_aggregator: EconFunction,
+    objective_aggregator: EconFunction | None = None,
     members: tuple[str, ...],
+    certainty_equivalent: CertaintyEquivalent
+    | Mapping[str, CertaintyEquivalent]
+    | None = None,
     co_map_state_names: tuple[StateName, ...] = (),
     continuation_functions: EconFunctionsMapping | None = None,
     gated_continuations: Mapping[RegimeName, GatedContinuationSpec] = MappingProxyType(
@@ -1846,9 +1293,10 @@ def get_Q_and_F_collective(
     separate — both builders call
     `_get_compute_CE`, which takes the member axis as a parameter.
 
-    Per member `s`, computes `Q^s = H(u^s, E[V'^s])` with the shared
-    Bellman aggregator `H` (the default `H_linear` applies `u + beta * E[V']`
-    elementwise, so every member is discounted with the SAME beta). Each
+    Per member `κ`, computes `Q^κ = W(u^κ, CE^κ)` with the regime's Koopmans
+    aggregator `W`, applied elementwise when one is shared by every member and
+    on each member's slice otherwise; `CE^κ` aggregates member `κ`'s
+    continuation under its certainty equivalent. Each
     transition target must itself be a collective regime with the identical
     `members` tuple (validated at model processing), so its
     `next_V_arr` leaf carries the trailing member axis. The continuation
@@ -1862,11 +1310,10 @@ def get_Q_and_F_collective(
     `(*action_axes, n_members)` and `F` `(*action_axes,)` — exactly what
     the member branch there (`collective_readout`) consumes.
 
-    No nonlinear certainty equivalent: it is rejected at regime construction for
-    collective regimes. Taste shocks are admitted only where exactly one member
-    has a positive Pareto weight and the regime declares no `exit` and no
-    `shocks`; the member branch there reads its decider's smoothed choice
-    (`decider_smoothed_readout`).
+    Taste shocks are admitted only where exactly one member
+    has a positive Pareto weight and the regime declares no `composition_action` and no
+    `shocks`. The member branch there reads the smoothed choice of that
+    deciding member (`decider_smoothed_readout`).
 
     Args:
         flat_param_names: Frozenset of flat parameter names for the regime.
@@ -1875,12 +1322,12 @@ def get_Q_and_F_collective(
             `utility`, plus the shared `H`.
         constraints: Immutable mapping of constraint names to internal user
             functions.
-        period_targets: Carry targets whose continuation enters E[V^s] this
+        period_targets: Carry targets whose continuation enters E[V^κ] this
             period (all collective with the identical member tuple), read
             at the next states their laws produce.
         scalar_targets: Graph targets active next period that carry no state.
             Their value function has the member axis alone, so there is no
-            next state to interpolate at and each enters E[V^s] as a single
+            next state to interpolate at and each enters E[V^κ] as a single
             degenerate node weighted only by the regime transition probability.
         transitions: Immutable mapping of transition names to transition
             functions.
@@ -1894,8 +1341,13 @@ def get_Q_and_F_collective(
             value arrays (state axes only; the member axis is not an
             interpolation axis).
         koopmans_aggregator: The regime's Bellman aggregator, combining each
-            member's utility and certainty equivalent into `Q^s`.
+            member's utility and certainty equivalent into `Q^κ`.
+        objective_aggregator: The aggregator the members' action is chosen
+            on, applied to every member, or `None` when the Bellman aggregator
+            also chooses.
         members: Ordered member names; fixes the trailing-axis order.
+        certainty_equivalent: The regime's certainty equivalent, shared by every
+            member or keyed by member, or `None` for the linear expectation.
         co_map_state_names: Tuple of state names co-mapped with the continuation
             V (see `get_Q_and_F`).
         continuation_functions: Function pool the continuation sub-DAG (per-target
@@ -1921,7 +1373,8 @@ def get_Q_and_F_collective(
     # coincide (`None`); only the simulate phase passes them apart. The
     # continuation prices the target V under the perceived law, pairing
     # `transitions` with `continuation_pool`; a sub-DAG resolved against the
-    # other pool is neither phase and can reverse the household argmax.
+    # other pool is neither phase and can reverse the argmax of the
+    # Pareto-weighted objective.
     #
     # The flow needs no pool of its own: `next_<state>` is reserved for a
     # transition's output, so no per-member utility or feasibility reads one
@@ -1931,20 +1384,31 @@ def get_Q_and_F_collective(
     )
     # One DAG for every member's felicity and the single feasibility mask.
     # The mask takes no member input — `_get_feasibility` is handed the
-    # regime's constraints and function pool alone — so a household has one
-    # action set however many felicities it carries, and the felicities' shared
+    # regime's constraints and function pool alone — so the members share one
+    # action set however many felicities the regime carries, and the shared
     # nodes are computed once rather than once per member.
     utilities_and_F = _get_U_and_F(
         functions=functions,
         constraints=constraints,
-        utility_names=tuple(f"utility_{member}" for member in members),
+        utility_names=tuple(map(_member_utility_name, members)),
         bound_specs=bound_specs,
     )
     n_members = len(members)
+    # An aggregator is a function of one member's utility and continuation. A
+    # bare one serves every member with the shared params, so it is mapped over
+    # the member axis in one call.
+    if not isinstance(koopmans_aggregator, _MemberAggregator):
+        koopmans_aggregator = cast(
+            "EconFunction", _EachMemberAggregator(aggregator=koopmans_aggregator)
+        )
+    if objective_aggregator is not None:
+        objective_aggregator = cast(
+            "EconFunction", _EachMemberAggregator(aggregator=objective_aggregator)
+        )
 
     # The engine's one continuation-aggregation site, told that every target's V
-    # leaf carries a trailing member axis. `certainty_equivalent=None`
-    # because a collective regime rejects a nonlinear one at construction.
+    # leaf carries a trailing member axis and handed each member's certainty
+    # equivalent.
     #
     # `continuation_pool`, NOT `functions`: the continuation is priced under the
     # agent's perceived law, helpers included — mirroring `get_Q_and_F`.
@@ -1959,6 +1423,18 @@ def get_Q_and_F_collective(
         certainty_equivalent=None,
         co_map_state_names=co_map_state_names,
         n_members=n_members,
+        member_certainty_equivalents=tuple(
+            (
+                each,
+                MappingProxyType({arg: f"{entry}__{arg}" for arg in each.param_names}),
+            )
+            for entry, each in member_slots(
+                base="certainty_equivalent",
+                declaration=certainty_equivalent or LinearExpectation(),
+                members=members,
+            )
+        ),
+        flat_param_names=flat_param_names,
         gated_continuations=gated_continuations,
         count_raise_landings=count_raise_landings,
         lottery_contraction_source=lottery_contraction_source,
@@ -1968,6 +1444,13 @@ def get_Q_and_F_collective(
     _build_W_kwargs = _get_build_W_kwargs(
         functions=functions, koopmans_aggregator=koopmans_aggregator
     )
+    build_objective_kwargs = (
+        None
+        if objective_aggregator is None
+        else _get_build_W_kwargs(
+            functions=functions, koopmans_aggregator=objective_aggregator
+        )
+    )
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         deps=[utilities_and_F, *continuation_deps],
@@ -1975,6 +1458,12 @@ def get_Q_and_F_collective(
             {"next_regime_to_V_arr", "period", "age"}
             | flat_param_names
             | continuation_arg_names
+            | _build_W_kwargs.arg_names
+            | (
+                frozenset()
+                if build_objective_kwargs is None
+                else build_objective_kwargs.arg_names
+            )
         ),
     )
 
@@ -1983,6 +1472,8 @@ def get_Q_and_F_collective(
         compute_CE=compute_CE,
         koopmans_aggregator=koopmans_aggregator,
         build_W_kwargs=_build_W_kwargs,
+        objective_aggregator=objective_aggregator,
+        build_objective_kwargs=build_objective_kwargs,
         arg_names=tuple(arg_names_of_Q_and_F),
         continuation_reads=_continuation_reads(
             deps=continuation_deps, arg_names=continuation_arg_names
@@ -2018,6 +1509,15 @@ class _CollectiveQAndF:
 
     Empty for a kernel that counts none, which then returns `(Q, F)` alone.
     """
+    objective_aggregator: EconFunction | None = field(
+        default=None, metadata={"fingerprint_omit_if_default": True}
+    )
+    """The aggregator `W_objective` the members' action is chosen on, or
+    `None` when `W` also chooses."""
+    build_objective_kwargs: (
+        Callable[[QAndFKwargs], dict[ReferenceName, EconFunctionArg]] | None
+    ) = field(default=None, metadata={"fingerprint_omit_if_default": True})
+    """Assembles `W_objective`'s further arguments from the cell."""
 
     def __post_init__(self) -> None:
         _publish_signature(
@@ -2061,7 +1561,7 @@ class _CollectiveQAndF:
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
     ) -> QAndFParts:
-        """Keep household continuation integrity from the ordinary flow pass."""
+        """Keep the members' continuation integrity from the ordinary flow pass."""
         return self._parts_from_utilities(
             next_regime_to_V_arr=next_regime_to_V_arr,
             utilities_and_F=self.utilities_and_F(**states_actions_params),
@@ -2073,7 +1573,7 @@ class _CollectiveQAndF:
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **states_actions_params: QAndFArg,
     ) -> EvaluatedQAndF:
-        """Preserve actual floor integrity through household continuation and F."""
+        """Preserve actual floor integrity through the members' continuation and F."""
         flow = _evaluated_action_utilities_and_F(
             function=self.utilities_and_F, states_actions_params=states_actions_params
         )
@@ -2109,11 +1609,8 @@ class _CollectiveQAndF:
         CE, _, *landing_counts = continuation
         CE = cast("FloatND", CE)
 
-        # W applied on the stacked arrays is W per member: `utility` and
-        # `CE` share the trailing member axis and the aggregator's
-        # parameters (e.g. the default `LinearAggregator`'s discount factor) are shared
-        # across members, so the elementwise aggregation is exactly
-        # Q^s = W(u^s, CE^s, beta) with the same beta for every s.
+        # Q^κ = W_κ(u^κ, CE^κ): each member's aggregator reads its own slice
+        # of the trailing member axis.
         Q_arr = self.koopmans_aggregator(
             utility=U_stack,
             CE=CE,
@@ -2122,13 +1619,124 @@ class _CollectiveQAndF:
                 self.build_W_kwargs(states_actions_params),
             ),
         )
+        Q_objective = (
+            None
+            if self.objective_aggregator is None
+            else jnp.asarray(
+                self.objective_aggregator(
+                    utility=U_stack,
+                    CE=CE,
+                    **cast(
+                        "Callable[[QAndFKwargs], dict[ReferenceName, EconFunctionArg]]",
+                        self.build_objective_kwargs,
+                    )(states_actions_params),
+                )
+            )
+        )
 
         return QAndFParts(
             U=U_stack,
             F=jnp.asarray(F_arr),
             CE=CE,
             Q=jnp.asarray(Q_arr),
+            Q_objective=Q_objective,
         ), cast("tuple[IntND, ...]", tuple(landing_counts))
+
+
+def get_member_aggregator(*, aggregators: tuple[EconFunction, ...]) -> EconFunction:
+    """Combine each member's Koopmans aggregator into one over the member axis.
+
+    Member `κ` is aggregated as `W_κ(utility=utility[..., κ], CE=CE[..., κ])`
+    with its own further arguments, and the results are stacked on the trailing
+    member axis. The combination's further arguments are the union of the
+    members', so `W_kwargs` is assembled for it as for any one aggregator.
+
+    Args:
+        aggregators: Each member's aggregator, params renamed to its own
+            qualified names, in member order.
+
+    Returns:
+        The combined aggregator.
+
+    """
+    return cast(
+        "EconFunction",
+        _MemberAggregator(
+            aggregators=aggregators,
+            arg_names=(
+                "utility",
+                "CE",
+                *sorted(get_union_of_args(list(aggregators)) - {"utility", "CE"}),
+            ),
+        ),
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _MemberAggregator:
+    """Each member's Koopmans aggregator applied to its slice of the member axis."""
+
+    aggregators: tuple[EconFunction, ...]
+    """Each member's aggregator, in member order."""
+    arg_names: tuple[ReferenceName, ...]
+    """The published argument names, `utility` and `CE` first."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            arg_names=self.arg_names,
+            return_annotation="FloatND",
+            name="koopmans_aggregator",
+        )
+
+    @no_type_check
+    def __call__(self, *, utility: FloatND, CE: FloatND, **kwargs: QAndFArg) -> FloatND:
+        return jnp.stack(
+            [
+                aggregator(
+                    utility=utility[..., member],
+                    CE=CE[..., member],
+                    **{
+                        name: kwargs[name]
+                        for name in get_union_of_args([aggregator])
+                        if name in kwargs
+                    },
+                )
+                for member, aggregator in enumerate(self.aggregators)
+            ],
+            axis=-1,
+        )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _EachMemberAggregator:
+    """One Koopmans aggregator mapped over the trailing member axis.
+
+    Each member's call sees that member's `utility` and `CE` alone; the further
+    arguments are shared. Mapping rather than slicing and stacking keeps the
+    traced program the aggregator's own elementwise program.
+    """
+
+    aggregator: EconFunction
+    """The aggregator every member shares."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            arg_names=tuple(inspect.signature(self.aggregator).parameters),
+            return_annotation="FloatND",
+            name="koopmans_aggregator",
+        )
+
+    @no_type_check
+    def __call__(self, *, utility: FloatND, CE: FloatND, **kwargs: QAndFArg) -> FloatND:
+        # Positional, since `jax.vmap` maps keyword arguments; the further
+        # arguments are closed over and so shared by every member.
+        # keyword-only-exempt: library-callback=jax.vmap
+        def one_member(member_utility: FloatND, member_CE: FloatND) -> FloatND:
+            return self.aggregator(utility=member_utility, CE=member_CE, **kwargs)
+
+        return jax.vmap(one_member, in_axes=-1, out_axes=-1)(utility, CE)
 
 
 def _get_member_sliced_interpolator(
@@ -2689,7 +2297,10 @@ def _get_compute_CE(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     certainty_equivalent: CertaintyEquivalent | None,
     co_map_state_names: tuple[StateName, ...],
-    n_members: int | None = None,
+    n_members: int,
+    member_certainty_equivalents: tuple[
+        tuple[CertaintyEquivalent, MappingProxyType[str, str]], ...
+    ] = (),
     gated_continuations: Mapping[RegimeName, GatedContinuationSpec] = MappingProxyType(
         {}
     ),
@@ -2704,9 +2315,9 @@ def _get_compute_CE(
 ]:
     """Build the closure that aggregates next period's value into `CE`.
 
-    The single continuation-aggregation site of the engine: the Bellman `Q` of a
-    singleton regime, the per-member `Q^s` of a collective one, and the NaN
-    diagnostics all call the closure this returns, so they cannot disagree. The
+    The single continuation-aggregation site of the engine: the per-member
+    Bellman `Q^κ` of every regime and the NaN diagnostics all call the closure
+    this returns, so they cannot disagree. The
     continuation is a lottery over the stochastic nodes of every reachable target
     regime, weighted by that target's regime-transition probability:
 
@@ -2739,15 +2350,18 @@ def _get_compute_CE(
         regime_to_v_interpolation_info: Immutable mapping of regime names to
             V-interpolation info.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
-            regime, or `None` for the linear expectation. A collective regime
-            rejects a nonlinear one at construction, so it always passes `None`.
+            regime, or `None` for the linear expectation. A regime with several
+            members passes `None` and states its members' in
+            `member_certainty_equivalents`.
         co_map_state_names: Tuple of state names co-mapped with the continuation V.
         n_members: Length of the trailing member axis the continuation
-            carries, or `None` for a singleton regime. It is the only structural
-            difference a collective regime makes to the aggregation: every
-            target's V leaf, and hence `CE`, gains one trailing axis, while the
-            regime-transition probabilities — which are member-independent —
+            carries. Every target's V leaf, and hence `CE`, ends in that axis,
+            while the regime-transition probabilities — which are member-independent —
             keep the plain cell shape and broadcast across it.
+        member_certainty_equivalents: The certainty equivalent per member, in
+            member order, each with the flat params names of its
+            arguments. Unless every member's is the linear expectation, each
+            member's slice of the joint lottery is aggregated under its own.
         gated_continuations: Mapping of target regime names to the gated-edge
             continuation spec that target's leaf is read under. A target absent
             from it is read as an ordinary value function.
@@ -2791,6 +2405,7 @@ def _get_compute_CE(
                 certainty_equivalent=certainty_equivalent,
                 co_map_state_names=co_map_state_names,
                 n_members=n_members,
+                member_certainty_equivalents=member_certainty_equivalents,
                 gated_continuations=gated_continuations,
                 flat_param_names=flat_param_names,
                 count_raise_landings=count_raise_landings,
@@ -2805,8 +2420,12 @@ def _get_compute_CE(
     # Exact type, not `isinstance`: a subclass overriding `aggregate` states a
     # different quantity, and the per-target route would silently discard the
     # override.
-    reduces_per_target = (
-        certainty_equivalent is None or type(certainty_equivalent) is LinearExpectation
+    reduces_per_target = all(
+        each is None or type(each) is LinearExpectation
+        for each in (
+            certainty_equivalent,
+            *(member for member, _ in member_certainty_equivalents),
+        )
     )
 
     continuations = {
@@ -2899,6 +2518,7 @@ def _get_compute_CE(
         ce_flat_param_names=ce_flat_param_names,
         co_map_next_names=co_map_next_names,
         n_members=n_members,
+        member_certainty_equivalents=member_certainty_equivalents,
         gated_scalar_landing_checks=tuple(
             (
                 target_regime_name,
@@ -3363,8 +2983,12 @@ class _ComputeCE:
     """The certainty equivalent's flat parameter names."""
     co_map_next_names: frozenset[str]
     """`next_`-prefixed names of the co-mapped states, which carry no coordinate."""
-    n_members: int | None
-    """Number of members of a collective regime, or `None`."""
+    n_members: int
+    """Number of the regime's members."""
+    member_certainty_equivalents: tuple[
+        tuple[CertaintyEquivalent, MappingProxyType[str, str]], ...
+    ] = field(default=(), metadata={"fingerprint_omit_if_default": True})
+    """The certainty equivalent per member, with its flat params names."""
     gated_scalar_landing_checks: tuple[
         tuple[RegimeName, tuple[LandingCheck, ...]], ...
     ] = field(default=(), metadata={"fingerprint_omit_if_default": True})
@@ -3523,6 +3147,7 @@ class _ComputeCE:
             active_regime_probs=active_regime_probs,
             as_lottery=not self.reduces_per_target,
             zero=zero,
+            n_members=self.n_members,
         )
         for target_regime_name in self.period_targets:
             continuation = self.continuations[target_regime_name]
@@ -3592,6 +3217,7 @@ class _ComputeCE:
                     weights=joint_next_stochastic_states_weights,
                     shifts=target_node_shifts[target_regime_name],
                     has_stochastic_states=continuation.has_lottery_axes,
+                    n_members=self.n_members,
                 )
                 # An impossible node is neutralized once, downstream in
                 # `_aggregate_joint_lottery`, where the concatenated weights are
@@ -3631,7 +3257,7 @@ class _ComputeCE:
                 probability_mass=probability_mass,
                 has_negative_probability=has_negative_probability,
             )
-        elif self.certainty_equivalent is not None:
+        elif self.certainty_equivalent is not None or not self.reduces_per_target:
             # `aggregate` normalizes by the weight sum itself, so the lottery
             # route has no division to attach the check to. Selecting between
             # the aggregate and NaN leaves the well-formed path free of any
@@ -3646,13 +3272,34 @@ class _ComputeCE:
                     probability_mass=probability_mass,
                     has_negative_probability=has_negative_probability,
                 ),
-                _aggregate_joint_lottery(
-                    certainty_equivalent=self.certainty_equivalent,
-                    lottery_values=lottery_values,
-                    lottery_weights=lottery_weights,
-                    lottery_shifts=lottery_shifts,
-                    ce_flat_param_names=self.ce_flat_param_names,
-                    states_actions_params=states_actions_params,
+                (
+                    _aggregate_joint_lottery(
+                        certainty_equivalent=self.certainty_equivalent,
+                        lottery_values=lottery_values,
+                        lottery_weights=lottery_weights,
+                        lottery_shifts=lottery_shifts,
+                        ce_flat_param_names=self.ce_flat_param_names,
+                        states_actions_params=states_actions_params,
+                    )
+                    if self.certainty_equivalent is not None
+                    else jnp.stack(
+                        [
+                            _aggregate_joint_lottery(
+                                certainty_equivalent=member,
+                                lottery_values=[
+                                    values[:, index] for values in lottery_values
+                                ],
+                                lottery_weights=lottery_weights,
+                                lottery_shifts=lottery_shifts,
+                                ce_flat_param_names=flat_names,
+                                states_actions_params=states_actions_params,
+                            )
+                            for index, (member, flat_names) in enumerate(
+                                self.member_certainty_equivalents
+                            )
+                        ],
+                        axis=-1,
+                    )
                 )
                 if lottery_values
                 else CE,
@@ -3890,7 +3537,7 @@ class _TargetContinuation:
         shifts: IntND,
         probability: FloatND,
         co_map_next_names: frozenset[str],
-        n_members: int | None,
+        n_members: int,
         reduces_per_target: bool,
         prepared: FloatND | None = None,
     ) -> _TargetValue:
@@ -3999,7 +3646,6 @@ class _TargetContinuation:
                 values=next_V_at_stochastic_states_arr,
                 weights=weights,
                 shifts=shifts,
-                has_lottery_axes=self.has_lottery_axes,
                 n_members=n_members,
             )
         return _TargetValue(
@@ -4345,7 +3991,7 @@ def _build_target_continuation(
     transition_plans: TargetTransitionPlans,
     v_interpolation_info: VInterpolationInfo,
     co_map_state_names: tuple[StateName, ...],
-    n_members: int | None,
+    n_members: int,
     allow_shock_average: bool,
     gated_continuation: GatedContinuationSpec | None = None,
     restore_original_layout: bool = False,
@@ -4371,8 +4017,7 @@ def _build_target_continuation(
         v_interpolation_info: The target's V-interpolation info.
         co_map_state_names: Tuple of state names co-mapped with the continuation V.
         n_members: Length of the trailing member axis each target's
-            `next_V_arr` leaf carries, or `None` for a singleton regime whose
-            leaves carry no such axis. It is not an interpolation axis: the
+            `next_V_arr` leaf carries. It is not an interpolation axis: the
             interpolator is evaluated once per member slice and the results
             are re-stacked last, so the axis rides through the node product-map
             (which stacks its mapped axes at the front) by construction.
@@ -4579,15 +4224,10 @@ def _build_target_continuation(
     averaged_inputs: tuple[str, ...] = ()
     integrated_weight_names: tuple[str, ...] = ()
     if shock_average is not None:
-        if (
-            gated_continuation is not None
-            or n_members is not None
-            or basis_variables
-            or original_layouts
-        ):
+        if gated_continuation is not None or basis_variables or original_layouts:
             msg = (
                 f"The additive shock transition toward regime '{target_regime_name}' "
-                "cannot be averaged on a gated, collective, entered or factored "
+                "cannot be averaged on a gated, entered or factored "
                 "continuation; declare the law as a plain function instead."
             )
             raise ModelInitializationError(msg)
@@ -4691,8 +4331,6 @@ def _build_target_continuation(
                 ),
             ),
         )
-    elif n_members is None:
-        mapped_interpolator = landing_counting.paired_with(next_V_interpolator)
     else:
         mapped_interpolator = landing_counting.paired_with(
             _get_member_sliced_interpolator(
@@ -5236,6 +4874,7 @@ def _scalar_target_contribution(
     active_regime_probs: Mapping[RegimeName, FloatND],
     as_lottery: bool,
     zero: FloatND,
+    n_members: int,
 ) -> tuple[
     list[tuple[RegimeName, FloatND, FloatND]],
     list[FloatND],
@@ -5264,6 +4903,8 @@ def _scalar_target_contribution(
             continuation, so the nodes must be handed over unaggregated.
         zero: Zero at the shape and dtype the mass accumulates in — the caller's
             cell shape, which the sign flags are shaped after as well.
+        n_members: Length of the trailing member axis, which a lottery node
+            keeps.
 
     Returns:
         Tuple of the linear mixture terms, the lottery values, their weights,
@@ -5301,10 +4942,10 @@ def _scalar_target_contribution(
             # ones keeps that from happening on the way in. The arm keeps the
             # scale it reached rather than being flattened onto a shared one —
             # every other arm does too, and the joint aggregator reads the pair.
-            node = jnp.ravel(scalar_V)
+            node = jnp.reshape(scalar_V, (-1, n_members))
             values.append(node)
             weighted_nodes, shift = scaled_joint_weight(
-                jnp.stack([jnp.broadcast_to(prob, jnp.shape(node))])
+                jnp.stack([jnp.broadcast_to(prob, jnp.shape(node)[:1])])
             )
             weights.append(weighted_nodes)
             shifts.append(shift)
@@ -5326,24 +4967,21 @@ def _scalar_target_contribution(
     )
 
 
-def _value_shaped_zero(*, zero: FloatND, n_members: int | None) -> FloatND:
+def _value_shaped_zero(*, zero: FloatND, n_members: int) -> FloatND:
     """Return the zero a continuation VALUE has, given the mass-shaped one.
 
     The regime-transition mass is member-independent, so it accumulates at
-    the plain cell shape; a continuation value carries one trailing axis on top
-    of that whenever the regime is collective.
+    the plain cell shape; a continuation value carries one trailing member axis
+    on top of that.
 
     Args:
         zero: Zero at the shape and dtype the mass accumulates in.
-        n_members: Length of the trailing member axis, or `None` for a
-            singleton regime, whose value and mass share one shape.
+        n_members: Length of the trailing member axis.
 
     Returns:
         Zero at the shape and dtype of a continuation value.
 
     """
-    if n_members is None:
-        return zero
     zero_arr = jnp.asarray(zero)
     return jnp.zeros((*zero_arr.shape, n_members), dtype=zero_arr.dtype)
 
@@ -5353,52 +4991,49 @@ def _expected_continuation_over_nodes(
     values: FloatND,
     weights: FloatND,
     shifts: IntND,
-    has_lottery_axes: bool,
-    n_members: int | None,
+    n_members: int,
 ) -> FloatND:
     """Reduce one target's continuation over its lottery nodes.
 
     Zero-safe throughout: a zero-probability node beside an admissible on-path
     `-inf` must not turn the average into a `nan`, which dissolution makes
-    routine rather than exotic on a collective regime.
+    routine rather than exotic.
 
-    Which reduction states that depends only on whether a trailing member
-    axis has to survive it:
+    Each member's values are flattened over the node axes and reduced on their
+    own, and the means are stacked on the member axis. This covers a target
+    with no lottery at all as well: the empty product is the weight `1.0` at
+    scale `0`, and the reduction is then bitwise identity on the values, so the
+    no-lottery case needs no branch of its own.
 
-    - **collective.** The node axes are flattened into one leading axis and
-      reduced away, leaving the member axis. This covers a target with no
-      lottery at all as well: the empty product is the weight `1.0` at scale
-      `0`, and the reduction is then bitwise identity on the values, so the
-      no-lottery case needs no branch of its own.
-    - **singleton, with a lottery.** The whole array is the node surface, so it
-      is reduced at once (`axis=None`) — the spelling whose bits
-      `zero_safe_average` is tested against.
-    - **singleton, without one.** There is no node axis and no weight to apply.
+    The member axis is taken off before the mean rather than carried through
+    it. Carried as an axis of length one, it lets the compiler store each
+    node's exponent between the mean's two passes, one integer per cell,
+    action and node; reduced per member, the second pass recomputes it from the
+    node values.
 
     Args:
         values: Next period's value at this target's lottery nodes, the node
-            axes leading and (collectively) the member axis trailing.
+            axes leading and the member axis trailing.
         weights: The nodes' scaled joint weights, one per node.
         shifts: Each node's own base-two scale.
-        has_lottery_axes: Whether the target's transition draws any stochastic
-            state, and so whether `values` carries node axes at all.
-        n_members: Length of the trailing member axis, or `None` for a
-            singleton regime.
+        n_members: Length of the trailing member axis.
 
     Returns:
-        The weighted mean over the nodes, keeping any trailing member axis.
+        The weighted mean over the nodes, keeping the trailing member axis.
 
     """
-    if n_members is not None:
-        return zero_safe_average(
-            a=jnp.asarray(values).reshape(-1, n_members),
-            axis=0,
-            weights=jnp.asarray(weights).reshape(-1),
-            shifts=jnp.asarray(shifts).reshape(-1),
-        )
-    if has_lottery_axes:
-        return zero_safe_average(a=values, weights=weights, shifts=shifts)
-    return jnp.average(values)
+    values = jnp.asarray(values)
+    return jnp.stack(
+        [
+            zero_safe_average(
+                a=values[..., member].reshape(-1),
+                weights=jnp.asarray(weights).reshape(-1),
+                shifts=jnp.asarray(shifts).reshape(-1),
+            )
+            for member in range(n_members)
+        ],
+        axis=-1,
+    )
 
 
 def _as_lottery(
@@ -5407,7 +5042,8 @@ def _as_lottery(
     weights: FloatND,
     shifts: IntND,
     has_stochastic_states: bool,
-) -> tuple[Float1D, Float1D, IntND]:
+    n_members: int,
+) -> tuple[FloatND, Float1D, IntND]:
     """Flatten one target regime's continuation into a unit-mass lottery.
 
     The nodes stay scaled pairs. Dividing them by their mass as plain numbers
@@ -5429,6 +5065,7 @@ def _as_lottery(
         shifts: Each node's own base-two scale; ignored likewise.
         has_stochastic_states: Whether the target's transition draws stochastic
             states.
+        n_members: Length of the trailing member axis, which every node keeps.
 
     Returns:
         Tuple of the flattened values, their probabilities' coefficients, and
@@ -5436,16 +5073,15 @@ def _as_lottery(
         to zero for a target whose weights carry no mass at all.
 
     """
-    flat_values = jnp.ravel(values)
+    flat_values = jnp.reshape(values, (-1, n_members))
     if has_stochastic_states:
         coefficients, node_shifts = normalized_scaled_weights(
             coefficients=jnp.ravel(weights), shifts=jnp.ravel(jnp.asarray(shifts))
         )
         return flat_values, coefficients, node_shifts
-    uniform = jnp.full(
-        flat_values.shape, 1.0 / flat_values.size, dtype=flat_values.dtype
-    )
-    return flat_values, uniform, jnp.zeros(flat_values.shape, dtype=jnp.int32)
+    n_nodes = flat_values.shape[0]
+    uniform = jnp.full((n_nodes,), 1.0 / n_nodes, dtype=flat_values.dtype)
+    return flat_values, uniform, jnp.zeros((n_nodes,), dtype=jnp.int32)
 
 
 def _get_arg_names_of_Q_and_F(
@@ -5528,7 +5164,7 @@ class _OuterJointWeights:
             # The empty product is the certain event. Building it from an
             # empty factor array would close a zero-size array into the
             # program, and the CPU compiler crashes on a zero-size operand of
-            # the `shard_map` that splits subjects over devices.
+            # the `shard_map` that splits agents over devices.
             return jnp.ones(()), jnp.zeros((), dtype=jnp.int32)
         return scaled_joint_weight(jnp.array(list(kwargs.values())))
 
@@ -5548,8 +5184,9 @@ def _get_U_and_F(
     executed if they matter for the value of U.
 
     Feasibility carries no member input of its own: `_get_feasibility` builds
-    the mask from the regime's constraints and the shared function pool, so a
-    household has ONE action set however many felicities it carries. A constraint
+    the mask from the regime's constraints and the shared function pool, so the
+    members share ONE action set however many felicities the regime carries. A
+    constraint
     may still name a member-indexed node (`utility_f`) — that names the same
     node for every member, which is why the mask is a single DAG target here
     rather than one per felicity.

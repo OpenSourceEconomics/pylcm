@@ -267,7 +267,7 @@ def _integrated_read(
     the integrated value and economic marginal weight the node rows equally.
     """
     carry = result.retained_continuations[
-        ArtifactRef(period=1, regime="child", key=EGM_CONTINUATION)
+        ArtifactRef(step=1, regime="child", key=EGM_CONTINUATION)
     ]
     assert isinstance(carry, EGMCarry)
     assert carry.endog_grid.shape[0] == len(nodes)
@@ -336,16 +336,16 @@ def test_public_case_r_replay_matches_the_literal_policy_at_off_node_shocks() ->
     model = _interior_model()
     params = _params()
     result = model.solve(params=params, log_level="warning", max_compilation_workers=1)
-    n_subjects = 8
+    n_agents = 8
     frame = model.simulate(
         params=params,
         solution=result,
         seed=19,
         log_level="warning",
         initial_conditions={
-            "regime_id": np.zeros(n_subjects, dtype=int),
-            "age": np.zeros(n_subjects, dtype=int),
-            "wealth": np.linspace(2.5, 4.0, n_subjects, dtype=canonical_float_dtype()),
+            "regime_id": np.zeros(n_agents, dtype=int),
+            "age": np.zeros(n_agents, dtype=int),
+            "wealth": np.linspace(2.5, 4.0, n_agents, dtype=canonical_float_dtype()),
         },
     )
     child = frame.raw_results["child"][1]
@@ -518,7 +518,7 @@ def test_public_case_r_replay_saves_the_floor_exactly_at_the_corner() -> None:
     np.testing.assert_allclose(
         saving, resources - _corner_consumption(resources), rtol=0, atol=tolerance
     )
-    value = np.asarray(child.V_arr)
+    value = np.asarray(child.V_arr)[..., 0]
     expected = _corner_value(resources)
     np.testing.assert_array_less(
         np.abs(value - expected) / np.maximum(1.0, np.abs(expected)),

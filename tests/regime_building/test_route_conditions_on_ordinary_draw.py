@@ -1,4 +1,4 @@
-"""Gates own only subjects drawn to their scheduled target.
+"""Gates own only agents drawn to their scheduled target.
 
 A real ordinary lottery selects the incoming edge before a gate runs. Separate
 incoming gates cannot overwrite one another when their declarations are reversed.
@@ -43,7 +43,7 @@ from tests.conftest import DECIMAL_PRECISION
 
 _BETA = 0.95
 _SEED = 41
-_N_SUBJECTS = 64
+_N_AGENTS = 64
 
 
 @categorical(ordered=False)
@@ -93,8 +93,8 @@ def _u_fallback_b(wage: ContinuousState) -> FloatND:
     return wage + 2.0
 
 
-def _ordinary_uniforms(*, n_subjects: int) -> FloatND:
-    """Independently address the reserved period-one regime lottery by subject."""
+def _ordinary_uniforms(*, n_agents: int) -> FloatND:
+    """Independently address the reserved period-one regime lottery by agent."""
     encoded = json.dumps(
         ["pylcm.random.v1", "regime", "regime", 0],
         ensure_ascii=False,
@@ -105,9 +105,9 @@ def _ordinary_uniforms(*, n_subjects: int) -> FloatND:
     for word in words:
         root = jax.random.fold_in(root, np.uint32(word))
     draws = []
-    for subject in range(n_subjects):
-        key = jax.random.fold_in(root, np.uint32(subject >> 32))
-        key = jax.random.fold_in(key, np.uint32(subject % 2**32))
+    for agent in range(n_agents):
+        key = jax.random.fold_in(root, np.uint32(agent >> 32))
+        key = jax.random.fold_in(key, np.uint32(agent % 2**32))
         key = jax.random.fold_in(key, np.uint32(1))
         draws.append(jax.random.uniform(key, dtype=jnp.asarray(0.0).dtype))
     return jnp.stack(draws)
@@ -195,9 +195,9 @@ def _dual_model(*, edge_order: tuple[RegimeName, RegimeName]) -> Model:
 
 
 def test_multiple_gates_preserve_the_original_draw_under_reversed_order() -> None:
-    """Each offered target owns its subjects under either declaration order."""
-    wages = jnp.tile(jnp.asarray([1.0, 2.0]), _N_SUBJECTS // 2)
-    uniform = np.asarray(_ordinary_uniforms(n_subjects=_N_SUBJECTS))
+    """Each offered target owns its agents under either declaration order."""
+    wages = jnp.tile(jnp.asarray([1.0, 2.0]), _N_AGENTS // 2)
+    uniform = np.asarray(_ordinary_uniforms(n_agents=_N_AGENTS))
     target_a = uniform < 0.5
     assert target_a.any()
     assert (~target_a).any()
@@ -213,8 +213,8 @@ def test_multiple_gates_preserve_the_original_draw_under_reversed_order() -> Non
         wages=wages,
     )
     for frame in (forward, reverse):
-        landed = frame.loc[frame["period"] == 1].sort_values("subject_id")
-        np.testing.assert_array_equal(landed["subject_id"], np.arange(_N_SUBJECTS))
+        landed = frame.loc[frame["period"] == 1].sort_values("agent_id")
+        np.testing.assert_array_equal(landed["agent_id"], np.arange(_N_AGENTS))
         np.testing.assert_array_equal(landed["regime_name"].to_numpy(), expected)
         aaae(landed["wage"], wages, decimal=DECIMAL_PRECISION)
         aaae(

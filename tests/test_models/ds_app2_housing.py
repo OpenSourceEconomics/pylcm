@@ -356,8 +356,12 @@ def build_model(
         """
         return (new_housing >= housing_min) & (new_housing <= housing_max)
 
-    liquid_grid = LinSpacedGrid(start=0.0, stop=liquid_max, n_points=n_grid)
-    housing_grid = LinSpacedGrid(start=housing_min, stop=housing_max, n_points=n_grid)
+    liquid_grid = LinSpacedGrid(
+        start=0.0, stop=liquid_max, n_points=n_grid, off_grid="extrapolate"
+    )
+    housing_grid = LinSpacedGrid(
+        start=housing_min, stop=housing_max, n_points=n_grid, off_grid="extrapolate"
+    )
     outer_grid = LinSpacedGrid(start=housing_min, stop=housing_max, n_points=n_grid)
     consumption_grid = LinSpacedGrid(
         start=0.05, stop=consumption_max, n_points=n_consumption

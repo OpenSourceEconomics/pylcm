@@ -44,9 +44,9 @@ across draws, the contracted read is `-inf`, while per-draw enumeration gives Na
 
 The simulation and the public `Model.lookup_policy`, which runs the simulation's
 decision, contract the same draws as the solve, with one exception: a stochastic process
-whose probabilities read the subject's current value. A simulated value may lie between
+whose probabilities read the agent's current value. A simulated value may lie between
 the process's nodes, and which draws are contracted is fixed when the simulation is
-built, so this process draw stays enumerated in the simulation for every subject, even
+built, so this process draw stays enumerated in the simulation for every agent, even
 for one exactly on a node. Other eligible draws in the same continuation are still
 contracted. Where no such process draw is contracted in the solve, the simulation
 maximizes the Q the solve maximized, cancelling values included. Where one is, the
@@ -54,57 +54,57 @@ simulated choice can differ from the solve's by more than a tie with cancelling 
 even at a node.
 
 The contraction applies in every kernel of a regime that declares it: the ordinary one,
-the exit and consent queries that solve a regime with an exit, and a
+the separation and consent queries that solve a regime with a composition action, and a
 collective regime's, where each member's value is contracted on its own. A query
 evaluates its regime at projected states, so, like the simulation, it keeps a process
 draw whose probabilities read the current value enumerated. It binds the current
 shocks per row after building its tables, so it also keeps a draw whose probabilities
-read a current shock, directly or through a helper. An exit's query reads its regime's
-own kernel, so a regime with an exit keeps such a draw there too; a regime without one
-sums it. A query also keeps every draw toward a target whose `off_grid="raise"`
-landings it counts on the nodes.
+read a current shock, directly or through a helper. The query of a composition action
+reads its regime's own kernel, so a regime with a composition action keeps such a draw
+there too; a regime without one sums it. A query also keeps every draw toward a target
+whose `off_grid="raise"` landings it counts on the nodes.
 
 A regime with a gated edge contracts nothing in either phase.
 
 The contraction is off by default, and off it leaves every program unchanged. The
 ordinary kernel builds its table inside its tile loops, and on GPU the compiler does not
-hoist it out of them, so it is rebuilt for every cell, action and subject tile. A period
+hoist it out of them, so it is rebuilt for every cell, action and agent tile. A period
 solved in a few wide tiles gains, while one split into many narrow tiles, as fixed
 `axis_widths` or unbudgeted widths can force, loses. A query builds each table once per
 call, before its loops, and so trades compile time and host memory for solve time: in a
-model with exits and collective regimes, whose queries each prepare their own tables,
-compile time and host memory rise while each period can solve faster.
+model with composition actions and collective regimes, whose queries each prepare their
+own tables, compile time and host memory rise while each period can solve faster.
 
 ## Capability table
 
 <!-- capability tables: rendered, do not edit by hand -->
 
-| Solver       | Required declaration                                         | Problem shape                                                                | Hard prerequisites and supported constraints                                                                                                                                                                                                 | Main tradeoff                                                                                                                  |
-| ------------ | ------------------------------------------------------------ | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `GridSearch` | Regime or a specialized regime                               | General discrete-continuous action product                                   | Ordinary callable constraints; EV1 taste shocks; transition-local joint lotteries                                                                                                                                                            | Broad representation; eligible singleton hard-max routes stream actions, while EV1 and collective reductions use dense actions |
-| `EGM`        | ConsumptionSavingsRegime with one LiquidMargin               | Smooth concave one-state/one-action cash-on-hand problem                     | One continuous state and action; no discrete/process axes; identity resources; additive continuation; provable post-decision lower bound                                                                                                     | Narrow structural contract with no upper envelope                                                                              |
-| `DCEGM`      | ConsumptionSavingsRegime with one LiquidMargin               | One liquid Euler margin and optional discrete choice                         | Valid resources and post-decision roles; lower bound; supported passive states and continuation layout; EV1 taste shocks; no finite NNBEGM successor regime                                                                                  | Constrained candidates and upper envelope; simulation may re-optimize on the action grid                                       |
-| `NBEGM`      | ConsumptionSavingsRegime with one LiquidMargin               | Supported declared kinks, jumps, hard boundaries or smooth discrete branches | Supported case-piece or piecewise-affine declaration; proven constraint routes; nonlinear CE only on eligible ride-along routes; no EV1 taste shocks; marginal donation only on an unsharded self-carry main program with eligible ownership | Preserves declared topology; structural probes and candidate geometry add cost                                                 |
-| `NEGM`       | NestedConsumptionSavingsRegime with liquid and outer margins | DCEGM inner solve conditional on a finite outer grid                         | Inner DCEGM contract plus outer state/action, post-decision, no-adjustment and cost roles; no EV1 taste shocks                                                                                                                               | Exact relative to the outer candidate set; retained candidates can dominate memory                                             |
-| `NNBEGM`     | NestedConsumptionSavingsRegime with liquid and outer margins | NBEGM inner solve inside a finite or adaptive outer search                   | Inner NBEGM contract plus compatible outer search and branch aggregation; no EV1 taste shocks                                                                                                                                                | Declared budget topology inside each outer candidate adds structural and computational cost                                    |
+| Solver       | Required declaration                                         | Problem shape                                                                | Hard prerequisites and supported constraints                                                                                                                                                                                                 | Main tradeoff                                                                                         |
+| ------------ | ------------------------------------------------------------ | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `GridSearch` | Regime or a specialized regime                               | General discrete-continuous action product                                   | Ordinary callable constraints; EV1 taste shocks; transition-local joint lotteries                                                                                                                                                            | Broad representation; eligible hard-max routes stream actions, while EV1 reductions use dense actions |
+| `EGM`        | ConsumptionSavingsRegime with one LiquidMargin               | Smooth concave one-state/one-action cash-on-hand problem                     | One continuous state and action; no discrete/process axes; identity resources; additive continuation; provable post-decision lower bound                                                                                                     | Narrow structural contract with no upper envelope                                                     |
+| `DCEGM`      | ConsumptionSavingsRegime with one LiquidMargin               | One liquid Euler margin and optional discrete choice                         | Valid resources and post-decision roles; lower bound; supported passive states and continuation layout; EV1 taste shocks; no finite NNBEGM successor regime                                                                                  | Constrained candidates and upper envelope; simulation may re-optimize on the action grid              |
+| `NBEGM`      | ConsumptionSavingsRegime with one LiquidMargin               | Supported declared kinks, jumps, hard boundaries or smooth discrete branches | Supported case-piece or piecewise-affine declaration; proven constraint routes; nonlinear CE only on eligible ride-along routes; no EV1 taste shocks; marginal donation only on an unsharded self-carry main program with eligible ownership | Preserves declared topology; structural probes and candidate geometry add cost                        |
+| `NEGM`       | NestedConsumptionSavingsRegime with liquid and outer margins | DCEGM inner solve conditional on a finite outer grid                         | Inner DCEGM contract plus outer state/action, post-decision, no-adjustment and cost roles; no EV1 taste shocks                                                                                                                               | Exact relative to the outer candidate set; retained candidates can dominate memory                    |
+| `NNBEGM`     | NestedConsumptionSavingsRegime with liquid and outer margins | NBEGM inner solve inside a finite or adaptive outer search                   | Inner NBEGM contract plus compatible outer search and branch aggregation; no EV1 taste shocks                                                                                                                                                | Declared budget topology inside each outer candidate adds structural and computational cost           |
 
 ## Execution axes
 
-| Solver       | Reduced axes                            | Tiled axes                                              | Host axes         | Host-repeated programs             | Donation candidates | EV1 taste shocks | Nonlinear CE |
-| ------------ | --------------------------------------- | ------------------------------------------------------- | ----------------- | ---------------------------------- | ------------------- | ---------------- | ------------ |
-| `GridSearch` | `action_product`                        | `cell`                                                  | —                 | —                                  | —                   | Yes              | Yes          |
-| `EGM`        | —                                       | —                                                       | —                 | —                                  | —                   | No               | No           |
-| `DCEGM`      | `stochastic_node`                       | `cell`, `savings_point`, `euler_point`, `envelope_cell` | —                 | —                                  | —                   | Yes              | No           |
-| `NBEGM`      | `stochastic_node`, `interval`, `branch` | `cell`                                                  | —                 | —                                  | `main`              | No               | Yes          |
-| `NEGM`       | `stochastic_node`, `outer_candidate`    | `cell`, `savings_point`, `euler_point`, `envelope_cell` | —                 | —                                  | —                   | No               | No           |
-| `NNBEGM`     | `stochastic_node`, `interval`, `branch` | `cell`                                                  | `outer_candidate` | `adjuster:main`, `adjuster:replay` | —                   | No               | Yes          |
+| Solver       | Reduced axes                            | Tiled axes                                              | Host axes         | Host-repeated programs             | Donation candidates | EV1 taste shocks | Nonlinear CE | Several members |
+| ------------ | --------------------------------------- | ------------------------------------------------------- | ----------------- | ---------------------------------- | ------------------- | ---------------- | ------------ | --------------- |
+| `GridSearch` | `action_product`                        | `cell`                                                  | —                 | —                                  | —                   | Yes              | Yes          | Yes             |
+| `EGM`        | —                                       | —                                                       | —                 | —                                  | —                   | No               | No           | No              |
+| `DCEGM`      | `stochastic_node`                       | `cell`, `savings_point`, `euler_point`, `envelope_cell` | —                 | —                                  | —                   | Yes              | No           | No              |
+| `NBEGM`      | `stochastic_node`, `interval`, `branch` | `cell`                                                  | —                 | —                                  | `main`              | No               | Yes          | No              |
+| `NEGM`       | `stochastic_node`, `outer_candidate`    | `cell`, `savings_point`, `euler_point`, `envelope_cell` | —                 | —                                  | —                   | No               | No           | No              |
+| `NNBEGM`     | `stochastic_node`, `interval`, `branch` | `cell`                                                  | `outer_candidate` | `adjuster:main`, `adjuster:replay` | —                   | No               | Yes          | No              |
 
 <!-- end capability tables -->
 
 Potential axes depend on the selected solver configuration. Model construction accepts
 only axes declared by its actual programs; these tables do not waive structural
 validation. Host-repeated programs may contain planned compiled cores. Regime submesh
-placement and simulation subject tiling are separate execution policies.
+placement and simulation agent tiling are separate execution policies.
 
 (unsupported-solver-combinations)=
 ## Unsupported combinations
@@ -139,7 +139,7 @@ What users see does not change:
 - `solve` publishes values integrated over the shocks; no value array, `value_array`
   coordinate or saved archive has a shock axis.
 - `simulate` draws each shock from the same addressed stream as the current-IID route
-  (shock name, original subject row and period), and applies `BaseInnovations` and
+  (shock name, original agent row and period), and applies `BaseInnovations` and
   `PhysicalValues` inputs with the same rules: an entry record at the row's entry
   period, a path at every period it covers, superseding the entry. Every current
   function reads the realized physical draw.
@@ -207,7 +207,7 @@ deliberately dense, unsupported, or trivial declares no `action_product` axis.
 
 The separate `cell` axis tiles the flattened Cartesian product of inner states.
 `ExecutionConfig(axis_widths={"cell": n})` bounds the number of state cells evaluated
-together. Each output leaf recovers its state axes; collective values also retain their
+together. Each output leaf recovers its state axes; values also retain their
 trailing member axis.
 Sharded states stay outside this loop; fixed states also retain their co-mapping with
 continuation values, preserving device-local reads. Empty and singleton state products
@@ -217,25 +217,24 @@ with this axis is planned even when its action reduction remains deliberately de
 This matrix uses exactly three disposition labels:
 
 (gridsearch-jit-route-matrix)=
-#### JIT solve route matrix
+#### Solve route matrix
 
 | Route shape | Disposition | Meaning |
 | --- | --- | --- |
-| Singleton hard max | streamed | Action blocks feed the hard-max reduction. |
-| Collective hard max | deliberately dense | Dense action reduction preserves candidate identity, member readout, and dissolution; the streamed reference currently regresses the measured resource envelope. |
-| Singleton EV1 with at least one discrete action | deliberately dense | Dense action reduction preserves canonical floating-point reduction order and winner identity; the blocked reference does not yet preserve that contract. |
+| Hard max | streamed | Action blocks feed the hard-max reduction, which keeps candidate identity, member readout, and dissolution. |
+| EV1 with at least one discrete action | deliberately dense | Dense action reduction preserves canonical floating-point reduction order and winner identity; the blocked reference does not yet preserve that contract. |
 | Edge references or gated targets without a co-mapped state | streamed | Each target artifact and its exact source argument path is declared; the resolved transfer supplies it as a dynamic input to the streamed solve core. |
 | Ordinary co-mapped state route without a separate reference channel | streamed | Continuation leaves co-map with the state cell while actions stream. |
 | Co-mapped state plus a separate edge-reference channel | deliberately dense | The two data transports are not yet represented together by the streamed program. |
 | No action, or an action product containing at most one candidate | deliberately dense | Blocking a trivial product adds no useful execution choice. |
-| JIT disabled, including the raw execution path | deliberately dense | The action-streamed program is a JIT lowering route. |
-| Collective EV1 | unsupported | The action-streamed solve program has no collective EV1 reduction. |
+| `Decoupled` Koopmans aggregator | deliberately dense | The reduction selects on the objective and reads the stored value at the selected action. |
+| A read of a grid with `off_grid="raise"` whose landings the solve counts | deliberately dense | The dense reduction sums each action's landings over the feasible actions in the pass that takes the maximum. |
 | EV1 without a discrete action | unsupported | The GridSearch EV1 reduction requires a discrete-choice axis. |
 | Any simulation-policy construction | deliberately dense | Simulation lies outside this solve-route classifier and continues to recompute policies on the dense action product. |
 
-The streamed rows assume JIT execution, a nontrivial action product, and no applicable
-unsupported composition. When several rows describe one route, an unsupported
-composition takes precedence, followed by a deliberately dense condition; only the
+The streamed rows assume a nontrivial action product and no applicable unsupported
+composition. `enable_jit=False` resolves the same programs and evaluates them eagerly.
+When several rows describe one route, an unsupported composition takes precedence, followed by a deliberately dense condition; only the
 remaining eligible route is streamed.
 
 Here, **unsupported** is a disposition of the action-streamed solve program, not a new
@@ -343,25 +342,25 @@ execution widths belong in `ExecutionConfig.axis_widths`.
 
 :::{important} Solved and simulated continuous actions
 With the default `replay="candidate"`, `simulate` reads a plain DC-EGM regime's solved
-policy at each subject's realized state (policy-first). For every discrete-action branch
+policy at each agent's realized state (policy-first). For every discrete-action branch
 it reads the conditional value at that branch's resources; the branch with the largest
 value wins, and its policy row supplies the continuous action. Value, action and
 transitions therefore belong to the same branch.
 
-A subject keeps that read when it passes cheap acceptance checks:
+An agent keeps that read when it passes cheap acceptance checks:
 
 - every live branch's read lies inside its row support
 - the winning value and action are finite and the action is positive
 - the action is within the intrinsic budget, `resources - savings lower bound`
 - the action is feasible under the regime's constraints
 
-Only rejected subjects take the argmax on the regime's declared action grid. The
+Only rejected agents take the argmax on the regime's declared action grid. The
 reported value is the read value: the canonical evaluation at the emitted action
 supplies only feasibility, and the default path runs no ownership audit.
 
 A process state (an IID or AR(1) shock declared as a state, for example
 `NormalIIDProcess`) is a node axis of the published rows, and its simulated value can
-fall between nodes. Each branch then reads the two bracketing node rows at the subject's
+fall between nodes. Each branch then reads the two bracketing node rows at the agent's
 resources and blends them linearly in the node coordinate, extrapolating along the edge
 segment beyond the outer nodes. The process's transition weights follow the same rule
 off node, so the blended continuation is the one the grid argmax scores. A value on a
@@ -403,7 +402,7 @@ blends the bracketing node rows as above. With discrete actions, the branch whos
 published conditional value reads largest wins and its conditional policy supplies the
 continuous action. Acceptance requires the liquid state inside its grid, a live branch,
 and a finite, positive action within the intrinsic budget that the regime's constraints
-admit; rejected subjects take the action-grid argmax. The reported value is the
+admit; rejected agents take the action-grid argmax. The reported value is the
 canonical evaluation at the emitted actions, since the policy carries no value at an
 off-grid state. A read between grid nodes is a linear interpolation of the solved
 policy: across a jump or kink of that policy it is not the optimum at the realized
@@ -581,11 +580,11 @@ setting: it lives on [`OuterContinuousMargin.adjustment_cost`](consumption_savin
 
 With `FiniteOuterGrid`, NNBEGM replays the keeper-plus-outer-grid candidates ranked
 during the solve. That bank lives on the regime's own state grids and is not
-extrapolated: `simulate` raises an `OffGridStateError` for a subject whose continuous
+extrapolated: `simulate` raises an `OffGridStateError` for an agent whose continuous
 state (other than a stochastic process) lies outside its grid, whether it started there
 or a predecessor regime's choice landed it there. Widen that grid to cover every start
 and every landing. With `AdaptiveOuterMesh` it republishes the mesh policies and the
-search settings, and re-refines per subject at that subject's own resources. The
+search settings, and re-refines per agent at that agent's own resources. The
 adaptive replay reads the exact generated mesh, whose nodes the result carries as the
 candidate axis of the policy's descriptor, so both the adaptive policy and the finite
 candidate bank are self-contained, retained under every replay-retaining

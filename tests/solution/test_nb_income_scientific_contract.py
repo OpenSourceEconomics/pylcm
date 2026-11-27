@@ -141,11 +141,11 @@ def _bind_inputs(*, capture: NativeIncomeCapture, root: Path) -> _Inputs:
     coordinates = {}
     for solver in ("nbegm", "grid"):
         panel = _load(root=root, filename=f"{solver}-period0.npz")
-        np.testing.assert_array_equal(panel["subject_id"], np.arange(60))
+        np.testing.assert_array_equal(panel["agent_id"], np.arange(60))
         np.testing.assert_array_equal(panel["period"], np.zeros(60))
         public = capture.simulations[solver].to_dataframe(use_categorical_codes=True)
-        actual = public.query("period == 0").sort_values("subject_id")
-        np.testing.assert_array_equal(actual["subject_id"], panel["subject_id"])
+        actual = public.query("period == 0").sort_values("agent_id")
+        np.testing.assert_array_equal(actual["agent_id"], panel["agent_id"])
         np.testing.assert_array_equal(actual["consumption"], panel["consumption"])
         np.testing.assert_array_equal(capture.actions[solver], panel["consumption"])
         np.testing.assert_array_equal(actual["liquid"], panel["liquid"])
@@ -158,9 +158,9 @@ def _bind_inputs(*, capture: NativeIncomeCapture, root: Path) -> _Inputs:
         assert grids[solver].shape == (2500,)
         saved = _load(root=root, filename=f"{solver}-public-values.npz")
         schemas = capture.solutions[solver].metadata.value_schemas
-        assert schemas[1, "saving"].axis_names == ("income", "liquid")
+        assert schemas[1, "saving"].axis_names == ("income", "liquid", "member")
         values[solver] = saved["p1__saving"]
-        assert values[solver].shape == (2, 120)
+        assert values[solver].shape == (2, 120, 1)
         np.testing.assert_array_equal(
             values[solver], capture.solutions[solver].values[1]["saving"]
         )
@@ -169,7 +169,7 @@ def _bind_inputs(*, capture: NativeIncomeCapture, root: Path) -> _Inputs:
         )
         np.testing.assert_array_equal(coordinates[solver]["p1__saving__income"], [0, 1])
         shadow[solver] = _native_shadow(capture=capture, root=root, solver=solver)
-    for field in ("liquid", "income", "subject_id"):
+    for field in ("liquid", "income", "agent_id"):
         np.testing.assert_array_equal(panels["nbegm"][field], panels["grid"][field])
     np.testing.assert_array_equal(grids["nbegm"], grids["grid"])
     np.testing.assert_array_equal(grids["nbegm"], fixture._CONSUMPTION_GRID.to_jax())
@@ -211,13 +211,13 @@ def _interval(interval: reference.Interval) -> list[_Json]:
     return [str(interval.lower), str(interval.upper)]
 
 
-def _subject_at_precision(
-    *, inputs: _Inputs, subject: int, precision: int, bisections: int
+def _agent_at_precision(
+    *, inputs: _Inputs, agent: int, precision: int, bisections: int
 ) -> tuple[dict[str, _Json], reference.Interval]:
     """Score both public actions with one independently bounded nominal optimum."""
     economics = reference.Economics()
-    wealth = inputs.wealth[subject]
-    income = economics.incomes[inputs.income[subject]]
+    wealth = inputs.wealth[agent]
+    income = economics.incomes[inputs.income[agent]]
     optimum = reference.optimum0(
         economics=economics,
         wealth=wealth,
@@ -230,7 +230,7 @@ def _subject_at_precision(
     methods: dict[str, _Json] = {}
     losses = {}
     for solver in ("nbegm", "grid"):
-        action = inputs.actions[solver][subject]
+        action = inputs.actions[solver][agent]
         scored = reference.objective0(
             economics=economics,
             wealth=wealth,
@@ -248,7 +248,7 @@ def _subject_at_precision(
         shadow_value = reference.objective0(
             economics=shadow,
             wealth=wealth,
-            income=shadow.incomes[inputs.income[subject]],
+            income=shadow.incomes[inputs.income[agent]],
             consumption=action,
             precision=precision,
         )
@@ -267,9 +267,9 @@ def _subject_at_precision(
     feasible_grid = sum(0 < action <= upper for action in inputs.grid)
     assert feasible_grid > 0
     return {
-        "subject_id": subject,
+        "agent_id": agent,
         "wealth": str(wealth),
-        "income_code": inputs.income[subject],
+        "income_code": inputs.income[agent],
         "equal_weight": "1/60",
         "precision_digits": precision,
         "optimum_iterations": optimum.iterations,
@@ -283,13 +283,13 @@ def _subject_at_precision(
     }, losses["nbegm"]
 
 
-def _subject(*, inputs: _Inputs, subject: int) -> tuple[dict[str, _Json], Decimal]:
+def _agent(*, inputs: _Inputs, agent: int) -> tuple[dict[str, _Json], Decimal]:
     """Refine only unresolved oracle classifications within two fixed budgets."""
     for precision, bisections in ((80, 128), (160, 256)):
         try:
-            row, loss = _subject_at_precision(
+            row, loss = _agent_at_precision(
                 inputs=inputs,
-                subject=subject,
+                agent=agent,
                 precision=precision,
                 bisections=bisections,
             )
@@ -309,7 +309,7 @@ def _value_node(
     """Compare one actual NB physical node to the full structural V1 enclosure."""
     economics = reference.Economics()
     wealth = inputs.value_wealth[index]
-    observed = _number(inputs.values["nbegm"][code, index])
+    observed = _number(inputs.values["nbegm"][code, index, 0])
     for precision in (80, 160):
         truth = reference.last_period(
             economics=economics,
@@ -398,7 +398,7 @@ def test_original_nb_income_meets_independent_scientific_contract(
     assert {call["seed"] for call in simulation_calls} == {528}
     inputs = _bind_inputs(capture=capture, root=root)
     _require_action_lineage_sensitivity(capture=capture, root=root)
-    scored = [_subject(inputs=inputs, subject=subject) for subject in range(60)]
+    scored = [_agent(inputs=inputs, agent=agent) for agent in range(60)]
     nodes = [
         _value_node(inputs=inputs, code=code, index=index)
         for code in range(2)
@@ -442,7 +442,7 @@ def test_original_nb_income_meets_independent_scientific_contract(
         "capture_sha256": hashlib.sha256(
             (root / "CAPTURE.json").read_bytes()
         ).hexdigest(),
-        "subjects": [row for row, _ in scored],
+        "agents": [row for row, _ in scored],
         "period_one_nodes": [row for row, _ in nodes],
         "max_loss_bp_upper": str(losses[-1]),
         "q95_nearest_rank_loss_bp_upper": str(losses[56]),

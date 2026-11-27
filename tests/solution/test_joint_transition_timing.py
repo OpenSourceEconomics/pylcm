@@ -16,7 +16,13 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.typing import DiscreteAction, FloatND, ScalarInt, UserParams
+from lcm.typing import (
+    ContinuousState,
+    DiscreteAction,
+    FloatND,
+    ScalarInt,
+    UserParams,
+)
 from tests.conftest import DECIMAL_PRECISION
 
 
@@ -41,6 +47,14 @@ def _next_payoff(*, choice: DiscreteAction, shock: Mapping[str, FloatND]) -> Flo
     return jnp.where(choice == Choice.risky, risky, 6.0)
 
 
+def _zero_utility() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def _payoff_utility(payoff: ContinuousState) -> FloatND:
+    return payoff
+
+
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
 def test_action_maximizes_expected_continuation_not_each_realized_node(
     *, enable_jit: bool
@@ -50,7 +64,7 @@ def test_action_maximizes_expected_continuation_not_each_realized_node(
         regimes={
             "source": Regime(
                 actions={"choice": DiscreteGrid(category_class=Choice)},
-                functions={"utility": lambda: jnp.asarray(0.0)},
+                functions={"utility": _zero_utility},
                 joint_transitions={
                     "target": {
                         "shock": JointTransition(
@@ -64,7 +78,7 @@ def test_action_maximizes_expected_continuation_not_each_realized_node(
             ),
             "target": Regime(
                 states={"payoff": IrregSpacedGrid(points=np.array([0.0, 6.0, 10.0]))},
-                functions={"utility": lambda payoff: payoff},
+                functions={"utility": _payoff_utility},
             ),
         },
         ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
@@ -85,7 +99,9 @@ def test_action_maximizes_expected_continuation_not_each_realized_node(
         "target": {"utility": {}},
     }
 
-    source_value = model.solve(params=params, log_level="debug").values[0]["source"]
+    source_value = np.asarray(
+        model.solve(params=params, log_level="debug").values[0]["source"]
+    )[..., 0]
 
     np.testing.assert_array_almost_equal(source_value, 6.0, decimal=DECIMAL_PRECISION)
     assert not np.isclose(float(source_value), 8.0)

@@ -71,6 +71,25 @@ def _innermost[**P, R](function: Callable[P, R]) -> Callable[P, R]:
     return function
 
 
+def _core_and_bound_values(
+    function: Callable[..., PytreeValue],
+) -> tuple[object, ...]:  # noqa: PAN001 - a partial binds values of any type
+    """The core a program runs and its bound values, seen through the member axis.
+
+    A value-publishing program runs its core inside a wrapper that appends the
+    member axis; the wrapper binds the core and its bound values directly.
+    """
+    if not isinstance(function, functools.partial):
+        return (function,)
+    keywords = {
+        name: value
+        for name, value in function.keywords.items()
+        if not name.startswith("_member_axis_")
+    }
+    core = function.keywords.get("_member_axis_core", function.func)
+    return (core, *function.args, *sorted(keywords.items()))
+
+
 def _assert_same_arguments(
     *,
     actual: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
@@ -93,14 +112,14 @@ def _assert_same_arguments(
 )
 def test_the_kernel_class_follows_the_outer_search(
     *, route: str, kernel_class_name: str
-):
+) -> None:
     kernel, _ = _kernel(route)
 
     assert type(kernel) is getattr(nnbegm_module, kernel_class_name)
     assert isinstance(kernel, nnbegm_module._NNBEGMPeriodKernel)
 
 
-def test_the_graph_republishes_every_inner_program_under_role_prefixes():
+def test_the_graph_republishes_every_inner_program_under_role_prefixes() -> None:
     kernel, _ = _kernel("finite")
     graph = core_program_graph(kernel=kernel)
 
@@ -119,7 +138,9 @@ def test_the_graph_republishes_every_inner_program_under_role_prefixes():
             assert program.scope is inner.scope
             assert program.disposition is CoreExecutionDisposition.PLANNED
             assert program.disposition_reason is None
-            assert program.function is inner.function
+            assert _core_and_bound_values(program.function) == _core_and_bound_values(
+                inner.function
+            )
             assert replace(
                 program.requirements, value_reads=(), host_axis_names=()
             ) == replace(inner.requirements, value_reads=())
@@ -131,7 +152,7 @@ def test_the_graph_republishes_every_inner_program_under_role_prefixes():
     assert graph["adjuster:replay"].replaces_program == "adjuster:main"
 
 
-def test_the_adaptive_kernel_keeps_its_inner_programs_planned():
+def test_the_adaptive_kernel_keeps_its_inner_programs_planned() -> None:
     """Adaptive host scheduling retains inner planner axes and input transfers."""
     kernel, _ = _kernel("adaptive")
     graph = core_program_graph(kernel=kernel)
@@ -147,7 +168,7 @@ def test_the_adaptive_kernel_keeps_its_inner_programs_planned():
         assert program.disposition_reason is None
 
 
-def test_the_host_scheduled_adjuster_declares_its_continuation_reads():
+def test_the_host_scheduled_adjuster_declares_its_continuation_reads() -> None:
     """The adaptive adjuster names every target whose carry its host loop reads.
 
     The captured period's only reachable target publishing a carry is the terminal
@@ -172,7 +193,9 @@ def test_the_nested_keeper_declares_the_carry_leaves_it_reads(*, route: str) -> 
     assert {read.target.regime for read in program.requirements.value_reads} == {"dead"}
 
 
-def test_the_host_scheduled_adjuster_reads_are_keyed_by_the_program_that_runs_them():
+def test_the_host_scheduled_adjuster_reads_are_keyed_by_the_program_that_runs_them() -> (  # noqa: E501
+    None
+):
     """Each republished adjuster program owns its reads under its own graph key."""
     kernel, _ = _kernel("adaptive")
     graph = core_program_graph(kernel=kernel)
@@ -187,7 +210,7 @@ def test_the_host_scheduled_adjuster_reads_are_keyed_by_the_program_that_runs_th
     }
 
 
-def test_every_republished_program_declares_the_leaves_its_role_reads():
+def test_every_republished_program_declares_the_leaves_its_role_reads() -> None:
     """No program of a nested period is left without a declaration of its reads."""
     kernel, _ = _kernel("finite")
     graph = core_program_graph(kernel=kernel)
@@ -214,7 +237,7 @@ def test_the_graph_declares_the_final_composite_policy_type(
         }
 
 
-def test_the_keeper_builder_hands_the_inner_keeper_the_period_context():
+def test_the_keeper_builder_hands_the_inner_keeper_the_period_context() -> None:
     kernel, context = _kernel("finite")
     build_context = _build_context(context)
 
@@ -230,7 +253,7 @@ def test_the_keeper_builder_hands_the_inner_keeper_the_period_context():
     _assert_same_arguments(actual=composite.arguments, expected=inner.arguments)
 
 
-def test_the_adjuster_builder_binds_the_first_outer_node():
+def test_the_adjuster_builder_binds_the_first_outer_node() -> None:
     kernel, context = _kernel("finite")
     first_node = kernel.outer_grid_values[0]
 
@@ -260,7 +283,7 @@ def test_the_adjuster_builder_binds_the_first_outer_node():
     )
 
 
-def test_with_fixed_params_rebinds_both_roles():
+def test_with_fixed_params_rebinds_both_roles() -> None:
     kernel, _ = _kernel("finite")
     graph = core_program_graph(kernel=kernel)
     fixed = MappingProxyType(

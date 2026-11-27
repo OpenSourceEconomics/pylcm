@@ -35,12 +35,17 @@ def stack_retirement_V(
 ) -> np.ndarray:
     periods = sorted(period_to_regime_to_V_arr)[:-1]
     return np.stack(
-        [np.asarray(period_to_regime_to_V_arr[p]["retirement"]) for p in periods]
+        [
+            np.asarray(period_to_regime_to_V_arr[p]["retirement"])[..., 0]
+            for p in periods
+        ]
     )
 
 
 @pytest.mark.parametrize(("case", "n_periods"), ANALYTICAL_CASES.items())
-def test_retirement_only_brute_force_matches_analytical(*, case, n_periods):
+def test_retirement_only_brute_force_matches_analytical(
+    *, case: str, n_periods: int
+) -> None:
     """Brute-force V of the two-regime model equals the analytical retired values."""
     model = get_model(n_periods)
     params = get_params(n_periods=n_periods, discount_factor=0.98, interest_rate=0.0)

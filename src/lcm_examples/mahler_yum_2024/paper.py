@@ -232,7 +232,9 @@ def build_dead_regime() -> Regime:
     """The paper-mode dead regime (terminal, with the Euler axis declared)."""
     return Regime(
         states={
-            "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
+            "wealth": IrregSpacedGrid(
+                points=_WEALTH_GRID_POINTS, off_grid="extrapolate"
+            ),
             "discount_type": DiscreteGrid(category_class=DiscountType),
         },
         functions={"utility": dead_utility},
@@ -289,10 +291,14 @@ def build_working_regime(
     """The paper-mode working regime with continuous effort and habit."""
     return NestedConsumptionSavingsRegime(
         states={
-            "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
+            "wealth": IrregSpacedGrid(
+                points=_WEALTH_GRID_POINTS, off_grid="extrapolate"
+            ),
             "health": DiscreteGrid(category_class=Health),
             "productivity_shock": prod_shock_grid,
-            "lagged_effort": LinSpacedGrid(start=0.0, stop=1.0, n_points=N_HABIT_GRID),
+            "lagged_effort": LinSpacedGrid(
+                start=0.0, stop=1.0, n_points=N_HABIT_GRID, off_grid="extrapolate"
+            ),
             "education": DiscreteGrid(category_class=Education),
             "productivity": DiscreteGrid(category_class=ProductivityType),
             "health_type": DiscreteGrid(category_class=HealthType),
@@ -353,9 +359,13 @@ def build_retirement_regime(
     """The paper-mode retirement regime without work-only dimensions."""
     return NestedConsumptionSavingsRegime(
         states={
-            "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
+            "wealth": IrregSpacedGrid(
+                points=_WEALTH_GRID_POINTS, off_grid="extrapolate"
+            ),
             "health": DiscreteGrid(category_class=Health),
-            "lagged_effort": LinSpacedGrid(start=0.0, stop=1.0, n_points=N_HABIT_GRID),
+            "lagged_effort": LinSpacedGrid(
+                start=0.0, stop=1.0, n_points=N_HABIT_GRID, off_grid="extrapolate"
+            ),
             "education": DiscreteGrid(category_class=Education),
             "health_type": DiscreteGrid(category_class=HealthType),
             "discount_type": DiscreteGrid(category_class=DiscountType),

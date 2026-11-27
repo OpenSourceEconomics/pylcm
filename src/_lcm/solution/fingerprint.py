@@ -57,7 +57,7 @@ from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
 from _lcm.processes.grid_resolution import ProcessGridResolver
 from _lcm.regime_building.value_adapter import AdaptedBuild, ValueAdapter
 from _lcm.regime_law import RegimeLaw
-from _lcm.time import TimeAxis, coordinate_kind
+from _lcm.time import ModelTime, Stages, TimeAxis, coordinate_kind, step_count
 from _lcm.typing import (
     DataclassInstance,
     FlatEdgeParams,
@@ -93,6 +93,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     DiscreteState,
+    UserAge,
     UserParams,
 )
 
@@ -231,7 +232,7 @@ _TRUSTED_TERMINAL_OBJECT_TYPES = (
 )
 # A fingerprint hashes the names of declaration types and fields. These keep the
 # literal `stakeholder` names they are hashed under until the single-member and
-# household engine paths merge, so a model's durable fingerprint does not move
+# collective engine paths merge, so a model's durable fingerprint does not move
 # with the vocabulary.
 _DURABLE_TYPE_NAMES = MappingProxyType(
     {"lcm.collective.MemberRoute": "lcm.collective.StakeholderRoute"}
@@ -831,6 +832,20 @@ _MISSING: Final = _Missing.MISSING
 type BindingRecorder = Callable[[SealedBinding], None]
 
 
+def _clock_record(
+    ages: TimeAxis,
+) -> tuple[UserAge | str | tuple[UserAge | str, ...] | Stages, ...]:
+    """Return the clock's identity: its coordinates and, in a staged model, stages."""
+    record = (
+        tuple(ages.exact_values)
+        if coordinate_kind(ages) == "age"
+        else ("period", step_count(ages))
+    )
+    if isinstance(ages, ModelTime) and ages.stages:
+        return (record, ages.stages)
+    return record
+
+
 def fingerprint_model_declarations(
     *,
     ages: TimeAxis,
@@ -847,9 +862,7 @@ def fingerprint_model_declarations(
     return _semantic_fingerprint(
         (
             ("pylcm-model-declarations", 1),
-            tuple(ages.exact_values)
-            if coordinate_kind(ages) == "age"
-            else ("period", ages.n_periods),
+            _clock_record(ages),
             {name: int(code) for name, code in regime_names_to_ids.items()},
             {
                 name: _project_user_regime_declaration(regime, law=laws[name])
@@ -893,10 +906,8 @@ def fingerprint_model_structure(
         regimes=regimes,
     )
     record = (
-        ("pylcm-model-structure", 8),
-        tuple(ages.exact_values)
-        if coordinate_kind(ages) == "age"
-        else ("period", ages.n_periods),
+        ("pylcm-model-structure", 9),
+        _clock_record(ages),
         {name: int(regime_id) for name, regime_id in regime_names_to_ids.items()},
         {
             name: {
@@ -911,7 +922,7 @@ def fingerprint_model_structure(
                 "state_names": regime.solution.state_names,
                 "action_names": regime.solution.action_names,
                 # Hashed under its kept literal name, as in `_DURABLE_FIELD_NAMES`.
-                "stakeholders": regime.member_axis,
+                "stakeholders": regime.members,
                 "solver_identity": user_regimes[name].solver.identity,
                 "replay_identity": (
                     None
@@ -1144,7 +1155,7 @@ def _project_user_regime_declaration(
             "fields": MappingProxyType(
                 {
                     # Hashed under its kept literal name, as in `_DURABLE_FIELD_NAMES`.
-                    ("stakeholders" if name == "member_axis" else name): (
+                    ("stakeholders" if name == "members" else name): (
                         _project_transition_slot_to_solve(value)
                         if name in _TRANSITION_SLOTS
                         else value

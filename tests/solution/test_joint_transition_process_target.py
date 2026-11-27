@@ -119,14 +119,14 @@ def _expected_V0(*, expected_continuation_shock_square: float) -> np.ndarray:
     `wealth` is fixed. Each joint node contributes the linear interpolation of
     that surface at the value the output names.
 
-    The axes are `(wage_shock, wealth)`, which is the regime's published solve
-    order — process states precede ordinary ones there, so the array is not
+    The axes are `(wage_shock, wealth, member)`, which is the regime's published
+    solve order — process states precede ordinary ones there, so the array is not
     built in the order the regime declares its states.
     """
     shock = np.asarray(_NODES)[:, None]
     wealth = np.asarray(_WEALTH)[None, :]
     continuation = wealth + expected_continuation_shock_square
-    return wealth + shock**2 + _DISCOUNT_FACTOR * continuation
+    return (wealth + shock**2 + _DISCOUNT_FACTOR * continuation)[..., None]
 
 
 def test_a_joint_output_naming_process_nodes_reads_those_nodes_alone() -> None:
@@ -180,7 +180,7 @@ def test_a_simulated_joint_output_realizes_one_of_its_support_points() -> None:
     """Simulation takes the physical value the output names, not a node.
 
     The node basis exists so the solve can read a stored value function; the
-    state itself is the physical value, so a subject's realized `wage_shock` is
+    state itself is the physical value, so an agent's realized `wage_shock` is
     one of the two points the joint support declares.
     """
     model = _model(support=(-0.1, 0.1))

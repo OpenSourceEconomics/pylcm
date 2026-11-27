@@ -5,7 +5,7 @@ period's realization, known at the choice; reading `next_x` means the draw after
 the choice. A group whose shocks the regime reads only as `next_x` is integrated
 out: each shock becomes a fixed node set, and the solve sums the source's
 continuation over its nodes with its weights. The nodes serve the solve's
-integration only. Simulation draws each subject's value from the shock's
+integration only. Simulation draws each agent's value from the shock's
 continuous law, since the draw enters only next period's state law and indexes
 no policy read. The regime stores no axis for it.
 """
@@ -207,7 +207,7 @@ class PostDecisionShock(_IIDProcess):
     """One post-decision shock's physical nodes and weights, fixed at model build.
 
     The nodes and weights are the solve's integration rule. Simulation draws from
-    the shock's law, mapped from one addressed base innovation per subject.
+    the shock's law, mapped from one addressed base innovation per agent.
     """
 
     group: ShockGroup = field(compare=False)

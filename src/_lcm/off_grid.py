@@ -35,6 +35,7 @@ from lcm.typing import (
     OffGrid,
     RegimeName,
     ScalarInt,
+    StageName,
     StateName,
 )
 
@@ -86,6 +87,7 @@ def report_off_grid(
     state: StateName,
     phase: str,
     logger: logging.Logger,
+    stage: StageName | None = None,
 ) -> None:
     """Enforce a declared raise policy and separately emit checked counts."""
     message = off_grid_message(
@@ -95,6 +97,7 @@ def report_off_grid(
         period=period,
         state=state,
         phase=phase,
+        stage=stage,
     )
     if count and rule == "raise":
         raise OffGridStateError(message)
@@ -113,26 +116,30 @@ def off_grid_message(
     period: int,
     state: StateName,
     phase: str,
+    stage: StageName | None = None,
 ) -> str:
     """Describe one target state's raw landings outside, or not finite on, its grid.
 
     Every check that counts landings words its report and its refusal with this,
     so the same landing reads the same in the solve kernel, the preflight and the
-    realized simulation. A count at `COUNT_CAPACITY` is a lower bound.
+    realized simulation. `stage` names the source's stage in a model with
+    stages. A count at `COUNT_CAPACITY` is a lower bound.
     """
     shown = f">={count}" if count >= COUNT_CAPACITY else f"={count}"
+    in_stage = "" if stage is None else f", stage={stage!r}"
     return (
         f"Off-grid next states: regime={regime!r}, target={target!r}, "
-        f"period={period}, state={state!r}, phase={phase!r}, count{shown}"
+        f"period={period}{in_stage}, state={state!r}, phase={phase!r}, "
+        f"count{shown}"
     )
 
 
 @dataclass(frozen=True, kw_only=True)
 class ProjectedGridRule:
-    """The destination-grid rule an exit's projected continuous state follows.
+    """The destination grid rule for a continuous state a composition action projects.
 
-    A mover lands on the destination's grid as a realised next state does, so the
-    state's declared `off_grid` rule acts on the projected value:
+    A member who enters the destination lands on its grid as a realised next state
+    does, so the state's declared `off_grid` rule acts on the projected value:
 
     - `"clip_state"` caps it to the grid's outer nodes, wherever it is read;
     - `"raise"` leaves it as is, and every active read outside the grid counts as
@@ -143,7 +150,7 @@ class ProjectedGridRule:
     """
 
     source: RegimeName
-    """The regime whose exit projects the state."""
+    """The regime whose composition action projects the state."""
     target: RegimeName
     """The destination regime."""
     state: StateName
@@ -167,9 +174,9 @@ def projected_grid_rules(
     """Return the rule of each projected state whose grid clips or raises.
 
     Args:
-        source: The regime whose exit projects the states.
+        source: The regime whose composition action projects the states.
         target: The destination regime.
-        states: The destination states the exit projects.
+        states: The destination states the composition action projects.
         grids: The destination's grids.
         nodes: The destination's state nodes in the read's period.
 
@@ -179,7 +186,7 @@ def projected_grid_rules(
 
     Raises:
         RegimeInitializationError: Such a grid takes its points at run time, so
-            its outer nodes are not known when the exit is bound.
+            its outer nodes are not known when the composition action is bound.
 
     """
     rules = []
@@ -193,11 +200,11 @@ def projected_grid_rules(
         points = np.asarray(nodes[state])
         if not np.all(np.isfinite(points)):
             raise RegimeInitializationError(
-                f"The exit of regime {source!r} projects state {state!r} of regime "
-                f"{target!r}, whose grid declares off_grid={grid.off_grid!r} on "
-                "points supplied at run time. The exit cannot apply that rule "
-                "without the grid's outer nodes; fix the points or declare another "
-                "off_grid rule."
+                f"The composition action of regime {source!r} projects state "
+                f"{state!r} of regime {target!r}, whose grid declares "
+                f"off_grid={grid.off_grid!r} on points supplied at run time. The "
+                "composition action cannot apply that rule without the grid's outer "
+                "nodes. Fix the points or declare another off_grid rule."
             )
         rules.append(
             ProjectedGridRule(

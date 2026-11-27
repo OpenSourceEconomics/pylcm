@@ -252,7 +252,7 @@ def test_valid_whole_call_preflight_has_two_host_summaries(
     record_property("compilation_requests", stages)
     assert requests.calls == dict.fromkeys(counts, 1)
     assert stages == (0, 0, 0)
-    assert result.n_subjects == len(initial["regime_id"])
+    assert result.n_agents == len(initial["regime_id"])
     assert sum(counts.values()) <= 2, counts
 
 

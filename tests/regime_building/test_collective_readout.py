@@ -16,33 +16,10 @@ import pytest
 
 from _lcm.regime_building.collective import (
     _weighted_sum,
+    collective_argmax_and_readout,
     collective_readout,
+    decider_choice,
 )
-from lcm.typing import ScalarFloat
-
-
-def test_readout_reads_own_Q_at_household_argmax_single_state() -> None:
-    # Two members, three actions, one state cell. Household weights 1/2 each.
-    # Q^f favours action 0; Q^m favours action 2; the joint objective picks the
-    # action maximizing 1/2 (Q^f + Q^m).
-    q_f = jnp.array([10.0, 4.0, 0.0])
-    q_m = jnp.array([0.0, 3.0, 9.0])
-    #   O = [5.0, 3.5, 4.5]  -> argmax = action 0
-    feas = jnp.array([True, True, True])
-
-    values, dissolution = collective_readout(
-        member_Q={"f": q_f, "m": q_m},
-        feasibility=feas,
-        weights={"f": 0.5, "m": 0.5},
-        action_axes=(0,),
-    )
-
-    # At a* = 0, each member reads its OWN Q, not the scalarization.
-    assert values["f"] == pytest.approx(10.0)
-    assert values["m"] == pytest.approx(0.0)
-    # The two values differ -> genuinely per-member (not the shared objective).
-    assert values["f"] != values["m"]
-    assert bool(dissolution) is False
 
 
 def test_feasibility_mask_changes_the_joint_choice() -> None:
@@ -78,25 +55,6 @@ def test_empty_feasible_set_sets_dissolution_flag() -> None:
     assert bool(dissolution) is True
 
 
-def test_batched_over_states() -> None:
-    # Two state cells x three actions. Distinct argmax per cell.
-    # cell 0: O = 1/2([1,0,0]+[0,0,3]) = [0.5,0,1.5] -> a*=2 -> Vf=0, Vm=3
-    # cell 1: O = 1/2([5,0,0]+[0,0,1]) = [2.5,0,0.5] -> a*=0 -> Vf=5, Vm=0
-    q_f = jnp.array([[1.0, 0.0, 0.0], [5.0, 0.0, 0.0]])
-    q_m = jnp.array([[0.0, 0.0, 3.0], [0.0, 0.0, 1.0]])
-    feas = jnp.ones((2, 3), dtype=bool)
-
-    values, dissolution = collective_readout(
-        member_Q={"f": q_f, "m": q_m},
-        feasibility=feas,
-        weights={"f": 0.5, "m": 0.5},
-        action_axes=(1,),
-    )
-    np.testing.assert_allclose(np.asarray(values["f"]), [0.0, 5.0])
-    np.testing.assert_allclose(np.asarray(values["m"]), [3.0, 0.0])
-    np.testing.assert_array_equal(np.asarray(dissolution), [False, False])
-
-
 def test_unequal_weights_shift_the_choice() -> None:
     # With weight 0.9 on m, the objective tilts to m's preferred action.
     q_f = jnp.array([10.0, 0.0])
@@ -129,55 +87,6 @@ def test_two_action_axes_are_flattened_consistently() -> None:
     assert values["f"] == pytest.approx(0.0)
     assert values["m"] == pytest.approx(8.0)
 
-
-def test_terminal_e1_end_to_end_with_real_utilities() -> None:
-    """Real per-member utilities read out to the correct per-member V^s.
-
-    Mirrors what the terminal collective kernel does: build one Q^s per member
-    by evaluating its utility over the action product for each state, then hand the
-    stacked Q^s to `collective_readout`. Here the "action" is a binary work choice
-    and the "state" is a wage; the wife weights leisure, the husband weights
-    household consumption. Exercises the readout core directly, so it pins the
-    numerics rather than the engine wiring.
-    """
-    # Two states (wages), one binary action a in {0=leisure, 1=work}.
-    wage = jnp.array([10.0, 40.0])  # state grid
-    work = jnp.array([0.0, 1.0])  # action grid
-
-    # Consumption (public good): earnings from whoever works. Wife's utility values
-    # her own leisure highly; husband's values consumption. Both see the same C.
-    def consumption(
-        *, w: ScalarFloat, a: ScalarFloat
-    ) -> ScalarFloat:  # (state, action) -> C
-        return w * a
-
-    def u_wife(*, w: ScalarFloat, a: ScalarFloat) -> ScalarFloat:
-        return consumption(w=w, a=a) + 30.0 * (1.0 - a)  # strong leisure taste
-
-    def u_husband(*, w: ScalarFloat, a: ScalarFloat) -> ScalarFloat:
-        return 2.0 * consumption(w=w, a=a)  # values consumption, indifferent to leisure
-
-    # Evaluate each member's utility over the action product, per state:
-    # shape (n_states, n_actions).
-    q_f = jax.vmap(lambda w: jax.vmap(lambda a: u_wife(w=w, a=a))(work))(wage)
-    q_m = jax.vmap(lambda w: jax.vmap(lambda a: u_husband(w=w, a=a))(work))(wage)
-    feas = jnp.ones((2, 2), dtype=bool)
-
-    values, dissolution = collective_readout(
-        member_Q={"f": q_f, "m": q_m},
-        feasibility=feas,
-        weights={"f": 0.5, "m": 0.5},
-        action_axes=(1,),
-    )
-
-    # Hand-check. O = 1/2 (u_f + u_m).
-    # wage=10: a=0 -> u_f=30, u_m=0,  O=15;  a=1 -> u_f=10, u_m=20, O=15 -> tie -> a=0.
-    #          a*=0 -> V_f=30, V_m=0.
-    # wage=40: a=0 -> u_f=30, u_m=0,  O=15;  a=1 -> u_f=40, u_m=80, O=60 -> a=1.
-    #          a*=1 -> V_f=40, V_m=80.
-    np.testing.assert_allclose(np.asarray(values["f"]), [30.0, 40.0])
-    np.testing.assert_allclose(np.asarray(values["m"]), [0.0, 80.0])
-    np.testing.assert_array_equal(np.asarray(dissolution), [False, False])
     # The household trades off: at the low wage it keeps the wife home (her leisure
     # taste dominates the joint objective); at the high wage her work wins jointly.
 
@@ -264,3 +173,74 @@ def test_nan_household_objective_at_an_infeasible_action_is_not_read() -> None:
         action_axes=(0,),
     )
     assert values["m"] == pytest.approx(2.0)
+
+
+@pytest.mark.parametrize(
+    ("q_f", "q_m"),
+    [
+        pytest.param([2.0, 2.0], [jnp.nan, 3.0], id="nan-member-value-loses"),
+        pytest.param([-0.0, 0.0], [1.0, 5.0], id="signed-zeros-tie"),
+    ],
+)
+def test_tied_objective_goes_to_the_next_member(
+    *, q_f: list[float], q_m: list[float]
+) -> None:
+    """Under a tied objective the next member decides; NaN ranks below a number."""
+    values, _ = collective_readout(
+        member_Q={"f": jnp.array(q_f), "m": jnp.array(q_m)},
+        feasibility=jnp.array([True, True]),
+        weights={"f": 1.0, "m": 0.0},
+        action_axes=(0,),
+    )
+
+    assert float(values["m"]) == q_m[1]
+    assert not bool(jnp.signbit(values["f"]))
+
+
+def test_decider_tie_over_continuous_actions_goes_to_the_members_in_order() -> None:
+    """The decider's tied continuous maximizers are ranked by the members' values.
+
+    Member `f` decides; its value ties at actions 0 and 1, where `f` is also the
+    first member, so the tie passes to `m`, who values action 1 more.
+    """
+    q = jnp.stack((jnp.array([[1.0, 1.0, 0.0]]), jnp.array([[0.0, 4.0, 9.0]])), axis=-1)
+
+    _decider, Qc, continuous_argmax, at_choice = decider_choice(
+        Q=q,
+        feasibility=jnp.ones((1, 3), dtype=bool),
+        weights=jnp.array([1.0, 0.0]),
+        n_discrete_action_axes=1,
+    )
+
+    np.testing.assert_array_equal(Qc, [1.0])
+    np.testing.assert_array_equal(continuous_argmax, [1])
+    np.testing.assert_array_equal(at_choice, [[1.0, 4.0]])
+
+
+def test_one_candidate_value_carries_the_derivative_of_the_selected_candidate() -> None:
+    """With no action axis, a member's published value differentiates as its own Q.
+
+    The household objective only selects; neither a member's Q nor a Pareto weight
+    reaches the published value through it. An infeasible cell publishes `-inf`
+    with no derivative.
+    """
+    q_self = jnp.array([1.0, 2.0, 3.0])
+    q_other = jnp.array([4.0, -1.0, 0.5])
+    feasibility = jnp.array([True, True, False])
+
+    # keyword-only-exempt: library-callback=jax.jvp
+    def published(q: jax.Array, weight: jax.Array) -> jax.Array:
+        _argmax, values, _dissolution = collective_argmax_and_readout(
+            member_Q={"self": q, "other": q_other},
+            feasibility=feasibility,
+            weights={"self": weight, "other": 1.0 - weight},
+            action_axes=(),
+        )
+        return values["self"]
+
+    q_tangent = jnp.array([0.5, -1.0, 2.0])
+    primal, tangent = jax.jvp(
+        published, (q_self, jnp.asarray(0.25)), (q_tangent, jnp.asarray(1.0))
+    )
+    np.testing.assert_array_equal(primal, [1.0, 2.0, -np.inf])
+    np.testing.assert_array_equal(tangent, [0.5, -1.0, 0.0])

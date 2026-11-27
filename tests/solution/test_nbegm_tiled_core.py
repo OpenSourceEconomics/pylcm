@@ -9,6 +9,7 @@ program) the policy. Agreement with the direct scalar oracle is
 """
 
 import inspect
+from collections.abc import Callable
 from functools import partial
 from typing import TypedDict, Unpack
 
@@ -106,6 +107,15 @@ def _run(
     )
 
 
+def _member_axis_core(
+    function: Callable[..., PytreeValue],
+) -> Callable[..., PytreeValue]:
+    """The core a member-axis wrapper publishes the value of, or `function` itself."""
+    if isinstance(function, partial):
+        return function.keywords.get("_member_axis_core", function)
+    return function
+
+
 @pytest.mark.parametrize("name", ["main", "replay"])
 def test_tile_local_core_signature_has_no_materialized_continuation_stacks(
     name: str,
@@ -116,7 +126,7 @@ def test_tile_local_core_signature_has_no_materialized_continuation_stacks(
         params=nbegm_ride_along_toy.build_params(),
     )
     names = inspect.signature(
-        core_program_graph(kernel=kernel)[name].function
+        _member_axis_core(core_program_graph(kernel=kernel)[name].function)
     ).parameters
     assert "next_regime_to_continuation" in names
     assert "next_regime_to_V_arr" not in names

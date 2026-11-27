@@ -614,7 +614,7 @@ def test_a_carried_weight_preserves_ordinary_imputation_dependencies() -> None:
 def test_a_carried_weight_decides_on_the_imputation_not_the_seeded_value() -> None:
     """The household follows the imputed power even when the seed disagrees.
 
-    Both subjects are seeded with `power = low`, under which his weight would
+    Both agents are seeded with `power = low`, under which his weight would
     be `0.8` and the household would take `b`. The decision is made on the
     solve-phase imputation, which puts the power with her, so both rows choose
     `a`.

@@ -1,4 +1,4 @@
-"""Subject membership allocations must enter the simulation workspace guard."""
+"""Agent membership allocations must enter the simulation workspace guard."""
 
 import dataclasses
 import functools
@@ -22,8 +22,8 @@ from _lcm.simulation import simulate as simulation_module
 from _lcm.simulation.chunk_operations import _period_age
 from _lcm.simulation.host_operations import ProfiledSimulationOperations
 from _lcm.simulation.membership import (
-    activate_subject_membership,
-    initialize_subject_membership,
+    activate_agent_membership,
+    initialize_agent_membership,
 )
 from _lcm.simulation.memory import SimulationMemory
 from _lcm.simulation.residency import (
@@ -71,9 +71,9 @@ def _run_with_membership_guard[**P, Result](
         """Inspect the pure membership body during abstract profiling or execution."""
         function_name = "full_like" if operation == "empty_carriers" else "where"
         target_name = (
-            "_empty_subject_membership"
+            "_empty_agent_membership"
             if operation == "empty_carriers"
-            else "_activate_subject_membership"
+            else "_activate_agent_membership"
         )
         target_code = inspect.unwrap(getattr(membership_module, target_name)).__code__
         numerical_function = getattr(jnp, function_name)
@@ -81,7 +81,7 @@ def _run_with_membership_guard[**P, Result](
             guard.setattr(
                 jnp,
                 function_name,
-                _guard_first_subject_allocation(
+                _guard_first_agent_allocation(
                     original=numerical_function,
                     operation=operation,
                     observations=observations,
@@ -93,7 +93,7 @@ def _run_with_membership_guard[**P, Result](
     return call
 
 
-def _guard_first_subject_allocation[**P, Result](
+def _guard_first_agent_allocation[**P, Result](
     *,
     original: Callable[P, Result],
     operation: str,
@@ -101,7 +101,7 @@ def _guard_first_subject_allocation[**P, Result](
     target_code: CodeType,
 ) -> Callable[P, Result]:
     def call(*args: P.args, **kwargs: P.kwargs) -> Result:
-        """The first subject-sized operation must be traced before it executes."""
+        """The first agent-sized operation must be traced before it executes."""
         operand = (
             args[0]
             if args
@@ -127,7 +127,7 @@ def _guard_first_subject_allocation[**P, Result](
 def test_budgeted_membership_setup_allocates_inside_profiled_code(
     *, monkeypatch: pytest.MonkeyPatch, operation: str
 ) -> None:
-    """Workspace admission covers empty membership and each subject's entry."""
+    """Workspace admission covers empty membership and each agent's entry."""
     model = _stateful_target_model()
     params = {"alive": {"koopmans_aggregator": {"discount_factor": 0.0}}}
     initial = {
@@ -137,7 +137,7 @@ def test_budgeted_membership_setup_allocates_inside_profiled_code(
     }
     solution = model.solve(params=params, log_level="off")
     observations: list[bool] = []
-    # Whole-chunk admission traces the body before entering the subject loop.
+    # Whole-chunk admission traces the body before entering the agent loop.
     # Observe its primitives across the whole call, keeping its function identity.
     result = _run_with_membership_guard(
         original=model.simulate,
@@ -174,14 +174,14 @@ def test_membership_activation_preserves_rows_outside_their_entry_period(
         SimulationMemory(
             budget_bytes=2**28,
             devices=devices,
-            subject_devices=devices,
+            agent_devices=devices,
             operations=ProfiledSimulationOperations(),
             inputs=measure_buffer_footprint(tree=inputs),
         )
         if budgeted
         else None
     )
-    empty_regimes, empty_roles = initialize_subject_membership(
+    empty_regimes, empty_roles = initialize_agent_membership(
         initial_regime_ids=inputs["initial_regime_ids"],
         initial_own_member=inputs["initial_own_member"],
         memory=memory,
@@ -189,7 +189,7 @@ def test_membership_activation_preserves_rows_outside_their_entry_period(
     np.testing.assert_array_equal(empty_regimes, [-(2**31)] * 4)
     np.testing.assert_array_equal(empty_roles, [-1, -1, -1, -1])
     for period in range(4):
-        regimes, roles = activate_subject_membership(
+        regimes, roles = activate_agent_membership(
             period=period, memory=memory, **inputs
         )
         for actual, old_name, initial_name in (
@@ -278,9 +278,9 @@ def _inspect_membership_roots(
     **kwargs: Unpack[HostDispatch],
 ) -> PytreeValue:
     target = (
-        membership_module._empty_subject_membership
+        membership_module._empty_agent_membership
         if observed.channel == "states"
-        else membership_module._activate_subject_membership
+        else membership_module._activate_agent_membership
     )
     if kwargs["function"] is target:
         devices = kwargs["budget_devices"]

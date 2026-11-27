@@ -165,7 +165,7 @@ def _check_one_regimes_weights(
             **mesh,
             **regime_params,
             "period": jnp.int32(period),
-            "age": jnp.asarray(coordinate_at(ages=ages, period=period)),
+            "age": jnp.asarray(coordinate_at(ages=ages, step=period)),
         }
         declared = weights.declared(
             **{name: supplied[name] for name in weights.arg_names}
@@ -216,7 +216,7 @@ def _fail_if_not_a_pareto_weighting(
     if not bool(jnp.all(jnp.asarray(total) > 0)):
         msg = (
             f"The Pareto weights in {where} do not sum to a positive total "
-            "everywhere on the regime's grid, so the household scalarization "
+            "everywhere on the regime's grid, so the Pareto-weighted objective "
             "is identically zero there and its argmax is undefined. Check the "
             f"'{PARETO_OBJECTIVE_ENTRY}' entry of this regime's params."
         )
@@ -229,11 +229,11 @@ def _fail_if_not_one_decider(
     declared: Mapping[str, FloatND],
     period: int,
 ) -> None:
-    """Require exactly one positive weight at every cell of a taste-shock household.
+    """Require one positive Pareto weight per cell of a collective taste-shock regime.
 
-    Under EV1 taste shocks the household's choice is the smoothed choice of the
+    Under EV1 taste shocks the members' choice is the smoothed choice of the
     one member whose weight is positive, so a cell with two such members, or
-    none, has no decider.
+    none, has no deciding member.
 
     Raises:
         InvalidParamsError: If the number of members with a positive weight is

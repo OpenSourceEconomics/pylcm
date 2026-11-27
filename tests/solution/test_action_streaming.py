@@ -1,3 +1,4 @@
+import functools
 import itertools
 from collections.abc import Callable, Mapping, Sequence
 from typing import Protocol, TypeGuard, cast
@@ -12,10 +13,45 @@ from numpy.testing import assert_array_equal
 from _lcm.solution.action_reduction import HardMaxResult
 from _lcm.solution.action_streaming import (
     build_streaming_collective_max_Q_over_a,
-    build_streaming_ev1_max_Q_over_a,
-    build_streaming_max_Q_over_a,
 )
+from _lcm.solution.collective_action_reduction import CollectiveHardMaxResult
 from lcm.typing import ActionName, BoolND, FloatND, IntND
+
+
+def _streamed_single(
+    *,
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    action_names: tuple[ActionName, ...],
+    block_width: int,
+) -> Callable[..., HardMaxResult]:
+    """Stream a single's actions: the household of the one member `"self"`.
+
+    The weight is a float32 one, so the objective takes the value's own dtype.
+    """
+
+    @functools.wraps(Q_and_F)
+    def with_member_axis(**kwargs: FloatND) -> tuple[FloatND, BoolND]:
+        value, feasible = Q_and_F(**kwargs)
+        return jnp.asarray(value)[..., jnp.newaxis], feasible
+
+    streamed = build_streaming_collective_max_Q_over_a(
+        publishes_identity=True,
+        Q_and_F=with_member_axis,
+        action_names=action_names,
+        block_width=block_width,
+        members=("self",),
+        weights={"self": jnp.float32(1.0)},
+    )
+
+    def reduce_actions(**kwargs: FloatND) -> HardMaxResult:
+        result = cast("CollectiveHardMaxResult", streamed(**kwargs))
+        return HardMaxResult(
+            best_value=result.best_member_values[..., 0],
+            best_global_action_id=result.best_global_action_id,
+            any_feasible=result.any_feasible,
+        )
+
+    return reduce_actions
 
 
 def _direct_scalar_oracle(
@@ -73,7 +109,7 @@ def test_streaming_one_action_matches_direct_oracle_for_arbitrary_block_widths(
         action_grids={"choice": choice},
         fixed_kwargs={"state": 3.0, "offset": 0.25},
     )
-    streamed = build_streaming_max_Q_over_a(
+    streamed = _streamed_single(
         Q_and_F=Q_and_F,
         action_names=("choice",),
         block_width=block_width,
@@ -82,7 +118,6 @@ def test_streaming_one_action_matches_direct_oracle_for_arbitrary_block_widths(
     result = streamed(
         choice=jnp.asarray(choice), state=jnp.float32(3), offset=jnp.float32(0.25)
     )
-    result = cast("HardMaxResult", result)
 
     assert_array_equal(result.best_value, expected[0])
     assert_array_equal(result.best_global_action_id, expected[1])
@@ -108,7 +143,7 @@ def test_streaming_multiple_actions_uses_canonical_row_major_global_ids(
         action_grids={"hours": hours, "saving": saving},
         fixed_kwargs={"target": 41.0},
     )
-    streamed = build_streaming_max_Q_over_a(
+    streamed = _streamed_single(
         Q_and_F=Q_and_F,
         action_names=("hours", "saving"),
         block_width=block_width,
@@ -117,7 +152,6 @@ def test_streaming_multiple_actions_uses_canonical_row_major_global_ids(
     result = streamed(
         hours=jnp.asarray(hours), saving=jnp.asarray(saving), target=jnp.float32(41)
     )
-    result = cast("HardMaxResult", result)
 
     assert expected[1] == 6
     assert_array_equal(result.best_value, expected[0])
@@ -135,14 +169,13 @@ def test_streaming_ties_use_smallest_global_id_across_blocks_and_partial_final_b
         )
         return value, jnp.ones((), dtype=bool)
 
-    streamed = build_streaming_max_Q_over_a(
+    streamed = _streamed_single(
         Q_and_F=Q_and_F,
         action_names=("first", "second"),
         block_width=4,
     )
 
     result = streamed(first=jnp.array([0, 1]), second=jnp.array([10, 20, 30]))
-    result = cast("HardMaxResult", result)
 
     # C-order identities: (0, 30) -> 2 and (1, 10) -> 3.
     assert_array_equal(result.best_value, 9.0)
@@ -158,7 +191,7 @@ def test_streaming_distinguishes_feasible_negative_infinity_from_all_infeasible(
         feasible = jnp.where(row == 0, choice == 0, jnp.zeros((), dtype=bool))
         return value, feasible
 
-    streamed = build_streaming_max_Q_over_a(
+    streamed = _streamed_single(
         Q_and_F=Q_and_F,
         action_names=("choice",),
         block_width=3,
@@ -166,7 +199,6 @@ def test_streaming_distinguishes_feasible_negative_infinity_from_all_infeasible(
     choices = jnp.array([0, 1])
 
     result = jax.vmap(lambda row: streamed(choice=choices, row=row))(jnp.array([0, 1]))
-    result = cast("HardMaxResult", result)
 
     assert_array_equal(result.best_value, jnp.array([-jnp.inf, -jnp.inf]))
     assert_array_equal(result.best_global_action_id, jnp.array([0, -1]))
@@ -189,7 +221,7 @@ def test_streaming_preserves_grid_search_feasible_nan_identity_quirk(
         action_grids={"choice": choices},
         fixed_kwargs={},
     )
-    streamed = build_streaming_max_Q_over_a(
+    streamed = _streamed_single(
         Q_and_F=Q_and_F,
         action_names=("choice",),
         block_width=block_width,
@@ -206,7 +238,7 @@ def test_streaming_no_action_product_is_the_identity_and_is_jittable() -> None:
     def Q_and_F(*, state: FloatND, feasible: BoolND) -> tuple[FloatND, BoolND]:
         return state * 2, feasible
 
-    streamed = build_streaming_max_Q_over_a(
+    streamed = _streamed_single(
         Q_and_F=Q_and_F,
         action_names=(),
         block_width=7,
@@ -230,7 +262,7 @@ def test_q_and_f_sees_scalar_action_cells_and_never_the_full_action_product() ->
         assert second.ndim == 0
         return first + second, jnp.ones((), dtype=bool)
 
-    streamed = build_streaming_max_Q_over_a(
+    streamed = _streamed_single(
         Q_and_F=Q_and_F,
         action_names=("first", "second"),
         block_width=4,
@@ -249,7 +281,7 @@ def test_q_and_f_sees_scalar_action_cells_and_never_the_full_action_product() ->
 @pytest.mark.parametrize("block_width", [0, -2])
 def test_streaming_rejects_non_positive_block_width(block_width: int) -> None:
     with pytest.raises(ValueError, match="block_width must be positive"):
-        build_streaming_max_Q_over_a(
+        _streamed_single(
             Q_and_F=lambda: (jnp.float32(0), jnp.ones((), dtype=bool)),
             action_names=(),
             block_width=block_width,
@@ -329,19 +361,12 @@ def _sin_collective_Q_and_F(*, choice: jax.Array) -> tuple[jax.Array, jax.Array]
     return jnp.sin(choice) * jnp.array([1.0, 2.0]), jnp.ones((), dtype=bool)
 
 
-def _sin_ev1_Q_and_F(
-    *, branch: jax.Array, choice: jax.Array
-) -> tuple[jax.Array, jax.Array]:
-    """A discrete-branch Q whose every evaluation stages exactly one `sin`."""
-    return jnp.sin(choice) + branch, jnp.ones((), dtype=bool)
-
-
 # Seven actions in blocks of three are three blocks, the last one padded.
 _CHOICE = jnp.arange(7.0)
 
 
-def _single_device_jaxpr() -> ClosedJaxpr:
-    streamed = build_streaming_max_Q_over_a(
+def _single_jaxpr() -> ClosedJaxpr:
+    streamed = _streamed_single(
         Q_and_F=sin_Q_and_F, action_names=("choice",), block_width=3
     )
     return jax.make_jaxpr(lambda choice: streamed(choice=choice))(_CHOICE)
@@ -349,6 +374,7 @@ def _single_device_jaxpr() -> ClosedJaxpr:
 
 def _collective_jaxpr() -> ClosedJaxpr:
     streamed = build_streaming_collective_max_Q_over_a(
+        publishes_identity=True,
         Q_and_F=_sin_collective_Q_and_F,
         action_names=("choice",),
         block_width=3,
@@ -358,25 +384,9 @@ def _collective_jaxpr() -> ClosedJaxpr:
     return jax.make_jaxpr(lambda choice: streamed(choice=choice))(_CHOICE)
 
 
-def _ev1_jaxpr() -> ClosedJaxpr:
-    # Two branches of seven continuous cells in blocks of three: three blocks
-    # per branch, six blocks in all.
-    streamed = build_streaming_ev1_max_Q_over_a(
-        Q_and_F=_sin_ev1_Q_and_F,
-        action_names=("branch", "choice"),
-        n_discrete_action_axes=1,
-        block_width=3,
-        scale=1.0,
-    )
-    return jax.make_jaxpr(
-        lambda branch, choice: streamed(branch=branch, choice=choice)
-    )(jnp.arange(2.0), _CHOICE)
-
-
 _STREAMED_ROUTES = {
-    "hard_max": (_single_device_jaxpr, [3]),
+    "single": (_single_jaxpr, [3]),
     "collective": (_collective_jaxpr, [3]),
-    "ev1": (_ev1_jaxpr, [6]),
 }
 
 
@@ -408,31 +418,18 @@ def _shifted_collective_Q_and_F(
     return (jnp.sin(choice) + shift) * jnp.array([1.0, 2.0]), jnp.ones((), dtype=bool)
 
 
-def _shifted_ev1_Q_and_F(
-    *, branch: jax.Array, choice: jax.Array, shift: jax.Array
-) -> tuple[jax.Array, jax.Array]:
-    """A discrete-branch Q that reads one per-device state."""
-    return jnp.sin(choice) + branch + shift, jnp.ones((), dtype=bool)
-
-
 _SHIFTED_ROUTES = {
-    "hard_max": lambda shift: build_streaming_max_Q_over_a(
+    "single": lambda shift: _streamed_single(
         Q_and_F=_shifted_Q_and_F, action_names=("choice",), block_width=3
     )(choice=_CHOICE, shift=shift),
     "collective": lambda shift: build_streaming_collective_max_Q_over_a(
+        publishes_identity=True,
         Q_and_F=_shifted_collective_Q_and_F,
         action_names=("choice",),
         block_width=3,
         members=("first", "second"),
         weights={"first": jnp.asarray(0.5), "second": jnp.asarray(0.5)},
     )(choice=_CHOICE, shift=shift),
-    "ev1": lambda shift: build_streaming_ev1_max_Q_over_a(
-        Q_and_F=_shifted_ev1_Q_and_F,
-        action_names=("branch", "choice"),
-        n_discrete_action_axes=1,
-        block_width=3,
-        scale=1.0,
-    )(branch=jnp.arange(2.0), choice=_CHOICE, shift=shift),
 }
 
 
@@ -481,12 +478,9 @@ def test_streamed_program_takes_no_argument_its_blocks_never_read() -> None:
     def reduce_actions(
         *, choice: jax.Array, shift: jax.Array, ignored: jax.Array
     ) -> HardMaxResult:
-        return cast(
-            "HardMaxResult",
-            build_streaming_max_Q_over_a(
-                Q_and_F=_partly_reading_Q_and_F, action_names=("choice",), block_width=3
-            )(choice=choice, shift=shift, ignored=ignored),
-        )
+        return _streamed_single(
+            Q_and_F=_partly_reading_Q_and_F, action_names=("choice",), block_width=3
+        )(choice=choice, shift=shift, ignored=ignored)
 
     compiled = (
         jax.jit(reduce_actions)

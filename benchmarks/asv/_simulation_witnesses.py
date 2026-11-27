@@ -3,7 +3,7 @@
 Two CPU models cover the two shapes forward simulation has: a multi-regime
 model whose states carry a discretised shock process, and a collective model
 whose regime transition runs through gated edges. Each builder returns the
-model, its params, and initial conditions for a handful of subjects.
+model, its params, and initial conditions for a handful of agents.
 
 The module imports no test framework, so a benchmark runner whose environment
 holds only the project's runtime dependencies can import it.

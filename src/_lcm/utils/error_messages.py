@@ -26,7 +26,7 @@ def path_segment_name_errors(*, kind: str, names: Iterable[str]) -> list[str]:
     to the same key as `"x"` + `"_y"`.
 
     Args:
-        kind: What the names are, as the subject of the message (e.g. `"Regime"`).
+        kind: What the names are, as the agent of the message (e.g. `"Regime"`).
         names: The names to check.
 
     Returns:

@@ -12,17 +12,15 @@ from _lcm.execution.reductions import (
 )
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
 from _lcm.solution.collective_action_reduction import COLLECTIVE_HARD_MAX_REDUCTION
-from _lcm.solution.logsumexp_action_reduction import LOGSUMEXP_REDUCTION
 
 _SHIPPED_FOLDS = {
-    "hard_max": HARD_MAX_REDUCTION,
-    "logsumexp": LOGSUMEXP_REDUCTION,
     "collective_hard_max": COLLECTIVE_HARD_MAX_REDUCTION,
     "weighted_expectation": WEIGHTED_EXPECTATION_REDUCTION,
     "hard_max_with_carry": HARD_MAX_WITH_CARRY_REDUCTION,
 }
 
 _DECLARATIONS_ONLY = {
+    "hard_max": HARD_MAX_REDUCTION,
     "interval_envelope": INTERVAL_ENVELOPE_REDUCTION,
 }
 
@@ -30,7 +28,6 @@ _SPECS = _SHIPPED_FOLDS | _DECLARATIONS_ONLY
 
 _EXPECTED_EXACTNESS = {
     "hard_max": "exact",
-    "logsumexp": "tolerance_equivalent",
     "collective_hard_max": "exact",
     "weighted_expectation": "tolerance_equivalent",
     "hard_max_with_carry": "exact",

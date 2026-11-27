@@ -20,21 +20,31 @@ they are meant to test.
 """
 
 import inspect
-from typing import TYPE_CHECKING, cast
+import logging
+from collections.abc import Callable, Mapping
+from typing import TYPE_CHECKING, NotRequired, TypedDict, Unpack, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from lcm.solver_api import SOLVER_DIAGNOSTICS
+from lcm.solver_api import SOLVER_DIAGNOSTICS, KernelOutput
 
 if TYPE_CHECKING:
     from _lcm.solution.solver_diagnostics import SolverDiagnostics
 import pytest
 
 import _lcm.solution.nnbegm as _solvers
+from _lcm.egm.carry import EGMCarry
+from _lcm.egm.outer_candidates import OuterCandidateBank
+from _lcm.egm.outer_carry import ContinuousCollapse
+from _lcm.engine import StateActionSpace
+from _lcm.solution.contract import ContinuationPayload
+from _lcm.time import TimeAxis
+from _lcm.typing import FlatParams, PytreeValue
 from lcm import LinSpacedGrid
 from lcm.solvers import AdaptiveOuterMesh, UniformObservedFixedCost
+from lcm.typing import FloatND, RegimeName
 from lcm_examples.mahler_yum_2024 import (
     START_PARAMS,
     create_inputs,
@@ -135,9 +145,7 @@ def test_dead_utility_is_identically_zero_on_the_wealth_axis() -> None:
 
 def test_params_adapter_preserves_the_flat_calibration() -> None:
     """Paper mode consumes the optimized model's flat parameter vocabulary."""
-    model_params, _ = create_inputs(
-        seed=0, n_simulation_subjects=10, params=START_PARAMS
-    )
+    model_params, _ = create_inputs(seed=0, n_simulation_agents=10, params=START_PARAMS)
     adapted = adapt_params_to_paper_mode(model_params)
     assert set(adapted) == set(model_params)
     assert adapted["min_consumption"] == model_params["min_consumption"]
@@ -193,6 +201,26 @@ class _StopAfterCaptureError(Exception):
     pass
 
 
+class _KernelArguments(TypedDict):
+    compiled_cores: Mapping[str, Callable[..., PytreeValue]]
+    state_action_space: StateActionSpace
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND]
+    next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload]
+    flat_params: FlatParams
+    period: int
+    ages: TimeAxis
+    logger: logging.Logger
+
+
+class _CollapseArguments(TypedDict):
+    keeper_v_arr: FloatND
+    keeper_carry: EGMCarry
+    bank: OuterCandidateBank
+    config: AdaptiveOuterMesh
+    fixed_cost_scale: NotRequired[FloatND | None]
+    fixed_cost_support: NotRequired[tuple[float, float] | None]
+
+
 def _mesh(
     *, initial: int, max_nodes: int, rounds: int, tol: float
 ) -> AdaptiveOuterMesh:
@@ -213,13 +241,15 @@ def _solve_and_capture(mesh: AdaptiveOuterMesh) -> dict[str, np.ndarray]:
     original_call = _solvers._NNBEGMPeriodKernel.__call__
     original_collapse = _solvers.collapse_continuous_candidate_bank
 
-    def capturing_keeper(self, **kw):
+    def capturing_keeper(
+        self: _solvers._NNBEGMPeriodKernel, **kw: Unpack[_KernelArguments]
+    ) -> KernelOutput:
         result = original_keeper(self, **kw)
         if kw["period"] == _CAPTURE_PERIOD:
             captured["keeper_V"] = np.asarray(result.value)
         return result
 
-    def capturing_collapse(**kw):
+    def capturing_collapse(**kw: Unpack[_CollapseArguments]) -> ContinuousCollapse:
         collapse = original_collapse(**kw)
         search = collapse.value_search
         captured["search_x"] = np.asarray(search.x)
@@ -227,7 +257,9 @@ def _solve_and_capture(mesh: AdaptiveOuterMesh) -> dict[str, np.ndarray]:
         captured["refinement_gain"] = np.asarray(search.refinement_gain)
         return collapse
 
-    def capturing_call(self, **kw):
+    def capturing_call(
+        self: _solvers._NNBEGMPeriodKernel, **kw: Unpack[_KernelArguments]
+    ) -> KernelOutput:
         result = original_call(self, **kw)
         if kw["period"] == _CAPTURE_PERIOD:
             captured["V"] = np.asarray(result.value)
@@ -240,9 +272,7 @@ def _solve_and_capture(mesh: AdaptiveOuterMesh) -> dict[str, np.ndarray]:
         return result
 
     model = create_mahler_yum_model(implementation="paper", outer_search=mesh)
-    model_params, _ = create_inputs(
-        seed=0, n_simulation_subjects=10, params=START_PARAMS
-    )
+    model_params, _ = create_inputs(seed=0, n_simulation_agents=10, params=START_PARAMS)
     params = adapt_params_to_paper_mode(model_params)
     patcher = pytest.MonkeyPatch()
     patcher.setattr(_solvers._NNBEGMPeriodKernel, "_solve_keeper", capturing_keeper)

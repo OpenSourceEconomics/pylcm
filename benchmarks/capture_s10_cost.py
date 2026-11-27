@@ -8,7 +8,7 @@ fixtures (no production workload uses these producers yet):
   health state, a work choice, a literal savings floor and a declared health-cost
   shock, with `alive` repeating until a terminal `done`. The shock is uniform with
   unit variance rather than the fixture's normal: simulated draws from a normal tail
-  push the cost of a poor, unhealthy subject past every action's savings floor.
+  push the cost of a poor, unhealthy agent past every action's savings floor.
 - `nnbegm`: the finite NNBEGM keeper/adjuster housing regime of
   `tests/egm/_nnbegm_toy.py`, whose resources read a declared current shock.
 
@@ -16,7 +16,7 @@ fixtures (no production workload uses these producers yet):
 savings grid instead of `DCEGM`.
 
 `--solver gridsearch` keeps the same regimes, state grids, shock nodes, dtype and
-subjects and swaps every EGM solver for `GridSearch()`, which searches the declared
+agents and swaps every EGM solver for `GridSearch()`, which searches the declared
 consumption (and investment) grids. Both arms therefore declare the same
 `--consumption-points` grids. For `nnbegm` the GridSearch arm adds the borrowing limit
 the EGM savings grid imposes and the outer-grid domain as constraints; `dc-aca`
@@ -176,10 +176,10 @@ def _dc_aca(args: argparse.Namespace) -> _Built:
     )
     rng = np.random.default_rng(args.seed)
     initial = {
-        "regime_id": np.zeros(args.subjects, dtype=np.int32),
-        "period": np.zeros(args.subjects, dtype=np.int32),
-        "wealth": rng.uniform(1.0, top / 2, args.subjects),
-        "good_health": rng.integers(0, 2, args.subjects, dtype=np.int32),
+        "regime_id": np.zeros(args.agents, dtype=np.int32),
+        "period": np.zeros(args.agents, dtype=np.int32),
+        "wealth": rng.uniform(1.0, top / 2, args.agents),
+        "good_health": rng.integers(0, 2, args.agents, dtype=np.int32),
     }
     return model, {}, initial, {"savings_points": args.savings_points}
 
@@ -248,10 +248,10 @@ def _nnbegm(args: argparse.Namespace) -> _Built:
     model = Model(**inputs)
     rng = np.random.default_rng(args.seed)
     initial = {
-        "regime_id": np.full(args.subjects, model.regime_names_to_ids["child"]),
-        "age": np.ones(args.subjects, dtype=int),
-        "wealth": rng.uniform(1.5, 3.0, args.subjects),
-        "housing": rng.choice(np.asarray(housing.points), args.subjects),
+        "regime_id": np.full(args.agents, model.regime_names_to_ids["child"]),
+        "age": np.ones(args.agents, dtype=int),
+        "wealth": rng.uniform(1.5, 3.0, args.agents),
+        "housing": rng.choice(np.asarray(housing.points), args.agents),
     }
     return model, _params(), initial, {"shock_nodes_eps": list(eps)}
 
@@ -287,7 +287,7 @@ def main() -> None:
     parser.add_argument("--consumption-points", type=int, default=12)
     parser.add_argument("--shock-nodes", type=int, default=3)
     parser.add_argument("--periods", type=int, default=3)
-    parser.add_argument("--subjects", type=int, default=30)
+    parser.add_argument("--agents", type=int, default=30)
     parser.add_argument("--precision", type=int, choices=(32, 64), default=64)
     parser.add_argument("--seed", type=int, default=19)
     parser.add_argument("--out", type=Path, required=True)
@@ -341,7 +341,7 @@ def main() -> None:
             ).to_dataframe()
             calls[label] = {"wall_seconds": time.perf_counter() - start, **_memory()}
     receipt["calls"] = calls
-    numeric = data.select_dtypes("number").drop(columns=["subject_id"], errors="ignore")
+    numeric = data.select_dtypes("number").drop(columns=["agent_id"], errors="ignore")
     receipt["panel_means_by_period"] = json.loads(
         numeric.groupby("period").mean().to_json(orient="index")
     )

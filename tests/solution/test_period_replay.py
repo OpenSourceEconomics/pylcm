@@ -40,11 +40,17 @@ from _lcm.typing import PytreeValue
 from lcm import AgeGrid, ExecutionConfig, LinSpacedGrid, Model
 from lcm.persistence import PeriodCapture, load_period_capture, replay_period
 from lcm.solver_api import ArtifactKey, ResultRetention
-from lcm.typing import FloatND, RegimeName
+from lcm.typing import FloatND, RegimeName, UserParamsNode
 from tests.regime_building.test_gated_edges_collective_solve import (
     EKLRegimeId,
     _make_full_topology_regimes,
     _with_full_topology_laws,
+)
+from tests.regime_building.test_nonterminal_collective_solve import (
+    RegimeId as CoupleRegimeId,
+)
+from tests.regime_building.test_nonterminal_collective_solve import (
+    _make_couple_regimes,
 )
 from tests.solution._callback_types import CompileFunctionsKwargs
 from tests.test_models.deterministic import base as retirement_model
@@ -484,7 +490,7 @@ def test_public_solve_captures_adjacent_periods_for_fresh_model_replay(
     monkeypatch.setenv("LCM_LOG_KERNEL_ATTRIBUTION", "1")
     capture = PeriodCapture(
         directory=tmp_path,
-        periods=(("retirement", 1), ("working_life", 0)),
+        steps=(("retirement", 1), ("working_life", 0)),
         source_identity={"model": "tiny-public-model-v1"},
     )
     params = retirement_model.get_params(n_periods=_N_PERIODS)
@@ -500,7 +506,7 @@ def test_public_solve_captures_adjacent_periods_for_fresh_model_replay(
         period_capture=capture,
     )
     fresh = _make_public_capture_model(budget=budget)
-    for regime_name, period in capture.periods:
+    for regime_name, period in capture.steps:
         caplog.clear()
         replay = fresh.replay_period(
             directory=tmp_path / f"{regime_name}@{period}",
@@ -571,7 +577,7 @@ def test_public_interrupted_capture_has_inputs_without_a_reference(
     assert persistent_compilation_cache is False
     capture = PeriodCapture(
         directory=tmp_path,
-        periods=(("working_life", 0),),
+        steps=(("working_life", 0),),
         source_identity={"model": "tiny-public-model-v1"},
     )
     monkeypatch.setenv("LCM_LOG_KERNEL_ATTRIBUTION", "1")
@@ -686,7 +692,7 @@ def test_public_capture_from_separately_warmed_gpu_cache_requires_native_metadat
     logger.addFilter(interrupt)
     capture = PeriodCapture(
         directory=root / "capture",
-        periods=(("working_life", 0),),
+        steps=(("working_life", 0),),
         source_identity={"model": "tiny-public-model-v1"},
     )
     try:
@@ -723,7 +729,7 @@ def test_an_ungated_regime_in_a_gated_edge_model_replays_bit_for_bit(
     params = {"discount_factor": 0.9}
     capture = PeriodCapture(
         directory=tmp_path,
-        periods=(target,),
+        steps=(target,),
         source_identity={"model": "gated-edge-topology-v1"},
     )
     result = build_gated_edge_model(devices=(0,), sharded=()).solve(
@@ -744,6 +750,83 @@ def test_an_ungated_regime_in_a_gated_edge_model_replays_bit_for_bit(
         replay.optimized_hlo_matches,
     )
     assert observed == (True, True, True)
+
+
+def _couple_capture_model() -> Model:
+    """The two-period work/leisure couple, a household of the members f and m."""
+    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
+    return Model(
+        regimes=_make_couple_regimes(),
+        edges={"couple": {"couple_terminal": 0}},
+        ages=ages,
+        regime_id_class=CoupleRegimeId,
+        initial_nodes={ages.exact_values[0]: "couple"},
+        execution_config=ExecutionConfig(device_memory_bytes=None),
+    )
+
+
+def _single_capture_model() -> Model:
+    """The public retirement fixture, a household of the one member `"self"`."""
+    return _make_public_capture_model()
+
+
+_MEMBER_AXIS_CAPTURES: dict[
+    str,
+    tuple[
+        Callable[[], Model],
+        dict[str, UserParamsNode],
+        tuple[tuple[RegimeName, int], ...],
+        int,
+    ],
+] = {
+    "couple": (
+        _couple_capture_model,
+        {"discount_factor": 0.95},
+        (("couple", 0), ("couple_terminal", 1)),
+        2,
+    ),
+    "single": (
+        _single_capture_model,
+        retirement_model.get_params(n_periods=_N_PERIODS),
+        (("retirement", 1), ("working_life", 0)),
+        1,
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_MEMBER_AXIS_CAPTURES))
+@pytest.mark.parametrize("persistent_compilation_cache", [False], indirect=True)
+def test_a_value_with_a_member_axis_replays_bit_for_bit(
+    *, tmp_path: Path, case: str, persistent_compilation_cache: bool
+) -> None:
+    """A regime whose value carries a member axis captures and replays exactly.
+
+    A fresh model's strict replay of each captured period returns the in-context
+    array, member axis included, and matches the completed reference.
+    """
+    assert jax.config.jax_enable_compilation_cache is persistent_compilation_cache
+    build, params, periods, n_members = _MEMBER_AXIS_CAPTURES[case]
+    capture = PeriodCapture(
+        directory=tmp_path, steps=periods, source_identity={"model": case}
+    )
+    result = build().solve(params=params, log_level="off", period_capture=capture)
+    fresh = build()
+    for regime_name, period in periods:
+        replay = fresh.replay_period(
+            directory=tmp_path / f"{regime_name}@{period}",
+            params=params,
+            source_identity=capture.source_identity,
+        )
+        expected = np.asarray(result.values[period][regime_name])
+        observed = (
+            np.shape(replay.value),
+            np.asarray(replay.value).dtype,
+            np.asarray(replay.value).tobytes() == expected.tobytes(),
+            replay.reference_matches,
+            replay.optimized_hlo_matches,
+        )
+        assert observed == (expected.shape, expected.dtype, True, True, True)
+        assert expected.shape[-1] == n_members
 
 
 _ATTRIBUTE_BACKEND_CONFIG = re.compile(r"backend_config=(\{[A-Za-z_]\w* = [^}]*\})")
@@ -940,7 +1023,7 @@ def test_captured_admission_records_round_trip_as_read_only_views(
     monkeypatch.setattr(backward_induction, "_compile_all_functions", observe)
     capture = PeriodCapture(
         directory=tmp_path,
-        periods=(("working_life", 0),),
+        steps=(("working_life", 0),),
         source_identity={"model": "tiny-public-model-v1"},
     )
     _make_public_capture_model().solve(
@@ -1015,3 +1098,25 @@ def _make_public_capture_model(
         ),
         initial_nodes=initial_nodes_of(model=base),
     )
+
+
+@pytest.mark.parametrize("version", [None, "1", "3"], ids=["missing", "older", "newer"])
+def test_replay_refuses_a_capture_written_in_another_format(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, version: str | None
+) -> None:
+    """A capture of another format is refused before its payload is unpickled.
+
+    Its value arrays may lack the trailing member axis. The payload is removed,
+    so only the format check can produce the refusal.
+    """
+    _solve_capturing(
+        monkeypatch=monkeypatch, tmp_path=tmp_path, target="working_life@1"
+    )
+    directory = tmp_path / "working_life@1"
+    (directory / "format_version").unlink(missing_ok=True)
+    if version is not None:
+        (directory / "format_version").write_text(version, encoding="utf-8")
+    (directory / period_replay._PAYLOAD_NAME).unlink()
+
+    with pytest.raises(ValueError, match="written in another format"):
+        replay_period(directory=directory)

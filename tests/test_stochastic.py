@@ -65,7 +65,7 @@ def _lifecycle_edges(*, ages: AgeGrid) -> dict[str, Transition]:
     }
 
 
-def test_model_simulate_with_stochastic_model():
+def test_model_simulate_with_stochastic_model() -> None:
     model = get_model(n_periods=4)
     params = get_params(n_periods=4)
 
@@ -83,14 +83,14 @@ def test_model_simulate_with_stochastic_model():
     df = result.to_dataframe().query('regime_name == "working_life"')
 
     # Verify expected columns
-    required_cols = {"period", "subject_id", "partner", "labor_supply"}
+    required_cols = {"period", "agent_id", "partner", "labor_supply"}
     assert required_cols <= set(df.columns)
     assert len(df) > 0
 
     # Check partner transition follows expected pattern:
     # Partner becomes single if working and partnered, otherwise stays partnered
-    period_0 = df.query("period == 0").set_index("subject_id")
-    period_1 = df.query("period == 1").set_index("subject_id")
+    period_0 = df.query("period == 0").set_index("agent_id")
+    period_1 = df.query("period == 1").set_index("agent_id")
     common = period_0.index.intersection(period_1.index)
 
     if len(common) > 0:
@@ -109,7 +109,7 @@ def test_model_simulate_with_stochastic_model():
         )
 
 
-def test_model_solve_with_stochastic_model():
+def test_model_solve_with_stochastic_model() -> None:
     model = get_model(n_periods=4)
     model.solve(log_level="debug", params=get_params(n_periods=4))
 
@@ -183,7 +183,7 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
         initial_nodes={ages.exact_values[0]: "working_life"},
     )
 
-    # Use survival_probs=1.0 for all but the last period so no subject dies early.
+    # Use survival_probs=1.0 for all but the last period so no agent dies early.
     # This test focuses on health transition equivalence, not mortality.
     params = get_params(n_periods=n_periods)
     params["survival_probs"] = jnp.concatenate(
@@ -245,6 +245,10 @@ def test_compare_deterministic_and_stochastic_results_value_function(
     )
 
 
+def _zero_utility() -> FloatND:
+    return jnp.asarray(0.0)
+
+
 def _make_minimal_stochastic_model(
     *, next_draw: Callable[..., FloatND], draw_batch_size: int = 0
 ) -> Model:
@@ -295,7 +299,7 @@ def _make_minimal_stochastic_model(
         functions={"utility": utility},
     )
     dead_regime = UserRegime(
-        functions={"utility": lambda: 0.0},
+        functions={"utility": _zero_utility},
     )
     return Model(
         regimes={"working_life": working_regime, "dead": dead_regime},
@@ -388,7 +392,9 @@ def test_stochastic_weight_on_continuous_state_varies_continuation_by_wealth() -
     # rows, so the per-wealth expected bonus appears on every row.
     wealth_grid = jnp.linspace(1.0, 10.0, 15)
     expected_per_wealth = discount_factor * jnp.clip(wealth_grid / 10.0, 0.1, 0.9)
-    expected = jnp.broadcast_to(expected_per_wealth, extra_continuation_value.shape)
+    expected = jnp.broadcast_to(
+        expected_per_wealth[:, None], extra_continuation_value.shape
+    )
     assert_allclose(extra_continuation_value, expected, atol=1e-6)
 
 
@@ -421,7 +427,7 @@ def test_stochastic_state_batch_size_is_value_equivalent_to_no_splay() -> None:
     )
 
 
-def test_start_at_the_last_age_of_a_nonterminal_regime_is_rejected():
+def test_start_at_the_last_age_of_a_nonterminal_regime_is_rejected() -> None:
     """A nonterminal regime cannot be required at the last age.
 
     It has to place probability one on some target regime, but at the last age

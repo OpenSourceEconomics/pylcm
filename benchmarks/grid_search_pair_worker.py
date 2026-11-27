@@ -533,7 +533,16 @@ def _route_metadata(model: Model) -> _RouteMetadata:
         action_extents = tuple(
             _grid_extent(regime.solution.grids[name]) for name in action_names
         )
-        collective = regime.member_axis is not None
+        # A regime of more than one member is collective. A historical checkout
+        # names a collective regime's members in `member_axis` or `stakeholders`
+        # and leaves them `None` for a singleton.
+        members = (
+            getattr(regime, "members", None)
+            or getattr(regime, "member_axis", None)
+            or getattr(regime, "stakeholders", None)
+            or ()
+        )
+        collective = len(members) > 1
         has_taste_shocks = bool(regime.has_taste_shocks)
         if has_taste_shocks:
             taste_shock_regimes.append(regime_name)
@@ -543,8 +552,8 @@ def _route_metadata(model: Model) -> _RouteMetadata:
         transition = transitions.get(regime_name)
         if (
             regime.gated_edges
-            or getattr(declaration, "exit", None) is not None
-            or getattr(declaration, "exits", {})
+            or getattr(declaration, "composition_action", None) is not None
+            or getattr(declaration, "composition_actions", {})
             or getattr(transition, "participation", {})
         ):
             gs_vd_regimes.append(regime_name)

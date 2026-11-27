@@ -37,13 +37,27 @@ class _Model:
         regimes: dict[str, Record] = {}
         for cell in self.cells.values():
             ops = cell.get("operators", {})
-            # Members and the whole exit are part of a regime's kind.
-            r = regimes.setdefault(cell["regime"], {"terminal": True, "choice": False, "law": ops.get("taste_shocks"),
+            # Members in their order, the whole composition action and the Pareto
+            # weight states with the nodes of their grids are part of a regime's
+            # kind.
+            own_lists = sorted((n, self.domains[cell["states"][n]].get("values", cell["states"][n]))
+                               for n in cell.get("renegotiated_states", []))
+            r = regimes.setdefault(cell["regime"], {"terminal": True, "choice": False, "law": ops.get("taste_shocks"), "grids": {},
                                                     "kind": repr([cell.get("stage"), cell.get("solver_identity"),
                                                                   sorted((k, v) for k, v in ops.items() if k != "taste_shocks"),
-                                                                  cell.get("member_axis"), cell.get("exit_identity")])})
+                                                                  cell.get("members"), cell.get("composition_action_identity"),
+                                                                  own_lists])})
             r["terminal"] = r["terminal"] and cell["terminal"]
             r["choice"] = r["choice"] or any(self.domains[d].get("kind") == "categorical" for d in cell["actions"].values())
+            for a, d in cell["actions"].items():
+                r["grids"].setdefault(a, set()).add(repr((self.domains[d].get("kind"), self.domains[d].get("values", d))))
+        # An action that two nonterminal regimes of one kind declare on unequal
+        # grids is part of the kind of every regime that has it.
+        living = [r for r in regimes.values() if not r["terminal"]]
+        unequal = [tuple((a, tuple(sorted(g))) for a, g in sorted(r["grids"].items())
+                         if any(o["kind"] == r["kind"] and o["grids"].get(a, g) != g for o in living)) for r in living]
+        for r, own in zip(living, unequal, strict=True):
+            r["kind"] = repr((r["kind"], own))
         out: list[tuple[str, ...]] = [(n,) for n, r in regimes.items() if r["terminal"]]
         for kind in {r["kind"] for r in regimes.values() if not r["terminal"]}:
             names = [n for n, r in regimes.items() if not r["terminal"] and r["kind"] == kind]
@@ -109,7 +123,7 @@ def literal_price(model: _Model, members: tuple[str, ...], fibres: list[Fibre]) 
     statuses = {n for cid, _ in fibres for n in model.axes[cid]}
     rows = len({c["regime"] for c in cells}) if len(members) > 1 else 1
     # One stored value and one action value per member of a collective regime.
-    rows *= max(len(c.get("member_axis") or ()) for c in cells) or 1
+    rows *= max(len(c.get("members") or ()) for c in cells) or 1
     for name in live:
         if name in statuses:
             rows *= len({repr(model.value(members, f, name)) for f in fibres})
@@ -222,7 +236,7 @@ def check_layouts(declarations: Record, facts: Facts, result: Record, guard: Cal
         errors.append("reported lanes differ from the independently derived lanes")
     if result["original_count"] != sum(prod(model.size(d) for d in c["states"].values())
                                        * prod(model.size(d) for d in c["actions"].values())
-                                       * (len(c.get("member_axis") or ()) or 1)
+                                       * (len(c.get("members") or ()) or 1)
                                        for c in model.cells.values()):
         errors.append("original count differs from the model as written")
     ev0 = 0
@@ -240,7 +254,7 @@ def check_layouts(declarations: Record, facts: Facts, result: Record, guard: Cal
                         values.setdefault(name, set()).update(map(repr, domain["values"]))
                     else:
                         sizes[kind, name] = max(sizes.get((kind, name), 0), model.size(did))
-        label = (len(members) if len(members) > 1 else 1) * (max(len(c.get("member_axis") or ()) for c in member_cells) or 1)
+        label = (len(members) if len(members) > 1 else 1) * (max(len(c.get("members") or ()) for c in member_cells) or 1)
         periods = len({c["period"] for c in member_cells})
         ev0 += periods * label * prod(len(v) for v in values.values()) * prod(sizes.values())
     if result["dense_count"] != ev0:

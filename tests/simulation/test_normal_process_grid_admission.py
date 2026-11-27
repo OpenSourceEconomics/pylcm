@@ -218,7 +218,7 @@ def test_normal_support_preserves_saved_identity_value_and_policy(
         log_level=log_level,
     )
     np.testing.assert_array_equal(
-        result.period_to_regime_to_V_arr[0]["alive"], expected_values
+        result.step_to_regime_to_V_arr[0]["alive"], expected_values
     )
     np.testing.assert_array_equal(
         result.to_dataframe(use_categorical_codes=True)

@@ -1,8 +1,8 @@
 """Empirical admission against the declared starts, and stable random sites.
 
-A simulated subject may start only at a pair in `model.initial_nodes`; every other
-known pair is refused by name, whether or not the engine solves it. A subject's
-named innovations depend on the seed, computational period and original subject
+A simulated agent may start only at a pair in `model.initial_nodes`; every other
+known pair is refused by name, whether or not the engine solves it. An agent's
+named innovations depend on the seed, computational period and original agent
 row, independently of which other pairs the declared starts make visitable.
 """
 
@@ -46,7 +46,7 @@ from tests.test_demand_worklists import _phased_model
 _WEALTH = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 _PARAMS = {"discount_factor": 0.9}
 _AGES = AgeGrid(start=25, inclusive_stop=75, step="10Y")
-_N_SUBJECTS = 64
+_N_AGENTS = 64
 
 
 @categorical(ordered=False)
@@ -132,9 +132,9 @@ def _panel(*, model: Model, age: float, regime: RegimeName) -> pd.DataFrame:
     result = model.simulate(
         params=_PARAMS,
         initial_conditions={
-            "wealth": jnp.zeros(_N_SUBJECTS),
-            "age": jnp.full(_N_SUBJECTS, age),
-            "regime_id": jnp.full(_N_SUBJECTS, model.regime_names_to_ids[regime]),
+            "wealth": jnp.zeros(_N_AGENTS),
+            "age": jnp.full(_N_AGENTS, age),
+            "regime_id": jnp.full(_N_AGENTS, model.regime_names_to_ids[regime]),
         },
         solution=solution,
         log_level="off",
@@ -160,7 +160,7 @@ def test_simulate_refuses_starts_outside_initial_nodes(
 
 
 def test_simulate_admits_starts_inside_initial_nodes() -> None:
-    """Subjects at a declared start are simulated from there."""
+    """Agents at a declared start are simulated from there."""
     panel = _panel(model=_model({25: "working"}), age=25.0, regime="working")
     assert panel.query("age == 25")["regime_name"].eq("working").all()
 
@@ -174,14 +174,14 @@ def test_initial_nodes_survive_pickling() -> None:
 
 
 def test_draws_do_not_depend_on_other_visitable_pairs() -> None:
-    """Adding an unrelated start leaves every working subject's trajectory as is."""
+    """Adding an unrelated start leaves every working agent's trajectory as is."""
     alone = _panel(model=_model({25: "working"}), age=25.0, regime="working")
     with_island = _panel(
         model=_model({25: ("working", "island")}), age=25.0, regime="working"
     )
     np.testing.assert_array_equal(
-        alone[["subject_id", "age", "regime_name"]].to_numpy(),
-        with_island[["subject_id", "age", "regime_name"]].to_numpy(),
+        alone[["agent_id", "age", "regime_name"]].to_numpy(),
+        with_island[["agent_id", "age", "regime_name"]].to_numpy(),
     )
 
 
@@ -451,11 +451,9 @@ def test_simulate_refuses_an_invalid_law_row_off_the_grid(*, log_level: str) -> 
         model.simulate(
             params=_PARAMS,
             initial_conditions={
-                "wealth": jnp.full(_N_SUBJECTS, 0.5),
-                "age": jnp.full(_N_SUBJECTS, 25.0),
-                "regime_id": jnp.full(
-                    _N_SUBJECTS, model.regime_names_to_ids["working"]
-                ),
+                "wealth": jnp.full(_N_AGENTS, 0.5),
+                "age": jnp.full(_N_AGENTS, 25.0),
+                "regime_id": jnp.full(_N_AGENTS, model.regime_names_to_ids["working"]),
             },
             log_level=log_level,  # ty: ignore[invalid-argument-type]
             seed=0,
@@ -485,10 +483,10 @@ def test_simulate_accepts_valid_law_rows_off_the_grid() -> None:
         ((0.25, 0.25), [False, False, True]),
     ],
 )
-def test_realized_regime_flags_check_a_subject_constant_law_on_every_row(
+def test_realized_regime_flags_check_an_agent_constant_law_on_every_row(
     *, probabilities: tuple[float, float], expected: list[bool]
 ) -> None:
-    """A law that is constant across subjects is checked against every row mask."""
+    """A law that is constant across agents is checked against every row mask."""
     flags = regime_probability_flags(
         probabilities=tuple(jnp.asarray(value) for value in probabilities),
         inactive_indices=(),

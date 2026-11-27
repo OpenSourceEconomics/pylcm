@@ -4,8 +4,9 @@ title: Periods and temporal parameters
 
 # Periods and temporal parameters
 
-Use `Model(n_periods=...)` when computational stages are the natural model clock. Keep
-`Model(ages=AgeGrid(...))` when actual ages define that clock. Supply exactly one.
+Use `Model(n_periods=...)` when periods are the natural model clock. Keep
+`Model(ages=AgeGrid(...))` when actual ages define that clock. Supply exactly one. A
+model that takes several decisions in one period declares them as `stages`.
 
 ## Model time
 
@@ -33,8 +34,8 @@ invalid.
 
 `model.ages` is `None` in period mode. Functions may request `period`. An unresolved
 `age` argument is an error. Declare a separately named `biological_age` or
-`economic_quarter` function when the economics needs it. A computational stage does not
-determine discounting, survival, interest accrual or how flows are aggregated.
+`economic_quarter` function when the economics needs it. A period does not determine
+discounting, survival, interest accrual or how flows are aggregated.
 
 Admissible starts use `InitialNodes(by_period={0: "working"})`; age models use
 `InitialNodes(by_age={25: "working"})`. Exactly one nonempty mapping is required, and a
@@ -138,13 +139,101 @@ Source inspection cannot prove the meaning of arbitrary helpers, closures or ind
 arithmetic. Managed selection removes the time axis before the consumer sees the value;
 it is the route that prevents a consumer from confusing an age with a period position.
 
-## Stages within economic time
+## Several decisions in one period
 
-A quarterly model may have several computational stages per quarter. Declare one
-paper-owned mapping from period to economic quarter and use it to gather profiles by
-their source labels. Two stages may deliberately read the same quarter. Neither adding a
-stage nor repeating a biological age implies that time has elapsed. Keep discounting and
-transition timing in the model's equations.
+A couple may first decide whether to stay together and then how much to consume, or two
+players may move in turn. Declare the decisions of one period as an ordered mapping from
+stage names to the regimes of each stage:
+
+```python
+model = Model(
+    n_periods=3,
+    stages={"work": ("working",), "spend": ("spending", "final")},
+    regimes=regimes,
+    regime_id_class=RegimeId,
+    initial_nodes=InitialNodes(by_period={0: "working"}),
+    edges={
+        "working": {
+            "spending": PeriodRange(exclusive_stop=2),
+            "final": Periods(values=(2,)),
+        },
+        "spending": {"working": PeriodRange(exclusive_stop=2)},
+    },
+)
+```
+
+Every period has the same stages, and every regime is in exactly one of them. A regime
+that decides in two stages of one period is two declared regimes.
+
+- An edge lands at its target's next occurrence: the first step after the current one
+  that belongs to the target's stage. A later stage of the same period is reached
+  without discounting; crossing into the next period discounts once, however many stages
+  are skipped. An edge into a regime of the source's own stage lands in the next period.
+  Its selector names the source's period, as in a model without stages.
+- A composition action leads to a regime of its own stage or of a later stage of its
+  period. For a destination in a later stage, the value of the outside option is the
+  destination's value at its occurrence later in the period, at the landing state,
+  without discounting. The decision on the composition cannot observe a shock that the
+  destination draws in its own stage, because that shock is not drawn yet. Draw it in
+  the earlier stage and carry it as a state. A destination in a later stage is admitted
+  only as one in the source's own stage is, solved by `GridSearch` over its whole action
+  grid; one solved by an endogenous-grid solver is refused when the model is built. The
+  destination's value averages over the shocks it draws in its stage, and it needs a
+  feasible action at the landing state for every shock node with positive weight.
+- Agents start in their regime's own stage, so `initial_nodes` and initial conditions
+  may name a regime of any stage.
+- The stages of a period are linked without discounting: where a regime's edges land in
+  its period, it adds their certainty equivalent to its utility. Its edges at one age
+  all land in its period or all cross into the next one; a regime whose edges land in
+  its period at some age declares no Koopmans aggregator and uses no endogenous-grid
+  solver, and if its edges cross at other ages the model's aggregator is
+  `LinearAggregator`, which discounts at those ages only.
+
+A regime with one decision per period, such as a single among couples who first decide
+whether to stay together and then how much to consume, is declared once, in the stage
+where it decides. An edge into it reads its value at its next occurrence, and an agent
+in it has no row and no transition at a step it sits out. The parameter template,
+`model.regime_names_to_ids`, `model.initial_nodes`, the solution's values, the raw
+simulation results and the simulated frame list only declared regimes, so they have no
+entry for a step the regime sits out. An edge whose target's next occurrence lies beyond
+the last period is refused.
+
+An edge into a regime that sits out a stage is a shorthand, and it has three limits: a
+source's edges at one age all stay in its period or all cross into the next one, a gated
+edge does not skip a stage, and an edge does not skip a stage of a regime with a
+continuous stochastic process among its states. Where an edge breaks one of them, the
+error names the regime and the stage in which to declare its pass-through explicitly. A
+pass-through is a regime of that stage with the same states as the regime it stands for,
+one action, no shock and zero utility, whose edge lands in that regime, so that its
+value is the regime's value handed through; let the refused edge land in the
+pass-through instead.
+
+- `period` and `age` are the period's wherever the model reads them: in functions,
+  constraints and conditions, laws, gates, composition actions and transfers, Pareto
+  weights and shock laws. A condition that reads `period` then offers a solver no
+  structure, as one built with `Condition.from_callable` does. `TimeVarying` and other
+  time-indexed parameters are indexed by period, and the simulated frame has a `stage`
+  column next to `period`.
+- A regime decides in its own stage of every period, so a selector that names only the
+  final period is refused for a regime of the last stage, where no transition happens.
+  The regime finder does not analyse a model with stages.
+
+Two players who move in turn are one regime per stage. Each regime has both players as
+members and a `ParetoObjective` that puts the whole Pareto weight on the player who
+moves. The deciding member maximizes its own value. The other member's value follows the
+deciding member's choice.
+
+The engine solves one step per pair of a period and a stage. `model.n_periods` counts
+periods and `model.n_steps` counts steps. The solution's values, its accessors
+(`solution.value(step=..., regime=...)`) and the raw simulation results are keyed by
+step, `2 * period` for `work` and `2 * period + 1` for `spend` above.
+`model.step_of(period=..., regime_name=...)` gives the step of a period and regime, and
+`model.period_of_step(step=...)` and `model.stage_of_step(step=...)` give a step's
+period and stage name. `Model` methods that take `period=`, such as `lookup_policy` and
+`state_grid`, take the period and find the regime's step themselves. Without `stages`
+every period has one stage, and a step is a period.
+
+## Economic profiles
 
 For a labelled economic profile, use an explicit mapping:
 
@@ -156,7 +245,7 @@ profile = TimeVarying.from_profile(
 )
 ```
 
-This returns period-labelled values `[10, 10, 20, 20]`. The two stages in each quarter
+This returns period-labelled values `[10, 10, 20, 20]`: the two periods of each quarter
 deliberately share a source value. A missing mapped source label or a duplicate selected
 source label is an error; unused source rows are ignored. The numeric gather preserves
 derivatives with respect to the profile's values. The helper assigns neither elapsed

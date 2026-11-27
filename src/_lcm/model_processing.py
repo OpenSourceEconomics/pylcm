@@ -48,6 +48,7 @@ from _lcm.regime_building.broadcast import (
     root_functions,
     states_read_through_their_draw,
 )
+from _lcm.regime_building.collective import member_name
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.phases import (
@@ -451,7 +452,7 @@ def validate_model_inputs(
     `ages` lets the used-variable check resolve `AgeSpecializedFunction` functions at
     each regime's representative age, so a state read only by a policy-specialized
     function still counts as used. A marker only the simulate phase reads is
-    resolved at the first of `visited_periods_by_regime`, where a subject can be;
+    resolved at the first of `visited_periods_by_regime`, where an agent can be;
     they default to the active periods.
 
     `targets_by_phase` names, per phase and regime, the targets the model graph
@@ -627,9 +628,7 @@ def _validate_function_usage(
         direct.update(regime.derived_categoricals)
         direct.add("utility")
         direct.update(
-            ("utility",)
-            if regime.member_axis is None
-            else tuple(f"utility_{member}" for member in regime.member_axis)
+            member_name(base="utility", member=member) for member in regime.members
         )
         for phase in ("solve", "simulate"):
             functions = dict(complete.get_all_functions(phase=phase, law=laws[name]))
@@ -654,7 +653,7 @@ def _validate_function_usage(
             if phase == "simulate" and visited_periods_by_regime is not None:
                 periods = visited_periods_by_regime.get(name, ())
             coordinate = specialization_coordinate_at(
-                ages=ages, period=(periods or (0,))[0]
+                ages=ages, step=(periods or (0,))[0]
             )
             for func in functions.values():
                 if not periods and isinstance(func, AgeSpecializedFunction):
@@ -865,7 +864,7 @@ def _validate_all_variables_used(
         active_periods_by_regime: The per-regime coverage.
         targets_by_phase: Per phase and regime, the targets the model graph
             reaches at the demanded periods.
-        visited_periods_by_regime: Per regime, the periods a subject can be in
+        visited_periods_by_regime: Per regime, the periods an agent can be in
             it, where a simulate-only marker is resolved.
         removed_edge_reads: Per regime, each state or action read by a
             declaration removed with its fixed-zero edge, and the targets of
@@ -928,10 +927,10 @@ def _validate_all_variables_used(
                 else visited_periods_by_regime.get(regime_name, ())
             ) or active_periods
             representative_age = specialization_coordinate_at(
-                ages=ages, period=active_periods[0]
+                ages=ages, step=active_periods[0]
             )
             simulated_age = specialization_coordinate_at(
-                ages=ages, period=visited_periods[0]
+                ages=ages, step=visited_periods[0]
             )
             user_functions = {
                 name: resolve_node(
@@ -1223,7 +1222,7 @@ def _validate_constraint_phase_invariance(
         active_periods = active_periods_by_regime.get(regime_name, ())
         if active_periods:
             representative_age = specialization_coordinate_at(
-                ages=ages, period=active_periods[0]
+                ages=ages, step=active_periods[0]
             )
             ancestry_funcs = {
                 name: resolve_node(node=func, age=representative_age)
@@ -1383,10 +1382,10 @@ def _partial_fixed_params_into_regimes(
                 for period, kernel in regime.solution.period_kernels.items()
             }
         )
-        bound_exit_queries = MappingProxyType(
+        bound_composition_queries = MappingProxyType(
             {
                 period: plan.with_fixed_params(fixed_flat_params=fixed_flat_params)
-                for period, plan in regime.simulation.exit_queries.items()
+                for period, plan in regime.simulation.composition_queries.items()
             }
         )
         if not reachable_fixed:
@@ -1396,7 +1395,7 @@ def _partial_fixed_params_into_regimes(
                     regime.solution, period_kernels=bound_kernels
                 ),
                 simulation=dataclasses.replace(
-                    regime.simulation, exit_queries=bound_exit_queries
+                    regime.simulation, composition_queries=bound_composition_queries
                 ),
             )
             continue
@@ -1446,7 +1445,7 @@ def _partial_fixed_params_into_regimes(
         simulation = regime.simulation
         new_simulate = dataclasses.replace(
             simulation,
-            exit_queries=bound_exit_queries,
+            composition_queries=bound_composition_queries,
             programs=dataclasses.replace(
                 simulation.programs,
                 **{
@@ -1548,7 +1547,7 @@ def _validate_param_types(flat_params: FlatParams) -> None:
 
 
 def fail_if_nonpositive_taste_shock_scale(flat_params: FlatParams) -> None:
-    """Raise if any regime's taste-shock scale is not strictly positive.
+    """Raise if any regime's taste-shock scale is not strictly positive and finite.
 
     Declaring taste shocks means opting into smoothing, so the scale must be
     positive. The hard maximum is the no-taste-shocks model, reached by not
@@ -1558,10 +1557,10 @@ def fail_if_nonpositive_taste_shock_scale(flat_params: FlatParams) -> None:
         if regime_name == EDGES:
             continue
         scale = cast("FlatRegimeParams", regime_params).get(TASTE_SHOCK_SCALE_PARAM)
-        if isinstance(scale, Array) and float(scale) <= 0:
+        if isinstance(scale, Array) and not 0 < float(scale) < jnp.inf:
             msg = (
                 f"The taste-shock scale of regime {regime_name!r} is "
-                f"{float(scale)}, but it must be strictly positive."
+                f"{float(scale)}, but it must be strictly positive and finite."
             )
             raise InvalidParamsError(msg)
 

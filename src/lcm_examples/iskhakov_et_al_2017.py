@@ -140,7 +140,7 @@ def next_regime_from_retirement(*, age: int, final_age_alive: float) -> ScalarIn
     )
 
 
-WEALTH_GRID = LinSpacedGrid(start=1, stop=400, n_points=100)
+WEALTH_GRID = LinSpacedGrid(start=1, stop=400, n_points=100, off_grid="extrapolate")
 CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 
 
@@ -278,8 +278,8 @@ def get_dcegm_model(n_periods: int) -> Model:
     transitions; `get_params` works unchanged), but solved by Euler-equation
     inversion on the exogenous savings grid instead of grid search — no
     consumption grid enters the solve. Forward simulation reads the solved
-    policy at each subject's resources, so simulated consumption need not sit
-    on the consumption grid; a subject whose read is rejected (off the row's
+    policy at each agent's resources, so simulated consumption need not sit
+    on the consumption grid; an agent whose read is rejected (off the row's
     support, outside the budget or infeasible) takes the grid argmax.
 
     Args:

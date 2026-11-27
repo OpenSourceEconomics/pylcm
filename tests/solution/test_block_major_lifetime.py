@@ -3,7 +3,7 @@
 `ExecutionConfig(invariant_block_schedule=InvariantBlockSchedule.BLOCK_MAJOR)`
 solves every component of the blocked state — one code — through all of its
 periods before the next code starts. A combined `simulate` runs that code's
-subjects while its values are still on the device. The component's values are
+agents while its values are still on the device. The component's values are
 then retained on the host and its device buffers are deleted, so the device
 holds one code's lifetime values at a time.
 
@@ -73,7 +73,7 @@ def _config(
     *,
     schedule: InvariantBlockSchedule | None,
     budget: int | None = None,
-    subject_width: int | None = None,
+    agent_width: int | None = None,
     axis_widths: Mapping[str, int] = MappingProxyType({}),
 ) -> ExecutionConfig:
     """Return an execution config: unblocked when `schedule` is `None`."""
@@ -83,7 +83,7 @@ def _config(
         device_memory_bytes=budget,
         axis_widths={
             **axis_widths,
-            **({} if subject_width is None else {"subject": subject_width}),
+            **({} if agent_width is None else {"agent": agent_width}),
         },
     )
 
@@ -102,7 +102,7 @@ def _life_cycle_model(
         ages=model.ages,
         regime_id_class=life_cycle._RegimeId,
         initial_nodes={0: "work"},
-        execution_config=_config(schedule=schedule, budget=budget, subject_width=3),
+        execution_config=_config(schedule=schedule, budget=budget, agent_width=3),
     )
 
 
@@ -169,7 +169,7 @@ def _retained(solution: SolutionResult) -> block_major.RetainedComponentValues:
     values = _store(solution)
     period = next(iter(values))
     regime = next(iter(values[period]))
-    entry = values._raw(period=period, regime=regime)
+    entry = values._raw(step=period, regime=regime)
     owner = getattr(entry, "owner", None)
     assert isinstance(owner, block_major.RetainedComponentValues)
     return owner
@@ -269,7 +269,9 @@ def test_block_major_values_match_the_enumerated_oracle() -> None:
     values = _solution(model=model, params=params).values
 
     np.testing.assert_array_almost_equal(
-        np.stack([np.asarray(values[period]["working"]) for period in (0, 1, 2)]),
+        np.stack(
+            [np.asarray(values[period]["working"])[..., 0] for period in (0, 1, 2)]
+        ),
         np.asarray([oracle[period] for period in (0, 1, 2)]),
         decimal=test_config.DECIMAL_PRECISION,
     )
@@ -304,7 +306,7 @@ def test_inspecting_a_block_major_result_assembles_no_value(
         for regime in solution.values[period]
     }
     states = {
-        _store(solution).load_state(period=period, regime=regime)
+        _store(solution).load_state(step=period, regime=regime)
         for period, regime in coordinates
     }
     schemas = dict(solution.metadata.value_schemas)
@@ -324,10 +326,10 @@ def test_reading_one_value_assembles_only_that_entry_on_its_solve_layout(
     model, params = _workload(name="sector_typed_terminal", schedule=_BLOCK_MAJOR)
     reference, _ = _workload(name="sector_typed_terminal", schedule=_PERIOD_MAJOR)
     solution = _solution(model=model, params=params)
-    want = _solution(model=reference, params=params).value(period=1, regime="working")
+    want = _solution(model=reference, params=params).value(step=1, regime="working")
     assemblies = _Assemblies(monkeypatch=monkeypatch)
 
-    got = solution.value(period=1, regime="working")
+    got = solution.value(step=1, regime="working")
 
     assert assemblies.calls == [(1, "working")]
     assert isinstance(got, jax.Array)
@@ -397,7 +399,7 @@ def _assert_panels_match_the_references(
 
 @pytest.fixture
 def rounding_panel() -> tuple[Model, SimulationResult]:
-    """Return a real one-subject panel for published-result rounding witnesses."""
+    """Return a real one-agent panel for published-result rounding witnesses."""
     model = _life_cycle_model(schedule=None)
     result = _simulate(
         model=model,
@@ -456,7 +458,7 @@ def _create_rounding_panel(
         raw_results=raw,
         regimes=model._regimes,
         flat_params=result.flat_params,
-        period_to_regime_to_V_arr=result.period_to_regime_to_V_arr,
+        step_to_regime_to_V_arr=result.step_to_regime_to_V_arr,
         ages=model.ages,
         simulation_output_dtypes=model.simulation_output_dtypes,
     )
@@ -636,7 +638,7 @@ def test_combined_simulation_matches_the_reference_routes(
 ) -> None:
     """Solving and simulating one code at a time gives the period-major panel.
 
-    A code no subject holds is still solved, so the published solution is
+    A code no agent holds is still solved, so the published solution is
     complete and holds the period-major values.
     """
     params = life_cycle._params(typed_dead=True)
@@ -713,8 +715,8 @@ def test_a_block_major_simulation_result_saves_and_loads_its_values(
     loaded = SimulationResult.load(directory=tmp_path / "result")
 
     _assert_value_bytes_equal(
-        got=loaded.period_to_regime_to_V_arr,
-        want=want.period_to_regime_to_V_arr,
+        got=loaded.step_to_regime_to_V_arr,
+        want=want.step_to_regime_to_V_arr,
         ordered=False,
     )
     assert loaded.to_dataframe().equals(want_frame)
@@ -947,8 +949,8 @@ def test_materializing_every_value_above_the_budget_is_refused_before_upload(
         _store(solution).materialize()
     assert assemblies.calls == []
 
-    value = solution.value(period=0, regime="working")
-    assert value.shape == (6, int(_LONG_WEALTH.n_points))
+    value = solution.value(step=0, regime="working")
+    assert value.shape == (6, int(_LONG_WEALTH.n_points), 1)
     assert assemblies.calls == [(0, "working")]
 
 

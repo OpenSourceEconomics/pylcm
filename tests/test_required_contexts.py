@@ -316,12 +316,12 @@ def test_retirement_solves_to_the_dead_value_under_any_start(
     """Retirement moving along its only edge solves to the dead value."""
     values = _life_model(initial_nodes).solve(params=_PARAMS, log_level="off")
     np.testing.assert_allclose(
-        np.asarray(values.values[4]["retirement"]), np.asarray([0.0, 1.9])
+        np.asarray(values.values[4]["retirement"])[..., 0], np.asarray([0.0, 1.9])
     )
 
 
 def test_late_root_with_an_empty_first_period_simulates() -> None:
-    """With no problem at the first age, subjects start at 65 and die at 75."""
+    """With no problem at the first age, agents start at 65 and die at 75."""
     model = _life_model({65: "retirement"})
     panel = model.simulate(
         params=_PARAMS,
@@ -504,7 +504,7 @@ def _producer_model(initial_nodes: UserInitialNodes) -> Model:
     )
 
 
-def test_a_late_root_keeps_the_producer_of_its_exit_target() -> None:
+def test_a_late_root_keeps_the_producer_of_its_composition_action_target() -> None:
     """A start at 55 still requires the wealth producer into retirement."""
     template = cast(
         "dict[str, UserFacingRegimeParamsTemplate]",

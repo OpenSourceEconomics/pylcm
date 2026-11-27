@@ -5,6 +5,7 @@ from pathlib import Path
 
 from networkx import DiGraph
 
+from _lcm.time import landing_step, period_of_step
 from _lcm.typing import JSONValue
 from _lcm_regime_finder.layout_search import analyze_layouts as _analyze_layouts
 from lcm.model import Model
@@ -88,8 +89,8 @@ def digraph(model: Model, *, phase: Phase | None = None) -> DiGraph:
     declared edges and pruning reasons. Economic functions may differ: both
     phases remain in `graph.graph["declarations"]`, and no function is evaluated.
     Edge `law` metadata retains the complete original bound source law, including
-    any phase variants. Same-period exits and value reads remain declaration
-    metadata, not temporal edges.
+    any phase variants. Same-period composition actions and value reads remain
+    declaration metadata, not temporal edges.
 
     Graph and attribute containers are independent and editable. Declaration,
     callable and grid leaves are shared originals and obey the model's stability
@@ -122,9 +123,7 @@ def digraph(model: Model, *, phase: Phase | None = None) -> DiGraph:
 
     selected_phase = "solve" if phase is None else phase
     temporal = graph.solution if selected_phase == "solve" else graph.simulation
-    clock = (
-        tuple(range(model.n_periods)) if model.ages is None else model.ages.exact_values
-    )
+    clock = model._time.exact_values  # noqa: SLF001
     result = DiGraph(
         phase=phase,
         coordinate_kind=graph.coordinate_kind,
@@ -137,14 +136,17 @@ def digraph(model: Model, *, phase: Phase | None = None) -> DiGraph:
         for regime_name in sorted(regime_names):
             result.add_node(
                 (clock[period], regime_name),
-                period=period,
-                declaration=declarations.regimes_by_period[period][regime_name],
+                period=period_of_step(ages=model._time, step=period),  # noqa: SLF001
+                declaration=declarations.regimes_by_step[period][regime_name],
             )
     for period, targets_by_source in enumerate(temporal.targets_by_period):
         for source in sorted(targets_by_source):
             for target in sorted(targets_by_source[source]):
                 source_node = (clock[period], source)
-                target_node = (clock[period + 1], target)
+                target_node = (
+                    clock[landing_step(ages=model._time, step=period, target=target)],  # noqa: SLF001
+                    target,
+                )
                 # NetworkX otherwise silently admits a missing endpoint.
                 if source_node not in result or target_node not in result:
                     msg = "A temporal edge has an endpoint outside the admitted nodes."
@@ -154,7 +156,7 @@ def digraph(model: Model, *, phase: Phase | None = None) -> DiGraph:
                     target_node,
                     law=graph.laws[source],
                     status=temporal.edge_status(
-                        period=period, source=source, target=target
+                        step=period, source=source, target=target
                     ),
                 )
     return result

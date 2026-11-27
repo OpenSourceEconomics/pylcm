@@ -21,16 +21,17 @@ from _lcm.regime_building.Q_and_F import (
     EDGE_REF_PARAMS_ARG,
     EDGE_REF_V_ARG,
 )
+from _lcm.simulation.agent_groups import type_local_template
 from _lcm.simulation.current_iid_overrides import (
     CurrentIIDOverrideSchema,
     current_iid_override_prototype,
 )
-from _lcm.simulation.operand_placement import subject_operand_sharding
+from _lcm.simulation.operand_placement import agent_operand_sharding
 from _lcm.simulation.policy_programs import ReplayPayload
 from _lcm.simulation.program_arguments import (
     current_iid_arguments,
     decision_arguments,
-    declares_active_subjects,
+    declares_active_agents,
     gate_fold_arguments,
     policy_prepare_arguments,
     policy_rank_arguments,
@@ -41,10 +42,9 @@ from _lcm.simulation.programs import PROFILED_POLICY_ROUTES
 from _lcm.simulation.random_address import scalar_draw_axis
 from _lcm.simulation.runtime import SimulationRuntime
 from _lcm.simulation.shock_paths import supplied_shock_argument_names
-from _lcm.simulation.subject_groups import type_local_template
 from _lcm.simulation.value_placement import simulation_value_sharding
 from _lcm.solution.backward_induction import CompilationWave, _states_for_period
-from _lcm.time import TimeAxis
+from _lcm.time import TimeAxis, step_count
 from _lcm.typing import (
     FlatParams,
     PytreeValue,
@@ -113,7 +113,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
     base_spaces: Mapping[str, StateActionSpace],
     values: Mapping[int, Mapping[str, jax.Array | jax.ShapeDtypeStruct]],
     ages: TimeAxis,
-    n_subjects: int,
+    n_agents: int,
     widths: Mapping[str, int],
     columns: Mapping[str, jax.ShapeDtypeStruct],
     ordinary_key: jax.ShapeDtypeStruct,
@@ -159,18 +159,18 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
         )
     if set(columns) != set(regime.simulation.state_names) or any(
         not isinstance(leaf, jax.ShapeDtypeStruct)
-        or leaf.shape != (n_subjects,)
+        or leaf.shape != (n_agents,)
         or leaf.sharding is None
         for leaf in columns.values()
     ):
         raise ExecutionPlanningError(
             "Forward unit profiles require the complete placed current state carrier."
         )
-    devices = runtime.subject_devices
-    subject = subject_operand_sharding(devices=devices)
-    shared = simulation_value_sharding(stored_sharding=subject, devices=devices)
+    devices = runtime.agent_devices
+    agent = agent_operand_sharding(devices=devices)
+    shared = simulation_value_sharding(stored_sharding=agent, devices=devices)
     current = {
-        state: _placed_abstract(leaf=leaf, sharding=subject)
+        state: _placed_abstract(leaf=leaf, sharding=agent)
         for state, leaf in columns.items()
     }
     states = {state: current[state] for state in base.states}
@@ -185,11 +185,11 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             {
                 target: values[period + 1][target]
                 for target in regime.solution.reachability.targets(
-                    period=period, source=name
+                    step=period, source=name
                 )
             }
         )
-        if period + 1 < ages.n_periods
+        if period + 1 < step_count(ages)
         else MappingProxyType({})
     )
     profiles: dict[str, ForwardProgramProfile] = {}
@@ -234,7 +234,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             program=regime.simulation.programs.gate_fold[period],
             arguments=fold_arguments,
             period=period,
-            n_subjects=n_subjects,
+            n_agents=n_agents,
             widths=widths,
             family="gate_fold",
             regime_name=name,
@@ -257,17 +257,15 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
                 for ref in edge_references
             }
         )
-    subject_key = jax.ShapeDtypeStruct(
-        (n_subjects,), ordinary_key.dtype, sharding=subject
-    )
+    agent_key = jax.ShapeDtypeStruct((n_agents,), ordinary_key.dtype, sharding=agent)
     current_shocks = {}
     decision_key = (
-        jax.ShapeDtypeStruct((n_subjects,), ordinary_key.dtype, sharding=subject)
+        jax.ShapeDtypeStruct((n_agents,), ordinary_key.dtype, sharding=agent)
         if taste_key is None
         else jax.ShapeDtypeStruct(
-            (n_subjects, *scalar_draw_axis(dtype=taste_key.dtype)),
+            (n_agents, *scalar_draw_axis(dtype=taste_key.dtype)),
             taste_key.dtype,
-            sharding=subject,
+            sharding=agent,
         )
     )
     if prepared_decision is not None:
@@ -279,7 +277,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
         decoded = runtime.operations.prepare_abstract(
             function=_lookup_values_from_indices,
             arguments=decoder_arguments,
-            subject_arg_names=("flat_indices",),
+            agent_arg_names=("flat_indices",),
             devices=devices,
         )
         profiles["action_decode"] = ForwardProgramProfile(
@@ -298,7 +296,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
                 profiles=profiles,
                 wave=wave,
                 period=period,
-                n_subjects=n_subjects,
+                n_agents=n_agents,
                 widths=widths,
                 policy=policy,
                 states=current,
@@ -324,10 +322,8 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             }
         )
         arguments = decision_arguments(
-            active_subjects=jax.ShapeDtypeStruct(
-                (n_subjects,), jnp.bool_, sharding=subject
-            )
-            if declares_active_subjects(
+            active_agents=jax.ShapeDtypeStruct((n_agents,), jnp.bool_, sharding=agent)
+            if declares_active_agents(
                 program=regime.simulation.programs.forward_decision[period]
             )
             else None,
@@ -338,9 +334,9 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
                 if regime.simulation.current_iid_draw_plan is None
                 else {
                     name: jax.ShapeDtypeStruct(
-                        (n_subjects, *scalar_draw_axis(dtype=ordinary_key.dtype)),
+                        (n_agents, *scalar_draw_axis(dtype=ordinary_key.dtype)),
                         ordinary_key.dtype,
-                        sharding=subject,
+                        sharding=agent,
                     )
                     for name in regime.simulation.current_iid_draw_plan.physical_names
                 },
@@ -349,8 +345,8 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
                     names=()
                     if regime.simulation.current_iid_draw_plan is None
                     else regime.simulation.current_iid_draw_plan.physical_names,
-                    n_subjects=n_subjects,
-                    sharding=subject,
+                    n_agents=n_agents,
+                    sharding=agent,
                 ),
             ),
             states={
@@ -382,7 +378,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             program=regime.simulation.programs.forward_decision[period],
             arguments=arguments,
             period=period,
-            n_subjects=n_subjects,
+            n_agents=n_agents,
             widths=widths,
             family="decision",
             regime_name=name,
@@ -395,7 +391,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             regime=regime, sim_policy=policy, action_names=base.action_names
         ):
             # Policy-first runs its read before the grid argmax, which still
-            # runs whenever some subject's read is rejected; both are profiled.
+            # runs whenever some agent's read is rejected; both are profiled.
             # Containers mirror `_read_egm_policy_first`'s operands, so dispatch
             # finds this executable under the same producer key.
             policy_first_arguments = {
@@ -415,7 +411,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
                 "period": period_value,
                 "age": age,
                 "in_regime": jax.ShapeDtypeStruct(
-                    (n_subjects,), jnp.bool_, sharding=shared
+                    (n_agents,), jnp.bool_, sharding=shared
                 ),
                 "referenced_value_kwargs": MappingProxyType(
                     dict(_shared_tree(tree=references, devices=devices))
@@ -444,23 +440,21 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
                 "tuple[Mapping[str, jax.ShapeDtypeStruct], ...]", prepared_outputs
             )[2]
         if not states and indices.ndim == 0:
-            indices = jax.ShapeDtypeStruct(
-                (n_subjects,), indices.dtype, sharding=subject
-            )
+            indices = jax.ShapeDtypeStruct((n_agents,), indices.dtype, sharding=agent)
         decoder_arguments = MappingProxyType(
             {
                 "flat_indices": _placed_abstract(
-                    leaf=indices, sharding=subject if indices.ndim else shared
+                    leaf=indices, sharding=agent if indices.ndim else shared
                 ),
                 "grids": _shared_tree(tree=base.actions, devices=devices),
             }
         )
-        subject_arg_names = ("flat_indices",) if indices.ndim else ()
+        agent_arg_names = ("flat_indices",) if indices.ndim else ()
         if wave is None:
             decoded = runtime.operations.prepare_abstract(
                 function=_lookup_values_from_indices,
                 arguments=decoder_arguments,
-                subject_arg_names=subject_arg_names,
+                agent_arg_names=agent_arg_names,
                 devices=devices,
             )
             profiles["decision"] = replace(
@@ -478,7 +472,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
                 runtime.operations.lower_abstract(
                     function=_lookup_values_from_indices,
                     arguments=decoder_arguments,
-                    subject_arg_names=subject_arg_names,
+                    agent_arg_names=agent_arg_names,
                     devices=devices,
                     wave=wave,
                     label=f"{name} action decoder (period {period})",
@@ -489,7 +483,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
         if program is None:
             continue
         keys = (
-            dict(_stochastic_keys(regime=regime, key=subject_key))
+            dict(_stochastic_keys(regime=regime, key=agent_key))
             if family == "transition"
             else {}
         )
@@ -512,9 +506,9 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
                         for target, plan in regime.simulation.transition_plans.items()
                     )
                     keys[argument] = jax.ShapeDtypeStruct(
-                        (n_subjects,),
+                        (n_agents,),
                         np.dtype(np.int32 if integer else canonical_float_dtype()),
-                        sharding=subject,
+                        sharding=agent,
                     )
         arguments = transition_arguments(
             current_shocks=current_shocks,
@@ -541,7 +535,7 @@ def profile_forward_unit(  # noqa: C901, PLR0912, PLR0915
             program=program,
             arguments=arguments,
             period=period,
-            n_subjects=n_subjects,
+            n_agents=n_agents,
             widths=widths,
             family=family,
             regime_name=name,
@@ -559,7 +553,7 @@ def _profile_finite_decision(
     profiles: dict[str, ForwardProgramProfile],
     wave: CompilationWave | None,
     period: int,
-    n_subjects: int,
+    n_agents: int,
     widths: Mapping[str, int],
     policy: SimulationPolicy | None,
     states: Mapping[str, jax.ShapeDtypeStruct],
@@ -593,7 +587,7 @@ def _profile_finite_decision(
             "Finite profiles require canonical policy arrays or their descriptors."
         )
     abstract_payload = jax.tree.map(
-        partial(_abstract_policy_leaf, devices=runtime.subject_devices), payload
+        partial(_abstract_policy_leaf, devices=runtime.agent_devices), payload
     )
     bank = _prepare_program(
         runtime=runtime,
@@ -602,7 +596,7 @@ def _profile_finite_decision(
             payload=abstract_payload, states=states, params=params, age=age
         ),
         period=period,
-        n_subjects=n_subjects,
+        n_agents=n_agents,
         widths=widths,
         family="policy_prepare",
         regime_name=name,
@@ -623,7 +617,7 @@ def _profile_finite_decision(
             references=references,
         ),
         period=period,
-        n_subjects=n_subjects,
+        n_agents=n_agents,
         widths=widths,
         family="decision",
         regime_name=name,
@@ -652,7 +646,7 @@ def _prepare_program(
     program: CoreProgram,
     arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
     period: int,
-    n_subjects: int,
+    n_agents: int,
     widths: Mapping[str, int],
     family: str,
     regime_name: RegimeName,
@@ -678,19 +672,19 @@ def _prepare_program(
             program=program,
             arguments=arguments,
             period=period,
-            n_subjects=n_subjects,
+            n_agents=n_agents,
             widths=widths,
         )
         profiles[family] = profile
         return profile.executable.out_info
     concrete_widths = _concrete_widths(
-        program=program, n_subjects=n_subjects, widths=widths
+        program=program, n_agents=n_agents, widths=widths
     )
     return runtime.lower_abstract(
         program=program,
         arguments=arguments,
         period=period,
-        n_subjects=n_subjects,
+        n_agents=n_agents,
         widths=concrete_widths,
         wave=wave,
         label=(f"{regime_name} {family} (period {period}, widths={concrete_widths!r})"),
@@ -704,7 +698,7 @@ def _profile_program(
     program: CoreProgram,
     arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
     period: int,
-    n_subjects: int,
+    n_agents: int,
     widths: Mapping[str, int],
 ) -> ForwardProgramProfile:
     """Resolve the same declared axes as dispatch at this concrete chunk extent."""
@@ -712,8 +706,8 @@ def _profile_program(
         program=program,
         arguments=arguments,
         period=period,
-        n_subjects=n_subjects,
-        widths=_concrete_widths(program=program, n_subjects=n_subjects, widths=widths),
+        n_agents=n_agents,
+        widths=_concrete_widths(program=program, n_agents=n_agents, widths=widths),
     )
     if compiled.memory is None:
         raise ExecutionPlanningError(
@@ -731,18 +725,16 @@ def _profile_program(
 
 
 def _concrete_widths(
-    *, program: CoreProgram, n_subjects: int, widths: Mapping[str, int]
+    *, program: CoreProgram, n_agents: int, widths: Mapping[str, int]
 ) -> dict[str, int]:
-    """Clamp the chunk's widths to each declared axis at this subject extent."""
+    """Clamp the chunk's widths to each declared axis at this agent extent."""
     return {
         axis.name: min(
-            widths.get(
-                axis.name, n_subjects if axis.name == "subject" else axis.extent
-            ),
-            n_subjects if axis.name == "subject" else axis.extent,
+            widths.get(axis.name, n_agents if axis.name == "agent" else axis.extent),
+            n_agents if axis.name == "agent" else axis.extent,
         )
         for axis in program.requirements.axes
-        if axis.name != "subject" or n_subjects > 1
+        if axis.name != "agent" or n_agents > 1
     }
 
 

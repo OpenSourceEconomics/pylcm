@@ -112,8 +112,8 @@ def test_complete_type_values_follow_the_literal_oracle_in_each_execution_mode(
     # Code order is low/middle/high. Working values are the independently worked
     # literal 3 + 8/2, 1 + 2/2, -2 + 6/2; terminal values are 8, 2, 6.
     expected = (
-        (0, "working", (3,), dtype, np.asarray((7, 2, 1), dtype=dtype).tobytes()),
-        (1, "terminal", (3,), dtype, np.asarray((8, 2, 6), dtype=dtype).tobytes()),
+        (0, "working", (3, 1), dtype, np.asarray((7, 2, 1), dtype=dtype).tobytes()),
+        (1, "terminal", (3, 1), dtype, np.asarray((8, 2, 6), dtype=dtype).tobytes()),
     )
     assert actual == expected
 
@@ -231,14 +231,14 @@ def test_eager_schedules_and_action_partitions_preserve_all_literal_type_values(
             [
                 0,
                 "working",
-                [3],
+                [3, 1],
                 dtype.str,
                 np.asarray((8, 3, 2), dtype=dtype).tobytes().hex(),
             ],
             [
                 1,
                 "terminal",
-                [3],
+                [3, 1],
                 dtype.str,
                 np.asarray((8, 2, 6), dtype=dtype).tobytes().hex(),
             ],
@@ -360,14 +360,14 @@ def test_eager_state_sharded_blocks_preserve_all_literal_type_values(
             [
                 0,
                 "working",
-                [2, 3],
+                [2, 3, 1],
                 dtype.str,
                 np.asarray(((7, 2, 1), (8.5, 3.5, 2.5)), dtype=dtype).tobytes().hex(),
             ],
             [
                 1,
                 "terminal",
-                [2, 3],
+                [2, 3, 1],
                 dtype.str,
                 np.asarray(((8, 2, 6), (9, 3, 7)), dtype=dtype).tobytes().hex(),
             ],
@@ -434,7 +434,7 @@ def test_scalar_block_equals_literal_typewise_bellman_equation(
     for blocked in (False, True):
         result = _model(blocked=blocked).solve(params=params, log_level="off")
         got = np.asarray(result.values[0]["working"])
-        assert got.shape == (3,)
+        assert got.shape == (3, 1)
         assert got.dtype == oracle.dtype
         assert got.tobytes() == oracle.tobytes()
 
@@ -474,5 +474,5 @@ def test_scalar_bound_reads_preserve_type_permutation_and_binary_scaling(
     }
     result = _model(blocked=True).solve(params=params, log_level="off")
     got = np.asarray(result.values[0]["working"])
-    assert (got.shape, got.dtype) == (expected.shape, expected.dtype)
+    assert (got.shape, got.dtype) == ((*expected.shape, 1), expected.dtype)
     assert got.tobytes() == expected.tobytes()

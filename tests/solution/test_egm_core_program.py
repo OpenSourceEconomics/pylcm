@@ -78,7 +78,7 @@ def _build_context(context: OracleContext) -> CoreBuildContext:
     )
 
 
-def test_the_graph_publishes_one_planned_main_program():
+def test_the_graph_publishes_one_planned_main_program() -> None:
     kernel, _ = _kernel()
     graph = core_program_graph(kernel=kernel)
 
@@ -95,7 +95,7 @@ def test_the_graph_publishes_one_planned_main_program():
     }
 
 
-def test_main_publishes_the_value_and_a_one_row_carry():
+def test_main_publishes_the_value_and_a_one_row_carry() -> None:
     kernel, _ = _kernel()
     roles = core_program_graph(kernel=kernel)["main"].output_roles
     assert isinstance(roles, tuple)
@@ -112,7 +112,7 @@ def test_main_publishes_the_value_and_a_one_row_carry():
     assert carry_roles.policy is None
 
 
-def test_the_runtime_call_hands_the_core_exactly_the_builders_arguments():
+def test_the_runtime_call_hands_the_core_exactly_the_builders_arguments() -> None:
     kernel, context = _kernel()
     program = core_program_graph(kernel=kernel)["main"]
     materialized = materialize_core_program(
@@ -134,7 +134,7 @@ def test_the_runtime_call_hands_the_core_exactly_the_builders_arguments():
         )
 
 
-def test_the_builder_refuses_a_law_falling_in_savings():
+def test_the_builder_refuses_a_law_falling_in_savings() -> None:
     kernel, context = _kernel()
     flat_params = _flat_params(
         {
@@ -158,7 +158,7 @@ def test_the_builder_refuses_a_law_falling_in_savings():
         )
 
 
-def test_with_fixed_params_rebinds_the_program_and_its_builder():
+def test_with_fixed_params_rebinds_the_program_and_its_builder() -> None:
     kernel, context = _kernel()
     program = core_program_graph(kernel=kernel)["main"]
     fixed = MappingProxyType(
@@ -170,7 +170,12 @@ def test_with_fixed_params_rebinds_the_program_and_its_builder():
 
     function = bound_program.function
     assert isinstance(function, functools.partial)
-    assert function.func is program.function
+    assert isinstance(program.function, functools.partial)
+    assert function.func is program.function.func
+    assert (
+        function.keywords["_member_axis_core"]
+        is program.function.keywords["_member_axis_core"]
+    )
     assert function.keywords["crra"] == 2.0
     assert bound_program.argument_builder is not program.argument_builder
     free_arguments = materialize_core_program(
@@ -218,7 +223,7 @@ def _flat_params(
 
 def test_a_replay_lowers_the_program_the_solve_ran(
     *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-):
+) -> None:
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", f"{_REGIME}@{_PERIOD}")
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
     solution = _model(solver=EGM(savings_grid=_SAVINGS_GRID)).solve(
@@ -245,7 +250,7 @@ def test_a_replay_lowers_the_program_the_solve_ran(
     )
 
 
-def test_the_kernel_runs_under_jit_from_its_declared_program():
+def test_the_kernel_runs_under_jit_from_its_declared_program() -> None:
     """The declared program, jitted on the builder's arguments, is the period solve."""
     kernel, context = _kernel()
     program = core_program_graph(kernel=kernel)["main"]
@@ -282,7 +287,7 @@ def _single_liquid_nbegm_graph() -> Mapping[str, CoreProgram]:
     return core_program_graph(kernel=kernel)
 
 
-def test_a_single_liquid_nbegm_kernel_declares_its_feasibility_breakpoints():
+def test_a_single_liquid_nbegm_kernel_declares_its_feasibility_breakpoints() -> None:
     """The one-row kernel NB-EGM builds for a single liquid axis publishes the same
     graph, with a breakpoints row for the feasibility boundaries its carry carries."""
     graph = _single_liquid_nbegm_graph()
@@ -297,7 +302,7 @@ def test_a_single_liquid_nbegm_kernel_declares_its_feasibility_breakpoints():
     assert carry_roles.policy is None
 
 
-def test_a_single_liquid_nbegm_kernel_declares_the_rows_its_arguments_carry():
+def test_a_single_liquid_nbegm_kernel_declares_the_rows_its_arguments_carry() -> None:
     """The dense NB-EGM route pairs carry row to argument exactly as plain EGM does."""
     program = _single_liquid_nbegm_graph()["main"]
 

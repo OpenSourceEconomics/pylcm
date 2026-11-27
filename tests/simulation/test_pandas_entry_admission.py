@@ -56,7 +56,7 @@ def test_dataframe_uploads_pass_through_numeric_admission(
         result = model.simulate(
             params=params, initial_conditions=frame, log_level="off"
         )
-        assert result.n_subjects == count
+        assert result.n_agents == count
         observed = result.to_dataframe().query("period == 0")
         np.testing.assert_array_equal(observed["wealth"].to_numpy(), frame["wealth"])
     else:

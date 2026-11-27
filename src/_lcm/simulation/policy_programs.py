@@ -24,8 +24,8 @@ from _lcm.execution.value_transfer import (
     ValueConsumerAddress,
     ValueInputChannel,
 )
-from _lcm.simulation.program_types import subject_axis
-from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
+from _lcm.simulation.program_types import agent_axis
+from _lcm.simulation.programs import _AgentTiled, _ArgumentsBoundAtDispatch
 from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.solution.feasibility import BoundedResult
 from _lcm.typing import (
@@ -113,7 +113,7 @@ def declare_finite_replay_programs(regime: Regime) -> Regime:
         preparation[period] = _program(
             name=POLICY_PREPARE,
             body=_Prepare(regime=regime, period=period),
-            subject_names=("states",),
+            agent_names=("states",),
             state_names=regime.simulation.state_names,
             reads=payload_reads,
             roles=(
@@ -140,7 +140,7 @@ def declare_finite_replay_programs(regime: Regime) -> Regime:
                 period=period,
                 reference_names=reference_names,
             ),
-            subject_names=("bank", "canonical_states"),
+            agent_names=("bank", "canonical_states"),
             state_names=regime.simulation.state_names,
             reads=(
                 *value_reads,
@@ -186,7 +186,7 @@ def _program(
     *,
     name: str,
     body: Callable[..., PytreeValue],
-    subject_names: tuple[str, ...],
+    agent_names: tuple[str, ...],
     state_names: tuple[StateName, ...],
     reads: tuple[ValueRead, ...],
     roles: OutputRoleTree,
@@ -194,16 +194,16 @@ def _program(
 ) -> CoreProgram:
     return CoreProgram(
         name=name,
-        function=_SubjectTiled(
+        function=_AgentTiled(
             func=body,
-            subject_arg_names=subject_names,
+            agent_arg_names=agent_names,
             n_bound_records=n_bound_records,
         ),
         argument_builder=_ArgumentsBoundAtDispatch(
-            program_name=name, subject_arg_names=subject_names
+            program_name=name, agent_arg_names=agent_names
         ),
         requirements=CoreExecutionRequirements(
-            tiled_axes=(subject_axis(state_names=state_names),), value_reads=reads
+            tiled_axes=(agent_axis(state_names=state_names),), value_reads=reads
         ),
         output_roles=roles,
         disposition=CoreExecutionDisposition.PLANNED,

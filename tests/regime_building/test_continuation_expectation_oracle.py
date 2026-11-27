@@ -397,7 +397,8 @@ def _oracle(
 def _solved_alive_values(*, model: Model, solution: SolutionResult) -> np.ndarray:
     names = model.state_names(regime_name="alive")
     return np.transpose(
-        np.asarray(solution.values[0]["alive"]), [names.index(name) for name in _AXES]
+        np.asarray(solution.values[0]["alive"])[..., 0],
+        [names.index(name) for name in _AXES],
     )
 
 

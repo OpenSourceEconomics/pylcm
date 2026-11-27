@@ -11,7 +11,7 @@ Each candidate passes through three gates, in order:
 - **Resolved widths.** A candidate whose solve compiles exactly the programs,
   at exactly the widths, the baseline's does is *inactive*: it cannot run
   differently, so it is neither gated nor timed.
-- **Output equivalence.** Every value array is compared, keyed by period and
+- **Output equivalence.** Every value array is compared, keyed by step and
   regime, against the baseline's. Exact equality is the default; a declared
   ULP allowance admits a gap up to the baseline's own A/A gap plus that
   allowance. Finite masks and signed infinities must match regardless of the
@@ -648,7 +648,7 @@ def _program_text(program: jax.stages.Compiled) -> str:
 def _solve_values(
     *, model: Model, params: UserParams, log_level: LogLevel = "off"
 ) -> MappingProxyType[tuple[int, str], np.ndarray]:
-    """Solve, retaining values only, and return them keyed by period and regime."""
+    """Solve, retaining values only, and return them keyed by step and regime."""
     result = model.solve(
         params=params,
         log_level=log_level,

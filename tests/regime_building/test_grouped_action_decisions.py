@@ -10,10 +10,11 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_equal
 
-from _lcm.solution.action_reduction import HardMaxResult
-from _lcm.solution.action_streaming import build_streaming_max_Q_over_a
+from _lcm.solution.action_reduction import CollectiveHardMaxResult, HardMaxResult
+from _lcm.solution.action_streaming import build_streaming_collective_max_Q_over_a
 from _lcm.utils.dispatchers import tiled_productmap
 from lcm.typing import BoolND, FloatND, IntND
+from tests.single_member import SELF, with_member_axis
 
 
 def _decision_Q_and_F(
@@ -28,13 +29,27 @@ def _decision_Q_and_F(
 def _decision_cell(
     *, region: IntND, sector: IntND, wealth: FloatND, choice: IntND
 ) -> HardMaxResult:
-    """Publish value, global action identity, and feasibility from one scalar state."""
-    streamed = build_streaming_max_Q_over_a(
-        Q_and_F=_decision_Q_and_F, action_names=("choice",), block_width=3
+    """Publish value, global action identity, and feasibility from one scalar state.
+
+    The single is the household of its one member `"self"`; the float32 weight
+    keeps the objective at the value's float32.
+    """
+    streamed = build_streaming_collective_max_Q_over_a(
+        publishes_identity=True,
+        Q_and_F=with_member_axis(_decision_Q_and_F),
+        action_names=("choice",),
+        block_width=3,
+        members=SELF,
+        weights={"self": jnp.float32(1.0)},
     )
-    return cast(
-        "HardMaxResult",
+    result = cast(
+        "CollectiveHardMaxResult",
         streamed(region=region, sector=sector, wealth=wealth, choice=choice),
+    )
+    return HardMaxResult(
+        best_value=result.best_member_values[..., 0],
+        best_global_action_id=result.best_global_action_id,
+        any_feasible=result.any_feasible,
     )
 
 

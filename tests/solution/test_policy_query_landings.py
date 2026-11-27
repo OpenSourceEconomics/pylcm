@@ -303,8 +303,8 @@ def test_physical_replay_keeps_checked_landing_counts_after_query_reduction(
             log_level="off",
             runtime_checks=False,
         ).to_dataframe()
-        source = frame.loc[frame["period"] == 0].sort_values("subject_id")
-        destination = frame.loc[frame["period"] == 1].sort_values("subject_id")
+        source = frame.loc[frame["period"] == 0].sort_values("agent_id")
+        destination = frame.loc[frame["period"] == 1].sort_values("agent_id")
         np.testing.assert_array_equal(source["action"], 1)
         np.testing.assert_array_equal(destination["wealth"], 1)
         np.testing.assert_array_almost_equal(

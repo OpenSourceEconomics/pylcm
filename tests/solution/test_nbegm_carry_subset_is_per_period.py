@@ -8,13 +8,14 @@ Filtering to the union would hand each core carries it never indexes.
 
 import pytest
 
+from lcm import Model
 from tests.test_models import nbegm_jump_ride_along_toy as toy
 
 _REGIME = "alive"
 
 
 @pytest.fixture(scope="module")
-def model():
+def model() -> Model:
     """A ride-along NB-EGM model whose reachable target set varies by period."""
     return toy.build_model(
         variant="nbegm",
@@ -27,7 +28,9 @@ def model():
     )
 
 
-def test_the_toy_reaches_different_targets_in_different_periods(model):
+def test_the_toy_reaches_different_targets_in_different_periods(
+    model: Model,
+) -> None:
     """The union of reachable targets is strictly wider than any single period's.
 
     Without this the carry-subset invariant below would hold trivially.
@@ -35,22 +38,24 @@ def test_the_toy_reaches_different_targets_in_different_periods(model):
     reachability = model.reachability.solution
     union = set(reachability.union_targets(source=_REGIME))
     per_period = [
-        set(reachability.targets(period=period, source=_REGIME))
+        set(reachability.targets(step=period, source=_REGIME))
         for period in model._regimes[_REGIME].solution.period_kernels
     ]
     assert all(targets < union for targets in per_period)
 
 
-def test_each_period_kernel_carries_exactly_its_own_periods_targets(model):
+def test_each_period_kernel_carries_exactly_its_own_periods_targets(
+    model: Model,
+) -> None:
     """A period's carry set is that period's reachable targets, not the union."""
     reachability = model.reachability.solution
     period_kernels = model._regimes[_REGIME].solution.period_kernels
     carried = {
-        period: set(kernel.stateful_targets)
+        period: set(kernel.stateful_targets)  # ty: ignore[unresolved-attribute]
         for period, kernel in period_kernels.items()
     }
     expected = {
-        period: set(reachability.targets(period=period, source=_REGIME))
+        period: set(reachability.targets(step=period, source=_REGIME))
         for period in period_kernels
     }
     assert carried == expected

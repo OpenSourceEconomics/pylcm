@@ -31,6 +31,7 @@ from lcm.typing import (
     FloatND,
     Period,
     ScalarInt,
+    UserParamsNode,
 )
 from lcm_examples.mortality import (
     RETIREMENT_LAW,
@@ -122,7 +123,7 @@ def next_partner(
 
 # Smaller grids than the base mortality model to keep solve time manageable with the
 # additional stochastic states (health, partner).
-WEALTH_GRID = LinSpacedGrid(start=1, stop=100, n_points=100)
+WEALTH_GRID = LinSpacedGrid(start=1, stop=100, n_points=100, off_grid="extrapolate")
 CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=100, n_points=200)
 
 working_life = _base_working_life.replace(
@@ -211,13 +212,13 @@ def build_model(
 
 def get_params(
     *,
-    n_periods,
-    discount_factor=0.95,
-    disutility_of_work=0.5,
-    interest_rate=0.05,
-    wage=10.0,
-    probs_array=None,
-):
+    n_periods: int,
+    discount_factor: float = 0.95,
+    disutility_of_work: float = 0.5,
+    interest_rate: float = 0.05,
+    wage: float = 10.0,
+    probs_array: FloatND | None = None,
+) -> dict[str, UserParamsNode]:
     default_probs_array = jnp.array(
         [
             # Transition from period 0 to period 1

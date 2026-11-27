@@ -25,7 +25,7 @@ from numpy.testing import assert_allclose
 
 from _lcm.probability import is_live
 from _lcm.regime_building.zero_safe import zero_safe_average
-from _lcm.zero_safe import _largest_selected
+from _lcm.zero_safe import _largest_selected, scaled_lottery_mean
 from lcm.certainty_equivalent import LinearExpectation
 from lcm.typing import FloatND, IntND
 from tests.conftest import DECIMAL_PRECISION
@@ -223,7 +223,7 @@ def test_scaled_average_keeps_a_finite_mean_when_its_numerator_overflows(
     assert_allclose(result, expected, rtol=10.0**-DECIMAL_PRECISION)
 
 
-def test_zero_safe_average_prices_a_downscaled_node_against_a_near_max_value():
+def test_zero_safe_average_prices_a_downscaled_node_against_a_near_max_value() -> None:
     """A node whose scale keeps it in range is priced, not sent to infinity.
 
     Both nodes here carry probability `2**-8`, so the mean is half the larger
@@ -245,7 +245,7 @@ def test_zero_safe_average_prices_a_downscaled_node_against_a_near_max_value():
     assert_allclose(result, largest / 2, rtol=10.0**-DECIMAL_PRECISION)
 
 
-def test_zero_safe_average_prices_a_downscaled_node_along_a_reduced_axis():
+def test_zero_safe_average_prices_a_downscaled_node_along_a_reduced_axis() -> None:
     """The same holds when the average reduces one axis of a larger array.
 
     Each row carries the two nodes at equal probability, so each row's mean is
@@ -265,3 +265,56 @@ def test_zero_safe_average_prices_a_downscaled_node_along_a_reduced_axis():
         jnp.asarray([largest / 2, largest / 8]),
         rtol=10.0**-DECIMAL_PRECISION,
     )
+
+
+def _dtype_tiny() -> float:
+    return float(np.finfo(np.dtype(jnp.asarray(1.0).dtype)).tiny)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize(
+    ("values", "coefficients", "expected"),
+    [
+        pytest.param((1.0, np.inf), (1.0, 1.0), np.inf, id="live-infinity"),
+        pytest.param((-np.inf, np.inf), (1.0, 1.0), np.nan, id="opposite-infinities"),
+        pytest.param((1.0, np.nan), (1.0, 1.0), np.nan, id="live-nan-value"),
+        pytest.param((1.0, np.nan), (1.0, 0.0), 1.0, id="null-weight-on-nan"),
+        pytest.param((2.0, -np.inf), (1.0, 0.0), 2.0, id="null-weight-on-infinity"),
+        pytest.param((1.0, 2.0), (1.0, np.nan), np.nan, id="nan-weight"),
+        pytest.param((1.0, 2.0), (1.0, -1.0), np.nan, id="negative-weight"),
+        pytest.param((1.0, 2.0), (1.0, np.inf), np.nan, id="infinite-weight"),
+        pytest.param((1.0, 2.0), (0.0, 0.0), np.nan, id="no-live-node"),
+        pytest.param((1.0, -1.0), (1.0, 1.0), 0.0, id="exact-cancellation"),
+        pytest.param((0.0, 4.0), (1.0, 1.0), 2.0, id="zero-value"),
+        pytest.param(("tiny", "tiny/2"), (1.0, 1.0), "3tiny/4", id="subnormal-mean"),
+    ],
+)
+def test_scaled_lottery_mean_at_the_edges_of_the_format(
+    *,
+    values: tuple[float | str, ...],
+    coefficients: tuple[float, ...],
+    expected: float | str,
+    enable_jit: bool,
+) -> None:
+    """Infinite, NaN, null, invalid and subnormal rows have their exact means."""
+    tiny = _dtype_tiny()
+    named = {"tiny": tiny, "tiny/2": tiny / 2, "3tiny/4": 0.75 * tiny}
+    dtype = jnp.asarray(1.0).dtype
+    host_values = np.asarray([named.get(v, v) for v in values], dtype=dtype)
+    expected_value = np.asarray(named.get(expected, expected), dtype=dtype)
+    assert expected_value != 0 or expected == 0.0
+
+    def mean(*, values: FloatND, coefficients: FloatND) -> FloatND:
+        return scaled_lottery_mean(
+            values=values,
+            coefficients=coefficients,
+            shifts=jnp.zeros(values.shape, dtype=jnp.int32),
+        )[0]
+
+    evaluate = jax.jit(mean) if enable_jit else mean
+    actual = evaluate(
+        values=jnp.asarray(host_values),
+        coefficients=jnp.asarray(coefficients, dtype=dtype),
+    )
+
+    np.testing.assert_array_equal(np.asarray(actual), expected_value)

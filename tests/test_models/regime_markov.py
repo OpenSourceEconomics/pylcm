@@ -38,7 +38,7 @@ def _next_regime_probs(
 alive = UserRegime(
     states={
         "health": DiscreteGrid(category_class=Health),
-        "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
+        "wealth": LinSpacedGrid(start=0, stop=100, n_points=5, off_grid="extrapolate"),
     },
     state_transitions={
         "health": fixed_transition("health"),

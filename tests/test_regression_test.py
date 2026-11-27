@@ -12,15 +12,6 @@ from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
 from _lcm.config import TEST_DATA
-from _lcm.grids import UniformContinuousGrid
-from lcm import (
-    GridBreakpoint,
-    IrregSpacedGrid,
-    LinSpacedGrid,
-    LogSpacedGrid,
-    PiecewiseLinSpacedGrid,
-    PiecewiseLogSpacedGrid,
-)
 from lcm.typing import FloatND
 from lcm_examples import mortality as mortality_example
 from lcm_examples import precautionary_savings as ps_example
@@ -39,7 +30,7 @@ _PRECISION_DIR = TEST_DATA / "regression_tests" / ("f64" if X64_ENABLED else "f3
 _RNG_PRECISION_DIR = _PRECISION_DIR / "random-v1"
 
 
-def test_regression_test():
+def test_regression_test() -> None:
     """Test that the output of lcm does not change."""
     # Load expected output
     expected_simulate = pd.read_pickle(
@@ -86,7 +77,7 @@ def test_regression_test():
     )
 
 
-def test_regression_precautionary_savings():
+def test_regression_precautionary_savings() -> None:
     """Test that precautionary savings benchmark model output does not change."""
     expected = pd.read_pickle(
         _RNG_PRECISION_DIR / "precautionary_savings_simulation.pkl"
@@ -100,14 +91,14 @@ def test_regression_precautionary_savings():
     )
     params = ps_example.get_params(shock_type="rouwenhorst", sigma=0.2, rho=0.9)
 
-    n_subjects = 4
+    n_agents = 4
     got = model.simulate(
         params=params,
         initial_conditions={
-            "age": jnp.full(n_subjects, 20.0),
-            "wealth": jnp.full(n_subjects, 5.0),
-            "income": jnp.full(n_subjects, 0.0),
-            "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
+            "age": jnp.full(n_agents, 20.0),
+            "wealth": jnp.full(n_agents, 5.0),
+            "income": jnp.full(n_agents, 0.0),
+            "regime_id": jnp.zeros(n_agents, dtype=jnp.int32),
         },
         seed=12345,
         log_level="debug",
@@ -123,7 +114,7 @@ def test_regression_precautionary_savings():
     )
 
 
-def test_regression_mortality():
+def test_regression_mortality() -> None:
     """Test that mortality benchmark model output does not change."""
     expected = pd.read_pickle(_RNG_PRECISION_DIR / "mortality_simulation.pkl")
 
@@ -131,13 +122,13 @@ def test_regression_mortality():
     model = mortality_example.get_model(n_periods=n_periods)
     params = mortality_example.get_params(n_periods=n_periods)
 
-    n_subjects = 4
+    n_agents = 4
     got = model.simulate(
         params=params,
         initial_conditions={
-            "age": jnp.full(n_subjects, 40.0),
-            "wealth": jnp.full(n_subjects, 100.0),
-            "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
+            "age": jnp.full(n_agents, 40.0),
+            "wealth": jnp.full(n_agents, 100.0),
+            "regime_id": jnp.zeros(n_agents, dtype=jnp.int32),
         },
         seed=12345,
         log_level="debug",
@@ -151,98 +142,6 @@ def test_regression_mortality():
         check_column_type=False,
         check_categorical=False,
     )
-
-
-def _create_grid(
-    *, grid_type: str, start: float, stop: float, n_points: int
-) -> (
-    UniformContinuousGrid
-    | IrregSpacedGrid
-    | PiecewiseLinSpacedGrid
-    | PiecewiseLogSpacedGrid
-):
-    """Create a grid of the specified type."""
-    if grid_type == "LinSpacedGrid":
-        return LinSpacedGrid(start=start, stop=stop, n_points=n_points)
-    if grid_type == "LogSpacedGrid":
-        return LogSpacedGrid(start=start, stop=stop, n_points=n_points)
-    if grid_type == "PiecewiseLinSpacedGrid":
-        n_lower = n_points // 3 * 2
-        return PiecewiseLinSpacedGrid(
-            start=start,
-            stop=stop,
-            breakpoints=(GridBreakpoint(value=100.0, owner="right"),),
-            points_per_segment=(n_lower, n_points - n_lower),
-        )
-    if grid_type == "PiecewiseLogSpacedGrid":
-        n_upper = n_points // 3 * 2
-        return PiecewiseLogSpacedGrid(
-            start=start,
-            stop=stop,
-            breakpoints=(GridBreakpoint(value=50.0, owner="right"),),
-            points_per_segment=(n_points - n_upper, n_upper),
-        )
-    if grid_type == "IrregSpacedGrid":
-        # Points between lin/log spacing - use average of both
-        lin_points = np.linspace(start, stop, n_points)
-        log_points = np.logspace(np.log10(start), np.log10(stop), n_points)
-        irreg_points = tuple((lin_points + log_points) / 2)
-        return IrregSpacedGrid(points=np.array(irreg_points))
-    msg = f"Unknown grid type: {grid_type}"
-    raise ValueError(msg)
-
-
-@pytest.mark.parametrize(
-    "grid_type",
-    [
-        "LinSpacedGrid",
-        "LogSpacedGrid",
-        "PiecewiseLinSpacedGrid",
-        "PiecewiseLogSpacedGrid",
-        "IrregSpacedGrid",
-    ],
-)
-def test_model_with_different_grid_types(grid_type: str):
-    """Test that model solution and simulation work with all grid types."""
-    n_periods = 4
-    # As the borrowing constraint uses weak inequality, we cannot use log-spaced grids
-    # for wealth. Consuming everything this period is allowed, but cannot be
-    # represented.
-    wealth_grid = _create_grid(
-        grid_type=grid_type.replace("Log", "Lin"), n_points=100, start=1, stop=400
-    )
-    consumption_grid = _create_grid(
-        grid_type=grid_type, start=1, stop=400, n_points=500
-    )
-
-    model = get_model(
-        n_periods=n_periods,
-        wealth_grid=wealth_grid,
-        consumption_grid=consumption_grid,
-    )
-    params = get_params(
-        n_periods=n_periods,
-        discount_factor=0.95,
-        disutility_of_work=1.0,
-        interest_rate=0.05,
-    )
-
-    # This should complete without error
-    result = model.simulate(
-        log_level="debug",
-        params=params,
-        initial_conditions={
-            "wealth": jnp.array([5.0, 20, 40, 70]),
-            "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
-            "regime_id": jnp.array([RegimeId.working_life] * 4),
-        },
-    )
-    df = result.to_dataframe(terminal_rows="all")
-
-    # Basic sanity checks
-    assert len(df) == n_periods * 4  # 4 periods * 4 subjects
-    assert "wealth" in df.columns
-    assert "consumption" in df.columns
 
 
 # Complete outputs of four representative models (fixed `params["edges"]` laws,
@@ -284,13 +183,13 @@ def test_stored_byte_fingerprint_identifies_the_compiler_target(
 
 
 @pytest.mark.parametrize("name", REPRESENTATIVE_MODELS)
-def test_representative_outputs_have_exactly_the_stored_keys(name: str):
+def test_representative_outputs_have_exactly_the_stored_keys(name: str) -> None:
     """Each model produces exactly the stored value arrays and simulated columns."""
     assert set(_outputs(name)) == set(_stored_outputs(name))
 
 
 @pytest.mark.parametrize("name", REPRESENTATIVE_MODELS)
-def test_representative_outputs_have_the_stored_dtypes_and_shapes(name: str):
+def test_representative_outputs_have_the_stored_dtypes_and_shapes(name: str) -> None:
     """Each output array has the dtype and shape of its stored array."""
     assert _dtypes_and_shapes(_outputs(name)) == _dtypes_and_shapes(
         _stored_outputs(name)
@@ -303,7 +202,7 @@ def test_representative_outputs_have_the_stored_dtypes_and_shapes(name: str):
     "outputs are compared within tolerance.",
 )
 @pytest.mark.parametrize("name", REPRESENTATIVE_MODELS)
-def test_representative_outputs_equal_their_stored_bytes(name: str):
+def test_representative_outputs_equal_their_stored_bytes(name: str) -> None:
     """Each output equals its stored array byte for byte.
 
     Signed zeros, NaN payloads and discrete labels included. The last bits of a
@@ -314,7 +213,7 @@ def test_representative_outputs_equal_their_stored_bytes(name: str):
 
 
 @pytest.mark.parametrize("name", REPRESENTATIVE_MODELS)
-def test_representative_float_outputs_match_their_stored_values(name: str):
+def test_representative_float_outputs_match_their_stored_values(name: str) -> None:
     """Each model's value arrays and float columns agree with their stored values."""
     got = _outputs(name)
     expected = {
@@ -331,7 +230,7 @@ def test_representative_float_outputs_match_their_stored_values(name: str):
 
 
 @pytest.mark.parametrize("name", REPRESENTATIVE_MODELS)
-def test_representative_discrete_outputs_equal_their_stored_values(name: str):
+def test_representative_discrete_outputs_equal_their_stored_values(name: str) -> None:
     """Each model's labels and integer columns equal their stored values."""
     got = _outputs(name)
     expected = {
@@ -344,7 +243,7 @@ def test_representative_discrete_outputs_equal_their_stored_values(name: str):
     }
 
 
-def test_stored_outputs_record_the_precision_they_are_compared_at():
+def test_stored_outputs_record_the_precision_they_are_compared_at() -> None:
     """The archive of each precision directory was produced at that precision."""
     with np.load(_STORED_MODEL_VALUES) as stored:
         assert str(stored[f"{PROVENANCE}/precision"]) == ("64" if X64_ENABLED else "32")

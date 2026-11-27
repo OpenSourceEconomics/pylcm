@@ -27,6 +27,7 @@ from typing import cast, no_type_check
 import jax.numpy as jnp
 from dags import get_annotations, get_free_arguments
 
+from _lcm.constraints.ir import Opaque
 from _lcm.dtypes import name_of
 from _lcm.gated_edge import GatedEdge
 from _lcm.grids import Grid
@@ -75,10 +76,28 @@ class UnreadableProcessCode:
     """Why the reading regime has no node position to give."""
 
 
+@dataclass(frozen=True, kw_only=True)
+class StageClock:
+    """The clock a user function's `period` is read through in a staged model.
+
+    The engine runs over steps, the stages of each period in turn; a user function
+    reads the period of the step.
+    """
+
+    n_stages: int
+    """Number of stages in every period."""
+
+    def decode(self, step: ValueND) -> ValueND:
+        """Return the period of `step`."""
+        return step // self.n_stages
+
+
 # The grid a user function's argument is read through: a discrete grid, whose
-# code the engine holds, or the reading regime's process, whose node value the
-# engine holds.
-type AdapterGrid = DiscreteGrid | _ContinuousStochasticProcess | UnreadableProcessCode
+# code the engine holds, the reading regime's process, whose node value the
+# engine holds, or the clock of a staged model, whose step the engine holds.
+type AdapterGrid = (
+    DiscreteGrid | _ContinuousStochasticProcess | UnreadableProcessCode | StageClock
+)
 
 # The suffix of an argument that reads the code of a discrete variable.
 CODE_SUFFIX = "_code"
@@ -559,7 +578,9 @@ def adapt_user_function(
             _ContinuousStochasticProcess | UnreadableProcessCode,
         )
     }
-    if not decoded and not codes and encode is None:
+    clock = value_grids.get("period") if "period" in reads else None
+    clock = clock if isinstance(clock, StageClock) else None
+    if not decoded and not codes and encode is None and clock is None:
         return func
     _fail_if_a_position_has_no_node(func=func, positions=positions, codes=codes)
     # The key covers every constructor input, so an equal key means equal
@@ -583,6 +604,7 @@ def adapt_user_function(
             cast("dict[str, _ContinuousStochasticProcess]", positions)
         ),
         encode=encode,
+        clock=clock,
     )
     if adapters is not None:
         # The adapter holds the function and every keyed grid, so no keyed id
@@ -667,7 +689,7 @@ def adapt_collective_utility(
     value_grids: Mapping[StateOrActionName, AdapterGrid],
     adapters: AdapterMemo,
 ) -> CollectiveUtility:
-    """Return the household declaration with the bodies the engine runs.
+    """Return the collective utility declaration with the bodies the engine runs.
 
     Each member's body is the adapted `utility_<s>` the engine holds, so the
     declaration and the engine name one object, and each Pareto weight reads
@@ -787,9 +809,26 @@ def adapt_entry(  # noqa: PLR0911
     """
     # Without value grids nothing changes. A grid declares no function. A
     # condition is a tree of names, not a function; the model refuses one that
-    # reads a value or a code. A household's member bodies
-    # are adapted as the regime's `utility_<s>` functions. An identity law maps
+    # reads a value or a code, and one that reads the period of a staged model
+    # reads it through the clock as a function does, offering a solver no
+    # structure. In a regime with several members, the member bodies are
+    # adapted as the regime's `utility_<s>` functions. An identity law maps
     # codes to codes exactly as it maps values to values.
+    clock = value_grids.get("period")
+    if (
+        isinstance(entry, Condition)
+        and isinstance(clock, StageClock)
+        and "period" in entry.dependencies
+    ):
+        expression = entry.expression
+        return Condition.from_callable(
+            adapt_user_function(
+                func=expression.func if isinstance(expression, Opaque) else entry,
+                value_grids={"period": clock},
+                encode=None,
+                adapters=adapters,
+            )
+        )
     if not value_grids or isinstance(
         entry,
         Condition
@@ -1023,6 +1062,8 @@ class ValueAdapter:
     """The process of each `<name>_code` argument whose variable holds a node value."""
     encode: DiscreteGrid | None
     """The grid whose code the returned value names, if any."""
+    clock: StageClock | None = None
+    """The clock `period` is read through, in a model with several stages."""
 
     def __post_init__(self) -> None:
         # The function's own attributes, declaration markers such as a case
@@ -1095,6 +1136,8 @@ class ValueAdapter:
                 if name in self.codes
                 else self.decoded[name].decode(kwargs[name])
                 if name in self.decoded
+                else self.clock.decode(kwargs[name])
+                if self.clock is not None and name == "period"
                 else kwargs[name]
                 for name in self._reads
             }

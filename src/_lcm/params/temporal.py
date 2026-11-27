@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.dtypes import CanonicalArrayWriter, canonical_float_dtype
-from _lcm.time import TimeAxis, coordinate_kind
+from _lcm.time import TimeAxis, coordinate_kind, step_count
 from _lcm.utils.ast_inspection import time_index_names
 from lcm.exceptions import InvalidParamsError, ModelInitializationError
 from lcm.temporal import TimeVarying, _validate_time_labels
@@ -71,30 +71,30 @@ def time_gather_indices(
         )
     _validate_time_labels(labels=labels, kind=kind, name=name)
     wanted: dict[UserAge | float, int] = {
-        label: period for period, label in enumerate(ages.exact_values)
+        label: step for step, label in enumerate(ages.exact_values)
     }
     # Fraction labels have an exact public identity; support the AgeGrid's float
     # representation too, as existing named-Series input does.
     if kind == "age":
         wanted.update(
-            {float(label): period for period, label in enumerate(ages.exact_values)}
+            {float(label): step for step, label in enumerate(ages.exact_values)}
         )
     positions: dict[int, int] = {}
     for index, label in enumerate(labels):
-        period = wanted.get(label)
-        if period is None:
+        step = wanted.get(label)
+        if step is None:
             continue
-        if check_duplicates and period in positions:
+        if check_duplicates and step in positions:
             raise InvalidParamsError(
                 f"{name}: duplicate selected {kind} key {label!r}."
             )
-        positions[period] = index
+        positions[step] = index
     missing = [ages.exact_values[p] for p in required_periods if p not in positions]
     if missing:
         raise InvalidParamsError(
             f"{name}: missing required {kind} coordinates {missing[:8]}."
         )
-    return tuple(positions.get(period, -1) for period in range(ages.n_periods))
+    return tuple(positions.get(step, -1) for step in range(step_count(ages)))
 
 
 def align_time_varying(
@@ -124,7 +124,7 @@ def align_time_varying(
     )
     if array_writer is not None:
         host = np.zeros(
-            (ages.n_periods, *value.values.shape[1:]), dtype=canonical_float_dtype()
+            (step_count(ages), *value.values.shape[1:]), dtype=canonical_float_dtype()
         )
         selected = np.asarray(indices) >= 0
         host[selected] = np.asarray(value.values)[np.asarray(indices)[selected]]
@@ -133,13 +133,13 @@ def align_time_varying(
     # synthesized; coverage was checked before constructing a numeric array.
     if isinstance(value.values, np.ndarray):
         host = np.zeros(
-            (ages.n_periods, *value.values.shape[1:]), dtype=value.values.dtype
+            (step_count(ages), *value.values.shape[1:]), dtype=value.values.dtype
         )
         selected = np.asarray(indices) >= 0
         host[selected] = value.values[np.asarray(indices)[selected]]
         return host
     values = jnp.asarray(value.values)
     if not values.shape[0]:
-        return jnp.zeros((ages.n_periods, *values.shape[1:]), dtype=values.dtype)
+        return jnp.zeros((step_count(ages), *values.shape[1:]), dtype=values.dtype)
     gather = tuple(i if i >= 0 else values.shape[0] for i in indices)
     return jnp.take(values, jnp.asarray(gather), axis=0, mode="fill", fill_value=0)

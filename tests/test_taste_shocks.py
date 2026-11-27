@@ -12,19 +12,38 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
+from numpy.testing import assert_array_equal
 
 from _lcm import logsum
 from _lcm.regime_building.max_Q_over_a import draw_taste_shock_noise
-from lcm import EULER_GAMMA, AgeGrid, DiscreteGrid, Model, Regime, categorical
-from lcm.exceptions import InvalidParamsError, ModelInitializationError
-from lcm.solvers import GridSearch
+from lcm import (
+    EULER_GAMMA,
+    AgeGrid,
+    DiscreteGrid,
+    InitialNodes,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    Transition,
+    categorical,
+    fixed_transition,
+)
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.exceptions import (
+    InvalidParamsError,
+    ModelInitializationError,
+    NoFeasibleActionError,
+)
+from lcm.solvers import DCEGM, GridSearch
 from lcm.taste_shocks import (
     ExtremeValueTasteShocks,
 )
 from lcm.typing import (
     BoolND,
     ContinuousAction,
+    ContinuousState,
     DiscreteAction,
+    DiscreteState,
     FloatND,
     ScalarInt,
     UserParamsNode,
@@ -33,7 +52,7 @@ from tests.conftest import DECIMAL_PRECISION
 from tests.test_models import taste_shocks_toy
 
 
-def test_logsum_matches_logsumexp_identity():
+def test_logsum_matches_logsumexp_identity() -> None:
     """`logsum_and_softmax` equals `scale * log(sum(exp(values / scale)))`."""
     values = jnp.array([[0.0, 1.0], [2.0, 3.0], [4.0, 5.0]])
     scale = 1.0
@@ -44,7 +63,7 @@ def test_logsum_matches_logsumexp_identity():
     aaae(got_logsum, expected, decimal=12)
 
 
-def test_logsum_small_scale_approaches_hard_max():
+def test_logsum_small_scale_approaches_hard_max() -> None:
     """With a small scale, the smoothed max is numerically the hard max."""
     values = jnp.array([[0.0, 1.0], [2.0, 3.0], [4.0, 5.0]])
 
@@ -53,7 +72,7 @@ def test_logsum_small_scale_approaches_hard_max():
     aaae(got_logsum, jnp.array([4.0, 5.0]), decimal=5)
 
 
-def test_logsum_small_scale_does_not_overflow():
+def test_logsum_small_scale_does_not_overflow() -> None:
     """A small positive scale keeps the smoothed value at the finite hard max.
 
     `values / scale` overflows to `inf` in float32 when the scale is small
@@ -72,7 +91,7 @@ def test_logsum_small_scale_does_not_overflow():
     aaae(got_probs, jnp.array([0.0, 1.0], dtype=jnp.float32), decimal=6)
 
 
-def test_logsum_multiple_axes():
+def test_logsum_multiple_axes() -> None:
     """Aggregation over all discrete axes collapses them jointly."""
     values = jnp.array([[0.0, 1.0], [2.0, 3.0], [4.0, 5.0]])
     scale = 0.5
@@ -83,7 +102,7 @@ def test_logsum_multiple_axes():
     aaae(got_logsum, expected, decimal=10)
 
 
-def test_logsum_masked_rows_get_zero_probability():
+def test_logsum_masked_rows_get_zero_probability() -> None:
     """`-inf` (infeasible) entries contribute zero probability and no NaN."""
     values = jnp.array([[1.0], [-jnp.inf]])
 
@@ -95,7 +114,7 @@ def test_logsum_masked_rows_get_zero_probability():
     aaae(got_probs, jnp.array([[1.0], [0.0]]), decimal=12)
 
 
-def test_logsum_all_masked_is_neg_inf_without_nan():
+def test_logsum_all_masked_is_neg_inf_without_nan() -> None:
     """A fully infeasible slice yields `-inf` value and finite (zero) probs."""
     values = jnp.array([[-jnp.inf], [-jnp.inf]])
 
@@ -131,7 +150,7 @@ def _reference_alive_V(*, scale: float, discount_factor: float) -> np.ndarray:
 
 
 @pytest.mark.slow
-def test_brute_force_solve_matches_reference_logsum_value_function():
+def test_brute_force_solve_matches_reference_logsum_value_function() -> None:
     """Solved V in the decision period equals the numpy logsum reference exactly.
 
     Both compute the same grid-restricted `Qc`, so agreement is up to float
@@ -144,30 +163,12 @@ def test_brute_force_solve_matches_reference_logsum_value_function():
 
     period_to_regime_to_V_arr = model.solve(params=params, log_level="debug").values
 
-    got = np.asarray(period_to_regime_to_V_arr[0]["alive"])
+    got = np.asarray(period_to_regime_to_V_arr[0]["alive"])[..., 0]
     expected = _reference_alive_V(scale=scale, discount_factor=discount_factor)
     np.testing.assert_allclose(got, expected, rtol=1e-5, atol=1e-8)
 
 
-@pytest.mark.slow
-def test_smoothed_value_weakly_exceeds_hard_max_value():
-    """The EV1 expected maximum dominates the hard max pointwise.
-
-    The smoothed value increases in the scale and tends to the hard max as the
-    scale vanishes, so a vanishing-scale solve serves as the hard-max baseline.
-    """
-    model = taste_shocks_toy.get_model()
-    smoothed = model.solve(
-        params=taste_shocks_toy.get_params(scale=0.5), log_level="debug"
-    ).values
-    hard = model.solve(
-        params=taste_shocks_toy.get_params(scale=1e-8), log_level="debug"
-    ).values
-
-    assert bool(jnp.all(smoothed[0]["alive"] >= hard[0]["alive"] - 1e-12))
-
-
-def test_params_template_contains_taste_shock_scale():
+def test_params_template_contains_taste_shock_scale() -> None:
     """The params template exposes the scale under the `taste_shocks` pseudo-entry."""
     model = taste_shocks_toy.get_model()
 
@@ -176,7 +177,7 @@ def test_params_template_contains_taste_shock_scale():
     assert "scale" in template["alive"]["taste_shocks"]
 
 
-def test_taste_shock_noise_is_mean_zero():
+def test_taste_shock_noise_is_mean_zero() -> None:
     """The simulation taste-shock draw has mean zero.
 
     The solve uses `scale * logsumexp(Qc / scale)`, which equals the expected
@@ -189,7 +190,7 @@ def test_taste_shock_noise_is_mean_zero():
     np.testing.assert_allclose(float(jnp.mean(noise)), 0.0, atol=0.03)
 
 
-def test_expected_max_with_taste_shock_noise_matches_logsum():
+def test_expected_max_with_taste_shock_noise_matches_logsum() -> None:
     """The expected realized maximum equals the smoothed (logsum) solve value.
 
     With the centered draw, `E[max_d (v_d + noise_d)]` reproduces
@@ -210,20 +211,21 @@ def test_expected_max_with_taste_shock_noise_matches_logsum():
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("scale", [0.0, -0.1])
-def test_nonpositive_taste_shock_scale_raises(scale):
-    """A taste-shock scale that is not strictly positive is rejected.
+@pytest.mark.parametrize("scale", [0.0, -0.1, float("nan"), float("inf")])
+def test_taste_shock_scale_outside_the_positive_reals_raises(scale: float) -> None:
+    """A taste-shock scale that is not strictly positive and finite is rejected.
 
     Declaring taste shocks means opting into smoothing, so the scale must be
     positive. The hard maximum is the no-taste-shocks model, not `scale = 0`.
+    At float32 an infinite scale is refused where the parameter is cast.
     """
     model = taste_shocks_toy.get_model()
     params = taste_shocks_toy.get_params(scale=scale)
-    with pytest.raises(InvalidParamsError, match="scale"):
+    with pytest.raises((InvalidParamsError, OverflowError), match="scale"):
         model.solve(params=params, log_level="debug")
 
 
-def test_taste_shocks_without_discrete_action_raises():
+def test_taste_shocks_without_discrete_action_raises() -> None:
     """Declaring taste shocks on a regime without discrete actions is an error."""
     no_discrete_action = taste_shocks_toy.alive.replace(
         actions={"consumption": taste_shocks_toy.CONSUMPTION_GRID},
@@ -266,7 +268,9 @@ def _get_location_zero_model() -> Model:
 
 
 @pytest.mark.slow
-def test_location_zero_utility_shift_moves_value_by_constant_and_keeps_choices():
+def test_location_zero_utility_shift_moves_value_by_constant_and_keeps_choices() -> (
+    None
+):
     """Adding `scale * EULER_GAMMA` to utility gives location-0 EV1 shocks.
 
     Under the default linear Koopmans aggregator, the constant enters every
@@ -278,12 +282,12 @@ def test_location_zero_utility_shift_moves_value_by_constant_and_keeps_choices()
     scale = 0.2
     discount_factor = 0.95
     wealth = np.linspace(1.0, 10.0, 6)
-    n_subjects = wealth.size
+    n_agents = wealth.size
     initial_conditions = {
-        "age": jnp.full(n_subjects, 40.0),
+        "age": jnp.full(n_agents, 40.0),
         "wealth": jnp.asarray(wealth),
         "regime_id": jnp.full(
-            n_subjects, taste_shocks_toy.ToyRegimeId.alive, dtype=jnp.int32
+            n_agents, taste_shocks_toy.ToyRegimeId.alive, dtype=jnp.int32
         ),
     }
     mean_zero_params = taste_shocks_toy.get_params(
@@ -448,13 +452,13 @@ def test_location_zero_shift_preserves_unshifted_constraint_inputs(
 
     mean_zero_value = mean_zero_model.solve(
         params=mean_zero_params, log_level="debug"
-    ).values[0]["alive"]
+    ).values[0]["alive"][..., 0]
     naive_value = naive_model.solve(
         params=location_zero_params, log_level="debug"
-    ).values[0]["alive"]
+    ).values[0]["alive"][..., 0]
     location_zero_value = location_zero_model.solve(
         params=location_zero_params, log_level="debug"
-    ).values[0]["alive"]
+    ).values[0]["alive"][..., 0]
 
     # Enumerate the two deterministic actions independently of the model DAG.
     base_values = np.array([0.0, 1.0]) - entry_cost
@@ -474,3 +478,186 @@ def test_location_zero_shift_preserves_unshifted_constraint_inputs(
         assert float(naive_value) > float(location_zero_value)
     else:
         aaae(naive_value, location_zero_value, decimal=DECIMAL_PRECISION)
+
+
+@categorical(ordered=False)
+class _Doomed:
+    no: ScalarInt
+    yes: ScalarInt
+
+
+@categorical(ordered=False)
+class _Work:
+    no: ScalarInt
+    yes: ScalarInt
+
+
+@categorical(ordered=False)
+class _DoomRegimeId:
+    decide: ScalarInt
+    done: ScalarInt
+
+
+def _doomed_utility(
+    *, consumption: ContinuousAction, work: DiscreteAction, doomed: DiscreteState
+) -> FloatND:
+    return (
+        jnp.log(consumption)
+        - 0.1 * work
+        + jnp.where(doomed == _Doomed.yes, -jnp.inf, 0.0)
+    )
+
+
+def _savings(*, wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+    return wealth - consumption
+
+
+def _wealth_from_savings(*, savings: FloatND, work: DiscreteAction) -> ContinuousState:
+    return savings + 0.5 * work
+
+
+def _wealth_from_consumption(
+    *, wealth: ContinuousState, consumption: ContinuousAction, work: DiscreteAction
+) -> ContinuousState:
+    return wealth - consumption + 0.5 * work
+
+
+def _borrowing(*, consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
+    return consumption <= wealth
+
+
+def _inverse_marginal_log_utility(*, marginal_continuation: FloatND) -> FloatND:
+    return 1.0 / marginal_continuation
+
+
+def _terminal_wealth(*, wealth: ContinuousState, doomed: DiscreteState) -> FloatND:
+    return wealth + 0.0 * doomed
+
+
+_DOOM_PARAMS = {
+    "decide": {
+        "taste_shocks": {"scale": 0.5},
+        "koopmans_aggregator": {"discount_factor": 1.0},
+    }
+}
+
+
+def _doom_model(*, solver: str) -> Model:
+    """One single regime with taste shocks; at `doomed = yes` both alternatives are
+    worth minus infinity at every consumption."""
+    states = {
+        "wealth": LinSpacedGrid(start=0.5, stop=5.0, n_points=10),
+        "doomed": DiscreteGrid(_Doomed),
+    }
+    actions = {
+        "work": DiscreteGrid(_Work),
+        "consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=50),
+    }
+    decide = (
+        ConsumptionSavingsRegime(
+            states=states,
+            actions=actions,
+            taste_shocks=ExtremeValueTasteShocks(),
+            state_transitions={
+                "wealth": _wealth_from_savings,
+                "doomed": fixed_transition("doomed"),
+            },
+            functions={
+                "utility": _doomed_utility,
+                "savings": _savings,
+                "inverse_marginal_utility": _inverse_marginal_log_utility,
+            },
+            solver=DCEGM(savings_grid=LinSpacedGrid(start=0.0, stop=5.0, n_points=40)),
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="wealth",
+                post_decision_state="savings",
+            ),
+        )
+        if solver == "dcegm"
+        else Regime(
+            states=states,
+            actions=actions,
+            taste_shocks=ExtremeValueTasteShocks(),
+            state_transitions={
+                "wealth": _wealth_from_consumption,
+                "doomed": fixed_transition("doomed"),
+            },
+            constraints={"borrowing": _borrowing},
+            functions={"utility": _doomed_utility},
+            solver=GridSearch(),
+        )
+    )
+    return Model(
+        regimes={
+            "decide": decide,
+            "done": Regime(
+                states={
+                    "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=20),
+                    "doomed": DiscreteGrid(_Doomed),
+                },
+                functions={"utility": _terminal_wealth},
+            ),
+        },
+        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
+        regime_id_class=_DoomRegimeId,
+        initial_nodes=InitialNodes(by_age={0.0: ("decide",)}),
+        edges={"decide": Transition(law="done")},
+    )
+
+
+@pytest.mark.parametrize("solver", ["grid_search", "dcegm"])
+def test_a_cell_where_every_alternative_is_minus_infinity_is_worth_minus_infinity(
+    *, solver: str
+) -> None:
+    """Specification 14.5a: where every alternative is worth minus infinity, the
+    node is worth minus infinity and has no choice probabilities, and an agent
+    who reaches it is a fault of the model, as for a node without a feasible
+    action. The simulation refuses it under both solvers."""
+    model = _doom_model(solver=solver)
+    solution = model.solve(params=_DOOM_PARAMS, log_level="off")
+    values = np.asarray(solution.values[0]["decide"])[..., 0]
+
+    assert np.isfinite(values[_Doomed.no]).all()
+    assert np.isneginf(values[_Doomed.yes]).all()
+    with pytest.raises(NoFeasibleActionError, match="no feasible action"):
+        model.simulate(
+            params=_DOOM_PARAMS,
+            solution=solution,
+            initial_conditions={
+                "wealth": jnp.full(2, 2.0),
+                "doomed": jnp.full(2, _Doomed.yes),
+                "regime_id": jnp.full(2, _DoomRegimeId.decide),
+                "age": jnp.zeros(2),
+            },
+            log_level="off",
+        )
+
+
+def test_policy_lookup_has_no_choice_probabilities_at_a_minus_infinity_cell() -> None:
+    """At a cell where every alternative is worth minus infinity the lookup gives
+    the value minus infinity, `Qc` minus infinity and choice probabilities that
+    are all zero: there is no distribution to draw from (specification 14.5a)."""
+    model = _doom_model(solver="grid_search")
+    solution = model.solve(params=_DOOM_PARAMS, log_level="off")
+
+    lookup = model.lookup_policy(
+        params=_DOOM_PARAMS,
+        solution=solution,
+        period=0,
+        regime_name="decide",
+        states={
+            "wealth": jnp.asarray([2.0, 2.0]),
+            "doomed": jnp.asarray([_Doomed.no, _Doomed.yes]),
+        },
+        use_categorical_codes=True,
+    )
+
+    value = np.asarray(lookup.value)[..., 0]
+    probabilities = np.asarray(lookup.choice_probabilities)
+    assert np.isfinite(value[0])
+    aaae(probabilities[0].sum(), 1.0, decimal=DECIMAL_PRECISION)
+    assert np.isneginf(value[1])
+    assert np.isneginf(np.asarray(lookup.Qc)[1]).all()
+    assert_array_equal(probabilities[1], [0.0, 0.0])

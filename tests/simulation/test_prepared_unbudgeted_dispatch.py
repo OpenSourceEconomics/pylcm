@@ -1,7 +1,7 @@
 """AC4: an unbudgeted exact-signature repeat reuses its static preparation.
 
 With no device-memory budget configured, `SimulationRuntime.dispatch` splits a
-cached, immutable preparation record -- the subject-extent descriptor, the
+cached, immutable preparation record -- the agent-extent descriptor, the
 declared argument positions, the selected width map and the reusable call
 structure, keyed by the complete abstract signature -- from a per-call binder
 that rebuilds and re-places this call's own leaves every time.
@@ -15,7 +15,7 @@ PRNG configuration -- falls back to the full validated route.
 
 Fields that are immutable for the life of one `SimulationRuntime` (the resolved
 execution config with its explicit widths and device ids, `enable_jit` and the
-ordered `subject_devices`) are deliberately absent from the record key: the
+ordered `agent_devices`) are deliberately absent from the record key: the
 records live on the runtime that owns them, so a different configuration is a
 different runtime with an empty cache. `test_a_new_runtime_shares_no_prepared_route`
 enforces exactly that boundary.
@@ -26,7 +26,7 @@ import dataclasses
 
 # Operations whose repetition AC4 is about, named at the module attribute each
 # caller actually reads, so a rename or a re-import cannot silently stop
-# counting. `static_descriptor` and `subject_extent` are the static program
+# counting. `static_descriptor` and `agent_extent` are the static program
 # construction, `width_frontier` the actual frontier function, `planner` the
 # workspace preparation, `memory_report` the backend memory request, and
 # `placement` the per-call binding whose *presence* the repeat must still show.
@@ -53,8 +53,8 @@ from _lcm.simulation.entry_inputs import (
     SimulationEntryInputs,
     capture_simulation_entry_inputs,
 )
-from _lcm.simulation.program_types import subject_axis
-from _lcm.simulation.programs import _ArgumentsBoundAtDispatch, _SubjectTiled
+from _lcm.simulation.program_types import agent_axis
+from _lcm.simulation.programs import _AgentTiled, _ArgumentsBoundAtDispatch
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
     FootprintTree,
@@ -67,13 +67,15 @@ from _lcm.simulation.runtime import (
 )
 from _lcm.typing import PytreeValue
 from benchmarks.asv._simulation_witnesses import multi_regime
+from lcm import Model, SimulationResult
 from lcm.execution import ExecutionConfig
-from lcm.typing import FloatND, ReferenceName
+from lcm.solver_api import SolutionResult
+from lcm.typing import FloatND, ReferenceName, UserInitialConditions, UserParams
 from tests.simulation._callback_types import ChunkPreparation, EntryCapture
 
 _INSTRUMENTED_SITES = (
     ("static_descriptor", runtime_module, "materialize_core_program"),
-    ("subject_extent", runtime_module, "_with_subject_extent"),
+    ("agent_extent", runtime_module, "_with_agent_extent"),
     ("width_frontier", workspace_planning, "_workspace_width_candidates"),
     ("planner", runtime_module, "plan_workspace"),
     ("placement", runtime_module, "place_simulation_arguments"),
@@ -83,7 +85,7 @@ _INSTRUMENTED_SITES = (
 #: Counters that must be exactly zero on an exact-signature unbudgeted repeat.
 _STATIC_SITES = (
     "static_descriptor",
-    "subject_extent",
+    "agent_extent",
     "width_frontier",
     "planner",
     "memory_report",
@@ -128,12 +130,19 @@ def _reset(counts: dict[str, int]) -> None:
         counts[name] = 0
 
 
-def _small_unbudgeted_model():
+def _small_unbudgeted_model() -> tuple[Model, UserParams, UserInitialConditions]:
     """Build a small multi-regime witness with no device-memory budget."""
     return multi_regime(execution_config=ExecutionConfig(device_memory_bytes=None))
 
 
-def _simulate(*, model, params, solution, initial_conditions, seed):
+def _simulate(
+    *,
+    model: Model,
+    params: UserParams,
+    solution: SolutionResult,
+    initial_conditions: UserInitialConditions,
+    seed: int,
+) -> SimulationResult:
     """Run one public unbudgeted simulation."""
     return model.simulate(
         params=params,
@@ -144,26 +153,26 @@ def _simulate(*, model, params, solution, initial_conditions, seed):
     )
 
 
-def _wealth(result) -> np.ndarray:
+def _wealth(result: SimulationResult) -> np.ndarray:
     """Read the published wealth column of one simulation result."""
     return result.to_dataframe()["wealth"].to_numpy()
 
 
-def _increment_subject(*, state: FloatND) -> FloatND:
+def _increment_agent(*, state: FloatND) -> FloatND:
     """Advance the independently observed state by one unit."""
     return state + 1
 
 
 def _unit_program(*, name: str = "simulate_transition") -> CoreProgram:
-    """Declare one subject-valued program whose operand is a scalar per subject."""
+    """Declare one agent-valued program whose operand is a scalar per agent."""
     return CoreProgram(
         name=name,
-        function=_SubjectTiled(func=_increment_subject, subject_arg_names=("state",)),
+        function=_AgentTiled(func=_increment_agent, agent_arg_names=("state",)),
         argument_builder=_ArgumentsBoundAtDispatch(
-            program_name=name, subject_arg_names=("state",)
+            program_name=name, agent_arg_names=("state",)
         ),
         requirements=CoreExecutionRequirements(
-            tiled_axes=(subject_axis(state_names=("state",)),)
+            tiled_axes=(agent_axis(state_names=("state",)),)
         ),
         output_roles="next_state",
         disposition=CoreExecutionDisposition.PLANNED,
@@ -172,26 +181,26 @@ def _unit_program(*, name: str = "simulate_transition") -> CoreProgram:
 
 
 def _unit_runtime(*, width: int | None = None) -> SimulationRuntime:
-    """Build an unbudgeted executor with an optional pinned subject tile."""
+    """Build an unbudgeted executor with an optional pinned agent tile."""
     return SimulationRuntime(
         execution=ResolvedExecution(
             device_ids=(0,),
             sharded_states=frozenset(),
-            axis_widths=MappingProxyType({} if width is None else {"subject": width}),
+            axis_widths=MappingProxyType({} if width is None else {"agent": width}),
             device_memory_bytes=None,
         ),
         enable_jit=True,
-        subject_devices=(jax.devices()[0],),
+        agent_devices=(jax.devices()[0],),
     )
 
 
-_UNIT_SUBJECTS = 64
+_UNIT_AGENTS = 64
 
 
 def _unit_arguments(**overrides: PytreeValue) -> dict[ReferenceName, PytreeValue]:
     """Bind one call's complete operands for the unit-level witness program."""
     arguments: dict[ReferenceName, PytreeValue] = {
-        "state": jnp.arange(_UNIT_SUBJECTS, dtype=jnp.result_type(float))
+        "state": jnp.arange(_UNIT_AGENTS, dtype=jnp.result_type(float))
     }
     arguments.update(overrides)
     return arguments
@@ -260,11 +269,11 @@ def test_a_cold_unbudgeted_dispatch_builds_its_static_preparation(
         program=program,
         arguments=_unit_arguments(),
         period=0,
-        n_subjects=_UNIT_SUBJECTS,
+        n_agents=_UNIT_AGENTS,
     )
 
     assert counts["static_descriptor"] == 1
-    assert counts["subject_extent"] == 1
+    assert counts["agent_extent"] == 1
     assert counts["width_frontier"] >= 1
     assert counts["planner"] == 1
     assert counts["placement"] == 1
@@ -284,7 +293,7 @@ def test_an_exact_signature_repeat_reconstructs_no_static_preparation(
         program=program,
         arguments=_unit_arguments(),
         period=0,
-        n_subjects=_UNIT_SUBJECTS,
+        n_agents=_UNIT_AGENTS,
     )
     _reset(counts)
 
@@ -292,7 +301,7 @@ def test_an_exact_signature_repeat_reconstructs_no_static_preparation(
         program=program,
         arguments=_unit_arguments(),
         period=0,
-        n_subjects=_UNIT_SUBJECTS,
+        n_agents=_UNIT_AGENTS,
     )
 
     assert {name: counts[name] for name in _STATIC_SITES} == dict.fromkeys(
@@ -315,16 +324,16 @@ def test_a_repeat_binds_this_call_s_own_values(
         program=program,
         arguments=_unit_arguments(),
         period=0,
-        n_subjects=_UNIT_SUBJECTS,
+        n_agents=_UNIT_AGENTS,
     )
     _reset(counts)
 
-    shifted = jnp.arange(_UNIT_SUBJECTS, dtype=jnp.result_type(float)) + 100.0
+    shifted = jnp.arange(_UNIT_AGENTS, dtype=jnp.result_type(float)) + 100.0
     result = runtime.dispatch(
         program=program,
         arguments=_unit_arguments(state=shifted),
         period=0,
-        n_subjects=_UNIT_SUBJECTS,
+        n_agents=_UNIT_AGENTS,
     )
 
     assert {name: counts[name] for name in _STATIC_SITES} == dict.fromkeys(
@@ -336,19 +345,17 @@ def test_a_repeat_binds_this_call_s_own_values(
 
 def _changed_dtype() -> dict[ReferenceName, PytreeValue]:
     """Same population and shape, a different floating-point dtype."""
-    return _unit_arguments(state=jnp.arange(_UNIT_SUBJECTS, dtype=jnp.float16))
+    return _unit_arguments(state=jnp.arange(_UNIT_AGENTS, dtype=jnp.float16))
 
 
 def _weak_typed() -> dict[ReferenceName, PytreeValue]:
     """Same shape and dtype as the working precision, but a weakly typed leaf."""
-    return _unit_arguments(state=jnp.full(_UNIT_SUBJECTS, 1.0))
+    return _unit_arguments(state=jnp.full(_UNIT_AGENTS, 1.0))
 
 
 def _extra_column() -> dict[ReferenceName, PytreeValue]:
     """An additional optional argument column the previous call did not carry."""
-    return _unit_arguments(
-        spare=jnp.zeros(_UNIT_SUBJECTS, dtype=jnp.result_type(float))
-    )
+    return _unit_arguments(spare=jnp.zeros(_UNIT_AGENTS, dtype=jnp.result_type(float)))
 
 
 def _typed_static_value() -> dict[ReferenceName, PytreeValue]:
@@ -380,7 +387,7 @@ def test_a_changed_signature_re_enters_the_validated_route(
         program=program,
         arguments=_unit_arguments(),
         period=0,
-        n_subjects=_UNIT_SUBJECTS,
+        n_agents=_UNIT_AGENTS,
     )
     _reset(counts)
 
@@ -391,20 +398,20 @@ def test_a_changed_signature_re_enters_the_validated_route(
             program=program,
             arguments=changed(),
             period=0,
-            n_subjects=_UNIT_SUBJECTS,
+            n_agents=_UNIT_AGENTS,
         )
 
     assert counts["static_descriptor"] == 1
-    assert counts["subject_extent"] == 1
+    assert counts["agent_extent"] == 1
 
 
 @pytest.mark.parametrize(
-    ("period", "n_subjects"),
-    [(1, _UNIT_SUBJECTS), (0, _UNIT_SUBJECTS * 2)],
+    ("period", "n_agents"),
+    [(1, _UNIT_AGENTS), (0, _UNIT_AGENTS * 2)],
     ids=["period", "population"],
 )
 def test_a_changed_period_or_population_re_enters_the_validated_route(
-    *, monkeypatch: pytest.MonkeyPatch, period: int, n_subjects: int
+    *, monkeypatch: pytest.MonkeyPatch, period: int, n_agents: int
 ) -> None:
     """Period program and population extent are part of the record's identity."""
     program = _unit_program()
@@ -415,21 +422,21 @@ def test_a_changed_period_or_population_re_enters_the_validated_route(
         program=program,
         arguments=_unit_arguments(),
         period=0,
-        n_subjects=_UNIT_SUBJECTS,
+        n_agents=_UNIT_AGENTS,
     )
     _reset(counts)
 
     runtime.dispatch(
         program=program,
         arguments=_unit_arguments(
-            state=jnp.arange(n_subjects, dtype=jnp.result_type(float)),
+            state=jnp.arange(n_agents, dtype=jnp.result_type(float)),
         ),
         period=period,
-        n_subjects=n_subjects,
+        n_agents=n_agents,
     )
 
     assert counts["static_descriptor"] == 1
-    assert counts["subject_extent"] == 1
+    assert counts["agent_extent"] == 1
     assert len(runtime.routes) == 2
 
 
@@ -444,7 +451,7 @@ def test_a_rebuilt_period_program_cannot_inherit_a_preparation(
         program=_unit_program(),
         arguments=_unit_arguments(),
         period=0,
-        n_subjects=_UNIT_SUBJECTS,
+        n_agents=_UNIT_AGENTS,
     )
     _reset(counts)
 
@@ -452,11 +459,11 @@ def test_a_rebuilt_period_program_cannot_inherit_a_preparation(
         program=_unit_program(),
         arguments=_unit_arguments(),
         period=0,
-        n_subjects=_UNIT_SUBJECTS,
+        n_agents=_UNIT_AGENTS,
     )
 
     assert counts["static_descriptor"] == 1
-    assert counts["subject_extent"] == 1
+    assert counts["agent_extent"] == 1
 
 
 def test_a_new_runtime_shares_no_prepared_route(
@@ -464,7 +471,7 @@ def test_a_new_runtime_shares_no_prepared_route(
 ) -> None:
     """Widths, devices and JIT are immutable per runtime, so records never cross.
 
-    `axis_widths`, `device_ids`, `enable_jit` and `subject_devices` cannot change
+    `axis_widths`, `device_ids`, `enable_jit` and `agent_devices` cannot change
     within one `SimulationRuntime`; a different choice is a different runtime,
     and the record cache is owned by, and dies with, that runtime.
     """
@@ -476,7 +483,7 @@ def test_a_new_runtime_shares_no_prepared_route(
         program=program,
         arguments=_unit_arguments(),
         period=0,
-        n_subjects=_UNIT_SUBJECTS,
+        n_agents=_UNIT_AGENTS,
     )
     _reset(counts)
 
@@ -486,14 +493,14 @@ def test_a_new_runtime_shares_no_prepared_route(
         program=program,
         arguments=_unit_arguments(),
         period=0,
-        n_subjects=_UNIT_SUBJECTS,
+        n_agents=_UNIT_AGENTS,
     )
 
     assert counts["static_descriptor"] == 1
-    assert counts["subject_extent"] == 1
+    assert counts["agent_extent"] == 1
     assert counts["width_frontier"] >= 1
     (route,) = pinned_width.routes.values()
-    assert dict(route.widths) == {"subject": 8}
+    assert dict(route.widths) == {"agent": 8}
 
 
 def test_a_record_holds_no_caller_array() -> None:
@@ -504,7 +511,7 @@ def test_a_record_holds_no_caller_array() -> None:
         program=program,
         arguments=_unit_arguments(),
         period=0,
-        n_subjects=_UNIT_SUBJECTS,
+        n_agents=_UNIT_AGENTS,
     )
 
     (route,) = runtime.routes.values()
@@ -547,7 +554,7 @@ def test_a_public_warm_simulation_reuses_its_static_preparation(
     )
 
     assert counts["static_descriptor"] == 0
-    assert counts["subject_extent"] == 0
+    assert counts["agent_extent"] == 0
     assert counts["planner"] == 0
     assert counts["lowering"] == 0
     assert counts["memory_report"] == 0

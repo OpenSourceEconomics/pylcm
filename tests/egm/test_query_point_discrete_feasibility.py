@@ -259,12 +259,12 @@ def test_no_predicate_dc_control_has_exact_published_endpoint_values(
     )
     result = model.solve(params=params, log_level="off")
     np.testing.assert_array_almost_equal(
-        result.values[1]["child"][0],
+        result.values[1]["child"][0, ..., 0],
         np.full((2, 3), 10.0),
         decimal=DECIMAL_PRECISION,
     )
     np.testing.assert_array_almost_equal(
-        result.values[0]["parent"][1],
+        result.values[0]["parent"][1, ..., 0],
         np.full((2, 3), 13.0),
         decimal=DECIMAL_PRECISION,
     )
@@ -344,13 +344,13 @@ def test_installed_dc_predicate_precedes_choice_and_parent_aggregation(
     if island:
         # Both stored z nodes exclude job 1; its conditional source stays live.
         np.testing.assert_array_almost_equal(
-            context["next_regime_to_V_arr"]["child"][0],
+            context["next_regime_to_V_arr"]["child"][0, ..., 0],
             np.zeros((2, 3)),
             decimal=DECIMAL_PRECISION,
         )
     else:
         np.testing.assert_array_almost_equal(
-            context["next_regime_to_V_arr"]["child"][0],
+            context["next_regime_to_V_arr"]["child"][0, ..., 0],
             np.broadcast_to(np.asarray([0.0, 10.0])[:, None], (2, 3)),
             decimal=DECIMAL_PRECISION,
         )
@@ -386,7 +386,7 @@ def test_installed_dc_predicate_precedes_choice_and_parent_aggregation(
             decimal=DECIMAL_PRECISION,
         )
     np.testing.assert_array_almost_equal(
-        output.value[1],
+        output.value[1, ..., 0],
         np.full((2, 3), 10.0 if admitted else 3.0),
         decimal=DECIMAL_PRECISION,
     )
@@ -410,12 +410,12 @@ def test_generic_parent_keeps_node_masked_child_value() -> None:
     )
     result = model.solve(params=params, log_level="off")
     np.testing.assert_array_almost_equal(
-        result.values[1]["child"][0],
+        result.values[1]["child"][0, ..., 0],
         np.broadcast_to(np.asarray([0.0, 10.0])[:, None], (2, 3)),
         decimal=DECIMAL_PRECISION,
     )
     np.testing.assert_array_almost_equal(
-        result.values[0]["parent"][1],
+        result.values[0]["parent"][1, ..., 0],
         np.full((2, 3), 5.0),
         decimal=DECIMAL_PRECISION,
     )

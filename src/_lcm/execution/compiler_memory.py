@@ -5,6 +5,8 @@ import functools
 from collections.abc import Callable
 from typing import Protocol, runtime_checkable
 
+import jax
+
 from _lcm.typing import PytreeValue
 
 
@@ -53,6 +55,19 @@ class CompilerMemoryBytes:
     host_output_size_in_bytes: int | None
     host_alias_size_in_bytes: int | None
     host_temp_size_in_bytes: int | None
+
+
+def is_device_out_of_memory(*, error: BaseException) -> bool:
+    """Return whether `error` is XLA reporting that a device ran out of memory.
+
+    XLA opens the message of a `JaxRuntimeError` with its status code, and
+    `RESOURCE_EXHAUSTED` is the code of a failed device allocation: one the
+    program makes while it runs, or one the compiler makes while compiling it,
+    when its autotuner places a fusion's operands on the device to time them.
+    """
+    return isinstance(error, jax.errors.JaxRuntimeError) and str(error).startswith(
+        "RESOURCE_EXHAUSTED"
+    )
 
 
 def compiler_memory_bytes(

@@ -90,7 +90,11 @@ Model(
 - `koopmans_aggregator` and `certainty_equivalent` are optional: `None` means the regime
   takes the model-level value. Declaring either at the regime level requires declaring
   it in *every* non-terminal regime — no mixing with the model-level broadcast. Terminal
-  regimes take neither and declaring one is an error.
+  regimes take neither and declaring one is an error. A household may key either slot
+  by member (`{"f": CESAggregator(), "m": LinearAggregator()}`), every member named;
+  member `m`'s params then live under `koopmans_aggregator_<m>` /
+  `certainty_equivalent_<m>`. A bare declaration is shared by every member under the
+  single key. `Decoupled` is declared for the household as a whole, never per member.
 - `functions` must contain a `"utility"` entry (the utility function); checked when the
   model finalizes its regimes, not at `Regime` construction
 - `state_transitions` maps state names to transition functions. Every non-process state
@@ -267,9 +271,8 @@ booleans as array indices inside JIT. Use `jnp.int32(...)` to cast.
 Every regime has **members**: `Regime.members` is `("self",)` for a regime declared
 with a plain utility function, and the `utilities` keys of a `CollectiveUtility`, in
 insertion order, for a household; those fix the trailing axis of `V` and of every
-published array. A household may not name a member `"self"`. `Regime.member_axis` is
-the engine's household marker (`None` for a plain utility). Everything is declared in a
-slot that already exists: the regime's utility, its `exit`, and the `Transition` on its
+published array. A household may not name a member `"self"`. Everything is declared in a
+slot that already exists: the regime's utility, its `composition_action`, and the `Transition` on its
 `Model(edges=...)` entry:
 
 ```python
@@ -319,8 +322,8 @@ Model(
 - A gate predicate reads target states, params, `period` and `age`, never a value: an
   argument named `V_target`, `V_target_<s>` or `D_target` raises `GateReadsValueError`
   when the `Gate` is declared, and `Gate` takes no `references`. A move decided by
-  comparing values is an `Exit` in `Regime(exit=...)` of the regime that decides:
-  formation with a `Consent` rule on the single's regime, dissolution with `Unilateral`
+  comparing values is a `CompositionAction` in `Regime(composition_action=...)` of the regime that decides:
+  formation with a `Consent` rule on the single's regime, dissolution with `PCOnActions`
   or `MutualConsent` on the household's. The Boolean-dtype requirement is checked **at
   evaluation**, i.e. on the first `solve()`, not at build.
 - An exit's payoff is the destination's problem value at the projected state, without
@@ -329,7 +332,7 @@ Model(
   a longer chain is refused. See
   `docs/adr/0004-one-noun-members-and-the-rule-of-the-deciding-regime.md`.
 - A household admits `taste_shocks` only when exactly one member has a positive Pareto
-  weight (the decider), and not with an `exit`, with `shocks`, or when another regime's
+  weight (the decider), and not with a `composition_action`, with `shocks`, or when another regime's
   exit reads its decision.
 - `ParetoObjective(weights=...)` scalarizes the household; a weight may read the
   regime's states and `period`/`age`, never an action. Its other arguments become free
@@ -338,11 +341,12 @@ Model(
   `params["edges"][source][target]`.
 - Member identity is **per row**: seed `initial_conditions["own_member"]`
   whenever the starting regime's forward closure contains a collective regime declaring
-  a transition with more than one route. A row keeps its role across an ordinary regime
-  transition, so a two-leg route it runs into later demands the seed, while one in a
-  regime the cohort can never reach demands nothing. It is published as an
+  a transition with more than one route or an exit with targets for more than one
+  member. A row keeps its role across an ordinary regime transition, so such a
+  transition or exit it runs into later demands the seed, while one in a regime the
+  cohort can never reach demands nothing. It is published as an
   `own_member` column, missing for singleton rows.
-- `GatedEdge`, `member_axis` and `gated_edges` are the **lowered** form these
+- `GatedEdge` and `gated_edges` are the **lowered** form these
   declarations decompose into. Write the declarations.
 
 See `docs/user_guide/collective_regimes.md` and `docs/reference/collective_regimes.md`.
@@ -453,7 +457,7 @@ result.regime_names  # list[str]
 result.state_names  # list[str]
 result.action_names  # list[str]
 result.n_periods  # int
-result.n_subjects  # int
+result.n_agents  # int
 result.available_targets  # list[str] - computable additional targets
 
 # Access raw data for advanced users

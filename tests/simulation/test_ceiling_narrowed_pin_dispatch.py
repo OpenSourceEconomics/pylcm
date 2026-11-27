@@ -24,7 +24,7 @@ from tests.simulation._width_reference import (
     effective_pin,
     legal_widths,
 )
-from tests.simulation.test_unbudgeted_subject_width import (
+from tests.simulation.test_unbudgeted_agent_width import (
     _empty_footprint,
     _materialized,
 )
@@ -55,9 +55,9 @@ _PROGRAMS: dict[tuple[int, int, int], MaterializedCoreProgram] = {}
 def _program(axis: Axis) -> MaterializedCoreProgram:
     key = (axis.extent, axis.alignment, axis.minimum)
     if key not in _PROGRAMS:
-        template = _materialized(n_subjects=axis.extent)
+        template = _materialized(n_agents=axis.extent)
         if axis.extent == 1:
-            # Real materialization omits the trivial subject planner axis. Keep
+            # Real materialization omits the trivial agent planner axis. Keep
             # that representation instead of indexing or inventing an axis.
             _PROGRAMS[key] = template
             return template
@@ -95,8 +95,8 @@ def _ids(case: WidthCase) -> str:
 def _admit(*, axis: Axis, pin: int, ceiling: int) -> Mapping[str, int]:
     return bootstrap_widths(
         axes=_program(axis).requirements.axes,
-        fixed_widths=MappingProxyType({"subject": pin}),
-        width_ceilings=MappingProxyType({"subject": ceiling}),
+        fixed_widths=MappingProxyType({"agent": pin}),
+        width_ceilings=MappingProxyType({"agent": ceiling}),
     )
 
 
@@ -109,14 +109,14 @@ def _dispatch(
         else SimulationDispatchContext(
             live_footprint=_empty_footprint,
             budget_devices=(jax.devices()[0],),
-            axis_widths=MappingProxyType({"subject": reserved}),
+            axis_widths=MappingProxyType({"agent": reserved}),
         )
     )
     return _dispatch_widths(
         program=_program(axis),
-        configured=MappingProxyType({"subject": pin}),
+        configured=MappingProxyType({"agent": pin}),
         residency=residency,
-        width_ceilings=MappingProxyType({"subject": ceiling}),
+        width_ceilings=MappingProxyType({"agent": ceiling}),
     )
 
 
@@ -131,22 +131,22 @@ def test_reference_partition_covers_every_case() -> None:
 
 
 @pytest.mark.parametrize("case", _SINGLETON, ids=_ids)
-def test_singleton_materialization_omits_the_subject_planner_axis(
+def test_singleton_materialization_omits_the_agent_planner_axis(
     case: WidthCase,
 ) -> None:
-    """One subject has implicit width one, not a declared tiled planner axis."""
+    """One agent has implicit width one, not a declared tiled planner axis."""
     assert _program(case[0]).requirements.axes == ()
 
 
 @pytest.mark.parametrize("case", _SINGLETON, ids=_ids)
 def test_singleton_reference_width_is_one(case: WidthCase) -> None:
-    """The reference assigns a single subject the physical width one."""
+    """The reference assigns a single agent the physical width one."""
     assert _expected(**_kw(case)) == 1
 
 
 @pytest.mark.parametrize("case", _SINGLETON, ids=_ids)
 def test_singleton_admission_plans_no_width(case: WidthCase) -> None:
-    """Admission has no subject axis to plan for a single subject."""
+    """Admission has no agent axis to plan for a single agent."""
     assert dict(_admit(**_kw(case))) == {}
 
 
@@ -170,9 +170,9 @@ def _singleton_ids(item: ReservedCase) -> str:
 def test_singleton_dispatch_forwards_the_pin_under_any_reservation(
     item: ReservedCase,
 ) -> None:
-    """An omitted subject axis cannot conflict with any reservation map."""
+    """An omitted agent axis cannot conflict with any reservation map."""
     case, reserved = item
-    assert dict(_dispatch(**_kw(case), reserved=reserved)) == {"subject": case[1]}
+    assert dict(_dispatch(**_kw(case), reserved=reserved)) == {"agent": case[1]}
 
 
 @pytest.mark.parametrize("item", _SINGLETON_RESERVED, ids=_singleton_ids)
@@ -183,7 +183,7 @@ def test_singleton_forwarded_pin_plans_no_width(item: ReservedCase) -> None:
     planned = bootstrap_widths(
         axes=_program(case[0]).requirements.axes,
         fixed_widths=forwarded,
-        width_ceilings=MappingProxyType({"subject": case[2]}),
+        width_ceilings=MappingProxyType({"agent": case[2]}),
     )
     assert dict(planned) == {}
 
@@ -191,14 +191,14 @@ def test_singleton_forwarded_pin_plans_no_width(item: ReservedCase) -> None:
 @pytest.mark.parametrize("case", _LEGAL, ids=_ids)
 def test_bootstrap_widths_admits_reference_effective_pin(case: WidthCase) -> None:
     """Admission selects the largest legal width under both pin and ceiling."""
-    assert _admit(**_kw(case))["subject"] == _expected(**_kw(case))
+    assert _admit(**_kw(case))["agent"] == _expected(**_kw(case))
 
 
 @pytest.mark.parametrize("case", _LEGAL, ids=_ids)
 def test_budgeted_dispatch_accepts_admitted_width(case: WidthCase) -> None:
     """A reservation at the admitted width dispatches at that width."""
-    got = _dispatch(**_kw(case), reserved=_admit(**_kw(case))["subject"])
-    assert got["subject"] == _expected(**_kw(case))
+    got = _dispatch(**_kw(case), reserved=_admit(**_kw(case))["agent"])
+    assert got["agent"] == _expected(**_kw(case))
 
 
 @pytest.mark.parametrize("case", _LEGAL, ids=_ids)
@@ -209,9 +209,9 @@ def test_unbudgeted_dispatch_plans_reference_effective_pin(case: WidthCase) -> N
     planned = bootstrap_widths(
         axes=_program(axis).requirements.axes,
         fixed_widths=forwarded,
-        width_ceilings=MappingProxyType({"subject": ceiling}),
+        width_ceilings=MappingProxyType({"agent": ceiling}),
     )
-    assert planned["subject"] == _expected(**_kw(case))
+    assert planned["agent"] == _expected(**_kw(case))
 
 
 @pytest.mark.parametrize("case", _CONTESTED, ids=_ids)
@@ -235,4 +235,4 @@ def test_bootstrap_widths_refuses_ceiling_below_every_legal_width(
     _, _, ceiling = case
     with pytest.raises(ExecutionPlanningError) as error:
         _admit(**_kw(case))
-    assert {"subject", str(ceiling)} <= set(re.findall(r"\w+", str(error.value)))
+    assert {"agent", str(ceiling)} <= set(re.findall(r"\w+", str(error.value)))

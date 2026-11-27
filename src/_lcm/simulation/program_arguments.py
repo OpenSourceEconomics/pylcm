@@ -16,7 +16,7 @@ from _lcm.engine import Regime, StateActionSpace
 from _lcm.execution.core_program import CoreProgram
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.shock_overrides import CurrentIIDOverride
-from _lcm.simulation.operand_placement import SubjectArgumentNames
+from _lcm.simulation.operand_placement import AgentArgumentNames
 from _lcm.typing import PRNGKeyND, PytreeValue, QualifiedName, ShapeDtypePytree
 from lcm.typing import (
     BoolND,
@@ -28,15 +28,15 @@ from lcm.typing import (
     StateName,
 )
 
-ACTIVE_SUBJECTS_ARGUMENT = "_lcm_active_subjects"
+ACTIVE_AGENTS_ARGUMENT = "_lcm_active_agents"
 
 
-def declares_active_subjects(*, program: CoreProgram) -> bool:
-    """Whether a decision program declares the active-subject mask operand."""
+def declares_active_agents(*, program: CoreProgram) -> bool:
+    """Whether a decision program declares the active-agent mask operand."""
     builder = program.argument_builder
     return (
-        isinstance(builder, SubjectArgumentNames)
-        and ACTIVE_SUBJECTS_ARGUMENT in builder.subject_arg_names
+        isinstance(builder, AgentArgumentNames)
+        and ACTIVE_AGENTS_ARGUMENT in builder.agent_arg_names
     )
 
 
@@ -54,7 +54,7 @@ def decision_arguments(
     params: Mapping[QualifiedName, PytreeValue | ShapeDtypePytree],
     period: PytreeValue | ShapeDtypePytree,
     age: PytreeValue | ShapeDtypePytree,
-    active_subjects: BoolND
+    active_agents: BoolND
     | np.ndarray[tuple[int], np.dtype[np.bool_]]
     | jax.ShapeDtypeStruct
     | None = None,
@@ -72,9 +72,7 @@ def decision_arguments(
         "period": period,
         "age": age,
         **(
-            {ACTIVE_SUBJECTS_ARGUMENT: active_subjects}
-            if active_subjects is not None
-            else {}
+            {ACTIVE_AGENTS_ARGUMENT: active_agents} if active_agents is not None else {}
         ),
     }
 
@@ -215,8 +213,8 @@ def gate_route_arguments(
     *,
     edge_values: PytreeValue | ShapeDtypePytree,
     next_states: PytreeValue | ShapeDtypePytree,
-    new_subject_regime_ids: PytreeValue | ShapeDtypePytree,
-    subjects_in_regime: PytreeValue | ShapeDtypePytree,
+    new_agent_regime_ids: PytreeValue | ShapeDtypePytree,
+    agents_in_regime: PytreeValue | ShapeDtypePytree,
     flat_params: PytreeValue | ShapeDtypePytree,
     own_member: PytreeValue | ShapeDtypePytree,
     new_own_member: PytreeValue | ShapeDtypePytree,
@@ -226,8 +224,8 @@ def gate_route_arguments(
     return {
         "edge_values": edge_values,
         "next_states": next_states,
-        "new_subject_regime_ids": new_subject_regime_ids,
-        "subjects_in_regime": subjects_in_regime,
+        "new_agent_regime_ids": new_agent_regime_ids,
+        "agents_in_regime": agents_in_regime,
         "flat_params": flat_params,
         "own_member": own_member,
         "new_own_member": new_own_member,

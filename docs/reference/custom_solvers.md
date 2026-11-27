@@ -16,7 +16,7 @@ adapter or automatic migration across versions is not implied.
 A solver derives from `Solver` and implements the `capabilities` property and
 `build_period_kernels` method. The shipped solvers are frozen dataclasses because they
 carry numerical configuration; a solver with no configuration needs no fields. Solver
-API version 3 requires both declarations. Between them, a solver and its kernels answer
+API version 5 requires both declarations. Between them, a solver and its kernels answer
 the following questions.
 
 - **What can this configuration execute?** `capabilities` returns frozen
@@ -24,6 +24,17 @@ the following questions.
   tiled and host axes, repeated program keys and supported preference features. A
   concrete model accepts only axes declared by its built programs; the capability
   description does not authorize additional widths or bypass structural validation.
+
+- **How many members do I solve?** A regime solves the values of its members:
+  `("self",)` for a regime declared with a plain utility function, the `utilities` keys
+  of a `CollectiveUtility` otherwise.
+  `SolverExecutionCapabilities.supports_several_members` declares whether the solver
+  solves a regime with more than one member; model construction refuses a regime with
+  several members whose solver does not. The regime's value arrays carry a trailing axis
+  over its members, the build context's `members`, and every program publishing the
+  value includes it: a solver of one member appends an axis of length one to its value
+  and reads its member's slice of each value array it reads. That member's utility
+  function is named `utility_<member>`, or `utility` for the member `"self"`.
 
 - **Which continuations do I read?** `required_continuation_keys` returns a frozenset of
   `ArtifactKey`. Model building checks every key against what each reachable target
@@ -65,8 +76,9 @@ the following questions.
 ## A minimal solver
 
 The solver below publishes one dense program whose value is the regime's own wealth
-grid. It is the shape every custom solver starts from: declare the program, build its
-arguments from the build context, return a `KernelOutput`.
+grid, for its one member `"self"`. It is the shape every custom solver starts from:
+declare the program, build its arguments from the build context, return a
+`KernelOutput`.
 
 ```python
 import dataclasses
@@ -87,12 +99,17 @@ from lcm.solvers import (
     SolverExecutionCapabilities,
     SolverIdentity,
 )
-from lcm.typing import Float1D
+from lcm.typing import Float1D, Float2D
 
 
-def wealth_value(*, wealth: Float1D) -> Float1D:
-    """One value per state node: the wealth itself."""
-    return wealth
+def wealth_value(*, wealth: Float1D) -> Float2D:
+    """One value per state node and member: the wealth itself."""
+    return wealth[:, None]
+
+
+def wealth_arguments(build: object) -> dict[str, object]:
+    """Bind the regime's wealth grid from the build context."""
+    return {"wealth": build.state_action_space.states["wealth"]}
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -155,9 +172,7 @@ class WealthSolver(Solver):
         program = CoreProgram(
             name="main",
             function=wealth_value,
-            argument_builder=lambda build: {
-                "wealth": build.state_action_space.states["wealth"]
-            },
+            argument_builder=wealth_arguments,
             requirements=CoreExecutionRequirements(),
             output_roles=OutputRole.VALUE,
             disposition=CoreExecutionDisposition.DENSE,
@@ -433,8 +448,8 @@ counted, not merely retained.
 
 A program whose builder reads a stored value it does not declare, or declares one its
 builder does not read, is refused when the program is materialized.
-`SolverBuildContext.solution_reachability.targets(period=..., source=...)` returns the
-target regimes to declare for one period; the last period of the horizon has none. The
+`SolverBuildContext.solution_reachability.targets(step=..., source=...)` returns the
+target regimes to declare for one step; the last step of the horizon has none. The
 conformance fixture's `TargetValueSolver` is the reference shape.
 
 (publishing-a-continuation)=
@@ -560,7 +575,7 @@ Every regime declares exactly one replay route, reachable as
 `regime.simulation.replay_route`, and simulation dispatches on it rather than on the
 class of whatever payload a solve happened to retain. A route names its `replay_mode`:
 
-- `EXACT_REPLAY` — the decision comes from a retained payload, read at the subject's
+- `EXACT_REPLAY` — the decision comes from a retained payload, read at the agent's
   realized state. The route's `payload_type` is the exact class the solve must retain,
   and the pre-simulation check refuses any other.
 - `VALID_RECOMPUTATION` — nothing is retained and the decision is recomputed on the
@@ -575,7 +590,7 @@ a model whose external solver leaves it unset is refused when the model is built
 declarations need no code of their own:
 
 - `DeclaredReplay.GRID_RECOMPUTATION` — the solver's decision is exactly the argmax over
-  the regime's declared action grids at the subject's realized state, so simulation
+  the regime's declared action grids at the agent's realized state, so simulation
   recomputes it there. This is what the example above declares: it retains no payload,
   and the regime's own utility and continuation define its decision.
 - `DeclaredReplay.UNSUPPORTED` — the decision cannot be reproduced. The solve stays
@@ -616,7 +631,7 @@ dataclass records from that plan without calling either plugin callback.
 PyTree-represented static metadata is validated; callback-injected instance state is
 canonicalized to the declared plan. The resulting owned snapshots all pass the route's
 `validate` before any forward execution. Simulation then places each period's payload
-and coordinate arrays on its actual subject devices and calls `validate` again with that
+and coordinate arrays on its actual agent devices and calls `validate` again with that
 exact rebuilt snapshot and context immediately before `build_reader`. Both calls receive
 the same objects; their authority and descriptive metadata are preserved from preflight.
 A validator must leave its immutable inputs unchanged and tolerate repeated validation
@@ -628,9 +643,9 @@ result.
 `ReplayModelContext` and `SimulationBuildContext` expose the same period-specific
 solve-grid view: `state_names` and `action_names` are the canonical solution axes, and
 their node mappings contain exactly those named grids. A state declared with
-`Phased(solve=callable, simulate=Grid)` is carried per subject only during simulation;
-it is therefore not an artifact axis and does not appear in either build context. The
-reader still receives that carried state in its per-subject `states` mapping at runtime.
+`Phased(solve=callable, simulate=Grid)` is carried per agent only during simulation; it
+is therefore not an artifact axis and does not appear in either build context. The
+reader still receives that carried state in its per-agent `states` mapping at runtime.
 
 The reader receives only this public `SimulationBuildContext` and the validated
 `ReplayRouteSnapshot`. Its call has this shape:
@@ -641,7 +656,7 @@ reader(states={...}, fallback_actions={...})
 ```
 
 It must be pure and JAX-transformable. Every declared action is returned by name as a
-scalar or an array broadcastable to one entry per subject; it must not invoke Python I/O
+scalar or an array broadcastable to one entry per agent; it must not invoke Python I/O
 or inspect an engine-private object.
 
 ## Persistence

@@ -1,5 +1,6 @@
 """Scalar borrowing floors move EGM nodes before continuation evaluation."""
 
+import functools
 import logging
 from collections.abc import Callable
 from dataclasses import replace
@@ -524,7 +525,7 @@ def test_dynamic_egm_domain_uses_exact_adjacent_float_comparisons() -> None:
         current_nodes=(float(below), float(floor), float(above), 1.0),
     )
     _, _, _, output = scalar_context_output(floor=float(floor), model=model)
-    np.testing.assert_array_equal(np.isneginf(output.value[:2]), [True, True])
+    np.testing.assert_array_equal(np.isneginf(output.value[:2, 0]), [True, True])
     np.testing.assert_array_almost_equal(
         output.value[2],
         np.log(float(above - floor) * 5.5),
@@ -708,7 +709,9 @@ def test_dynamic_egm_parent_accepts_child_integrity_before_economics(
         model=model, params=parent_params(floor=0.5), regime_name="parent", period=0
     )
     assert isinstance(kernel, _EGMPeriodKernel)
-    guard = kernel.core_programs()["main"].function
+    function = kernel.core_programs()["main"].function
+    assert isinstance(function, functools.partial)
+    guard = function.keywords["_member_axis_core"]
     assert isinstance(guard, _RegimeMassGuardedCore)
     core = guard.core
     assert isinstance(core, _EGMCore)
@@ -956,7 +959,7 @@ def test_dynamic_egm_parent_current_empty_domains_are_economic() -> None:
         runtime_checks=False,
     )
     np.testing.assert_array_equal(
-        solution.values[0]["parent"][:2],
+        solution.values[0]["parent"][:2, 0],
         [-np.inf, -np.inf],
     )
     np.testing.assert_array_almost_equal(
@@ -1280,7 +1283,7 @@ def test_dynamic_egm_floor_value_changes_reuse_compiled_programs() -> None:
     )
 
 
-def test_dynamic_egm_simulation_uses_actual_subject_floor() -> None:
+def test_dynamic_egm_simulation_uses_actual_agent_floor() -> None:
     """A finite illegal action loses to the best legal grid action at actual wealth."""
     model = build_dynamic_egm_model()
     params = dynamic_egm_params(floor=0.5)
@@ -1299,7 +1302,7 @@ def test_dynamic_egm_simulation_uses_actual_subject_floor() -> None:
 
 
 @pytest.mark.parametrize("runtime_checks", [True, False])
-def test_dynamic_egm_simulation_rejects_empty_actual_subject(
+def test_dynamic_egm_simulation_rejects_empty_actual_agent(
     *, runtime_checks: bool
 ) -> None:
     """No declared positive action is feasible at actual wealth equal to the floor."""

@@ -230,9 +230,9 @@ def test_carried_categorical_law_uses_its_canonical_domain(
     )
     params = {"discount_factor": 0.0}
     solution = model.solve(params=params, log_level="off", runtime_checks=False)
-    assert solution.values[0]["alive"].shape == (2,)
+    assert solution.values[0]["alive"].shape == (2, 1)
     assert_array_almost_equal(
-        solution.values[0]["alive"], [0.25, 0.5], decimal=DECIMAL_PRECISION
+        solution.values[0]["alive"][..., 0], [0.25, 0.5], decimal=DECIMAL_PRECISION
     )
     result = model.simulate(
         params=params,
@@ -250,7 +250,7 @@ def test_carried_categorical_law_uses_its_canonical_domain(
         runtime_checks=False,
     ).to_dataframe(use_categorical_codes=True)
     for period in (0, 1):
-        rows = result.query("period == @period").sort_values("subject_id")
+        rows = result.query("period == @period").sort_values("agent_id")
         codes = np.array([1, 0]) if period == 0 else np.array([0, 1])
         np.testing.assert_array_equal(rows["status"], codes)
         probabilities = 0.25 + 0.25 * codes
@@ -324,13 +324,13 @@ def test_categorical_law_uses_current_date_and_original_uniform(width: int) -> N
                 nodes=Product(),
             )
         },
-        execution_config=ExecutionConfig(axis_widths={"subject": width, "cell": width}),
+        execution_config=ExecutionConfig(axis_widths={"agent": width, "cell": width}),
     )
     params = {"discount_factor": 0.0, "innovation": {"p": 0.25}}
     solution = model.solve(params=params, log_level="off", runtime_checks=False)
     for period, name in enumerate(("alive", "last")):
         assert_array_almost_equal(
-            solution.values[period][name],
+            solution.values[period][name][..., 0],
             0.25 + np.arange(3) / 8 + period / 8,
             decimal=DECIMAL_PRECISION,
         )
@@ -348,7 +348,7 @@ def test_categorical_law_uses_current_date_and_original_uniform(width: int) -> N
         runtime_checks=False,
     ).to_dataframe(use_categorical_codes=True)
     for period in (0, 1):
-        rows = result.query("period == @period").sort_values("subject_id")
+        rows = result.query("period == @period").sort_values("agent_id")
         state = initial_state if period == 0 else 2 - initial_state
         keys = draw_row_keys(
             key=jax.random.key(47),
@@ -560,8 +560,8 @@ def test_category_alias_is_shared_by_the_entire_native_flow() -> None:
         log_level="off",
         runtime_checks=False,
     ).to_dataframe(use_categorical_codes=True, additional_targets=["reported"])
-    source = panel.query("period == 0").sort_values("subject_id")
-    destination = panel.query("period == 1").sort_values("subject_id")
+    source = panel.query("period == 0").sort_values("agent_id")
+    destination = panel.query("period == 1").sort_values("agent_id")
     np.testing.assert_array_equal(source["action"], source["eps"])
     np.testing.assert_array_equal(source["value"], 14 * source["eps"])
     np.testing.assert_array_equal(source["reported"], source["eps"])
@@ -603,5 +603,5 @@ def test_declared_helper_takes_precedence_over_a_continuous_code_spelling() -> N
         params={"innovation": {"shift": 2.0}}, log_level="off", runtime_checks=False
     )
     assert_array_almost_equal(
-        solution.values[0]["alive"], [2.0, 3.0], decimal=DECIMAL_PRECISION
+        solution.values[0]["alive"][..., 0], [2.0, 3.0], decimal=DECIMAL_PRECISION
     )

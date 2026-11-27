@@ -1,7 +1,7 @@
 """Tests for compile-only workspace-frontier selection."""
 
 from collections.abc import Callable, Hashable, Mapping
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from typing import Literal, Never, cast
 
 import jax
@@ -487,6 +487,26 @@ def test_compile_exceptions_propagate_unchanged(budget_bytes: int | None) -> Non
     assert caught.value is failure
 
 
+def test_budgeted_planning_passes_a_candidate_whose_compile_runs_out_of_memory() -> (
+    None
+):
+    """Width 8 runs out of device memory while compiling; width 4 fits and is kept."""
+    compiler = _Compiler(lambda widths: _stats(widths["action_product"]))
+
+    def compile_candidate(widths: Mapping[str, int]) -> _Executable[SimpleNamespace]:
+        if widths["action_product"] == 8:
+            raise jax.errors.JaxRuntimeError("RESOURCE_EXHAUSTED: Out of memory")
+        return compiler(widths)
+
+    plan = plan_workspace(
+        axes=(_axis(extent=8),),
+        compile_candidate=compile_candidate,
+        budget_bytes=100,
+    )
+
+    assert plan.widths == {"action_product": 4}
+
+
 def test_all_fixed_axes_compile_only_one_candidate_and_report_overbudget() -> None:
     compiler = _Compiler(lambda _widths: _stats(11))
 
@@ -868,9 +888,11 @@ def test_budgeted_frontier_is_enumerated_once_per_axis_declaration(
     built: list[tuple[int, ...]] = []
     width_mapping = planning._width_mapping
 
-    def record(**kwargs):
-        built.append(kwargs["values"])
-        return width_mapping(**kwargs)
+    def record(
+        *, axes: tuple[ReducedAxis | TiledOutputAxis, ...], values: tuple[int, ...]
+    ) -> MappingProxyType[str, int]:
+        built.append(values)
+        return width_mapping(axes=axes, values=values)
 
     monkeypatch.setattr(planning, "_width_mapping", record)
 

@@ -126,10 +126,11 @@ def test_flattening_a_target_keeps_the_scale_its_coefficients_need() -> None:
     coefficients, shifts = _wide_target()
 
     values, node_coefficients, node_shifts = _as_lottery(
-        values=jnp.ones((2,), dtype=dtype),
+        values=jnp.ones((2, 1), dtype=dtype),
         weights=coefficients,
         shifts=shifts,
         has_stochastic_states=True,
+        n_members=1,
     )
     half = jnp.asarray(0.5, dtype=dtype)
     weighted, product_shifts = scaled_joint_weight(
@@ -138,7 +139,8 @@ def test_flattening_a_target_keeps_the_scale_its_coefficients_need() -> None:
 
     got = _aggregate_joint_lottery(
         certainty_equivalent=_InheritedLinearExpectation(),
-        lottery_values=[values, jnp.asarray([0.0], dtype=dtype)],
+        # The engine aggregates each member's slice of the nodes on its own.
+        lottery_values=[values[:, 0], jnp.asarray([0.0], dtype=dtype)],
         lottery_weights=[weighted, jnp.asarray([0.5], dtype=dtype)],
         lottery_shifts=[
             product_shifts + node_shifts,

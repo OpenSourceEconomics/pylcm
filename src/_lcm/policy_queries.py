@@ -21,8 +21,10 @@ from _lcm.current_iid import (
     CURRENT_IID_ARGUMENT,
     CURRENT_IID_NODES_ARGUMENT,
     CURRENT_IID_ROWS_ARGUMENT,
+    AdmittedGroupParams,
     CurrentIIDDrawFrame,
     CurrentIIDPlan,
+    NodeOperands,
 )
 from _lcm.dtypes import Code, as_canonical_float, as_code
 from _lcm.engine import StateActionSpace
@@ -38,21 +40,39 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.execution.pending_work import PendingSolveWork
-from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind
+from _lcm.execution.value_transfer import (
+    ValueArtifactAddress,
+    ValueArtifactKind,
+    ValueConsumerAddress,
+    ValueInputChannel,
+)
 from _lcm.grids import Grid
 from _lcm.off_grid import ProjectedGridRule, count_projected_off_grid
 from _lcm.output_roles import OutputRole, target_role
 from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
-from _lcm.regime_building.argmax import argmax_and_max
-from _lcm.regime_building.collective import ParetoWeights, collective_argmax_and_readout
-from _lcm.regime_building.max_Q_over_a import _evaluate_pareto_weights
+from _lcm.probability import is_represented_zero
+from _lcm.regime_building.collective import (
+    collective_argmax_and_readout,
+    decider_choice,
+    decider_expected_values,
+)
+from _lcm.regime_building.decoupled import (
+    household_argmax_and_readout,
+    smoothed_logsum,
+    smoothed_profiles,
+)
+from _lcm.regime_building.max_Q_over_a import (
+    _evaluate_pareto_weights,
+    _stacked_pareto_weights,
+)
 from _lcm.regime_building.Q_and_F import (
     CanonicalActionKernel,
     EvaluatedQAndF,
     LandingCheck,
-    has_objective_profile,
+    QAndFParts,
     runtime_bound_specs,
 )
+from _lcm.regime_building.V import get_V_interpolator
 from _lcm.solution.contract import ContinuationPayload, PeriodKernel, SolverBuildContext
 from _lcm.solution.grid_search import (
     GridSearch,
@@ -76,7 +96,7 @@ from _lcm.utils.counts import sum_counts
 from _lcm.utils.dispatchers import productmap, vary_carry_like_body
 from lcm.exceptions import ExecutionPlanningError, UnsupportedOperationError
 from lcm.grids import DiscreteGrid
-from lcm.shocks import MonteCarlo, QuasiMonteCarlo, ShockGroupName
+from lcm.shocks import MonteCarlo, QuasiMonteCarlo, ShockGroupName, ShockName
 from lcm.solver_api import KernelOutput
 from lcm.typing import (
     BoolND,
@@ -95,7 +115,6 @@ _PHYSICAL_CONTEXTS = "_lcm_query_physical_contexts"
 _INFORMATION = "_lcm_query_information"
 _DRAWS = "_lcm_query_draws"
 _ACTING = "_lcm_query_acting"
-_TASTE = "_lcm_query_taste"
 _QUERY_ARGUMENTS = "query_arguments"
 _EVALUATED = "_lcm_query_evaluated"
 _OUTSIDE = "_lcm_query_outside"
@@ -119,10 +138,10 @@ _FLAT_OPERAND_PATH_LENGTH = 2
 class QueryKind(StrEnum):
     """The action problem a query reads.
 
-    - `RAW` ⇒ the target's problem without its exit
-    - `PARTICIPATING` ⇒ that problem with the target's exit applied as a rule for
-      staying, without the move
-    - `FULL` ⇒ the target's problem with its exit
+    - `RAW` ⇒ the target's problem without its composition action
+    - `PARTICIPATING` ⇒ that problem with the target's composition action applied as a
+      rule for staying, without leaving
+    - `FULL` ⇒ the target's problem with its composition action
     """
 
     RAW = "Raw"
@@ -204,8 +223,8 @@ def demanded_query_order(
     """Expand demanded roots and reject typed cycles and reads deeper than one step.
 
     A query never reads a Full publication. A Participating query, a rule for staying
-    applied within one step, reads Raw queries only: problem values, never another
-    rule for staying.
+    applied within one step, reads Raw queries only: values without the composition
+    action, never another rule for staying.
     """
     graph: dict[str, tuple[str, ...]] = {}
     pending = list(reversed(roots))
@@ -226,9 +245,9 @@ def demanded_query_order(
             ):
                 raise ValueError(
                     f"Participating query {name!r} cannot read Participating query "
-                    f"{upstream!r}: a rule for staying reads the problem values of "
-                    "its targets only, so two such rules cannot chain within one "
-                    "step."
+                    f"{upstream!r}: a rule for staying reads only the values of "
+                    "its targets without the composition action, so two such "
+                    "rules cannot chain within one step."
                 )
         graph[name] = dependencies[name]
         pending.extend(reversed(dependencies[name]))
@@ -263,8 +282,9 @@ class QueryNode:
     read: QueryRead
     """Mapped context and kind of this action problem.
 
-    An exit target is read as Raw, the destination's problem without its own exit,
-    because a subject moves at most once per period. A consent target is read as
+    A destination is read as Raw, the destination's problem without its own
+    composition action, because an agent decides on its composition at most once per
+    period. A consent target is read as
     Participating: the formed couple applies its own rule for staying, and the
     targets of that rule are read as Raw.
     """
@@ -280,15 +300,15 @@ class QueryNode:
         MappingProxyType({})
     )
     """Current coordinates selected together with the root's retained policy."""
-    gated_channels: Mapping[RegimeName, tuple[int | None, ...]] = MappingProxyType({})
+    gated_channels: Mapping[RegimeName, tuple[int, ...]] = MappingProxyType({})
     """Open-branch value components, stacked inside the admitted query core."""
     available: Callable[..., BoolND] | None = None
     """Caller-context guard evaluated before a demanded benchmark."""
-    exit_targets: Mapping[int, Mapping[str, str]] = MappingProxyType({})
-    """Stable exit ID to source member and its exact destination query key."""
-    exit_adjustments: Mapping[int, Mapping[str, Callable[..., PytreeValue]]] = (
-        MappingProxyType({})
-    )
+    composition_action_targets: Mapping[int, Mapping[str, str]] = MappingProxyType({})
+    """Stable decision ID to source member and its exact destination query key."""
+    composition_action_adjustments: Mapping[
+        int, Mapping[str, Callable[..., PytreeValue]]
+    ] = MappingProxyType({})
     """The same bound once-paid source adjustments used by the decision."""
     ancestors: tuple[str, ...] = ()
     """Exact producing contexts along the mapped source path."""
@@ -308,17 +328,18 @@ class QueryNode:
     The context's plan indices then span the kept groups alone; every other
     group and every observation axis is drawn once per sample.
     """
-    exit_availability: Callable[..., PytreeValue] | None = None
-    """Availability predicate of the occupant's exit, if it declares one."""
+    composition_action_availability: Callable[..., PytreeValue] | None = None
+    """Availability predicate of the occupant's composition action, if it has one."""
     draw_condition: int | None = None
-    """Drawn plan position whose draws fall only where an exit is available.
+    """Drawn plan position whose draws fall only where the decision is available.
 
-    The mass where no exit is available then enters once, through one more row
-    per kept row, at the value of staying.
+    The mass where no decision is available then enters once, through one more row per
+    kept row, at the value of staying.
     """
     available_nodes: tuple[int, tuple[bool, ...]] | None = None
-    """Enumerated plan position whose nodes alone decide whether the exit is
-    available, and whether it is at each of them.
+    """Enumerated plan position whose nodes alone decide if the decision is available.
+
+    It also holds whether it is available at each of them.
 
     The plan's rows then cross that group's available nodes and its first
     unavailable one with every node of the other groups. A row of that one node
@@ -329,13 +350,21 @@ class QueryNode:
     """Proof that this outside read lands on the destination's stored nodes.
 
     None when the build cannot prove it; the read keeps its Raw identity either
-    way, since it is the same problem value.
+    way, since it is the same value without the composition action.
     """
     grid_rules: tuple[ProjectedGridRule, ...] = ()
-    """Destination-grid rules of the states an exit projects into this read.
+    """Destination-grid rules of the states that the decision projects into this read.
 
     The projection already caps each `clip_state` state; each `raise` state adds
     one reached-landing check to the read's own.
+    """
+    landing: int | None = None
+    """The target's occurrence later in the period, whose stored value this read
+    takes; `None` for a read of the target's problem at the read's step.
+
+    A decision on the composition enters a regime of a later stage of its period, which
+    decides there:
+    its value at its occurrence is interpolated at the projected states.
     """
 
     def __post_init__(self) -> None:
@@ -370,21 +399,23 @@ class QueryNode:
         object.__setattr__(self, "observation_aliases", MappingProxyType(aliases))
         object.__setattr__(
             self,
-            "exit_targets",
+            "composition_action_targets",
             MappingProxyType(
                 {
                     identifier: MappingProxyType(dict(targets))
-                    for identifier, targets in self.exit_targets.items()
+                    for identifier, targets in self.composition_action_targets.items()
                 }
             ),
         )
         object.__setattr__(
             self,
-            "exit_adjustments",
+            "composition_action_adjustments",
             MappingProxyType(
                 {
                     identifier: MappingProxyType(dict(adjustments))
-                    for identifier, adjustments in self.exit_adjustments.items()
+                    for identifier, adjustments in (
+                        self.composition_action_adjustments.items()
+                    )
                 }
             ),
         )
@@ -403,20 +434,19 @@ class QueryNode:
     @property
     def value_shape(self) -> tuple[int, ...]:
         """Return the answer owner's tuple shape, independent of physical laws."""
-        member_axis = self.context.member_axis
-        return () if member_axis is None else (len(member_axis),)
+        return (len(self.context.members),)
 
 
 def gated_query_targets(
     *, context: SolverBuildContext, period: int
 ) -> tuple[RegimeName, ...]:
     """Select this query's future gates; terminal dates have no continuation."""
-    if period >= context.solution_reachability.n_periods - 1:
+    if period >= context.solution_reachability.n_steps - 1:
         return ()
     return tuple(
         target
         for target in context.solution_reachability.targets(
-            period=period, source=context.regime_name
+            step=period, source=context.regime_name
         )
         if target in context.edge_target_regimes
     )
@@ -434,6 +464,25 @@ def _node_inputs(
         return _OutsideReadArguments(
             period=period, plan=node.context.current_iid_plans.get(period)
         ), ()
+    if node.landing is not None:
+        target = node.read.target
+        plan = node.context.current_iid_plans.get(node.landing)
+        return _LandingReadArguments(period=period, target=target, plan=plan), (
+            ValueRead(
+                target=ValueArtifactAddress(
+                    kind=ValueArtifactKind.REGIME_VALUE,
+                    period=node.landing,
+                    regime=target,
+                ),
+                source=ValueConsumerAddress(
+                    source_period=period,
+                    source_regime=target,
+                    core_key="main",
+                    channel=ValueInputChannel.NEXT_REGIME_VALUE,
+                    path=(target,),
+                ),
+            ),
+        )
     builder, reads = grid_search_query_inputs(context=node.context, period=period)
     if not node.gated_channels:
         return builder, reads
@@ -450,6 +499,44 @@ def _node_inputs(
         else read
         for read in reads
     )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _LandingReadArguments:
+    """A landing read's operands: the clock and its target's stored value.
+
+    Also the target's actions, parameters and draws for evaluating feasibility at
+    the landing state.
+    """
+
+    period: int
+    target: RegimeName
+    plan: CurrentIIDPlan | None
+
+    def __call__(
+        self, context: CoreBuildContext
+    ) -> Mapping[str, PytreeValue | ShapeDtypePytree]:
+        if context.ages is None:
+            raise ValueError("A landing read needs its actual economic age.")
+        arguments: dict[str, PytreeValue | ShapeDtypePytree] = {
+            **dict(cast("StateActionSpace", context.state_action_space).actions),
+            **dict(
+                regime_kernel_params(
+                    cast("FlatParams", context.flat_params), regime_name=self.target
+                )
+            ),
+            "period": jnp.int32(self.period),
+            "age": context.ages.values[self.period],
+        }
+        arguments["next_regime_to_V_arr"] = cast(
+            "PytreeValue",
+            MappingProxyType({self.target: context.next_regime_to_V_arr[self.target]}),
+        )
+        if self.plan is not None:
+            arguments.update(
+                _current_iid_arguments(plan=self.plan, flat_params=context.flat_params)
+            )
+        return MappingProxyType(arguments)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -473,13 +560,25 @@ class _OutsideReadArguments:
             "age": context.ages.values[self.period],
         }
         if self.plan is not None:
-            arguments[CURRENT_IID_ARGUMENT] = {
-                name: dict(context.flat_params.get(name, {}))
-                for name, _, _ in self.plan.bindings
-            }
-            arguments[CURRENT_IID_NODES_ARGUMENT] = self.plan.node_operands
-            arguments[CURRENT_IID_ROWS_ARGUMENT] = self.plan.indices
+            arguments.update(
+                _current_iid_arguments(plan=self.plan, flat_params=context.flat_params)
+            )
         return MappingProxyType(arguments)
+
+
+def _current_iid_arguments(
+    *,
+    plan: CurrentIIDPlan,
+    flat_params: Mapping[RegimeName, FlatRegimeParams | FlatEdgeParams],
+) -> dict[str, PytreeValue]:
+    """Supply a query's law parameters and numerical support as operands."""
+    return {
+        CURRENT_IID_ARGUMENT: {
+            name: dict(flat_params.get(name, {})) for name, _, _ in plan.bindings
+        },
+        CURRENT_IID_NODES_ARGUMENT: plan.node_operands,
+        CURRENT_IID_ROWS_ARGUMENT: plan.indices,
+    }
 
 
 # Values at one common action, stable ID, support, integrity, reached-landing counts.
@@ -488,15 +587,16 @@ type PolicyAnswer = tuple[FloatND, IntND, BoolND, BoolND, IntND]
 # A destination's tabulated values and support, read by its stored outside reads.
 type OutsideTable = tuple[FloatND, BoolND]
 
-# Q, feasibility, integrity and landing counts over the action grid.
-type StayTable = tuple[FloatND, BoolND, BoolND, IntND]
+# Q, feasibility, integrity and landing counts over the action grid, and the
+# objective's Q of a regime with a separate objective (`None` without one).
+type StayTable = tuple[FloatND, BoolND, BoolND, IntND, FloatND | None]
 
 
 def _query_landing_checks(*, node: QueryNode) -> tuple[LandingCheck, ...]:
     """The read's reached-landing checks: its problem's, then its projected states'.
 
-    A projected state checks against its destination grid on behalf of the exit
-    that projects it.
+    A projected state checks against its destination grid on behalf of the composition
+    action that projects it.
     """
     return (
         *_problem_landing_checks(node=node),
@@ -509,6 +609,8 @@ def _query_landing_checks(*, node: QueryNode) -> tuple[LandingCheck, ...]:
 
 
 def _problem_landing_checks(*, node: QueryNode) -> tuple[LandingCheck, ...]:
+    if node.landing is not None:
+        return ()
     return getattr(
         node.context.Q_and_F_functions[node.read.period], "landing_checks", ()
     )
@@ -537,7 +639,7 @@ def _query_landing_totals(*, counts: IntND) -> IntND:
 
 @dataclass(frozen=True, kw_only=True, eq=False)
 class ScalarPolicyQueries:
-    """The same bound decision at one original subject or mapped destination.
+    """The same bound decision at one original agent or mapped destination.
 
     Simulation owns native argument placement, inventory and row custody. Every
     query's current parameters and canonical continuation enter explicitly.
@@ -549,8 +651,9 @@ class ScalarPolicyQueries:
     """The node that acts.
 
     - Full for an original occupant's choice.
-    - For a mover's once-only action, the kind its move was priced at: Participating
-      after a consent move, Raw after any other exit.
+    - For the once-only action of a member who leaves, the kind its decision was priced
+      at: Participating after formation by consent, Raw after any other
+      composition action.
     """
     period: int
     """Exact computational period of the phase-specific Q/F declarations."""
@@ -563,7 +666,7 @@ class ScalarPolicyQueries:
         arguments: Mapping[str, Mapping[str, PytreeValue]],
         frame: CurrentIIDDrawFrame | None = None,
     ) -> Mapping[str, FloatND | IntND]:
-        """Use the same canonical settlement at the immutable original source."""
+        """Use the same canonical transfer at the immutable original source."""
         fixed = arguments[query]
         physical = {} if frame is None else frame.physical
         return _mapped_query_states(
@@ -700,7 +803,7 @@ class ScalarPolicyQueries:
         ages: TimeAxis,
         fixed_flat_params: FlatParams = MappingProxyType({}),
     ) -> Mapping[str, Mapping[str, PytreeValue]]:
-        """Bind only clock and settlement operands, without policy value inputs."""
+        """Bind only clock and transfer operands, without policy value inputs."""
         params = _query_flat_params(
             flat_params=flat_params, fixed_flat_params=fixed_flat_params
         )
@@ -937,10 +1040,10 @@ def build_policy_query_kernel(
     chunk_size = min(chunk_size, size)
     row_batch = _row_batch(chunk_size=chunk_size, halvings=halvings)
     bank_size = _get_padded_query_bank_size(size=size, chunk_size=chunk_size)
-    member_axis = root_context.member_axis
-    member_shape = () if member_axis is None else (len(member_axis),)
+    member_shape = (len(root_context.members),)
     value_shape = (
-        tuple(value.size for value in root_space.states.values()) + member_shape
+        *(value.size for value in root_space.states.values()),
+        *member_shape,
     )
     bank_shape = (bank_size, *member_shape)
     dtype = jnp.asarray(0.0).dtype
@@ -1196,10 +1299,8 @@ def _own_raw_evaluation_sources(
         node.read.kind is not QueryKind.FULL
         or raw.read.kind is not QueryKind.RAW
         or raw.context is not context
-        or context.member_axis is not None
         or context.koopmans_aggregator is not None
         or context.state_action_space.action_names
-        or context.has_taste_shocks
         or node.ancestors
         or raw.ancestors != (root,)
         or raw.inputs
@@ -1295,34 +1396,33 @@ def _finish_bank(*, shape: tuple[int, ...], size: int) -> _FinishBank:
 
 
 def _admit_node(*, node: QueryNode, period: int) -> None:
-    """Refuse an unrepresented action/status or information intersection."""
+    """Refuse an unrepresented action/status or information intersection.
+
+    A landing read evaluates its target's feasibility in the target's problem at
+    the occurrence, which is admitted as a read of the target's problem is.
+    """
     context = node.context
     if node.read.phase != "solve" or node.read.period != period:
         raise UnsupportedOperationError(
             "A policy query needs its exact solve phase/period."
         )
-    _admit_query_solver(context=context, period=period)
-    if period not in context.Q_and_F_functions:
+    problem = period if node.landing is None else node.landing
+    _admit_query_solver(context=context, period=problem)
+    if problem not in context.Q_and_F_functions:
         raise ValueError("The target action problem is inactive at this period.")
-    _admit_query_objective(context=context, period=period)
     _fail_if_projection_incomplete(node=node, reader="A query")
-    if context.has_taste_shocks and context.member_axis is not None:
-        raise UnsupportedOperationError(
-            f"Regime {context.regime_name!r} is a household with EV1 taste shocks "
-            "whose decision an exit rule reads. Reading a household's decision "
-            "under taste shocks is not implemented: drop `taste_shocks` on this "
-            "regime, or the exit that reads it."
-        )
     if context.invariant_bindings or context.action_partitions != 1:
         raise UnsupportedOperationError(
             "This query closure needs an unblocked action problem."
         )
-    gated_targets = set(gated_query_targets(context=context, period=period))
-    if set(node.gated_channels) != gated_targets:
+    # A landing read takes its target's stored value, not its continuation.
+    if node.landing is None and set(node.gated_channels) != set(
+        gated_query_targets(context=context, period=period)
+    ):
         raise UnsupportedOperationError(
             "A query needs its gated continuation's explicit raw value channels."
         )
-    if runtime_bound_specs(function=context.Q_and_F_functions[period]):
+    if runtime_bound_specs(function=context.Q_and_F_functions[problem]):
         raise UnsupportedOperationError(
             "Query bound integrity must have a native status adapter."
         )
@@ -1336,15 +1436,6 @@ def _fail_if_projection_incomplete(*, node: QueryNode, reader: str) -> None:
             f"{reader} of regime {node.read.target!r} needs exactly one projection "
             f"per state of its value function ({expected}); got "
             f"{sorted(node.read.projection)}."
-        )
-
-
-def _admit_query_objective(*, context: SolverBuildContext, period: int) -> None:
-    """Refuse a separate selection profile the query does not transport."""
-    if has_objective_profile(Q_and_F=context.Q_and_F_functions[period]):
-        raise UnsupportedOperationError(
-            "Native policy query does not represent Decoupled objective selection; "
-            "the query reduces reported values."
         )
 
 
@@ -1660,7 +1751,8 @@ def _query_node_parameter_namespaces(
     *, node: QueryNode, information: bool
 ) -> frozenset[str]:
     """Mirror the node's action/law and exact producing projection operands."""
-    plan = node.context.current_iid_plans.get(node.read.period)
+    period = node.read.period if node.landing is None else node.landing
+    plan = node.context.current_iid_plans.get(period)
     names = {name for name, _, _ in (() if plan is None else plan.bindings)} | {
         path[0]
         for path in node.read.operand_paths.values()
@@ -1674,7 +1766,7 @@ def _query_node_parameter_namespaces(
 def _query_projection_operands(
     *, node: QueryNode, context: CoreBuildContext
 ) -> Mapping[str, PytreeValue]:
-    """Bind each producing context's exact current-call settlement parameters."""
+    """Bind each producing context's exact current-call transfer parameters."""
     return _projection_operands(
         node=node,
         source_state_names=frozenset(
@@ -1708,7 +1800,7 @@ def _projection_operands(
     source_state_names: frozenset[StateName],
     flat_params: FlatParams,
 ) -> Mapping[str, PytreeValue]:
-    """Read the same canonical settlement paths for policies and entry frames."""
+    """Read the same canonical transfer paths for policies and entry frames."""
     operands = {}
     for name, path in node.read.operand_paths.items():
         if name in source_state_names or name in {"period", "age"}:
@@ -2090,7 +2182,7 @@ def _observation_available(
     arguments: Mapping[str, Mapping[str, PytreeValue]],
     available: Mapping[str, PytreeValue],
 ) -> BoolND:
-    """Short-circuit equivalent aliases without evaluating their settlements."""
+    """Short-circuit equivalent aliases without evaluating their transfers."""
     active = jnp.asarray(a=False)
     for producer in node.observation_aliases[group]:
         fixed = arguments[producer]
@@ -2125,7 +2217,7 @@ def _observation_inputs(
     available: Mapping[str, PytreeValue],
     guard: BoolND | None = None,
 ) -> Mapping[str, FloatND | IntND]:
-    """Use proved equal law-input maps, excluding unrelated target settlements."""
+    """Use proved equal law-input maps, excluding unrelated target transfers."""
     producer = node.observation_sources[group]
     target = definitions[producer]
     plan = target.context.current_iid_plans[period]
@@ -2176,10 +2268,7 @@ def query_arguments(
         for target, indices in node.gated_channels.items():
             value = values[target]
             values[target] = jnp.stack(
-                tuple(
-                    value if index is None else value[..., index] for index in indices
-                ),
-                axis=-1,
+                tuple(value[..., index] for index in indices), axis=-1
             )
         arguments["next_regime_to_V_arr"] = MappingProxyType(values)
     arguments.setdefault(_PHYSICAL_CONTEXTS, {})
@@ -2237,7 +2326,7 @@ def kept_table(
     if node.participation is None:
         return table
     participation = node.participation
-    q, ordinary, valid, landings = table
+    q, ordinary, valid, landings, objective = table
     names = node.context.state_action_space.action_names
     grids = jnp.meshgrid(
         *(jnp.asarray(arguments[name]) for name in names), indexing="ij"
@@ -2268,7 +2357,7 @@ def kept_table(
         tuple(grid.reshape(size) for grid in grids),
         q.reshape((size, *q.shape[ordinary.ndim :])),
     ).reshape(ordinary.shape)
-    return q, ordinary & keep, valid, landings
+    return q, ordinary & keep, valid, landings, objective
 
 
 def _active_query_cell(
@@ -2292,8 +2381,12 @@ def _active_query_cell(
         fixed=fixed,
         projection_operands=projection_operands,
     )
+    if node.landing is not None:
+        return _landing_answer(
+            node=node, live=live, guard=guard, arguments=arguments, mapped=mapped
+        )
     context = node.context
-    q, feasible, valid, landing_counts = (
+    q, feasible, valid, landing_counts, objective = (
         stay_table(
             node=node,
             period=period,
@@ -2312,15 +2405,26 @@ def _active_query_cell(
         action, value, taste_valid = _taste_query_choice(
             node=node,
             q=q,
+            objective=objective,
             feasible=feasible,
             arguments=arguments,
         )
         valid &= taste_valid
-    elif context.member_axis is not None:
-        pareto_weights = cast("ParetoWeights", context.pareto_weights)
+        # An acting draw without an alternative to draw publishes no action.
+        support &= action >= 0
+    elif objective is not None:
+        # A separate objective chooses as in the regime's own solve.
+        action, value = household_argmax_and_readout(
+            selection=objective,
+            readout=q,
+            where=feasible,
+            weights=_taste_weights(node=node, arguments=arguments),
+        )
+    else:
+        pareto_weights = context.pareto_weights
         action, values, _ = collective_argmax_and_readout(
             member_Q={
-                name: q[..., index] for index, name in enumerate(context.member_axis)
+                name: q[..., index] for index, name in enumerate(context.members)
             },
             feasibility=feasible,
             weights=_evaluate_pareto_weights(
@@ -2332,9 +2436,7 @@ def _active_query_cell(
             ),
             action_axes=axes,
         )
-        value = jnp.stack(tuple(values[name] for name in context.member_axis))
-    else:
-        action, value = argmax_and_max(a=q, where=feasible, initial=-jnp.inf)
+        value = jnp.stack(tuple(values[name] for name in context.members))
     valid = (
         jnp.all(valid)
         & ~jnp.any(jnp.isnan(value))
@@ -2362,19 +2464,6 @@ def _active_query_cell(
             "feasible": feasible,
             "answer": answer,
         }
-        if context.has_taste_shocks:
-            from _lcm.regime_building.max_Q_over_a import (  # noqa: PLC0415
-                TASTE_SHOCK_SCALE_PARAM,
-            )
-
-            operands[_TASTE] = {
-                "scale": arguments[TASTE_SHOCK_SCALE_PARAM],
-                **(
-                    {"key": arguments["taste_shock_key"]}
-                    if "taste_shock_key" in arguments
-                    else {}
-                ),
-            }
         answer = node.decision(
             **{
                 name: operands[name]
@@ -2383,6 +2472,121 @@ def _active_query_cell(
         )
         _validate_decision_answer(node=node, answer=answer)
     return answer
+
+
+def _landing_answer(
+    *,
+    node: QueryNode,
+    live: BoolND,
+    guard: BoolND,
+    arguments: Mapping[str, PytreeValue],
+    mapped: Mapping[str, FloatND | IntND],
+) -> PolicyAnswer:
+    """Read a later stage's target at its occurrence, at the mapped states.
+
+    The value is the one stored at the occurrence, interpolated on the target's
+    grid there: the target decides later in the period, undiscounted. The read
+    chooses no action. It is supported where its guard holds and the target's
+    problem at the occurrence has a feasible action at the mapped states.
+    """
+    context = node.context
+    target = node.read.target
+    info = (
+        (context.period_to_regime_v_interp or {})
+        .get(cast("int", node.landing), {})
+        .get(target, context.regime_to_v_interpolation_info[target])
+    )
+    interpolate = get_V_interpolator(
+        v_interpolation_info=info, state_prefix="", V_arr_name="V_arr"
+    )
+    stored = cast("Mapping[RegimeName, FloatND]", arguments["next_regime_to_V_arr"])[
+        target
+    ]
+    value = jnp.stack(
+        tuple(
+            interpolate(
+                **{state: mapped[state] for state in info.state_names},
+                V_arr=stored[..., index],
+            )
+            for index, _ in enumerate(context.members)
+        )
+    )
+    support, law_valid = _landing_support(node=node, arguments=arguments)
+    valid = (
+        law_valid
+        & ~jnp.any(jnp.isnan(value))
+        & _mapped_query_valid(node=node, mapped=mapped)
+    )
+    return (
+        jnp.where(guard, value, -jnp.inf),
+        jnp.asarray(-1, dtype=jnp.int32),
+        live & guard & support,
+        ~live | valid,
+        count_projected_off_grid(rules=node.grid_rules, mapped=mapped, active=guard),
+    )
+
+
+def _landing_support(
+    *, node: QueryNode, arguments: Mapping[str, PytreeValue]
+) -> tuple[BoolND, BoolND]:
+    """Return feasibility at every positive-mass draw and the law's validity.
+
+    The destination decides at its occurrence, over its whole action grid. Its
+    draws affect support here, and its stored value already integrates over them.
+    """
+    landing = cast("int", node.landing)
+    flow = cast("CanonicalActionKernel", node.context.Q_and_F_functions[landing])
+    action_names = node.context.state_action_space.action_names
+    actions = {name: arguments[name] for name in action_names}
+    operands = {
+        **arguments,
+        "period": cast("IntND", arguments["period"]) + (landing - node.read.period),
+    }
+
+    def has_action(shocks: Mapping[ShockName, FloatND | IntND]) -> BoolND:
+        feasible = cast(
+            "Callable[..., BoolND]",
+            productmap(
+                func=with_signature(
+                    functools.partial(
+                        _feasible_at,
+                        flow=flow.utilities_and_F,
+                        operands={**operands, **shocks},
+                    ),
+                    args=list(action_names),
+                    enforce=False,
+                ),
+                variables=action_names,
+                batch_sizes=dict.fromkeys(action_names, 0),
+            ),
+        )
+        return jnp.any(feasible(**actions))
+
+    plan = node.context.current_iid_plans.get(landing)
+    if plan is None:
+        return has_action({}), jnp.asarray(a=True)
+    physical, factors, valid = plan.realise_nodes(
+        arguments=cast("QAndFKwargs", operands),
+        group_params=cast("AdmittedGroupParams", operands[CURRENT_IID_ARGUMENT]),
+        node_operands=cast("NodeOperands", operands[CURRENT_IID_NODES_ARGUMENT]),
+        indices=cast("IntND", operands[CURRENT_IID_ROWS_ARGUMENT]),
+    )
+    present = jnp.all(~is_represented_zero(factors), axis=0)
+    support = jax.lax.map(has_action, dict(physical))
+    return jnp.all(~present | support), valid
+
+
+def _feasible_at(
+    *,
+    flow: Callable[..., tuple[PytreeValue, ...]],
+    operands: Mapping[str, PytreeValue],
+    **actions: PytreeValue,
+) -> BoolND:
+    """The feasibility a canonical flow returns last, at one action."""
+    inputs = {**operands, **actions}
+    return jnp.asarray(
+        flow(**{name: inputs[name] for name in inspect.signature(flow).parameters})[-1]
+    )
 
 
 def _mapped_query_valid(
@@ -2428,14 +2632,17 @@ def _taste_query_choice(
     *,
     node: QueryNode,
     q: FloatND,
+    objective: FloatND | None,
     feasible: BoolND,
     arguments: Mapping[str, PytreeValue],
 ) -> tuple[IntND, FloatND, BoolND]:
-    """Price hidden target taste at its logsum; draw only in the acting pass."""
-    from _lcm.logsum import logsum_and_softmax  # noqa: PLC0415
+    """Price hidden target taste at its logsum; draw only in the acting pass.
+
+    With a separate `objective`, the alternatives and their prices are those of
+    the regime's own solve (`smoothed_profiles`, `smoothed_logsum`).
+    """
     from _lcm.regime_building.max_Q_over_a import (  # noqa: PLC0415
         TASTE_SHOCK_SCALE_PARAM,
-        draw_taste_shock_noise,
     )
 
     context = node.context
@@ -2445,37 +2652,144 @@ def _taste_query_choice(
     )
     if not n_discrete:
         raise ValueError("EV1 policy queries require a discrete action axis.")
-    discrete_values, identifiers = _taste_stay_roster(
-        q=q, feasible=feasible, n_discrete=n_discrete
-    )
+    weights = _taste_weights(node=node, arguments=arguments)
     scale = cast("FloatND", arguments[TASTE_SHOCK_SCALE_PARAM])
-    if arguments.get(_ACTING, False):
-        noise = draw_taste_shock_noise(
-            key=cast("jax.Array", arguments["taste_shock_key"]),
-            shape=discrete_values.shape,
-            scale=scale,
+    key = (
+        cast("jax.Array", arguments["taste_shock_key"])
+        if arguments.get(_ACTING, False)
+        else None
+    )
+    if objective is None:
+        discrete_values, identifiers, at_choice, decider = _taste_stay_roster(
+            q=q, feasible=feasible, n_discrete=n_discrete, weights=weights
         )
-        discrete = jnp.argmax(discrete_values + noise)
-        value = discrete_values[discrete]
-    else:
+        discrete, value = taste_choice(
+            values=discrete_values,
+            at_choice=at_choice,
+            decider=decider,
+            scale=scale,
+            key=key,
+        )
+        return (
+            jnp.where(discrete < 0, -1, identifiers[discrete]),
+            value,
+            _scale_is_valid(scale),
+        )
+    smoothed = smoothed_profiles(
+        # The reduction reads only F, Q and Q_objective of the parts.
+        parts=QAndFParts(U=q, F=feasible, CE=q, Q=q, Q_objective=objective),
+        weights=weights,
+        n_discrete_action_axes=n_discrete,
+    )
+    discrete_values = smoothed.conditional.objective.ravel()
+    identifiers = (
+        jnp.arange(discrete_values.size, dtype=jnp.int32)
+        * math.prod(feasible.shape[n_discrete:])
+        + smoothed.conditional.continuous_index.ravel()
+    ).astype(jnp.int32)
+    if key is None:
         discrete = jnp.argmax(discrete_values)
-        value, _ = logsum_and_softmax(values=discrete_values, scale=scale, axes=(0,))
-    action = identifiers[discrete]
-    return action, value, jnp.all(jnp.isfinite(scale) & (scale > 0))
+        value = smoothed_logsum(smoothed=smoothed, scale=scale)[0]
+    else:
+        discrete, value = taste_choice(
+            values=discrete_values,
+            at_choice=smoothed.stored.reshape(-1, q.shape[-1]),
+            decider=smoothed.decider,
+            scale=scale,
+            key=key,
+        )
+    return (
+        jnp.where(discrete < 0, -1, identifiers[discrete]),
+        value,
+        _scale_is_valid(scale),
+    )
+
+
+def _scale_is_valid(scale: FloatND) -> BoolND:
+    """Whether the taste-shock scale is finite and positive."""
+    return jnp.all(jnp.isfinite(scale) & (scale > 0))
+
+
+def _taste_weights(*, node: QueryNode, arguments: Mapping[str, PytreeValue]) -> FloatND:
+    """The members' Pareto weights in member order."""
+    context = node.context
+    return _stacked_pareto_weights(
+        pareto_weights=context.pareto_weights,
+        members=context.members,
+        states_actions_params=cast("QAndFKwargs", arguments),
+    )
+
+
+def taste_choice(
+    *,
+    values: FloatND,
+    at_choice: FloatND,
+    decider: IntND,
+    scale: FloatND,
+    key: jax.Array | None,
+) -> tuple[jax.Array, FloatND]:
+    """Choose among the deciding member's taste alternatives and publish their value.
+
+    With `key`, the deciding member draws: it takes the alternative maximizing
+    `values` plus one mean-zero EV1 term each, and publishes `at_choice` there.
+    Without it, the choice is the noise-free argmax, and the value is the deciding
+    member's log-sum, with every other member at its mean of `at_choice` under the
+    deciding member's choice probabilities (`decider_expected_values`).
+
+    Where every alternative is worth `-inf` to the deciding member, the logit has
+    no probabilities: the draw takes no alternative (index `-1`) and publishes
+    `-inf` for every member, as the regime's own simulation does.
+
+    Args:
+        values: The deciding member's value of each alternative.
+        at_choice: Each alternative's published value, every member's value in
+            a trailing member axis.
+        decider: The deciding member's index.
+        scale: The taste-shock scale.
+        key: The acting draw's key, or `None` to price the alternatives.
+
+    Returns:
+        The index of the chosen alternative and the published value.
+    """
+    from _lcm.regime_building.max_Q_over_a import (  # noqa: PLC0415
+        draw_taste_shock_noise,
+    )
+
+    if key is not None:
+        chosen = jnp.argmax(
+            values + draw_taste_shock_noise(key=key, shape=values.shape, scale=scale)
+        )
+        worthless = jnp.all(jnp.isneginf(values))
+        return (
+            jnp.where(worthless, -1, chosen),
+            jnp.where(worthless, -jnp.inf, at_choice[chosen]),
+        )
+    chosen = jnp.argmax(values)
+    return chosen, decider_expected_values(
+        decider=decider, Qc=values, at_choice=at_choice, scale=scale
+    )
 
 
 def _taste_stay_roster(
-    *, q: FloatND, feasible: BoolND, n_discrete: int
-) -> tuple[FloatND, IntND]:
-    """Optimize continuous actions before assigning one taste per discrete cell."""
-    discrete_cells = math.prod(q.shape[:n_discrete])
-    continuous_cells = math.prod(q.shape[n_discrete:])
-    masked = jnp.where(feasible, q, -jnp.inf).reshape(discrete_cells, continuous_cells)
-    continuous = jnp.argmax(masked, axis=1)
+    *, q: FloatND, feasible: BoolND, n_discrete: int, weights: FloatND
+) -> tuple[FloatND, IntND, FloatND, IntND]:
+    """Optimize continuous actions before assigning one taste per discrete cell.
+
+    Returns the deciding member's value of each discrete cell, the stable action
+    ID attaining it, the published value there (`taste_choice`) and the deciding
+    member, the one with the positive Pareto weight (`decider_choice`).
+    """
+    decider, values, continuous, at_choice = decider_choice(
+        Q=q,
+        feasibility=feasible,
+        weights=weights,
+        n_discrete_action_axes=n_discrete,
+    )
+    continuous_cells = math.prod(feasible.shape[n_discrete:])
     identifiers = (
-        jnp.arange(discrete_cells, dtype=jnp.int32) * continuous_cells + continuous
+        jnp.arange(values.size, dtype=jnp.int32) * continuous_cells + continuous
     ).astype(jnp.int32)
-    return jnp.max(masked, axis=1), identifiers
+    return values, identifiers, at_choice, decider
 
 
 def _mapped_query_states(
@@ -2485,7 +2799,7 @@ def _mapped_query_states(
     names: frozenset[str] | None = None,
     guard: BoolND | None = None,
 ) -> Mapping[str, FloatND | IntND]:
-    """Canonical scalar settlement boundary shared by solve and actual routing.
+    """Canonical scalar transfer boundary shared by solve and actual routing.
 
     Under a false `guard` a cell runs only as a discarded lane of a batch, and the
     target reads its first grid point instead: a point its own solve evaluates.
@@ -2538,7 +2852,7 @@ def _query_action(
     dependencies: Mapping[str, PolicyAnswer],
     participate: bool = True,
     **actions: PytreeValue,
-) -> tuple[FloatND, BoolND, BoolND, IntND]:
+) -> StayTable:
     """Preserve the canonical Q/F arrays and add only declared participation."""
     inputs = {**arguments, **actions}
     evaluated = cast("EvaluatedQAndF | None", arguments.get(_EVALUATED))
@@ -2551,11 +2865,8 @@ def _query_action(
     landings = jnp.where(
         ordinary, _evaluated_query_landings(node=node, evaluated=evaluated), 0
     )
-    expected_q_shape = (
-        () if node.context.member_axis is None else (len(node.context.member_axis),)
-    )
-    if q.shape != expected_q_shape:
-        raise ValueError("Query Q must be scalar or the canonical member tuple.")
+    if q.shape != (len(node.context.members),):
+        raise ValueError("Query Q must carry the canonical member tuple.")
     if ordinary.dtype != jnp.bool_:
         raise TypeError("Canonical query feasibility must be boolean.")
     if ordinary.ndim != 0:
@@ -2565,7 +2876,7 @@ def _query_action(
         for flag in status:
             valid &= ~jnp.any(flag)
     if node.participation is None or not participate:
-        return q, ordinary, valid, landings
+        return q, ordinary, valid, landings, parts.Q_objective
     operands = {**inputs, **dependencies, "q": q}
     keep = node.participation(
         **{
@@ -2577,7 +2888,7 @@ def _query_action(
         raise TypeError("Query participation must be boolean.")
     if keep.ndim != 0:
         raise ValueError("Query participation must be scalar per action.")
-    return q, ordinary & keep, valid, landings
+    return q, ordinary & keep, valid, landings, parts.Q_objective
 
 
 def _evaluate_query_action(

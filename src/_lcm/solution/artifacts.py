@@ -142,7 +142,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
     retention: ResultRetention,
     regimes: Mapping[RegimeName, Regime],
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
-    n_periods: int,
+    n_steps: int,
     model_instance_id: str,
     params_fingerprint: str,
     model_fingerprint: str,
@@ -226,7 +226,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         user_regime = user_regimes[regime_name]
 
         policy_ref = ArtifactRef(
-            period=period,
+            step=period,
             regime=regime_name,
             key=SIMULATION_POLICY,
         )
@@ -289,7 +289,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         elif artifact_authority.required:
             raise RuntimeError(
                 "A model-authoritative route published no required artifact at "
-                f"({ref.period}, {ref.regime!r}, {ref.key.type_id!r})."
+                f"({ref.step}, {ref.regime!r}, {ref.key.type_id!r})."
             )
         else:
             omissions[ref] = OmissionReason.UNSUPPORTED
@@ -320,7 +320,7 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         ),
         metadata=SolutionMetadata(
             retention=retention,
-            n_periods=n_periods,
+            n_steps=n_steps,
             regime_names=tuple(regimes),
             solver_types=MappingProxyType(
                 {
@@ -532,7 +532,7 @@ def _update_digest_value(
 def _canonical_value_axis_names(*, regime: Regime) -> tuple[str, ...]:
     """Return the public names of the axes in one canonical stored value."""
     state_axes = tuple(regime.solution.state_names)
-    return (*state_axes, "member") if regime.member_axis is not None else state_axes
+    return (*state_axes, "member")
 
 
 def _value_axes(
@@ -553,11 +553,9 @@ def _value_axes(
         states = {**states, **period_axes.get(period, {})}
     axes = []
     for index, name in enumerate(axis_names):
-        member = regime.member_axis is not None and index == len(axis_names) - 1
+        member = index == len(axis_names) - 1
         if member:
-            if regime.member_axis is None:
-                raise ValueError("A member value axis requires member names.")
-            coordinates = regime.member_axis
+            coordinates = regime.members
         else:
             coordinates = tuple(np.asarray(states[name]).tolist())
         axes.append(
@@ -586,7 +584,7 @@ def _add_nested_artifacts[Payload](
     """Flatten one existing period/regime mapping into addressed artifacts."""
     for period, regime_to_payload in nested.items():
         for regime, payload in regime_to_payload.items():
-            target[ArtifactRef(period=period, regime=regime, key=key)] = payload
+            target[ArtifactRef(step=period, regime=regime, key=key)] = payload
 
 
 __all__ = [

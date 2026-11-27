@@ -28,8 +28,8 @@ from _lcm.regime_building.Q_and_F import (
 
 @pytest.mark.parametrize("unreachable_value", [-np.inf, np.inf])
 def test_a_zero_probability_scalar_target_leaves_the_continuation_intact(
-    unreachable_value,
-):
+    unreachable_value: float,
+) -> None:
     """A zero-probability target adds zero, not NaN, beside a reachable one."""
     mixture_terms, _, _, _, mass, _ = _scalar_target_contribution(
         scalar_targets=("reachable", "unreachable"),
@@ -43,6 +43,7 @@ def test_a_zero_probability_scalar_target_leaves_the_continuation_intact(
         },
         as_lottery=False,
         zero=jnp.asarray(0.0),
+        n_members=1,
     )
     CE = _sum_regime_mixture(mixture_terms=mixture_terms, like=jnp.asarray(0.0))
 
@@ -50,7 +51,7 @@ def test_a_zero_probability_scalar_target_leaves_the_continuation_intact(
     np.testing.assert_allclose(np.asarray(mass), 1.0)
 
 
-def test_a_reachable_infeasible_target_still_propagates_its_minus_infinity():
+def test_a_reachable_infeasible_target_still_propagates_its_minus_infinity() -> None:
     """A target that is genuinely reached at `-inf` keeps making the value `-inf`."""
     mixture_terms, _, _, _, _, _ = _scalar_target_contribution(
         scalar_targets=("reachable", "infeasible"),
@@ -64,6 +65,7 @@ def test_a_reachable_infeasible_target_still_propagates_its_minus_infinity():
         },
         as_lottery=False,
         zero=jnp.asarray(0.0),
+        n_members=1,
     )
     CE = _sum_regime_mixture(mixture_terms=mixture_terms, like=jnp.asarray(0.0))
 

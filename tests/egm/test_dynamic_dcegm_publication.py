@@ -796,6 +796,12 @@ def test_mapped_conditional_step_keeps_floor_per_cell_across_discrete_choices(
     np.testing.assert_array_equal(result.bound_status[0], [False, False])
 
 
+def _core(*, function: Callable[..., PytreeValue]) -> Callable[..., PytreeValue]:
+    """Return the core inside a program's member-axis publication wrapper."""
+    assert isinstance(function, functools.partial)
+    return function.keywords["_member_axis_core"]
+
+
 def _canonical_producer_steps(
     *, monkeypatch: pytest.MonkeyPatch, asset: bool
 ) -> tuple[tuple[_EGMStep, ...], EGMQuerySpec, EGMContinuationSpec]:
@@ -813,7 +819,9 @@ def _canonical_producer_steps(
         authorities.append(model.authority)
         for kernel in built.period_kernels.values():
             assert isinstance(kernel, _DCEGMPeriodKernel)
-            core = inspect.unwrap(kernel.core_programs()["replay"].function)
+            core = inspect.unwrap(
+                _core(function=kernel.core_programs()["replay"].function)
+            )
             assert isinstance(core, _EGMStep)
             cores.append(core)
         return built
@@ -1129,7 +1137,7 @@ def test_canonical_native_period_publishes_floor_corner_and_current_values(
     kernel = built.period_kernels[1]
     assert isinstance(kernel, _DCEGMPeriodKernel)
     core = kernel.core_programs()["main"].function
-    assert hasattr(core, "lower")
+    assert hasattr(_core(function=core), "lower")
     result = kernel(
         compiled_cores={"main": core},
         state_action_space=context.state_action_space,
@@ -1142,11 +1150,12 @@ def test_canonical_native_period_publishes_floor_corner_and_current_values(
     )
     assert isinstance(result, FeasibilityKernelOutput)
     tolerance = 10 ** (-DECIMAL_PRECISION)
+    value = result.value[..., 0]
     np.testing.assert_allclose(
-        result.value[:, :, -1, 0], np.full((2, 3), np.log(8.9)), rtol=tolerance
+        value[:, :, -1, 0], np.full((2, 3), np.log(8.9)), rtol=tolerance
     )
     np.testing.assert_allclose(
-        result.value[:, :, -1, 1], np.full((2, 3), np.log(8.4)), rtol=tolerance
+        value[:, :, -1, 1], np.full((2, 3), np.log(8.4)), rtol=tolerance
     )
     np.testing.assert_array_equal(result.feasibility_counts, [0, 0])
     carry = result.continuations[EGM_CONTINUATION]

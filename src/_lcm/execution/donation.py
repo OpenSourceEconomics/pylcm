@@ -111,7 +111,7 @@ def resolve_donations(
     program: ResolvedCoreProgram,
     dispatch: Hashable,
     ledger: PlannedInputLiveness,
-    n_periods: int,
+    n_steps: int,
 ) -> tuple[ResolvedDonation, ...]:
     """Nominate, per candidate argument, what the ledger lets this dispatch donate.
 
@@ -130,7 +130,7 @@ def resolve_donations(
         program: The resolved program whose candidates are nominated.
         dispatch: The `(period, regime)` unit this program belongs to.
         ledger: The planned remaining-consumer accounting of the solve.
-        n_periods: Number of periods the solve runs.
+        n_steps: Number of steps the solve runs.
 
     Returns:
         Tuple of one decision per candidate argument a declared read addresses.
@@ -165,7 +165,7 @@ def resolve_donations(
                 artifact=artifact,
                 dispatch=dispatch,
                 ledger=ledger,
-                n_periods=n_periods,
+                n_steps=n_steps,
             )
             for artifact in artifacts
         ):
@@ -184,7 +184,7 @@ def _is_donatable(
     artifact: ValueArtifactAddress,
     dispatch: Hashable,
     ledger: PlannedInputLiveness,
-    n_periods: int,
+    n_steps: int,
 ) -> bool:
     """Report whether this dispatch may hand one artifact's own buffer over.
 
@@ -193,7 +193,7 @@ def _is_donatable(
     them presumes the ledger registered the key.
     """
     return (
-        artifact.period < n_periods
+        artifact.period < n_steps
         and ledger.is_known(artifact=artifact)
         and ledger.has_sole_remaining_consumer(artifact=artifact, dispatch=dispatch)
         and not ledger.is_retained(artifact=artifact)

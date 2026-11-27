@@ -304,8 +304,12 @@ def get_model(
     ages = AgeGrid(start=0, inclusive_stop=n_periods - 1, step="Y")
     retirement_age = ages.exact_values[retirement_period]
     final_age = ages.exact_values[-1]
-    liquid_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_liquid)
-    pension_grid = LinSpacedGrid(start=0.0, stop=pension_max, n_points=n_pension)
+    liquid_grid = LinSpacedGrid(
+        start=0.1, stop=liquid_max, n_points=n_liquid, off_grid="extrapolate"
+    )
+    pension_grid = LinSpacedGrid(
+        start=0.0, stop=pension_max, n_points=n_pension, off_grid="extrapolate"
+    )
     consumption_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_consumption)
     die = StochasticTransition(func=prob_die)
     retired_law = ByAge.until(

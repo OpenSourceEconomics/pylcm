@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from lcm import Model
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models import negm_serviceflow_toy
 
@@ -22,11 +23,11 @@ pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_R
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
 
 
-def _solve_period0_alive(model) -> jnp.ndarray:
+def _solve_period0_alive(model: Model) -> jnp.ndarray:
     return model.solve(params=_PARAMS, log_level="debug").values[0]["alive"]
 
 
-def test_negm_solves_when_utility_reads_the_new_durable_stock():
+def test_negm_solves_when_utility_reads_the_new_durable_stock() -> None:
     """The service-flow NEGM model solves to a finite, well-shaped value array.
 
     `utility` reads `next_illiquid` (the `outer_post_decision`) through the
@@ -34,18 +35,18 @@ def test_negm_solves_when_utility_reads_the_new_durable_stock():
     kernel evaluates without falling outside its scope.
     """
     v0 = _solve_period0_alive(negm_serviceflow_toy.build_negm_model())
-    assert v0.shape == (negm_serviceflow_toy.N_X, negm_serviceflow_toy.N_Z)
+    assert v0.shape == (negm_serviceflow_toy.N_X, negm_serviceflow_toy.N_Z, 1)
     assert bool(jnp.all(jnp.isfinite(v0)))
 
 
-def test_negm_value_is_monotone_increasing_in_both_assets():
+def test_negm_value_is_monotone_increasing_in_both_assets() -> None:
     """The period-0 value rises with both liquid wealth and the durable stock."""
     v0 = _solve_period0_alive(negm_serviceflow_toy.build_negm_model())
     assert bool(jnp.all(jnp.diff(v0, axis=0) >= -1e-6))
     assert bool(jnp.all(jnp.diff(v0, axis=1) >= -1e-6))
 
 
-def test_negm_value_matches_the_dense_brute_optimum():
+def test_negm_value_matches_the_dense_brute_optimum() -> None:
     """NEGM reproduces the dense grid-search optimum within the grid band.
 
     The grid-search twin searches the same durable grid with a dense

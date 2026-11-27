@@ -155,7 +155,7 @@ def encode_initial_values(
     A pandas Series becomes its NumPy array. Without `use_categorical_codes` the
     values of a value-grid state become codes; a row is read only if its
     `"regime_id"` names a regime declaring the state, and every other row of that
-    state gets `MISSING_CAT_CODE`, like a state a subject's regime does not have.
+    state gets `MISSING_CAT_CODE`, like a state an agent's regime does not have.
     Without `"regime_id"` every row is read. With `use_categorical_codes` every
     entry already holds codes, so a Categorical, which holds values, is refused.
 

@@ -91,7 +91,7 @@ def lower_period_candidate(
         persistable_artifact_refs=persistable_artifact_refs,
         logger=logger,
     )
-    triple = candidate.regime, candidate.period, candidate.core
+    triple = candidate.regime, candidate.step, candidate.core
     rank = _find_candidate_rank(candidate=candidate, frontier=frontier)
     selected = frontier.candidate(triple=triple, position=rank)
     resolved = programs[selected]
@@ -109,7 +109,7 @@ def lower_period_candidate(
         **identities,
         "primary_key": primary_key,
         "regime": candidate.regime,
-        "period": candidate.period,
+        "step": candidate.step,
         "core": candidate.core,
         "widths": describe_lowering_value(resolved.tile_widths),
         "rank": rank,
@@ -118,7 +118,7 @@ def lower_period_candidate(
             frozenset(
                 ref.key
                 for ref in persistable_artifact_refs
-                if ref.regime == candidate.regime and ref.period == candidate.period
+                if ref.regime == candidate.regime and ref.step == candidate.step
             )
         ),
         "continuation": describe_lowering_value(
@@ -153,7 +153,7 @@ def lower_period_candidate(
         layout=layouts[triple],
         donated=donated,
         internal_templates=internal[selected],
-        label=f"{candidate.regime} {candidate.core} (period {candidate.period})",
+        label=f"{candidate.regime} {candidate.core} (step {candidate.step})",
     )
     stablehlo = str(lowered.compiler_ir(dialect="stablehlo")).encode("utf-8")
     return LoweredPeriodCandidate(
@@ -171,7 +171,7 @@ def _find_candidate_rank(
     *, candidate: PeriodCandidate, frontier: _LazyCandidateFrontier
 ) -> int:
     """Find exact ranked membership without inventing a width or a fallback."""
-    triple = candidate.regime, candidate.period, candidate.core
+    triple = candidate.regime, candidate.step, candidate.core
     bound = frontier.candidates_by_triple.get(triple)
     if bound is None:
         raise ExecutionPlanningError(

@@ -357,8 +357,12 @@ def build_model(
     final_age = int(ages.exact_values[-1])
     keep_housing = _make_keep_housing(delta)
 
-    liquid_grid = LinSpacedGrid(start=housing_min, stop=liquid_max, n_points=n_grid)
-    housing_grid = LinSpacedGrid(start=housing_min, stop=housing_max, n_points=n_grid)
+    liquid_grid = LinSpacedGrid(
+        start=housing_min, stop=liquid_max, n_points=n_grid, off_grid="extrapolate"
+    )
+    housing_grid = LinSpacedGrid(
+        start=housing_min, stop=housing_max, n_points=n_grid, off_grid="extrapolate"
+    )
     outer_grid = LinSpacedGrid(
         start=housing_min, stop=housing_max, n_points=n_outer_grid or n_grid
     )

@@ -21,7 +21,6 @@ import numpy as np
 import pytest
 
 from _lcm.certainty_equivalent import LinearExpectation
-from _lcm.regime_building.argmax import argmax_and_max
 from _lcm.regime_building.Q_and_F import _scalar_target_contribution
 from _lcm.regime_building.zero_safe import zero_safe_average
 from lcm.typing import Float1D, ScalarFloat
@@ -82,8 +81,10 @@ def _scalar_lottery(
         active_regime_probs={"live": _float(live_prob), "dead": _float(dead_prob)},
         as_lottery=True,
         zero=_float(0.0),
+        n_members=1,
     )
-    return jnp.concatenate(values), jnp.concatenate(weights), mass
+    # Each node keeps the trailing axis of the one member `"self"`.
+    return jnp.concatenate(values)[:, 0], jnp.concatenate(weights), mass
 
 
 def test_zero_probability_node_carrying_minus_inf_is_a_null_event() -> None:
@@ -110,8 +111,7 @@ def test_zero_probability_node_does_not_reverse_the_action() -> None:
         values=_array([-jnp.inf, 1.0, 2.0]),
         weights=_array([0.0, 0.5, 0.5]),
     )
-    index, _ = argmax_and_max(a=jnp.stack([_float(1.4), continuation]))
-    assert int(index) == 1
+    assert int(jnp.argmax(jnp.stack([_float(1.4), continuation]))) == 1
 
 
 @pytest.mark.parametrize("n_nodes", [2, 3, 5, 9])
@@ -195,8 +195,7 @@ def test_zero_probability_stateless_target_does_not_reverse_the_action() -> None
     continuation = _InheritedLinearExpectation().aggregate(
         values=values, weights=weights, params={}
     )
-    index, _ = argmax_and_max(a=jnp.stack([_float(1.9), continuation]))
-    assert int(index) == 1
+    assert int(jnp.argmax(jnp.stack([_float(1.9), continuation]))) == 1
 
 
 def test_linear_expectation_drops_a_zero_weight_node() -> None:

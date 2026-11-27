@@ -4,7 +4,7 @@ import os
 import shutil
 import subprocess
 import textwrap
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from fractions import Fraction
 from functools import partial
 from itertools import pairwise
@@ -214,7 +214,7 @@ def test_model_with_process(distribution_type: DistributionType) -> None:
         for regime in expected_solve[period]:
             if distribution_type == "lognormal":
                 np.testing.assert_allclose(
-                    got_solve.values[period][regime],
+                    got_solve.values[period][regime][..., 0],
                     expected_solve[period][regime],
                     rtol=_LOGNORMAL_RELATIVE_VALUE_ERROR,
                     atol=0,
@@ -222,7 +222,7 @@ def test_model_with_process(distribution_type: DistributionType) -> None:
             else:
                 aaae(
                     expected_solve[period][regime],
-                    got_solve.values[period][regime],
+                    got_solve.values[period][regime][..., 0],
                     decimal=5,
                 )
 
@@ -348,7 +348,7 @@ def test_lognormal_values_match_the_discretized_bellman_recurrence() -> None:
     result = model.solve(params=params, log_level="off")
     for period, regimes in _lognormal_solution_reference().items():
         for regime, expected in regimes.items():
-            actual = np.asarray(result.values[period][regime])
+            actual = np.asarray(result.values[period][regime])[..., 0]
             assert actual.shape == expected.shape
             assert actual.dtype == np.asarray(jnp.asarray(0.0)).dtype
             np.testing.assert_allclose(
@@ -408,6 +408,18 @@ def test_multi_regime_reached_states_afford_the_lowest_consumption_node() -> Non
     assert (living["wealth"] + np.exp(living["income"]) >= 0.1).all()
 
 
+# Parametrized cases pair each class with its own keyword arguments, so the tests
+# call a class as `Callable[..., _Process]` rather than through one signature.
+type _Process = (
+    UniformIIDProcess
+    | NormalIIDProcess
+    | LogNormalIIDProcess
+    | NormalMixtureIIDProcess
+    | TauchenAR1Process
+    | RouwenhorstAR1Process
+    | TauchenNormalMixtureAR1Process
+)
+
 _GRID_CLASSES_WITH_GH_KWARG = [
     (UniformIIDProcess, {}),
     (NormalIIDProcess, {"gauss_hermite": True}),
@@ -420,7 +432,9 @@ _GRID_CLASSES_WITH_GH_KWARG = [
 
 
 @pytest.mark.parametrize(("grid_cls", "extra_kw"), _GRID_CLASSES_WITH_GH_KWARG)
-def test_process_grid_correct_shape_without_params(*, grid_cls, extra_kw):
+def test_process_grid_correct_shape_without_params(
+    *, grid_cls: Callable[..., _Process], extra_kw: Mapping[str, float]
+) -> None:
     """A process grid without params returns correct-shape arrays."""
     grid = grid_cls(n_points=3, **extra_kw)
     assert not grid.is_fully_specified
@@ -486,7 +500,9 @@ def test_process_grid_correct_shape_without_params(*, grid_cls, extra_kw):
         ),
     ],
 )
-def test_process_grid_fully_specified_with_all_params(*, grid_cls, kwargs):
+def test_process_grid_fully_specified_with_all_params(
+    *, grid_cls: Callable[..., _Process], kwargs: Mapping[str, float]
+) -> None:
     """A process grid with all params provided is fully specified."""
     grid = grid_cls(n_points=3, **kwargs)
     assert grid.is_fully_specified
@@ -633,7 +649,7 @@ def _terminal_model(
     )
 
 
-def _active_subject() -> dict[str, Int1D]:
+def _active_agent() -> dict[str, Int1D]:
     return {
         "period": jnp.array([0], dtype=jnp.int32),
         "regime_id": jnp.full(1, _ActiveOnlyId.active, dtype=jnp.int32),
@@ -650,7 +666,7 @@ def _float_dtype() -> np.dtype:
 def test_unreachable_regime_with_runtime_rho_needs_no_parameters(
     *, grid_kind: _Ar1Kind, enable_jit: bool, entry: str
 ) -> None:
-    """A regime no subject can enter imposes no runtime-rho parameter.
+    """A regime no agent can enter imposes no runtime-rho parameter.
 
     The active terminal cell has constant utility 1, so its value and its single
     simulated row are known exactly, independent of any model machinery.
@@ -674,7 +690,7 @@ def test_unreachable_regime_with_runtime_rho_needs_no_parameters(
     else:
         frame = model.simulate(
             params={},
-            initial_conditions=_active_subject(),
+            initial_conditions=_active_agent(),
             solution=(
                 model.solve(params={}, log_level="off")
                 if entry == "simulate-with-solution"
@@ -736,7 +752,7 @@ def _call_entry(
     else:
         model.simulate(
             params=params,
-            initial_conditions={**_active_subject(), "income": jnp.array([0.25])},
+            initial_conditions={**_active_agent(), "income": jnp.array([0.25])},
             solution=solution,
             log_level="off",
             seed=0,
@@ -744,7 +760,9 @@ def _call_entry(
 
 
 @pytest.mark.parametrize("grid_cls", _AR1_GRID_CLASSES)
-def test_ar1_grid_centers_on_unconditional_mean(grid_cls):
+def test_ar1_grid_centers_on_unconditional_mean(
+    grid_cls: Callable[..., TauchenAR1Process | RouwenhorstAR1Process],
+) -> None:
     """Midpoint of AR(1) gridpoints is approximately mu / (1 - rho)."""
     mu, rho = 2.0, 0.8
     kwargs: dict[str, float] = {"rho": rho, "sigma": 0.5, "mu": mu}
@@ -758,7 +776,9 @@ def test_ar1_grid_centers_on_unconditional_mean(grid_cls):
 
 
 @pytest.mark.parametrize("grid_cls", _AR1_GRID_CLASSES)
-def test_ar1_transition_probs_rows_sum_to_one(grid_cls):
+def test_ar1_transition_probs_rows_sum_to_one(
+    grid_cls: Callable[..., TauchenAR1Process | RouwenhorstAR1Process],
+) -> None:
     """Each row of the transition matrix sums to 1."""
     kwargs: dict[str, float] = {"rho": 0.9, "sigma": 0.5, "mu": 1.0}
     if grid_cls is TauchenAR1Process:
@@ -858,7 +878,9 @@ def test_gauss_hermite_rejects_nonpositive_node_counts(
         (TauchenNormalMixtureAR1Process, {}),
     ],
 )
-def test_even_n_points_accepted_for_non_gauss_hermite(grid_cls_and_kwargs):
+def test_even_n_points_accepted_for_non_gauss_hermite(
+    grid_cls_and_kwargs: tuple[Callable[..., _Process], Mapping[str, float]],
+) -> None:
     """Non-GH grids accept even n_points (linspace grids work fine without a node at
     the mean)."""
     grid_cls, extra_kw = grid_cls_and_kwargs
@@ -873,26 +895,28 @@ def test_even_n_points_accepted_for_non_gauss_hermite(grid_cls_and_kwargs):
         TauchenAR1Process,
     ],
 )
-def test_gauss_hermite_and_n_std_mutual_exclusion(grid_cls):
+def test_gauss_hermite_and_n_std_mutual_exclusion(
+    grid_cls: type[NormalIIDProcess | LogNormalIIDProcess | TauchenAR1Process],
+) -> None:
     """gauss_hermite=True and n_std are mutually exclusive."""
     with pytest.raises(GridInitializationError, match="mutually exclusive"):
         grid_cls(n_points=3, gauss_hermite=True, n_std=2.0)
 
 
-def test_gauss_hermite_required():
+def test_gauss_hermite_required() -> None:
     """Normal(n_points=5) without gauss_hermite raises TypeError."""
     with pytest.raises(TypeError):
         NormalIIDProcess(n_points=5)  # ty: ignore[missing-argument]
 
 
-def test_normal_gauss_hermite_weights_sum_to_one():
+def test_normal_gauss_hermite_weights_sum_to_one() -> None:
     """GH weights for iid Normal sum to 1."""
     grid = NormalIIDProcess(n_points=7, gauss_hermite=True, mu=0.0, sigma=1.0)
     P = grid.get_transition_probs()
     aaae(P[0].sum(), 1.0, decimal=DECIMAL_PRECISION)
 
 
-def test_normal_linspace_transition_probs_rows_sum_to_one():
+def test_normal_linspace_transition_probs_rows_sum_to_one() -> None:
     """Non-GH Normal iid transition probability rows sum to 1."""
     grid = NormalIIDProcess(
         n_points=7, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=3.0
@@ -902,7 +926,7 @@ def test_normal_linspace_transition_probs_rows_sum_to_one():
     aaae(row_sums, jnp.ones(7), decimal=DECIMAL_PRECISION)
 
 
-def test_lognormal_linspace_transition_probs_rows_sum_to_one():
+def test_lognormal_linspace_transition_probs_rows_sum_to_one() -> None:
     """Non-GH LogNormal iid transition probability rows sum to 1."""
     grid = LogNormalIIDProcess(
         n_points=7, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=3.0
@@ -912,7 +936,7 @@ def test_lognormal_linspace_transition_probs_rows_sum_to_one():
     aaae(row_sums, jnp.ones(7), decimal=DECIMAL_PRECISION)
 
 
-def test_normal_gauss_hermite_n_std_not_in_params():
+def test_normal_gauss_hermite_n_std_not_in_params() -> None:
     """n_std is excluded from params_to_pass_at_runtime when gauss_hermite=True."""
     grid = NormalIIDProcess(n_points=5, gauss_hermite=True)
     assert "n_std" not in grid.params_to_pass_at_runtime
@@ -928,7 +952,7 @@ def test_normal_gauss_hermite_n_std_not_in_params():
     ],
     ids=["normal", "lognormal", "uniform", "tauchen"],
 )
-def test_process_grid_params_excludes_distributed(grid):
+def test_process_grid_params_excludes_distributed(grid: _Process) -> None:
     """`distributed` is a placement flag, not a distribution parameter.
 
     `ContinuousGrid` exposes `distributed` as a field, but it must not leak
@@ -939,7 +963,7 @@ def test_process_grid_params_excludes_distributed(grid):
     assert "distributed" not in grid.params_to_pass_at_runtime
 
 
-def test_tauchen_gauss_hermite_transition_probs_rows_sum_to_one():
+def test_tauchen_gauss_hermite_transition_probs_rows_sum_to_one() -> None:
     """Each row of the GH Tauchen transition matrix sums to 1."""
     grid = TauchenAR1Process(n_points=7, gauss_hermite=True, rho=0.9, sigma=0.5, mu=1.0)
     P = grid.get_transition_probs()
@@ -947,7 +971,7 @@ def test_tauchen_gauss_hermite_transition_probs_rows_sum_to_one():
     aaae(row_sums, jnp.ones(7), decimal=DECIMAL_PRECISION)
 
 
-def test_tauchen_linspace_transition_probs_rows_sum_to_one():
+def test_tauchen_linspace_transition_probs_rows_sum_to_one() -> None:
     """Each row of the non-GH Tauchen transition matrix sums to 1."""
     grid = TauchenAR1Process(
         n_points=7, gauss_hermite=False, rho=0.9, sigma=0.5, mu=1.0, n_std=3.0
@@ -957,7 +981,7 @@ def test_tauchen_linspace_transition_probs_rows_sum_to_one():
     aaae(row_sums, jnp.ones(7), decimal=DECIMAL_PRECISION)
 
 
-def test_tauchen_gauss_hermite_centers_on_unconditional_mean():
+def test_tauchen_gauss_hermite_centers_on_unconditional_mean() -> None:
     """GH Tauchen gridpoints center on mu / (1 - rho)."""
     mu, rho = 2.0, 0.8
     grid = TauchenAR1Process(n_points=11, gauss_hermite=True, rho=rho, sigma=0.5, mu=mu)
@@ -967,7 +991,7 @@ def test_tauchen_gauss_hermite_centers_on_unconditional_mean():
     aaae(midpoint, expected, decimal=_CENTERING_DECIMAL)
 
 
-def test_lognormal_correct_shape_without_params():
+def test_lognormal_correct_shape_without_params() -> None:
     """LogNormal without params returns correct-shape NaN arrays."""
     grid = LogNormalIIDProcess(n_points=3, gauss_hermite=True)
     assert not grid.is_fully_specified
@@ -975,14 +999,14 @@ def test_lognormal_correct_shape_without_params():
     assert grid.get_transition_probs().shape == (3, 3)
 
 
-def test_lognormal_fully_specified_gauss_hermite():
+def test_lognormal_fully_specified_gauss_hermite() -> None:
     """LogNormal with gauss_hermite=True is fully specified with mu/sigma."""
     grid = LogNormalIIDProcess(n_points=5, gauss_hermite=True, mu=0.0, sigma=1.0)
     assert grid.is_fully_specified
     assert grid.get_gridpoints().shape == (5,)
 
 
-def test_lognormal_fully_specified_n_std():
+def test_lognormal_fully_specified_n_std() -> None:
     """LogNormal with gauss_hermite=False is fully specified with mu/sigma/n_std."""
     grid = LogNormalIIDProcess(
         n_points=5, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=3.0
@@ -991,13 +1015,13 @@ def test_lognormal_fully_specified_n_std():
     assert grid.get_gridpoints().shape == (5,)
 
 
-def test_lognormal_gridpoints_are_positive():
+def test_lognormal_gridpoints_are_positive() -> None:
     """All LogNormal gridpoints are strictly positive."""
     grid = LogNormalIIDProcess(n_points=7, gauss_hermite=True, mu=0.0, sigma=1.0)
     assert jnp.all(grid.get_gridpoints() > 0)
 
 
-def test_lognormal_gauss_hermite_weights_sum_to_one():
+def test_lognormal_gauss_hermite_weights_sum_to_one() -> None:
     """GH weights for iid LogNormal sum to 1."""
     grid = LogNormalIIDProcess(n_points=7, gauss_hermite=True, mu=0.0, sigma=1.0)
     P = grid.get_transition_probs()
@@ -1028,7 +1052,7 @@ _NORMAL_MIXTURE_KWARGS: _MixtureOptions = {
 }
 
 
-def test_normal_mixture_transition_probs_rows_sum_to_one():
+def test_normal_mixture_transition_probs_rows_sum_to_one() -> None:
     """NormalMixture transition probability rows sum to 1."""
     grid = NormalMixtureIIDProcess(n_points=7, **_NORMAL_MIXTURE_KWARGS)
     P = grid.get_transition_probs()
@@ -1036,7 +1060,7 @@ def test_normal_mixture_transition_probs_rows_sum_to_one():
     aaae(row_sums, jnp.ones(7), decimal=DECIMAL_PRECISION)
 
 
-def test_iid_normal_mixture_stationary_moments():
+def test_iid_normal_mixture_stationary_moments() -> None:
     """IID NormalMixture stationary mean and std match mixture moments."""
     kwargs = _NORMAL_MIXTURE_KWARGS
     grid = NormalMixtureIIDProcess(n_points=21, **kwargs)
@@ -1066,7 +1090,7 @@ _TAUCHEN_NORMAL_MIXTURE_KWARGS: _TauchenMixtureOptions = {
 }
 
 
-def test_tauchen_normal_mixture_transition_probs_rows_sum_to_one():
+def test_tauchen_normal_mixture_transition_probs_rows_sum_to_one() -> None:
     """TauchenNormalMixture transition probability rows sum to 1."""
     grid = TauchenNormalMixtureAR1Process(n_points=7, **_TAUCHEN_NORMAL_MIXTURE_KWARGS)
     P = grid.get_transition_probs()
@@ -1074,7 +1098,7 @@ def test_tauchen_normal_mixture_transition_probs_rows_sum_to_one():
     aaae(row_sums, jnp.ones(7), decimal=DECIMAL_PRECISION)
 
 
-def test_tauchen_normal_mixture_centers_on_unconditional_mean():
+def test_tauchen_normal_mixture_centers_on_unconditional_mean() -> None:
     """TauchenNormalMixture gridpoints center on (mu + mean_eps) / (1 - rho)."""
     kwargs = _TAUCHEN_NORMAL_MIXTURE_KWARGS
     grid = TauchenNormalMixtureAR1Process(n_points=11, **kwargs)
@@ -1085,7 +1109,7 @@ def test_tauchen_normal_mixture_centers_on_unconditional_mean():
     aaae(midpoint, expected, decimal=_CENTERING_DECIMAL)
 
 
-def test_tauchen_normal_mixture_stationary_moments_and_autocorrelation():
+def test_tauchen_normal_mixture_stationary_moments_and_autocorrelation() -> None:
     """TauchenNormalMixture stationary mean, std, and autocorrelation match theory."""
     kwargs = _TAUCHEN_NORMAL_MIXTURE_KWARGS
     grid = TauchenNormalMixtureAR1Process(n_points=21, **kwargs)
@@ -1111,13 +1135,28 @@ def test_tauchen_normal_mixture_stationary_moments_and_autocorrelation():
     aaae(got_rho, rho, decimal=1)
 
 
-TAUCHEN_CASES = [
+class _TauchenCase(TypedDict):
+    rho: float
+    sigma: float
+    mu: float
+    n_std: int
+    n: int
+
+
+class _RouwenhorstCase(TypedDict):
+    rho: float
+    sigma: float
+    mu: float
+    n: int
+
+
+TAUCHEN_CASES: list[_TauchenCase] = [
     {"rho": 0.9, "sigma": 0.5, "mu": 0.0, "n_std": 3, "n": 7},
     {"rho": 0.7, "sigma": 1.0, "mu": 2.0, "n_std": 2, "n": 5},
     {"rho": 0.99, "sigma": 0.1, "mu": 0.0, "n_std": 3, "n": 11},
 ]
 
-ROUWENHORST_CASES = [
+ROUWENHORST_CASES: list[_RouwenhorstCase] = [
     {"rho": 0.9, "sigma": 0.5, "mu": 0.0, "n": 7},
     {"rho": 0.7, "sigma": 1.0, "mu": 2.0, "n": 5},
     {"rho": 0.99, "sigma": 0.1, "mu": 0.0, "n": 11},
@@ -1127,7 +1166,7 @@ ROUWENHORST_CASES = [
 @pytest.mark.parametrize(
     "case", TAUCHEN_CASES, ids=lambda c: f"rho={c['rho']}_n={c['n']}"
 )
-def test_tauchen_matches_quantecon(case):
+def test_tauchen_matches_quantecon(case: _TauchenCase) -> None:
     """Tauchen (non-GH) gridpoints and transition probs match QuantEcon."""
     qe = qe_tauchen(**case)
     grid = TauchenAR1Process(
@@ -1146,7 +1185,7 @@ def test_tauchen_matches_quantecon(case):
     "case", ROUWENHORST_CASES, ids=lambda c: f"rho={c['rho']}_n={c['n']}"
 )
 @pytest.mark.filterwarnings("ignore:The API of rouwenhorst has changed:UserWarning")
-def test_rouwenhorst_matches_quantecon(case):
+def test_rouwenhorst_matches_quantecon(case: _RouwenhorstCase) -> None:
     """Rouwenhorst gridpoints and transition probs match QuantEcon."""
     qe = qe_rouwenhorst(**case)
     grid = RouwenhorstAR1Process(
@@ -1159,7 +1198,7 @@ def test_rouwenhorst_matches_quantecon(case):
     aaae(grid.get_transition_probs(), qe.P, decimal=DECIMAL_PRECISION)
 
 
-def _stationary_moments(*, gridpoints, P):
+def _stationary_moments(*, gridpoints: Float1D, P: FloatND) -> tuple[float, float]:
     """Compute mean and variance from the stationary distribution of a Markov chain."""
     # Stationary distribution: solve pi @ P = pi via eigendecomposition
     eigvals, eigvecs = jnp.linalg.eig(P.T)
@@ -1171,7 +1210,7 @@ def _stationary_moments(*, gridpoints, P):
     return float(mean), float(jnp.sqrt(var))
 
 
-def _lag1_autocorrelation(*, gridpoints, P):
+def _lag1_autocorrelation(*, gridpoints: Float1D, P: FloatND) -> float:
     """Compute lag-1 autocorrelation from gridpoints and transition matrix."""
     eigvals, eigvecs = jnp.linalg.eig(P.T)
     idx = jnp.argmin(jnp.abs(eigvals - 1.0))
@@ -1185,7 +1224,7 @@ def _lag1_autocorrelation(*, gridpoints, P):
 
 
 @pytest.mark.parametrize("gauss_hermite", [True, False])
-def test_iid_normal_stationary_moments(gauss_hermite):
+def test_iid_normal_stationary_moments(*, gauss_hermite: bool) -> None:
     """IID Normal stationary mean and std match mu and sigma."""
     mu, sigma = 1.5, 0.8
     grid = NormalIIDProcess(
@@ -1203,7 +1242,7 @@ def test_iid_normal_stationary_moments(gauss_hermite):
 
 
 @pytest.mark.parametrize("gauss_hermite", [True, False])
-def test_iid_lognormal_stationary_moments(gauss_hermite):
+def test_iid_lognormal_stationary_moments(*, gauss_hermite: bool) -> None:
     """IID LogNormal stationary log-mean and log-std match mu and sigma."""
     mu, sigma = 0.5, 0.3
     grid = LogNormalIIDProcess(
@@ -1229,7 +1268,11 @@ def test_iid_lognormal_stationary_moments(gauss_hermite):
     ],
     ids=["tauchen-gh", "tauchen-linspace", "rouwenhorst"],
 )
-def test_ar1_stationary_moments_and_autocorrelation(*, grid_cls, extra_kw):
+def test_ar1_stationary_moments_and_autocorrelation(
+    *,
+    grid_cls: Callable[..., TauchenAR1Process | RouwenhorstAR1Process],
+    extra_kw: Mapping[str, float],
+) -> None:
     """AR(1) stationary mean, std, and lag-1 autocorrelation match theory."""
     rho, sigma, mu = 0.8, 0.4, 1.0
     grid = grid_cls(n_points=21, rho=rho, sigma=sigma, mu=mu, **extra_kw)
@@ -1273,6 +1316,9 @@ def test_process_lottery_axes_follow_declaration_order_across_hash_seeds(
                     beta: ContinuousState) -> FloatND:
             return gamma + 2 * alpha + 3 * beta
 
+        def dead_utility() -> FloatND:
+            return jnp.asarray(0.0)
+
         observed = []
         original = Q_and_F._build_target_continuation
         def observe(**kwargs: Any) -> Any:
@@ -1293,7 +1339,7 @@ def test_process_lottery_axes_follow_declaration_order_across_hash_seeds(
                         },
                         functions={'utility': utility},
                     ),
-                    'dead': Regime(functions={'utility': lambda: 0.0}),
+                    'dead': Regime(functions={'utility': dead_utility}),
                 },
                 ages=AgeGrid(start=0, inclusive_stop=2, step='Y'),
                 regime_id_class=RegimeId,
@@ -1307,9 +1353,9 @@ def test_process_lottery_axes_follow_declaration_order_across_hash_seeds(
             beta = np.asarray(grids['beta'].get_gridpoints())[None, None, :]
             terminal = gamma + 2 * alpha + 3 * beta
             decimal_precision = int(os.environ['TEST_DECIMAL_PRECISION'])
-            np.testing.assert_allclose(values[1]['alive'], terminal,
+            np.testing.assert_allclose(values[1]['alive'][..., 0], terminal,
                 atol=10**(-decimal_precision), rtol=10**(-decimal_precision))
-            np.testing.assert_allclose(values[0]['alive'], terminal + 5.5,
+            np.testing.assert_allclose(values[0]['alive'][..., 0], terminal + 5.5,
                 atol=10**(-decimal_precision), rtol=10**(-decimal_precision))
         finally:
             Q_and_F._build_target_continuation = original
@@ -1494,9 +1540,9 @@ def test_tauchen_on_nodes_unit_root_native_solve_and_simulate(
     weights = process.compute_transition_probs(
         rho=jnp.asarray(1.0), sigma=jnp.asarray(0.1), mu=jnp.asarray(0.0)
     )
-    aaae(solution.values[1]["dead"], expected, decimal=DECIMAL_PRECISION)
+    aaae(solution.values[1]["dead"][..., 0], expected, decimal=DECIMAL_PRECISION)
     aaae(
-        solution.values[0]["alive"],
+        solution.values[0]["alive"][..., 0],
         expected + weights @ expected,
         decimal=DECIMAL_PRECISION,
     )
@@ -1856,7 +1902,7 @@ def test_tauchen_on_adjacent_nodes_two_period_value_uses_exact_bins(
     expected = _exact_normal_bin_matrix(
         nodes=nodes, rho=1.0, mu=0.0, sigma=sigma
     ) @ np.asarray([0.0, 1.0])
-    aaae(solution.values[0]["alive"], expected, decimal=DECIMAL_PRECISION)
+    aaae(solution.values[0]["alive"][..., 0], expected, decimal=DECIMAL_PRECISION)
 
 
 def _reference_on_nodes_rule(
@@ -1971,7 +2017,7 @@ def test_tauchen_on_nodes_transition_rule_values_match_independent_bellman_sum(
         else {}
     )
     got = model.solve(params=params, log_level="off", runtime_checks=True)
-    aaae(got.values[0]["alive"], expected, decimal=DECIMAL_PRECISION)
+    aaae(got.values[0]["alive"][..., 0], expected, decimal=DECIMAL_PRECISION)
 
 
 @categorical(ordered=False)
@@ -2324,11 +2370,13 @@ def test_density_two_period_bellman_value_retains_the_small_drift(
         density_matrix(nodes=nodes, rho=0.0, sigma=sigma, mu=mu)
     ) @ np.asarray([0.0, 1.0])
     np.testing.assert_array_almost_equal(
-        solution.values[0]["alive"], expected, decimal=DECIMAL_PRECISION
+        solution.values[0]["alive"][..., 0], expected, decimal=DECIMAL_PRECISION
     )
-    np.testing.assert_array_equal(solution.values[1]["dead"], np.asarray([0.0, 1.0]))
+    np.testing.assert_array_equal(
+        solution.values[1]["dead"][..., 0], np.asarray([0.0, 1.0])
+    )
     # A caller comparing the resulting continuation with a sure 0.7 must choose it.
-    assert int(np.argmax([0.7, float(solution.values[0]["alive"][0])])) == 1
+    assert int(np.argmax([0.7, float(solution.values[0]["alive"][0, 0])])) == 1
 
 
 def _evaluate_node_boundaries(
@@ -2625,10 +2673,10 @@ def test_density_product_residual_enters_public_two_period_values(
     expected = (
         np.asarray(density_matrix(nodes=nodes, rho=rho, mu=mu, sigma=sigma)) @ terminal
     )
-    actual = solution.values[0]["alive"]
+    actual = solution.values[0]["alive"][..., 0]
     assert np.isfinite(actual).all()
     np.testing.assert_array_almost_equal(actual, expected, decimal=DECIMAL_PRECISION)
-    np.testing.assert_array_equal(solution.values[1]["dead"], terminal)
+    np.testing.assert_array_equal(solution.values[1]["dead"][..., 0], terminal)
     sure = 0.7 if sign > 0 else 0.3
     expected_choice = 1 if sign > 0 else 0
     assert int(np.argmax([sure, float(actual[source_index])])) == expected_choice
@@ -2741,7 +2789,7 @@ def test_rouwenhorst_simulation_extrapolates_beyond_the_edge_nodes() -> None:
         seed=42,
         log_level="off",
     )
-    first = result.to_dataframe().query("period == 0").sort_values("subject_id")
+    first = result.to_dataframe().query("period == 0").sort_values("agent_id")
 
     assert np.isfinite(first["value"]).all()
     assert first["consumption"].iloc[1] == first["consumption"].iloc[0]

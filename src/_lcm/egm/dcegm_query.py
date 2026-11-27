@@ -115,6 +115,7 @@ def build_dcegm_query(
         predicates=predicates,
         build_preferences=get_preferences_builder(
             functions=functions,
+            utility_name=model.utility_name,
             action_name=bound.action,
             scale_grid=model.offsets,
         ),
@@ -147,7 +148,7 @@ class DCEGMQuery:
     def input_names(self) -> frozenset[ReferenceName]:
         """External actual-target inputs, excluding internally chosen quantities."""
         bound = self.model.authority.bound
-        internal = {bound.action, bound.post_decision, "utility", "CE"}
+        internal = {bound.action, bound.post_decision, self.model.utility_name, "CE"}
         finite = self.model.authority.finite_outer
         if finite is not None:
             internal |= {finite.outer_action, finite.outer_post_decision}

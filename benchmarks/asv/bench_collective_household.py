@@ -9,7 +9,7 @@ pays for, and each cost is measured on its own axis here:
   regime's kernels and its exit programs;
 - **warm solve** — the same solve with the compilation cache hot, which is what
   an estimation loop pays per parameter vector;
-- **simulation over cohort size** — exits route original subjects before their
+- **simulation over cohort size** — exits route original agents before their
   final action each period, so this is where a cohort-size term would show.
 
 Host memory is tracked by `track_peak_cpu_mem` or `peakmem_*` and device memory
@@ -169,7 +169,7 @@ class CollectiveHouseholdSolve:
 class _SimulateCohort:
     """One cohort size, as `_gpu_mem`'s measurement subprocess drives it."""
 
-    n_subjects: int
+    n_agents: int
 
     def setup_for_gpu_measurement(self):
         from lcm_examples import collective_household
@@ -179,7 +179,7 @@ class _SimulateCohort:
             params=self.model_params, log_level="off", runtime_checks=False
         )
         self.initial_conditions = collective_household.get_initial_conditions(
-            n_subjects=self.n_subjects, model=self.model
+            n_agents=self.n_agents, model=self.model
         )
 
     def execute_for_measurement(self):
@@ -194,11 +194,11 @@ class _SimulateCohort:
 
 
 class _Simulate1000(_SimulateCohort):
-    n_subjects = 1_000
+    n_agents = 1_000
 
 
 class _Simulate100000(_SimulateCohort):
-    n_subjects = 100_000
+    n_agents = 100_000
 
 
 _SIMULATE_COHORTS = {1_000: "_Simulate1000", 100_000: "_Simulate100000"}
@@ -217,12 +217,12 @@ class _SimulateMeasurements:
 
     def setup_cache(self) -> _CohortMeasurements:
         return {
-            n_subjects: _gpu_mem.measure_combined_with_warm_samples_and_gpu_peak(
+            n_agents: _gpu_mem.measure_combined_with_warm_samples_and_gpu_peak(
                 bench_module="benchmarks.asv.bench_collective_household",
                 bench_class=bench_class,
                 warm_samples=_WARM_SAMPLES,
             )
-            for n_subjects, bench_class in _SIMULATE_COHORTS.items()
+            for n_agents, bench_class in _SIMULATE_COHORTS.items()
         }
 
     # Two first simulations and their warm calls, one after the other.
@@ -232,7 +232,7 @@ class _SimulateMeasurements:
 class CollectiveHouseholdSimulate(_SimulateMeasurements):
     """Forward simulation, over cohort sizes.
 
-    Exits route each original subject before its final action.
+    Exits route each original agent before its final action.
     A cohort-size term that grew faster than linearly would show up between
     these points.
     """
@@ -246,27 +246,25 @@ class CollectiveHouseholdSimulate(_SimulateMeasurements):
     # simulation ~337/355/354 ms at 1,000/10,000/100,000) and cost 3m24s;
     # dropped rather than kept as a third routine point.
     params = list(_SIMULATE_COHORTS)
-    param_names = ["n_subjects"]
+    param_names = ["n_agents"]
 
     # keyword-only-exempt: library-callback=asv
-    def track_execution_time(
-        self, cache: _CohortMeasurements, n_subjects: int
-    ) -> float:
-        return statistics.median(cache[n_subjects]["warm_samples"])
+    def track_execution_time(self, cache: _CohortMeasurements, n_agents: int) -> float:
+        return statistics.median(cache[n_agents]["warm_samples"])
 
     track_execution_time.unit = "seconds"
 
     # keyword-only-exempt: library-callback=asv
-    def track_peak_cpu_mem(self, cache: _CohortMeasurements, n_subjects: int) -> float:
-        return cache[n_subjects]["peak_cpu_mem"]
+    def track_peak_cpu_mem(self, cache: _CohortMeasurements, n_agents: int) -> float:
+        return cache[n_agents]["peak_cpu_mem"]
 
     track_peak_cpu_mem.unit = "bytes"
 
     # keyword-only-exempt: library-callback=asv
     def track_compilation_time(
-        self, cache: _CohortMeasurements, n_subjects: int
+        self, cache: _CohortMeasurements, n_agents: int
     ) -> float:
-        return cache[n_subjects]["compilation_time"]
+        return cache[n_agents]["compilation_time"]
 
     track_compilation_time.unit = "seconds"
 

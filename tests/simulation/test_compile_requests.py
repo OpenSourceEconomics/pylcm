@@ -1,6 +1,6 @@
 """A warm simulate call compiles nothing, and the simulation loop validates cheaply.
 
-The compile-request pins say that repeating a simulate call at a subject width
+The compile-request pins say that repeating a simulate call at an agent width
 the process has already seen asks JAX for no further compilation, at any log
 level. The host-time rows say what runtime validation costs once nothing
 compiles any more: checked `progress` must stay within half again the host
@@ -217,7 +217,7 @@ def test_multi_regime_witness_retains_feasible_full_horizon() -> None:
         runtime_checks=True,
     ).to_dataframe()
     assert set(result["regime_name"]) == {"work", "retire", "dead"}
-    assert (result.groupby("subject_id")["period"].count() == 6).all()
+    assert (result.groupby("agent_id")["period"].count() == 6).all()
     assert np.isfinite(result["value"]).all()
     living = result[result["regime_name"] != "dead"]
     assert np.isfinite(living[["wealth", "income", "consumption"]]).all().all()
@@ -249,10 +249,10 @@ def test_cold_simulate_call_compiles() -> None:
 
 
 @pytest.mark.parametrize("witness", sorted(WITNESSES))
-def test_a_subject_width_never_simulated_before_compiles_on_its_first_call(
+def test_an_agent_width_never_simulated_before_compiles_on_its_first_call(
     *, witness: str
 ) -> None:
-    """A model asked for a subject width it has not seen before compiles for it."""
+    """A model asked for an agent width it has not seen before compiles for it."""
     model, params, initial_conditions = WITNESSES[witness]()
     solution = model.solve(params=params, log_level="off")
     model.simulate(
@@ -275,8 +275,8 @@ def test_a_subject_width_never_simulated_before_compiles_on_its_first_call(
 
 
 @pytest.mark.parametrize("witness", sorted(WITNESSES))
-def test_repeating_a_subject_width_at_debug_compiles_nothing(*, witness: str) -> None:
-    """A subject width simulated twice at `debug` compiles only on its first call."""
+def test_repeating_an_agent_width_at_debug_compiles_nothing(*, witness: str) -> None:
+    """An agent width simulated twice at `debug` compiles only on its first call."""
     model, params, initial_conditions = WITNESSES[witness]()
     solution = model.solve(params=params, log_level="off")
     doubled = {name: jnp.tile(value, 2) for name, value in initial_conditions.items()}
@@ -390,10 +390,10 @@ def test_simulation_loop_host_time_at_progress_is_within_the_bar_of_off(
     Measured with the pre-flight validators stubbed, so the ratio belongs to the
     period loop alone. The estimator is the median of `HOST_TIME_REPEATS` = 9
     warm calls per log level, the two levels timed alternately inside one
-    process, both warmed at the timed subject width so no compilation enters
+    process, both warmed at the timed agent width so no compilation enters
     either median, and every `lcm` record sent to a null handler so that log
     emission is held fixed while the level varies. The witnesses are small — 3
-    subjects for `dissolution`, 7 for `multi_regime` — which is why pre-flight
+    agents for `dissolution`, 7 for `multi_regime` — which is why pre-flight
     validation dominates the whole call at these widths but not the loop.
 
     Both legs still carry the level-independent part of `Model.simulate`
@@ -546,7 +546,7 @@ def _median_host_times(
 ) -> TimingMeasurement:
     """Retain ordered wall times and compile counts for the warm timing batch.
 
-    Both levels are warmed at this witness's subject width before any call is
+    Both levels are warmed at this witness's agent width before any call is
     timed, and the timed calls alternate between the levels.
 
     With `stub_preflight`, the seam is checked rather than trusted: if neither

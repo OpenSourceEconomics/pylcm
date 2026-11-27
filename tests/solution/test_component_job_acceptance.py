@@ -1,7 +1,7 @@
 """Collected component-job raw results land where the placement contract says.
 
-A single-process block-major simulation cuts each invariant code's subjects into
-chunks of the subject width. With several chunks in total, every raw leaf ends up
+A single-process block-major simulation cuts each invariant code's agents into
+chunks of the agent width. With several chunks in total, every raw leaf ends up
 on the host assembly device: the first selected CPU on a CPU backend, CPU 0 on a
 GPU backend. With one chunk, every raw leaf stays on the selected compute device.
 
@@ -163,10 +163,15 @@ def _assert_collected_result_meets_the_contract(
     assert fields["live_choice"] == [1] * len(codes)
     assert fields["live_pref_type"] == list(codes)
     np.testing.assert_allclose(fields["live_wealth"], wealth, rtol=rtol)
+    # Each simulated value carries the trailing member axis of the single `"self"`.
     np.testing.assert_allclose(
-        fields["live_value"], 1.9 * (wealth + pref_type) + 1.0, rtol=rtol
+        np.asarray(fields["live_value"])[..., 0],
+        1.9 * (wealth + pref_type) + 1.0,
+        rtol=rtol,
     )
-    np.testing.assert_allclose(fields["dead_value"], wealth + pref_type, rtol=rtol)
+    np.testing.assert_allclose(
+        np.asarray(fields["dead_value"])[..., 0], wealth + pref_type, rtol=rtol
+    )
 
     assert {key: reloaded[key] for key in ("raw", "values", "panels", "fields")} == {
         key: produced[key] for key in ("raw", "values", "panels", "fields")

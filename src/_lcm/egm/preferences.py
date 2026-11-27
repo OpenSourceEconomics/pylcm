@@ -162,6 +162,7 @@ def preferences_from_utility(
 def get_preferences_builder(
     *,
     functions: EconFunctionsMapping,
+    utility_name: FunctionName,
     action_name: ActionName,
     scale_grid: Float1D,
 ) -> Callable[[EconFunctionKwargs], Preferences]:
@@ -173,8 +174,9 @@ def get_preferences_builder(
 
     Args:
         functions: The regime's processed functions (parameters carry their
-            qualified names). Must contain a `utility` target;
+            qualified names). Must contain the `utility_name` target;
             `inverse_marginal_utility` is optional.
+        utility_name: Name of the utility function of the regime's one member.
         action_name: The regime's own name for the consumption action, the
             argument the three maps are functions of.
         scale_grid: Post-decision grid whose top node scales the Newton inverse's
@@ -186,7 +188,7 @@ def get_preferences_builder(
         `Preferences` bundle.
 
     """
-    utility_func = concatenate_felicity(functions=functions)
+    utility_func = concatenate_felicity(functions=functions, utility_name=utility_name)
     analytic_inverse = (
         concatenate_regime_function(
             functions=functions, target=INVERSE_MARGINAL_UTILITY
@@ -251,10 +253,13 @@ def concatenate_regime_function(
 
 
 def concatenate_felicity(
-    *, functions: Mapping[FunctionName, Callable[..., PytreeValue]]
+    *,
+    functions: Mapping[FunctionName, Callable[..., PytreeValue]],
+    utility_name: FunctionName,
 ) -> Callable[..., FloatND]:
-    """Concatenate the regime's `utility` target at the canonical float dtype.
+    """Concatenate the regime's one member's utility at the canonical float dtype.
 
+    `utility_name` names the member's utility function (`one_member_utility_name`).
     Every endogenous-grid route that evaluates or differentiates the felicity
     outside the utilities-and-feasibility kernel composes it here, so a felicity
     returning `0` or an integer array is converted before its first consumer.
@@ -262,11 +267,11 @@ def concatenate_felicity(
     return concatenate_functions(
         functions={
             **functions,
-            "utility": in_role(
-                func=functions["utility"], role=OutputRole.FLOAT, kind="Utility"
+            utility_name: in_role(
+                func=functions[utility_name], role=OutputRole.FLOAT, kind="Utility"
             ),
         },
-        targets="utility",
+        targets=utility_name,
         enforce_signature=False,
         set_annotations=True,
     )

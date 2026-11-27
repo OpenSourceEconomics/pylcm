@@ -38,22 +38,16 @@ from _lcm.solution.undeclared_reads import (
     undeclared_read_pins,
 )
 from _lcm.typing import RegimeName
-from lcm import AgeGrid, LinSpacedGrid, Model
+from lcm import LinSpacedGrid, Model
 from lcm.solver_api import EGM_CONTINUATION, ArtifactRef
 from lcm.solvers import EGM, NNBEGM
-from tests.regime_building.test_gated_edges_collective_solve import (
-    EKLRegimeId,
-    _make_full_topology_regimes,
-)
 from tests.simulation.test_nnbegm_split_workflow_parity import _MESH
 from tests.solution.test_egm_solver import _SAVINGS_GRID
 from tests.solution.test_egm_solver import _model as _egm_model
-from tests.solution.test_gated_edge_fold_reads import (
-    FULL_TOPOLOGY_EDGES,
-    _program_metadata,
-)
 from tests.solution.test_gated_edge_fold_reads import _model as _gated_model
+from tests.solution.test_gated_edge_fold_reads import _program_metadata
 from tests.test_models import nbegm_jump_ride_along_toy as _jump_ride_along_toy
+from tests.test_models import taste_shocks_toy
 from tests.test_models.n_nbegm_toy import build_model as _build_nnbegm_model
 
 
@@ -116,7 +110,7 @@ def test_every_regime_value_is_retained() -> None:
 def test_a_persisted_continuation_payload_is_retained_leaf_by_leaf() -> None:
     """Persistence-oriented retention keeps every leaf of the payload it selects."""
     model = _egm_model(solver=EGM(savings_grid=_SAVINGS_GRID))
-    reference = ArtifactRef(period=3, regime="done", key=EGM_CONTINUATION)
+    reference = ArtifactRef(step=3, regime="done", key=EGM_CONTINUATION)
     ledger = _build_planned_input_liveness(
         regimes=model._regimes,
         program_metadata=_metadata(model=model),
@@ -131,7 +125,7 @@ def test_a_persisted_continuation_payload_is_retained_leaf_by_leaf() -> None:
     assert ledger.retained_artifacts >= frozenset(
         ValueArtifactAddress(
             kind=ValueArtifactKind.CONTINUATION_LEAF,
-            period=reference.period,
+            period=reference.step,
             regime=reference.regime,
             artifact_key=reference.key,
             leaf_path=path,
@@ -180,31 +174,31 @@ def _declared_read_consumer_counts(
 def test_a_dense_program_s_declared_leaf_read_is_a_counted_consumer() -> None:
     """A dense program's continuation-leaf read counts, so it can close.
 
-    A one-cell gated collective model keeps a dense program that declares its reads,
-    which is what pins the rule that counting follows the declaration rather
-    than the disposition. Several of its programs read one leaf, so a leaf
-    carries as many consumers as read it; what matters is that none carries
-    zero. `min` on an empty set raises, so a model that declared no dense read
-    would fail this rather than pass it vacuously.
+    A one-cell EV1 model keeps a dense program that declares its reads, which is
+    what pins the rule that counting follows the declaration rather than the
+    disposition. A leaf carries as many consumers as read it; what matters is
+    that none carries zero. `min` on an empty set raises, so a model that
+    declared no dense read would fail this rather than pass it vacuously.
     """
+    toy = taste_shocks_toy.get_model()
     model = Model(
         regimes={
             name: regime.replace(
-                states={"wage": LinSpacedGrid(start=1.0, stop=3.0, n_points=1)}
+                states={"wealth": LinSpacedGrid(start=1.0, stop=3.0, n_points=1)}
             )
-            for name, regime in _make_full_topology_regimes().items()
+            for name, regime in toy.user_regimes.items()
         },
-        ages=AgeGrid(start=0, inclusive_stop=3, step="Y"),
-        regime_id_class=EKLRegimeId,
-        initial_nodes={0: "single_f"},
-        edges=FULL_TOPOLOGY_EDGES,
+        ages=toy.ages,
+        regime_id_class=taste_shocks_toy.ToyRegimeId,
+        initial_nodes={40: "alive"},
+        edges=toy.edges,
     )
 
     assert (
         min(
             _declared_read_consumer_counts(
                 model=model,
-                metadata=_program_metadata(model=model),
+                metadata=_metadata(model=model),
                 disposition=CoreExecutionDisposition.DENSE,
             )
         )
@@ -340,9 +334,7 @@ def test_a_program_declaring_no_reads_pins_every_reachable_continuation_leaf() -
     pins = undeclared_read_pins(
         regimes=regimes, regime_name=source, period=period, declares_no_reads=True
     )
-    targets = regimes[source].solution.reachability.targets(
-        period=period, source=source
-    )
+    targets = regimes[source].solution.reachability.targets(step=period, source=source)
     leaf_pins = {
         (artifact.regime, artifact.leaf_path)
         for artifact in pins
@@ -381,7 +373,7 @@ def test_the_last_period_pins_nothing(*, declares_no_reads: bool) -> None:
     model = _egm_model(solver=EGM(savings_grid=_SAVINGS_GRID))
     regimes = model._regimes
     name, regime = next(iter(regimes.items()))
-    last = regime.solution.reachability.n_periods - 1
+    last = regime.solution.reachability.n_steps - 1
 
     assert (
         undeclared_read_pins(

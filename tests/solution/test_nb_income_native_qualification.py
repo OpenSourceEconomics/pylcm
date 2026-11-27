@@ -227,7 +227,7 @@ def _assert_unhooked_parity(
     actual = simulated.to_dataframe(use_categorical_codes=True)
     expected = capture.simulations[solver].to_dataframe(use_categorical_codes=True)
     pd.testing.assert_frame_equal(actual, expected, check_exact=True)
-    actions = actual.query("period == 0").sort_values("subject_id")["consumption"]
+    actions = actual.query("period == 0").sort_values("agent_id")["consumption"]
     _assert_array_bits(actual=actions.to_numpy(), expected=capture.actions[solver])
     _assert_saved_panel(capture=capture, root=root, solver=solver)
     assert _hook_ids() == original_hooks

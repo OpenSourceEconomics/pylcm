@@ -144,7 +144,7 @@ def test_first_period_policy_is_the_reference_policy(
         df = model.simulate(
             params=_PARAMS, initial_conditions=conditions, log_level="off", seed=0
         ).to_dataframe()
-        first = df.query("period == 0").sort_values("subject_id")
+        first = df.query("period == 0").sort_values("agent_id")
         return first[["consumption", "illiquid_investment"]].to_numpy()
 
     got = first_choices(model=integrated, conditions=common)
@@ -176,8 +176,8 @@ def test_simulation_draws_the_income_continuously() -> None:
         )
         .to_dataframe()
     )
-    wealth = df.query("period == 1").sort_values("subject_id")["wealth"].to_numpy()
+    wealth = df.query("period == 1").sort_values("agent_id")["wealth"].to_numpy()
 
-    # Identical subjects choose alike, so next wealth varies by the draw alone,
-    # and a continuous draw takes as many values as there are subjects.
+    # Identical agents choose alike, so next wealth varies by the draw alone,
+    # and a continuous draw takes as many values as there are agents.
     assert len(np.unique(wealth)) > 10 * _INCOME.n_points

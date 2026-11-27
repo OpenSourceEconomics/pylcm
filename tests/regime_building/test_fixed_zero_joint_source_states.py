@@ -283,8 +283,8 @@ def test_fixed_zero_edge_is_removed_and_wealth_kept() -> None:
     )
     assert (
         model.state_names(regime_name="source"),
-        model.graph.solution.targets(period=0, source="source"),
-        model.graph.simulation.targets(period=0, source="source"),
+        model.graph.solution.targets(step=0, source="source"),
+        model.graph.simulation.targets(step=0, source="source"),
         set(model.graph.edges.solve["source"]),
         dict(model.graph.pruned_edges["solve"]),
     ) == (
@@ -378,7 +378,7 @@ def _outcome(
     return (
         model.state_names(regime_name="source"),
         dict(model.pruned_variables),
-        model.graph.solution.targets(period=0, source="source"),
+        model.graph.solution.targets(step=0, source="source"),
         np.asarray(values[0]["source"]).tolist(),
     )
 

@@ -8,7 +8,7 @@ import time
 from . import _gpu_mem
 from ._mahler_execution import POLICY_LABEL, create_mahler_gpu_model
 
-_N_SUBJECTS = 10_000
+_N_AGENTS = 10_000
 
 # Warm samples MahlerYumBudgetedGpu's setup_cache collects per commit, shared
 # by track_execution_time and track_peak_cpu_mem: build once, one cold call,
@@ -47,7 +47,7 @@ class _MahlerYum:
 
         self.model_params, self.initial_conditions = create_inputs(
             seed=0,
-            n_simulation_subjects=_N_SUBJECTS,
+            n_simulation_agents=_N_AGENTS,
             params=start_params,
         )
 

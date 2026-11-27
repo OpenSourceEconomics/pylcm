@@ -43,7 +43,7 @@ def sealed(value: FloatND) -> FloatND:
     Shock draws seal each product so that it is neither folded with constants
     nor contracted into a fused multiply-add with the sum it feeds. A draw then
     rounds exactly as written in every compiled program, so simulating the same
-    subjects partitioned over devices or not gives bitwise-equal states.
+    agents partitioned over devices or not gives bitwise-equal states.
     """
     return jax.lax.optimization_barrier(value)
 

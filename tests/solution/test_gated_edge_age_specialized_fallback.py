@@ -59,12 +59,12 @@ _ENTRY_BALANCE = 4.0
 _EXPECTED_SAVER_V_AT_AGE_1 = 59.0
 _EXPECTED_SAVER_V_AT_AGE_0 = 29.5
 
-# The annuity's realized payoff at the principal a routed subject lands on:
+# The annuity's realized payoff at the principal a routed agent lands on:
 # `100 + 4 ** 2`. It differs from the `118` the age-2 fold interpolates, because
 # the fold reads a grid too coarse to represent a square exactly.
 _EXPECTED_ROUTED_ANNUITY_VALUE = 116.0
 
-# The principal a routed subject lands on, the whole balance it rolled over.
+# The principal a routed agent lands on, the whole balance it rolled over.
 _EXPECTED_ROUTED_PRINCIPAL = 4.0
 
 
@@ -108,7 +108,7 @@ def test_simulated_saver_value_agrees_with_backward_induction() -> None:
 
     result = model.simulate(
         params={"discount_factor": _DISCOUNT_FACTOR},
-        initial_conditions=_initial_conditions(n_subjects=2),
+        initial_conditions=_initial_conditions(n_agents=2),
         solution=solution,
         log_level="debug",
     )
@@ -219,11 +219,11 @@ def _build_model() -> Model:
     )
 
 
-def _initial_conditions(*, n_subjects: int) -> dict[str, FloatND]:
-    """Seed every subject as a saver at age 0; `saver` carries no state."""
+def _initial_conditions(*, n_agents: int) -> dict[str, FloatND]:
+    """Seed every agent as a saver at age 0; `saver` carries no state."""
     return {
-        "age": jnp.zeros(n_subjects),
-        "regime_id": jnp.full(n_subjects, _RegimeId.saver, dtype=jnp.int32),
+        "age": jnp.zeros(n_agents),
+        "regime_id": jnp.full(n_agents, _RegimeId.saver, dtype=jnp.int32),
     }
 
 

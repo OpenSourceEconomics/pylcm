@@ -1151,16 +1151,17 @@ def _validate_edge_identity(
             raise ValueError(msg)
         return
 
-    expected_period = (
-        source.source_period
+    # A next-period read lands at its target's next occurrence, which a staged
+    # model may place several steps ahead.
+    if (
+        target.period != source.source_period
         if source.channel is ValueInputChannel.SAME_PERIOD_VALUE
-        else source.source_period + 1
-    )
-    if target.period != expected_period:
+        else target.period <= source.source_period
+    ):
         relation = (
-            "equal"
+            "equal to"
             if source.channel is ValueInputChannel.SAME_PERIOD_VALUE
-            else "one after"
+            else "after"
         )
         msg = f"A regime-value artifact period must be {relation} its source period."
         raise ValueError(msg)

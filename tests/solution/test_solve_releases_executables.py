@@ -21,7 +21,7 @@ import pytest
 from _lcm.solution import backward_induction, negm
 from lcm import AgeGrid, DiscreteGrid, ExecutionConfig, LinSpacedGrid, Model
 from lcm.solvers import AdaptiveOuterMesh, GridSearch
-from tests.solution.test_public_exit_queries import _sharing_control_model
+from tests.solution.test_public_composition_action_queries import _sharing_control_model
 from tests.solution.test_solution_result import _small_grid_search_inputs
 from tests.test_models import n_nbegm_toy
 from tests.test_models.deterministic.regression import (
@@ -256,7 +256,7 @@ def test_public_queries_without_continuations_do_not_collect(
     )
     for _ in range(2):
         result = model.solve(params={}, runtime_checks=False, log_level="off")
-        np.testing.assert_array_equal(result.values[0]["single_f"], expected)
+        np.testing.assert_array_equal(result.values[0]["single_f"][..., 0], expected)
         assert not result.retained_continuations
         del result
     assert events == []
@@ -267,14 +267,14 @@ def test_multiperiod_value_only_solve_does_not_collect(
 ) -> None:
     """Rolling ordinary value functions requires no continuation collection."""
     model, params, _ = _small_grid_search_inputs()
-    assert model._time.n_periods > 1
+    assert model._time.n_steps > 1
     assert all(
         regime.solution.continuation_spec is None for regime in model._regimes.values()
     )
     events = _observe_collection(monkeypatch)
     for _ in range(2):
         result = model.solve(params=params, runtime_checks=False, log_level="off")
-        assert len(result.values) == model._time.n_periods
+        assert len(result.values) == model._time.n_steps
         assert not result.retained_continuations
         del result
     assert events == []

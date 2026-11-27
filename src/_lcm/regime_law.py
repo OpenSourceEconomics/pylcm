@@ -48,7 +48,7 @@ type DecomposedTransition = (
 
 @dataclass(frozen=True, kw_only=True)
 class RegimeLaw:
-    """The law that moves a source regime's subjects to their next regime."""
+    """The law that moves a source regime's agents to their next regime."""
 
     transition: RegimeTransitionLaw
     """The bound law, `None` for a terminal regime (no outgoing edges).

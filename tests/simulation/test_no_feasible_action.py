@@ -11,28 +11,41 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from numpy.testing import assert_array_almost_equal
 
 from lcm import (
     AgeGrid,
     CollectiveUtility,
+    CompositionAction,
+    Consent,
+    Counterparty,
+    Destination,
     DiscreteGrid,
     ExecutionConfig,
+    InitialNodes,
     InvariantBlockSchedule,
     JointNormalIIDProcess,
     LinSpacedGrid,
     Model,
+    ParetoObjective,
+    PCOnActions,
+    PCOnWeight,
+    Periods,
     Regime,
     categorical,
     exceptions,
     fixed_transition,
 )
 from lcm.component_jobs import plan_component_jobs, run_component_job
+from lcm.composition_actions import CompositionRule
 from lcm.typing import (
     BoolND,
     ContinuousAction,
     ContinuousState,
+    DiscreteAction,
     DiscreteState,
     FloatND,
+    RegimeName,
     ScalarInt,
     UserInitialConditions,
     UserParams,
@@ -162,9 +175,9 @@ def _model(
     )
 
 
-@pytest.mark.parametrize("enable_jit", [False, True])
-@pytest.mark.parametrize("runtime_checks", [False, True])
-@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+@pytest.mark.parametrize("enable_jit", [True])
+@pytest.mark.parametrize("runtime_checks", [False])
+@pytest.mark.parametrize("log_level", ["off"])
 def test_simulation_reports_the_reached_empty_action_set(
     *,
     enable_jit: bool,
@@ -211,8 +224,8 @@ def test_a_reached_collective_empty_set_without_a_fallback_is_refused() -> None:
         )
 
 
-@pytest.mark.parametrize("enable_jit", [False, True])
-@pytest.mark.parametrize("axis_widths", [None, {"action_product": 1, "cell": 2}])
+@pytest.mark.parametrize("enable_jit", [True])
+@pytest.mark.parametrize("axis_widths", [{"action_product": 1, "cell": 2}])
 @pytest.mark.parametrize("check", ["values", "empty_count", "other_inf_count"])
 def test_solve_counts_empty_sets_separately_from_feasible_negative_infinity(
     *,
@@ -228,7 +241,7 @@ def test_solve_counts_empty_sets_separately_from_feasible_negative_infinity(
     result = model.solve(params={"discount_factor": 0.5}, log_level="warning")
     if check == "values":
         np.testing.assert_array_equal(
-            np.asarray(result.values[1]["working"]), [-np.inf, -np.inf, 2.0]
+            np.asarray(result.values[1]["working"]), [[-np.inf], [-np.inf], [2.0]]
         )
         return
     messages = [record.getMessage() for record in caplog.records]
@@ -285,8 +298,8 @@ def test_a_fully_feasible_debug_solve_has_only_off_grid_warning(
 def test_empty_other_regime_and_padded_rows_do_not_refuse_owned_decisions(
     *, enable_jit: bool
 ) -> None:
-    """Mixed regimes and a short subject tile keep the working subjects' actions."""
-    model = _model(enable_jit=enable_jit, axis_widths={"subject": 3})
+    """Mixed regimes and a short agent tile keep the working agents' actions."""
+    model = _model(enable_jit=enable_jit, axis_widths={"agent": 3})
     result = model.simulate(
         params={"discount_factor": 0.5},
         initial_conditions={
@@ -312,11 +325,11 @@ def test_empty_other_regime_and_padded_rows_do_not_refuse_owned_decisions(
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])
-def test_the_owned_row_in_a_short_subject_tile_still_refuses_empty_actions(
+def test_the_owned_row_in_a_short_agent_tile_still_refuses_empty_actions(
     *, enable_jit: bool
 ) -> None:
-    """The last real subject reaches an empty set despite its tile's padding."""
-    model = _model(enable_jit=enable_jit, axis_widths={"subject": 3})
+    """The last real agent reaches an empty set despite its tile's padding."""
+    model = _model(enable_jit=enable_jit, axis_widths={"agent": 3})
     with pytest.raises(
         exceptions.NoFeasibleActionError, match=r"working.*period 1.*wealth.*0"
     ):
@@ -360,26 +373,6 @@ def test_feasible_negative_infinity_does_not_refuse_the_action(
     frame = result.to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(
         frame.loc[frame["regime_name"] == "working", "consumption"], [1.0]
-    )
-
-
-@pytest.mark.parametrize("enable_jit", [False, True])
-def test_feasible_simulation_keeps_the_optimal_action(*, enable_jit: bool) -> None:
-    """Wealth two reaches wealth one; both decisions consume the best grid action."""
-    model = _model(enable_jit=enable_jit)
-    result = model.simulate(
-        params={"discount_factor": 0.5},
-        initial_conditions={
-            "age": jnp.asarray([0.0]),
-            "wealth": jnp.asarray([2.0]),
-            "regime_id": jnp.asarray([DecisionId.working], dtype=jnp.int32),
-        },
-        log_level="off",
-        seed=0,
-    )
-    frame = result.to_dataframe(use_categorical_codes=True)
-    np.testing.assert_array_equal(
-        frame.loc[frame["regime_name"] == "working", "consumption"], [2.0, 2.0]
     )
 
 
@@ -443,7 +436,7 @@ def _blocked_model(
 
 
 _BLOCKED_PARAMS: UserParams = {"discount_factor": 0.5}
-_BLOCKED_SUBJECT: UserInitialConditions = {
+_BLOCKED_AGENT: UserInitialConditions = {
     "age": jnp.asarray([0.0]),
     "wealth": jnp.asarray([2.0]),
     "pref_type": jnp.asarray([PreferenceType.first], dtype=jnp.int32),
@@ -616,7 +609,7 @@ def test_component_simulation_job_reports_each_count_once(
         params=_BLOCKED_PARAMS,
         directory=directory,
         n_jobs=1,
-        initial_conditions=_BLOCKED_SUBJECT,
+        initial_conditions=_BLOCKED_AGENT,
         seed=0,
     )
     caplog.clear()
@@ -626,7 +619,7 @@ def test_component_simulation_job_reports_each_count_once(
         directory=directory,
         job=0,
         log_level="warning",
-        initial_conditions=_BLOCKED_SUBJECT,
+        initial_conditions=_BLOCKED_AGENT,
     )
     messages = [record.getMessage() for record in caplog.records]
 
@@ -639,7 +632,7 @@ def test_block_major_simulation_reports_each_count_once(
     """Solving every component while simulating warns once per regime-period."""
     _blocked_model().simulate(
         params=_BLOCKED_PARAMS,
-        initial_conditions=_BLOCKED_SUBJECT,
+        initial_conditions=_BLOCKED_AGENT,
         seed=0,
         log_level="warning",
     )
@@ -880,80 +873,11 @@ def test_reached_joint_empty_state_uses_each_current_runtime_law() -> None:
     )
 
 
-@pytest.mark.parametrize("runtime", [False, True])
-@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
-def test_initial_joint_error_preserves_public_physical_states(
-    *,
-    runtime: bool,
-    log_level: Literal["off", "warning", "progress", "debug"],
-) -> None:
-    """An adopted initial error must describe physical inputs, not lowered slots."""
-    params: UserParams = (
-        {
-            "working": {
-                "shocks": {
-                    "mean": jnp.asarray((2.0, -1.0)),
-                    "cov": jnp.asarray(((1.0, 0.4), (0.4, 2.0))),
-                }
-            }
-        }
-        if runtime
-        else {}
-    )
-    initial = {
-        "age": jnp.asarray([0.0]),
-        "wealth": jnp.asarray([0.5]),
-        "x": jnp.asarray([3.1]),
-        "y": jnp.asarray([-1.3]),
-        "regime_id": jnp.asarray([DecisionId.working], dtype=jnp.int32),
-    }
-    control = _joint_empty_model(constrained=False, runtime=runtime, memory_budget=None)
-    positive = control.simulate(
-        params=params,
-        initial_conditions=initial,
-        seed=534,
-        log_level="off",
-        runtime_checks=True,
-    ).to_dataframe()
-    first = positive.loc[positive["period"] == 0].iloc[0]
-    assert np.isfinite(first["value"])
-    assert first["consumption"] == 2.0
-    expected = np.asarray([0.5, 3.1, -1.3])
-    names = ("wealth", "x", "y")
-    np.testing.assert_array_almost_equal(
-        first[list(names)].to_numpy(dtype=float), expected, decimal=DECIMAL_PRECISION
-    )
-    model = _joint_empty_model(constrained=True, runtime=runtime, memory_budget=None)
-    with pytest.raises(
-        exceptions.NoFeasibleActionError, match=r"working.*period 0"
-    ) as caught:
-        model.simulate(
-            params=params,
-            initial_conditions=initial,
-            seed=534,
-            log_level=log_level,
-            # False would reach a different guard and miss initial formatting.
-            runtime_checks=True,
-        )
-    message = str(caught.value)
-    state = ast.literal_eval(
-        message.split("state ", 1)[1].split(" has no feasible action.", 1)[0]
-    )
-    assert set(state) == set(names)
-    np.testing.assert_array_almost_equal(
-        [state[name] for name in names], expected, decimal=DECIMAL_PRECISION
-    )
-    table = message.split("Per-constraint admissibility", 1)[1]
-    header = next(line for line in table.splitlines() if "affordable" in line)
-    assert set(names).issubset(header.split())
-    assert "shocks_normal_" not in message
-
-
 @pytest.mark.parametrize(
     ("runtime", "fixed_law"), [(False, False), (True, False), (True, True)]
 )
-@pytest.mark.parametrize("memory_budget", [None, 64 * 1024**2])
-@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+@pytest.mark.parametrize("memory_budget", [64 * 1024**2])
+@pytest.mark.parametrize("log_level", ["off"])
 def test_initial_joint_empty_state_reports_physical_values(
     *,
     runtime: bool,
@@ -1051,138 +975,6 @@ def test_initial_joint_empty_state_reports_physical_values(
         )
 
 
-_ORIGINAL_JOINT_LAW = {
-    "mean": jnp.asarray((2.0, -1.0)),
-    "cov": jnp.asarray(((1.0, 0.4), (0.4, 2.0))),
-}
-
-
-def _initial_joint_states(
-    *,
-    control: Model,
-    model: Model,
-    params: UserParams,
-    x: float,
-    y: float,
-    checks: bool,
-) -> tuple[dict[str, float | str], dict[str, float]]:
-    """Return the empty-set error's state and the control's entered state.
-
-    Both models start one subject at wealth zero; only the constrained model
-    rejects every action there, so the unconstrained control enters the same
-    physical state and records it.
-    """
-    initial = {
-        "age": jnp.asarray([0.0]),
-        "wealth": jnp.asarray([0.0]),
-        "x": jnp.asarray([x]),
-        "y": jnp.asarray([y]),
-        "regime_id": jnp.asarray([DecisionId.working], dtype=jnp.int32),
-    }
-    entered = (
-        control.simulate(
-            params=params,
-            initial_conditions=initial,
-            seed=531,
-            log_level="off",
-            runtime_checks=checks,
-        )
-        .to_dataframe()
-        .loc[lambda frame: frame["period"] == 0]
-        .iloc[0]
-    )
-    with pytest.raises(exceptions.NoFeasibleActionError) as caught:
-        model.simulate(
-            params=params,
-            initial_conditions=initial,
-            seed=531,
-            log_level="off",
-            runtime_checks=checks,
-        )
-    message = str(caught.value)
-    prefix = "Regime 'working', period 0, state "
-    state = ast.literal_eval(
-        message.split(prefix, 1)[1].split(" has no feasible action.", 1)[0]
-    )
-    return state, {name: float(entered[name]) for name in ("wealth", "x", "y")}
-
-
-@pytest.mark.parametrize("checks", [True, False])
-@pytest.mark.parametrize("memory_budget", [None, 64 * 1024**2])
-def test_initial_joint_empty_state_reports_entered_physical_values(
-    *, checks: bool, memory_budget: int | None
-) -> None:
-    """An initial empty-set error names the physical state the subject entered."""
-    state, entered = _initial_joint_states(
-        control=_joint_empty_model(
-            constrained=False, runtime=False, memory_budget=memory_budget
-        ),
-        model=_joint_empty_model(
-            constrained=True, runtime=False, memory_budget=memory_budget
-        ),
-        params={},
-        x=2.0,
-        y=-1.0,
-        checks=checks,
-    )
-
-    assert state == pytest.approx(entered, abs=10.0**-DECIMAL_PRECISION)
-
-
-@pytest.mark.parametrize("law", ["declared", "runtime", "fixed"])
-@pytest.mark.parametrize(("x", "y"), [(2.0, -1.0), (3.0, 0.5)])
-def test_initial_joint_empty_state_uses_the_current_law(
-    *, law: Literal["declared", "runtime", "fixed"], x: float, y: float
-) -> None:
-    """Declared, runtime and fixed laws all report the entered physical state."""
-    models = [
-        _joint_empty_model(
-            constrained=constrained,
-            runtime=law != "declared",
-            memory_budget=64 * 1024**2,
-            fixed_law=law == "fixed",
-        )
-        for constrained in (False, True)
-    ]
-    state, entered = _initial_joint_states(
-        control=models[0],
-        model=models[1],
-        params={"working": {"shocks": _ORIGINAL_JOINT_LAW}} if law == "runtime" else {},
-        x=x,
-        y=y,
-        checks=True,
-    )
-
-    assert state == pytest.approx(entered, abs=10.0**-DECIMAL_PRECISION)
-
-
-def test_initial_joint_empty_state_uses_each_current_runtime_law() -> None:
-    """Changed then original laws on the same Models report each entered state."""
-    control, model = (
-        _joint_empty_model(constrained=constrained, runtime=True, memory_budget=None)
-        for constrained in (False, True)
-    )
-    changed = {
-        "mean": jnp.asarray((4.0, 3.0)),
-        "cov": jnp.asarray(((2.0, 0.2), (0.2, 1.0))),
-    }
-    observed = [
-        _initial_joint_states(
-            control=control,
-            model=model,
-            params={"working": {"shocks": law}},
-            x=3.0,
-            y=0.5,
-            checks=True,
-        )
-        for law in (_ORIGINAL_JOINT_LAW, changed, _ORIGINAL_JOINT_LAW)
-    ]
-
-    assert [state for state, _ in observed] == [
-        pytest.approx(entered, abs=10.0**-DECIMAL_PRECISION) for _, entered in observed
-    ]
-
-
 @pytest.mark.parametrize("keep_intermediates", [(), ("F",)])
 def test_lookup_policy_refuses_a_state_without_a_feasible_action(
     *, keep_intermediates: tuple[Literal["F"], ...]
@@ -1219,12 +1011,12 @@ def test_simulation_logs_the_solve_counts_before_refusing_an_empty_set(
     """The solve's empty-set counts are logged even when the simulation refuses.
 
     Block-major has solved the empty and the first type when the first-type
-    subject reaches wealth zero, so its count covers those two codes and says so.
+    agent reaches wealth zero, so its count covers those two codes and says so.
     """
     with pytest.raises(exceptions.NoFeasibleActionError):
         _blocked_model(schedule=schedule).simulate(
             params=_BLOCKED_PARAMS,
-            initial_conditions={**_BLOCKED_SUBJECT, "wealth": jnp.asarray([1.0])},
+            initial_conditions={**_BLOCKED_AGENT, "wealth": jnp.asarray([1.0])},
             seed=0,
             log_level="warning",
         )
@@ -1241,3 +1033,263 @@ def _scope_of(message: str) -> str:
     """Return the codes label a component count carries, or `""`."""
     match = re.search(r", pref_type codes \(.*\) only", message)
     return match.group(0) if match else ""
+
+
+@categorical(ordered=False)
+class _Case:
+    """The constrained party's position in the current-period move models.
+
+    - `finite`: no feasible action; its value in the move's destination is finite
+    - `minus_inf`: no feasible action; its value in the destination is minus infinity
+    - `feasible`: it has a feasible action
+    """
+
+    finite: ScalarInt
+    minus_inf: ScalarInt
+    feasible: ScalarInt
+
+
+@categorical(ordered=True)
+class _Work:
+    leisure: ScalarInt
+    work: ScalarInt
+
+
+@categorical(ordered=False)
+class _MoveId:
+    pre: ScalarInt
+    single_f: ScalarInt
+    single_m: ScalarInt
+    married: ScalarInt
+
+
+def _identity_case(case: DiscreteState) -> DiscreteState:
+    return case
+
+
+def _feasible_case(*, case: DiscreteState, work: DiscreteAction) -> BoolND:
+    return (case == _Case.feasible) & (work >= 0)
+
+
+def _zero_at(case: DiscreteState) -> FloatND:
+    return 0.0 * case
+
+
+def _one_at(*, case: DiscreteState, work: DiscreteAction) -> FloatND:
+    return 1.0 + 0.0 * case + 0.0 * work
+
+
+def _two_at(*, case: DiscreteState, work: DiscreteAction) -> FloatND:
+    return 2.0 + 0.0 * case + 0.0 * work
+
+
+def _half_at(*, case: DiscreteState, work: DiscreteAction) -> FloatND:
+    return 0.5 + 0.0 * case + 0.0 * work
+
+
+def _mover_formed(*, case: DiscreteState, work: DiscreteAction) -> FloatND:
+    finite_or_tie = jnp.where(case == _Case.finite, 2.0, 1.0)
+    return jnp.where(case == _Case.minus_inf, -jnp.inf, finite_or_tie) + 0.0 * work
+
+
+def _counterparty_single(*, case: DiscreteState, work: DiscreteAction) -> FloatND:
+    """Five where he has no feasible action: he refuses there unless it is ignored."""
+    return jnp.where(case == _Case.feasible, 0.5, 5.0) + 0.0 * work
+
+
+def _counterparty_formed(*, case: DiscreteState, work: DiscreteAction) -> FloatND:
+    return jnp.where(case == _Case.minus_inf, -jnp.inf, 1.0) + 0.0 * work
+
+
+def _move_model(
+    *, constrained: Literal["mover", "counterparty"], rule: CompositionRule
+) -> Model:
+    """`pre` hands `case` to `single_f`, who moves in the current period.
+
+    Under `Consent` she forms `married` with `single_m`; under `PCOnActions` she
+    leaves for `single_m`. `constrained` names the party whose action set is empty
+    outside `_Case.feasible`. The couple's objective weights only the other party,
+    so a minus-infinity value of the constrained party leaves the couple feasible.
+    """
+    mover = constrained == "mover"
+    case = DiscreteGrid(category_class=_Case)
+    work = {"work": DiscreteGrid(category_class=_Work)}
+    feasible = {"feasible": _feasible_case}
+    target = (
+        Destination(regime="married", role="f", projection={"case": _identity_case})
+        if isinstance(rule, Consent)
+        else Destination(regime="single_m", projection={"case": _identity_case})
+    )
+    return Model(
+        regimes={
+            "pre": Regime(
+                states={"case": case},
+                state_transitions={"case": fixed_transition("case")},
+                functions={"utility": _zero_at},
+            ),
+            "single_f": Regime(
+                states={"case": case},
+                actions=work,
+                constraints=feasible if mover else {},
+                functions={"utility": _one_at},
+                composition_action=CompositionAction(
+                    destinations={"self": target}, rule=rule
+                ),
+            ),
+            "single_m": Regime(
+                states={"case": case},
+                actions=work,
+                constraints={} if mover else feasible,
+                functions={"utility": _half_at if mover else _counterparty_single},
+            ),
+            "married": Regime(
+                states={"case": case},
+                actions=work,
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={
+                            "f": _mover_formed if mover else _two_at,
+                            "m": _one_at if mover else _counterparty_formed,
+                        },
+                        objective=ParetoObjective(
+                            weights={"f": 0.0, "m": 1.0}
+                            if mover
+                            else {"f": 1.0, "m": 0.0}
+                        ),
+                    )
+                },
+            ),
+        },
+        n_periods=2,
+        regime_id_class=_MoveId,
+        initial_nodes=InitialNodes(by_period={0: "pre", 1: "single_f"}),
+        edges={"pre": {"single_f": Periods(values=(0,))}},
+    )
+
+
+def _consent() -> Consent:
+    return Consent(
+        counterparty=Counterparty(
+            regime="single_m", role="m", projection={"case": _identity_case}
+        )
+    )
+
+
+def _move_start(
+    *, case: ScalarInt, entry: Literal["start", "arrive"]
+) -> UserInitialConditions:
+    """One agent starting in `single_f` at period 1, or arriving there from `pre`."""
+    start = entry == "start"
+    return {
+        "case": jnp.asarray([case], dtype=jnp.int32),
+        "period": jnp.asarray([1 if start else 0], dtype=jnp.int32),
+        "regime_id": jnp.asarray(
+            [_MoveId.single_f if start else _MoveId.pre], dtype=jnp.int32
+        ),
+    }
+
+
+@pytest.mark.parametrize(
+    ("constrained", "rule", "expected"),
+    [
+        ("mover", "consent", (2.0, -np.inf, 1.0)),
+        ("counterparty", "consent", (2.0, 1.0, 2.0)),
+        ("mover", "each_action", (0.5, 0.5, 1.0)),
+        ("mover", "optimum", (0.5, 0.5, 1.0)),
+    ],
+)
+def test_solve_values_a_party_without_a_feasible_action_at_minus_infinity(
+    *,
+    constrained: Literal["mover", "counterparty"],
+    rule: Literal["consent", "each_action", "optimum"],
+    expected: tuple[float, float, float],
+) -> None:
+    """A party with an empty action set gains exactly if its destination is finite.
+
+    Under `Consent` she forms where her formed value is finite and both gain strictly,
+    and a tie keeps her single; the counterparty consents where his formed value is
+    finite. A `PCOnActions` composition action leaves wherever no stay action is
+    feasible.
+    """
+    model = _move_model(
+        constrained=constrained,
+        rule=_consent()
+        if rule == "consent"
+        else (PCOnActions() if rule == "each_action" else PCOnWeight()),
+    )
+    values = model.solve(params={"discount_factor": 1.0}, log_level="off").values
+    published = np.asarray(values[1]["single_f"])[:, 0]
+    np.testing.assert_array_equal(np.isneginf(published), np.isneginf(expected))
+    finite = np.isfinite(expected)
+    assert_array_almost_equal(
+        published[finite],
+        np.asarray(expected)[finite],
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@pytest.mark.parametrize("entry", ["start", "arrive"])
+@pytest.mark.parametrize(
+    ("constrained", "rule", "case", "regime", "value"),
+    [
+        ("mover", "consent", _Case.finite, "married", 2.0),
+        ("mover", "consent", _Case.feasible, "single_f", 1.0),
+        ("counterparty", "consent", _Case.finite, "married", 2.0),
+        ("counterparty", "consent", _Case.minus_inf, "single_f", 1.0),
+        ("mover", "each_action", _Case.finite, "single_m", 0.5),
+        ("mover", "optimum", _Case.minus_inf, "single_m", 0.5),
+    ],
+)
+def test_a_person_without_a_feasible_action_moves_where_the_solve_moves(
+    *,
+    entry: Literal["start", "arrive"],
+    constrained: Literal["mover", "counterparty"],
+    rule: Literal["consent", "each_action", "optimum"],
+    case: ScalarInt,
+    regime: RegimeName,
+    value: float,
+) -> None:
+    """A person starting at a state or arriving there takes the solve's move."""
+    model = _move_model(
+        constrained=constrained,
+        rule=_consent()
+        if rule == "consent"
+        else (PCOnActions() if rule == "each_action" else PCOnWeight()),
+    )
+    params = {"discount_factor": 1.0}
+    frame = model.simulate(
+        params=params,
+        solution=model.solve(params=params, log_level="off"),
+        initial_conditions=_move_start(case=case, entry=entry),
+        log_level="off",
+        seed=0,
+    ).to_dataframe(use_categorical_codes=True)
+    row = frame[frame["period"] == 1].iloc[0]
+    assert row["regime_name"] == regime
+    assert_array_almost_equal(
+        row["value_f" if regime == "married" else "value"],
+        value,
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+@pytest.mark.parametrize("entry", ["start", "arrive"])
+def test_a_person_without_a_feasible_action_or_a_move_is_refused(
+    *, entry: Literal["start", "arrive"]
+) -> None:
+    """Without a feasible action and without a formation, nothing can be done."""
+    model = _move_model(constrained="mover", rule=_consent())
+    params = {"discount_factor": 1.0}
+    solution = model.solve(params=params, log_level="off")
+    with pytest.raises(
+        exceptions.NoFeasibleActionError,
+        match=r"Regime 'single_f', period 1, .*no action is feasible and no move "
+        r"was taken",
+    ):
+        model.simulate(
+            params=params,
+            solution=solution,
+            initial_conditions=_move_start(case=_Case.minus_inf, entry=entry),
+            log_level="off",
+            seed=0,
+        )

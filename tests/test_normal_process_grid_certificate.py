@@ -75,7 +75,7 @@ _NESTED_CORRIDOR_SOURCES = (
     "src/_lcm/egm/carry.py",
     "src/_lcm/egm/query_data.py",
     "src/_lcm/regime_building/Q_and_F.py",
-    "src/_lcm/simulation/subject_parallel.py",
+    "src/_lcm/simulation/agent_parallel.py",
     "src/_lcm/solution/egm.py",
     "src/_lcm/solution/kernel_output.py",
     "src/_lcm/constraints/dynamic_bound.py",
@@ -156,7 +156,16 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
     # The dead-code cleanup deleted the streamed EV1 reduction's `semantic_key` and
     # its three `streaming_ev1:` controls; the ValueDependentConstraint removal
     # deleted value_access:grid_same_period_shifted.
-    assert len(historical) == 598
+    # Streaming the household solve deleted the three streaming_classifier controls
+    # of the dense collective disposition with that disposition and added
+    # streaming_classifier:household_sent_dense.
+    # The one engine path deleted the singleton, streamed-EV1, streamed-logsumexp
+    # and argmax_and_max controls with their reducers and the logsumexp corridor
+    # source, and moved the singleton rank and gap filters onto the household
+    # routes.
+    # Removing the single hard max's dead fold deleted its three
+    # streaming_hard_max filter, merge and signed-zero controls.
+    assert len(historical) == 549
     historical = historical - exact_count_controls
     added_feasibility_controls = {
         "feasibility_summary:published_value_changed",
@@ -173,7 +182,7 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
         "simulation_adapter:initial_physical_mean_operand_changed",
         "simulation_adapter:initial_physical_output_hold_omitted",
         "simulation_adapter:initial_physical_prefix_changed",
-        "simulation_adapter:initial_physical_subject_order_changed",
+        "simulation_adapter:initial_physical_agent_order_changed",
         "simulation_adapter:initial_physical_table_column_changed",
         "simulation_adapter:initial_physical_transform_changed",
     }
@@ -188,16 +197,16 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
     # inverted and native_graph:collective_output_role_dropped with their targets;
     # the fold-machinery removal deleted ten streaming fold controls and two
     # supplemental s02_status:fold_weight_* controls with theirs.
-    assert len(historical) == 596
+    assert len(historical) == 547
     historical_before_s1 = historical - added_rng_controls - added_engine_controls
-    assert len(historical_before_s1) == 594
-    assert len(historical_before_s1 - added_initial_controls) == 582
+    assert len(historical_before_s1) == 545
+    assert len(historical_before_s1 - added_initial_controls) == 533
     assert (
         len(historical_before_s1 - added_initial_controls - added_feasibility_controls)
-        == 580
+        == 531
     )
     assert "src/_lcm/solution/feasibility.py" in direct_flow._CERTIFIED_CORRIDOR_SOURCES
-    assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 182
+    assert len(direct_flow._CERTIFIED_CORRIDOR_SOURCES) == 181
     added_corridor_sources = (
         set(_S1_CORRIDOR_SOURCES)
         | set(_CURRENT_IID_CORRIDOR_SOURCES)
@@ -217,14 +226,15 @@ def test_normal_controls_preserve_all_historical_populations() -> None:
         and relative not in _NESTED_CORRIDOR_SOURCES
         and relative not in added_corridor_sources
     )
-    assert len(original_corridor_sources) == 116
+    assert len(original_corridor_sources) == 115
     # Exact ordered source roster from 0a39539fd628bb60dcae2d3cca601816fe4832f4,
-    # less src/_lcm/simulation/policy_diagnostics.py, deleted with its control.
+    # less src/_lcm/simulation/policy_diagnostics.py, deleted with its control, and
+    # src/_lcm/solution/logsumexp_action_reduction.py, deleted with its reducer.
     assert (
         hashlib.sha256(
             ("\n".join(original_corridor_sources) + "\n").encode()
         ).hexdigest()
-        == "88e96568e7985d187373f1bd1accb4d9dd9b5b0c8176e2695b9d6dbe3f7fb87f"
+        == "9e05b2f949630ac924546ea1ad9ed4cd8e5d63debf9f36d48b9b4eb1831a9e4c"
     )
 
 

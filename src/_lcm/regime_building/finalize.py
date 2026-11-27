@@ -29,10 +29,12 @@ from _lcm.processes.joint_normal_lowering import (
     coordinate_names,
     joint_normal_declarations,
 )
+from _lcm.regime_building.collective import member_name
 from _lcm.regime_building.value_adapter import (
     AdaptableEntry,
     AdapterGrid,
     AdapterMemo,
+    StageClock,
     ValueAdapter,
     adapt_collective_utility,
     adapt_entry,
@@ -47,27 +49,70 @@ from _lcm.user_regime_validation import _validate_completeness
 from _lcm.utils.error_messages import format_messages
 from lcm.case_piece import CaseBoundary
 from lcm.collective import CollectiveUtility
+from lcm.composition_actions import CompositionAction, Consent, MutualConsent
 from lcm.condition import Condition
 from lcm.consumption_savings_regime import (
     NetOfAdjustmentCost,
     _composition_rule_message,
     _EGMFamilyRegime,
 )
-from lcm.decoupled import Decoupled
+from lcm.decoupled import KoopmansDeclaration
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.exits import Consent, Exit
 from lcm.grids import DiscreteGrid
+from lcm.koopmans_aggregation import LinearAggregator
 from lcm.phased import Phased
 from lcm.regime import ConstraintEntry, StateEntry, StateTransitionEntry
 from lcm.regime import Regime as UserRegime
 from lcm.transition import JointTransition, _AgeSpecialized
-from lcm.typing import FloatND, ReferenceName, StateName, UserFunction, ValueND
+from lcm.typing import (
+    FloatND,
+    IntND,
+    ReferenceName,
+    StateName,
+    UserFunction,
+    ValueND,
+)
 
 # A user `Regime` after model-build finalization. Runtime-equivalent to
 # `lcm.regime.Regime`; internal signatures use this alias to mark values
 # produced by `finalize_regimes` (model-level slots merged, completeness
 # validated).
 type FinalizedUserRegime = UserRegime
+
+
+def link_stages(*, utility: FloatND, CE: FloatND) -> FloatND:
+    """Add a later stage's certainty equivalent: no time passes within a period."""
+    return utility + CE
+
+
+def _linking(
+    *,
+    regime_name: RegimeName,
+    crossing: frozenset[int],
+    koopmans_aggregator: UserFunction,
+) -> UserFunction:
+    """The aggregator of a regime whose edges land in its period at some age.
+
+    In the `crossing` periods its edges reach the next period instead, which only
+    the linear aggregator can discount alongside the undiscounted ages.
+    """
+    if not crossing:
+        return link_stages
+    if not isinstance(koopmans_aggregator, LinearAggregator):
+        raise ModelInitializationError(
+            f"The edges of '{regime_name}' land in its period at some ages and in "
+            "the next period at others; the model's Koopmans aggregator must then "
+            "be `LinearAggregator`."
+        )
+    periods = jnp.asarray(sorted(crossing), dtype=jnp.int32)
+
+    def link_or_discount(
+        *, utility: FloatND, CE: FloatND, discount_factor: FloatND, period: IntND
+    ) -> FloatND:
+        """Discount the certainty equivalent only where the edges cross."""
+        return utility + jnp.where(jnp.isin(period, periods), discount_factor, 1.0) * CE
+
+    return link_or_discount
 
 
 def finalize_regimes(
@@ -79,6 +124,7 @@ def finalize_regimes(
     certainty_equivalent: CertaintyEquivalent,
     value_grids_by_regime: Mapping[RegimeName, Mapping[str, AdapterGrid]] | None = None,
     adapters: AdapterMemo | None = None,
+    linked: Mapping[RegimeName, frozenset[int]] = MappingProxyType({}),
 ) -> MappingProxyType[RegimeName, FinalizedUserRegime]:
     """Finalize every user regime for the model build.
 
@@ -101,6 +147,11 @@ def finalize_regimes(
             functions is read through, with processes bound to that regime.
             Collected from `user_regimes` when `None`.
         adapters: The adapters already built for this model.
+        linked: The regimes whose edges land in their own period at some age,
+            which they reach without discounting, each with the periods in which
+            its edges cross into the next period instead. Each gets
+            `link_stages` as its Koopmans aggregator, or a linear aggregator
+            that discounts only in those periods.
 
     Returns:
         Immutable mapping of regime names to finalized regimes.
@@ -115,19 +166,23 @@ def finalize_regimes(
     """
     _fail_if_a_joint_coordinate_is_a_discrete_state(user_regimes=user_regimes)
     _fail_if_continuation_slot_is_mixed(
-        user_regimes=user_regimes, laws=laws, slot="koopmans_aggregator"
+        user_regimes={
+            name: regime for name, regime in user_regimes.items() if name not in linked
+        },
+        laws=laws,
+        slot="koopmans_aggregator",
     )
     _fail_if_continuation_slot_is_mixed(
         user_regimes=user_regimes, laws=laws, slot="certainty_equivalent"
     )
     # The published frame is one table over every regime, so the names its
-    # collective regimes claim are reserved for all of them.
+    # collective regimes claim are reserved for all of them. The member
+    # `"self"` publishes the ordinary `value` column, which reserves nothing.
     reserved_value_columns = frozenset(
-        f"value_{member}"
+        member_name(base="value", member=member)
         for regime in user_regimes.values()
-        if regime.member_axis is not None
-        for member in regime.member_axis
-    )
+        for member in regime.members
+    ) - {"value"}
     if value_grids_by_regime is None:
         value_grids_by_regime = bind_reading_regimes(
             value_grids=collect_adapter_grids(
@@ -168,6 +223,12 @@ def finalize_regimes(
             regime_koopmans_aggregator = (
                 user_regime.koopmans_aggregator
                 if user_regime.koopmans_aggregator is not None
+                else _linking(
+                    regime_name=regime_name,
+                    crossing=linked[regime_name],
+                    koopmans_aggregator=koopmans_aggregator,
+                )
+                if regime_name in linked
                 else koopmans_aggregator
             )
             regime_certainty_equivalent = (
@@ -234,7 +295,7 @@ def finalize_regimes(
             ),
             derived_categoricals=merged,
             koopmans_aggregator=cast(
-                "UserFunction | Phased | Decoupled | None",
+                "KoopmansDeclaration",
                 adapt_entry(
                     entry=regime_koopmans_aggregator,
                     value_grids=value_grids,
@@ -243,8 +304,8 @@ def finalize_regimes(
                 ),
             ),
             certainty_equivalent=regime_certainty_equivalent,
-            exit=_adapt_exit(
-                declaration=user_regime.exit,
+            composition_action=_adapt_composition_action(
+                declaration=user_regime.composition_action,
                 source_grids=value_grids,
                 grids_by_regime=value_grids_by_regime,
                 adapters=adapters,
@@ -264,13 +325,13 @@ def finalize_regimes(
     return MappingProxyType(result)
 
 
-def _adapt_exit(
+def _adapt_composition_action(
     *,
-    declaration: Exit | None,
+    declaration: CompositionAction | None,
     source_grids: Mapping[str, AdapterGrid],
     grids_by_regime: Mapping[RegimeName, Mapping[str, AdapterGrid]],
     adapters: AdapterMemo,
-) -> Exit | None:
+) -> CompositionAction | None:
     """Decode source reads and encode only projected destination-state outputs."""
     if declaration is None:
         return None
@@ -322,11 +383,26 @@ def _adapt_exit(
                 ),
             ),
         )
+    clock = source_grids.get("period")
+    if isinstance(rule, MutualConsent) and isinstance(clock, StageClock):
+        # The transfer default reads codes, and the period through the clock.
+        rule = replace(
+            rule,
+            transfer=replace(
+                rule.transfer,
+                default=adapt_user_function(
+                    func=rule.transfer.default,
+                    value_grids={"period": clock},
+                    encode=None,
+                    adapters=adapters,
+                ),
+            ),
+        )
     return replace(
         declaration,
         rule=rule,
         available=adapted(declaration.available),
-        targets={
+        destinations={
             role: replace(
                 target,
                 projection=projection(
@@ -334,7 +410,7 @@ def _adapt_exit(
                 ),
                 utility_adjustment=adapted(target.utility_adjustment),
             )
-            for role, target in declaration.targets.items()
+            for role, target in declaration.destinations.items()
         },
     )
 
@@ -346,7 +422,7 @@ def _with_adapted_household(
     value_grids: Mapping[str, AdapterGrid],
     adapters: AdapterMemo,
 ) -> UserRegime:
-    """Return the regime whose household declares the bodies the engine runs.
+    """Return the regime whose collective utility declares the engine's bodies.
 
     A member's adapted utility is then one object in the declaration and in
     the engine's functions, and the Pareto weights read values.

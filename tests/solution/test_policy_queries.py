@@ -1,7 +1,7 @@
 """Typed current-period reads use mapped canonical action problems.
 
-The private adapter installed below is a stage fixture. Public Exit declarations
-are qualified by their own later stages.
+The private adapter installed below is a stage fixture. Public Composition action
+declarations are qualified by their own later stages.
 """
 
 import logging
@@ -54,6 +54,7 @@ from lcm import (
 from lcm.shocks import Normal, ShockGroup, UserNodes
 from lcm.solvers import EGM, GridSearch
 from lcm.typing import BoolND, FloatND, IntND, RegimeName, ScalarInt
+from tests.collective_fixtures import SHARE_GRID_POINTS, make_tied_shares_model
 from tests.conftest import DECIMAL_PRECISION
 from tests.simulation._callback_types import WorkspacePlanning
 from tests.solution._callback_types import CompileFunctionsKwargs
@@ -996,6 +997,53 @@ def test_stateless_action_free_query_has_one_native_cell(*, enable_jit: bool) ->
     np.testing.assert_array_equal(result.values[0]["root"], [1, 2])
 
 
+@pytest.mark.parametrize("action_order", [("a", "b"), ("b", "a")])
+def test_tied_household_query_follows_the_members_not_the_grid(
+    *, action_order: tuple[str, str]
+) -> None:
+    """A queried household breaks an objective tie by its first member's value.
+
+    Every feasible split of the unit ties at objective `1/2`; `f` is declared
+    first and values `a`, so the query answers `a = 1` with `V = (1, 0)`,
+    whichever of the two actions is declared first.
+    """
+    _CONTEXTS.clear()
+    make_tied_shares_model(action_order=action_order, solver=_CaptureGridSearch())
+    context = _CONTEXTS["couple"]
+    read = replace(
+        _read(kind=QueryKind.RAW, target="couple"),
+        projection={},
+        state_inputs=frozenset(),
+        operand_paths={},
+    )
+    scalar = queries.ScalarPolicyQueries(
+        definitions={"couple": QueryNode(read=read, context=context)},
+        root="couple",
+        period=0,
+    )
+    arguments = scalar.arguments(
+        context=CoreBuildContext(
+            state_action_space=context.state_action_space,
+            next_regime_to_V_arr={},
+            next_regime_to_continuation={},
+            flat_params={},
+            period=0,
+            ages=context.ages,
+        )
+    )
+
+    answer = scalar(
+        states={},
+        arguments=cast("Mapping[str, Mapping[str, PytreeValue]]", arguments),
+    )
+
+    shares = np.asarray(SHARE_GRID_POINTS)
+    action = np.unravel_index(int(answer[1]), (shares.size, shares.size))
+    chosen = dict(zip(action_order, shares[list(action)], strict=True))
+    np.testing.assert_array_equal(answer[0], [1.0, 0.0])
+    assert chosen == {"a": 1.0, "b": 0.0}
+
+
 def _finite_heavy_outside(*, q: FloatND, outside: PolicyAnswer) -> jax.Array:
     return jnp.all(jnp.isfinite(outside[0])) & jnp.all(
         q >= -jnp.sum(jnp.abs(outside[0]))
@@ -1263,7 +1311,7 @@ def test_participation_callback_reads_mapped_state_and_current_params() -> None:
 
 
 def test_mapped_query_accepts_a_python_scalar_constant() -> None:
-    """A constant settlement has no undeclared numerical axis."""
+    """A constant transfer has no undeclared numerical axis."""
     model = _native_model(enable_jit=True)
     original = model._regimes["root"]
     kernel = original.solution.period_kernels[0]
@@ -1317,7 +1365,7 @@ def _information_mesh_inputs(
         jax.debug.callback(lambda value: events["law"].append(float(value)), wealth)
         return mean(wealth)
 
-    def settlement(wealth: FloatND) -> FloatND:
+    def transfer(wealth: FloatND) -> FloatND:
         jax.debug.callback(
             lambda value: events["projection"].append(float(value)), wealth
         )
@@ -1374,7 +1422,7 @@ def _information_mesh_inputs(
     node = QueryNode(
         read=replace(
             _read(kind=QueryKind.PARTICIPATING, target="target"),
-            projection={"wealth": settlement},
+            projection={"wealth": transfer},
             operand_paths={},
         ),
         context=context,
@@ -1396,7 +1444,7 @@ def _information_mesh_inputs(
 
 
 def _information_native_keep(*, q: FloatND, outside: PolicyAnswer) -> BoolND:
-    return q >= outside[0]
+    return jnp.all(q >= outside[0])
 
 
 @pytest.mark.parametrize(
@@ -1594,8 +1642,9 @@ def test_information_mesh_neutral_branch_keeps_axes_and_runtime_guard(
     # The target reads none of the parent's shocks, so the parent's two rows form
     # one class and the answer keeps one entry for it.
     dimensions = (1,) if ancestor else ()
+    # The value ends in the axis of the single's one member.
     assert tuple(leaf.shape for leaf in answer) == (
-        (2, *dimensions),
+        (2, *dimensions, 1),
         (2, *dimensions, 2),
         (2, *dimensions),
         (2, *dimensions),
@@ -1610,7 +1659,7 @@ def test_information_mesh_neutral_branch_keeps_axes_and_runtime_guard(
     )
     # JAX places an output without elements replicated, whatever its out spec.
     assert all(leaf.sharding.spec == jax.P("X") for leaf in answer if leaf.size)
-    np.testing.assert_array_equal(answer[0][1], np.full(dimensions, 2.0))
+    np.testing.assert_array_equal(answer[0][1], np.full((*dimensions, 1), 2.0))
     np.testing.assert_array_equal(answer[1][1], np.zeros((*dimensions, 2), np.int32))
     np.testing.assert_array_equal(answer[2][1], np.ones(dimensions, bool))
     np.testing.assert_array_equal(answer[3][1], np.ones(dimensions, bool))
@@ -1619,7 +1668,7 @@ def test_information_mesh_neutral_branch_keeps_axes_and_runtime_guard(
         assert any(not np.isfinite(value) for value in events["law"])
         np.testing.assert_array_equal(answer[3][0], np.zeros(dimensions, bool))
     else:
-        np.testing.assert_array_equal(answer[0][0], np.full(dimensions, -np.inf))
+        np.testing.assert_array_equal(answer[0][0], np.full((*dimensions, 1), -np.inf))
         np.testing.assert_array_equal(
             answer[1][0], -np.ones((*dimensions, 2), np.int32)
         )

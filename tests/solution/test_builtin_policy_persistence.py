@@ -63,7 +63,7 @@ from tests.test_models.deterministic.dcegm_variants import (
 
 
 class _OmissionRecord(TypedDict):
-    period: int
+    step: int
     regime: RegimeName
     type_id: str
     schema_version: str
@@ -77,7 +77,7 @@ class _NamedAxisRecord(TypedDict):
 
 
 class _DescriptorRecord(TypedDict):
-    period: int
+    step: int
     regime: RegimeName
     type_id: str
     schema_version: str
@@ -140,7 +140,7 @@ def test_builtin_egm_continuation_roundtrips_as_an_independent_lazy_entry(
         log_level="off",
         retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
     )
-    ref = ArtifactRef(period=0, regime="retirement", key=EGM_CONTINUATION)
+    ref = ArtifactRef(step=0, regime="retirement", key=EGM_CONTINUATION)
     path = save_solution(solution=solution, path=tmp_path / "egm-solution.lcm")
 
     restored = load_solution(path=path)
@@ -264,7 +264,7 @@ def _rewrite_candidate_axis(
         descriptor = next(
             entry
             for entry in manifest["metadata"]["artifact_descriptors"]
-            if entry["period"] == ref.period
+            if entry["step"] == ref.step
             and entry["regime"] == ref.regime
             and entry["type_id"] == ref.key.type_id
         )
@@ -376,12 +376,12 @@ def test_mixed_route_persistence_is_addressed_by_artifact_ref(
     ``SIMULATION_POLICY``, while only the finite cell is persistable.
     """
     finite_ref = ArtifactRef(
-        period=0,
+        step=0,
         regime="finite",
         key=SIMULATION_POLICY,
     )
     adaptive_ref = ArtifactRef(
-        period=0,
+        step=0,
         regime="adaptive",
         key=SIMULATION_POLICY,
     )
@@ -447,7 +447,7 @@ def test_mixed_route_persistence_is_addressed_by_artifact_ref(
         ),
         metadata=SolutionMetadata(
             retention=ResultRetention.VALUES_AND_REPLAY,
-            n_periods=1,
+            n_steps=1,
             regime_names=("finite", "adaptive"),
             solver_types={
                 "finite": "example.FiniteNNBEGM",

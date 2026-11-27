@@ -62,10 +62,10 @@ class GatedEdge:
     moves; a row landing in a singleton regime carries none.
 
     At the end of each period's solve, the engine folds, for
-    each declared edge and each source member `s`, a gated continuation
+    each declared edge and each source member `κ`, a gated continuation
     object on the target regime's grid:
 
-        Wbar^s(x) = jnp.where(gate(x), V_target^{leg_s}(x), V_fallback^s(pi_s(x)))
+        Wbar^κ(x) = jnp.where(gate(x), V_target^{leg_κ}(x), V_fallback^κ(pi_κ(x)))
 
     The source's continuation then reads `Wbar` in place of the raw target V,
     threaded through the ordinary transition machinery.

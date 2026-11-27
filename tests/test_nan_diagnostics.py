@@ -12,7 +12,7 @@ from _lcm.engine import StateActionSpace
 from _lcm.solution.validate_V import _Reductions, validate_V, value_function_nan_error
 from _lcm.typing import JSONValue
 from _lcm.utils.logging import LogLevel
-from lcm import ExecutionConfig, Model, categorical
+from lcm import CollectiveUtility, ExecutionConfig, Model, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.grids import LinSpacedGrid
@@ -51,7 +51,7 @@ def _make_nan_V(n_wealth: int = 3) -> jnp.ndarray:
     return jnp.full(n_wealth, jnp.nan)
 
 
-def test_diagnostic_arrays_have_state_action_grid_shape():
+def test_diagnostic_arrays_have_state_action_grid_shape() -> None:
     """Diagnostic by_dim breakdown has entries for each state and action."""
     n_wealth, n_consumption = 3, 2
     sas = _make_state_action_space(n_wealth=n_wealth, n_consumption=n_consumption)
@@ -100,9 +100,14 @@ def test_diagnostic_arrays_have_state_action_grid_shape():
 
 
 def _build_nan_model(
+    *,
     execution_config: ExecutionConfig | None = None,
+    household: bool = False,
 ) -> tuple[Model, UserParams]:
-    """Build a minimal model that produces NaN in V during backward induction."""
+    """Build a minimal model that produces NaN in V during backward induction.
+
+    As a household, both regimes are couples whose members share each utility.
+    """
 
     @categorical(ordered=False)
     class _Rid:
@@ -127,15 +132,28 @@ def _build_nan_model(
     ) -> BoolND:
         return consumption <= wealth
 
+    def terminal_utility() -> FloatND:
+        return jnp.asarray(0.0)
+
     non_terminal = UserRegime(
         actions={"consumption": LinSpacedGrid(start=1, stop=2, n_points=3)},
         states={"wealth": LinSpacedGrid(start=1, stop=2, n_points=3)},
         state_transitions={"wealth": next_wealth},
-        functions={"utility": utility},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": utility, "m": utility})
+            if household
+            else utility
+        },
         constraints={"borrowing_constraint": borrowing_constraint},
     )
     terminal = UserRegime(
-        functions={"utility": lambda: 0.0},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": terminal_utility, "m": terminal_utility}
+            )
+            if household
+            else terminal_utility
+        },
     )
     model = Model(
         regimes={"non_terminal": non_terminal, "terminal": terminal},
@@ -239,18 +257,21 @@ def test_simulate_runtime_checks_false_permits_nan_at_every_log_level(
     assert set(result._raw_results) == {"non_terminal", "terminal"}
 
 
+@pytest.mark.parametrize("household", [False, True], ids=["single", "household"])
 @pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
 def test_nan_diagnostics_end_to_end(
-    *, log_level: LogLevel, capsys: pytest.CaptureFixture[str]
+    *, log_level: LogLevel, household: bool, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Real model: `model.solve()` attaches a diagnostics dict when V has NaN.
 
     This exercises the full build → productmap → reduction → summarize
     chain. If `_build_compute_intermediates_per_period` does not produce
     a dict-returning closure, `_summarize_diagnostics` silently fails
-    (broad try/except) and `exc.diagnostics` is missing.
+    (broad try/except) and `exc.diagnostics` is missing. A household's
+    intermediates carry a member axis, which the reduction folds into each
+    state-action cell.
     """
-    model, params = _build_nan_model()
+    model, params = _build_nan_model(household=household)
 
     with pytest.raises(InvalidValueFunctionError) as exc_info:
         model.solve(log_level=log_level, params=params)
@@ -273,7 +294,7 @@ def test_nan_diagnostics_end_to_end(
     assert "consumption" in by_dim
 
 
-def test_diagnostic_failure_preserves_original_error():
+def test_diagnostic_failure_preserves_original_error() -> None:
     """If diagnostics crash, the original InvalidValueFunctionError survives."""
     sas = _make_state_action_space()
 

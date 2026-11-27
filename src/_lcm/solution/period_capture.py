@@ -124,6 +124,11 @@ _TARGET_ENV = "LCM_CAPTURE_PERIOD"
 _DIR_ENV = "LCM_CAPTURE_DIR"
 _PAYLOAD_NAME = "kernel_inputs.pkl"
 
+# Version 2 stores value arrays with the trailing member axis; a capture
+# without the file predates it.
+CAPTURE_FORMAT_VERSION = 2
+CAPTURE_FORMAT_VERSION_NAME = "format_version"
+
 # Payload key under which a capture records its device-layout descriptors.
 LAYOUTS_KEY = "layouts"
 
@@ -450,6 +455,9 @@ def capture_kernel_inputs(
 
     directory = Path(os.environ.get(_DIR_ENV, ".")) / f"{regime_name}@{period}"
     directory.mkdir(parents=True, exist_ok=True)
+    # The format file is written last, so a capture is never read half written.
+    version_path = directory / CAPTURE_FORMAT_VERSION_NAME
+    version_path.unlink(missing_ok=True)
     _save_pkl(
         path=directory / _PAYLOAD_NAME,
         obj={
@@ -474,6 +482,7 @@ def capture_kernel_inputs(
             ),
         },
     )
+    version_path.write_text(str(CAPTURE_FORMAT_VERSION), encoding="utf-8")
 
 
 def _period_layouts(

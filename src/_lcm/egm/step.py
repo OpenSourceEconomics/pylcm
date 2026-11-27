@@ -195,6 +195,7 @@ from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.regime_building.w_dag import _get_build_W_kwargs
 from _lcm.regime_law import RegimeLaws
+from _lcm.solution.contract import one_member_utility_name
 from _lcm.solution.dcegm import (
     EGMStepBuild,
     ExactEnvelope,
@@ -215,6 +216,7 @@ from _lcm.typing import (
     EconFunctionArg,
     EconFunctionsMapping,
     EGMStepFunction,
+    FunctionName,
     QualifiedName,
     RegimeName,
     RegimeTransitionFunction,
@@ -347,6 +349,7 @@ def build_egm_step_functions(
     n_pad = compute_egm_carry_length(solver=solver)
     n_savings_nodes = int((solver.savings_grid.to_jax()).shape[0])
     own_v_info = regime_to_v_interpolation_info[regime_name]
+    utility_name = one_member_utility_name(members=user_regimes[regime_name].members)
     # Any savings-stage Euler-state read (the Euler law's residual, regime
     # transition probabilities, stochastic transition weights, non-Euler
     # laws) switches the kernel to the per-exogenous-asset-node solve; the
@@ -426,22 +429,22 @@ def build_egm_step_functions(
         solution_reachability.union_targets(source=regime_name)
     )
     active_periods = tuple(
-        period
-        for period, active_regimes in enumerate(
+        step
+        for step, active_regimes in enumerate(
             solution_reachability.active_regimes_by_period
         )
         if regime_name in active_regimes
     )
-    for period in active_periods:
+    for step in active_periods:
         targets = (
             ()
-            if period == solution_reachability.n_periods - 1
-            else solution_reachability.targets(period=period, source=regime_name)
+            if step == solution_reachability.n_steps - 1
+            else solution_reachability.targets(step=step, source=regime_name)
         )
         carry, scalar = get_egm_continuation_targets(
             targets=targets,
             regime_to_v_interpolation_info=continuation_v_interpolation_info(
-                period=period,
+                period=step,
                 regime_to_v_interpolation_info=regime_to_v_interpolation_info,
                 period_to_regime_v_interp=period_to_regime_v_interp,
             ),
@@ -452,24 +455,24 @@ def build_egm_step_functions(
                 scalar,
                 (
                     continuation_grid_signature(
-                        period=period,
+                        period=step,
                         targets=carry + scalar,
                         period_to_regime_grid_signature=period_to_regime_grid_signature,
                     ),
                     # An `AgeSpecializedFunction` is a different function at each
                     # age, so periods may share a program only where the user's
                     # declared signature says the closures agree.
-                    periodized_tree_signature(tree=functions, period=period),
-                    periodized_tree_signature(tree=constraints, period=period),
+                    periodized_tree_signature(tree=functions, period=step),
+                    periodized_tree_signature(tree=constraints, period=step),
                     tuple(
                         (
                             target,
                             periodized_tree_signature(
-                                tree=model.functions, period=period + 1
+                                tree=model.functions, period=step + 1
                             ),
                             periodized_tree_signature(
                                 tree={"koopmans_aggregator": model.koopmans_aggregator},
-                                period=period + 1,
+                                period=step + 1,
                             ),
                         )
                         for target in carry
@@ -484,7 +487,7 @@ def build_egm_step_functions(
                 ),
             ),
             [],
-        ).append(period)
+        ).append(step)
 
     built: dict[_EGMGroupKey, EGMStepFunction[_DCEGMStepOutput]] = {}
     node_axes_by_group: dict[_EGMGroupKey, tuple[tuple[StateName, int], ...]] = {}
@@ -513,6 +516,7 @@ def build_egm_step_functions(
             user_regimes=user_regimes,
             laws=laws,
             functions=group_functions,
+            utility_name=utility_name,
             constraints=group_constraints,
             processed_constraints=processed_constraints,
             stateful_targets=stateful_targets,
@@ -556,6 +560,7 @@ def build_egm_step_functions(
             user_regimes=child_user_regimes,
             laws=laws,
             functions=group_functions,
+            utility_name=utility_name,
             koopmans_aggregator=koopmans_aggregator,
             certainty_equivalent=certainty_equivalent,
             constraints=group_constraints,
@@ -591,9 +596,9 @@ def build_egm_step_functions(
     result: dict[int, EGMStepFunction[_DCEGMStepOutput]] = {}
     group_keys: dict[int, _EGMGroupKey] = {}
     for key, grouped_periods in configs.items():
-        for period in grouped_periods:
-            result[period] = built[key]
-            group_keys[period] = key
+        for step in grouped_periods:
+            result[step] = built[key]
+            group_keys[step] = key
 
     return EGMStepBuild(
         steps=MappingProxyType(dict(sorted(result.items()))),
@@ -604,7 +609,7 @@ def build_egm_step_functions(
         row_passive_state_names=own_passive_state_names,
         row_discrete_action_names=tuple(own_discrete_action_values),
         stochastic_node_axes_by_period=MappingProxyType(
-            {period: node_axes_by_group[key] for period, key in group_keys.items()}
+            {step: node_axes_by_group[key] for step, key in group_keys.items()}
         ),
         cell_extent=math.prod(leading_shape[:n_cell_axes]),
         savings_point_extent=n_savings_nodes,
@@ -645,6 +650,7 @@ def _get_egm_step(
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     functions: EconFunctionsMapping,
+    utility_name: FunctionName,
     koopmans_aggregator: EconFunction,
     certainty_equivalent: CertaintyEquivalent | None = None,
     constraints: ConstraintFunctionsMapping,
@@ -685,6 +691,7 @@ def _get_egm_step(
         user_regimes=user_regimes,
         laws=laws,
         functions=functions,
+        utility_name=utility_name,
         koopmans_aggregator=koopmans_aggregator,
         certainty_equivalent=certainty_equivalent,
         constraints=constraints,
@@ -1268,6 +1275,7 @@ def _build_kernel_pieces(
     user_regimes: Mapping[RegimeName, UserRegime],
     laws: RegimeLaws,
     functions: EconFunctionsMapping,
+    utility_name: FunctionName,
     koopmans_aggregator: EconFunction,
     certainty_equivalent: CertaintyEquivalent | None = None,
     constraints: ConstraintFunctionsMapping,
@@ -1332,7 +1340,9 @@ def _build_kernel_pieces(
         + own_passive_state_names
         + tuple(own_discrete_action_values),
         euler_axis_in_V=euler_axis_in_V,
-        utility_func=concatenate_felicity(functions=functions),
+        utility_func=concatenate_felicity(
+            functions=functions, utility_name=utility_name
+        ),
         inverse_marginal_utility_func=(
             concatenate_regime_function(
                 functions=functions, target="inverse_marginal_utility"

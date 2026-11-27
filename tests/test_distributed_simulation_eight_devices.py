@@ -1,4 +1,4 @@
-"""A public three-device solve feeds eight-device subject simulation.
+"""A public three-device solve feeds eight-device agent simulation.
 
 Run this file alone with JAX_NUM_CPU_DEVICES=8 and
 XLA_FLAGS=--xla_force_host_platform_device_count=8. It never changes topology at
@@ -21,29 +21,22 @@ from lcm import (
     Model,
     Regime,
     Transition,
-    categorical,
     fixed_transition,
 )
 from lcm.execution import ExecutionConfig
-from lcm.typing import ScalarInt
+from tests.simulation.test_independent_outer_cohorts import (
+    _Kind,
+    _next_regime,
+    _next_wealth,
+    _RegimeId,
+    _utility_retired,
+    _utility_working,
+)
 
 pytestmark = pytest.mark.skipif(
     jax.default_backend() != "cpu" or jax.device_count() != 8,
     reason="Requires an isolated eight-device CPU process",
 )
-
-
-@categorical(ordered=False)
-class _Kind:
-    low: ScalarInt
-    middle: ScalarInt
-    high: ScalarInt
-
-
-@categorical(ordered=False)
-class _RegimeId:
-    working: ScalarInt
-    retired: ScalarInt
 
 
 def _model(*, devices: tuple[int, ...]) -> Model:
@@ -53,18 +46,12 @@ def _model(*, devices: tuple[int, ...]) -> Model:
             "working": Regime(
                 states={"wealth": LinSpacedGrid(start=1, stop=40, n_points=4)},
                 actions={"consumption": LinSpacedGrid(start=1, stop=3, n_points=3)},
-                functions={
-                    "utility": lambda wealth, consumption, kind: (
-                        -((consumption - (kind + 1)) ** 2) + wealth * 0.125
-                    )
-                },
-                state_transitions={
-                    "wealth": lambda wealth, consumption: wealth - consumption
-                },
+                functions={"utility": _utility_working},
+                state_transitions={"wealth": _next_wealth},
             ),
             "retired": Regime(
                 states={"wealth": LinSpacedGrid(start=1, stop=40, n_points=4)},
-                functions={"utility": lambda wealth, kind: wealth * (kind + 1)},
+                functions={"utility": _utility_retired},
             ),
         },
         states={"kind": DiscreteGrid(_Kind)},
@@ -74,23 +61,19 @@ def _model(*, devices: tuple[int, ...]) -> Model:
         execution_config=ExecutionConfig(
             devices=devices,
             sharded_states=("kind",),
-            axis_widths={"subject": 16},
+            axis_widths={"agent": 16},
         ),
         initial_nodes={0: "working"},
         edges={
             "working": Transition(
                 targets={"working": 0, "retired": (0, 1)},
-                law=DeterministicTransition(
-                    func=lambda age: jax.numpy.where(
-                        age < 1, _RegimeId.working, _RegimeId.retired
-                    ),
-                ),
+                law=DeterministicTransition(func=_next_regime),
             )
         },
     )
 
 
-def _assert_subject_partition(*, value: jax.Array) -> None:
+def _assert_agent_partition(*, value: jax.Array) -> None:
     """Check actual local shard indices, not just the named device set."""
     assert value.shape[0] == 16
     shards = value.addressable_shards
@@ -108,7 +91,7 @@ def _assert_subject_partition(*, value: jax.Array) -> None:
 def test_three_device_solve_simulates_on_eight_devices(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Eight subject shards consume addressed copies without deleting solve values."""
+    """Eight agent shards consume addressed copies without deleting solve values."""
     model = _model(devices=tuple(range(8)))
     reference = _model(devices=(0,))
     params = {"discount_factor": 0.5}
@@ -189,8 +172,8 @@ def test_three_device_solve_simulates_on_eight_devices(
     assert len(copy_addresses) == len(set(copy_addresses))
     for period in (0, 1):
         data = result.raw_results["working"][period]
-        _assert_subject_partition(value=data.V_arr)
-        _assert_subject_partition(value=data.actions["consumption"])
+        _assert_agent_partition(value=data.V_arr)
+        _assert_agent_partition(value=data.actions["consumption"])
         np.testing.assert_array_equal(
             np.asarray(data.in_regime), np.ones(16, dtype=bool)
         )

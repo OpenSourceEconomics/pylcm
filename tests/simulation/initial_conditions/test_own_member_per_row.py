@@ -1,4 +1,4 @@
-"""A subject's role is its own, carried row by row through the simulation.
+"""An agent's role is its own, carried row by row through the simulation.
 
 A collective regime's members are the roles its members occupy, and which
 role a row occupies decides where that row goes when the household ends: her
@@ -13,7 +13,7 @@ vocabulary, so a model whose collective regimes name disjoint roles is
 expressible and a role can be compared across regimes.
 
 The dissolution miniature below empties the participation mask at `wage = 2`
-alone, so the three subjects separate exactly: two stay married, one dissolves.
+alone, so the three agents separate exactly: two stay married, one dissolves.
 """
 
 from types import MappingProxyType
@@ -40,7 +40,7 @@ _NO_ROLE = -1
 def _simulate_cohort(
     *, own_member: list[int] | None, wages: tuple[float, ...] = (1.0, 2.0, 3.0)
 ) -> tuple[SimulationResult, PeriodToRegimeToVArr]:
-    """Simulate the dissolution miniature with one role per subject."""
+    """Simulate the dissolution miniature with one role per agent."""
     ages, regimes, regime_names_to_ids, flat_params, solution = _solve_dissolution()
     initial_conditions = {
         "wage": jnp.asarray(wages),
@@ -72,7 +72,7 @@ def _role_ids(regimes: MappingProxyType[RegimeName, EngineRegime]) -> dict[str, 
 def test_a_mixed_cohort_dissolves_each_row_into_its_own_single_regime() -> None:
     """The wife's row enters `single_f`, the husband's `single_m`, in one call.
 
-    Only the `wage = 2` subject dissolves, and here that subject is the one
+    Only the `wage = 2` agent dissolves, and here that agent is the one
     carrying the husband's role, so `single_m` receives it and `single_f`
     receives nobody. The middle row is the discriminating one: a router that
     picked a leg by declaration order would send it to `single_f`.
@@ -98,7 +98,7 @@ def test_the_same_cohort_with_the_roles_swapped_dissolves_the_other_way() -> Non
     """Giving the dissolving row the wife's role sends it to `single_f`.
 
     The gate is a property of the household, not of who is looking at it, so
-    the same subject dissolves either way — only its destination moves. Without
+    the same agent dissolves either way — only its destination moves. Without
     this control the result above could come from the cohort rather than from
     the role.
     """
@@ -148,7 +148,7 @@ def test_a_row_that_stays_married_keeps_its_role() -> None:
 
     published = result.to_dataframe(use_categorical_codes=True)
     married = published.query("period == 1 and regime_name == 'married_ir'")
-    assert list(married.sort_values("subject_id")["own_member"]) == [
+    assert list(married.sort_values("agent_id")["own_member"]) == [
         roles["f"],
         roles["f"],
     ]

@@ -4,15 +4,24 @@ This oracle takes literal finite relation sets, not the normalizer's output.
 It neither imports production analysis nor evaluates an economic callback.
 """
 
+from collections.abc import Collection, Iterable
 
-def physical_closure(initial_nodes, scheduled_moves, settlements=()):
+type _Node = tuple[int, str]
+type _PhaseNode = tuple[int, str, str]
+
+
+def physical_closure(
+    initial_nodes: Iterable[_Node],
+    scheduled_moves: Iterable[tuple[_Node, _Node]],
+    transfers: Iterable[tuple[_Node, _Node]] = (),
+) -> set[_Node]:
     """Least closure of physical moves from explicitly admitted initial nodes.
 
     Each move is ((source_period, source_owner), (target_period, target_owner)).
     Policy-read relations deliberately are not an argument to this operation.
     """
     reached = set(initial_nodes)
-    moves = tuple(scheduled_moves) + tuple(settlements)
+    moves = tuple(scheduled_moves) + tuple(transfers)
     changed = True
     while changed:
         additions = {target for source, target in moves if source in reached}
@@ -21,7 +30,9 @@ def physical_closure(initial_nodes, scheduled_moves, settlements=()):
     return reached
 
 
-def demanded_owners(physical, reads):
+def demanded_owners(
+    physical: Iterable[_Node], reads: Collection[tuple[_PhaseNode, _PhaseNode]]
+) -> set[_PhaseNode]:
     """Least phase-specific owner closure of literal read edges.
 
     A read is ((period, owner, phase), (period, owner, phase)). An owner that is

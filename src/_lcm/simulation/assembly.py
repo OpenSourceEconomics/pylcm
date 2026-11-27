@@ -72,15 +72,15 @@ def _run_assembly(
 ) -> jax.Array:
     """Apply the CPU-host exclusion only to the final assembly bodies here.
 
-    Every operand but the gathered `rows` carries the subject axis.
+    Every operand but the gathered `rows` carries the agent axis.
     """
     if function is None:
         function = _slice_array if "array" in arguments else _concatenate_arrays
-    subject_arg_names = tuple(name for name in arguments if name != "rows")
-    leaves = jax.tree.leaves({name: arguments[name] for name in subject_arg_names})
+    agent_arg_names = tuple(name for name in arguments if name != "rows")
+    leaves = jax.tree.leaves({name: arguments[name] for name in agent_arg_names})
     devices = set().union(*(leaf.devices() for leaf in leaves))
     host_assembly = len(devices) == 1 and next(iter(devices)).platform == "cpu"
-    executing = tuple(devices) if host_assembly else memory.subject_devices
+    executing = tuple(devices) if host_assembly else memory.agent_devices
     if (
         host_assembly
         and not devices.intersection(memory.devices)
@@ -91,7 +91,7 @@ def _run_assembly(
         profile = memory.operations.prepare_abstract(
             function=function,
             arguments=jax.tree.map(_abstract_operand, arguments),
-            subject_arg_names=subject_arg_names,
+            agent_arg_names=agent_arg_names,
             static_arguments=static_arguments,
             devices=executing,
         )
@@ -101,7 +101,7 @@ def _run_assembly(
         result = memory.operations.dispatch(
             function=function,
             arguments=arguments,
-            subject_arg_names=subject_arg_names,
+            agent_arg_names=agent_arg_names,
             static_arguments=static_arguments,
             devices=executing,
             budget_devices=memory.devices,
@@ -113,15 +113,15 @@ def _run_assembly(
 
 
 def _concatenate_arrays(*, arrays: tuple[jax.Array, ...]) -> jax.Array:
-    """The original concatenate along the global subject axis."""
+    """The original concatenate along the global agent axis."""
     return jnp.concatenate(arrays)
 
 
 def _slice_array(*, array: jax.Array, start: int, stop: int) -> jax.Array:
-    """The original contiguous subject slice with immutable bounds."""
+    """The original contiguous agent slice with immutable bounds."""
     return array[start:stop]
 
 
 def _take_rows(*, array: jax.Array, rows: jax.Array | np.ndarray) -> jax.Array:
-    """Gather subject rows, copying each row's bytes unchanged."""
+    """Gather agent rows, copying each row's bytes unchanged."""
     return jnp.take(array, rows, axis=0)

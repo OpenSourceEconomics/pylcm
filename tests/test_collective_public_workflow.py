@@ -9,7 +9,7 @@ built from the finalized regimes, so a parameter the model consumes but the
 template omits is invisible until a user follows the documented route.
 
 Repeated simulation reuses the active runtime executor and must preserve
-every routed subject.
+every routed agent.
 """
 
 from collections.abc import Mapping
@@ -42,8 +42,8 @@ from tests.regime_building.test_collective_regime_simulate import (
 _EXPECTED_TEMPLATE_LEAVES = frozenset(
     {
         "married__koopmans_aggregator__discount_factor",
-        "married_ir__exit__targets__f__utility_adjustment__delta_f",
-        "married_ir__exit__targets__m__utility_adjustment__delta_m",
+        "married_ir__composition_action__destinations__f__utility_adjustment__delta_f",
+        "married_ir__composition_action__destinations__m__utility_adjustment__delta_m",
         "married_ir__koopmans_aggregator__discount_factor",
         "single_f__koopmans_aggregator__discount_factor",
         "single_m__koopmans_aggregator__discount_factor",
@@ -52,9 +52,9 @@ _EXPECTED_TEMPLATE_LEAVES = frozenset(
 
 _VALUES = {"discount_factor": _BETA, "delta_f": 0.5, "delta_m": 0.2}
 
-_N_SUBJECTS = 3
+_N_AGENTS = 3
 
-#: Ages 0-2. Every subject reaches a terminal regime at age 2, and the default
+#: Ages 0-2. Every agent reaches a terminal regime at age 2, and the default
 #: `terminal_rows="first"` publishes that entry row but not the frozen ones
 #: after it, so the age-3 rows are absent.
 _N_LIVE_PERIODS = 3
@@ -120,16 +120,16 @@ def _filled_template(model: Model) -> UserParams:
 
 
 def _initial_conditions(model: Model) -> MappingProxyType[str, FloatND | IntND]:
-    """A married cohort of `_N_SUBJECTS`, one on each side of the dissolution."""
+    """A married cohort of `_N_AGENTS`, one on each side of the dissolution."""
     return MappingProxyType(
         {
             "wage": jnp.array([1.0, 2.0, 3.0]),
             "age": jnp.array([0.0, 0.0, 0.0]),
             "regime_id": jnp.array(
-                [model.regime_names_to_ids["married"]] * _N_SUBJECTS, dtype=jnp.int32
+                [model.regime_names_to_ids["married"]] * _N_AGENTS, dtype=jnp.int32
             ),
             "own_member": jnp.full(
-                _N_SUBJECTS, model.member_names_to_ids["f"], dtype=jnp.int32
+                _N_AGENTS, model.member_names_to_ids["f"], dtype=jnp.int32
             ),
         }
     )
@@ -211,15 +211,15 @@ def test_the_documented_workflow_produces_a_frame() -> None:
 
     df = result.to_dataframe()
 
-    assert set(map(tuple, df[["subject_id", "period"]].to_numpy())) == {
-        (subject, period)
-        for subject in range(_N_SUBJECTS)
+    assert set(map(tuple, df[["agent_id", "period"]].to_numpy())) == {
+        (agent, period)
+        for agent in range(_N_AGENTS)
         for period in range(_N_LIVE_PERIODS)
     }
 
 
-def test_repeated_simulation_routes_the_same_subjects() -> None:
-    """Repeated calls on the same model preserve every subject's routed regime."""
+def test_repeated_simulation_routes_the_same_agents() -> None:
+    """Repeated calls on the same model preserve every agent's routed regime."""
     model = _make_model()
     params = _filled_template(model)
     solution = model.solve(params=params, log_level="debug")

@@ -28,7 +28,7 @@ List the sizes of:
 - stochastic nodes;
 - outer candidates in a nested solve;
 - periods and active regime shapes;
-- simulated subjects.
+- simulated agents.
 
 The [scaling discussion](../methods/performance_scaling.md) explains how those axes
 enter each solver family. The largest declared grid is not necessarily the largest
@@ -87,9 +87,9 @@ ExecutionConfig(axis_widths={"cell": {"heavy": 8}})
 
 Regimes the mapping does not name keep the width the planner chooses for them, per
 regime and per period. The two forms may be mixed across axes. Because only the solve
-phase plans per regime, an axis that only simulation programs declare — `subject`, for
-one — takes the bare-integer form; a per-regime width for it is refused at model build,
-as is one naming a regime the model does not declare.
+phase plans per regime, an axis that only simulation programs declare — `agent`, for one
+— takes the bare-integer form; a per-regime width for it is refused at model build, as
+is one naming a regime the model does not declare.
 
 | axis              | declared by                                                                                          |
 | ----------------- | ---------------------------------------------------------------------------------------------------- |
@@ -122,9 +122,9 @@ memory without capping its retained candidate bank.
 
 For `GridSearch`, `cell` tiles the flattened product of the states evaluated inside each
 sharded slice. Sharded states stay outside this product. `action_product` separately
-streams eligible hard-max action reductions; EV1 and collective models keep their
-canonical dense action reductions while tiling state cells. `DCEGM` uses the applicable
-axes listed above.
+streams eligible hard-max action reductions, including those of a regime with several
+members; EV1 models keep their canonical dense action reductions while tiling state
+cells. `DCEGM` uses the applicable axes listed above.
 
 NBEGM also owns no compiled-width fields. Use its applicable axes in the table above:
 `interval` streams the continuation read together with the stable-identity candidate
@@ -218,35 +218,37 @@ continuation replicated onto other devices, for example under a sharded continuo
 state, moves one code's share at a time. The blocked solve evaluates the same Bellman
 problem as the unblocked one and publishes values in the same layout. Independently
 compiled blocked and unblocked values agree within eight ULP of the working float
-format; policies, states, actions, regimes, and public result structure remain exact.
-Routes dispatching the same compiled program retain their bitwise contract. Terminal
-regimes are solved whole.
+format, and the sets of best actions agree. Simulated choices, and the states and
+regimes that follow from them, agree wherever the best action is unique. Blocking keeps
+the order of the action grid, and the public result structure is the same. Routes
+dispatching the same compiled program retain their bitwise contract. Terminal regimes
+are solved whole.
 
 The request is checked at model construction. It is refused, naming every reason, when:
 
 - more than one state is named, or a width other than 1 is given;
 - the state is also in `sharded_states`, or no regime declares it;
 - the state's value can change, or a value read crosses its codes;
-- a non-terminal regime carrying it is not solved by `GridSearch`, is a collective
-  regime, declares taste shocks or gated edges, folds a process, reads a gated-edge
-  reference value, or carries the state on a non-discrete grid.
+- a non-terminal regime carrying it is not solved by `GridSearch`, declares taste shocks
+  or gated edges, folds a process, reads a gated-edge reference value, or carries the
+  state on a non-discrete grid.
 
 A blocked regime-period cannot be captured or replayed with the period-replay tools.
 
 ### Grouped simulation
 
 When the forward phase provably never changes the state either, `simulate` groups the
-subjects by their starting code. Each code's subjects run in chunks of their own, and
-every stored value carrying the state is read through that code's block, so a device
-receives one code's share of each such value rather than all of them. Each subject keeps
-the random draws of its original row and its original row in the result, so the panel is
-the ungrouped panel. A subject that starts without the state, in a regime that does not
-carry it, joins the first code's group; an empty group dispatches nothing.
+agents by their starting code. Each code's agents run in chunks of their own, and every
+stored value carrying the state is read through that code's block, so a device receives
+one code's share of each such value rather than all of them. Each agent keeps the random
+draws of its original row and its original row in the result, so the panel is the
+ungrouped panel. An agent that starts without the state, in a regime that does not carry
+it, joins the first code's group; an empty group dispatches nothing.
 
 Simulation falls back to the ungrouped route when the simulate phase can change the
 state, for example through a `Phased` law whose `simulate` branch moves it, or when a
 regime has taste shocks, has gated edges (a `Gate` in its `Transition` in
-`Model(edges=...)`), or replays a stored policy. The plan summary's `subject_grouping`
+`Model(edges=...)`), or replays a stored policy. The plan summary's `agent_grouping`
 names the grouping state, or is `None` on the ungrouped route.
 
 ### Solve, simulate and release one code at a time
@@ -272,7 +274,7 @@ model = Model(
 Each code is solved through every period on the same compiled programs, then copied to
 the host, and its device buffers are deleted before the next code starts, so the device
 holds one code's values at a time. `simulate` without a `solution` simulates each code's
-subjects right after that code is solved, while its values are still on the device.
+agents right after that code is solved, while its values are still on the device.
 
 The result keeps its usual contract. `solution.values` lists every period and regime,
 and inspecting it reads nothing. Reading a value assembles it from the retained codes on
@@ -280,14 +282,15 @@ the layout the period-major solve publishes, and `SolutionResult.save` writes ev
 value from the host. Simulating the result reads one code's values at a time. Values and
 simulated panels are those of the period-major schedule, byte for byte; where blocking
 itself places a value on a neighbouring float of the unblocked one, so does this
-schedule.
+schedule. Both schedules run the same programs on the same action grid, so a tie between
+actions goes to the same action in both.
 
 What moves where:
 
 - every value crosses from the device to the host once, and each simulation from a saved
   or returned result uploads one code's values at a time;
 - the host holds every value of the result for as long as the result is referenced;
-- `solution.value(period=..., regime=...)` places one value on its devices, and
+- `solution.value(step=..., regime=...)` places one value on its devices, and
   `solution.values.materialize()` places every value at once. Each is refused before
   anything is placed when what it places exceeds the device budget on a device, counted
   per device on the value's sharding. When several values fit only one at a time, read
@@ -302,7 +305,7 @@ solve, and no block stays in memory. See `value_storage` in
 
 The schedule is refused at model construction unless a state is named in
 `invariant_block_widths` and every regime carries it on a discrete grid. Simulating a
-block-major solution is refused when the simulate phase does not group subjects by the
+block-major solution is refused when the simulate phase does not group agents by the
 state, when the simulation is budgeted (pass `device_memory_bytes=None`), or when
 `log_path` asks for snapshots that would hold every value at once. A solution loaded
 from an archive is read whole, as on any other model.
@@ -362,9 +365,8 @@ of one, or an empty mapping, runs the ordinary route unchanged.
 The request is checked at model construction. It is refused, naming every reason, when:
 
 - it names a regime the model does not declare, or more devices than the model may use;
-- the regime is terminal, is not solved by `GridSearch`, is a collective regime,
-  declares taste shocks or gated edges, folds a process, or carries a discrete sharded
-  state;
+- the regime is terminal, is not solved by `GridSearch`, declares taste shocks or gated
+  edges, folds a process, or carries a discrete sharded state;
 - the action product has fewer than two actions or fewer actions than devices;
 - a fixed `action_product` width cuts the product into fewer blocks than devices.
 
@@ -386,9 +388,10 @@ working-life regimes alone. Only a state *every* regime prunes is refused, becau
 no axis is left to spread. The stricter continuous route additionally requires the state
 in every regime.
 
-Ordinary singleton hard-max `GridSearch` also supports one model-level `LinSpacedGrid`
-as the sole sharded state. Every regime must retain that same static grid. Unsharded
-states may include:
+Hard-max `GridSearch` also supports one model-level continuous grid with fixed nodes
+(`LinSpacedGrid`, `LogSpacedGrid`, the piecewise grids, or an `IrregSpacedGrid` whose
+points are not supplied at run time) as the sole sharded state. Every regime must retain
+that same static grid. Unsharded states may include:
 
 - Concrete discrete grids.
 - At most one static `PiecewiseLinSpacedGrid` interpolation coordinate per regime.
@@ -397,11 +400,12 @@ states may include:
 - Carried states declared with a `LinSpacedGrid` simulation domain. Their solve
   imputation does not add a value-array dimension.
 
-Runtime state grids, other process families, mixed solvers, collective or gated routes
-and taste shocks remain outside this route. Runtime action grids keep their ordinary
-GridSearch semantics. Process nodes retain the ordinary index-based continuation read;
-sharding does not enable process-aware off-grid interpolation. Additional continuous
-coordinates keep their named positions, so the sharded axis need not be trailing.
+Runtime state grids, other process families, mixed solvers, gated routes, taste shocks
+and `Decoupled` aggregators remain outside this route. Runtime action grids keep their
+ordinary GridSearch semantics. Process nodes retain the ordinary index-based
+continuation read; sharding does not enable process-aware off-grid interpolation.
+Additional continuous coordinates keep their named positions, so the sharded axis need
+not be trailing.
 
 For example, a 24-point assets axis can use eight selected devices, with three assets
 coordinates on each device. Logical value-axis order stays unchanged. Interpolation
@@ -434,7 +438,10 @@ Under a device-memory budget, solve execution waits for earlier compiled work th
 any of the next core's execution or transfer devices. Work on disjoint device sets can
 remain asynchronous. A shared source array can therefore serialize cores assigned to
 different regime submeshes. The wait covers returned auxiliary arrays and declared
-copies as well as values; it does not bound memory used by compiler autotuning.
+copies as well as values; it does not bound memory used by compiler autotuning. When
+compiling a width runs out of device memory, the default widest-first width search
+passes over that width and tries the next one; a width fixed in `axis_widths`, or the
+only width a core admits, raises XLA's error instead.
 
 (set-a-device-memory-budget)=
 
@@ -525,21 +532,21 @@ earlier candidates also refuse.
 
 ## Batch forward simulation
 
-Set `ExecutionConfig(axis_widths={"subject": k})` on the model to process subjects in
-chunks. The inner compiled subject width remains fixed at `k`; the outer chunk is
-clamped to the population and rounded up to a multiple of the subject-device count. For
-example, width three uses outer chunks of four on four devices while retaining an inner
-width of three. Completed chunks are offloaded to host. Random keys retain their
-original population and global subject indices, so changing the width does not change
-simulated draws.
+Set `ExecutionConfig(axis_widths={"agent": k})` on the model to process agents in
+chunks. The inner compiled agent width remains fixed at `k`; the outer chunk is clamped
+to the population and rounded up to a multiple of the agent-device count. For example,
+width three uses outer chunks of four on four devices while retaining an inner width of
+three. Completed chunks are offloaded to host. Random keys retain their original
+population and global agent indices, so changing the width does not change simulated
+draws.
 
 Under a device-memory budget, every call is planned by the same top-first outer-cohort
-search, whether or not `axis_widths["subject"]` is pinned. Replay routes that cannot be
+search, whether or not `axis_widths["agent"]` is pinned. Replay routes that cannot be
 budgeted refuse the budget, whether it is the device default or explicit.
 
-A pinned `axis_widths["subject"]` fixes the anchor width the frontier doubles from.
+A pinned `axis_widths["agent"]` fixes the anchor width the frontier doubles from.
 Without a pin, the existing single-axis workspace search proposes the widest
-representable subject width the budget admits as that anchor; the frontier and its map
+representable agent width the budget admits as that anchor; the frontier and its map
 selection then proceed identically either way. The anchor only seeds the search — it is
 not a memory verdict, and the admitted extent may use a different inner map than the
 anchor if a fallback runs.
@@ -568,7 +575,7 @@ more planning cost than an ascending search. Compiler exceptions are not caught 
 memory refusals. Compilation and its host-memory cost are not bounded by the simulated
 payload's device budget.
 
-For example, 226,848 subjects, inner width 2,048 and eight subject devices give the
+For example, 226,848 agents, inner width 2,048 and eight agent devices give the
 geometric sizes 2,048, 4,096, 8,192, 16,384, 32,768, 65,536, 131,072 and 226,848. The
 last size is profiled first. Success selects one cohort immediately, with the inner map
 still fixed. Every attempted size uses its own compiled requirements, retained owners,
@@ -589,8 +596,8 @@ chunks cannot remove. CPU assembly after GPU offload uses host RAM outside the G
 ceiling.
 
 Finite NNBEGM replay includes candidate preparation, diagnostics and canonical ranking
-in this bound. The prepared bank has one row per subject in the outer chunk and keeps
-the full published candidate extent. A smaller inner width does not remove that bank's
+in this bound. The prepared bank has one row per agent in the outer chunk and keeps the
+full published candidate extent. A smaller inner width does not remove that bank's
 storage requirement. Addressed policy copies and their transfer overlap are counted
 alongside retained originals.
 
@@ -599,7 +606,7 @@ are completed. Their resulting arrays are counted, but this entry work is not
 pre-admitted by the chunk profiles. Budgeted host replay routes remain refused until
 their complete stages and owners have profiles.
 
-The same fixed `seed` gives the same per-subject EV1 taste-shock choices across subject
+The same fixed `seed` gives the same per-agent EV1 taste-shock choices across agent
 chunk widths and repeated calls. Keep the seed, parameters, initial conditions, and
 model fixed when checking that invariance.
 
@@ -684,16 +691,16 @@ values by state name or through the simulated panel, never by axis position.
 
 At fp32, a sharded solve is a different compiled program and can round differently.
 Choices whose values are nearly tied can then flip, and a flip propagates through the
-rest of that subject's history. Measured on the Borella model, fp32, 5×A40 sharded
-against 1×A40: 17,084 of 20,000 simulated subjects' actions diverged at some point, with
-a median relative value gap of 1.7e-6 at the first divergence. Judge such a difference
-against an fp64 control before treating it as a defect or as noise.
+rest of that agent's history. Measured on the Borella model, fp32, 5×A40 sharded against
+1×A40: 17,084 of 20,000 simulated agents' actions diverged at some point, with a median
+relative value gap of 1.7e-6 at the first divergence. Judge such a difference against an
+fp64 control before treating it as a defect or as noise.
 
-### Subject sharding for simulate-heavy models
+### Agent sharding for simulate-heavy models
 
-When simulation, not the solve, dominates a call, spread the simulated subjects over all
-devices with `ExecutionConfig(simulation_sharding="subjects")`; see
-[subject-parallel simulation](subject_parallel_simulation.md). Measured on the ACA
+When simulation, not the solve, dominates a call, spread the simulated agents over all
+devices with `ExecutionConfig(simulation_sharding="agents")`; see
+[agent-parallel simulation](agent_parallel_simulation.md). Measured on the ACA
 retirement model, 8×A40, fp32, one pair: the warm call went from 1,686 s to 1,064 s and
 warm simulation from 801 s to 191 s, with the solve time and device peak unchanged and
 bitwise-equal panels.

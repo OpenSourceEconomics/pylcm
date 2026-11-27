@@ -83,6 +83,7 @@ def _report() -> dict[str, JSONValue]:
             "mismatches": _bitwise_mismatches(
                 got=got.values, expected=reference.values
             ),
+            "max_ulp": _max_ulp(got=got.values, expected=reference.values),
             "working_layout": _layout(got.values[0]["working"]),
             "dead_layout": _layout(got.values[3]["dead"]),
         }
@@ -118,6 +119,9 @@ def _report() -> dict[str, JSONValue]:
         )
         report[f"state_by_action_{partitions}"] = {
             "mismatches_to_same_state_mesh": _bitwise_mismatches(
+                got=got.values, expected=same_state_mesh.values
+            ),
+            "max_ulp_to_same_state_mesh": _max_ulp(
                 got=got.values, expected=same_state_mesh.values
             ),
             "max_ulp_to_one_device": _max_ulp(
@@ -159,11 +163,13 @@ def _report() -> dict[str, JSONValue]:
     second = model.solve(params=many_actions.get_params(scale=1.7), log_level="off")
     report["changed_params"] = {
         "mismatches": _bitwise_mismatches(got=second.values, expected=changed.values),
+        "max_ulp": _max_ulp(got=second.values, expected=changed.values),
         "differs_from_first": not np.array_equal(
             np.asarray(second.values[0]["working"]), np.asarray(first[0]["working"])
         ),
     }
 
+    report["household"] = _household_report()
     report["programs"] = _program_report()
     report["budget"] = _budget_report()
     report["block_major"] = {
@@ -289,6 +295,33 @@ def _simulated_frames(
     }
 
 
+def _household_report() -> dict[str, JSONValue]:
+    """Solve the two-member household with and without its actions partitioned."""
+    from lcm import ExecutionConfig  # noqa: PLC0415
+    from tests import collective_fixtures  # noqa: PLC0415
+
+    model, params = collective_fixtures.make_two_member_model()
+    solutions = [
+        Model(
+            edges=model.edges,
+            regimes=dict(model.user_regimes),
+            ages=model.ages,
+            regime_id_class=collective_fixtures.CoupleRegimeId,
+            initial_nodes={0: "couple"},
+            execution_config=ExecutionConfig(
+                axis_widths={"action_product": 1}, action_partitions=partitions
+            ),
+        ).solve(params=params, log_level="off")
+        for partitions in ({"couple": 2}, {})
+    ]
+    return {
+        "mismatches": _bitwise_mismatches(
+            got=solutions[0].values, expected=solutions[1].values
+        ),
+        "couple_layout": _layout(solutions[0].values[0]["couple"]),
+    }
+
+
 def _program_report() -> dict[str, JSONValue]:
     """Compile the working regime's period-0 program and read its exchanges."""
     from _lcm.solution import backward_induction  # noqa: PLC0415
@@ -393,7 +426,7 @@ def _block_major_report(
             execution_config=ExecutionConfig(
                 devices=tuple(range(8 if sharded_states else 4)),
                 device_memory_bytes=None,
-                axis_widths={"action_product": _FIXED_WIDTH, "cell": 8, "subject": 3},
+                axis_widths={"action_product": _FIXED_WIDTH, "cell": 8, "agent": 3},
                 invariant_block_widths={"pref_type": 1},
                 invariant_block_schedule=schedule,
                 action_partitions={"working": 4},

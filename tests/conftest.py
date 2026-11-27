@@ -87,7 +87,7 @@ DECIMAL_PRECISION: int = 12
 # precision; eight is that with headroom.
 INVARIANCE_EPS_MULTIPLE: float = 8.0
 
-# Marker naming a test whose subject needs the native exact-affine kernel.
+# Marker naming a test whose agent needs the native exact-affine kernel.
 EXACT_KERNEL_MARKER = "requires_exact_affine_kernel"
 
 # Canonical reason used by exact-kernel tests and their skip inventory.
@@ -998,7 +998,7 @@ class PrepareMaterializedKwargs(TypedDict, closed=True):
     """Keywords received by `SimulationRuntime._prepare_materialized`."""
 
     program: MaterializedCoreProgram
-    n_subjects: int
+    n_agents: int
     residency: NotRequired[SimulationDispatchContext | None]
 
 

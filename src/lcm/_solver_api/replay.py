@@ -45,7 +45,7 @@ class ReplayRouteSnapshot:
     """One immutable cell passed unchanged from validation to reader construction.
 
     Whole-result preflight validates stored-layout cells before forward execution.
-    Simulation places a cell's arrays on its subject devices, then validates that
+    Simulation places a cell's arrays on its agent devices, then validates that
     exact placed snapshot and context again immediately before building its reader.
     """
 
@@ -68,8 +68,8 @@ class ReplayModelContext:
 
     regime_name: RegimeName
     """Name of the regime being replayed."""
-    period: int
-    """Period of the solution cell."""
+    step: int
+    """Step of the solution cell; see `Model.step_of`."""
     state_names: tuple[StateName, ...]
     """Solution-state names in canonical product-map order."""
 
@@ -85,8 +85,8 @@ class ReplayModelContext:
     def __post_init__(self) -> None:
         if type(self.regime_name) is not str or not self.regime_name:
             raise TypeError("ReplayModelContext.regime_name must be a nonempty str.")
-        if type(self.period) is not int or self.period < 0:
-            raise TypeError("ReplayModelContext.period must be a nonnegative int.")
+        if type(self.step) is not int or self.step < 0:
+            raise TypeError("ReplayModelContext.step must be a nonnegative int.")
         object.__setattr__(self, "state_names", tuple(self.state_names))
         object.__setattr__(self, "action_names", tuple(self.action_names))
 
@@ -117,8 +117,8 @@ class SimulationBuildContext:
     are not artifact axes and therefore do not appear here.
     """
 
-    period: int
-    """Period of the solution cell the reader is built for."""
+    step: int
+    """Step of the solution cell the reader is built for."""
     regime_name: RegimeName
     """Name of the regime the reader is built for."""
     state_names: tuple[StateName, ...]
@@ -146,7 +146,7 @@ class ActionOutput:
     actions: Mapping[
         ActionName, ValueND | npt.NDArray[np.generic] | np.generic | float | int | bool
     ]
-    """Immutable mapping of action names to their scalar or per-subject values."""
+    """Immutable mapping of action names to their scalar or per-agent values."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "actions", MappingProxyType(dict(self.actions)))
@@ -162,9 +162,9 @@ class ReplayReader(Protocol):
         states: Mapping[StateName, FloatND | IntND],
         fallback_actions: Mapping[ActionName, ValueND],
     ) -> ActionOutput:
-        """Return each named action as a scalar or per-subject-broadcastable array.
+        """Return each named action as a scalar or per-agent-broadcastable array.
 
-        ``states`` contains the regime's full per-subject simulation state, including
+        ``states`` contains the regime's full per-agent simulation state, including
         any carried-only states omitted from ``SimulationBuildContext``.
         """
         ...

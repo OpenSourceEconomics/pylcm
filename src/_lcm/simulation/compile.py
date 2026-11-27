@@ -8,8 +8,8 @@ import jax
 
 from _lcm.engine import Regime
 from _lcm.execution.execution_plan import ResolvedExecution
+from _lcm.simulation.agent_devices import simulation_agent_devices
 from _lcm.simulation.runtime import SimulationRuntime
-from _lcm.simulation.subject_devices import simulation_subject_devices
 from _lcm.typing import RegimeName
 
 
@@ -23,7 +23,7 @@ def bind_simulation_runtime(
     executor = SimulationRuntime(
         execution=execution,
         enable_jit=enable_jit,
-        subject_devices=_subject_devices(
+        agent_devices=_agent_devices(
             regimes=regimes, device_ids=execution.device_ids, execution=execution
         ),
     )
@@ -43,13 +43,13 @@ def bind_simulation_runtime(
     )
 
 
-def _subject_devices(
+def _agent_devices(
     *,
     regimes: Mapping[RegimeName, Regime],
     device_ids: tuple[int, ...],
     execution: ResolvedExecution | None = None,
 ) -> tuple[jax.Device, ...]:
     """Resolve the same forward devices used by profiles and population carriers."""
-    return simulation_subject_devices(
+    return simulation_agent_devices(
         regimes=regimes, device_ids=device_ids, execution=execution
     )

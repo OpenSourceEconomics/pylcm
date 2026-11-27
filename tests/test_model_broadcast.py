@@ -8,7 +8,7 @@ and actions are pruned per regime by DAG reachability; regime-level
 declarations are never pruned.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Unpack
 
 import jax.numpy as jnp
@@ -32,7 +32,7 @@ from lcm import (
 )
 from lcm.exceptions import ExecutionPlanningError, ModelInitializationError
 from lcm.regime import Regime as UserRegime
-from lcm.regime import RegimeReplacement
+from lcm.regime import RegimeReplacement, StateEntry
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import FloatND, FunctionName, RegimeName, ScalarInt
 
@@ -382,7 +382,7 @@ def test_broadcast_state_read_only_through_age_specialized_function_survives() -
     `(*args, **kwargs)` signature and cannot tell the broadcast state is used.
     """
 
-    def build_policy_bonus(age: float):
+    def build_policy_bonus(age: float) -> Callable[[FloatND], FloatND]:
         return lambda bonus_base: bonus_base + age
 
     model = _build_model(
@@ -440,7 +440,9 @@ def test_sharded_state_must_be_declared_at_model_level() -> None:
     ],
     ids=["concrete-continuous", "runtime-continuous", "carried-discrete"],
 )
-def test_unsupported_sharded_state_combinations_are_refused(*, grid) -> None:
+def test_unsupported_sharded_state_combinations_are_refused(
+    *, grid: StateEntry
+) -> None:
     """Unsupported and runtime grids are refused with the offending state name."""
     with pytest.raises(
         ExecutionPlanningError,
@@ -504,9 +506,7 @@ def test_model_broadcast_solves_and_simulates() -> None:
         seed=3,
     )
     df = result.to_dataframe(use_categorical_codes=True)
-    work_rows = df.loc[df["regime_name"] == "work"].sort_values(
-        ["subject_id", "period"]
-    )
+    work_rows = df.loc[df["regime_name"] == "work"].sort_values(["agent_id", "period"])
     values = work_rows.loc[work_rows["period"] == 0, "skill"]
     assert values.tolist() == [0, 1, 0, 1]
 

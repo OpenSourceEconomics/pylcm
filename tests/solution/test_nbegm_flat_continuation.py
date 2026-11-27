@@ -87,4 +87,4 @@ def test_nbegm_survives_a_zero_marginal_continuation() -> None:
     liquid = np.linspace(0.1, 30.0, _N_LIQUID)
     cash = liquid + _BASE_INCOME
     expected = cash ** (1.0 - _CRRA) / (1.0 - _CRRA)
-    np.testing.assert_allclose(v, expected, rtol=1e-6)
+    np.testing.assert_allclose(v, expected[:, None], rtol=1e-6)

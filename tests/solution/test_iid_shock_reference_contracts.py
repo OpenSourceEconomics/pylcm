@@ -203,7 +203,7 @@ def test_case_u_replay_at_original_shock_nodes(shock: float) -> None:
 def test_reference_modules_import_only_independent_dependencies() -> None:
     modules = (
         Path(oracle.__file__),
-        Path(__file__).with_name("test_exit_reference_household.py"),
+        Path(__file__).with_name("test_composition_action_reference_household.py"),
     )
     imports = {
         node.module.split(".")[0]

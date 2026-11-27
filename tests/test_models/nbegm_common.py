@@ -217,7 +217,9 @@ def make_alive_dead_model(
     final_age = ages.exact_values[-1]
     stays = ages.exact_values[:-2]
     if liquid_grid is None:
-        liquid_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_liquid)
+        liquid_grid = LinSpacedGrid(
+            start=0.1, stop=liquid_max, n_points=n_liquid, off_grid="extrapolate"
+        )
     alive_actions = {
         liquid_action: LinSpacedGrid(
             start=0.1, stop=liquid_max, n_points=n_consumption

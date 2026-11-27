@@ -22,10 +22,11 @@ repository, and only the first is a runtime concept:
 ## What the candidate certificate claims
 
 `tests/candidate_certificate/direct_flow.py` proves route-local candidate-array flow
-from `Q_and_F` to the full reducers, along ten named corridors — singleton, collective
-and taste-shock, each in a dense solve, a streamed reference and a simulate variant,
-plus the action-partitioned singleton solve, whose devices share one action product. Its
-own module docstring is the authoritative statement of the claim and of its boundary.
+from `Q_and_F` to the full reducers, along six named corridors: the collective solve,
+its streamed and action-partitioned variants, the collective simulate, and the
+taste-shock solve and simulate. Every regime has members, and a regime with one member
+has exactly one. So every route carries a trailing member axis. The module docstring of
+`direct_flow.py` is the authoritative statement of the claim and of its boundary.
 
 The boundary matters as much as the claim. The certificate says nothing about the
 *economics*: user DAGs, constraints, transitions, continuation values and interpolation

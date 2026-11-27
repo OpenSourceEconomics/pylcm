@@ -83,8 +83,16 @@ def _utility(*, wealth: jax.Array, work: jax.Array) -> jax.Array:
     return wealth + jnp.sum(work @ work) / work.size
 
 
+def _next_wealth(wealth: jax.Array) -> jax.Array:
+    return wealth
+
+
+def _terminal_utility(wealth: jax.Array) -> jax.Array:
+    return wealth
+
+
 def _produce(*, wealth: jax.Array, work: jax.Array) -> tuple[jax.Array, jax.Array]:
-    return wealth, work @ work
+    return wealth[:, None], work @ work
 
 
 def _consume(*, previous_value: jax.Array, previous_matrix: jax.Array) -> jax.Array:
@@ -222,13 +230,13 @@ def _model(*, budget: int | None) -> Model:
         regimes={
             "working": Regime(
                 states={"wealth": grid},
-                state_transitions={"wealth": lambda wealth: wealth},
+                state_transitions={"wealth": _next_wealth},
                 functions={"utility": _utility},
                 solver=_TwoProgramSolver(),
             ),
             "terminal": Regime(
                 states={"wealth": grid},
-                functions={"utility": lambda wealth: wealth},
+                functions={"utility": _terminal_utility},
             ),
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
@@ -319,7 +327,9 @@ def test_public_multicore_waits_for_pending_auxiliary_before_next_core(
         right, left
     ) / (_SIZE * _SIZE)
     assert_agrees_to_ulp(
-        got=solution.values[0]["working"], expected=expected.astype(work.dtype), n_ulp=4
+        got=solution.values[0]["working"],
+        expected=expected.astype(work.dtype)[:, None],
+        n_ulp=4,
     )
     np.testing.assert_array_equal(work, host_work.astype(work.dtype))
 
@@ -391,7 +401,7 @@ def test_budgeted_real_donor_and_template_fallback_leave_no_stale_witness(
         assert dispatches[1][0] == dispatches[2][0]
         assert not counter_fixture._TEMPLATES[-1].count.is_deleted()
         np.testing.assert_array_equal(counter_fixture._TEMPLATES[-1].count, 0.0)
-        wealth = np.asarray(_WEALTH.to_jax())
+        wealth = np.asarray(_WEALTH.to_jax())[:, None]
         for period in range(3):
             np.testing.assert_array_equal(
                 result.values[period]["alive"], wealth + 2 - period

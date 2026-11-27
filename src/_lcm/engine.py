@@ -79,7 +79,7 @@ from lcm.typing import (
 if TYPE_CHECKING:
     from _lcm.current_iid import CurrentIIDDrawPlan, CurrentIIDPlan
     from _lcm.regime_building.gated_edges import ResolvedGatedEdge
-    from _lcm.simulation.exits import ExitSimulationPlan
+    from _lcm.simulation.composition_actions import CompositionSimulationPlan
     from _lcm.solution.contract import PeriodKernel
 
     # The contract module imports this one at runtime, so `PeriodKernel` is
@@ -92,7 +92,7 @@ else:
     type CurrentIIDPlan = object
     type CurrentIIDDrawPlan = object
     # The simulation query metadata imports the canonical engine declarations.
-    type ExitSimulationPlan = object
+    type CompositionSimulationPlan = object
     PeriodKernelsMapping = Mapping
 
 # A precondition a solver can only check once parameter *values* exist. Kernels
@@ -558,7 +558,7 @@ class SolutionPhase:
     """
 
     pareto_weights: ParetoWeights | None = None
-    """The household's Pareto weight evaluator, or `None` for a singleton regime.
+    """The members' Pareto weight evaluator, or `None` for a singleton regime.
 
     Kept here so the params-bound preflight can read the weights the solve will
     actually use, rather than re-deriving them from the user declaration.
@@ -861,7 +861,7 @@ class GridRecomputationRoute:
     """The route of a regime whose simulated decision is recomputed on the grid.
 
     Nothing is retained from the solve, so each simulated period re-runs the
-    argmax over the regime's own action grids at the subject's realized state.
+    argmax over the regime's own action grids at the agent's realized state.
     """
 
     @property
@@ -938,7 +938,7 @@ class EGMPolicyRead:
     """Names for the off-grid read of a published `EGMSimPolicy` in simulate.
 
     The stored policy maps the endogenous resources value to the optimal
-    continuous action; simulation interpolates it at each subject's resources
+    continuous action; simulation interpolates it at each agent's resources
     instead of argmaxing over the action grid.
     """
 
@@ -989,7 +989,7 @@ class EGMPolicyRead:
 
     @property
     def consumer_route(self) -> str:
-        """The reader that interpolates the rows at a subject's resources."""
+        """The reader that interpolates the rows at an agent's resources."""
         return "egm_off_grid"
 
 
@@ -998,7 +998,7 @@ class NBEGMPolicyRead:
     """Names for the realized-state read of a published `NBEGMGridPolicy`.
 
     The stored policy is the optimal inner action on the regime's state grid;
-    simulation reads it at each subject's realized state instead of argmaxing
+    simulation reads it at each agent's realized state instead of argmaxing
     over the action grid. A discrete action is chosen by the largest read of its
     published conditional value.
     """
@@ -1056,7 +1056,7 @@ class NBEGMPolicyRead:
 
     @property
     def consumer_route(self) -> str:
-        """The reader that interpolates the policy at a subject's state."""
+        """The reader that interpolates the policy at an agent's state."""
         return "nbegm_grid"
 
 
@@ -1201,16 +1201,17 @@ class NNBEGMPolicyRead:
 class SimulationPhase:
     """Simulate-phase view of a canonical regime.
 
-    Owns everything forward simulation reads: the per-subject state set
-    (solve states plus carried-only states), the per-subject grids, and the
+    Owns everything forward simulation reads: the per-agent state set
+    (solve states plus carried-only states), the per-agent grids, and the
     compiled function sets. Reading phase-dependent data through this
     namespace makes the phase explicit at every call site.
     """
 
-    exit_queries: Mapping[int, ExitSimulationPlan] = dataclasses.field(
+    composition_queries: Mapping[int, CompositionSimulationPlan] = dataclasses.field(
         default=MappingProxyType({}), metadata={"fingerprint_omit_if_default": True}
     )
-    """Bound original Full and final Participating policies for current exits."""
+    """Bound original Full and final Participating policies for current decisions
+    on the composition."""
 
     current_iid_draw_plan: CurrentIIDDrawPlan | None = dataclasses.field(
         default=None, metadata={"fingerprint_omit_if_default": True}
@@ -1269,7 +1270,7 @@ class SimulationPhase:
     programs: SimulationPrograms
     """The decision, transition, and route programs this regime declares.
 
-    Each names the axes the execution planner owns — the per-subject tile every
+    Each names the axes the execution planner owns — the per-agent tile every
     family runs in, and the action product a decision streams where its solve
     counterpart streams — so the width a body is compiled at is an engine
     choice rather than a regime-builder one.
@@ -1296,7 +1297,7 @@ class SimulationPhase:
     """Immutable mapping of period to pointwise state-action value functions.
 
     Evaluates the canonical `Q` and its feasibility at one action value per
-    subject, rather than maximizing over the action grid. It shares the model
+    agent, rather than maximizing over the action grid. It shares the model
     DAG, transitions, constraints, aggregators, params, and next-period value
     arrays with `programs.decision`, so a value it reports for an off-grid
     candidate action is directly comparable with the grid winner's value.
@@ -1359,7 +1360,7 @@ class SimulationPhase:
 
     @property
     def state_names(self) -> tuple[StateOrActionName, ...]:
-        """States carried per subject: solve states plus carried-only states."""
+        """States carried per agent: solve states plus carried-only states."""
         return self._variables.state_names
 
     @property
@@ -1369,7 +1370,7 @@ class SimulationPhase:
 
     @property
     def discrete_state_names(self) -> tuple[StateOrActionName, ...]:
-        """Per-subject discrete state names (includes stochastic processes)."""
+        """Per-agent discrete state names (includes stochastic processes)."""
         return self._variables.discrete_state_names
 
     @property
@@ -1495,8 +1496,9 @@ class Regime:
     has_taste_shocks: bool = False
     """Whether the regime declares EV1 taste shocks on its discrete actions."""
 
-    certainty_equivalent: CertaintyEquivalent | None
-    """Nonlinear certainty equivalent declared by the regime, if any."""
+    certainty_equivalent: CertaintyEquivalent | Mapping[str, CertaintyEquivalent] | None
+    """Nonlinear certainty equivalent declared by the regime, if any; a
+    regime with several members may key it by member."""
 
     resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
     """Flat resolved fixed params for this regime, used by to_dataframe targets."""
@@ -1513,22 +1515,22 @@ class Regime:
     are user-granular or absent.
     """
 
-    member_axis: tuple[str, ...] | None = None
-    """Ordered member names for a collective regime, or `None` (singleton).
+    members: tuple[str, ...]
+    """Names of the members whose values this regime carries, in axis order.
 
-    When set, the regime's value-function array carries a
-    trailing length-`len(members)` axis: the backward-induction V topology
-    appends it so the zero template and the roll match the collective kernel's
-    member-valued output.
+    The regime's value-function array carries a trailing length-`len(members)`
+    axis: the backward-induction V topology appends it so the zero template and
+    the roll match the kernel's member-valued output. A regime declared with a
+    plain utility function has the one member `"self"`.
     """
 
     member_names_to_ids: MappingProxyType[str, int] = MappingProxyType({})
     """The model's role vocabulary: every regime's member names, as codes.
 
     One vocabulary for the whole model, carried on every regime, so a role
-    survives the move between regimes that name their members differently
-    and a simulated row can carry it as an integer. `NO_ROLE` is what a row in
-    a singleton regime carries — it occupies no household's role.
+    survives a change between regimes that name their members differently and a
+    simulated row can carry it as an integer. `NO_ROLE` is what a row in a
+    singleton regime carries — it occupies no role.
     """
 
     edge_reference_regimes: tuple[RegimeName, ...] = ()
@@ -1578,7 +1580,7 @@ class _RegimeSharding:
     The mesh has one axis per distributed state, named after the state, and a
     trailing `ACTION_PARTITION_AXIS` when the regime's action product is shared
     by several devices. `state_sharding` produces the 1-D sharding for a single
-    state grid (or array of subjects); `V_arr_sharding` produces the multi-axis
+    state grid (or array of agents); `V_arr_sharding` produces the multi-axis
     sharding for the V-array given the order of states in the state-action
     space. Neither names the action axis, so both replicate along it.
     """
@@ -1892,7 +1894,7 @@ def _distribute_states_to_devices(
     return MappingProxyType(placed)
 
 
-#: Highest rank a simulated value array can carry: the subject axis, plus at
+#: Highest rank a simulated value array can carry: the agent axis, plus at
 #: most one trailing member axis for a collective regime.
 _MAX_SIMULATED_V_RANK = 2
 
@@ -1909,12 +1911,10 @@ class PeriodRegimeSimulationData:
     """Realized current innovations, separate from persistent state coordinates."""
 
     V_arr: FloatND
-    """Value function array for all subjects at this period.
+    """Value function array for all agents at this period.
 
-    Shape `(n_subjects,)` for a singleton regime; `(n_subjects,
-    n_members)` for a collective regime — each member's own
-    value at the household's shared argmax, mirroring the solve-side V's
-    trailing member axis.
+    Shape `(n_agents, n_members)`: each member's own value at the regime's
+    shared argmax, mirroring the solve-side V's trailing member axis.
 
     The grid-argmax value: where the off-grid policy read replaces the
     continuous action, this value belongs to the pre-replacement gridded
@@ -1923,29 +1923,29 @@ class PeriodRegimeSimulationData:
     """
 
     actions: MappingProxyType[ActionName, FloatND | IntND]
-    """Immutable mapping of action names to optimal action arrays for all subjects."""
+    """Immutable mapping of action names to optimal action arrays for all agents."""
 
     states: MappingProxyType[StateName, FloatND | IntND]
-    """Immutable mapping of state names to state value arrays for all subjects."""
+    """Immutable mapping of state names to state value arrays for all agents."""
 
     in_regime: Bool1D
-    """Boolean mask indicating which subjects are in this regime at this period."""
+    """Boolean mask indicating which agents are in this regime at this period."""
 
     own_member: Int1D
-    """The role each subject occupies here, as a code in the model's role
+    """The role each agent occupies here, as a code in the model's role
     vocabulary (`Regime.member_names_to_ids`).
 
     A row in a collective regime carries the member it IS — the wife's row
     her role, the husband's his — which is what decides the leg it follows when
-    the household ends. A row in a singleton regime occupies no role and carries
-    `NO_ROLE`.
+    the composition changes. A row in a singleton regime occupies no role and
+    carries `NO_ROLE`.
     """
 
     nested_policy_fallback: Bool1D
-    """Per-subject flag that the continuous-outer (nested) off-grid policy read
+    """Per-agent flag that the continuous-outer (nested) off-grid policy read
     was refused and fell back to the grid-argmax action pair at this period.
 
-    True only for subjects in a regime whose simulation published a nested
+    True only for agents in a regime whose simulation published a nested
     (continuous-outer) policy where the runtime replay could not certify the
     off-grid read: the branch read left its live row support, a non-affine outer
     transition surfaced at the recovered action, or the inner action came out
@@ -1957,19 +1957,19 @@ class PeriodRegimeSimulationData:
     """
 
     def __post_init__(self) -> None:
-        """Check `V_arr` against the per-subject axis every other field carries.
+        """Check `V_arr` against the per-agent axis every other field carries.
 
         `V_arr` is rank-polymorphic so a collective regime can publish one value
         per member, which means its annotation admits any rank and cannot
-        state the agreement the record depends on: a leading subject axis
+        state the agreement the record depends on: a leading agent axis
         matching `in_regime`, and at most one trailing role axis. A `V_arr` that
         disagrees misaligns every value in the simulated frame against the
         actions and states beside it, and nothing downstream re-derives the
         pairing.
 
         Raises:
-            ValueError: `V_arr` has no subject axis, has more than one axis
-                beyond it, or its leading axis is not the subject axis.
+            ValueError: `V_arr` has no agent axis, has more than one axis
+                beyond it, or its leading axis is not the agent axis.
         """
         # Reached with a non-array leaf whenever a pytree traversal rebuilds the
         # record from something other than arrays — a shape-dtype struct still
@@ -1981,15 +1981,15 @@ class PeriodRegimeSimulationData:
             return
         if not 1 <= len(V_shape) <= _MAX_SIMULATED_V_RANK:
             msg = (
-                f"V_arr must be a per-subject value array, optionally with a "
+                f"V_arr must be a per-agent value array, optionally with a "
                 f"trailing member axis for a collective regime, so its "
                 f"rank is 1 or 2; got shape {V_shape}."
             )
             raise ValueError(msg)
         if V_shape[0] != mask_shape[0]:
             msg = (
-                f"V_arr's leading axis is the subject axis and must match the "
-                f"per-subject `in_regime` mask: V_arr has {V_shape[0]} rows, "
+                f"V_arr's leading axis is the agent axis and must match the "
+                f"per-agent `in_regime` mask: V_arr has {V_shape[0]} rows, "
                 f"`in_regime` has {mask_shape[0]}."
             )
             raise ValueError(msg)
@@ -1999,7 +1999,7 @@ class PeriodRegimeSimulationData:
 # `jax.tree.map` recurse into the fields instead of treating the dataclass
 # as an opaque leaf. Without registration, an outer drain over a
 # `dict[regime][period] -> PeriodRegimeSimulationData` skips the inner
-# `V_arr` / `in_regime` / `actions` / `states` — the per-subject lazy
+# `V_arr` / `in_regime` / `actions` / `states` — the per-agent lazy
 # compute graphs build up across periods and only fire at access time,
 # whose materialisation workspace dwarfs the per-period output.
 jax.tree_util.register_dataclass(
@@ -2019,8 +2019,8 @@ jax.tree_util.register_dataclass(
 #: Names under which `PeriodRegimeSimulationData` fields are written to saved
 #: simulation results and component-job fragments, where they differ from the
 #: field name. `own_member` keeps the literal `own_stakeholder` until the
-#: single-member and household engine paths merge, so files saved for any model
-#: keep their format.
+#: engine paths for regimes with one and with several members merge, so files
+#: saved for any model keep their format.
 PERSISTED_FIELD_NAMES: MappingProxyType[str, str] = MappingProxyType(
     {"own_member": "own_stakeholder"}
 )

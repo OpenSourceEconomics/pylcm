@@ -59,9 +59,9 @@ EIGHT_DEVICE_TEST_FILES = (
     "tests/test_continuous_assets_sharding.py",
     "tests/test_continuous_transfer_admission.py",
     "tests/test_continuous_assets_aca_numerics.py",
-    "tests/simulation/test_subject_parallel.py",
-    "tests/simulation/test_subject_parallel_runtime.py",
-    "tests/simulation/test_subject_parallel_model.py",
+    "tests/simulation/test_agent_parallel.py",
+    "tests/simulation/test_agent_parallel_runtime.py",
+    "tests/simulation/test_agent_parallel_model.py",
     "tests/solution/test_materialization_admission.py",
     "tests/simulation/test_shock_paths_mesh.py",
 )

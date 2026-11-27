@@ -20,7 +20,6 @@ import json
 import math
 import operator
 import sys
-from itertools import product
 from typing import Any, Mapping, TypedDict
 
 
@@ -1864,7 +1863,7 @@ def _check_semantics(original: dict, normalized: dict, analysis: dict, *, facts=
                             for phase in phases:
                                 missing = relation_dependency(update, phase)
                                 if missing: fail("future update depends on removed detail", relation=relation.get("id"), state=state, phase=phase, missing=sorted(missing))
-                        elif relation.get("kind") in {"value_read", "gate", "exit", "fallback", "reporting"}:
+                        elif relation.get("kind") in {"value_read", "gate", "composition_action", "fallback", "reporting"}:
                             if state in cells.get(target, {}).get("states", {}) and state not in available:
                                 fail("same-period/outside consumer loses state", relation=relation.get("id"), state=state)
                         else:
@@ -2059,7 +2058,7 @@ def _original_schedule(source, dates):
         additions = set()
         for side in ("solve", "simulation"):
             # Independent physical reachability follows only scheduled moves
-            # and explicit settlement routes. Current value/policy reads are
+            # and explicit transfer routes. Current value/policy reads are
             # replayed by the separate demand registry in _check_capture.
             if period == len(dates) - 1: continue
             phase_edges = phase(source.get("edges", {}), side)
@@ -2093,7 +2092,7 @@ def _original_schedule(source, dates):
                         fallback = phase(fields(phase(route, side)).get("fallback"), side)
                         if fallback is not None:
                             if short(fallback) != "ProjectedRegimeValue":
-                                raise ValueError("Original fallback has no supported physical-settlement contract")
+                                raise ValueError("Original fallback has no supported physical-transfer contract")
                             additions.add((period + 1, fields(fallback)["regime"]))
         for addition in additions - admitted:
             admitted.add(addition); pending.append(addition)
@@ -2337,33 +2336,35 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
         operators = {key: payload_digest(declaration[key]) if declaration.get(key) is not None else None
                      for key in ("koopmans_aggregator", "certainty_equivalent", "pareto_objective", "taste_shocks")}
         if cell.get("operators") != operators: fail("original decision operators changed", cell=cell["id"])
-        if cell.get("member_axis") != declaration.get("member_axis"): fail("original members changed", cell=cell["id"])
-        exit_declaration = declaration.get("exit")
-        if cell.get("exit_identity") != (payload_digest(exit_declaration) if exit_declaration is not None else None):
-            fail("original exit identity changed", cell=cell["id"])
+        declared_members = list(declaration.get("members") or ["self"])
+        if cell.get("members") != (None if declared_members == ["self"] else declared_members):
+            fail("original members changed", cell=cell["id"])
+        composition_action_declaration = declaration.get("composition_action")
+        if cell.get("composition_action_identity") != (payload_digest(composition_action_declaration) if composition_action_declaration is not None else None):
+            fail("original composition action identity changed", cell=cell["id"])
         def renegotiated(value):
-            if short(value) == "Renegotiate": return {fields(value).get("state")}
+            if short(value) == "PCOnWeight": return {state} if (state := fields(value).get("state")) is not None else set()
             children = value.values() if isinstance(value, dict) else value if isinstance(value, list) else ()
             return set().union(*(renegotiated(child) for child in children))
-        if cell.get("renegotiated_states") != sorted(renegotiated(exit_declaration)):
-            fail("original renegotiated exit state changed", cell=cell["id"])
-        if exit_declaration is not None:
-            exits = [relation for relation in normalized.get("relations", []) if relation.get("kind") == "exit"
-                     and relation.get("source") == cell["id"] and relation.get("targets") == [] and relation.get("original") == exit_declaration]
-            if len(exits) != 1 or exits[0].get("observes") != fields(exit_declaration).get("observes", []):
-                fail("original exit information changed", cell=cell["id"])
-            if len(exits) == 1:
-                root = exits[0]
+        if cell.get("renegotiated_states") != sorted(renegotiated(composition_action_declaration)):
+            fail("original renegotiated composition action state changed", cell=cell["id"])
+        if composition_action_declaration is not None:
+            composition_actions = [relation for relation in normalized.get("relations", []) if relation.get("kind") == "composition_action"
+                     and relation.get("source") == cell["id"] and relation.get("targets") == [] and relation.get("original") == composition_action_declaration]
+            if len(composition_actions) != 1 or composition_actions[0].get("observes") != fields(composition_action_declaration).get("observes", []):
+                fail("original composition action information changed", cell=cell["id"])
+            if len(composition_actions) == 1:
+                root = composition_actions[0]
                 root_callbacks = [callbacks.get(identifier, {}).get("original")
                                   for identifier in root.get("callbacks", [])]
-                # The exit's availability and settlement default reach the facts only
+                # The composition action's availability and transfer default reach the facts only
                 # through this root, so an unchanged payload is not enough: the root
-                # holds the whole exit as its one callback, in both phases, and no
+                # holds the whole composition action as its one callback, in both phases, and no
                 # source-bound proof of zero support exists for it.
-                if (root_callbacks != [exit_declaration]
+                if (root_callbacks != [composition_action_declaration]
                         or root.get("phase", "both") != "both"
                         or root.get("support") is not None):
-                    fail("original exit root incidence changed", cell=cell["id"])
+                    fail("original composition action root incidence changed", cell=cell["id"])
         if cell.get("report_tags", []) != contract.get("report_tags", {}).get(regime, []): fail("reporting tag contract changed", cell=cell["id"])
         if start_pairs is not None and cell.get("admissible_start") != ((period, regime) in start_pairs): fail("admissible original start changed", cell=cell["id"])
         if set(cell.get("states", {})) != set(declaration.get("states", {})): fail("original state axes omitted", cell=cell.get("id"))
@@ -2407,24 +2408,24 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
                         fail('original intrinsic draw provider changed',cell=cell['id'],phase=phase,state=axis)
                     if not process_has_owner(record=record,regime=cell['regime'],axis=axis,phase=phase):
                         fail('original intrinsic draw provider owner changed',cell=cell['id'],phase=phase,state=axis)
-            if phase == "solve":
-                if declaration.get("certainty_equivalent") is not None:
-                    expected_roots.append(("certainty_equivalent", "solve", selected(declaration["certainty_equivalent"], "solve", period)))
-                continue
-            for kind, mapping in [("reward", {"utility": declaration.get("functions", {}).get("utility")}),
-                                  ("feasible", declaration.get("constraints", {}))]:
-                for value in mapping.values():
-                    if value is None: continue
-                    expected_roots.append((kind, phase, selected(value, phase, period)))
-            for name in declaration.get("output_only_functions", []):
-                if name in declaration.get("functions", {}): expected_roots.append(("reporting", phase, selected(declaration["functions"][name], phase, period)))
+            if phase == "solve" and declaration.get("certainty_equivalent") is not None:
+                expected_roots.append(("certainty_equivalent", "solve", selected(declaration["certainty_equivalent"], "solve", period)))
+            if phase == "simulation":
+                # Constraints are phase-invariant and reported outputs simulated.
+                expected_roots += [("feasible", phase, selected(value, phase, period))
+                                   for value in declaration.get("constraints", {}).values() if value is not None]
+                expected_roots += [("reporting", phase, selected(declaration["functions"][name], phase, period))
+                                   for name in declaration.get("output_only_functions", []) if name in declaration.get("functions", {})]
+            # Each phase's choice prices that phase's variant of these roots.
+            if declaration.get("functions", {}).get("utility") is not None:
+                expected_roots.append(("reward", phase, selected(declaration["functions"]["utility"], phase, period)))
             for name in ("koopmans_aggregator", "pareto_objective"):
                 if declaration.get(name) is not None: expected_roots.append((name, phase, selected(declaration[name], phase, period)))
             if "discount_factor" in declaration.get("functions", {}): expected_roots.append(("discount", phase, selected(declaration["functions"]["discount_factor"], phase, period)))
         for value in structural_roles.values(): expected_roots.append(("structural_margin", "solve", value))
         supported_slots = {"states", "actions", "functions", "constraints", "state_transitions", "joint_transitions", "derived_categoricals",
                            "output_only_functions", "koopmans_aggregator", "certainty_equivalent", "pareto_objective",
-                           "exit", "description", "solver", "taste_shocks", "shocks", "member_axis", "liquid", "outer_continuous", "semantic_role", "stage"}
+                           "composition_action", "description", "solver", "taste_shocks", "shocks", "members", "liquid", "outer_continuous", "semantic_role", "stage"}
         for slot, value in declaration.items():
             if slot not in supported_slots and value is not None and value != {} and value != []:
                 expected_roots.append(("unresolved_declaration_slot", "both", value))
@@ -2552,7 +2553,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
     def refs(value, phase=None):
         if short(value) == "Phased" and phase is not None:
             yield from refs(fields(value).get("solve" if phase == "solve" else "simulate"), phase)
-        elif short(value) in {"ProjectedRegimeValue", "ArrivalRead", "ExitTarget", "Counterparty"}:
+        elif short(value) in {"ProjectedRegimeValue", "ArrivalRead", "Destination", "Counterparty"}:
             yield value
         elif isinstance(value, dict):
             for child in value.values(): yield from refs(child, phase)
@@ -2571,7 +2572,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
         if short(value) == "Phased":
             side = "solve" if phase == "solve" else "simulate"
             yield from reference_locations(fields(value).get(side), ptr(ptr(path, "fields"), side), phase)
-        elif short(value) in {"ProjectedRegimeValue", "ArrivalRead", "ExitTarget", "Counterparty"}:
+        elif short(value) in {"ProjectedRegimeValue", "ArrivalRead", "Destination", "Counterparty"}:
             yield value, path
         elif isinstance(value, dict):
             for key, child in value.items(): yield from reference_locations(child, ptr(path, key), phase)
@@ -2582,7 +2583,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
         declaration = original_regimes[name]
         root = ptr(ptr(base, regime_key), name)
         root_fields = ptr(root, "fields") if raw.get("kind") in {"object", "dataclass"} else root
-        for key in ("exit",):
+        for key in ("composition_action",):
             location = ptr(root_fields, key) if key in fields(raw) else ptr(base, key)
             yield from reference_locations(declaration.get(key) or {}, location, phase)
     def demand(name, period, phase):
@@ -2633,7 +2634,7 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
                 allowed_statuses={'unresolved','structural'} if normalized.get('analysis_scope')=='pylcm-structural-graph/v1' else {'unresolved'}
                 if any(callbacks.get(cid, {}).get("status") not in allowed_statuses for cid in relation.get("callbacks", [])):
                     fail("unproved policy query factorization was asserted", relation=relation.get("id"))
-                read_type = data.get("kind", "Participating" if short(raw) == "ExitTarget" else "Raw" if short(raw) == "Counterparty" else "value")
+                read_type = data.get("kind", "Participating" if short(raw) == "Destination" else "Raw" if short(raw) == "Counterparty" else "value")
                 if relation.get("read_type") != read_type or relation.get("read_field") != data.get("field", "value") or relation.get("member") != data.get("member", data.get("role")) or relation.get("observes") != data.get("observes", []):
                     fail("original policy query information/read contract changed", relation=relation.get("id"))
                 try: pointed = _pointer(original, relation.get("source_path", ""))
@@ -2652,14 +2653,14 @@ def _check_capture(original: dict, normalized: dict, fail, unknown) -> None:
                 if callbacks.get(relation.get("state_updates", {}).get(axis), {}).get("original") != callback: fail("original reference projection callback changed", relation=relation.get("id"), state=axis)
             expected_callbacks = [data["utility_adjustment"]] if data.get("utility_adjustment") is not None else []
             if not same_payloads(callback_payloads(relation.get("callbacks", [])), expected_callbacks): fail("original reference adjustment callback changed", relation=relation.get("id"))
-            read_type = data.get("kind", "Participating" if short(raw) == "ExitTarget" else "Raw" if short(raw) == "Counterparty" else "value")
+            read_type = data.get("kind", "Participating" if short(raw) == "Destination" else "Raw" if short(raw) == "Counterparty" else "value")
             if relation.get("read_type") != read_type or relation.get("read_field") != data.get("field", "value") or relation.get("member") != data.get("member", data.get("role")) or relation.get("observes") != data.get("observes", []): fail("original reference information/read contract changed", relation=relation.get("id"))
     for cell in cells.values():
         declaration = original_regimes[cell["regime"]]
-        for key in ("exit",):
+        for key in ("composition_action",):
             for phase in ("solve", "simulation"):
                 for raw in refs(declaration.get(key) or {}, phase):
-                    check_reference(raw, cell["id"], phase, "exit" if key == "exit" else "value_read")
+                    check_reference(raw, cell["id"], phase, "composition_action" if key == "composition_action" else "value_read")
     for cell in cells.values():
         native_law = fields(laws.get(cell["regime"]))
         declared_gates = _independent_gate_map(native_law, "gated_edges", "arrivals")

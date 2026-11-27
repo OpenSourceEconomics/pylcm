@@ -29,6 +29,7 @@ from pydantic import TypeAdapter
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from _lcm.beartype_conf import REGIME_CONF
+from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.bounds import proves_the_savings_grids_lower_bound
 from _lcm.constraints.routes import (
     ConstraintRoute,
@@ -91,6 +92,7 @@ from _lcm.solution.feasibility import (
     QueryInputStatus,
     _unflatten_continuation_read_counts,
 )
+from _lcm.solution.member_axis import publish_member_axis
 from _lcm.time import TimeAxis
 from _lcm.transition_plans import SupportOrigin
 from _lcm.typing import (
@@ -350,7 +352,7 @@ class DCEGM(OneMarginSolver):
     """Policy-first replay, or explicit approximate Cartesian replay.
 
     For a plain DC-EGM regime, `"candidate"` simulates policy-first (the solved
-    policy rows are read at each subject's resources) and `"grid"` re-maximizes
+    policy rows are read at each agent's resources) and `"grid"` re-maximizes
     over the Cartesian action grid. Other solver-family replay routes keep their
     existing semantics.
     """
@@ -507,6 +509,18 @@ class DCEGM(OneMarginSolver):
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Preserve ordinary numerical preparation followed by program assembly."""
+        return publish_member_axis(
+            kernels=self.build_inner_period_kernels(context=context),
+            members=context.members,
+        )
+
+    def build_inner_period_kernels(
+        self, *, context: SolverBuildContext
+    ) -> SolutionKernels:
+        """Build the period kernels whose values carry no member axis.
+
+        An outer solver nesting this one appends the axis to its own programs.
+        """
         return self.finish_period_kernels(
             context=context, build=self.prepare_period_steps(context=context)
         )
@@ -533,7 +547,11 @@ class DCEGM(OneMarginSolver):
             laws=context.laws,
             functions=context.functions,
             koopmans_aggregator=context.koopmans_aggregator,
-            certainty_equivalent=context.certainty_equivalent,
+            # DC-EGM solves a regime of one member, whose certainty equivalent
+            # is not keyed by member.
+            certainty_equivalent=cast(
+                "CertaintyEquivalent | None", context.certainty_equivalent
+            ),
             constraints=context.constraints,
             processed_constraints=context.processed_constraints,
             transitions=context.transitions,
@@ -1235,9 +1253,9 @@ def dcegm_kernel_with_declared_reads(
         return kernel
     reachable_targets = (
         ()
-        if period == context.solution_reachability.n_periods - 1
+        if period == context.solution_reachability.n_steps - 1
         else context.solution_reachability.targets(
-            period=period,
+            step=period,
             source=context.regime_name,
         )
     )

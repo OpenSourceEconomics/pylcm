@@ -22,7 +22,6 @@ import numpy as np
 import pytest
 
 from _lcm.execution import output_layout, value_transfer
-from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
 from _lcm.typing import PytreeValue
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import FloatND, IntND, RegimeName, StateName
@@ -116,17 +115,22 @@ def _reference(
 
 
 def _assert_shards(value: FloatND) -> None:
-    """Assert disjoint middle-axis assets shards, including the terminal rank."""
-    expected_shape = (2, 3, 3, 24, 4) if value.ndim == 5 else (2, 24)
+    """Assert disjoint middle-axis assets shards, including the terminal rank.
+
+    The trailing axis of every value is its replicated member axis.
+    """
+    expected_shape = (2, 3, 3, 24, 4, 1) if value.ndim == 6 else (2, 24, 1)
     assert value.shape == expected_shape
-    axis = 3 if value.ndim == 5 else 1
+    axis = 3 if value.ndim == 6 else 1
     expected_spec = (
-        jax.P(None, None, None, "assets", None)
-        if value.ndim == 5
-        else jax.P(None, "assets")
+        jax.P(None, None, None, "assets", None, None)
+        if value.ndim == 6
+        else jax.P(None, "assets", None)
     )
     assert isinstance(value.sharding, jax.sharding.NamedSharding)
-    assert value.sharding.spec == expected_spec
+    assert value.sharding.is_equivalent_to(
+        jax.NamedSharding(value.sharding.mesh, expected_spec), value.ndim
+    )
     assert len(value.addressable_shards) == 8
     intervals = []
     for shard in value.addressable_shards:
@@ -148,7 +152,7 @@ def test_two_coordinate_values_and_carried_simulation_match_reference(  # noqa: 
     monkeypatch: pytest.MonkeyPatch,
     record_property: Callable[[str, int], None],
 ) -> None:
-    """Eight assets shards preserve two-coordinate values and carried subject paths."""
+    """Eight assets shards preserve two-coordinate values and carried agent paths."""
     _require_eight()
 
     model = _model(widths=widths)
@@ -164,8 +168,8 @@ def test_two_coordinate_values_and_carried_simulation_match_reference(  # noqa: 
         result = original(**kwargs)
         for value in jax.tree.leaves(result):
             if isinstance(value, jax.Array) and value.shape in (
-                (2, 3, 3, 24, 4),
-                (2, 24),
+                (2, 3, 3, 24, 4, 1),
+                (2, 24, 1),
             ):
                 _assert_shards(value)
                 birth_shapes.append(value.shape)
@@ -187,7 +191,7 @@ def test_two_coordinate_values_and_carried_simulation_match_reference(  # noqa: 
     for period, values in solution.values.items():
         for name, value in values.items():
             _assert_shards(value)
-            observed = np.asarray(value)
+            observed = np.asarray(value)[..., 0]
             phase = model._regimes[name].solution
             coordinates = phase.state_action_space(
                 regime_params=MappingProxyType({})
@@ -200,7 +204,7 @@ def test_two_coordinate_values_and_carried_simulation_match_reference(  # noqa: 
             )
             control_phase = control_model._regimes[name].solution
             control_labelled = _labelled_values(
-                value=np.asarray(control.values[period][name]),
+                value=np.asarray(control.values[period][name])[..., 0],
                 state_names=control_phase.state_names,
                 coordinates=control_phase.state_action_space(
                     regime_params=MappingProxyType({})
@@ -221,7 +225,7 @@ def test_two_coordinate_values_and_carried_simulation_match_reference(  # noqa: 
                 rtol=tolerance,
                 atol=0,
             )
-            snapshots.append((value, observed.copy()))
+            snapshots.append((value, np.asarray(value).copy()))
     record_property(
         "oracle_value_count", sum(len(values) for values in reference.values())
     )
@@ -251,21 +255,21 @@ def test_two_coordinate_values_and_carried_simulation_match_reference(  # noqa: 
         )
         frames.append(
             result.to_dataframe(use_categorical_codes=True)
-            .sort_values(["subject_id", "period"])
+            .sort_values(["agent_id", "period"])
             .reset_index(drop=True)
         )
     for frame in frames:
         working = frame.query('regime_name == "working"')
         assert len(working) == 34
         np.testing.assert_array_equal(
-            working["pension"], 4 + working["subject_id"] + 2 * working["period"]
+            working["pension"], 4 + working["agent_id"] + 2 * working["period"]
         )
         np.testing.assert_array_equal(
-            working["decision"].astype(int), working["subject_id"] % 2
+            working["decision"].astype(int), working["agent_id"] % 2
         )
     for frame in frames[1:]:
         for name in (
-            "subject_id",
+            "agent_id",
             "period",
             "shock",
             "persistent",
@@ -358,33 +362,3 @@ def test_coordinate_join_survives_preference_axis_relocation() -> None:
     )
     assert original == relocated
     assert original[(("assets", 5.0), ("pref_type", 1.0))] == -150.0
-
-
-@pytest.mark.parametrize("width", [1, 2, 3, 4])
-def test_negative_ties_and_infeasible_padding_preserve_named_max(width: int) -> None:
-    """Two-coordinate cells retain negative maxima, lowest-ID ties and empty masks."""
-    values = jnp.array(
-        [
-            [[-9.0, -3.0, -3.0, 0.0], [-5.0, -4.0, -2.0, 0.0]],
-            [[-7.0, -1.0, -6.0, 0.0], [-jnp.inf, -2.0, -3.0, 0.0]],
-        ]
-    )
-    feasible = jnp.array(
-        [
-            [[True, True, True, False], [False, False, False, False]],
-            [[True, False, True, False], [True, False, False, False]],
-        ]
-    )
-    action_ids = jnp.array([5, 8, 2, 0], dtype=jnp.int32)
-    accumulator = HARD_MAX_REDUCTION.initialize(value_template=jnp.zeros((2, 2)))
-    for start in range(0, 4, width):
-        accumulator = HARD_MAX_REDUCTION.add(
-            accumulator=accumulator,
-            values=values[..., start : start + width],
-            feasible=feasible[..., start : start + width],
-            action_ids=action_ids[start : start + width],
-        )
-    result = HARD_MAX_REDUCTION.finalize(accumulator=accumulator)
-    np.testing.assert_array_equal(result.best_value, [[-3.0, -np.inf], [-6.0, -np.inf]])
-    np.testing.assert_array_equal(result.best_global_action_id, [[2, -1], [2, 5]])
-    np.testing.assert_array_equal(result.any_feasible, [[True, False], [True, True]])

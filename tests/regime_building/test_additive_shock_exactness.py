@@ -175,7 +175,7 @@ def test_additive_shock_reads_the_target_grid_like_the_ordinary_law(
         ]
     )
     _assert_values(
-        actual=np.asarray(solution.values[0]["alive"]),
+        actual=np.asarray(solution.values[0]["alive"])[..., 0],
         expected=expected,
         max_ulp=_MAX_ULP[kind],
     )
@@ -228,7 +228,7 @@ def test_additive_shock_on_a_log_grid_keeps_the_ordinary_value(
     solution = model.solve(params={"discount_factor": 1.0}, log_level="debug")
     _, value = _log_choice_oracle()
     _assert_values(
-        actual=np.asarray(solution.values[0]["alive"])[:1],
+        actual=np.asarray(solution.values[0]["alive"])[:1, 0],
         expected=np.asarray([float(value)]),
         max_ulp=_MAX_ULP["log"],
     )

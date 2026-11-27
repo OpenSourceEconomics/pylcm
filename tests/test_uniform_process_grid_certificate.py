@@ -52,19 +52,25 @@ def test_uniform_controls_preserve_both_historical_mutation_populations() -> Non
     # supplemental s02_status:fold_weight_* controls with theirs; the dead-code
     # removal deleted the three streaming_ev1 semantic-key controls with
     # GridSearchEV1ActionReduction; the ValueDependentConstraint removal deleted
-    # value_access:grid_same_period_shifted with the same-period value access.
-    assert len(historical) == 394
+    # value_access:grid_same_period_shifted with the same-period value access;
+    # admitting household EV1 deleted streaming_classifier:collective_ev1_admitted;
+    # the one engine path deleted the singleton, streamed-EV1, streamed-logsumexp
+    # and argmax_and_max controls with their reducers and moved the singleton
+    # rank and gap filters onto the household routes.
+    # Removing the single hard max's dead fold deleted its three
+    # streaming_hard_max filter, merge and signed-zero controls.
+    assert len(historical) == 345
     assert (
         _name_digest(historical)
-        == "2f8d45afccfc746ab2fc3ad14505c7f087d4571092e83dedf2ce6dfc3780ff3b"
+        == "beec45a5615b3b5e9f48bfa84169d60aa238955c3f27021e6020e7fff336bdd3"
     )
-    assert len(registered) == 411
+    assert len(registered) == 362
     assert _name_digest(registered) == (
-        "ce4f0914b5cf4530600d46264ffe50b13254137d44de1abe78b5f787c9957612"
+        "06e2d12297b5811c6808bdd7056ee03ab896f19a8b48ddbd0cdcfa043fdf882c"
     )
     assert len(supplemental) == 94
     assert _name_digest(supplemental) == (
-        "f8f427f6dbbee3f52840b8e77e9fa36344a5131be9e1ed24e874523b09cf1673"
+        "7608b456ddbde38de63537034bbecdfdaa3f443b84ced77ed1e6ea1a558679ba"
     )
     assert len(uniform) == 37
     assert _name_digest(uniform) == (

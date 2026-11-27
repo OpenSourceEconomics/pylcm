@@ -3,7 +3,7 @@
 A continuous-outer solve is only complete if simulation can *replay the same
 continuous policy class*: re-decide keeper vs adjuster off-grid, re-run the
 same interpolant/search across the outer axis, and read the inner
-consumption policy at the subject's actual resources. Storing only the final
+consumption policy at the agent's actual resources. Storing only the final
 outer action on the state grid cannot do that — simulation arrives off the
 liquid grid, and a different branch can win there than at the nearest grid
 node. So the payload keeps the *conditional* ingredients:
@@ -13,11 +13,11 @@ node. So the payload keeps the *conditional* ingredients:
   candidate axis (`OuterPolicyBank`) — each is the exact inner solve's
   published policy conditional on that outer action;
 - the static names and search settings the reader needs to rebuild the
-  outer-value interpolant and refine it per subject.
+  outer-value interpolant and refine it per agent.
 
 All rows are re-reads on the *shared liquid state grid* (the NB-EGM inner's
 `carry_rows_share_state_grid` contract), so every branch is queried at the
-same abscissa — the subject's liquid state. Each branch's conditional
+same abscissa — the agent's liquid state. Each branch's conditional
 resources shift (the keeper's held durable, each candidate's credited outer
 move) is already inside its conditional solve, not applied at read time.
 
@@ -168,8 +168,8 @@ jax.tree_util.register_pytree_node(
 class NestedEGMSimPolicy:
     """Keeper plus conditional adjuster policies for continuous replay.
 
-    The simulation reader indexes both sides' rows at the subject's discrete
-    and passive states, reads every branch's value at the subject's liquid
+    The simulation reader indexes both sides' rows at the agent's discrete
+    and passive states, reads every branch's value at the agent's liquid
     state (the keeper holds the durable via the no-adjustment map; each
     adjuster candidate's solve already binds the outer post-decision to its
     node), rebuilds the outer-value interpolant from the conditional value
@@ -204,7 +204,7 @@ class NestedEGMSimPolicy:
     `None` when keeping means holding the current durable unchanged."""
 
     resources_target_name: FunctionName
-    """DAG function computing the accepted subject's resources for the
+    """DAG function computing the accepted agent's resources for the
     intrinsic budget check (the rows themselves are read at the liquid
     state, not at resources)."""
 
@@ -212,7 +212,7 @@ class NestedEGMSimPolicy:
     """Inner savings-grid lower bound for the intrinsic budget check."""
 
     golden_iterations: int
-    """Static golden-section budget of the subject-level outer refinement —
+    """Static golden-section budget of the agent-level outer refinement —
     the same setting the solve's search used."""
 
     replay_capability: OuterReplayCapability

@@ -253,4 +253,4 @@ def test_fixed_binding_order_does_not_change_equal_shape_economics(
                 spending_scale=float(scale),
                 log_level="off",
             )
-            np.testing.assert_array_equal(np.asarray(actual), expected)
+            np.testing.assert_array_equal(np.asarray(actual)[..., 0], expected)

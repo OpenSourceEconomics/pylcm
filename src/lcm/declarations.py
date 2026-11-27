@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast
 
+from _lcm.composition_actions import CompositionActionFunctionDemand
 from _lcm.constraints.processed import ProcessedConstraint, normalize_constraints
-from _lcm.exits import ExitFunctionDemand
 from _lcm.model_graph import ModelGraph
 from _lcm.regime_building.age_normalization import (
     PeriodizedEconFunction,
@@ -55,25 +55,25 @@ class ModelDeclarations:
 
     graph: ModelGraph
     """The model's declared and effective phase graphs, with bound laws."""
-    regimes_by_period: MappingProxyType[int, MappingProxyType[RegimeName, Regime]]
-    """Finalized regimes with construction-time age/period factories resolved."""
+    regimes_by_step: MappingProxyType[int, MappingProxyType[RegimeName, Regime]]
+    """Finalized regimes of each step, with age/period factories resolved."""
     phases: MappingProxyType[tuple[int, RegimeName, Phase], RegimePhaseSpec]
-    """Resolved phase slices for demanded period/regime contexts; grids stay full-sized.
+    """Resolved phase slices keyed by step, regime and phase; grids stay full-sized.
 
     Phase-invariant actions and ownership declarations remain in
-    `regimes_by_period`. Phase slices carry functions, constraints, grid states,
-    state and joint laws, continuation aggregators, and same-period exits.
+    `regimes_by_step`. Phase slices carry functions, constraints, grid states,
+    state and joint laws, continuation aggregators, and same-period composition actions.
     """
     functions: tuple[FunctionDeclaration, ...]
     """Unique callable identities and the input signatures construction accepts."""
-    original_periods_by_regime: Mapping[RegimeName, tuple[int, ...]]
-    """Physical entry cohorts before same-period exits."""
-    value_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None
-    """Periods with stored full values, or `None` when not separately recorded."""
-    query_periods_by_phase: Mapping[str, Mapping[RegimeName, tuple[int, ...]]]
-    """Query-only decisions keyed by `solution` and `simulation`, including exits."""
-    exit_function_demand: ExitFunctionDemand | None
-    """Declared callback paths demanded by same-period exits."""
+    original_steps_by_regime: Mapping[RegimeName, tuple[int, ...]]
+    """Steps of the physical entry cohorts before same-period composition actions."""
+    value_steps_by_regime: Mapping[RegimeName, tuple[int, ...]] | None
+    """Steps with stored full values, or `None` when not separately recorded."""
+    query_steps_by_phase: Mapping[str, Mapping[RegimeName, tuple[int, ...]]]
+    """Query-only decisions keyed by `solution` and `simulation`, with compositions."""
+    composition_action_function_demand: CompositionActionFunctionDemand | None
+    """Declared callback paths demanded by same-period composition actions."""
     schema_version: int = 1
     """Version of this declaration-view contract."""
 
@@ -82,24 +82,24 @@ def _get_model_declarations(
     *,
     structure: PreparedModelStructure,
     graph: ModelGraph,
-    n_periods: int,
+    n_steps: int,
     declared_regimes: Mapping[RegimeName, Regime],
 ) -> ModelDeclarations:
     regimes = MappingProxyType(
         {
-            period: (
+            step: (
                 structure.period_regimes.by_period.get(
-                    period, structure.representative_user_regimes
+                    step, structure.representative_user_regimes
                 )
                 if structure.period_regimes is not None
                 else structure.representative_user_regimes
             )
-            for period in range(n_periods)
+            for step in range(n_steps)
         }
     )
     phases: dict[tuple[int, RegimeName, Phase], RegimePhaseSpec] = {}
-    for regime_name, periods in structure.active_periods_by_regime.items():
-        for period in periods:
+    for regime_name, steps in structure.active_periods_by_regime.items():
+        for step in steps:
             spec = structure.phased_specs[regime_name]
             for phase, phase_spec in (
                 ("solve", spec.solution),
@@ -108,9 +108,9 @@ def _get_model_declarations(
                 if phase == "simulate" and (
                     regime_name
                     not in structure.reachability.simulation.active_regimes_by_period[
-                        period
+                        step
                     ]
-                    and period
+                    and step
                     not in structure.query_periods_by_phase.get("simulation", {}).get(
                         regime_name, ()
                     )
@@ -120,13 +120,13 @@ def _get_model_declarations(
                     phase_spec,
                     **{
                         field.name: _resolve_value(
-                            value=getattr(phase_spec, field.name), period=period
+                            value=getattr(phase_spec, field.name), period=step
                         )
                         for field in dataclasses.fields(phase_spec)
                     },
                 )
                 if structure.grid_schedule is not None:
-                    grids = structure.grid_schedule.by_period.get(period, {}).get(
+                    grids = structure.grid_schedule.by_period.get(step, {}).get(
                         regime_name, {}
                     )
                     resolved = dataclasses.replace(
@@ -138,18 +138,18 @@ def _get_model_declarations(
                             }
                         ),
                     )
-                phases[period, regime_name, phase] = resolved
+                phases[step, regime_name, phase] = resolved
     return ModelDeclarations(
         graph=graph,
-        regimes_by_period=regimes,
+        regimes_by_step=regimes,
         phases=MappingProxyType(phases),
         functions=_get_function_declarations(
             roots=(declared_regimes, regimes, phases, graph.laws)
         ),
-        original_periods_by_regime=structure.original_periods_by_regime,
-        value_periods_by_regime=structure.value_periods_by_regime,
-        query_periods_by_phase=structure.query_periods_by_phase,
-        exit_function_demand=structure.exit_function_demand,
+        original_steps_by_regime=structure.original_periods_by_regime,
+        value_steps_by_regime=structure.value_periods_by_regime,
+        query_steps_by_phase=structure.query_periods_by_phase,
+        composition_action_function_demand=structure.composition_action_function_demand,
     )
 
 

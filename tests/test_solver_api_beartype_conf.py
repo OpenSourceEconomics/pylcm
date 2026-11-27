@@ -21,9 +21,7 @@ from lcm.typing import FloatND, IntND
 
 
 def _stores() -> tuple[ValueStore, ArtifactStore, ArtifactRef]:
-    ref = ArtifactRef(
-        period=0, regime="alive", key=ArtifactKey(type_id="example.policy")
-    )
+    ref = ArtifactRef(step=0, regime="alive", key=ArtifactKey(type_id="example.policy"))
     values = ValueStore({(0, "alive"): jnp.asarray([1.0])})
     artifacts = ArtifactStore({ref: cast("ArtifactPayload", object())})
     return values, artifacts, ref
@@ -32,11 +30,11 @@ def _stores() -> tuple[ValueStore, ArtifactStore, ArtifactRef]:
 def test_a_wrongly_typed_store_coordinate_is_the_solver_api_error() -> None:
     """A store read with a wrongly typed coordinate raises `SolverAPITypeError`."""
     values, _, _ = _stores()
-    with pytest.raises(SolverAPITypeError, match=r"parameter period="):
+    with pytest.raises(SolverAPITypeError, match=r"parameter step="):
         _ = values[cast("int", "0")]
 
 
-_WRONGLY_TYPED_REF_FIELDS = [("period", "0"), ("regime", 0), ("key", "example")]
+_WRONGLY_TYPED_REF_FIELDS = [("step", "0"), ("regime", 0), ("key", "example")]
 
 
 @pytest.mark.parametrize(("field", "value"), _WRONGLY_TYPED_REF_FIELDS)
@@ -76,7 +74,7 @@ def test_placed_build_context_nodes_stay_read_only_mappings() -> None:
     """Device placement of a context's nodes returns the read-only mapping type."""
     placed = place_simulation_arguments(
         arguments={"state_nodes": _NODES},
-        subject_arg_names=(),
+        agent_arg_names=(),
         value_reads=(),
         devices=(jax.devices()[0],),
     )

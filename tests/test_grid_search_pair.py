@@ -61,6 +61,7 @@ from benchmarks.grid_search_pair_worker import (
     _grid_extent,
     _hlo_census,
     _kernel_execution_metadata,
+    _route_metadata,
 )
 
 
@@ -694,7 +695,7 @@ def test_query_metadata_does_not_unwrap_an_unknown_custody_lookalike() -> None:
 
 
 def test_collective_scenario_constructs_public_query_metadata(tmp_path: Path) -> None:
-    """A public household exposes Full graphs and the declared exits."""
+    """A public household exposes Full graphs and the declared composition actions."""
     code = """
 import sys
 from math import prod
@@ -733,12 +734,15 @@ assert query_regimes
 assert ("couple", 1) in query_sites
 routes = _route_metadata(model)
 _assert_scenario_identity(spec=spec, routes=routes)
-exit_owners = {
-    name for name, regime in model.user_regimes.items() if regime.exit is not None
+composition_owners = {
+    name
+    for name, regime in model.user_regimes.items()
+    if regime.composition_action is not None
 }
-# Dissolution is the couple's exit, formation each single's consent exit.
-assert exit_owners == {"couple", "single_f", "single_m"}
-assert exit_owners <= set(routes["gs_vd_regimes"])
+# Dissolution is the couple's composition action, formation each single's consent
+# composition action.
+assert composition_owners == {"couple", "single_f", "single_m"}
+assert composition_owners <= set(routes["gs_vd_regimes"])
 query_rows = [
     row for row in routes["kernels"]
     if (row["regime"], row["period"]) in query_sites
@@ -785,6 +789,37 @@ print("collective-gs-vd: public Full-query metadata verified")
     assert "collective-gs-vd: public Full-query metadata verified" in completed.stdout
 
 
+@pytest.mark.parametrize(
+    ("field", "single"),
+    [("members", ("self",)), ("member_axis", None), ("stakeholders", None)],
+)
+def test_route_metadata_makes_only_a_regime_of_several_members_collective(
+    *, field: str, single: tuple[str, ...] | None
+) -> None:
+    """Base and head checkouts spell members differently but agree on the count."""
+
+    def regime(value: tuple[str, ...] | None) -> SimpleNamespace:
+        solution = SimpleNamespace(
+            action_names=(), grids={}, sharded_state_names=(), period_kernels={}
+        )
+        return SimpleNamespace(
+            **{
+                "solution": solution,
+                "has_taste_shocks": False,
+                "gated_edges": (),
+                field: value,
+            }
+        )
+
+    model = SimpleNamespace(
+        _regimes={"single": regime(single), "couple": regime(("m", "f"))}
+    )
+
+    routes = _route_metadata(model)  # ty: ignore[invalid-argument-type]
+
+    assert routes["collective_regimes"] == ["couple"]
+
+
 def test_closure_scenarios_construct_with_their_declared_topology(
     tmp_path: Path,
 ) -> None:
@@ -799,6 +834,7 @@ jax.config.update("jax_enable_x64", False)
 jax.config.update("jax_num_cpu_devices", 4)
 jax.config.update("jax_platform_name", "cpu")
 
+from benchmarks.grid_search_pair import _is_scenario_target
 from benchmarks.grid_search_pair_scenarios import SCENARIOS, build_scenario
 from benchmarks.grid_search_pair_worker import (
     _assert_scenario_identity,
@@ -824,9 +860,16 @@ for name, spec in SCENARIOS.items():
         for row in routes["kernels"]
         if row["action_names"] and prod(row["action_extents"]) > 1
     ]
+    assert any(
+        _is_scenario_target(scenario=name, row=row, routes=routes)
+        for row in nontrivial
+    ), (name, routes)
     if name in {"singleton-ev1", "collective-gs-vd"}:
         dense_targets = [
-            row for row in nontrivial if row["has_taste_shocks"] or row["collective"]
+            row
+            for row in nontrivial
+            if row["has_taste_shocks"]
+            or (row["collective"] and row["regime"] in routes["gs_vd_regimes"])
         ]
         assert dense_targets and all(not row["streamed"] for row in dense_targets), (
             name, routes

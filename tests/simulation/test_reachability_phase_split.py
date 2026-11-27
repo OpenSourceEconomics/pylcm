@@ -90,7 +90,7 @@ def test_missing_solution_graph_value_raises_descriptive_simulation_input_error(
     params = {"discount_factor": 1.0, "probability_high": 0.5}
     solution = model.solve(params=params, log_level="debug")
 
-    assert model.reachability.solution.targets(period=0, source="source") == (
+    assert model.reachability.solution.targets(step=0, source="source") == (
         "high",
         "low",
     )

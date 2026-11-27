@@ -85,12 +85,12 @@ def test_to_dataframe_orders_member_columns_by_declared_members() -> None:
     model = _make_reverse_alphabetical_collective_model()
     result = model.simulate(
         params=COUPLE_PARAMS,
-        initial_conditions=make_couple_initial_conditions(n_subjects=2),
+        initial_conditions=make_couple_initial_conditions(n_agents=2),
         log_level="debug",
     )
     df = result.to_dataframe()
     assert list(df.columns) == [
-        "subject_id",
+        "agent_id",
         "period",
         "regime_name",
         "own_member",
@@ -123,7 +123,7 @@ def test_to_dataframe_places_additional_target_after_states_and_actions() -> Non
     )
     df = result.to_dataframe(additional_targets=["value_of_leisure"])
     assert list(df.columns) == [
-        "subject_id",
+        "agent_id",
         "period",
         "regime_name",
         "value",
@@ -162,13 +162,13 @@ def test_model_rejects_a_singleton_state_named_like_another_regimes_value_column
         _make_mixed_model_with_a_singleton_state_shadowing_a_value_column()
 
 
-@pytest.mark.parametrize("missing_column", ["subject_id", "period", "regime_name"])
+@pytest.mark.parametrize("missing_column", ["agent_id", "period", "regime_name"])
 def test_reorder_columns_requires_the_row_identifying_columns(
     missing_column: str,
 ) -> None:
     """Every published frame identifies its rows, so those columns are required.
 
-    `subject_id`, `period` and `regime_name` are present in every result and are
+    `agent_id`, `period` and `regime_name` are present in every result and are
     named unconditionally, so a frame that lacks one is refused rather than
     silently published one column narrower. Only the scalar `value` column is
     optional: an all-collective result publishes `value_<member>` columns
@@ -176,7 +176,7 @@ def test_reorder_columns_requires_the_row_identifying_columns(
     """
     frame = pd.DataFrame(
         {
-            "subject_id": [0, 1],
+            "agent_id": [0, 1],
             "period": [0, 0],
             "regime_name": ["couple", "couple"],
             "value": [1.0, 2.0],
@@ -434,7 +434,7 @@ def _reported_income(
     return rates[(wealth > benefit).astype(jnp.int32)] * wealth + benefit
 
 
-def _publication_capacity_model(*, subject_capacity: int = 64) -> Model:
+def _publication_capacity_model(*, agent_capacity: int = 64) -> Model:
     float_dtype = np.float64 if jax.config.x64_enabled else np.float32
     wealth = IrregSpacedGrid(points=np.asarray([0.0, 0.5, 1.0], dtype=float_dtype))
     model = Model(
@@ -479,7 +479,7 @@ def _publication_capacity_model(*, subject_capacity: int = 64) -> Model:
             )
         },
         execution_config=ExecutionConfig(
-            axis_widths={"subject": subject_capacity}, device_memory_bytes=None
+            axis_widths={"agent": agent_capacity}, device_memory_bytes=None
         ),
     )
     assert all(
@@ -503,7 +503,7 @@ def _publication_oracle(*, benefit: float) -> pd.DataFrame:
     rates = np.where(row_wealth > benefit, float_dtype(2), float_dtype(1))
     return pd.DataFrame(
         {
-            "subject_id": np.repeat(np.arange(64, dtype=np.int32), 2),
+            "agent_id": np.repeat(np.arange(64, dtype=np.int32), 2),
             "period": periods,
             "regime_name": np.where(
                 periods == 0, "working", np.where(retired, "retired", "staying")
@@ -526,7 +526,7 @@ def test_value_only_policy_changes_reuse_publication_capacity(
 ) -> None:
     """Changing regime occupancy preserves code for one fixed input population."""
     assert not persistent_compilation_cache
-    subject_capacity = 8
+    agent_capacity = 8
     float_dtype = np.float64 if jax.config.x64_enabled else np.float32
     assert str(jnp.asarray(0.0).dtype) == np.dtype(float_dtype).name
     stage = "setup"
@@ -545,7 +545,7 @@ def test_value_only_policy_changes_reuse_publication_capacity(
     jax.monitoring.register_event_time_span_listener(record_compile)
     try:
         arm, numerators = "vary", [17, 29, 17]
-        model = _publication_capacity_model(subject_capacity=subject_capacity)
+        model = _publication_capacity_model(agent_capacity=agent_capacity)
         assert str(np.asarray(model._time.values).dtype) == "int32"
         initial = {
             "wealth": (np.arange(64, dtype=float_dtype) + float_dtype(0.5))
@@ -577,8 +577,8 @@ def test_value_only_policy_changes_reuse_publication_capacity(
                 log_level="off",
             )
             jax.effects_barrier()
-            assert result.n_subjects == 64
-            assert result._subject_batch_size == subject_capacity
+            assert result.n_agents == 64
+            assert result._agent_batch_size == agent_capacity
             stage = "plain_frame"
             plain = result.to_dataframe(use_categorical_codes=True)
             stage = "targets_frame"
@@ -589,12 +589,12 @@ def test_value_only_policy_changes_reuse_publication_capacity(
             stage = "oracle"
             expected = _publication_oracle(benefit=benefit)
             pd.testing.assert_frame_equal(
-                frame.sort_values(["subject_id", "period"]).reset_index(drop=True),
+                frame.sort_values(["agent_id", "period"]).reset_index(drop=True),
                 expected,
                 check_exact=True,
             )
             pd.testing.assert_frame_equal(
-                plain.sort_values(["subject_id", "period"]).reset_index(drop=True),
+                plain.sort_values(["agent_id", "period"]).reset_index(drop=True),
                 expected.drop(columns="reported_income"),
                 check_exact=True,
             )

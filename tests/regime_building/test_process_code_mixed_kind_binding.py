@@ -129,9 +129,9 @@ def _solve_and_check(*, model: Model, expected: tuple[float, ...]) -> None:
     assert "z_code" not in str(model.get_params_template())
     solution = model.solve(params={"a": {}, "b": {}}, log_level="off")
     values = solution.values[0]
-    np.testing.assert_array_equal(np.asarray(values["a"]), np.asarray(expected))
+    np.testing.assert_array_equal(np.asarray(values["a"])[..., 0], np.asarray(expected))
     # In the unrelated categorical regime, maximizing over off/on yields one.
-    np.testing.assert_array_equal(np.asarray(values["b"]), np.asarray(1.0))
+    np.testing.assert_array_equal(np.asarray(values["b"])[..., 0], np.asarray(1.0))
 
 
 @pytest.mark.parametrize(
@@ -141,7 +141,7 @@ def _solve_and_check(*, model: Model, expected: tuple[float, ...]) -> None:
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
 def test_process_code_binding_ignores_foreign_action_kind(
     *, foreign_action_name: ActionName, reverse: bool, enable_jit: bool
-):
+) -> None:
     model = _model(
         reader=_position_payoff,
         foreign_action_name=foreign_action_name,
@@ -158,7 +158,7 @@ def test_process_code_binding_ignores_foreign_action_kind(
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
 def test_process_code_dtype_ignores_foreign_action_kind(
     *, foreign_action_name: ActionName, reverse: bool, enable_jit: bool
-):
+) -> None:
     model = _model(
         reader=_checked_position_payoff,
         foreign_action_name=foreign_action_name,
@@ -175,7 +175,7 @@ def test_process_code_dtype_ignores_foreign_action_kind(
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
 def test_no_process_code_read_preserves_physical_values(
     *, foreign_action_name: ActionName, reverse: bool, enable_jit: bool
-):
+) -> None:
     model = _model(
         reader=_physical_payoff,
         foreign_action_name=foreign_action_name,
@@ -192,7 +192,7 @@ def test_no_process_code_read_preserves_physical_values(
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
 def test_categorical_code_reader_keeps_its_local_kind(
     *, foreign_action_name: ActionName, reverse: bool, enable_jit: bool
-):
+) -> None:
     # Only the categorical regime reads a code. A repair that sends the union
     # of process names through _local_process for every regime would reject
     # b's valid categorical z_code reader in the colliding-name case.

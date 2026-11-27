@@ -1,5 +1,6 @@
 import json
 import logging
+import shutil
 from pathlib import Path
 from types import MappingProxyType, ModuleType
 from unittest.mock import patch
@@ -29,7 +30,7 @@ from lcm import (
     categorical,
     load_snapshot,
 )
-from lcm.exceptions import SolutionIntegrityError
+from lcm.exceptions import IncompatibleSolutionError, SolutionIntegrityError
 from lcm.persistence import load_legacy_solution, load_solution, save_solution
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult as _PublicSimulationResult
@@ -142,8 +143,8 @@ def test_persistence_roundtrip_preserves_the_exact_sparse_domain(
         } == expected
     for period, name in expected:
         np.testing.assert_array_equal(
-            np.asarray(loaded.value(period=period, regime=name)),
-            np.asarray(solution.value(period=period, regime=name)),
+            np.asarray(loaded.value(step=period, regime=name)),
+            np.asarray(solution.value(step=period, regime=name)),
         )
 
 
@@ -168,19 +169,18 @@ def _initial_conditions() -> UserInitialConditions:
 
 
 def _save_cpu_checkpoint(
-    *, tmp_path: Path, named: bool = False, subject_rows: np.ndarray | None = None
+    *, tmp_path: Path, named: bool = False, agent_rows: np.ndarray | None = None
 ) -> tuple[Path, jax.Array]:
     """Save literal values through the public simulation checkpoint interface."""
     cpu = jax.local_devices(backend="cpu")[0]
     placement = cpu
     if named:
         placement = jax.sharding.NamedSharding(
-            jax.sharding.Mesh(
-                np.asarray(jax.local_devices(backend="cpu")), ("subject",)
-            ),
-            jax.sharding.PartitionSpec("subject"),
+            jax.sharding.Mesh(np.asarray(jax.local_devices(backend="cpu")), ("agent",)),
+            jax.sharding.PartitionSpec("agent", None),
         )
-    values = jax.device_put(np.array([-0.0, 3.125], dtype=np.float32), placement)
+    # The regime's one member `"self"` is the trailing value axis.
+    values = jax.device_put(np.array([[-0.0], [3.125]], dtype=np.float32), placement)
     model, _params = _build_tiny_model(enable_jit=False)
     raw = PeriodRegimeSimulationData(
         V_arr=values,
@@ -196,30 +196,59 @@ def _save_cpu_checkpoint(
         ),
         regimes=model._regimes,
         flat_params=MappingProxyType({"working": MappingProxyType({})}),
-        period_to_regime_to_V_arr=MappingProxyType(
+        step_to_regime_to_V_arr=MappingProxyType(
             {0: MappingProxyType({"working": values})}
         ),
         ages=model.ages,  # ty: ignore[invalid-argument-type]
         simulation_output_dtypes={},
     )
-    result._subject_rows = subject_rows
+    result._agent_rows = agent_rows
     return result.save(directory=tmp_path / "result"), values
 
 
 @pytest.mark.parametrize(
-    "subject_rows", [None, np.array([4, 7], dtype=np.int64)], ids=["all", "selected"]
+    "agent_rows", [None, np.array([4, 7], dtype=np.int64)], ids=["all", "selected"]
 )
-def test_load_restores_the_subject_rows_of_the_saved_result(
-    *, tmp_path: Path, subject_rows: np.ndarray | None
+def test_load_restores_the_agent_rows_of_the_saved_result(
+    *, tmp_path: Path, agent_rows: np.ndarray | None
 ) -> None:
     """A loaded result names the same simulated rows as the result that was saved."""
-    directory, _values = _save_cpu_checkpoint(
-        tmp_path=tmp_path, subject_rows=subject_rows
-    )
+    directory, _values = _save_cpu_checkpoint(tmp_path=tmp_path, agent_rows=agent_rows)
 
     loaded = _PublicSimulationResult.load(directory=directory)
 
-    assert repr(loaded._subject_rows) == repr(subject_rows)
+    assert repr(loaded._agent_rows) == repr(agent_rows)
+
+
+@pytest.mark.parametrize(
+    "marker", [None, "0", "2", "one"], ids=["missing", "older", "newer", "corrupt"]
+)
+@pytest.mark.parametrize("solution_only", [False, True], ids=["load", "load_solution"])
+def test_both_readers_refuse_a_result_saved_in_another_format(
+    *, tmp_path: Path, marker: str | None, solution_only: bool
+) -> None:
+    """A result without the current format version is refused before any payload.
+
+    A result saved before results carried a version has no marker at all. The
+    payloads are removed, so a refusal cannot come from a failed read of them.
+    """
+    directory, _values = _save_cpu_checkpoint(tmp_path=tmp_path)
+    version_file = directory / "format_version"
+    if marker is None:
+        version_file.unlink(missing_ok=True)
+    else:
+        version_file.write_text(marker, encoding="utf-8")
+    for payload in ("V_arr", "arrays"):
+        shutil.rmtree(directory / payload)
+    (directory / "metadata.pkl").unlink()
+
+    loader = (
+        _PublicSimulationResult.load_solution
+        if solution_only
+        else _PublicSimulationResult.load
+    )
+    with pytest.raises(IncompatibleSolutionError, match="format version"):
+        loader(directory=directory)
 
 
 @pytest.mark.parametrize("solution_only", [False, True])
@@ -248,9 +277,9 @@ def test_cpu_checkpoint_preserves_its_device_when_default_enumeration_excludes_c
         np.asarray(restored).tobytes(),
         restored.sharding,
     ) == (
-        (2,),
+        (2, 1),
         np.dtype("float32"),
-        np.array([-0.0, 3.125], dtype=np.float32).tobytes(),
+        np.array([[-0.0], [3.125]], dtype=np.float32).tobytes(),
         values.sharding,
     )
 
@@ -311,8 +340,8 @@ def test_save_and_load_solution_roundtrip(
         assert set(loaded.values[period]) == set(solved.values[period])
         for regime_name in solved.values[period]:
             assert jnp.allclose(
-                loaded.value(period=period, regime=regime_name),
-                solved.value(period=period, regime=regime_name),
+                loaded.value(step=period, regime=regime_name),
+                solved.value(step=period, regime=regime_name),
             )
 
 
@@ -334,7 +363,7 @@ def test_legacy_value_only_archive_requires_the_explicit_migration_reader(
             for regime_name in solved.values[period]:
                 archive.create_dataset(
                     f"{period}/{regime_name}/V_arr",
-                    data=solved.value(period=period, regime=regime_name),
+                    data=solved.value(step=period, regime=regime_name),
                 )
 
     with pytest.raises(SolutionIntegrityError, match="manifest"):
@@ -348,7 +377,7 @@ def test_legacy_value_only_archive_requires_the_explicit_migration_reader(
         for regime_name in solved.values[period]:
             assert jnp.allclose(
                 migrated_values[period][regime_name],
-                solved.value(period=period, regime=regime_name),
+                solved.value(step=period, regime=regime_name),
             )
 
 
@@ -368,11 +397,11 @@ def test_solve_debug_persists_snapshot(
 
     snapshot = load_snapshot(dirs[0])
     assert isinstance(snapshot, SolveSnapshot)
-    assert snapshot.period_to_regime_to_V_arr is not None
+    assert snapshot.step_to_regime_to_V_arr is not None
     for period in period_to_regime_to_V_arr.values:
         for regime_name in period_to_regime_to_V_arr.values[period]:
             assert jnp.allclose(
-                snapshot.period_to_regime_to_V_arr[period][regime_name],
+                snapshot.step_to_regime_to_V_arr[period][regime_name],
                 period_to_regime_to_V_arr.values[period][regime_name],
             )
 
@@ -448,7 +477,7 @@ def test_simulate_with_solve_debug_persists_snapshot(
 
     snapshot = load_snapshot(path=dirs[0])
     assert isinstance(snapshot, SimulateSnapshot)
-    assert snapshot.period_to_regime_to_V_arr is not None
+    assert snapshot.step_to_regime_to_V_arr is not None
     assert snapshot.result is not None
 
 
@@ -596,9 +625,9 @@ def test_load_snapshot_with_exclude(
 
     snap_dir = min(tmp_path.glob("solve_snapshot_*/"))
 
-    snapshot = load_snapshot(path=snap_dir, exclude=["period_to_regime_to_V_arr"])
+    snapshot = load_snapshot(path=snap_dir, exclude=["step_to_regime_to_V_arr"])
     assert isinstance(snapshot, SolveSnapshot)
-    assert snapshot.period_to_regime_to_V_arr is None
+    assert snapshot.step_to_regime_to_V_arr is None
     assert snapshot.model is not None
     assert snapshot.params is not None
 
@@ -626,3 +655,32 @@ def test_solve_snapshot_round_trip(
                 period_to_regime_to_V_arr_2[period][regime_name],
                 period_to_regime_to_V_arr.values[period][regime_name],
             )
+
+
+@pytest.mark.parametrize("version", [None, 1, 3], ids=["missing", "older", "newer"])
+def test_load_snapshot_refuses_a_snapshot_written_in_another_format(
+    *,
+    tmp_path: Path,
+    model_and_params: tuple[Model, UserParams],
+    version: int | None,
+) -> None:
+    """A snapshot of another format is refused before a pickle or array is read.
+
+    Its value arrays may lack the trailing member axis, so it is loaded in the
+    environment recorded beside it. Its payloads are removed, so only the
+    format check can produce the refusal.
+    """
+    model, params = model_and_params
+    model.solve(params=params, log_level="debug", log_path=tmp_path)
+    snap_dir = min(tmp_path.glob("solve_snapshot_*/"))
+    metadata_path = snap_dir / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata.pop("format_version", None)
+    if version is not None:
+        metadata["format_version"] = version
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    for payload in (*snap_dir.glob("*.pkl"), snap_dir / "arrays.h5"):
+        payload.unlink()
+
+    with pytest.raises(ValueError, match="written in another format"):
+        load_snapshot(path=snap_dir)

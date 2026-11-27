@@ -71,7 +71,11 @@ _active = UserRegime(
 )
 
 
-_dead = UserRegime(functions={"utility": lambda: jnp.array(0.0)})
+def _zero_utility() -> FloatND:
+    return jnp.array(0.0)
+
+
+_dead = UserRegime(functions={"utility": _zero_utility})
 
 
 def _build_model() -> Model:
@@ -109,7 +113,7 @@ def test_solve_with_chained_transitions_returns_finite_value_function() -> None:
 def test_simulate_with_chained_transitions_yields_expected_next_wealth() -> None:
     """`next_wealth_t = wealth_t - c_t + 0.1 * next_aime_t` holds in simulation.
 
-    For each subject, `next_aime` is the value of `_next_aime(aime, ls)` at
+    For each agent, `next_aime` is the value of `_next_aime(aime, ls)` at
     the chosen labor supply, and `next_wealth` must equal
     `wealth - c + 0.1 * next_aime` exactly. Solving for the optimum, the
     test then checks that successive `wealth` values in the simulated
@@ -133,12 +137,12 @@ def test_simulate_with_chained_transitions_yields_expected_next_wealth() -> None
         )
         .to_dataframe()
         .query('regime_name == "active"')
-        .sort_values(["subject_id", "period"])
+        .sort_values(["agent_id", "period"])
         .reset_index(drop=True)
     )
 
-    for subject_id in df["subject_id"].unique():
-        rows = df.loc[df["subject_id"] == subject_id].sort_values("period")
+    for agent_id in df["agent_id"].unique():
+        rows = df.loc[df["agent_id"] == agent_id].sort_values("period")
         for i in range(len(rows) - 1):
             prev = rows.iloc[i]
             curr = rows.iloc[i + 1]
@@ -217,7 +221,7 @@ def _f2_build_model() -> Model:
         functions={"utility": _f2_utility},
     )
     last = UserRegime(
-        functions={"utility": lambda: jnp.array(0.0)},
+        functions={"utility": _zero_utility},
     )
     return Model(
         regimes={"live": live, "last": last},
@@ -244,7 +248,7 @@ def test_stochastic_weight_reading_deterministic_next_state_solves() -> None:
     model = _f2_build_model()
     V = model.solve(params={"discount_factor": 0.95}, log_level="debug").values
 
-    v_live = V[0]["live"]
+    v_live = V[0]["live"][..., 0]
     # Analytical value: from period 0, investing (or already being at high capital)
     # deterministically makes next period's `good` state "good", so
     # V[0]["live"](good, capital) = good + 0.95 * 1 for every capital -- period 1's

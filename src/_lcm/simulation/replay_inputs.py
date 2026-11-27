@@ -161,7 +161,7 @@ class PreparedReplayReader:
             for read in replay_payload_reads(
                 payload=payload,
                 key=key,
-                period=self.context.period,
+                period=self.context.step,
                 regime=self.context.regime_name,
                 core="simulation_external_replay",
             )
@@ -175,7 +175,7 @@ class PreparedReplayReader:
             key: place_replay_payload(
                 payload=payload,
                 key=key,
-                period=self.context.period,
+                period=self.context.step,
                 regime=self.context.regime_name,
                 core="simulation_external_replay",
                 owner=owner,
@@ -187,7 +187,7 @@ class PreparedReplayReader:
                 "state_nodes": self.context.state_nodes,
                 "action_nodes": self.context.action_nodes,
             },
-            subject_arg_names=(),
+            agent_arg_names=(),
             value_reads=(),
             devices=devices,
         )
@@ -206,7 +206,7 @@ class PreparedReplayReader:
         except Exception as error:
             raise InvalidSimulationInputError(
                 "External replay route rejected placed artifacts at "
-                f"({context.period}, {context.regime_name!r}): {error}"
+                f"({context.step}, {context.regime_name!r}): {error}"
             ) from error
         try:
             reader = self.route.build_reader(
@@ -216,11 +216,11 @@ class PreparedReplayReader:
         except Exception as error:
             raise InvalidSimulationInputError(
                 "External replay route could not build its period reader at "
-                f"({context.period}, {context.regime_name!r}): {error}"
+                f"({context.step}, {context.regime_name!r}): {error}"
             ) from error
         if not isinstance(reader, ReplayReader):
             raise InvalidSimulationInputError(
                 "External replay route returned a non-callable reader at "
-                f"({context.period}, {context.regime_name!r})."
+                f"({context.step}, {context.regime_name!r})."
             )
         return reader

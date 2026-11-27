@@ -46,7 +46,7 @@ emission order:
 - `chunk_planning` — cohort and chunk planning, which in a budgeted run
   compiles every profiled simulation candidate
 - `simulation_setup` — the simulation memory, call inputs and plan summary
-- `simulation_chunk` — one per subject chunk, the forward period loop
+- `simulation_chunk` — one per agent chunk, the forward period loop
 - `simulation_completion` — concatenating the chunks and waiting for them
 - `simulation_result` — trimming padding and building the result
 - `result_finalization` — releasing entry allocations and writing a simulate

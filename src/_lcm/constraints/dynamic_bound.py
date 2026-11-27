@@ -294,7 +294,7 @@ def _resolved_rhs_contract(
     current_identity = []
     lower_inputs = set()
     for period in periods or (0,):
-        age = specialization_coordinate_at(ages=ages, period=period)
+        age = specialization_coordinate_at(ages=ages, step=period)
         phase_paths = []
         for phase in ("solve", "simulate"):
             declared_pool = user_regime.get_all_functions(phase=phase, law=law)

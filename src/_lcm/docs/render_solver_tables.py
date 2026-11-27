@@ -41,6 +41,7 @@ def render_solver_tables(*, solvers: Mapping[str, Solver]) -> str:
             "Donation candidates",
             "EV1 taste shocks",
             "Nonlinear CE",
+            "Several members",
         ]
     ]
     for name, solver in solvers.items():
@@ -64,6 +65,7 @@ def render_solver_tables(*, solvers: Mapping[str, Solver]) -> str:
                 _names(cap.donation_candidates),
                 "Yes" if cap.supports_ev1_taste_shocks else "No",
                 "Yes" if cap.supports_nonlinear_certainty_equivalent else "No",
+                "Yes" if cap.supports_several_members else "No",
             ]
         )
     return "\n\n".join(

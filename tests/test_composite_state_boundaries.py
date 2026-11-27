@@ -4,7 +4,7 @@
   successor, keep their tables' ranks.
 - A constraint the enumeration cannot evaluate never lets a tuple off its members'
   grids into the code set, and a feasible off-grid law still raises.
-- Initial conditions are encoded only for subjects whose regime carries the members,
+- Initial conditions are encoded only for agents whose regime carries the members,
   after the usual integer checks.
 """
 
@@ -276,10 +276,10 @@ def _cohort(*, composite: bool) -> Model:
 
 
 @pytest.mark.parametrize("regime_ids", [(0, 1), (1, 0), (1, 1), (1, 0, 1)])
-def test_subjects_starting_without_the_members_are_not_encoded(
+def test_agents_starting_without_the_members_are_not_encoded(
     regime_ids: tuple[int, ...],
 ) -> None:
-    """Subjects starting where no member exists are feasible, as in the dense model."""
+    """Agents starting where no member exists are feasible, as in the dense model."""
     masks = [
         np.asarray(
             _cohort(composite=composite).initial_conditions_feasibility(
@@ -301,7 +301,7 @@ def test_fractional_member_code_is_refused_before_encoding(code: float) -> None:
         )
 
 
-def test_labelled_frame_without_member_on_other_subjects_starts_like_dense() -> None:
+def test_labelled_frame_without_member_on_other_agents_starts_like_dense() -> None:
     """A labelled frame leaves members empty where the start regime lacks them."""
     frame = pd.DataFrame(
         {
@@ -330,10 +330,10 @@ def _only(*, regime_ids: tuple[int, ...], column: str) -> dict[str, jnp.ndarray]
 
 
 @pytest.mark.parametrize("column", ["a", "b"])
-def test_one_member_column_for_subjects_without_members_is_accepted(
+def test_one_member_column_for_agents_without_members_is_accepted(
     column: str,
 ) -> None:
-    """Without a carrying subject, a single optional member column is fine."""
+    """Without a carrying agent, a single optional member column is fine."""
     masks = [
         np.asarray(
             _cohort(composite=composite).initial_conditions_feasibility(
@@ -346,8 +346,8 @@ def test_one_member_column_for_subjects_without_members_is_accepted(
     np.testing.assert_array_equal(masks[1], masks[0])
 
 
-def test_carrying_subject_without_every_member_column_is_refused() -> None:
-    """A subject starting where the members exist needs every member column."""
+def test_carrying_agent_without_every_member_column_is_refused() -> None:
+    """An agent starting where the members exist needs every member column."""
     with pytest.raises(InvalidInitialConditionsError, match="'b'"):
         _cohort(composite=True).initial_conditions_feasibility(
             params=_PARAMS, initial_conditions=_only(regime_ids=(0, 1), column="a")
@@ -365,7 +365,7 @@ def test_optional_member_column_is_still_checked_as_integers(value: float) -> No
 
 
 def test_optional_member_column_of_the_wrong_length_is_refused() -> None:
-    """An optional member column must have one entry per subject."""
+    """An optional member column must have one entry per agent."""
     conditions = _only(regime_ids=(1,), column="a") | {
         "a": jnp.zeros(2, dtype=jnp.int32)
     }
@@ -499,7 +499,7 @@ def test_member_law_reading_a_float_helper_simulates_like_dense() -> None:
             params=_PARAMS, initial_conditions=conditions, log_level="off", seed=5
         )
         .to_dataframe(use_categorical_codes=True)[
-            ["subject_id", "period", "regime_name", "choice"]
+            ["agent_id", "period", "regime_name", "choice"]
         ]
         .reset_index(drop=True)
         for c in (False, True)

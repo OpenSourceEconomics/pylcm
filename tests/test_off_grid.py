@@ -99,6 +99,7 @@ from lcm.typing import (
     Period,
     RegimeName,
     ScalarInt,
+    StageName,
     StateName,
     StateOrActionName,
 )
@@ -399,7 +400,7 @@ def test_clipped_continuation_matches_hand_capped_value_and_choice(
         decimal=DECIMAL_PRECISION,
     )
     np.testing.assert_array_almost_equal(
-        solution.values[0]["alive"],
+        solution.values[0]["alive"][..., 0],
         [2, 2.75, 6] if runtime_grid else [2, 4, 6],
         decimal=DECIMAL_PRECISION,
     )
@@ -448,13 +449,13 @@ def _next_regime(period: Period) -> ScalarInt:
     [("extrapolate", [2, 3, 4]), ("clip_lookup", [2, 3, 4]), ("clip_state", [2, 2, 2])],
 )
 @pytest.mark.parametrize("varying_bounds", [False, True])
-@pytest.mark.parametrize("subject_batch_size", [0, 1])
+@pytest.mark.parametrize("agent_batch_size", [0, 1])
 def test_grid_policy_preserves_or_clips_the_actual_later_state(
     *,
     off_grid: OffGrid,
     expected: list[int],
     varying_bounds: bool,
-    subject_batch_size: int,
+    agent_batch_size: int,
 ) -> None:
     """A later transition consumes the raw state for lookup-only clipping."""
 
@@ -491,9 +492,7 @@ def test_grid_policy_preserves_or_clips_the_actual_later_state(
         initial_nodes={0: "alive"},
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(
-            axis_widths={}
-            if subject_batch_size == 0
-            else {"subject": subject_batch_size},
+            axis_widths={} if agent_batch_size == 0 else {"agent": agent_batch_size},
             device_memory_bytes=None,
         ),
     )
@@ -602,7 +601,7 @@ def test_original_raw_off_grid_count_excludes_masked_cells_and_endpoints() -> No
 
 
 def test_state_clipping_preserves_other_target_and_unselected_carriers() -> None:
-    """Only the subject's actual handoff is capped, not its unused regime slots."""
+    """Only the agent's actual handoff is capped, not its unused regime slots."""
     result = jax.jit(_clip_next_states)(
         states=MappingProxyType(
             {
@@ -614,7 +613,7 @@ def test_state_clipping_preserves_other_target_and_unselected_carriers() -> None
             "alive": {"wealth": jnp.array([0.0, 2.0])},
             "terminal": {"wealth": jnp.array([0.0, 4.0])},
         },
-        subjects=jnp.array([True, True, False]),
+        agents=jnp.array([True, True, False]),
         new_regime_ids=jnp.array([RegimeId.alive, RegimeId.terminal, RegimeId.alive]),
         regime_ids=MappingProxyType(
             {"alive": RegimeId.alive, "terminal": RegimeId.terminal}
@@ -708,6 +707,7 @@ def test_validate_transitions_counts_off_grid_landings_without_output(
         state: StateName,
         phase: str,  # noqa: ARG001
         logger: logging.Logger,  # noqa: ARG001
+        stage: StageName | None = None,  # noqa: ARG001
     ) -> None:
         reported.append((state, period, count))
 
@@ -729,7 +729,7 @@ def test_explicit_raise_accepts_economically_capped_transitions(
         params=params, runtime_checks=runtime_checks, log_level="off"
     )
     np.testing.assert_array_almost_equal(
-        solution.values[0]["alive"], [2, 4, 6], decimal=DECIMAL_PRECISION
+        solution.values[0]["alive"][..., 0], [2, 4, 6], decimal=DECIMAL_PRECISION
     )
 
 
@@ -751,7 +751,7 @@ def test_raise_excludes_infeasible_exterior_transition_cells(
         log_level="debug",
     )
     np.testing.assert_array_almost_equal(
-        solution.values[0]["alive"], [2, 4, 6], decimal=DECIMAL_PRECISION
+        solution.values[0]["alive"][..., 0], [2, 4, 6], decimal=DECIMAL_PRECISION
     )
     rows = [
         record.getMessage()
@@ -1036,7 +1036,7 @@ def test_budgeted_counts_read_changed_node_operands_on_the_same_model() -> None:
     memory = SimulationMemory(
         budget_bytes=2**28,
         devices=devices,
-        subject_devices=devices,
+        agent_devices=devices,
         operations=ProfiledSimulationOperations(),
         inputs=measure_buffer_footprint(tree={}),
     )
@@ -1080,29 +1080,29 @@ def _zero_utility(x: ContinuousState) -> FloatND:
     return 0.0 * x
 
 
-_SUBJECT_LAYOUTS = pytest.mark.parametrize(
-    ("n_subjects", "subject_width"),
+_AGENT_LAYOUTS = pytest.mark.parametrize(
+    ("n_agents", "agent_width"),
     [
-        pytest.param(1, 2, id="one-subject-width-clamps"),
-        pytest.param(2, 1, id="two-subjects-unit-width"),
-        pytest.param(2, 3, id="two-subjects-width-clamps"),
-        pytest.param(3, 2, id="three-subjects-one-pad-row"),
-        pytest.param(4, 2, id="four-subjects-exact-multiple"),
-        pytest.param(5, 4, id="five-subjects-three-pad-rows"),
-        pytest.param(6, 4, id="six-subjects-two-pad-rows"),
-        pytest.param(7, 3, id="seven-subjects-two-pad-rows"),
-        pytest.param(8, 3, id="eight-subjects-one-pad-row"),
-        pytest.param(8, 4, id="eight-subjects-exact-multiple"),
-        pytest.param(3, 0, id="three-subjects-unbatched"),
-        pytest.param(8, 0, id="eight-subjects-unbatched"),
+        pytest.param(1, 2, id="one-agent-width-clamps"),
+        pytest.param(2, 1, id="two-agents-unit-width"),
+        pytest.param(2, 3, id="two-agents-width-clamps"),
+        pytest.param(3, 2, id="three-agents-one-pad-row"),
+        pytest.param(4, 2, id="four-agents-exact-multiple"),
+        pytest.param(5, 4, id="five-agents-three-pad-rows"),
+        pytest.param(6, 4, id="six-agents-two-pad-rows"),
+        pytest.param(7, 3, id="seven-agents-two-pad-rows"),
+        pytest.param(8, 3, id="eight-agents-one-pad-row"),
+        pytest.param(8, 4, id="eight-agents-exact-multiple"),
+        pytest.param(3, 0, id="three-agents-unbatched"),
+        pytest.param(8, 0, id="eight-agents-unbatched"),
     ],
 )
 
 
-def _simulate_every_subject_off_grid(
-    *, n_subjects: int, subject_width: int, caplog: pytest.LogCaptureFixture
+def _simulate_every_agent_off_grid(
+    *, n_agents: int, agent_width: int, caplog: pytest.LogCaptureFixture
 ) -> tuple[pd.DataFrame, list[int]]:
-    """Simulate distinct dyadic subjects that all leave `[0, 1]` once.
+    """Simulate distinct dyadic agents that all leave `[0, 1]` once.
 
     Returns the public panel and the realized `alive -> terminal` counts.
     """
@@ -1122,7 +1122,7 @@ def _simulate_every_subject_off_grid(
         regime_id_class=RegimeId,
         execution_config=ExecutionConfig(
             device_memory_bytes=None,
-            axis_widths={} if subject_width == 0 else {"subject": subject_width},
+            axis_widths={} if agent_width == 0 else {"agent": agent_width},
         ),
     )
     params = {"discount_factor": 1.0}
@@ -1133,9 +1133,9 @@ def _simulate_every_subject_off_grid(
             params=params,
             solution=solution,
             initial_conditions={
-                "age": jnp.zeros(n_subjects),
-                "regime_id": jnp.full(n_subjects, RegimeId.alive),
-                "x": jnp.arange(1, n_subjects + 1) / 8.0,
+                "age": jnp.zeros(n_agents),
+                "regime_id": jnp.full(n_agents, RegimeId.alive),
+                "x": jnp.arange(1, n_agents + 1) / 8.0,
             },
             runtime_checks=True,
             log_level="warning",
@@ -1155,35 +1155,35 @@ def _terminal_x(x: ContinuousState) -> FloatND:
     return x**2
 
 
-@_SUBJECT_LAYOUTS
-def test_realized_off_grid_count_includes_each_genuine_subject_once(
-    *, n_subjects: int, subject_width: int, caplog: pytest.LogCaptureFixture
+@_AGENT_LAYOUTS
+def test_realized_off_grid_count_includes_each_genuine_agent_once(
+    *, n_agents: int, agent_width: int, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Synthetic alignment rows never add to the realized exterior count."""
-    _, counts = _simulate_every_subject_off_grid(
-        n_subjects=n_subjects, subject_width=subject_width, caplog=caplog
+    _, counts = _simulate_every_agent_off_grid(
+        n_agents=n_agents, agent_width=agent_width, caplog=caplog
     )
-    assert sum(counts) == n_subjects
+    assert sum(counts) == n_agents
 
 
-@_SUBJECT_LAYOUTS
-def test_realized_off_grid_panel_keeps_raw_states_in_subject_order(
-    *, n_subjects: int, subject_width: int, caplog: pytest.LogCaptureFixture
+@_AGENT_LAYOUTS
+def test_realized_off_grid_panel_keeps_raw_states_in_agent_order(
+    *, n_agents: int, agent_width: int, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The public panel holds every genuine subject's raw exterior handoff once."""
-    frame, _ = _simulate_every_subject_off_grid(
-        n_subjects=n_subjects, subject_width=subject_width, caplog=caplog
+    """The public panel holds every genuine agent's raw exterior handoff once."""
+    frame, _ = _simulate_every_agent_off_grid(
+        n_agents=n_agents, agent_width=agent_width, caplog=caplog
     )
-    initial = np.arange(1, n_subjects + 1) / 8.0
+    initial = np.arange(1, n_agents + 1) / 8.0
     expected = pd.DataFrame(
         {
-            "subject_id": np.repeat(np.arange(n_subjects), 2),
-            "period": np.tile([0, 1], n_subjects),
+            "agent_id": np.repeat(np.arange(n_agents), 2),
+            "period": np.tile([0, 1], n_agents),
             "x": np.column_stack((initial, initial + 1.0)).reshape(-1),
         }
     )
     pd.testing.assert_frame_equal(
-        frame[["subject_id", "period", "x"]].reset_index(drop=True),
+        frame[["agent_id", "period", "x"]].reset_index(drop=True),
         expected,
         check_dtype=False,
         check_exact=True,

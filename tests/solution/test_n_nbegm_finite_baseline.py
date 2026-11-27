@@ -122,7 +122,7 @@ def test_finite_streaming_fold_matches_frozen_corrected_baseline(
         value, leaves = recorded[period]
         np.testing.assert_allclose(
             value,
-            baseline[f"{tag}:p{period}:V_arr"],
+            baseline[f"{tag}:p{period}:V_arr"][..., None],
             rtol=1e-12,
             atol=1e-12,
             err_msg=f"V_arr at period {period}, width {width}",
@@ -145,7 +145,7 @@ def test_finite_streaming_fold_matches_frozen_corrected_baseline(
             captured_period = _N_PERIODS - 1 if regime == "dead" else period
             np.testing.assert_allclose(
                 np.asarray(v_arr),
-                baseline[f"{tag}:solve:p{captured_period}:{regime}"],
+                baseline[f"{tag}:solve:p{captured_period}:{regime}"][..., None],
                 rtol=1e-12,
                 atol=1e-12,
                 err_msg=f"solve V at period {period}, regime {regime}",

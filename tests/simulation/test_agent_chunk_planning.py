@@ -1,0 +1,67 @@
+"""Execution widths bound the complete forward population dispatched at once."""
+
+import inspect
+from typing import Unpack
+
+import jax.numpy as jnp
+import pytest
+
+import _lcm.simulation.simulate as simulation
+from lcm import ExecutionConfig, LinSpacedGrid, Model
+from tests.simulation._callback_types import ChunkResults, SimulationChunkInputs
+from tests.test_models.deterministic.regression import (
+    RegimeId,
+    get_model,
+    get_params,
+)
+
+
+def test_agent_batch_size_is_not_a_public_simulation_argument() -> None:
+    """A model's execution configuration is the public agent-width control."""
+    assert "agent_batch_size" not in inspect.signature(Model.simulate).parameters
+
+
+def test_a_fixed_agent_width_bounds_complete_dispatched_chunks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Seven real rows execute in three chunks of three, with padding hidden."""
+    model = get_model(
+        n_periods=2,
+        wealth_grid=LinSpacedGrid(start=1, stop=3, n_points=3),
+        consumption_grid=LinSpacedGrid(start=1, stop=3, n_points=3),
+        # A budget treats the pin as the search anchor only; it bounds chunks here.
+        execution_config=ExecutionConfig(
+            axis_widths={"agent": 3}, device_memory_bytes=None
+        ),
+    )
+    params = get_params(n_periods=2)
+    solution = model.solve(params=params, log_level="off")
+    chunks: list[int] = []
+    windows: list[tuple[int, int]] = []
+    run_chunk = simulation._simulate_agent_chunk
+
+    def observe_chunk(**kwargs: Unpack[SimulationChunkInputs]) -> ChunkResults:
+        chunks.append(int(kwargs["initial_regime_ids"].shape[0]))
+        window = kwargs["agent_slice"]
+        assert isinstance(window, slice)
+        assert isinstance(window.start, int)
+        assert isinstance(window.stop, int)
+        windows.append((window.start, window.stop))
+        assert kwargs["original_n_agents"] == 7
+        return run_chunk(**kwargs)
+
+    monkeypatch.setattr(simulation, "_simulate_agent_chunk", observe_chunk)
+    result = model.simulate(
+        params=params,
+        solution=solution,
+        initial_conditions={
+            "wealth": jnp.linspace(1.0, 3.0, 7),
+            "age": jnp.full(7, 18.0),
+            "regime_id": jnp.full(7, RegimeId.working_life, dtype=jnp.int32),
+        },
+        seed=17,
+        log_level="off",
+    )
+    assert result.n_agents == 7
+    assert chunks == [3, 3, 3]
+    assert windows == [(0, 3), (3, 6), (6, 9)]

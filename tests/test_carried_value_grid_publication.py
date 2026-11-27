@@ -2,11 +2,13 @@
 
 The state `hours` is carried: its solve side is imputed as `20`, its simulate side
 is `DiscreteGrid(values=nodes)`. No regime declares it as a plain grid, so the only
-place its values appear is `Phased.simulate`. Every subject keeps its starting
+place its values appear is `Phased.simulate`. Every agent keeps its starting
 node, so in period 0 the published column must equal the starting values
 literally, with the full ordered node set as its categories, including nodes no
-subject occupies.
+agent occupies.
 """
+
+from pathlib import Path
 
 import jax.numpy as jnp
 import numpy as np
@@ -106,7 +108,7 @@ def _simulate(
     retired_declares_directly: bool = False,
     enable_jit: bool = True,
 ) -> SimulationResult:
-    n_subjects = len(start)
+    n_agents = len(start)
     return _model(
         nodes=nodes,
         retired_declares_directly=retired_declares_directly,
@@ -114,13 +116,13 @@ def _simulate(
     ).simulate(
         params={"discount_factor": 1.0},
         initial_conditions={
-            "wealth": np.zeros(n_subjects),
+            "wealth": np.zeros(n_agents),
             "hours": np.asarray(start),
-            "period": np.zeros(n_subjects, dtype=np.int32),
-            # Alternate the subjects between the two regimes that carry `hours`.
+            "period": np.zeros(n_agents, dtype=np.int32),
+            # Alternate the agents between the two regimes that carry `hours`.
             "regime_id": np.array(
-                [_RegimeId.alive, _RegimeId.retired] * n_subjects, dtype=np.int32
-            )[:n_subjects],
+                [_RegimeId.alive, _RegimeId.retired] * n_agents, dtype=np.int32
+            )[:n_agents],
         },
         seed=0,
         log_level="off",
@@ -128,7 +130,7 @@ def _simulate(
 
 
 def _first_period(frame: pd.DataFrame) -> pd.Series:
-    rows = frame.loc[frame["period"] == 0].sort_values("subject_id")
+    rows = frame.loc[frame["period"] == 0].sort_values("agent_id")
     return rows["hours"].reset_index(drop=True)
 
 
@@ -194,7 +196,7 @@ def test_carried_value_grid_with_categorical_codes_gives_codes(case: str) -> Non
     )
 
 
-def test_carried_value_grid_feather_holds_its_values(tmp_path) -> None:
+def test_carried_value_grid_feather_holds_its_values(tmp_path: Path) -> None:
     nodes, start = _CASES["int"]
     _simulate(nodes=nodes, start=np.asarray(start, dtype=nodes.dtype)).save(
         directory=tmp_path
@@ -203,7 +205,7 @@ def test_carried_value_grid_feather_holds_its_values(tmp_path) -> None:
     assert _first_period(saved).tolist() == start
 
 
-def test_carried_value_grid_load_holds_its_values(tmp_path) -> None:
+def test_carried_value_grid_load_holds_its_values(tmp_path: Path) -> None:
     nodes, start = _CASES["int"]
     _simulate(nodes=nodes, start=np.asarray(start, dtype=nodes.dtype)).save(
         directory=tmp_path

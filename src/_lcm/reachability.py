@@ -28,6 +28,7 @@ from enum import IntEnum
 from types import MappingProxyType
 from typing import Literal
 
+from _lcm.time import TimeAxis, landing_step
 from _lcm.typing import RegimeName
 from lcm.transition import StochasticTransition
 from lcm.typing import UserAge, UserFunction
@@ -51,13 +52,16 @@ class EdgeStatus(IntEnum):
 
 @dataclass(frozen=True, kw_only=True)
 class PhaseReachability:
-    """One phase's immutable period-indexed regime graph.
+    """One phase's immutable regime graph, indexed by step.
+
+    A step is one stage of one period (`Model.period_of_step`); without
+    `stages` the step is the period.
 
     `CONDITIONAL` is retained in `targets_by_period`. It is provenance, not a
     deferred Boolean; there is deliberately no runtime `resolve` method.
     """
 
-    n_periods: int
+    n_steps: int
     active_regimes_by_period: tuple[frozenset[RegimeName], ...]
     candidate_targets_by_source: MappingProxyType[RegimeName, tuple[RegimeName, ...]]
     targets_by_period: tuple[MappingProxyType[RegimeName, tuple[RegimeName, ...]], ...]
@@ -66,7 +70,7 @@ class PhaseReachability:
         """Return a structural hash independent of mapping insertion order."""
         return hash(
             (
-                self.n_periods,
+                self.n_steps,
                 self.active_regimes_by_period,
                 tuple(sorted(self.candidate_targets_by_source.items())),
                 tuple(
@@ -76,40 +80,40 @@ class PhaseReachability:
             )
         )
 
-    def targets(self, *, period: int, source: RegimeName) -> tuple[RegimeName, ...]:
-        """Return retained targets for the edge from `period` to `period + 1`."""
-        if not 0 <= period < self.n_periods - 1:
-            raise IndexError(period)
-        return self.targets_by_period[period].get(source, ())
+    def targets(self, *, step: int, source: RegimeName) -> tuple[RegimeName, ...]:
+        """Return retained targets of the edges leaving `source` at `step`."""
+        if not 0 <= step < self.n_steps - 1:
+            raise IndexError(step)
+        return self.targets_by_period[step].get(source, ())
 
-    def has_edge(self, *, period: int, source: RegimeName, target: RegimeName) -> bool:
-        """Return whether the static graph contains this period-specific edge."""
+    def has_edge(self, *, step: int, source: RegimeName, target: RegimeName) -> bool:
+        """Return whether the static graph contains this step's edge."""
         return (
-            self.edge_status(period=period, source=source, target=target)
+            self.edge_status(step=step, source=source, target=target)
             != EdgeStatus.FALSE
         )
 
     def edge_status(
-        self, *, period: int, source: RegimeName, target: RegimeName
+        self, *, step: int, source: RegimeName, target: RegimeName
     ) -> EdgeStatus:
         """Return the construction-time status of a candidate edge.
 
         A retained edge is `CONDITIONAL`; every other pair is `FALSE`.
         """
-        if not 0 <= period < self.n_periods - 1:
-            raise IndexError(period)
-        if target in self.targets_by_period[period].get(source, ()):
+        if not 0 <= step < self.n_steps - 1:
+            raise IndexError(step)
+        if target in self.targets_by_period[step].get(source, ()):
             return EdgeStatus.CONDITIONAL
         return EdgeStatus.FALSE
 
-    def periods_for_edge(
+    def steps_for_edge(
         self, *, source: RegimeName, target: RegimeName
     ) -> tuple[int, ...]:
-        """Return all source periods in which the edge is retained."""
+        """Return all source steps at which the edge is retained."""
         return tuple(
-            period
-            for period in range(self.n_periods - 1)
-            if self.has_edge(period=period, source=source, target=target)
+            step
+            for step in range(self.n_steps - 1)
+            if self.has_edge(step=step, source=source, target=target)
         )
 
     def union_targets(self, *, source: RegimeName) -> tuple[RegimeName, ...]:
@@ -118,8 +122,8 @@ class PhaseReachability:
             sorted(
                 {
                     target
-                    for period in range(self.n_periods - 1)
-                    for target in self.targets(period=period, source=source)
+                    for step in range(self.n_steps - 1)
+                    for target in self.targets(step=step, source=source)
                 }
             )
         )
@@ -136,7 +140,7 @@ class ModelReachability:
     declared starts can visit, and each pair whose value a solved problem reads."""
 
     visited_nodes: frozenset[tuple[UserAge, RegimeName]] = frozenset()
-    """Exact `(age, regime)` pairs a subject starting at a declared start can
+    """Exact `(age, regime)` pairs an agent starting at a declared start can
     physically visit; a subset of `nodes`."""
 
     def for_phase(self, phase: PhaseName) -> PhaseReachability:
@@ -175,24 +179,25 @@ def candidate_targets_from_transition[Cell](
 
 def build_phase_reachability(
     *,
-    n_periods: int,
+    n_steps: int,
     active_periods_by_regime: Mapping[RegimeName, Collection[int]],
     support_by_period: Mapping[RegimeName, Mapping[int, Collection[RegimeName]]],
     terminal_regimes: Collection[RegimeName] = (),
+    ages: TimeAxis | None = None,
 ) -> PhaseReachability:
     """Build one static graph; every retained edge is `CONDITIONAL`.
 
     A source's retained targets at a period are exactly its declared support
-    there. Every declared target must be covered at the next period; the graph
-    never drops a declared target.
+    there. Every declared target must be covered at the period the edge lands
+    in, its next occurrence on the clock `ages`; the graph never drops a
+    declared target.
     """
-    if n_periods < 1:
-        raise ValueError("n_periods must be positive")
+    if n_steps < 1:
+        raise ValueError("n_steps must be positive")
 
     regimes = frozenset(active_periods_by_regime)
     active = {
-        regime: frozenset(periods)
-        for regime, periods in active_periods_by_regime.items()
+        regime: frozenset(steps) for regime, steps in active_periods_by_regime.items()
     }
     unknown_sources = frozenset(support_by_period) - regimes
     unknown_targets = {
@@ -208,15 +213,20 @@ def build_phase_reachability(
             f"sources={sorted(unknown_sources)}, targets={sorted(unknown_targets)}"
         )
     uncovered = sorted(
-        (source, period, target)
+        (source, step, target)
         for source, by_period in support_by_period.items()
-        for period, targets in by_period.items()
+        for step, targets in by_period.items()
         for target in targets
-        if period + 1 not in active[target]
+        if (
+            step + 1
+            if ages is None
+            else landing_step(ages=ages, step=step, target=target)
+        )
+        not in active[target]
     )
     if uncovered:
         raise ValueError(
-            "Declared targets must be covered at the next period; "
+            "Declared targets must be covered at the period they land in; "
             f"(source, period, target) = {uncovered}"
         )
 
@@ -230,18 +240,18 @@ def build_phase_reachability(
         }
     )
     active_by_period = tuple(
-        frozenset(regime for regime, periods in active.items() if period in periods)
-        for period in range(n_periods)
+        frozenset(regime for regime, steps in active.items() if step in steps)
+        for step in range(n_steps)
     )
 
     target_maps: list[MappingProxyType[RegimeName, tuple[RegimeName, ...]]] = []
-    for period in range(n_periods - 1):
+    for step in range(n_steps - 1):
         period_targets: dict[RegimeName, tuple[RegimeName, ...]] = {}
         for source in sorted(regimes):
             declared = (
                 ()
-                if source in terminal or period not in active[source]
-                else tuple(support_by_period.get(source, {}).get(period, ()))
+                if source in terminal or step not in active[source]
+                else tuple(support_by_period.get(source, {}).get(step, ()))
             )
             retained = tuple(
                 target for target in candidates.get(source, ()) if target in declared
@@ -251,7 +261,7 @@ def build_phase_reachability(
         target_maps.append(MappingProxyType(period_targets))
 
     return PhaseReachability(
-        n_periods=n_periods,
+        n_steps=n_steps,
         active_regimes_by_period=active_by_period,
         candidate_targets_by_source=candidates,
         targets_by_period=tuple(target_maps),
@@ -260,30 +270,32 @@ def build_phase_reachability(
 
 def build_model_reachability(
     *,
-    n_periods: int,
+    n_steps: int,
     active_periods_by_regime: Mapping[RegimeName, Collection[int]],
     support_by_phase: Mapping[
         str, Mapping[RegimeName, Mapping[int, Collection[RegimeName]]]
     ],
     terminal_regimes: Collection[RegimeName] = (),
     visited_periods_by_regime: Mapping[RegimeName, Collection[int]] | None = None,
+    ages: TimeAxis | None = None,
 ) -> ModelReachability:
     """Build solve and simulate graphs from the declared per-period support.
 
     `active_periods_by_regime` must be the single canonical coverage mapping
     computed once at model preparation from the declarations. The simulate
-    graph is active only where a subject can be: `visited_periods_by_regime`,
+    graph is active only where an agent can be: `visited_periods_by_regime`,
     which defaults to the coverage.
     """
     return ModelReachability(
         solution=build_phase_reachability(
-            n_periods=n_periods,
+            n_steps=n_steps,
             active_periods_by_regime=active_periods_by_regime,
             support_by_period=support_by_phase["solution"],
             terminal_regimes=terminal_regimes,
+            ages=ages,
         ),
         simulation=build_phase_reachability(
-            n_periods=n_periods,
+            n_steps=n_steps,
             active_periods_by_regime=(
                 active_periods_by_regime
                 if visited_periods_by_regime is None
@@ -291,5 +303,6 @@ def build_model_reachability(
             ),
             support_by_period=support_by_phase["simulation"],
             terminal_regimes=terminal_regimes,
+            ages=ages,
         ),
     )

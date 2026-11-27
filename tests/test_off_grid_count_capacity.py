@@ -236,13 +236,13 @@ def test_action_reduction_saturates_instead_of_wrapping(compiled: bool) -> None:
 def test_state_reduction_saturates_instead_of_wrapping(compiled: bool) -> None:  # noqa: FBT001
     def outputs(**kwargs: jax.Array) -> tuple[jax.Array, ...]:  # noqa: ARG001
         return (
-            jnp.ones(4),
+            jnp.ones((4, 1)),
             jnp.zeros(4, dtype=bool),
             jnp.full((4, 1), 1 << 30, dtype=jnp.int32),
         )
 
     counted = LandingCountedGridSearch(
-        counted=CountedGridSearch(function=outputs, collective=False)  # ty: ignore[invalid-argument-type]
+        counted=CountedGridSearch(function=outputs)  # ty: ignore[invalid-argument-type]
     )
 
     def run() -> jax.Array:

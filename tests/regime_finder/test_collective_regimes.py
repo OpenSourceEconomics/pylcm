@@ -1,6 +1,6 @@
-"""The regime finder on collective models: pooling, counts, renegotiation and exits.
+"""The regime finder on collective models: pooling, counts, renegotiation and composition actions.
 
-Every model is a constructed `Model` from the collective, exit, renegotiation and
+Every model is a constructed `Model` from the collective, composition action, renegotiation and
 gate tests, or a few-line model of the same kind. The certificate
 tests alter a genuine report the way an unsound finder would write it and check that
 the independent replay rejects it.
@@ -8,13 +8,16 @@ the independent replay rejects it.
 
 from collections.abc import Callable, Mapping
 from copy import deepcopy
-from functools import cache
+from dataclasses import replace
+from functools import cache, partial
 from math import prod
 
+import jax
 import numpy as np
 import pytest
 
-import _lcm.regime_building.max_Q_over_a as max_Q_over_a
+import _lcm.solution.action_streaming as action_streaming
+from _lcm.typing import QAndFArg
 from _lcm_regime_finder import find_regimes, verify_certificate
 from _lcm_regime_finder.declarations import normalize_declarations
 from _lcm_regime_finder.facts import FactsBackendName, Record, make_facts
@@ -27,25 +30,27 @@ from lcm import (
     Counterparty,
     DiscreteGrid,
     ExecutionConfig,
-    Exit,
-    ExitTarget,
+    CompositionAction,
+    Destination,
     InitialNodes,
     LinSpacedGrid,
     Model,
-    MutualConsent,
     Periods,
     Regime,
-    Unilateral,
+    PCOnActions,
+    PCOnWeight,
     categorical,
     fixed_transition,
 )
-from lcm.exits import ExitRule
+from lcm.composition_actions import CompositionRule
 from lcm.shocks import GaussHermite, Normal, Product, ShockGroup
 from lcm.typing import (
+    ActionName,
     BoolND,
     ContinuousState,
     DiscreteState,
     FloatND,
+    ReferenceName,
     RegimeName,
     ScalarInt,
 )
@@ -53,7 +58,7 @@ from tests import test_transition_roles as transition_roles
 from tests.collective_fixtures import make_two_member_model
 from tests.regime_building import test_gate_shared_fallback as gate_fallback
 from tests.regime_finder import native_conditional_current_shocks as observed_offer
-from tests.solution import test_mutual_consent_settlement as settlement
+from tests.solution import test_mutual_consent_transfer as transfer
 from tests.solution import test_renegotiation as renegotiation
 
 BACKENDS: tuple[FactsBackendName, ...] = ("dense", "metadata")
@@ -96,13 +101,13 @@ def _role_model() -> Model:
             "single": Regime(
                 states={"w": DiscreteGrid(_Binary)},
                 functions={"utility": _stay},
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
                             regime="couple", role="f", projection={"x": _carry}
                         )
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                 ),
             ),
             "couple": Regime(
@@ -149,14 +154,14 @@ def _twin_outside(wealth: ContinuousState) -> FloatND:
 
 
 def _twin_regimes() -> dict[RegimeName, Regime]:
-    """Two couples that differ only in the rule of their exit, and their singles.
+    """Two couples that differ only in the rule of their composition action, and their singles.
 
-    One couple dissolves unless both members are willing to stay, the other only
-    if neither is. The couples read a current shock and the model-level state
+    One couple keeps an indifferent member, the other lets it leave. The couples
+    read a current shock and the model-level state
     `skill`; every regime moves on to a terminal regime of its kind.
     """
 
-    def couple(*, last: bool, rule: ExitRule | None) -> Regime:
+    def couple(*, last: bool, rule: CompositionRule | None) -> Regime:
         return Regime(
             states={"wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2)},
             state_transitions={} if last else {"wealth": fixed_transition("wealth")},
@@ -166,12 +171,12 @@ def _twin_regimes() -> dict[RegimeName, Regime]:
                 )
             },
             shocks=("match",),
-            exit=None
+            composition_action=None
             if rule is None
-            else Exit(
+            else CompositionAction(
                 rule=rule,
-                targets={
-                    member: ExitTarget(
+                destinations={
+                    member: Destination(
                         regime=f"single_{member}",
                         projection={
                             "wealth": fixed_transition("wealth"),
@@ -191,8 +196,8 @@ def _twin_regimes() -> dict[RegimeName, Regime]:
         )
 
     return {
-        "couple_u": couple(last=False, rule=Unilateral()),
-        "couple_m": couple(last=False, rule=MutualConsent()),
+        "couple_u": couple(last=False, rule=PCOnActions()),
+        "couple_m": couple(last=False, rule=PCOnActions(tie="leave")),
         "single_f": single(last=False),
         "single_m": single(last=False),
         "couple_end": couple(last=True, rule=None),
@@ -228,10 +233,41 @@ def _twin_model(regimes: Mapping[RegimeName, Regime]) -> Model:
     )
 
 
-def _equal_exit_couples() -> Model:
-    """The twin couples, both dissolving under one rule."""
+@categorical(ordered=True)
+class _Three:
+    no: ScalarInt
+    maybe: ScalarInt
+    yes: ScalarInt
+
+
+def _renegotiating_wife(
+    *, wealth: ContinuousState, match: FloatND, theta: DiscreteState
+) -> FloatND:
+    return wealth + match + theta
+
+
+def _renegotiating_couples(*, grid_m: type[_Binary | _Three]) -> Model:
+    """The twin couples renegotiating over `theta`, on `_Three` and on `grid_m`."""
     regimes = _twin_regimes()
-    regimes["couple_m"] = regimes["couple_u"]
+    couple = regimes["couple_u"]
+    assert couple.composition_action is not None
+    for name, grid in (("couple_u", _Three), ("couple_m", grid_m)):
+        regimes[name] = replace(
+            couple,
+            states={**couple.states, "theta": DiscreteGrid(grid)},
+            functions={
+                "utility": CollectiveUtility(
+                    utilities={"f": _renegotiating_wife, "m": _twin_husband}
+                )
+            },
+            state_transitions={
+                **couple.state_transitions,
+                "theta": fixed_transition("theta"),
+            },
+            composition_action=replace(
+                couple.composition_action, rule=PCOnWeight(state="theta")
+            ),
+        )
     return _twin_model(regimes)
 
 
@@ -279,9 +315,9 @@ def _value_reader_model() -> Model:
         regimes={
             "source": Regime(
                 functions={"utility": _one},
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(regime="formation", role="f", projection={})
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(regime="formation", role="f", projection={})
                     },
                     rule=Consent(
                         counterparty=Counterparty(
@@ -321,7 +357,8 @@ _MODELS: dict[str, Callable[[], Model]] = {
     "exact_gate": lambda: transition_roles.build_model(edge_form="exact_gate"),
     "hand_gate": lambda: transition_roles.build_model(edge_form="hand_gate"),
     "twin": lambda: _twin_model(_twin_regimes()),
-    "equal_exits": _equal_exit_couples,
+    "equal_lists": partial(_renegotiating_couples, grid_m=_Three),
+    "unequal_lists": partial(_renegotiating_couples, grid_m=_Binary),
     "renegotiate_1p": lambda: renegotiation._model(values=renegotiation._VALUES),
     "renegotiate_2p": lambda: renegotiation._model(
         values=renegotiation._VALUES, n_periods=2
@@ -329,7 +366,7 @@ _MODELS: dict[str, Callable[[], Model]] = {
     "two_member": lambda: make_two_member_model()[0],
     "role": _role_model,
     "observed_offer": observed_offer.model,
-    "settle": lambda: settlement._settlement_model(division="transfer"),
+    "transfer": lambda: transfer._transfer_model(division="transfer"),
     "survivor_gate": lambda: gate_fallback.build_model(route_form="survivor"),
     "shared_fallback": lambda: gate_fallback.build_model(route_form="both_phases"),
     "value_reader": lambda: _value_reader_model(),
@@ -368,6 +405,11 @@ def _layouts_without(report: Report, *, key: str, contract: bool = True) -> Repo
     declarations = deepcopy(report["analysis"]["declarations"])
     for cell in declarations["cells"]:
         cell.pop(key, None)
+    return _search(report, declarations, contract=contract)
+
+
+def _search(report: Report, declarations: Record, *, contract: bool = True) -> Report:
+    """Search `declarations` with the report's facts backend."""
     limits = {"seconds": 60, "metadata_categories": 100_000}
     facts = make_facts(report["facts_backend"], declarations, limits, lambda: None)
     if contract:
@@ -417,21 +459,45 @@ def test_single_agent_regimes_of_one_kind_still_pool(
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_regimes_with_different_exits_do_not_pool(backend: FactsBackendName) -> None:
+def test_regimes_with_different_composition_actions_do_not_pool(
+    backend: FactsBackendName,
+) -> None:
     """A unilateral and a mutual-consent couple stay apart."""
     assert not _pooled(_report("twin", backend), "couple_m", "couple_u")
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_regimes_with_equal_exits_still_pool(backend: FactsBackendName) -> None:
-    """Two couples with one member tuple and one exit pool."""
-    assert _pooled(_report("equal_exits", backend), "couple_m", "couple_u")
+def test_regimes_pool_only_on_equal_renegotiation_lists(
+    backend: FactsBackendName,
+) -> None:
+    """Couples with one member tuple and one composition action pool iff their lists are equal."""
+    assert (
+        _pooled(_report("unequal_lists", backend), "couple_m", "couple_u"),
+        _pooled(_report("equal_lists", backend), "couple_m", "couple_u"),
+    ) == (False, True)
+
+
+def test_certificate_rejects_a_layout_that_pools_unequal_renegotiation_lists() -> None:
+    """A layout searched as if both couples renegotiated over one list fails the check."""
+    report = _report("unequal_lists", "dense")
+    declarations = deepcopy(report["analysis"]["declarations"])
+    grids = {c["regime"]: c["states"].get("theta") for c in declarations["cells"]}
+    domains = declarations["domains"]
+    domains[grids["couple_m"]]["values"] = domains[grids["couple_u"]]["values"]
+    layouts = _search(report, declarations)
+    genuine = verify_certificate(_captured("unequal_lists"), report)
+    altered = _verify_altered("unequal_lists", "dense", layouts=layouts)
+    assert (
+        genuine["layout_check"]["status"],
+        _pooled({"layouts": layouts}, "couple_m", "couple_u"),
+        altered["layout_check"]["status"],
+    ) == ("PASS", True, "FAIL")
 
 
 def test_normalized_cells_carry_their_members() -> None:
     """Each cell names its regime's members, `None` for a single agent."""
     cells = _report("roles", "dense")["analysis"]["declarations"]["cells"]
-    assert {c["regime"]: c.get("member_axis", "absent") for c in cells} == {
+    assert {c["regime"]: c.get("members", "absent") for c in cells} == {
         "single": None,
         "couple": ["f", "m"],
         "single_end": None,
@@ -442,8 +508,8 @@ def test_normalized_cells_carry_their_members() -> None:
 @pytest.mark.parametrize(
     ("label", "key", "regimes"),
     [
-        ("roles", "member_axis", ("couple", "single")),
-        ("twin", "exit_identity", ("couple_m", "couple_u")),
+        ("roles", "members", ("couple", "single")),
+        ("twin", "composition_action_identity", ("couple_m", "couple_u")),
     ],
 )
 def test_certificate_rejects_a_layout_that_pools_unequal_regimes(
@@ -463,15 +529,15 @@ def test_certificate_rejects_a_layout_that_pools_unequal_regimes(
 @pytest.mark.parametrize(
     ("label", "regime", "key", "value"),
     [
-        ("roles", "couple", "member_axis", None),
-        ("twin", "couple_m", "exit_identity", None),
+        ("roles", "couple", "members", None),
+        ("twin", "couple_m", "composition_action_identity", None),
         ("renegotiate_2p", "couple", "renegotiated_states", []),
     ],
 )
 def test_certificate_rejects_cells_that_lose_their_kind(
     label: str, regime: RegimeName, key: str, value: JSONValue
 ) -> None:
-    """The source check rejects cells whose members, exit or renegotiation changed."""
+    """The source check rejects cells whose members, composition action or renegotiation changed."""
     genuine = verify_certificate(_captured(label), _report(label, "dense"))
     verified = _verify_with_cells(label, "dense", regime=regime, key=key, value=value)
     assert (
@@ -541,38 +607,32 @@ def test_certificate_rejects_a_layout_that_splits_the_renegotiation_state() -> N
 def _engine_counts() -> tuple[int, int]:
     """Solve the two-member model; return its stored values and action values.
 
-    The collective readout runs once per state node of each regime-period and
-    receives every member's action values there; the stored value carries
-    the state axes and a trailing member axis.
+    The household stream enumerates the action product once per state node of
+    each regime-period, every action carrying each member's value; the stored
+    value carries the state axes and a trailing member axis.
     """
-    per_node: list[int] = []
-    readout = max_Q_over_a.collective_readout
+    n_actions: list[int] = []
+    prepare = action_streaming._prepare_action_call
 
     def recording(
-        *,
-        member_Q: Mapping[str, FloatND],
-        feasibility: BoolND,
-        weights: Mapping[str, FloatND | float],
-        action_axes: tuple[int, ...],
-    ) -> tuple[dict[str, FloatND], BoolND]:
-        per_node.append(sum(prod(q.shape) for q in member_Q.values()))
-        return readout(
-            member_Q=member_Q,
-            feasibility=feasibility,
-            weights=weights,
-            action_axes=action_axes,
-        )
+        *, action_names: tuple[ActionName, ...], kwargs: dict[ReferenceName, QAndFArg]
+    ) -> tuple[
+        tuple[jax.Array, ...], dict[ReferenceName, QAndFArg], tuple[int, ...], int
+    ]:
+        prepared = prepare(action_names=action_names, kwargs=kwargs)
+        n_actions.append(prepared[-1])
+        return prepared
 
     model, params = make_two_member_model()
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(max_Q_over_a, "collective_readout", recording)
+        patch.setattr(action_streaming, "_prepare_action_call", recording)
         values = model.solve(params=params, log_level="off").values
     shapes = [
         np.asarray(v).shape for regimes in values.values() for v in regimes.values()
     ]
-    assert len(per_node) == len(shapes) and len(set(per_node)) == 1
+    assert len(n_actions) == len(shapes) and len(set(n_actions)) == 1
     stored = sum(prod(shape) for shape in shapes)
-    return stored, sum(prod(shape[:-1]) for shape in shapes) * per_node[0]
+    return stored, stored * n_actions[0]
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
@@ -597,27 +657,26 @@ def test_evaluations_count_the_member_axis(backend: FactsBackendName) -> None:
     )
 
 
-def test_exit_rule_kind_tie_and_compares_enter_the_exit_identity() -> None:
-    """Eight exit rules of one couple give eight exit identities."""
+def test_the_rule_and_its_tie_enter_the_composition_action_identity() -> None:
+    """Two rules with two ties each give four composition action identities."""
     identities = set()
-    for rule in ("unilateral", "mutual"):
-        for compares in ("each_action", "optimum"):
-            for tie in ("stay", "leave"):
-                model = settlement._comparison_model(
-                    rule=settlement._rule(rule=rule, compares=compares, tie=tie)
-                )
-                cells = normalize_declarations(read_model(model))["cells"]
-                identities |= {
-                    c.get("exit_identity") for c in cells if c["regime"] == "couple"
-                }
-    assert len(identities - {None}) == 8
+    for rule in (PCOnActions, PCOnWeight):
+        for tie in ("stay", "leave"):
+            model = transfer._comparison_model(rule=rule(tie=tie))
+            cells = normalize_declarations(read_model(model))["cells"]
+            identities |= {
+                c.get("composition_action_identity")
+                for c in cells
+                if c["regime"] == "couple"
+            }
+    assert len(identities - {None}) == 4
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_exit_role_keeps_the_projected_state_live_and_is_reported(
+def test_composition_action_role_keeps_the_projected_state_live_and_is_reported(
     backend: FactsBackendName,
 ) -> None:
-    """A single joining a couple as `f` keeps `w`, and its exit names the role."""
+    """A single joining a couple as `f` keeps `w`, and its composition action names the role."""
     report = _report("role", backend)
     closure = {
         _named(report, c): v
@@ -626,16 +685,16 @@ def test_exit_role_keeps_the_projected_state_live_and_is_reported(
     roles = {
         r.get("member")
         for r in report["analysis"]["declarations"]["relations"]
-        if r["kind"] == "exit" and r["targets"]
+        if r["kind"] == "composition_action" and r["targets"]
     }
     assert (closure["single@0"], roles) == (["w"], {"f"})
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_exit_observes_keeps_the_law_state_live_and_is_reported(
+def test_composition_action_observes_keeps_the_law_state_live_and_is_reported(
     backend: FactsBackendName,
 ) -> None:
-    """An observed offer whose law reads the history keeps it, and the exit names it."""
+    """An observed offer whose law reads the history keeps it, and the composition action names it."""
     report = _report("observed_offer", backend)
     closure = {
         _named(report, c): v
@@ -644,15 +703,15 @@ def test_exit_observes_keeps_the_law_state_live_and_is_reported(
     observed = [
         r.get("observes")
         for r in report["analysis"]["declarations"]["relations"]
-        if r["kind"] == "exit" and not r["targets"]
+        if r["kind"] == "composition_action" and not r["targets"]
     ]
     assert (closure["source@0"], observed) == (["lagged_school"], [["offer"]])
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_settlement_reads_stay_live(backend: FactsBackendName) -> None:
-    """The settlement's default and projections keep the case they read."""
-    report = _report("settle", backend)
+def test_transfer_reads_stay_live(backend: FactsBackendName) -> None:
+    """The transfer's default and projections keep the case they read."""
+    report = _report("transfer", backend)
     closure = {
         _named(report, c): v
         for c, v in report["analysis"]["dependency_closure"].items()

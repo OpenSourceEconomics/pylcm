@@ -3,7 +3,7 @@
 An IID process declared as a state is a value axis: the value array holds one slice
 per quadrature node. The same law declared as a `ShockGroup` is integrated within the
 period, so its value array equals the node-weighted average of those slices, and a
-subject whose draw is supplied at a node takes the node-state model's policy.
+agent whose draw is supplied at a node takes the node-state model's policy.
 """
 
 import functools
@@ -354,7 +354,7 @@ def _assert_reproduces_node_state_model(*, solver: str, bound: str | None) -> No
         log_level="off",
     ).to_dataframe()
     for panel in (legacy_panel, declared_panel):
-        panel.sort_values(["subject_id", "period"], inplace=True)
+        panel.sort_values(["agent_id", "period"], inplace=True)
     assert_array_almost_equal(
         declared_panel["consumption"].to_numpy(dtype=float),
         legacy_panel["consumption"].to_numpy(dtype=float),
@@ -394,7 +394,7 @@ def test_nbegm_health_cost_simulates_fresh_period_zero_draws(cost_scale: float) 
         seed=3,
         log_level="off",
     ).to_dataframe()
-    panel.sort_values(["subject_id", "period"], inplace=True)
+    panel.sort_values(["agent_id", "period"], inplace=True)
     first = panel[panel["period"] == 0]
     last = panel[panel["period"] == 1]
     draws = first["hcc_transitory"].to_numpy(dtype=float)
@@ -554,7 +554,7 @@ def test_declared_uniform_adjustment_cost_reproduces_node_state_model() -> None:
         )
 
     nodes = jnp.linspace(0.0, 1.0, 5)
-    n_subjects = 2 * 6 * 5
+    n_agents = 2 * 6 * 5
     wealth = jnp.tile(jnp.repeat(jnp.linspace(0.0, 4.0, 6), 5), 2)
     lagged_effort = jnp.repeat(jnp.arange(2, dtype=jnp.int32), 30)
     paths = jnp.stack(
@@ -564,8 +564,8 @@ def test_declared_uniform_adjustment_cost_reproduces_node_state_model() -> None:
     common = {
         "wealth": wealth,
         "lagged_effort": lagged_effort,
-        "period": jnp.zeros(n_subjects, dtype=jnp.int32),
-        "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
+        "period": jnp.zeros(n_agents, dtype=jnp.int32),
+        "regime_id": jnp.zeros(n_agents, dtype=jnp.int32),
     }
     legacy_panel = legacy.simulate(
         params={},
@@ -586,7 +586,7 @@ def test_declared_uniform_adjustment_cost_reproduces_node_state_model() -> None:
         use_categorical_codes=True,
     ).to_dataframe(use_categorical_codes=True)
     for panel in (legacy_panel, declared_panel):
-        panel.sort_values(["subject_id", "period"], inplace=True)
+        panel.sort_values(["agent_id", "period"], inplace=True)
     for column in ("effort", "saving", "wealth", "adjustment_cost"):
         assert_array_almost_equal(
             declared_panel[column].to_numpy(dtype=float),
@@ -717,7 +717,7 @@ def test_nbegm_carries_passive_discrete_state_into_terminal() -> None:
         log_level="off",
         use_categorical_codes=True,
     ).to_dataframe(use_categorical_codes=True)
-    panel.sort_values(["subject_id", "period"], inplace=True)
+    panel.sort_values(["agent_id", "period"], inplace=True)
     first = panel[panel["period"] == 0]
     last = panel[panel["period"] == 1]
     np.testing.assert_array_equal(last["good_health"].to_numpy(), good_health)
@@ -952,15 +952,15 @@ def _assert_values_integrate_node_state_values(
                 label=f"V period={period} regime={regime_name}",
             )
             assert not set(nodes) & set(
-                declared_solution.value_array(period=period, regime=regime_name).dims
+                declared_solution.value_array(step=period, regime=regime_name).dims
             )
     return legacy_solution, declared_solution
 
 
 def _node_paths(
-    *, model: Model, n_subjects: int, shock: StateName = "hcc_transitory"
+    *, model: Model, n_agents: int, shock: StateName = "hcc_transitory"
 ) -> FloatND:
-    """Node values cycling over subjects and periods, as a (subjects, periods) path."""
+    """Node values cycling over agents and periods, as a (agents, periods) path."""
     grid = jnp.asarray(
         NormalIIDProcess(
             n_points=_N_HCC_NODES, gauss_hermite=True, mu=0.0, sigma=1.0
@@ -970,19 +970,19 @@ def _node_paths(
             n_points=_SCALE_NODES, start=0.8, stop=1.2
         ).get_gridpoints()
     )
-    codes = (jnp.arange(n_subjects)[:, None] + jnp.arange(model.n_periods)) % len(grid)
+    codes = (jnp.arange(n_agents)[:, None] + jnp.arange(model.n_periods)) % len(grid)
     return grid[codes]
 
 
-def _start_frame(*, shape: str, n_subjects: int) -> dict[StateName, FloatND]:
-    wealth = jnp.tile(jnp.arange(1.0, 6.0), n_subjects // 5)
+def _start_frame(*, shape: str, n_agents: int) -> dict[StateName, FloatND]:
+    wealth = jnp.tile(jnp.arange(1.0, 6.0), n_agents // 5)
     common = {
         "wealth": wealth,
         "period": jnp.zeros(wealth.shape, dtype=jnp.int32),
         "regime_id": jnp.zeros(wealth.shape, dtype=jnp.int32),
     }
     if shape in {"passive_state", "aca"}:
-        common["good_health"] = jnp.arange(n_subjects, dtype=jnp.int32) % 2
+        common["good_health"] = jnp.arange(n_agents, dtype=jnp.int32) % 2
     return common
 
 
@@ -994,7 +994,7 @@ def test_declared_shock_reproduces_node_state_model_for_aca_egm_shapes(
     """Each ACA-shaped EGM source solves and simulates like its node-state model.
 
     Every published value is the node-weighted node-state value, without a node
-    axis, and subjects given node draws at every date take the node-state policy.
+    axis, and agents given node draws at every date take the node-state policy.
     """
     legacy = _aca_shaped_model(solver=solver, declared=False, shape=shape)
     declared = _aca_shaped_model(solver=solver, declared=True, shape=shape)
@@ -1005,9 +1005,9 @@ def test_declared_shock_reproduces_node_state_model_for_aca_egm_shapes(
         legacy=legacy, declared=declared, nodes={"hcc_transitory": weights}
     )
 
-    n_subjects = 30
-    paths = _node_paths(model=legacy, n_subjects=n_subjects)
-    common = _start_frame(shape=shape, n_subjects=n_subjects)
+    n_agents = 30
+    paths = _node_paths(model=legacy, n_agents=n_agents)
+    common = _start_frame(shape=shape, n_agents=n_agents)
     legacy_panel = legacy.simulate(
         params={},
         solution=legacy_solution,
@@ -1027,8 +1027,8 @@ def test_declared_shock_reproduces_node_state_model_for_aca_egm_shapes(
         use_categorical_codes=True,
     ).to_dataframe(use_categorical_codes=True)
     for panel in (legacy_panel, declared_panel):
-        panel.sort_values(["subject_id", "period"], inplace=True)
-    assert len(declared_panel) == len(legacy_panel) == 3 * n_subjects
+        panel.sort_values(["agent_id", "period"], inplace=True)
+    assert len(declared_panel) == len(legacy_panel) == 3 * n_agents
     for column in legacy_panel.columns:
         if column in {"regime", "regime_name"}:
             np.testing.assert_array_equal(
@@ -1348,7 +1348,7 @@ def test_saved_declared_solution_publishes_and_replays_integrated_values(
                 "hcc_transitory"
                 not in loaded.metadata.value_schemas[period, regime_name].axis_names
             )
-    common = _start_frame(shape="passive_state", n_subjects=20)
+    common = _start_frame(shape="passive_state", n_agents=20)
     panels = [
         model.simulate(
             params={},
@@ -1361,7 +1361,7 @@ def test_saved_declared_solution_publishes_and_replays_integrated_values(
         for result in (solution, loaded)
     ]
     for panel in panels:
-        panel.sort_values(["subject_id", "period"], inplace=True)
+        panel.sort_values(["agent_id", "period"], inplace=True)
     for column in ("consumption", "wealth", "hcc_transitory", "value"):
         assert_array_almost_equal(
             panels[1][column].to_numpy(dtype=float),
@@ -1452,7 +1452,7 @@ def test_declared_fresh_draws_follow_the_current_iid_stream() -> None:
             params=params, initial_conditions=initial, seed=17, log_level="off"
         )
         .to_dataframe()
-        .sort_values(["subject_id", "period"])
+        .sort_values(["agent_id", "period"])
         .query("period == 0")["hcc_transitory"]
         .to_numpy(dtype=float)
         for model in (current_iid, adapted)
@@ -1471,7 +1471,7 @@ def test_declared_shock_inputs_keep_their_tags() -> None:
         solver="nbegm", declared=True, shape="multi_date", group=group
     )
     solution = model.solve(params={}, log_level="off")
-    common = _start_frame(shape="multi_date", n_subjects=10)
+    common = _start_frame(shape="multi_date", n_agents=10)
     base = jnp.linspace(-1.5, 1.5, 10)
     path = jnp.stack([jnp.linspace(-0.4, 0.6, 10), jnp.linspace(0.3, -0.9, 10)], 1)
 
@@ -1488,7 +1488,7 @@ def test_declared_shock_inputs_keep_their_tags() -> None:
             seed=5,
             log_level="off",
         ).to_dataframe()
-        panel = panel.sort_values(["subject_id", "period"])
+        panel = panel.sort_values(["agent_id", "period"])
         return np.stack(
             [
                 panel.query(f"period == {period}")["hcc_transitory"].to_numpy(float)
@@ -1515,7 +1515,7 @@ def test_declared_physical_value_outside_its_support_is_refused() -> None:
     model = _aca_shaped_model(
         solver="nbegm", declared=True, shape="multi_date", group=group
     )
-    common = _start_frame(shape="multi_date", n_subjects=5)
+    common = _start_frame(shape="multi_date", n_agents=5)
     with pytest.raises(InvalidSimulationInputError, match="outside the law's support"):
         model.simulate(
             params={},
@@ -1564,9 +1564,9 @@ def test_declared_shock_solves_nested_egm_on_the_node_axis(*, solver: str) -> No
     expected = np.mean(
         [_oracle(wealth=2.0, housing=1.0, shock=z)[0] for z in (0.0, 3.0)]
     )
-    assert np.shape(solution.values[1]["child"]) == (3, 3)
+    assert np.shape(solution.values[1]["child"]) == (3, 3, 1)
     np.testing.assert_almost_equal(
-        solution.values[1]["child"][1, 1], expected, decimal=DECIMAL_PRECISION
+        solution.values[1]["child"][1, 1, 0], expected, decimal=DECIMAL_PRECISION
     )
     physical = jnp.asarray([0.0, 2.0, 3.0])
     result = model.simulate(
@@ -1593,7 +1593,7 @@ def test_finite_nnbegm_extrapolates_a_draw_beyond_its_outer_nodes() -> None:
     The rule's nodes sit inside the law's support, so a draw can lie beyond the
     last node. The finite NNBEGM replay reads it as it reads a draw between nodes,
     linearly in the node coordinate, here extrapolating the last segment: the
-    consumption of a subject at the same wealth and housing continues the line
+    consumption of an agent at the same wealth and housing continues the line
     through the consumptions at the two nodes.
     """
     declarations = _declarations()
@@ -1633,7 +1633,7 @@ def test_finite_nnbegm_extrapolates_a_draw_beyond_its_outer_nodes() -> None:
         )
         .to_dataframe()
         .query("period == 1")
-        .sort_values("subject_id")
+        .sort_values("agent_id")
     )
     at_nodes = panel["consumption"].to_numpy(dtype=float)
     np.testing.assert_almost_equal(
@@ -1728,7 +1728,7 @@ def _simulate_finite_nnbegm(
     *, model: Model, regime: RegimeName, wealth: FloatND, eps: FloatND | None
 ) -> SimulationResult:
     """Simulate from `regime`; `eps` is the entry draw of a start in the child."""
-    n_subjects = wealth.shape[0]
+    n_agents = wealth.shape[0]
     return model.simulate(
         params={**_params(), "parent": {"next_housing": {"landing_q": 0.0}}}
         if "parent" in model.regime_names_to_ids
@@ -1737,10 +1737,10 @@ def _simulate_finite_nnbegm(
         seed=3,
         initial_conditions={
             "wealth": wealth,
-            "housing": jnp.zeros((n_subjects,)),
-            "age": jnp.full((n_subjects,), 0.0 if regime == "parent" else 1.0),
+            "housing": jnp.zeros((n_agents,)),
+            "age": jnp.full((n_agents,), 0.0 if regime == "parent" else 1.0),
             "regime_id": jnp.full(
-                (n_subjects,), model.regime_names_to_ids[regime], jnp.int32
+                (n_agents,), model.regime_names_to_ids[regime], jnp.int32
             ),
             **({} if eps is None else {"eps": PhysicalValues(values=eps)}),
         },
@@ -1748,7 +1748,7 @@ def _simulate_finite_nnbegm(
 
 
 def test_finite_nnbegm_replays_a_start_on_its_wealth_grid_exactly() -> None:
-    """A subject inside the solved wealth grid takes the closed-form consumption."""
+    """An agent inside the solved wealth grid takes the closed-form consumption."""
     panel = (
         _simulate_finite_nnbegm(
             model=_finite_nnbegm_model(with_parent=False),
@@ -1760,7 +1760,7 @@ def test_finite_nnbegm_replays_a_start_on_its_wealth_grid_exactly() -> None:
         .query("period == 1")
     )
     assert_array_almost_equal(
-        panel.sort_values("subject_id")["consumption"].to_numpy(dtype=float),
+        panel.sort_values("agent_id")["consumption"].to_numpy(dtype=float),
         [_oracle(wealth=2.5, housing=0.0, shock=z)[2] for z in (0.0, 3.0)],
         decimal=DECIMAL_PRECISION,
     )
@@ -1831,13 +1831,15 @@ def test_realising_omitted_draws_again_traces_no_new_program(
 
     simulate()
     jitted: list[str] = []
-    jit = jax.jit
 
-    def spy(function, *args, **kwargs):
-        jitted.append(getattr(function, "__name__", repr(function)))
-        return jit(function, *args, **kwargs)
+    def recording[**P, R](jit: Callable[P, R]) -> Callable[P, R]:
+        def spy(*args: P.args, **kwargs: P.kwargs) -> R:
+            jitted.append(getattr(args[0], "__name__", repr(args[0])))
+            return jit(*args, **kwargs)
 
-    monkeypatch.setattr(jax, "jit", spy)
+        return spy
+
+    monkeypatch.setattr(jax, "jit", recording(jax.jit))
 
     simulate()
 

@@ -38,7 +38,7 @@ def period_to_continuation_target(
         if context.regime_name not in active_regimes:
             continue
         reached = context.solution_reachability.targets(
-            period=period, source=context.regime_name
+            step=period, source=context.regime_name
         )
         if len(reached) != 1:
             msg = (

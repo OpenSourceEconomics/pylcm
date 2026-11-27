@@ -17,7 +17,7 @@ explicit budget constraint).
 """
 
 import functools
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 import jax.numpy as jnp
 import numpy as np
@@ -304,7 +304,7 @@ def _survival_prob_model(solver: str) -> Model:
 
 
 @pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
-def test_smoothstep_survival_probability_matches_brute_force():
+def test_smoothstep_survival_probability_matches_brute_force() -> None:
     """A wealth-dependent survival probability matches the brute-force oracle.
 
     The stay probability rises across a wealth band spanning many grid cells
@@ -374,7 +374,7 @@ def _markov_health_model(solver: str) -> Model:
 
 
 @pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
-def test_markov_weights_reading_wealth_match_brute_force():
+def test_markov_weights_reading_wealth_match_brute_force() -> None:
     """Asset-reading Markov weights of a discrete state match brute force.
 
     The health transition weights read current wealth through a smoothstep, so
@@ -397,7 +397,7 @@ def test_markov_weights_reading_wealth_match_brute_force():
         brute_V = np.asarray(brute_solution[period]["working_life"])
         dcegm_V = np.asarray(dcegm_solution[period]["working_life"])
         # V leads with the discrete health axis; wealth is the trailing axis.
-        assert brute_V.shape == dcegm_V.shape == (2, 160)
+        assert brute_V.shape == dcegm_V.shape == (2, 160, 1)
         np.testing.assert_allclose(
             dcegm_V[:, N_BRUTE_UNSTABLE_NODES:],
             brute_V[:, N_BRUTE_UNSTABLE_NODES:],
@@ -453,7 +453,7 @@ def _passive_skill_model(solver: str) -> Model:
 
 
 @pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
-def test_passive_skill_law_reading_wealth_matches_brute_force():
+def test_passive_skill_law_reading_wealth_matches_brute_force() -> None:
     """`next_skill = decay * skill + gain * smoothstep(wealth)` matches brute.
 
     The passive state's law reads current wealth, so the child's skill value
@@ -503,7 +503,9 @@ def smooth_death_prob(wealth: ContinuousState) -> FloatND:
     return 1.0 - survival_of_wealth(wealth)
 
 
-def _build_model_with_survival_cells(*, stay, die) -> Model:
+def _build_model_with_survival_cells(
+    *, stay: Callable[..., FloatND], die: Callable[..., FloatND]
+) -> Model:
     working = ConsumptionSavingsRegime(
         actions={"consumption": CONSUMPTION_GRID},
         states={"wealth": WEALTH_GRID},
@@ -546,7 +548,9 @@ def _build_model_with_survival_cells(*, stay, die) -> Model:
         pytest.param(narrow_stay_prob, narrow_death_prob, id="sub_cell_smoothstep"),
     ],
 )
-def test_cliff_in_regime_transition_probability_raises(*, stay, die):
+def test_cliff_in_regime_transition_probability_raises(
+    *, stay: Callable[..., FloatND], die: Callable[..., FloatND]
+) -> None:
     """A survival probability that jumps at node resolution fails at build.
 
     A boolean step is a genuine cliff; a smoothstep narrower than one wealth
@@ -561,7 +565,7 @@ def test_cliff_in_regime_transition_probability_raises(*, stay, die):
 
 
 @pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
-def test_smooth_band_regime_transition_probability_constructs():
+def test_smooth_band_regime_transition_probability_constructs() -> None:
     """A survival probability ramping over many grid cells builds fine."""
     model = _build_model_with_survival_cells(
         stay=smooth_stay_prob, die=smooth_death_prob

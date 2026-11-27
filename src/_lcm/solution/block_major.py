@@ -21,13 +21,13 @@ every period of the component is solved before the next code starts:
   period-major solve publishes, only when that value is read.
 
 Forward simulation reads a component's values through a `ComponentValueSource`:
-`SolvingComponentValues` solves each component as its subjects are simulated,
+`SolvingComponentValues` solves each component as its agents are simulated,
 and `UploadedComponentValues` places a retained component back on the device.
 
 A component job solves a selection of the codes: `selected_components` scopes
 the schedules a solve or a simulation starts to those codes. A selected
 schedule retains its codes on the host and never publishes a result; its
-simulation holds the rows of its codes' subjects alone.
+simulation holds the rows of its codes' agents alone.
 """
 
 import dataclasses
@@ -741,7 +741,7 @@ class RetainedComponentValues:
             reads = f"Materializing {len(coordinates)} block-major values at once"
             remedy = (
                 "Read the values one at a time with "
-                "SolutionResult.value(period=..., regime=...), save the result "
+                "SolutionResult.value(step=..., regime=...), save the result "
                 "with SolutionResult.save, or raise "
                 "ExecutionConfig.device_memory_bytes."
             )
@@ -944,7 +944,7 @@ class ComponentSchedule:
                 f"are {tuple(component.code for component in every_component)!r}."
             )
             raise ExecutionPlanningError(msg)
-        self._subject_codes = codes
+        self._agent_codes = codes
         self._components = tuple(
             component
             for component in every_component
@@ -978,9 +978,9 @@ class ComponentSchedule:
         return self._components
 
     @property
-    def subject_codes(self) -> tuple[int, ...] | None:
+    def agent_codes(self) -> tuple[int, ...] | None:
         """Return the selected codes, or `None` when every code is solved."""
-        return self._subject_codes
+        return self._agent_codes
 
     @property
     def retained(self) -> RetainedComponentValues:
@@ -1058,7 +1058,7 @@ class ComponentSchedule:
             logger=self._logger,
             counts=self._feasibility_warnings,
             scope=""
-            if not codes or (self._subject_codes is None and codes == every_code)
+            if not codes or (self._agent_codes is None and codes == every_code)
             else f", {self._components[0].state_name} codes {codes} only",
         )
 
@@ -1092,9 +1092,9 @@ class SolvingComponentValues:
     """Solve each component as forward simulation reaches its code.
 
     `acquire` solves the code's component and hands its device values to the
-    simulation; `release` retains them on the host once the code's subjects
+    simulation; `release` retains them on the host once the code's agents
     are simulated. Every code is acquired and released, including codes no
-    subject holds, so the retained result is complete.
+    agent holds, so the retained result is complete.
     """
 
     def __init__(self, *, schedule: ComponentSchedule) -> None:
@@ -1117,9 +1117,9 @@ class SolvingComponentValues:
         return self._schedule.retained
 
     @property
-    def subject_codes(self) -> tuple[int, ...] | None:
+    def agent_codes(self) -> tuple[int, ...] | None:
         """Return the selected codes, or `None` when every code is solved."""
-        return self._schedule.subject_codes
+        return self._schedule.agent_codes
 
     def acquire(
         self, *, code: int
@@ -1127,7 +1127,7 @@ class SolvingComponentValues:
         """Solve the code's component and return its values on the device.
 
         Under host storage the solve has already moved the values to the host,
-        so they are retained at once and read back for the code's subjects.
+        so they are retained at once and read back for the code's agents.
         """
         values = self._schedule.solve_component(code=code)
         if any(
@@ -1171,7 +1171,7 @@ class SolvingComponentValues:
 
 
 class UploadedComponentValues:
-    """Place each retained component back on the device for its subjects."""
+    """Place each retained component back on the device for its agents."""
 
     def __init__(
         self, *, retained: RetainedComponentValues, store: _ValueStoreBoundary
@@ -1190,8 +1190,8 @@ class UploadedComponentValues:
         return self._retained.coverage.codes
 
     @property
-    def subject_codes(self) -> None:
-        """Every code's subjects are simulated from a complete retention."""
+    def agent_codes(self) -> None:
+        """Every code's agents are simulated from a complete retention."""
         return
 
     def acquire(
@@ -1266,7 +1266,7 @@ def selected_components(*, codes: tuple[int, ...]) -> Generator[ComponentSelecti
     """Scope the block-major schedules started inside to `codes`.
 
     A selected solve retains its codes and publishes no result; a selected
-    simulation simulates the subjects of its codes alone. The active selection
+    simulation simulates the agents of its codes alone. The active selection
     scope ends with the block; its returned retention can remain owned by the caller.
     """
     selection = ComponentSelection(codes=codes)

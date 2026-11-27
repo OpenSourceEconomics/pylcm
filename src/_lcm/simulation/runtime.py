@@ -35,18 +35,22 @@ from _lcm.execution.workspace_planning import (
     compiler_memory_reservation,
     plan_workspace,
 )
+from _lcm.simulation.agent_parallel import (
+    declared_agent_shard_arg_names,
+    shard_agent_function,
+)
 from _lcm.simulation.chunk_profile_cache import ProfileCacheToken
 from _lcm.simulation.host_operations import (
     ProfiledSimulationOperations,
     _abstract_operand,
 )
 from _lcm.simulation.operand_placement import (
-    SubjectArgumentNames,
+    AgentArgumentNames,
     place_simulation_arguments,
 )
 from _lcm.simulation.program_types import (
-    SUBJECT_AXIS,
-    SUBJECT_WIDTH_KEYWORD,
+    AGENT_AXIS,
+    AGENT_WIDTH_KEYWORD,
     SimulationBuildContext,
     SimulationPrograms,
 )
@@ -56,10 +60,6 @@ from _lcm.simulation.residency import (
     require_transfer_headroom,
     resident_bytes_by_device,
     union_buffer_footprints,
-)
-from _lcm.simulation.subject_parallel import (
-    declared_subject_shard_arg_names,
-    shard_subject_function,
 )
 from _lcm.solution.backward_induction import (
     CompilationWave,
@@ -73,24 +73,24 @@ from _lcm.typing import ArgumentTree, HostArray, PytreeValue, ShapeDtypePytree
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import ReferenceName
 
-# Narrowest inner tile an unbudgeted subject axis is lowered at, and the width it
-# keeps when one subject is too heavy for the byte cap below to afford more.
-_DEFAULT_UNBUDGETED_SUBJECT_WIDTH = 4096
+# Narrowest inner tile an unbudgeted agent axis is lowered at, and the width it
+# keeps when one agent is too heavy for the byte cap below to afford more.
+_DEFAULT_UNBUDGETED_AGENT_WIDTH = 4096
 
-# Largest argument slice one unbudgeted subject tile aims for, so the live block
+# Largest argument slice one unbudgeted agent tile aims for, so the live block
 # stays bounded by a fixed number of bytes on every backend whatever the model.
-# With the standing per-subject weight below this admits 262,144 subjects, the
+# With the standing per-agent weight below this admits 262,144 agents, the
 # widest tile the A40 width sweep measured and the widest it needed: every
 # simulation there reaches its full population extent, or that tile.
-_UNBUDGETED_SUBJECT_BLOCK_BYTES = 16 * 1024 * 1024
+_UNBUDGETED_AGENT_BLOCK_BYTES = 16 * 1024 * 1024
 
-# Standing per-subject weight, and the floor under the weight read off a
+# Standing per-agent weight, and the floor under the weight read off a
 # program's own operands.  Declared operands are only the visible part of a
-# subject's working set -- the sweep measured roughly thirty times their bytes
+# agent's working set -- the sweep measured roughly thirty times their bytes
 # once temporaries and outputs are counted -- so a light program is still
-# charged this much, and one that reads no per-subject operand at all is charged
+# charged this much, and one that reads no per-agent operand at all is charged
 # it rather than being admitted at an unbounded width.
-_MIN_SUBJECT_ARGUMENT_BYTES = 64
+_MIN_AGENT_ARGUMENT_BYTES = 64
 
 
 def _empty_widths() -> MappingProxyType[str, int]:
@@ -159,8 +159,8 @@ class SimulationRuntime:
     enable_jit: bool
     """Whether to compile the selected body or invoke its eager form."""
 
-    subject_devices: tuple[jax.Device, ...]
-    """Actual ordered devices evaluating subjects, independent of solve placement."""
+    agent_devices: tuple[jax.Device, ...]
+    """Actual ordered devices evaluating agents, independent of solve placement."""
 
     operations: ProfiledSimulationOperations = dataclasses.field(
         default_factory=ProfiledSimulationOperations, repr=False
@@ -186,7 +186,7 @@ class SimulationRuntime:
     probe can precede materialization; see `_prepared_route_key`. Entries hold
     immutable abstract description and compiled code only — never a caller
     array, never an admission or validation verdict. The runtime's own
-    configuration (`execution`, `enable_jit`, `subject_devices`) is immutable for
+    configuration (`execution`, `enable_jit`, `agent_devices`) is immutable for
     the life of one `SimulationRuntime` and therefore constant across this dict,
     so it is deliberately absent from the key: a different execution config,
     device order, explicit width or JIT disposition is a different runtime with
@@ -225,7 +225,7 @@ class SimulationRuntime:
         program: CoreProgram,
         arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
-        n_subjects: int,
+        n_agents: int,
         residency: SimulationDispatchContext | None = None,
     ) -> PytreeValue:
         """Invoke the selected executable with this call's dynamic arguments.
@@ -244,7 +244,7 @@ class SimulationRuntime:
                 program=program,
                 arguments=arguments,
                 period=period,
-                n_subjects=n_subjects,
+                n_agents=n_agents,
             )
             if self.execution.device_memory_bytes is None and residency is None
             else None
@@ -260,11 +260,11 @@ class SimulationRuntime:
             program=program,
             arguments=arguments,
             period=period,
-            n_subjects=n_subjects,
+            n_agents=n_agents,
             residency=residency,
         )
         compiled = self._prepare_materialized(
-            program=materialized, n_subjects=n_subjects, residency=residency
+            program=materialized, n_agents=n_agents, residency=residency
         )
         if route_key is not None:
             self._publish_prepared_route(
@@ -318,9 +318,9 @@ class SimulationRuntime:
             return None
         placed = place_simulation_arguments(
             arguments=built,
-            subject_arg_names=route.subject_arg_names,
+            agent_arg_names=route.agent_arg_names,
             value_reads=route.requirements.value_reads,
-            devices=self.subject_devices,
+            devices=self.agent_devices,
             budget_bytes=None,
             live_footprint=None,
             budget_devices=(),
@@ -339,7 +339,7 @@ class SimulationRuntime:
     ) -> None:
         """Record the static preparation an exact repeat of this call may reuse."""
         builder = program.argument_builder
-        if not isinstance(builder, SubjectArgumentNames):
+        if not isinstance(builder, AgentArgumentNames):
             return
         signature = _operand_signature(arguments=materialized.arguments)
         if signature is None:
@@ -348,7 +348,7 @@ class SimulationRuntime:
             self.routes[key] = _PreparedRoute(
                 source_program=program,
                 argument_builder=builder,
-                subject_arg_names=builder.subject_arg_names,
+                agent_arg_names=builder.agent_arg_names,
                 requirements=materialized.requirements,
                 widths=compiled.widths,
                 operand_signature=signature,
@@ -361,7 +361,7 @@ class SimulationRuntime:
         program: CoreProgram,
         arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
-        n_subjects: int,
+        n_agents: int,
     ) -> CompiledSimulationProgram:
         """Return the shared lazy/AOT executable without executing its body."""
         if self.execution.device_memory_bytes is not None:
@@ -370,11 +370,9 @@ class SimulationRuntime:
                 "accounting is available at live dispatch."
             )
         materialized = self._materialize(
-            program=program, arguments=arguments, period=period, n_subjects=n_subjects
+            program=program, arguments=arguments, period=period, n_agents=n_agents
         )
-        compiled = self._prepare_materialized(
-            program=materialized, n_subjects=n_subjects
-        )
+        compiled = self._prepare_materialized(program=materialized, n_agents=n_agents)
         with self.lock:
             self.prepared[
                 (period, program.name, _func_dedup_key(func=program.function))
@@ -387,15 +385,15 @@ class SimulationRuntime:
         program: CoreProgram,
         arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
-        n_subjects: int,
+        n_agents: int,
         residency: SimulationDispatchContext | None = None,
     ) -> MaterializedCoreProgram:
         """Build and place one argument tree before any planner candidate runs."""
         builder = program.argument_builder
-        if not isinstance(builder, SubjectArgumentNames):
-            raise TypeError("Simulation argument builders must declare subject names.")
+        if not isinstance(builder, AgentArgumentNames):
+            raise TypeError("Simulation argument builders must declare agent names.")
         materialized = materialize_core_program(
-            program=_with_subject_extent(program=program, n_subjects=n_subjects),
+            program=_with_agent_extent(program=program, n_agents=n_agents),
             context=_build_context(arguments=arguments, period=period),
         )
         live = (
@@ -412,9 +410,9 @@ class SimulationRuntime:
             materialized,
             arguments=place_simulation_arguments(
                 arguments=materialized.arguments,
-                subject_arg_names=builder.subject_arg_names,
+                agent_arg_names=builder.agent_arg_names,
                 value_reads=materialized.requirements.value_reads,
-                devices=self.subject_devices,
+                devices=self.agent_devices,
                 budget_bytes=self.execution.device_memory_bytes,
                 live_footprint=live,
                 budget_devices=() if residency is None else residency.budget_devices,
@@ -427,7 +425,7 @@ class SimulationRuntime:
         program: CoreProgram,
         arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
-        n_subjects: int,
+        n_agents: int,
         widths: Mapping[str, int],
     ) -> CompiledSimulationProgram:
         """Compile an explicitly placed abstract candidate without admitting a call.
@@ -442,9 +440,9 @@ class SimulationRuntime:
                 program=program,
                 arguments=arguments,
                 period=period,
-                n_subjects=n_subjects,
+                n_agents=n_agents,
             ),
-            n_subjects=n_subjects,
+            n_agents=n_agents,
             widths=widths,
             abstract_inputs=True,
         )
@@ -455,7 +453,7 @@ class SimulationRuntime:
         program: CoreProgram,
         arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
         period: int,
-        n_subjects: int,
+        n_agents: int,
         widths: Mapping[str, int],
         wave: CompilationWave,
         label: str,
@@ -473,10 +471,10 @@ class SimulationRuntime:
             program=program,
             arguments=arguments,
             period=period,
-            n_subjects=n_subjects,
+            n_agents=n_agents,
         )
         key = _simulation_lowering_key(
-            runtime=self, program=materialized, n_subjects=n_subjects, widths=widths
+            runtime=self, program=materialized, n_agents=n_agents, widths=widths
         )
         with self.lock:
             cached = self.cache.get(key)
@@ -486,10 +484,10 @@ class SimulationRuntime:
             program=materialized,
             enable_jit=self.enable_jit,
             abstract_inputs=True,
-            subject_devices=self.subject_devices,
-            shard_subjects=self.execution.simulation_sharding == "subjects",
-            subject_width=min(
-                self.execution.axis_widths.get(SUBJECT_AXIS, n_subjects), n_subjects
+            agent_devices=self.agent_devices,
+            shard_agents=self.execution.simulation_sharding == "agents",
+            agent_width=min(
+                self.execution.axis_widths.get(AGENT_AXIS, n_agents), n_agents
             ),
         )
         return wave.lower(
@@ -504,7 +502,7 @@ class SimulationRuntime:
         self,
         *,
         program: MaterializedCoreProgram,
-        n_subjects: int,
+        n_agents: int,
         residency: SimulationDispatchContext | None = None,
     ) -> CompiledSimulationProgram:
         """Recheck live residency while reusing compiled candidates by width."""
@@ -529,11 +527,11 @@ class SimulationRuntime:
                 budget_note=self.execution.device_memory_cap_note(),
             )
             external = resident_bytes_by_device(
-                live=live, arguments=arguments, devices=self.subject_devices
+                live=live, arguments=arguments, devices=self.agent_devices
             )
             resident = max(external.values())
             resident_lookup = _SimulationResidentBytes(
-                live=live, arguments=program.arguments, devices=self.subject_devices
+                live=live, arguments=program.arguments, devices=self.agent_devices
             )
         plan = plan_workspace(
             axes=program.requirements.axes,
@@ -545,7 +543,7 @@ class SimulationRuntime:
             ),
             width_ceilings=self.execution.axis_width_ceilings,
             compile_candidate=_CachedSimulationCandidateCompiler(
-                runtime=self, program=program, n_subjects=n_subjects
+                runtime=self, program=program, n_agents=n_agents
             ),
             budget_bytes=budget,
             resident_bytes=resident,
@@ -564,10 +562,8 @@ class SimulationRuntime:
             raise ExecutionPlanningError(
                 "Budgeted dispatch requires a live residency context."
             )
-        if not set(self.subject_devices).issubset(residency.budget_devices):
-            raise ExecutionPlanningError(
-                "The live budget context omits subject devices."
-            )
+        if not set(self.agent_devices).issubset(residency.budget_devices):
+            raise ExecutionPlanningError("The live budget context omits agent devices.")
         if (
             not self.enable_jit
             or program.disposition is CoreExecutionDisposition.HOST_DRIVEN
@@ -581,13 +577,13 @@ class SimulationRuntime:
         self,
         *,
         program: MaterializedCoreProgram,
-        n_subjects: int,
+        n_agents: int,
         widths: Mapping[str, int],
         abstract_inputs: bool = False,
     ) -> CompiledSimulationProgram:
         """Own one compilation per concrete width without retaining live arguments."""
         key = _simulation_lowering_key(
-            runtime=self, program=program, n_subjects=n_subjects, widths=widths
+            runtime=self, program=program, n_agents=n_agents, widths=widths
         )
         with self.lock:
             cached = self.cache.get(key)
@@ -605,11 +601,11 @@ class SimulationRuntime:
                 program=program,
                 enable_jit=self.enable_jit,
                 abstract_inputs=abstract_inputs,
-                subject_devices=self.subject_devices,
-                shard_subjects=self.execution.simulation_sharding == "subjects",
-                subject_width=min(
-                    self.execution.axis_widths.get(SUBJECT_AXIS, n_subjects),
-                    n_subjects,
+                agent_devices=self.agent_devices,
+                shard_agents=self.execution.simulation_sharding == "agents",
+                agent_width=min(
+                    self.execution.axis_widths.get(AGENT_AXIS, n_agents),
+                    n_agents,
                 ),
             )
             with nested_phase(name="simulation_compilation"):
@@ -665,17 +661,17 @@ class _PreparedRoute:
     argument_builder: CoreArgumentBuilder
     """The declared binder invoked afresh on every call; it owns no arrays."""
 
-    subject_arg_names: tuple[ReferenceName, ...]
-    """Operands partitioned across subjects, as the builder declares them."""
+    agent_arg_names: tuple[ReferenceName, ...]
+    """Operands partitioned across agents, as the builder declares them."""
 
     requirements: CoreExecutionRequirements
-    """Subject-extent descriptor: planner axes and addressed value reads."""
+    """Agent-extent descriptor: planner axes and addressed value reads."""
 
     widths: MappingProxyType[str, int]
     """The selected candidate's width map, reused instead of re-derived.
 
     Pinned from the compiled candidate itself, so an explicit `ExecutionConfig`
-    width and a derived unbudgeted subject width are both carried exactly as the
+    width and a derived unbudgeted agent width are both carried exactly as the
     planner selected them; nothing here re-runs `workspace_width_candidates`.
     """
 
@@ -711,7 +707,7 @@ def _prepared_route_key(
     program: CoreProgram,
     arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
     period: int,
-    n_subjects: int,
+    n_agents: int,
 ) -> Hashable | None:
     """Return the caller-side key a prepared route is probed with.
 
@@ -729,7 +725,7 @@ def _prepared_route_key(
         _func_dedup_key(func=program.function),
         program.disposition,
         program.compiler_options,
-        n_subjects,
+        n_agents,
         signature,
         _trace_settings_key(),
     )
@@ -739,7 +735,7 @@ def _simulation_lowering_key(
     *,
     runtime: SimulationRuntime,
     program: MaterializedCoreProgram,
-    n_subjects: int,
+    n_agents: int,
     widths: Mapping[str, int],
 ) -> Hashable:
     """Return the full compiler-identity key shared by compilation and dispatch.
@@ -755,11 +751,11 @@ def _simulation_lowering_key(
         program_identity=_func_dedup_key(func=program.function),
         arguments=jax.tree.map(_abstract_operand, program.arguments),
         specialization_key=(
-            n_subjects,
+            n_agents,
             tuple(widths.items()),
             runtime.enable_jit,
             runtime.execution.simulation_sharding,
-            tuple((device.platform, device.id) for device in runtime.subject_devices),
+            tuple((device.platform, device.id) for device in runtime.agent_devices),
         ),
         output_roles=program.output_roles,
         layout_key=program.disposition,
@@ -774,7 +770,7 @@ def _materialize_abstract(
     program: CoreProgram,
     arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
     period: int,
-    n_subjects: int,
+    n_agents: int,
 ) -> MaterializedCoreProgram:
     """Bind placed shape descriptors to a compiled program at a population extent."""
     if not runtime.enable_jit or (
@@ -784,10 +780,10 @@ def _materialize_abstract(
             "Abstract profiling requires a compiled simulation program."
         )
     _require_abstract_arguments(arguments=arguments)
-    if not isinstance(program.argument_builder, SubjectArgumentNames):
-        raise TypeError("Simulation argument builders must declare subject names.")
+    if not isinstance(program.argument_builder, AgentArgumentNames):
+        raise TypeError("Simulation argument builders must declare agent names.")
     materialized = materialize_core_program(
-        program=_with_subject_extent(program=program, n_subjects=n_subjects),
+        program=_with_agent_extent(program=program, n_agents=n_agents),
         context=_build_context(arguments=arguments, period=period),
     )
     _require_abstract_arguments(arguments=materialized.arguments)
@@ -796,9 +792,9 @@ def _materialize_abstract(
         materialized,
         arguments=place_simulation_arguments(
             arguments=materialized.arguments,
-            subject_arg_names=program.argument_builder.subject_arg_names,
+            agent_arg_names=program.argument_builder.agent_arg_names,
             value_reads=materialized.requirements.value_reads,
-            devices=runtime.subject_devices,
+            devices=runtime.agent_devices,
         ),
     )
 
@@ -820,41 +816,41 @@ def _with_compiler_memory(
     )
 
 
-def _unbudgeted_subject_width(
+def _unbudgeted_agent_width(
     *, program: MaterializedCoreProgram, axis: TiledOutputAxis
 ) -> int:
-    """Return the widest subject tile a constant byte cap admits without a budget.
+    """Return the widest agent tile a constant byte cap admits without a budget.
 
     Without a declared budget the runtime still derives a bound: the argument
-    slice of one subject tile may not exceed `_UNBUDGETED_SUBJECT_BLOCK_BYTES`.
-    The per-subject weight comes from the operands this materialized program
-    already holds abstractly — every leaf whose leading dimension is the subject
+    slice of one agent tile may not exceed `_UNBUDGETED_AGENT_BLOCK_BYTES`.
+    The per-agent weight comes from the operands this materialized program
+    already holds abstractly — every leaf whose leading dimension is the agent
     extent — so the result depends on nothing but the model's shapes, dtypes and
     the population size, and is identical on every backend and in a certificate.
 
-    The proposal never falls below `_DEFAULT_UNBUDGETED_SUBJECT_WIDTH`, so no
+    The proposal never falls below `_DEFAULT_UNBUDGETED_AGENT_WIDTH`, so no
     population is lowered narrower than the fixed default alone would have
     lowered it, and it passes through `_admissible_width`, so the axis
     alignment, its floor and the extent clamp are unchanged. Width is a lowering
     specialization only: a wider tile moves no value and no RNG stream.
     """
-    per_subject = max(
+    per_agent = max(
         sum(
-            _subject_slice_bytes(leaf=leaf)
+            _agent_slice_bytes(leaf=leaf)
             for leaf in jax.tree.leaves(program.arguments)
             if getattr(leaf, "shape", ())[:1] == (axis.extent,)
         ),
-        _MIN_SUBJECT_ARGUMENT_BYTES,
+        _MIN_AGENT_ARGUMENT_BYTES,
     )
     proposal = max(
-        _DEFAULT_UNBUDGETED_SUBJECT_WIDTH,
-        _UNBUDGETED_SUBJECT_BLOCK_BYTES // per_subject,
+        _DEFAULT_UNBUDGETED_AGENT_WIDTH,
+        _UNBUDGETED_AGENT_BLOCK_BYTES // per_agent,
     )
     return _admissible_width(axis=axis, width=min(proposal, axis.extent))
 
 
-def _subject_slice_bytes(*, leaf: jax.Array | HostArray | jax.ShapeDtypeStruct) -> int:
-    """Size one subject's share of a leading-axis operand, extended dtypes included."""
+def _agent_slice_bytes(*, leaf: jax.Array | HostArray | jax.ShapeDtypeStruct) -> int:
+    """Size one agent's share of a leading-axis operand, extended dtypes included."""
     shape = tuple(leaf.shape)
     count = math.prod(shape)
     if isinstance(leaf, jax.Array):
@@ -875,25 +871,25 @@ def _dispatch_widths(
     """Resolve explicit, budgeted, or derived inner simulation widths.
 
     An unbudgeted simulation keeps the complete population in one outer chunk.
-    Its inner subject tile is derived by `_unbudgeted_subject_width`, which
+    Its inner agent tile is derived by `_unbudgeted_agent_width`, which
     bounds the block by bytes rather than pinning a model-blind cell count, so
     device programs do enough work per dispatch. Explicit widths and the
     budgeted outer plan remain authoritative.
     """
     fixed = dict(configured)
     if residency is None:
-        if SUBJECT_AXIS not in fixed:
-            subject_axis = next(
+        if AGENT_AXIS not in fixed:
+            agent_axis = next(
                 (
                     axis
                     for axis in program.requirements.tiled_axes
-                    if axis.name == SUBJECT_AXIS
+                    if axis.name == AGENT_AXIS
                 ),
                 None,
             )
-            if subject_axis is not None:
-                fixed[SUBJECT_AXIS] = _unbudgeted_subject_width(
-                    program=program, axis=subject_axis
+            if agent_axis is not None:
+                fixed[AGENT_AXIS] = _unbudgeted_agent_width(
+                    program=program, axis=agent_axis
                 )
         return MappingProxyType(fixed)
     # Admission normalizes pins against the axis policy and its ceiling. Compare
@@ -926,11 +922,11 @@ class _CachedSimulationCandidateCompiler:
 
     runtime: SimulationRuntime
     program: MaterializedCoreProgram
-    n_subjects: int
+    n_agents: int
 
     def __call__(self, widths: Mapping[str, int]) -> CompiledSimulationProgram:
         return self.runtime.compile_candidate(
-            program=self.program, n_subjects=self.n_subjects, widths=widths
+            program=self.program, n_agents=self.n_agents, widths=widths
         )
 
 
@@ -998,7 +994,7 @@ def execute_simulation_program(
     family: str,
     period: int,
     arguments: Mapping[ReferenceName, PytreeValue | ShapeDtypePytree],
-    n_subjects: int,
+    n_agents: int,
 ) -> PytreeValue:
     """Dispatch one family's published program for the current period.
 
@@ -1016,6 +1012,8 @@ def execute_simulation_program(
         "gate_route": programs.gate_route,
         "policy_prepare": programs.policy_prepare,
         "policy_rank": programs.policy_rank,
+        # Frozen identities: the family names enter program identities and keep
+        # their spelling.
         "exit_full": programs.exit_full,
         "exit_participating": programs.exit_participating,
     }
@@ -1023,7 +1021,7 @@ def execute_simulation_program(
         program=families[family][period],
         arguments=arguments,
         period=period,
-        n_subjects=n_subjects,
+        n_agents=n_agents,
     )
 
 
@@ -1037,17 +1035,17 @@ class _SimulationCandidateCompiler:
     enable_jit: bool
     """Whether the selected callable is compiled."""
 
-    subject_width: int
-    """Width of a singleton or host-driven subject loop."""
+    agent_width: int
+    """Width of a singleton or host-driven agent loop."""
 
-    subject_devices: tuple[jax.Device, ...]
+    agent_devices: tuple[jax.Device, ...]
     """Ordered execution devices, including when no numerical input is kept."""
 
     abstract_inputs: bool = False
     """Whether the prepared operands describe required layouts without arrays."""
 
-    shard_subjects: bool = False
-    """Place the independent subject loop inside the selected device partitions."""
+    shard_agents: bool = False
+    """Place the independent agent loop inside the selected device partitions."""
 
     def __call__(self, widths: Mapping[str, int]) -> CompiledSimulationProgram:
         """Return the executable for exactly these proposed static widths."""
@@ -1063,17 +1061,17 @@ class _SimulationCandidateCompiler:
     def lower(self, widths: Mapping[str, int]) -> jax.stages.Lowered:
         """Trace and lower the program at exactly these proposed static widths.
 
-        Lowering binds the program to a mesh over the subject devices, so its
+        Lowering binds the program to a mesh over the agent devices, so its
         placement belongs to the selected program even if dead-code elimination
         removes every operand. Auto axes retain the compiler's inferred output
         partitions.
         """
         function, arguments, static_kwargs = self._bound(widths)
         mesh = jax.make_mesh(
-            (len(self.subject_devices),),
+            (len(self.agent_devices),),
             ("X",),
             (jax.sharding.AxisType.Auto,),
-            devices=self.subject_devices,
+            devices=self.agent_devices,
         )
         with jax.set_mesh(mesh):
             lowered = jax.jit(function, static_argnames=tuple(static_kwargs)).lower(
@@ -1091,21 +1089,21 @@ class _SimulationCandidateCompiler:
     ) -> tuple[Callable[..., PytreeValue], Mapping[str, ArgumentTree], dict[str, int]]:
         """Return the callable, its dynamic arguments and its static keywords."""
         if (
-            self.shard_subjects
-            and len(self.subject_devices) > 1
+            self.shard_agents
+            and len(self.agent_devices) > 1
             and (
                 not self.enable_jit
                 or self.program.disposition is CoreExecutionDisposition.HOST_DRIVEN
             )
         ):
             raise ExecutionPlanningError(
-                "Subject sharding requires compiled, subject-local programs; "
+                "Agent sharding requires compiled, agent-local programs; "
                 "host-driven or eager simulation is not supported by this mode."
             )
         if self.program.disposition is CoreExecutionDisposition.HOST_DRIVEN:
             function = self.program.function
             arguments = self.program.arguments
-            static_kwargs = {SUBJECT_WIDTH_KEYWORD: self.subject_width}
+            static_kwargs = {AGENT_WIDTH_KEYWORD: self.agent_width}
         else:
             transfers = tuple(
                 resolve_value_transfer(
@@ -1130,27 +1128,27 @@ class _SimulationCandidateCompiler:
             function = resolved.function
             arguments = resolved.arguments
             static_kwargs = dict(resolved.static_kwargs)
-            static_kwargs.setdefault(SUBJECT_WIDTH_KEYWORD, self.subject_width)
-        if self.shard_subjects and len(self.subject_devices) > 1:
+            static_kwargs.setdefault(AGENT_WIDTH_KEYWORD, self.agent_width)
+        if self.shard_agents and len(self.agent_devices) > 1:
             # Read the declaration through any keyword binding the model layer
             # wrapped around the body -- a regime's fixed params arrive as a
             # `functools.partial`, which proxies no attribute -- and shard the
             # bound callable itself, so its binding identity stays the one the
             # dedup and lowering keys were taken from.
-            subject_arg_names = declared_subject_shard_arg_names(function=function)
-            if subject_arg_names is None:
+            agent_arg_names = declared_agent_shard_arg_names(function=function)
+            if agent_arg_names is None:
                 raise ExecutionPlanningError(
                     f"Simulation program {self.program.name!r} does not declare "
-                    "independent leading-axis subject outputs."
+                    "independent leading-axis agent outputs."
                 )
-            if subject_arg_names:
-                function = shard_subject_function(
+            if agent_arg_names:
+                function = shard_agent_function(
                     function=function,
-                    subject_arg_names=subject_arg_names,
+                    agent_arg_names=agent_arg_names,
                     arguments=arguments,
                     static_kwargs=static_kwargs,
-                    devices=self.subject_devices,
-                    subject_width_keyword=SUBJECT_WIDTH_KEYWORD,
+                    devices=self.agent_devices,
+                    agent_width_keyword=AGENT_WIDTH_KEYWORD,
                     output_roles=self.program.output_roles,
                 )
                 # The wrapper binds only widths and immutable layout metadata;
@@ -1159,18 +1157,18 @@ class _SimulationCandidateCompiler:
         return function, arguments, static_kwargs
 
 
-def _with_subject_extent(*, program: CoreProgram, n_subjects: int) -> CoreProgram:
+def _with_agent_extent(*, program: CoreProgram, n_agents: int) -> CoreProgram:
     """Bind a real population extent and omit a trivial singleton planner axis."""
     return dataclasses.replace(
         program,
         requirements=dataclasses.replace(
             program.requirements,
             tiled_axes=tuple(
-                dataclasses.replace(axis, extent=n_subjects)
-                if axis.name == SUBJECT_AXIS
+                dataclasses.replace(axis, extent=n_agents)
+                if axis.name == AGENT_AXIS
                 else axis
                 for axis in program.requirements.tiled_axes
-                if axis.name != SUBJECT_AXIS or n_subjects > 1
+                if axis.name != AGENT_AXIS or n_agents > 1
             ),
         ),
     )

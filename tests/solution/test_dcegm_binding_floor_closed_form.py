@@ -125,7 +125,9 @@ def test_binding_floor_cells_publish_the_closed_form_value(
 ) -> None:
     """Below the kink the published value is `log(R - 1.5) + log(1.5)`."""
     model = _model(n_savings=n_savings, asset_rows=asset_rows)
-    published = np.asarray(model.solve(params={}, log_level="off").values[0]["alive"])
+    published = np.asarray(model.solve(params={}, log_level="off").values[0]["alive"])[
+        ..., 0
+    ]
     resources = np.asarray(_WEALTH.to_jax()) + 1.0
     binding = resources < 2 * _FLOOR
     expected = np.log(resources[binding] - _FLOOR) + np.log(_FLOOR)

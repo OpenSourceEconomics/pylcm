@@ -42,7 +42,7 @@ def _scope(
     return SimulationMemory(
         budget_bytes=budget_bytes,
         devices=(device,),
-        subject_devices=(device,),
+        agent_devices=(device,),
         operations=ProfiledSimulationOperations(),
         inputs=DeviceBufferFootprint(spans=MappingProxyType({}))
         if inputs is None

@@ -316,12 +316,12 @@ def test_each_blocked_candidate_is_admitted_with_its_cells_destination(
         assert record.resident - record.resident_without_internal >= destination
 
 
-# A two-period model whose 32-code values dwarf every other buffer, so admitting
+# A two-period model whose 64-code values dwarf every other buffer, so admitting
 # its working period turns on whether the assembled destination is charged.
 _AGES = AgeGrid(start=0, inclusive_stop=1, step="Y")
 
 _PrefType = categorical(ordered=False)(
-    type("_PrefType", (), {"__annotations__": {f"t{i}": ScalarInt for i in range(32)}})
+    type("_PrefType", (), {"__annotations__": {f"t{i}": ScalarInt for i in range(64)}})
 )
 
 

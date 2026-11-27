@@ -173,7 +173,7 @@ def original_cost(declarations, domains):
         return 1 if domains[did].get('solve_axis') is False else domains[did]['size']
     cells = declarations['cells']
     # A collective regime stores one value per member.
-    states = [prod(size(d) for d in c['states'].values()) * (len(c.get('member_axis') or ()) or 1) for c in cells]
+    states = [prod(size(d) for d in c['states'].values()) * (len(c.get('members') or ()) or 1) for c in cells]
     actions = [prod(size(d) for d in c['actions'].values()) for c in cells]
     return {'work': sum(s * a for s, a in zip(states, actions, strict=True)), 'storage': sum(states),
             'clarity': len({c['regime'] for c in cells})}

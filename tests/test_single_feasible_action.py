@@ -42,6 +42,7 @@ from lcm.exceptions import InvalidInitialConditionsError
 from lcm.grids import IrregSpacedGrid
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (
+    BoolND,
     ContinuousAction,
     ContinuousState,
     DiscreteState,
@@ -137,7 +138,7 @@ def _build_model(
     return model, params
 
 
-def test_baseline_no_nan():
+def test_baseline_no_nan() -> None:
     """Healthy regime: at every wealth, every consumption point is feasible.
 
     consumption_lo == wealth_lo so the smallest action is always feasible at
@@ -159,7 +160,7 @@ def test_baseline_no_nan():
             assert not jnp.any(jnp.isnan(V_arr))
 
 
-def test_some_states_have_only_one_feasible_action():
+def test_some_states_have_only_one_feasible_action() -> None:
     """At low-wealth states, only consumption[0] satisfies `consumption <= wealth`.
 
     consumption_lo < wealth_lo (so smallest action feasible at every wealth),
@@ -185,7 +186,7 @@ def test_some_states_have_only_one_feasible_action():
             )
 
 
-def test_some_states_have_no_feasible_action():
+def test_some_states_have_no_feasible_action() -> None:
     """At sufficiently low wealth, *every* consumption gridpoint is infeasible.
 
     consumption_lo > wealth_lo means at the lowest wealth state no
@@ -210,7 +211,7 @@ def test_some_states_have_no_feasible_action():
             )
 
 
-def test_log_zero_consumption_propagates_nan_via_max_when_unconstrained():
+def test_log_zero_consumption_propagates_nan_via_max_when_unconstrained() -> None:
     """U(c=0) = -inf is fine, but U evaluated at infeasible negative wealth
     via `next_wealth = wealth - c` going through interpolation in the next
     period should not pollute V."""
@@ -233,7 +234,9 @@ def test_log_zero_consumption_propagates_nan_via_max_when_unconstrained():
             assert not jnp.any(jnp.isnan(V_arr))
 
 
-def _constrained_simulation_inputs(*, wealth_lo, consumption_lo):
+def _constrained_simulation_inputs(
+    *, wealth_lo: float, consumption_lo: float
+) -> tuple[Model, UserParams, UserInitialConditions]:
     model, params = _build_model(
         wealth_lo=wealth_lo,
         wealth_hi=20.0,
@@ -253,7 +256,7 @@ def _constrained_simulation_inputs(*, wealth_lo, consumption_lo):
     return model, params, initial_conditions
 
 
-def test_simulate_with_a_single_feasible_action_yields_no_nan():
+def test_simulate_with_a_single_feasible_action_yields_no_nan() -> None:
     """A state-action space narrowed to one feasible action simulates cleanly."""
     model, params, initial_conditions = _constrained_simulation_inputs(
         wealth_lo=1.0, consumption_lo=0.5
@@ -267,10 +270,10 @@ def test_simulate_with_a_single_feasible_action_yields_no_nan():
     assert not df["value"].isna().any()
 
 
-def test_simulate_rejects_a_subject_seeded_where_no_action_is_feasible():
-    """Seeding a subject in a state with no feasible action is invalid input.
+def test_simulate_rejects_an_agent_seeded_where_no_action_is_feasible() -> None:
+    """Seeding an agent in a state with no feasible action is invalid input.
 
-    The subject has no decision to make, so there is nothing to simulate; the
+    The agent has no decision to make, so there is nothing to simulate; the
     condition is reported rather than carried silently into the result.
     """
     model, params, initial_conditions = _constrained_simulation_inputs(
@@ -278,7 +281,7 @@ def test_simulate_rejects_a_subject_seeded_where_no_action_is_feasible():
     )
     with pytest.raises(
         InvalidInitialConditionsError,
-        match=r"All actions are infeasible for 1 subject",
+        match=r"All actions are infeasible for 1 agent",
     ):
         model.simulate(
             params=params,
@@ -414,7 +417,7 @@ def _build_alive_dead_model(
     return model, params
 
 
-def test_bequest_gamma_close_to_one_is_safe():
+def test_bequest_gamma_close_to_one_is_safe() -> None:
     """gamma=0.999077 (the benchmark value for type_1) should not produce NaN."""
     model, params = _build_alive_dead_model(
         coefficient_rra=(3.84, 0.999077),
@@ -426,7 +429,7 @@ def test_bequest_gamma_close_to_one_is_safe():
             assert not jnp.any(jnp.isnan(V_arr))
 
 
-def test_bequest_gamma_exactly_one_for_one_type_only():
+def test_bequest_gamma_exactly_one_for_one_type_only() -> None:
     """gamma=1.0 exactly for one pref type triggers `jnp.where(isclose, log, power)`.
 
     The unselected `power` branch divides by `1 - gamma = 0` for that type. JAX
@@ -447,7 +450,9 @@ def test_bequest_gamma_exactly_one_for_one_type_only():
 
 
 @pytest.mark.parametrize("bad_coord", [jnp.inf, -jnp.inf, jnp.nan])
-def test_map_coordinates_returns_nan_for_non_finite_coordinate(bad_coord):
+def test_map_coordinates_returns_nan_for_non_finite_coordinate(
+    bad_coord: float,
+) -> None:
     """`map_coordinates` cannot recover from a non-finite continuous-state
     coordinate: the linear-interp weights become `inf` and `1 - inf = -inf`,
     and `inf * V[k] - inf * V[k-1]` reduces to NaN.
@@ -462,7 +467,7 @@ def test_map_coordinates_returns_nan_for_non_finite_coordinate(bad_coord):
     assert jnp.isnan(out)
 
 
-def test_irreg_coordinate_divides_by_zero_on_duplicate_grid_points():
+def test_irreg_coordinate_divides_by_zero_on_duplicate_grid_points() -> None:
     """`get_irreg_coordinate` divides by `upper_point - lower_point`. If a
     runtime-supplied points array contains duplicates, the divisor is 0.
 
@@ -490,7 +495,7 @@ def _runtime_state_grid_model() -> tuple[Model, UserParams, UserInitialCondition
     Reproduces the failure mode where `validate_initial_conditions` reads
     `_base_state_action_space` directly — still holding the placeholder
     zeros for runtime-supplied `IrregSpacedGrid`s. With a feasibility
-    constraint that the all-zero placeholder fails, every subject is
+    constraint that the all-zero placeholder fails, every agent is
     reported infeasible even though the real (post-substitution) grid
     would pass. The same mechanism affects runtime grids whether they
     are states or actions.
@@ -501,21 +506,27 @@ def _runtime_state_grid_model() -> tuple[Model, UserParams, UserInitialCondition
         alive: ScalarInt
         dead: ScalarInt
 
-    def utility(*, consumption, wealth):
+    def utility(*, consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
         return jnp.log(consumption) + 0.0 * wealth
 
-    def next_wealth(*, wealth, consumption):
+    def next_wealth(
+        *, wealth: ContinuousState, consumption: ContinuousAction
+    ) -> ContinuousState:
         return wealth - consumption
 
-    def borrow(*, consumption, wealth):  # noqa: ARG001
-        # The validator sees `wealth` as a per-subject array with the
-        # subject-supplied initial values, but `consumption` as the *grid*
+    def borrow(
+        *,
+        consumption: ContinuousAction,
+        wealth: ContinuousState,  # noqa: ARG001
+    ) -> BoolND:
+        # The validator sees `wealth` as a per-agent array with the
+        # agent-supplied initial values, but `consumption` as the *grid*
         # (placeholder zeros for runtime grids). With a feasibility check
         # that requires `consumption > 0`, every action gridpoint is
         # infeasible until the runtime points replace the placeholder.
         return consumption > 0
 
-    def next_regime(*, age, last_alive_age):
+    def next_regime(*, age: int, last_alive_age: int) -> ScalarInt:
         return jnp.where(
             age >= last_alive_age, RuntimeRegimeId.dead, RuntimeRegimeId.alive
         )
@@ -564,7 +575,7 @@ def _runtime_state_grid_model() -> tuple[Model, UserParams, UserInitialCondition
     return model, params, initial_conditions
 
 
-def test_runtime_action_grid_passes_initial_conditions_validation():
+def test_runtime_action_grid_passes_initial_conditions_validation() -> None:
     """`feature/runtime-action-grids` regression: initial-conditions
     feasibility check must use the *substituted* action grid, not the
     `_base_state_action_space` placeholder zeros."""
@@ -592,10 +603,10 @@ def test_runtime_action_grid_passes_initial_conditions_validation():
         initial_conditions=initial_conditions,
         log_level="debug",
     )
-    assert result.n_subjects == 3
+    assert result.n_agents == 3
 
 
-def test_runtime_state_grid_passes_initial_conditions_validation():
+def test_runtime_state_grid_passes_initial_conditions_validation() -> None:
     """Same regression for runtime-supplied *state* grids."""
     model, params, initial_conditions = _runtime_state_grid_model()
     result = model.simulate(
@@ -603,4 +614,4 @@ def test_runtime_state_grid_passes_initial_conditions_validation():
         initial_conditions=initial_conditions,
         log_level="debug",
     )
-    assert result.n_subjects == 3
+    assert result.n_agents == 3

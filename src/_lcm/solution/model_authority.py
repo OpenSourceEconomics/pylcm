@@ -861,7 +861,7 @@ def build_solution_authority(  # noqa: C901, PLR0915
             coordinate = (period, regime_name)
             values[coordinate] = value_descriptor
             policy_ref = ArtifactRef(
-                period=period,
+                step=period,
                 regime=regime_name,
                 key=SIMULATION_POLICY,
             )
@@ -978,7 +978,7 @@ def build_solution_authority(  # noqa: C901, PLR0915
                         f"{key.type_id!r}."
                     )
                 custom_ref = ArtifactRef(
-                    period=period,
+                    step=period,
                     regime=regime_name,
                     key=key,
                 )
@@ -994,7 +994,7 @@ def build_solution_authority(  # noqa: C901, PLR0915
                 )
             ):
                 continuation_ref = ArtifactRef(
-                    period=period,
+                    step=period,
                     regime=regime_name,
                     key=continuation_spec.artifact_key,
                 )
@@ -2499,7 +2499,7 @@ def _replay_model_context_from_state_action_space(
     """
     return ReplayModelContext(
         regime_name=regime_name,
-        period=period,
+        step=period,
         state_names=tuple(state_action_space.state_names),
         action_names=tuple(state_action_space.action_names),
         state_nodes=MappingProxyType(
@@ -2547,7 +2547,7 @@ def bind_generated_solution_authority(
     ) in internal_result.generated_replay_authorities.items():
         for regime_name, generated in regime_to_authority.items():
             ref = ArtifactRef(
-                period=period,
+                step=period,
                 regime=regime_name,
                 key=SIMULATION_POLICY,
             )
@@ -2564,12 +2564,12 @@ def bind_generated_solution_authority(
                 flat_params=flat_params,
             )
     expected_refs = {
-        ArtifactRef(period=period, regime=regime_name, key=SIMULATION_POLICY)
+        ArtifactRef(step=period, regime=regime_name, key=SIMULATION_POLICY)
         for period, regime_to_policy in internal_result.simulation_policies.items()
         for regime_name in regime_to_policy
         if authority.replay[
             ArtifactRef(
-                period=period,
+                step=period,
                 regime=regime_name,
                 key=SIMULATION_POLICY,
             )
@@ -2588,7 +2588,7 @@ def bind_generated_solution_authority(
         for regime_name, diagnostics in regime_to_diagnostics.items():
             bound.bind_diagnostics(
                 ref=ArtifactRef(
-                    period=period,
+                    step=period,
                     regime=regime_name,
                     key=SOLVER_DIAGNOSTICS,
                 ),
@@ -2640,7 +2640,7 @@ def bind_declared_solution_authority(
             ref=ref,
             template=diagnostics_template_from_descriptor(
                 descriptor=descriptor,
-                label=f"Solver diagnostics at ({ref.period}, {ref.regime!r})",
+                label=f"Solver diagnostics at ({ref.step}, {ref.regime!r})",
             ),
         )
     return bound.authority_with_bindings()
@@ -2724,14 +2724,14 @@ def _admit_adaptive_outer_nodes(
 ) -> tuple[float, ...]:
     """Return declared outer nodes once they satisfy what a shared mesh must."""
     outer_search = getattr(
-        regime.solution.period_kernels[ref.period], "outer_search", None
+        regime.solution.period_kernels[ref.step], "outer_search", None
     )
     if not isinstance(outer_search, AdaptiveOuterMesh):
         raise TypeError(
-            f"The nested replay route at ({ref.period}, {ref.regime!r}) is not "
+            f"The nested replay route at ({ref.step}, {ref.regime!r}) is not "
             "solved by an adaptive outer mesh."
         )
-    label = f"Adaptive outer nodes at ({ref.period}, {ref.regime!r})"
+    label = f"Adaptive outer nodes at ({ref.step}, {ref.regime!r})"
     if type(coordinates) is not tuple or any(
         type(node) is not float or not math.isfinite(node) for node in coordinates
     ):
@@ -2744,7 +2744,7 @@ def _admit_adaptive_outer_nodes(
         )
     if any(later <= earlier for earlier, later in itertools.pairwise(nodes)):
         raise ValueError(f"{label} must be strictly increasing.")
-    domain = policy_read.outer_state_domain_by_period.get(ref.period)
+    domain = policy_read.outer_state_domain_by_period.get(ref.step)
     if domain is None:
         raise TypeError(f"{label} have no declared outer-state domain.")
     lower, upper = domain
@@ -2796,7 +2796,7 @@ class _AuthorityBinding:
         policy_layout = _nested_policy_artifact_layout(
             policy_read=policy_read,
             template_snapshot=template_snapshot,
-            period=ref.period,
+            period=ref.step,
             adaptive_outer_nodes=adaptive_outer_nodes,
         )
         generated_authority = _authority_from_observed_template(
@@ -2819,7 +2819,7 @@ class _AuthorityBinding:
             base=regime.solution.state_action_space(
                 regime_params=regime_kernel_params(flat_params, regime_name=ref.regime),
             ),
-            period=ref.period,
+            period=ref.step,
         )
         bound_authority = _bind_model_owned_artifact_facts(
             authority=generated_authority,

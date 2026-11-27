@@ -19,7 +19,11 @@ from _lcm.params.numeric_roles import (
     merge_roles,
 )
 from _lcm.processes.iid import _IIDProcess
-from _lcm.regime_building.value_adapter import adapt_user_function, encoding_grid
+from _lcm.regime_building.value_adapter import (
+    StageClock,
+    adapt_user_function,
+    encoding_grid,
+)
 from _lcm.regime_law import RegimeLaw, RegimeLaws
 from _lcm.utils.error_messages import path_segment_name_errors
 from lcm.exceptions import (
@@ -244,8 +248,12 @@ def create_shock_registry(  # noqa: C901 - bind declarations and phase-specific 
     legacy_regimes: Mapping[RegimeName, Regime],
     model_states: Mapping[StateName, StateEntry],
     laws: RegimeLaws = MappingProxyType({}),
+    clock_grids: Mapping[str, StageClock] = MappingProxyType({}),
 ) -> ShockRegistry:
-    """Validate explicit identity and bind merged, unpruned consumer dependencies."""
+    """Validate explicit identity and bind merged, unpruned consumer dependencies.
+
+    A law or helper that reads `period` reads it through `clock_grids`.
+    """
     groups = MappingProxyType(dict(shocks))
     names = (
         frozenset(
@@ -304,6 +312,9 @@ def create_shock_registry(  # noqa: C901 - bind declarations and phase-specific 
                 f"Regime {regime_name!r} references unknown shock groups "
                 f"{sorted(unknown)!r}."
             )
+        _fail_if_a_group_is_observed_in_part(
+            regime_name=regime_name, regime=regime, groups=groups
+        )
         continuous_codes = frozenset(
             f"{name}_code"
             for group_name in regime.shocks
@@ -352,7 +363,7 @@ def create_shock_registry(  # noqa: C901 - bind declarations and phase-specific 
                 bindings[regime_name, phase, group_name] = ShockBinding(
                     group=_adapt_law_values(
                         group=group.bind_conditioning(state_grids=state_grids),
-                        grids=state_grids,
+                        grids={**state_grids, **clock_grids},
                     ),
                     state_inputs=state_inputs,
                     state_domains=MappingProxyType(
@@ -371,7 +382,7 @@ def create_shock_registry(  # noqa: C901 - bind declarations and phase-specific 
                                 "LawCallable",
                                 adapt_user_function(
                                     func=function,
-                                    value_grids=state_grids,
+                                    value_grids={**state_grids, **clock_grids},
                                     encode=encoding_grid(
                                         value_grids=state_grids, name=name
                                     )
@@ -404,7 +415,7 @@ def create_shock_registry(  # noqa: C901 - bind declarations and phase-specific 
 
 
 def _adapt_law_values(
-    *, group: ShockGroup, grids: Mapping[StateName, DiscreteGrid]
+    *, group: ShockGroup, grids: Mapping[str, DiscreteGrid | StageClock]
 ) -> ShockGroup:
     """Decode only user callable reads; conditioned lookups deliberately read codes."""
     laws = {}
@@ -568,6 +579,27 @@ def _create_legacy_adapters(
                         name=name,
                     )
     return MappingProxyType(records)
+
+
+def _fail_if_a_group_is_observed_in_part(
+    *,
+    regime_name: RegimeName,
+    regime: Regime,
+    groups: Mapping[ShockGroupName, ShockGroup],
+) -> None:
+    """Refuse a decision on the composition that observes part of a shock group."""
+    observed = frozenset(
+        () if regime.composition_action is None else regime.composition_action.observes
+    )
+    for group_name, group in groups.items():
+        seen = observed & group.shocks.keys()
+        if seen and seen != group.shocks.keys():
+            raise ShockDeclarationError(
+                f"The composition action of {regime_name!r} observes {sorted(seen)!r} "
+                "of shock "
+                f"group {group_name!r} but not {sorted(group.shocks.keys() - seen)!r}:"
+                " a group is observed whole or not at all."
+            )
 
 
 def _fail_if_shock_reads_are_unlowered(

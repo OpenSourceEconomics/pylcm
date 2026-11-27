@@ -128,7 +128,7 @@ def _a_to_b_edges(
     }
 
 
-def test_discrete_state_different_categories_across_regimes():
+def test_discrete_state_different_categories_across_regimes() -> None:
     """Single transition for a state with different categories across regimes.
 
     A 'health' state has 3 categories (disabled, bad, good) during working life
@@ -247,8 +247,8 @@ def test_deterministic_target_only_state() -> None:
     valid_codes = {float(HeirPresent.no), float(HeirPresent.yes)}
     assert not dead_rows.empty, "Expected some rows in the dead regime"
     assert dead_rows["heir_present"].isin(valid_codes).all()
-    # Wealthy subject (wealth=80 >= 50) should have heir
-    # Poor subject (wealth=20 < 50) should not
+    # Wealthy agent (wealth=80 >= 50) should have heir
+    # Poor agent (wealth=20 < 50) should not
     wealthy_dead = dead_rows[dead_rows["wealth"] >= 50]
     poor_dead = dead_rows[dead_rows["wealth"] < 50]
     if not wealthy_dead.empty:
@@ -359,7 +359,7 @@ def map_working_health_to_retired(health: DiscreteState) -> DiscreteState:
     return jnp.where(health >= 2, HealthRetirement.good, HealthRetirement.bad)
 
 
-def test_per_target_dict_transitions():
+def test_per_target_dict_transitions() -> None:
     """Per-target dict transitions correctly handle different categories across regimes.
 
     Uses the per-target dict syntax in `state_transitions` to provide a boundary
@@ -405,7 +405,7 @@ def test_per_target_dict_transitions():
     params = {"discount_factor": 0.95}
     period_to_regime_to_V_arr = model.solve(log_level="debug", params=params)
 
-    n_subjects = 4
+    n_agents = 4
     # Use codes 0 (disabled) and 1 (bad) — valid in both regimes.
     # Code 2 (good) is only valid in working and fails cross-regime validation.
     initial_health = jnp.array(
@@ -421,9 +421,9 @@ def test_per_target_dict_transitions():
         log_level="debug",
         params=params,
         initial_conditions={
-            "age": jnp.zeros(n_subjects),
+            "age": jnp.zeros(n_agents),
             "health": initial_health,
-            "regime_id": jnp.array([RegimeId.working_life] * n_subjects),
+            "regime_id": jnp.array([RegimeId.working_life] * n_agents),
         },
         solution=period_to_regime_to_V_arr,
     )
@@ -438,7 +438,7 @@ def test_per_target_dict_transitions():
     )
 
 
-def test_outer_phased_per_target_dict_spans_grids():
+def test_outer_phased_per_target_dict_spans_grids() -> None:
     """`Phased` of two per-target dicts is a per-target law, not a broadcast one.
 
     The categorical validator rejects a *simple* transition that spans mismatched
@@ -479,7 +479,7 @@ def test_outer_phased_per_target_dict_spans_grids():
     model.solve(log_level="off", params={"discount_factor": 0.95})
 
 
-def test_discrete_state_same_count_different_names():
+def test_discrete_state_same_count_different_names() -> None:
     """Same number of categories but different names should still raise."""
 
     @categorical(ordered=False)
@@ -538,7 +538,7 @@ def test_discrete_state_same_count_different_names():
         )
 
 
-def test_mixed_ordered_flags_raises():
+def test_mixed_ordered_flags_raises() -> None:
     """Mixed ordered flags (True in one regime, False in another) should raise."""
 
     @categorical(ordered=True)
@@ -579,7 +579,7 @@ def test_mixed_ordered_flags_raises():
         )
 
 
-def test_both_ordered_same_categories_passes():
+def test_both_ordered_same_categories_passes() -> None:
     """Both ordered with same categories should pass without error."""
 
     @categorical(ordered=True)
@@ -620,7 +620,7 @@ def test_both_ordered_same_categories_passes():
     )
 
 
-def test_both_ordered_different_categories_ambiguous_raises():
+def test_both_ordered_different_categories_ambiguous_raises() -> None:
     """Both ordered with ambiguous merge should raise."""
     # p < r and q < r — p vs q ordering is undetermined
     result = _merge_ordered_categories(
@@ -632,7 +632,7 @@ def test_both_ordered_different_categories_ambiguous_raises():
     assert result is None
 
 
-def test_both_ordered_different_categories_unique_merge():
+def test_both_ordered_different_categories_unique_merge() -> None:
     """Both ordered with unique topological merge should succeed."""
     # p < q from regime_a, q < r from regime_b → p < q < r
     result = _merge_ordered_categories(
@@ -644,7 +644,7 @@ def test_both_ordered_different_categories_unique_merge():
     assert result == ("p", "q", "r")
 
 
-def test_both_ordered_contradictory_raises():
+def test_both_ordered_contradictory_raises() -> None:
     """Contradictory orderings (cycle) should fail merge."""
     # a < b from regime_a, b < a from regime_b → cycle
     result = _merge_ordered_categories(
@@ -698,7 +698,7 @@ _WEALTH_GRID = LinSpacedGrid(start=1, stop=50, n_points=10)
 _CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=50, n_points=20)
 
 
-def test_incomplete_per_target_reachable_target():
+def test_incomplete_per_target_reachable_target() -> None:
     """Per-target dict omits a target the source can reach.
 
     Regime A's coarse transition reaches every regime, but A's per-target
@@ -1070,7 +1070,7 @@ def test_simple_law_uses_targets_from_its_own_phase(
 
     def phase_graph(target: RegimeName) -> PhaseReachability:
         return PhaseReachability(
-            n_periods=2,
+            n_steps=2,
             active_regimes_by_period=(frozenset({"working_life", "retirement"}),) * 2,
             candidate_targets_by_source=MappingProxyType({"retirement": (target,)}),
             targets_by_period=(MappingProxyType({"retirement": (target,)}),),

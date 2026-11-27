@@ -64,7 +64,7 @@ class SimulationMemory:
 
     budget_bytes: int
     devices: tuple[jax.Device, ...]
-    subject_devices: tuple[jax.Device, ...]
+    agent_devices: tuple[jax.Device, ...]
     operations: ProfiledSimulationOperations
     inputs: DeviceBufferFootprint
     producers: ProfiledSimulationOperations = field(
@@ -234,9 +234,9 @@ class SimulationMemory:
         *,
         function: Callable[..., T],
         arguments: Mapping[ReferenceName, PytreeValue],
-        subject_arg_names: tuple[ReferenceName, ...] = (),
+        agent_arg_names: tuple[ReferenceName, ...] = (),
         static_arguments: Mapping[str, StaticArgument] = MappingProxyType({}),
-        subject_outputs: bool = False,
+        agent_outputs: bool = False,
     ) -> T:
         """Profile one pure host operation and own its ready result for this unit."""
         result = cast(
@@ -244,10 +244,10 @@ class SimulationMemory:
             self.operations.dispatch(
                 function=function,
                 arguments=arguments,
-                subject_arg_names=subject_arg_names,
+                agent_arg_names=agent_arg_names,
                 static_arguments=static_arguments,
-                subject_outputs=subject_outputs,
-                devices=self.subject_devices,
+                agent_outputs=agent_outputs,
+                devices=self.agent_devices,
                 live_footprint=self.budget_snapshot,
                 budget_devices=self.devices,
                 budget_bytes=self.budget_bytes,
@@ -289,27 +289,27 @@ def run_simulation_operation[T: PytreeValue](
     memory: SimulationMemory | None,
     function: Callable[..., T],
     arguments: Mapping[ReferenceName, PytreeValue],
-    subject_arg_names: tuple[ReferenceName, ...] = (),
+    agent_arg_names: tuple[ReferenceName, ...] = (),
     static_arguments: Mapping[str, StaticArgument] = MappingProxyType({}),
-    subject_outputs: bool = False,
+    agent_outputs: bool = False,
 ) -> T:
     """Execute a pure operation under the current optional workspace budget.
 
     Unbudgeted operations run eagerly, so an operand committed to one device,
-    such as a grid's points, is first replicated onto the mesh of the subject
+    such as a grid's points, is first replicated onto the mesh of the agent
     rows it meets; JAX refuses to combine operands committed to different
     device sets.
     """
     if memory is None:
         return function(
-            **_replicate_onto_subject_mesh(arguments=arguments), **static_arguments
+            **_replicate_onto_agent_mesh(arguments=arguments), **static_arguments
         )
     return memory.run(
         function=function,
         arguments=arguments,
-        subject_arg_names=subject_arg_names,
+        agent_arg_names=agent_arg_names,
         static_arguments=static_arguments,
-        subject_outputs=subject_outputs,
+        agent_outputs=agent_outputs,
     )
 
 
@@ -328,14 +328,14 @@ def run_simulation_producer[T: PytreeValue](
     operations do, see `run_simulation_operation`.
     """
     if memory is None:
-        return function(**_replicate_onto_subject_mesh(arguments=arguments))
+        return function(**_replicate_onto_agent_mesh(arguments=arguments))
     placed = place_simulation_arguments(
         arguments=arguments,
         # Validation cohorts may have any size, including fewer rows than devices.
         # Replicate them like the preflight gather, whose output is unpadded.
-        subject_arg_names=(),
+        agent_arg_names=(),
         value_reads=(),
-        devices=memory.subject_devices,
+        devices=memory.agent_devices,
         budget_bytes=memory.budget_bytes,
         live_footprint=memory.snapshot(),
         budget_devices=memory.devices,
@@ -343,7 +343,7 @@ def run_simulation_producer[T: PytreeValue](
     argument_buffers = measure_buffer_footprint(tree=placed)
     live = memory.snapshot(additional=(arguments, placed))
     external = resident_bytes_by_device(
-        live=live, arguments=argument_buffers, devices=memory.subject_devices
+        live=live, arguments=argument_buffers, devices=memory.agent_devices
     )
     executable = (memory.producers if owner is None else owner).admit_producer(
         function=function,
@@ -356,7 +356,7 @@ def run_simulation_producer[T: PytreeValue](
             ),
             dict(placed),
         ),
-        devices=memory.subject_devices,
+        devices=memory.agent_devices,
         output_sharding=None,
         budget_bytes=memory.budget_bytes,
         resident_bytes=max(external.values()),
@@ -367,7 +367,7 @@ def run_simulation_producer[T: PytreeValue](
     return cast("T", result)
 
 
-def _replicate_onto_subject_mesh(
+def _replicate_onto_agent_mesh(
     *, arguments: Mapping[ReferenceName, PytreeValue]
 ) -> dict[ReferenceName, PytreeValue]:
     """Replicate single-device operands onto the one mesh sharding the others.

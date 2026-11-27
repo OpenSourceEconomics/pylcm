@@ -20,6 +20,8 @@ an arithmetic oracle rather than against another solve.
   positive.
 """
 
+from collections.abc import Mapping
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -98,7 +100,7 @@ def _solve_coarse_into_process_only_target(
     *,
     level: float,
     process: UniformIIDProcess | TauchenAR1Process | None = None,
-):
+) -> Mapping[int, Mapping[str, FloatND]]:
     """Build a coarse-transition model whose target's only state is a process.
 
     The parent carries no `shock` and declares no entry law for it, while its
@@ -106,6 +108,10 @@ def _solve_coarse_into_process_only_target(
     the process's business: an IID process supplies its own entry distribution,
     an AR(1) process cannot without a previous value.
     """
+
+    def _level_plus_shock(shock: ContinuousState) -> FloatND:
+        return shock + level
+
     process = _UNIFORM_SHOCK if process is None else process
     alive = Regime(
         states={"wealth": _WEALTH_GRID},
@@ -115,7 +121,7 @@ def _solve_coarse_into_process_only_target(
     )
     gone = Regime(
         states={"shock": process},
-        functions={"utility": lambda shock: shock + level},
+        functions={"utility": _level_plus_shock},
     )
     model = Model(
         regimes={"alive": alive, "gone": gone},
@@ -140,7 +146,7 @@ def _solve_coarse_into_process_only_target(
     return model.solve(params=params, log_level="debug").values
 
 
-def test_a_coarse_transition_into_an_iid_target_is_priced_at_its_own_law():
+def test_a_coarse_transition_into_an_iid_target_is_priced_at_its_own_law() -> None:
     """The parent reads `E[shock]` over the process's unconditional law.
 
     An IID draw does not depend on its previous value, so the source has nothing
@@ -158,7 +164,7 @@ def test_a_coarse_transition_into_an_iid_target_is_priced_at_its_own_law():
     )
 
 
-def test_a_coarse_transition_into_an_ar1_target_is_refused():
+def test_a_coarse_transition_into_an_ar1_target_is_refused() -> None:
     """An AR(1) target the source cannot seed is rejected, not priced at zero.
 
     Its next draw depends on a previous value that the source neither carries
@@ -185,8 +191,12 @@ def test_a_coarse_transition_into_an_ar1_target_is_refused():
     assert "narrow the transition's static target support" in message
 
 
-def _solve_with_entry_law(level: float):
+def _solve_with_entry_law(level: float) -> Mapping[int, Mapping[str, FloatND]]:
     """The same model, with the parent declaring how the target is entered."""
+
+    def _level_plus_shock(shock: ContinuousState) -> FloatND:
+        return shock + level
+
     alive = Regime(
         states={"wealth": _WEALTH_GRID},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=4)},
@@ -202,7 +212,7 @@ def _solve_with_entry_law(level: float):
                 n_points=3, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=2
             )
         },
-        functions={"utility": lambda shock: shock + level},
+        functions={"utility": _level_plus_shock},
     )
     model = Model(
         regimes={"alive": alive, "gone": gone},
@@ -228,7 +238,7 @@ def _solve_with_entry_law(level: float):
     return model.solve(params=params, log_level="debug").values
 
 
-def test_an_entered_process_only_target_reaches_its_parent():
+def test_an_entered_process_only_target_reaches_its_parent() -> None:
     """Shifting the target's level moves the parent that declared the entry.
 
     A symmetric shock alone cannot show this -- its expectation is zero either
@@ -240,7 +250,7 @@ def test_an_entered_process_only_target_reaches_its_parent():
     assert not np.allclose(poor, rich)
 
 
-def test_an_entered_process_only_target_is_priced_at_its_entry_node():
+def test_an_entered_process_only_target_is_priced_at_its_entry_node() -> None:
     """The parent's last living value is `max_c log(c) + beta * (node + level)`.
 
     The entry law hands over the middle node of a mean-zero symmetric grid,
@@ -292,7 +302,9 @@ def _tiny_budget(*, consumption: ContinuousAction, wealth: ContinuousState) -> B
     return consumption <= wealth
 
 
-def _solve_tiny_certainty_equivalent(*, risk_aversion: float = _RISK_AVERSION):
+def _solve_tiny_certainty_equivalent(
+    *, risk_aversion: float = _RISK_AVERSION
+) -> Mapping[int, Mapping[str, FloatND]]:
     """Solve a model whose entire continuation sits at the `1e-8` scale."""
     alive = Regime(
         states={"wealth": _TINY_WEALTH},
@@ -325,7 +337,7 @@ def _solve_tiny_certainty_equivalent(*, risk_aversion: float = _RISK_AVERSION):
     return model.solve(params=params, log_level="debug").values
 
 
-def test_a_tiny_continuation_survives_the_power_mean():
+def test_a_tiny_continuation_survives_the_power_mean() -> None:
     """A continuation at `1e-8` reaches the parent instead of collapsing to zero.
 
     Raising before averaging sends `v ** (1 - risk_aversion)` out of range and
@@ -344,7 +356,7 @@ def test_a_tiny_continuation_survives_the_power_mean():
     assert (alive <= 2.0 * _TINY * (1.0 + 1e-5)).all()
 
 
-def test_the_tiny_continuation_still_decides_the_policy():
+def test_the_tiny_continuation_still_decides_the_policy() -> None:
     """The parent's value tracks consuming, not the tie a collapsed value leaves.
 
     With no flow payoff and a terminal value decreasing in wealth, the optimal
@@ -352,7 +364,7 @@ def test_the_tiny_continuation_still_decides_the_policy():
     is the terminal utility at that wealth, computed directly.
     """
     solution = _solve_tiny_certainty_equivalent()
-    alive = np.asarray(solution[0]["alive"])
+    alive = np.asarray(solution[0]["alive"])[..., 0]
     wealth_nodes = np.asarray(_TINY_WEALTH.to_jax())
     consumption_nodes = np.asarray(_TINY_CONSUMPTION.to_jax())
     expected = []
@@ -364,7 +376,9 @@ def test_the_tiny_continuation_still_decides_the_policy():
 
 
 @pytest.mark.parametrize("risk_aversion", [2.0, 8.0, 20.0])
-def test_the_tiny_continuation_survives_across_risk_aversions(risk_aversion):
+def test_the_tiny_continuation_survives_across_risk_aversions(
+    risk_aversion: float,
+) -> None:
     """The collapse threshold moves with `risk_aversion`; none of them collapses.
 
     The overflowing intermediate is `v ** (1 - risk_aversion)`, so a single risk

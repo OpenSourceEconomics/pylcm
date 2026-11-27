@@ -142,7 +142,7 @@ def test_retained_target_only_iid_is_entered_at_its_own_law() -> None:
         NormalIIDProcess(n_points=3, gauss_hermite=False, mu=1.0, sigma=0.3, n_std=2.0),
     )
 
-    assert model.reachability.solution.targets(period=0, source="source") == ("target",)
+    assert model.reachability.solution.targets(step=0, source="source") == ("target",)
 
     solution = model.solve(
         params={"source": {"koopmans_aggregator": {"discount_factor": 1.0}}},
@@ -179,7 +179,7 @@ def test_process_carried_by_source_and_target_is_accepted() -> None:
     """
     model = _build_overlapping_model(coarse=False, carry_process=True)
 
-    assert model.reachability.solution.targets(period=0, source="source") == ("target",)
+    assert model.reachability.solution.targets(step=0, source="source") == ("target",)
 
     solution = model.solve(params=_PROCESS_SOLVE_PARAMS, log_level="debug").values
 
@@ -260,11 +260,11 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
     process_only = _process_only_model()
     process_and_inert_law = _process_and_inert_law_model()
 
-    assert process_only.reachability.solution.targets(period=0, source="source") == (
+    assert process_only.reachability.solution.targets(step=0, source="source") == (
         "target",
     )
     assert process_and_inert_law.reachability.solution.targets(
-        period=0, source="source"
+        step=0, source="source"
     ) == ("target",)
 
     solve_params = {"discount_factor": 1.0}
@@ -317,7 +317,7 @@ def test_explicit_entry_law_for_target_only_process_is_accepted() -> None:
         )
     )
 
-    assert model.reachability.solution.targets(period=0, source="source") == ("target",)
+    assert model.reachability.solution.targets(step=0, source="source") == ("target",)
 
     solution = model.solve(
         params={"source": {"koopmans_aggregator": {"discount_factor": 1.0}}},

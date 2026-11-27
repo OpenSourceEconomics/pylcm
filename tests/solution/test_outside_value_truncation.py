@@ -1,9 +1,10 @@
-"""An exit's outside value is the destination's problem value, without its exit.
+"""The value of the outside option ignores the destination's composition action.
 
-A subject moves at most once per period, so the value of leaving is the value of the
-destination's action problem at the projected state: the destination's own exit does
-not constrain it. A consent target is the exception: the formed couple applies its own
-rule for staying, and the outside values that rule compares are again problem values.
+An agent moves at most once per period, so the value of leaving is the value of the
+destination's action problem at the projected state: the destination's own composition
+action does not constrain it. A consent target is the exception: the formed couple
+applies its own rule for staying, and the outside values that rule compares are again
+problem values.
 
 A model-level state that only the couple reads is pruned from the singles, and so is
 every projection onto it in their problems: the model solves and simulates as if the
@@ -21,18 +22,18 @@ from _lcm.policy_queries import QueryKind
 from _lcm.regime_building.collective import NO_ROLE
 from lcm import (
     CollectiveUtility,
+    CompositionAction,
     Consent,
     Counterparty,
+    Destination,
     DiscreteGrid,
     ExecutionConfig,
-    Exit,
-    ExitTarget,
     InitialNodes,
     LinSpacedGrid,
     Model,
+    PCOnActions,
     Periods,
     Regime,
-    Unilateral,
     categorical,
     fixed_transition,
 )
@@ -87,11 +88,12 @@ def _chain_model() -> Model:
     Closed form at wealth 0 and 1:
 
     - onward is worth 2 + 2 * wealth;
-    - the destination's problem is worth max(0, 3) = 3; its own exit rejects every
-      action at wealth 1, where onward is worth 4, and keeps choice 1 at wealth 0;
+    - the destination's problem is worth max(0, 3) = 3; its own composition action
+      rejects every action at wealth 1, where onward is worth 4, and keeps choice 1
+      at wealth 0;
     - the source stays at 1, so it leaves for the destination's problem, worth 3,
-      at both cells. Were the destination's exit applied, the destination would offer
-      nothing at wealth 1 and the source would stay at 1 there.
+      at both cells. Were the destination's composition action applied, the destination
+      would offer nothing at wealth 1 and the source would stay at 1 there.
     """
     wealth = LinSpacedGrid(start=0, stop=1, n_points=2)
     return Model(
@@ -99,26 +101,26 @@ def _chain_model() -> Model:
             "source": Regime(
                 states={"wealth": wealth},
                 functions={"utility": _one},
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
                             regime="destination", projection={"wealth": _identity}
                         )
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                 ),
             ),
             "destination": Regime(
                 states={"wealth": wealth},
                 actions={"choice": DiscreteGrid(values=jnp.asarray([0, 1]))},
                 functions={"utility": _three_per_choice},
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
                             regime="onward", projection={"wealth": _identity}
                         )
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                 ),
             ),
             "onward": Regime(
@@ -134,16 +136,14 @@ def _chain_model() -> Model:
     )
 
 
-def test_an_exit_reads_its_destination_s_problem_without_the_destination_s_exit() -> (
-    None
-):
+def test_the_destination_is_read_without_its_own_composition_action() -> None:
     """The source leaves for the destination's problem value 3 at both cells."""
     problem_read = np.asarray([3.0, 3.0])
     nested_read = np.asarray([3.0, 1.0])
     assert not np.allclose(problem_read, nested_read)
     solution = _chain_model().solve(params={}, log_level="off", runtime_checks=False)
     np.testing.assert_array_almost_equal(
-        solution.values[0]["source"], problem_read, decimal=DECIMAL_PRECISION
+        solution.values[0]["source"][..., 0], problem_read, decimal=DECIMAL_PRECISION
     )
 
 
@@ -175,20 +175,21 @@ def _formation_model() -> Model:
     - the couple's actions pay (f, m) = (20, 4) and (6, 6);
     - a dissolving husband becomes single, worth 5;
     - a dissolving wife becomes divorced: that problem is worth max(0, 7) = 7,
-      while its own exit to onward (worth 8) would reject both of its actions;
+      while its own composition action to onward (worth 8) would reject both of its
+      actions;
     - the couple keeps an action only if both members weakly prefer it to leaving,
       so with the outside values (7, 5) it keeps nothing and cannot form;
-    - the single therefore stays at 5. With the divorced exit applied, the wife's
-      outside value would be empty, the couple would keep (6, 6), and the single
-      would marry at 6.
+    - the single therefore stays at 5. Were the divorced regime's composition action
+      applied, the value of the wife's outside option would be empty, the couple
+      would keep (6, 6), and the single would marry at 6.
     """
     return Model(
         regimes={
             "single_f": Regime(
                 functions={"utility": _five},
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(regime="couple", role="f", projection={})
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(regime="couple", role="f", projection={})
                     },
                     rule=Consent(
                         counterparty=Counterparty(
@@ -203,20 +204,20 @@ def _formation_model() -> Model:
                 functions={
                     "utility": CollectiveUtility(utilities={"f": _female, "m": _male})
                 },
-                exit=Exit(
-                    targets={
-                        "f": ExitTarget(regime="divorced_f", projection={}),
-                        "m": ExitTarget(regime="single_m", projection={}),
+                composition_action=CompositionAction(
+                    destinations={
+                        "f": Destination(regime="divorced_f", projection={}),
+                        "m": Destination(regime="single_m", projection={}),
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                 ),
             ),
             "divorced_f": Regime(
                 actions={"choice": DiscreteGrid(values=jnp.asarray([0, 1]))},
                 functions={"utility": _seven_per_choice},
-                exit=Exit(
-                    targets={"self": ExitTarget(regime="onward", projection={})},
-                    rule=Unilateral(),
+                composition_action=CompositionAction(
+                    destinations={"self": Destination(regime="onward", projection={})},
+                    rule=PCOnActions(),
                 ),
             ),
             "onward": Regime(functions={"utility": _eight}),
@@ -262,7 +263,9 @@ def test_a_mover_acts_in_the_destination_problem_it_was_priced_at() -> None:
         "choice": frame["choice"].tolist(),
         "value": np.round(frame["value"].to_numpy(), DECIMAL_PRECISION).tolist(),
     }
-    priced = np.round(np.asarray(solution.values[0]["source"]), DECIMAL_PRECISION)
+    priced = np.round(
+        np.asarray(solution.values[0]["source"])[..., 0], DECIMAL_PRECISION
+    )
     assert observed == {
         "regime": ["destination", "destination"],
         "choice": [1, 1],
@@ -274,15 +277,15 @@ def _widow_utility() -> float:
     return 0.0
 
 
-def _two_entries_model(*, couple_exit: bool) -> Model:
+def _two_entries_model(*, couple_composition_action: bool) -> Model:
     """A couple entered by a single's consent and by a widow's unilateral move."""
     return Model(
         regimes={
             "single_f": Regime(
                 functions={"utility": _five},
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(regime="couple", role="f", projection={})
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(regime="couple", role="f", projection={})
                     },
                     rule=Consent(
                         counterparty=Counterparty(
@@ -293,11 +296,11 @@ def _two_entries_model(*, couple_exit: bool) -> Model:
             ),
             "widow": Regime(
                 functions={"utility": _widow_utility},
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(regime="couple", role="f", projection={})
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(regime="couple", role="f", projection={})
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                 ),
             ),
             "single_m": Regime(functions={"utility": _five}),
@@ -306,14 +309,14 @@ def _two_entries_model(*, couple_exit: bool) -> Model:
                 functions={
                     "utility": CollectiveUtility(utilities={"f": _female, "m": _male})
                 },
-                exit=Exit(
-                    targets={
-                        "f": ExitTarget(regime="single_f", projection={}),
-                        "m": ExitTarget(regime="single_m", projection={}),
+                composition_action=CompositionAction(
+                    destinations={
+                        "f": Destination(regime="single_f", projection={}),
+                        "m": Destination(regime="single_m", projection={}),
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                 )
-                if couple_exit
+                if couple_composition_action
                 else None,
             ),
         },
@@ -326,19 +329,23 @@ def _two_entries_model(*, couple_exit: bool) -> Model:
 
 
 def test_a_regime_entered_by_consent_and_by_dissolution_is_refused() -> None:
-    """Consent movers act with the couple's own exit, unilateral movers without it."""
+    """Consent entrants act with the couple's composition action, others without it."""
     with pytest.raises(
         RegimeInitializationError, match=r"'couple'.*'single_f'.*'widow'"
     ):
-        _two_entries_model(couple_exit=True)
+        _two_entries_model(couple_composition_action=True)
 
 
-def test_a_regime_without_an_exit_may_be_entered_by_consent_and_by_dissolution() -> (
+def test_a_regime_without_composition_action_is_entered_by_consent_and_divorce() -> (
     None
 ):
-    """Without an exit of its own the couple is one problem for both movers."""
-    model = _two_entries_model(couple_exit=False)
-    acting = model._regimes["couple"].simulation.exit_queries[0].participating["couple"]
+    """With no composition action the couple is one problem for both entrants."""
+    model = _two_entries_model(couple_composition_action=False)
+    acting = (
+        model._regimes["couple"]
+        .simulation.composition_queries[0]
+        .participating["couple"]
+    )
     assert acting.definitions[acting.root].read.kind is QueryKind.PARTICIPATING
 
 
@@ -436,9 +443,9 @@ def marriage_model(
             states=single_grids,
             functions={"utility": single_utility},
             state_transitions=single_laws,
-            exit=Exit(
-                targets={
-                    "self": ExitTarget(
+            composition_action=CompositionAction(
+                destinations={
+                    "self": Destination(
                         regime="couple", role="f", projection={"match": _good_match}
                     )
                 },
@@ -470,17 +477,19 @@ def marriage_model(
                     else fixed_transition("match")
                 }
             },
-            exit=Exit(
-                targets={
-                    "f": ExitTarget(regime="single_f", projection=onto_single),
-                    "m": ExitTarget(regime="single_m", projection=onto_single),
+            composition_action=CompositionAction(
+                destinations={
+                    "f": Destination(regime="single_f", projection=onto_single),
+                    "m": Destination(regime="single_m", projection=onto_single),
                 },
-                rule=Unilateral(),
+                rule=PCOnActions(),
             ),
         ),
     }
     for name, regime in tuple(regimes.items()):
-        regimes[f"{name}_terminal"] = regime.replace(exit=None, state_transitions={})
+        regimes[f"{name}_terminal"] = regime.replace(
+            composition_action=None, state_transitions={}
+        )
     return Model(
         regimes=regimes,
         states={"match": match} if model_level else {},
@@ -577,7 +586,7 @@ def test_a_single_marries_and_a_poor_match_dissolves_under_a_model_level_state()
     below the 9.5 of staying single; a good match pays both more than 9.5.
     """
     frame = _marriage_frame(model_level=True)
-    first = frame.loc[frame["period"] == 0].sort_values("subject_id")
+    first = frame.loc[frame["period"] == 0].sort_values("agent_id")
     assert first["regime_name"].astype(str).tolist() == [
         "couple",
         "single_m",

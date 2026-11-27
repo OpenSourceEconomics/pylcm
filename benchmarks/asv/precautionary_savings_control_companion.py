@@ -34,15 +34,15 @@ if TYPE_CHECKING:
     from _lcm.typing import JSONValue
     from lcm.typing import UserInitialConditions, UserParamsNode
 
-N_SUBJECTS = 1_000_000
+N_AGENTS = 1_000_000
 SIMULATION_SEED = 20_250_915
 WARM_REPETITIONS = 3
 DEFAULT_BUDGET_BYTES = 8 * 1024**3
 CELLS = (
-    ("legacy-subject64", "legacy", 64),
-    ("legacy-subject128", "legacy", 128),
-    ("independent-subject64", "independent", 64),
-    ("independent-subject128", "independent", 128),
+    ("legacy-agent64", "legacy", 64),
+    ("legacy-agent128", "legacy", 128),
+    ("independent-agent64", "independent", 64),
+    ("independent-agent128", "independent", 128),
 )
 
 
@@ -143,7 +143,7 @@ def _plan_identity(prepared: PreparedSimulationChunks) -> dict[str, JSONValue]:
     profile = prepared.plan.profile
     receipt = prepared.plan.receipt
     return {
-        "selected_outer_extent": profile.n_subjects,
+        "selected_outer_extent": profile.n_agents,
         "padded_population": profile.padded_population,
         "resolved_axis_widths": dict(profile.axis_widths),
         "stages": [
@@ -193,10 +193,10 @@ def _make_initial_conditions() -> UserInitialConditions:
     import jax.numpy as jnp
 
     return {
-        "age": jnp.full(N_SUBJECTS, 20.0),
-        "wealth": jnp.full(N_SUBJECTS, 5.0),
-        "income": jnp.full(N_SUBJECTS, 0.0),
-        "regime_id": jnp.zeros(N_SUBJECTS, dtype=jnp.int32),
+        "age": jnp.full(N_AGENTS, 20.0),
+        "wealth": jnp.full(N_AGENTS, 5.0),
+        "income": jnp.full(N_AGENTS, 0.0),
+        "regime_id": jnp.zeros(N_AGENTS, dtype=jnp.int32),
     }
 
 
@@ -213,7 +213,7 @@ def run_cell(
     controls = {
         "device_memory_bytes": budget_bytes,
         "sharded_states": [],
-        "axis_widths": {"subject": width},
+        "axis_widths": {"agent": width},
         "devices": [int(devices[0].id)],
         "donate_buffers": True,
         "max_compilation_workers": workers,
@@ -222,7 +222,7 @@ def run_cell(
     config = ExecutionConfig(
         device_memory_bytes=budget_bytes,
         sharded_states=(),
-        axis_widths={"subject": width},
+        axis_widths={"agent": width},
         devices=(int(devices[0].id),),
         donate_buffers=True,
     )
@@ -348,7 +348,7 @@ def run_cell(
             "wealth_points": 10,
             "consumption_points": 10,
             "income_points": 5,
-            "subjects": N_SUBJECTS,
+            "agents": N_AGENTS,
             "dtype": str(np.asarray(initial["wealth"]).dtype),
         },
         "input_identity": {

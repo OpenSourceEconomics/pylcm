@@ -15,12 +15,13 @@ from _lcm.params.edges import regime_kernel_params
 from _lcm.processes.joint_normal_lowering import (
     coordinate_names,
 )
+from _lcm.regime_building.collective import member_name
 from _lcm.simulation.additional_targets import (
     _compute_targets,
     _filter_targets_for_regime,
 )
 from _lcm.simulation.result_metadata import CategoryValue, ResultMetadata
-from _lcm.time import TimeAxis, coordinate_kind
+from _lcm.time import ModelTime, TimeAxis, coordinate_kind
 from _lcm.typing import (
     ActionName,
     FlatParams,
@@ -29,7 +30,6 @@ from _lcm.typing import (
     RegimeName,
     StateName,
 )
-from lcm.exceptions import PyLCMError
 from lcm.processes import JointNormalIIDProcess
 from lcm.typing import BoolND, FloatND, FunctionName, IntND
 
@@ -44,7 +44,7 @@ def _create_flat_dataframe(
     metadata: ResultMetadata,
     additional_targets: tuple[FunctionName, ...] | None,
     ages: TimeAxis,
-    subject_batch_size: int | None = None,
+    agent_batch_size: int | None = None,
 ) -> pd.DataFrame:
     """Create a single flat DataFrame from all regime results.
 
@@ -67,11 +67,11 @@ def _create_flat_dataframe(
             regime_actions=metadata.regime_to_actions[name],
             publishes_nested_policy=metadata.regime_to_publishes_nested_policy[name],
             regime_params=regime_kernel_params(flat_params, regime_name=name),
-            member_axis=metadata.regime_to_member_axis.get(name),
+            members=metadata.regime_to_members[name],
             publishes_role=bool(metadata.member_names_to_ids),
             additional_targets=additional_targets,
             ages=ages,
-            subject_batch_size=subject_batch_size,
+            agent_batch_size=agent_batch_size,
         )
         for name in metadata.regime_names
         if raw_results[name]
@@ -83,9 +83,25 @@ def _create_flat_dataframe(
         action_names=metadata.action_names,
         member_value_names=_member_value_column_names(
             regime_names=metadata.regime_names,
-            regime_to_member_axis=metadata.regime_to_member_axis,
+            regime_to_members=metadata.regime_to_members,
         ),
     )
+    if isinstance(ages, ModelTime) and ages.stages:
+        # Rows are ordered by step; a step is a period and one of its stages.
+        stage_names = [name for name, _ in ages.stages]
+        frame["period"] = frame["period"] // ages.n_stages
+        frame.insert(
+            list(frame.columns).index("period") + 1,
+            "stage",
+            pd.Series(
+                pd.Categorical(
+                    [stage_names[ages.stage_of[name]] for name in frame["regime_name"]],
+                    categories=stage_names,
+                    ordered=True,
+                ),
+                index=frame.index,
+            ),
+        )
     shock_names = {
         name
         for periods in raw_results.values()
@@ -107,21 +123,22 @@ def _create_flat_dataframe(
 def _member_value_column_names(
     *,
     regime_names: tuple[RegimeName, ...],
-    regime_to_member_axis: Mapping[RegimeName, tuple[str, ...] | None],
+    regime_to_members: Mapping[RegimeName, tuple[str, ...]],
 ) -> list[str]:
     """Name the per-member value columns in the order the regimes declare them.
 
-    Each collective regime contributes `value_<member>` for every entry of
+    Each regime contributes `value_<member>` for every entry of
     its `members` tuple, in that tuple's order — the same order that fixes
     the trailing axis of its value function. Regimes are walked in
     `regime_names` order and a name already contributed by an earlier regime
     keeps its first position, so two regimes sharing a member share one
-    column.
+    column. The member `"self"` publishes the ordinary `value` column, which
+    is not one of these.
 
     Args:
         regime_names: Names of all regimes in the model.
-        regime_to_member_axis: Mapping of regime names to their ordered
-            member names, `None` for a singleton regime.
+        regime_to_members: Mapping of regime names to their ordered member
+            names.
 
     Returns:
         List of column names, in publication order.
@@ -129,9 +146,9 @@ def _member_value_column_names(
     """
     names: list[str] = []
     for regime_name in regime_names:
-        for member in regime_to_member_axis.get(regime_name) or ():
-            column = f"value_{member}"
-            if column not in names:
+        for member in regime_to_members[regime_name]:
+            column = _member_value_column_name(member)
+            if column not in names and column != "value":
                 names.append(column)
     return names
 
@@ -148,17 +165,17 @@ def _process_regime(
     regime_actions: tuple[str, ...],
     publishes_nested_policy: bool,
     regime_params: FlatRegimeParams,
-    member_axis: tuple[str, ...] | None,
+    members: tuple[str, ...],
     publishes_role: bool,
     additional_targets: tuple[FunctionName, ...] | None,
     ages: TimeAxis,
-    subject_batch_size: int | None = None,
+    agent_batch_size: int | None = None,
 ) -> pd.DataFrame:
     """Process results for a single regime into a DataFrame.
 
     `publishes_role` is a property of the MODEL, not of this regime: a model
     with any collective regime publishes `own_member` for every regime,
-    since a row that leaves a household still has to say it now occupies no
+    since a row that leaves a collective regime still has to say it now occupies no
     role. A model with none would carry a column that is the sentinel in every
     row, so it publishes none.
 
@@ -167,13 +184,8 @@ def _process_regime(
     may pass `regime=None` after dropping compiled `Regime` objects to
     free device workspaces. `members` is read unconditionally (from
     `ResultMetadata`, computed while `regime` was still guaranteed
-    present) so a COLLECTIVE regime's `value` column can be split even
-    when `regime` itself is `None`.
-
-    Raises:
-        PyLCMError: If the regime's recorded value carries a member axis
-            but no member names are available to name its columns.
-
+    present) so the regime's `value` column can be split even when `regime`
+    itself is `None`.
     """
     period_dicts = [
         _extract_period_data(
@@ -191,22 +203,8 @@ def _process_regime(
         _concatenate_and_filter(period_dicts)
     )
 
-    recorded_value = data["value"]
-    if member_axis is not None:
-        del data["value"]
-        data.update(
-            _split_member_value(value=np.asarray(recorded_value), members=member_axis)
-        )
-    elif np.ndim(recorded_value) > 1:
-        msg = (
-            f"Regime {regime_name!r} recorded a value with a trailing "
-            f"member axis of length {np.shape(recorded_value)[-1]}, but the "
-            "result carries no `regime_to_member_axis` entry for it, so its "
-            "per-member value columns cannot be named. The result was "
-            "written without that metadata; re-simulate to produce a result "
-            "that can be published as a dataframe."
-        )
-        raise PyLCMError(msg)
+    recorded_value = data.pop("value")
+    data.update(_split_member_value(value=np.asarray(recorded_value), members=members))
 
     if coordinate_kind(ages) == "age":
         data["age"] = np.asarray(ages.values)[np.asarray(data["period"])]
@@ -216,7 +214,7 @@ def _process_regime(
         data=data,
         joint_normals=joint_normals,
         regime_params=regime_params,
-        subject_batch_size=subject_batch_size,
+        agent_batch_size=agent_batch_size,
     )
 
     if additional_targets:
@@ -236,12 +234,12 @@ def _process_regime(
                 targets=targets_for_regime,
                 regime=regime,
                 regime_params=regime_params,
-                subject_batch_size=subject_batch_size,
+                agent_batch_size=agent_batch_size,
             )
             n_rows = len(data["period"])
             data.update(
                 {
-                    # A target that reads no per-subject variable evaluates to one
+                    # A target that reads no per-agent variable evaluates to one
                     # value for the whole regime and arrives 0-d. Give it its rows
                     # here rather than leaving pandas to broadcast it: pandas does
                     # not recognize a 0-d device array as a numeric scalar and
@@ -263,7 +261,7 @@ def _project_joint_shocks(
     data: dict[str, np.ndarray | FloatND | IntND | BoolND | Sequence[str]],
     joint_normals: MappingProxyType[ProcessName, JointNormalIIDProcess],
     regime_params: FlatRegimeParams,
-    subject_batch_size: int | None,
+    agent_batch_size: int | None,
 ) -> None:
     """Publish named shocks without retaining the compiled decision programs."""
     for group, process in joint_normals.items():
@@ -272,7 +270,7 @@ def _project_joint_shocks(
         names = coordinate_names(group=group, process=process)
         standard = np.stack([np.asarray(data[name]) for name in names], axis=-1)
         n_rows = len(standard)
-        batch_size = subject_batch_size or max(n_rows, 1)
+        batch_size = agent_batch_size or max(n_rows, 1)
         transform = jax.jit(jax.vmap(partial(process.transform, mean=mean, cov=cov)))
         chunks = [
             np.asarray(
@@ -296,17 +294,24 @@ def _split_member_value(
     value: np.ndarray,
     members: tuple[str, ...],
 ) -> dict[str, np.ndarray]:
-    """Split a COLLECTIVE regime's 2D `value` column into per-member columns.
+    """Split a regime's 2D `value` column into per-member columns.
 
-    A collective regime's recorded value carries a trailing member axis
+    A recorded value carries a trailing member axis
     (`PeriodRegimeSimulationData.V_arr`, shape `(n_rows, n_members)`), so
-    `pd.DataFrame` cannot ingest it as a single "value" column the way it does
-    for a singleton regime's 1D array. Naming is deterministic:
-    `value_<member>`, one 1D column per entry of `members`, in the
-    same order as the trailing axis (fixed by `Regime.member_axis` — see
-    `_lcm.regime_building.Q_and_F`).
+    `pd.DataFrame` cannot ingest it as a single "value" column. Naming is
+    deterministic: `value_<member>` (`value` for the member `"self"`), one 1D
+    column per entry of `members`, in the same order as the trailing axis
+    (fixed by `Regime.members`).
     """
-    return {f"value_{member}": value[:, i] for i, member in enumerate(members)}
+    return {
+        _member_value_column_name(member): value[:, i]
+        for i, member in enumerate(members)
+    }
+
+
+def _member_value_column_name(member: str) -> str:
+    """Name a member's value column: `value_<member>`, and `value` for `"self"`."""
+    return member_name(base="value", member=member)
 
 
 def _extract_period_data(
@@ -320,7 +325,7 @@ def _extract_period_data(
 ) -> dict[str, FloatND | IntND | BoolND]:
     """Extract data from a single period's simulation results."""
     data: dict[str, FloatND | IntND | BoolND] = {
-        "subject_id": jnp.arange(len(result.in_regime), dtype=jnp.int32),
+        "agent_id": jnp.arange(len(result.in_regime), dtype=jnp.int32),
         "period": jnp.full_like(result.in_regime, period, dtype=jnp.int32),
         "_in_regime": result.in_regime,
         "value": result.V_arr,
@@ -332,7 +337,7 @@ def _extract_period_data(
     if publishes_role:
         data["own_member"] = result.own_member
 
-    # Per-subject flag that a continuous-outer off-grid policy read was refused
+    # Per-agent flag that a continuous-outer off-grid policy read was refused
     # and the grid-argmax pair retained. Only NNBEGM regimes can publish the flag;
     # omitting it elsewhere avoids a constant-False column in unrelated results.
     if publishes_nested_policy:
@@ -353,7 +358,7 @@ def _extract_period_data(
 def _concatenate_and_filter(
     period_dicts: list[dict[str, FloatND | IntND | BoolND]],
 ) -> dict[str, np.ndarray]:
-    """Concatenate period data on host and filter to in-regime subjects.
+    """Concatenate period data on host and filter to in-regime agents.
 
     Walks `period_dicts` one period at a time. For each leaf the
     transfer goes through `_to_host`, which falls back to `np.asarray`
@@ -437,7 +442,7 @@ def _assemble_dataframe(
         action_names=action_names,
         member_value_names=member_value_names,
     )
-    return df.sort_values(["subject_id", "period"]).reset_index(drop=True)
+    return df.sort_values(["agent_id", "period"]).reset_index(drop=True)
 
 
 def _empty_dataframe(
@@ -446,7 +451,7 @@ def _empty_dataframe(
     action_names: tuple[ActionName, ...],
 ) -> pd.DataFrame:
     """Create empty DataFrame with correct columns."""
-    columns = ["subject_id", "period", "regime_name", "value"]
+    columns = ["agent_id", "period", "regime_name", "value"]
     columns.extend(state_names)
     columns.extend(action_names)
     return pd.DataFrame(columns=pd.Index(columns))
@@ -477,7 +482,7 @@ def _reorder_columns(
 ) -> pd.DataFrame:
     """Reorder columns: id, period, regime_name, role, value, states, actions, rest.
 
-    `subject_id`, `period` and `regime_name` identify a row and are named
+    `agent_id`, `period` and `regime_name` identify a row and are named
     unconditionally, so a frame that lacks one raises here rather than being
     published one column narrower. Two entries are conditional. A model with
     no collective regime publishes no `own_member`, and where it is
@@ -492,7 +497,7 @@ def _reorder_columns(
     rather than by a `value_` prefix leaves an ordinary computed column such as
     `value_of_leisure` in the trailing `rest` block where it belongs.
     """
-    base = ["subject_id", "period", "regime_name"]
+    base = ["agent_id", "period", "regime_name"]
     if "own_member" in df.columns:
         base = [*base, "own_member"]
     if "value" in df.columns:

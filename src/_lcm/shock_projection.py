@@ -1,4 +1,4 @@
-"""Prove when a demanded query can reuse a shared discrete physical category.
+"""Prove that an observed shock has one law at the source and at the landing.
 
 This admission consumes actual read closures and canonical projection bindings. It
 never infers an information set from a regime's permission to reference a group.
@@ -12,7 +12,6 @@ from collections.abc import Callable, Iterator, Mapping
 from dataclasses import fields
 from itertools import product
 from types import MappingProxyType
-from typing import Literal
 
 import jax
 import numpy as np
@@ -26,7 +25,6 @@ from lcm.grids import DiscreteGrid
 from lcm.phased import Phased
 from lcm.regime import StateEntry
 from lcm.shocks import (
-    Discrete,
     LawCallable,
     ShockGroupName,
     ShockName,
@@ -35,15 +33,14 @@ from lcm.shocks import (
 )
 from lcm.typing import FunctionName, ReferenceName, RegimeName, StateName, UserFunction
 
-type QueryKindName = Literal["Raw", "Participating", "Full"]
 type OperandPath = tuple[str | int, ...]
 
 _MAX_FINITE_PROJECTION_CELLS = 4096
 
 
-def validate_shared_discrete_projection(
+def validate_observed_laws(
     *,
-    query_kind: QueryKindName,
+    source: RegimeName,
     target: RegimeName,
     physical_inputs: frozenset[ShockName],
     source_physical_inputs: frozenset[ShockName],
@@ -56,68 +53,85 @@ def validate_shared_discrete_projection(
     source_parameter_paths: Mapping[QualifiedName, OperandPath] = MappingProxyType({}),
     target_parameter_paths: Mapping[QualifiedName, OperandPath] = MappingProxyType({}),
 ) -> None:
-    """Admit identical partitions only for actually demanded shared addresses.
+    """Refuse an observed shock whose law can differ at the source and the landing.
 
-    Bind fixed projection operands into the effective callable before admission;
-    runtime operands must retain their canonical binding paths. A declaration that
-    the source or query does not read contributes no shared-category obligation.
-    Numerical node-rule identity and conditional integration remain separate.
+    A group that the source draws, sees and the target reads is one draw, so each
+    of its shocks needs one law at the source's state and at the landing state: the
+    same functions and parameters in both regimes, reading only parameters and
+    states that the projection returns unchanged. A group only the target draws has
+    its law at the landing state alone and adds no obligation, nor does a
+    declaration that the source or target does not read.
     """
-    source = _discrete_bindings(source_bindings)
-    targets = _discrete_bindings(target_bindings)
-    shared = source_physical_inputs & physical_inputs & source.keys() & targets.keys()
-    for shock in sorted(shared):
-        source_group, source_binding = source[shock]
-        target_group, target_binding = targets[shock]
-        source_record, source_states = _law_record(
-            shock=shock,
-            group=source_group,
-            binding=source_binding,
-            parameter_paths=source_parameter_paths,
-        )
-        target_record, target_states = _law_record(
-            shock=shock,
-            group=target_group,
-            binding=target_binding,
-            parameter_paths=target_parameter_paths,
-        )
-        context = f"Shock {shock!r}, {query_kind}[{target}], projection"
-        if source_record != target_record or source_states != target_states:
-            raise ShockDeclarationError(
-                f"{context}: law/helper/parameter bindings differ."
+    seen = source_physical_inputs & physical_inputs
+    for group, binding in target_bindings.items():
+        own = source_bindings.get(group)
+        if own is None or not seen & binding.group.shocks.keys():
+            continue
+        for shock in binding.group.shocks:
+            record = _law_record(
+                shock=shock,
+                group=group,
+                binding=binding,
+                parameter_paths=target_parameter_paths,
             )
-        for state in sorted(target_states):
-            source_grid = _grid(source_domains.get(state))
-            target_grid = _grid(target_domains.get(state))
-            if (
-                source_grid is None
-                or target_grid is None
-                or _fingerprint((source_grid,)) != _fingerprint((target_grid,))
+            context = (
+                f"Regime {source!r} observes shock {shock!r} of group {group!r} at "
+                f"its composition action into {target!r}"
+            )
+            if record != _law_record(
+                shock=shock,
+                group=group,
+                binding=own,
+                parameter_paths=source_parameter_paths,
             ):
                 raise ShockDeclarationError(
-                    f"{context} input {state!r}: state domain/codecs differ."
+                    f"{context}, but its law reads different functions or "
+                    f"parameters in {source!r} and in {target!r}."
                 )
-            if state not in projection or not _preserves_input(
-                state=state,
-                func=projection[state],
-                functions=projection_functions,
-                source_domains=source_domains,
-                grid=source_grid,
-            ):
-                raise ShockDeclarationError(
-                    f"{context} input {state!r}: effective identity is unproved."
-                )
+            for state in sorted(record[1]):
+                if state not in projection or not _kept(
+                    state=state,
+                    func=projection[state],
+                    functions=projection_functions,
+                    source_domains=source_domains,
+                    target_domains=target_domains,
+                ):
+                    raise ShockDeclarationError(
+                        f"{context}, and its law reads state {state!r}, which the "
+                        "composition action's projection changes or is not proven "
+                        "to keep. The law of an observed shock must be the same at "
+                        "the source's state and at the landing state, so it may "
+                        "read only parameters and states the projection returns "
+                        "unchanged. "
+                        f"Draw {shock!r} in {source!r} and carry it to {target!r} "
+                        "as a state instead."
+                    )
 
 
-def _discrete_bindings(
-    bindings: Mapping[ShockGroupName, ShockBinding],
-) -> dict[ShockName, tuple[ShockGroupName, ShockBinding]]:
-    return {
-        shock: (name, binding)
-        for name, binding in bindings.items()
-        for shock, law in binding.group.shocks.items()
-        if isinstance(law, Discrete)
-    }
+def _kept(
+    *,
+    state: StateName,
+    func: UserFunction,
+    functions: Mapping[FunctionName, UserFunction],
+    source_domains: Mapping[StateName, StateEntry],
+    target_domains: Mapping[StateName, StateEntry],
+) -> bool:
+    """Whether `func` lands `state` at its source value, on the same grid."""
+    source_grid = _grid(source_domains.get(state))
+    target_grid = _grid(target_domains.get(state))
+    if (
+        source_grid is None
+        or target_grid is None
+        or _fingerprint((source_grid,)) != _fingerprint((target_grid,))
+    ):
+        return False
+    return _preserves_input(
+        state=state,
+        func=func,
+        functions=functions,
+        source_domains=source_domains,
+        grid=source_grid,
+    )
 
 
 def _law_record(  # noqa: C901 - walk bound law/helper dependencies and operand paths

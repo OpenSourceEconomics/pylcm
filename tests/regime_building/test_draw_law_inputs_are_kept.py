@@ -288,7 +288,7 @@ def _source_values(*, model: Model, axes: tuple[str, ...]) -> np.ndarray:
     names = model.state_names(regime_name="source")
     values = model.solve(params={"discount_factor": 1.0}, log_level="off").values
     return np.transpose(
-        np.asarray(values[0]["source"]), [names.index(name) for name in axes]
+        np.asarray(values[0]["source"])[..., 0], [names.index(name) for name in axes]
     )
 
 

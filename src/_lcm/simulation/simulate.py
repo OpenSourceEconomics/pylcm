@@ -1,7 +1,7 @@
-"""The forward-simulation loop over periods, regimes and subjects.
+"""The forward-simulation loop over periods, regimes and agents.
 
 `simulate` seeds the population from the validated initial conditions and then,
-for each period, decides every subject's actions — replaying a solver's
+for each period, decides every agent's actions — replaying a solver's
 published policy where one exists, recomputing on the grid otherwise — applies
 the state and regime transitions, and collects one
 `PeriodRegimeSimulationData` per (regime, period) pair.
@@ -59,6 +59,7 @@ from _lcm.off_grid import count_off_grid
 from _lcm.params.edges import regime_kernel_params
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.processes.grid_resolution import ProcessGridResolver
+from _lcm.regime_building.collective import landing_member_index
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.regime_building.Q_and_F import (
     EDGE_REF_PARAMS_ARG,
@@ -67,6 +68,12 @@ from _lcm.regime_building.Q_and_F import (
 )
 from _lcm.simulation import chunk_operations, population_operations
 from _lcm.simulation.additional_targets import _compute_targets
+from _lcm.simulation.agent_groups import (
+    AgentGroupPlan,
+    AgentRows,
+    ComponentValueSource,
+    plan_agent_groups,
+)
 from _lcm.simulation.assembly import concatenate_arrays, take_rows
 from _lcm.simulation.chunk_admission import PreparedSimulationChunks
 from _lcm.simulation.chunk_inputs import (
@@ -75,6 +82,8 @@ from _lcm.simulation.chunk_inputs import (
     prepare_simulation_chunk_inputs,
 )
 from _lcm.simulation.chunk_offload import chunk_host_device, offload_chunk
+from _lcm.simulation.composition_actions import PreparedCompositionDecision
+from _lcm.simulation.composition_replay import prepare_composition_period
 from _lcm.simulation.current_iid import prepare_current_iid_keys
 from _lcm.simulation.current_iid_overrides import (
     CurrentIIDOverrides,
@@ -94,8 +103,6 @@ from _lcm.simulation.dissolution_route import (
     reroute_rows_without_feasible_action,
     rows_of,
 )
-from _lcm.simulation.exit_replay import prepare_exit_period
-from _lcm.simulation.exits import PreparedExitDecision
 from _lcm.simulation.gated_routing import (
     GatedRouteDelta,
     commit_gated_route_delta,
@@ -109,8 +116,8 @@ from _lcm.simulation.initial_conditions import (
     trim_pad_from_raw_results,
 )
 from _lcm.simulation.membership import (
-    activate_subject_membership,
-    initialize_subject_membership,
+    activate_agent_membership,
+    initialize_agent_membership,
 )
 from _lcm.simulation.memory import (
     SimulationMemory,
@@ -135,10 +142,10 @@ from _lcm.simulation.plan_summary import (
 )
 from _lcm.simulation.policy_programs import ReplayPayload
 from _lcm.simulation.program_arguments import (
-    ACTIVE_SUBJECTS_ARGUMENT,
+    ACTIVE_AGENTS_ARGUMENT,
     current_iid_arguments,
     decision_arguments,
-    declares_active_subjects,
+    declares_active_agents,
     gate_fold_arguments,
     gate_route_arguments,
     policy_prepare_arguments,
@@ -166,12 +173,6 @@ from _lcm.simulation.shock_paths import (
     fail_if_a_held_process_code_is_off_node,
     shock_path_values,
     supplied_shock_argument_names,
-)
-from _lcm.simulation.subject_groups import (
-    ComponentValueSource,
-    SubjectGroupPlan,
-    SubjectRows,
-    plan_subject_groups,
 )
 from _lcm.simulation.taste_stream import (
     build_taste_stream_addresses,
@@ -203,7 +204,16 @@ from _lcm.solution.host_values import (
 )
 from _lcm.solution.solve_phase_records import CallId, solve_phase
 from _lcm.solution.validate_V import validate_V, value_function_nan_error
-from _lcm.time import TimeAxis, coordinate_at, coordinate_kind, display_age_at
+from _lcm.time import (
+    TimeAxis,
+    coordinate_at,
+    coordinate_kind,
+    describe_step,
+    display_age_at,
+    landing_step,
+    period_of_step,
+    step_count,
+)
 from _lcm.typing import (
     ActionName,
     AgeValue,
@@ -283,8 +293,8 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
     ),
     seed: int | PRNGKey | None = None,
     taste_shock_seed: int | PRNGKey | None = None,
-    subject_batch_size: int = 0,
-    original_n_subjects: int | None = None,
+    agent_batch_size: int = 0,
+    original_n_agents: int | None = None,
     device_ids: tuple[int, ...] = (),
     retained_footprint: DeviceBufferFootprint | None = None,
     prepared_chunks: PreparedSimulationChunks | None = None,
@@ -303,7 +313,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
     Args:
         flat_params: Immutable mapping of regime names to flat parameter mappings.
         initial_conditions: Flat mapping of state names (plus `"regime_id"`) to
-            arrays. All arrays must have the same length (number of subjects).
+            arrays. All arrays must have the same length (number of agents).
             The `"regime_id"` entry must contain integer regime codes.
             Example:
             {"wealth": jnp.array([10.0, 50.0]), "regime_id": jnp.array([0, 0])}
@@ -320,7 +330,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
             regimes.
             Where a regime qualifies (`SimulationPhase.egm_policy_read`), the
             continuous action is interpolated from the policy at the
-            subject's resources instead of argmaxed over the action grid.
+            agent's resources instead of argmaxed over the action grid.
         period_to_regime_to_replay_reader: Model-preflighted external replay
             readers, independently addressed by period and regime. Empty for
             built-in solver routes.
@@ -329,22 +339,22 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
         seed: Integer seed or scalar Threefry key of the ordinary stream. An integer
             becomes a Threefry key. If not provided, a random seed is generated.
         taste_shock_seed: Independent taste seed, or None for the ordinary stream.
-        subject_batch_size: Concrete outer subject chunk extent, resolved by
+        agent_batch_size: Concrete outer agent chunk extent, resolved by
             `Model.simulate` from ExecutionConfig and whole-chunk admission.
-            `0` or a value `>= n_subjects` simulates the whole
-            population in a single pass; a smaller value chunks the subjects,
+            `0` or a value `>= n_agents` simulates the whole
+            population in a single pass; a smaller value chunks the agents,
             bounding the per-period device workspace at the cost of re-running the
-            period loop per chunk. Results are invariant to this knob: per-subject
+            period loop per chunk. Results are invariant to this knob: per-agent
             RNG keys are generated for the full population and sliced by global
             index.
-        original_n_subjects: Subject count before any subject-axis padding applied
+        original_n_agents: Agent count before any agent-axis padding applied
             by `pad_initial_conditions_to_multiple`. When set, RNG keys are sized to it
             and the trailing pad rows are trimmed from the results before they are
             returned. `None` means no padding was applied.
         device_ids: The model's device ids, ascending. Empty names every
             device JAX reports.
         process_code_reads: Per regime, the process states whose node position
-            its readers take. A household holding one off the regime's nodes is
+            its readers take. An agent holding one off the regime's nodes is
             refused before the regime decides or a gate reads it.
         call_id: Identifier of the public call whose phase records the setup,
             each chunk, the completion wait and the result assembly are
@@ -352,13 +362,13 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
         component_values: Where a block-major solution's values are read from,
             one code at a time, or `None` to read `period_to_regime_to_V_arr`.
             Requires the grouped route: every code is acquired in grid order,
-            its subjects are simulated from its values alone, and it is
-            released before the next code is acquired. A code no subject holds
+            its agents are simulated from its values alone, and it is
+            released before the next code is acquired. A code no agent holds
             is acquired and released too. The result then holds the source's
-            complete value store. A source whose `subject_codes` selects codes
-            simulates those codes' subjects alone, on the chunks the whole
+            complete value store. A source whose `agent_codes` selects codes
+            simulates those codes' agents alone, on the chunks the whole
             population's plan cuts for them: the result holds their rows in
-            original order, names them in `_subject_rows`, and holds no values.
+            original order, names them in `_agent_rows`, and holds no values.
 
     Returns:
         SimulationResult object. Call .to_dataframe() to get a pandas DataFrame.
@@ -389,51 +399,45 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
         total_start = time.monotonic()
 
         # Extract state arrays from initial conditions, which include the regime
-        # and each subject's role on top. Neither is a state of any regime.
+        # and each agent's role on top. Neither is a state of any regime.
         initial_states = {
             k: v
             for k, v in initial_conditions.items()
             if k not in {"regime_id", "own_member"}
         }
 
-        # Forward-simulate one subject chunk at a time. Subjects are independent across
-        # the forward path (no cross-subject reduction), so each chunk runs the full
+        # Forward-simulate one agent chunk at a time. Agents are independent across
+        # the forward path (no cross-agent reduction), so each chunk runs the full
         # period loop on its own slice and the per-chunk results are concatenated on the
-        # subject axis. Chunking bounds the per-period device workspace; the chunk size
-        # is `subject_batch_size` (the whole population in one pass when zero).
-        n_subjects = int(initial_conditions["regime_id"].shape[0])
+        # agent axis. Chunking bounds the per-period device workspace; the chunk size
+        # is `agent_batch_size` (the whole population in one pass when zero).
+        n_agents = int(initial_conditions["regime_id"].shape[0])
         batch_size = (
-            n_subjects
-            if subject_batch_size == 0
-            else min(subject_batch_size, n_subjects)
+            n_agents if agent_batch_size == 0 else min(agent_batch_size, n_agents)
         )
 
         grouping = next(iter(regimes.values())).simulation.programs.grouping
-        subject_codes = (
-            None if component_values is None else component_values.subject_codes
-        )
+        agent_codes = None if component_values is None else component_values.agent_codes
         group_plan = (
             None
             if grouping is None
-            else plan_subject_groups(
+            else plan_agent_groups(
                 route=grouping,
                 codes=(
                     np.asarray(jax.device_get(initial_conditions[grouping.state_name]))
                     if grouping.state_name in initial_conditions
                     else None
                 ),
-                n_real=(
-                    n_subjects if original_n_subjects is None else original_n_subjects
-                ),
+                n_real=(n_agents if original_n_agents is None else original_n_agents),
                 width=batch_size,
-                selected=subject_codes,
+                selected=agent_codes,
             )
         )
 
         if component_values is not None and group_plan is None:
             raise ExecutionPlanningError(
                 "Values retained one code at a time can only be simulated with "
-                "subjects grouped by that code."
+                "agents grouped by that code."
             )
 
         runtime = next(iter(regimes.values())).simulation.programs.executor
@@ -448,7 +452,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                 )
             if not budgeted_simulation_programs_ready(
                 regimes=regimes,
-                n_periods=ages.n_periods,
+                n_steps=step_count(ages),
                 enable_jit=runtime.enable_jit,
             ):
                 raise ExecutionPlanningError(
@@ -477,7 +481,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                 axis_widths=MappingProxyType({})
                 if prepared_chunks is None
                 else prepared_chunks.plan.profile.axis_widths,
-                subject_devices=runtime.subject_devices,
+                agent_devices=runtime.agent_devices,
                 operations=runtime.operations,
                 producers=runtime.operations,
                 devices=resolve_budget_devices(
@@ -542,13 +546,13 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
         regime_ids_to_names = invert_regime_ids(regime_names_to_ids)
 
         # Diagnostic only: report the resolved execution plan once per call, so a
-        # clean run carries evidence of which route (legacy/subjects), devices,
+        # clean run carries evidence of which route (legacy/agents), devices,
         # widths and chunking actually engaged. Never consulted for dispatch — it
         # is built from what the runtime already resolved above.
         plan_summary = build_simulation_plan_summary(
             regimes=regimes,
-            subject_devices=call_inputs.devices,
-            n_subjects=n_subjects,
+            agent_devices=call_inputs.devices,
+            n_agents=n_agents,
             batch_size=batch_size,
             prepared_chunks=prepared_chunks,
             group_plan=group_plan,
@@ -557,22 +561,21 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
 
         # When chunking, offload each chunk's results to host as it finishes so the
         # device frees them before the next chunk's period loop allocates — bounding
-        # device residency to a single chunk. A single pass (batch_size == n_subjects)
+        # device residency to a single chunk. A single pass (batch_size == n_agents)
         # keeps results on the compute device (no memory pressure, and no host
         # round-trip for downstream targets).
-        windows: tuple[tuple[slice | SubjectRows, int | None], ...] = (
+        windows: tuple[tuple[slice | AgentRows, int | None], ...] = (
             tuple(
                 (slice(start, start + batch_size), None)
-                for start in range(0, n_subjects, batch_size)
+                for start in range(0, n_agents, batch_size)
             )
             if group_plan is None
             else tuple(
-                (SubjectRows(rows=chunk.rows), chunk.code)
-                for chunk in group_plan.chunks
+                (AgentRows(rows=chunk.rows), chunk.code) for chunk in group_plan.chunks
             )
         )
         host_device = (
-            chunk_host_device(subject_devices=call_inputs.devices)
+            chunk_host_device(agent_devices=call_inputs.devices)
             if len(windows) > 1
             else None
         )
@@ -612,7 +615,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
             chunk_results.extend(
                 _simulate_windows_period_by_period(
                     chunks=tuple(
-                        _subject_chunk_periods(
+                        _agent_chunk_periods(
                             initial_states={
                                 name: _population_window(
                                     array=array, window=window, memory=memory
@@ -632,9 +635,9 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                             starting_periods=_population_window(
                                 array=starting_periods, window=window, memory=memory
                             ),
-                            n_subjects=n_subjects,
-                            subject_slice=window,
-                            original_n_subjects=original_n_subjects,
+                            n_agents=n_agents,
+                            agent_slice=window,
+                            original_n_agents=original_n_agents,
                             regimes=regimes,
                             regime_names_to_ids=regime_names_to_ids,
                             regime_ids_to_names=regime_ids_to_names,
@@ -665,7 +668,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                             windows, chunk_records, strict=True
                         )
                     ),
-                    n_periods=ages.n_periods,
+                    n_steps=step_count(ages),
                     host_device=cast("jax.Device", host_device),
                     memory=memory,
                     prepared_chunks=prepared_chunks,
@@ -673,7 +676,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                     prefetch=functools.partial(
                         _prefetch_period_reads,
                         active_by_period=forward_regimes_by_period(
-                            regimes=regimes, n_periods=ages.n_periods
+                            regimes=regimes, n_steps=step_count(ages)
                         ),
                         values=period_to_regime_to_V_arr,
                         policies=period_to_regime_to_sim_policy or MappingProxyType({}),
@@ -693,7 +696,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
             else component_values.acquire(code=cast("int", group_code))
         )
         try:
-            for subject_slice, code in group_windows:
+            for agent_slice, code in group_windows:
                 with solve_phase(
                     name="simulation_chunk", logger=logger, call_id=call_id
                 ):
@@ -705,43 +708,43 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
                         prepared_chunks.require_chunk(
                             memory=memory, completed_setup=completed_setup
                         )
-                    # Ungrouped, `n_subjects` is padded up to a multiple of
+                    # Ungrouped, `n_agents` is padded up to a multiple of
                     # `batch_size` upstream (see `pad_initial_conditions_to_multiple`),
                     # so every chunk — including the last — is exactly `batch_size`
                     # rows; the trailing pad rows are dropped once, after the loop,
                     # by `trim_pad_from_raw_results`. Grouped, every chunk gathers
                     # `batch_size` original rows of one code.
-                    chunk = _simulate_subject_chunk(
+                    chunk = _simulate_agent_chunk(
                         initial_states={
                             name: _population_window(
-                                array=array, window=subject_slice, memory=memory
+                                array=array, window=agent_slice, memory=memory
                             )
                             for name, array in initial_states.items()
                         },
                         initial_regime_ids=_population_window(
                             array=initial_conditions["regime_id"],
-                            window=subject_slice,
+                            window=agent_slice,
                             memory=memory,
                         ),
                         initial_own_member=_population_window(
                             array=initial_own_member,
-                            window=subject_slice,
+                            window=agent_slice,
                             memory=memory,
                         ),
                         starting_periods=_population_window(
                             array=starting_periods,
-                            window=subject_slice,
+                            window=agent_slice,
                             memory=memory,
                         ),
-                        n_subjects=n_subjects,
-                        subject_slice=subject_slice,
+                        n_agents=n_agents,
+                        agent_slice=agent_slice,
                         code=code,
                         stored_codes=(
                             None
                             if component_values is None
                             else (cast("int", group_code),)
                         ),
-                        original_n_subjects=original_n_subjects,
+                        original_n_agents=original_n_agents,
                         regimes=regimes,
                         regime_names_to_ids=regime_names_to_ids,
                         regime_ids_to_names=regime_ids_to_names,
@@ -791,7 +794,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
             component_values.release(code=cast("int", group_code))
 
     with solve_phase(name="simulation_completion", logger=logger, call_id=call_id):
-        # Only a selection of codes no subject holds runs no chunk at all.
+        # Only a selection of codes no agent holds runs no chunk at all.
         simulation_results = (
             _concatenate_chunk_results(
                 chunk_results=chunk_results, regimes=regimes, memory=memory
@@ -800,7 +803,7 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
             else {}
         )
         if group_plan is not None:
-            simulation_results = _restore_subject_order(
+            simulation_results = _restore_agent_order(
                 results=simulation_results, plan=group_plan, memory=memory
             )
 
@@ -825,14 +828,14 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
             }
         )
 
-        # Drop any subject-axis alignment pad rows so `SimulationResult` exposes
-        # only the user's real subjects (see `pad_initial_conditions_to_multiple`).
-        # No-op when `original_n_subjects` already matched the dispatched leading
+        # Drop any agent-axis alignment pad rows so `SimulationResult` exposes
+        # only the user's real agents (see `pad_initial_conditions_to_multiple`).
+        # No-op when `original_n_agents` already matched the dispatched leading
         # axis.
-        if original_n_subjects is not None:
+        if original_n_agents is not None:
             wrapped_results = trim_pad_from_raw_results(
                 raw_results=wrapped_results,
-                original_n_subjects=original_n_subjects,
+                original_n_agents=original_n_agents,
                 memory=memory,
             )
 
@@ -849,16 +852,16 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
             raw_results=wrapped_results,
             regimes=regimes,
             flat_params=flat_params,
-            period_to_regime_to_V_arr=(
+            step_to_regime_to_V_arr=(
                 period_to_regime_to_V_arr
                 if component_values is None
                 else MappingProxyType({})
-                if subject_codes is not None
+                if agent_codes is not None
                 else component_values.values()
             ),
             ages=ages,
             simulation_output_dtypes=simulation_output_dtypes,
-            subject_batch_size=subject_batch_size,
+            agent_batch_size=agent_batch_size,
             nested_policy_regimes=nested_policy_regimes,
             randomness={
                 "address_version": RANDOM_ADDRESS_VERSION,
@@ -876,8 +879,8 @@ def simulate(  # noqa: C901, PLR0912, PLR0915
         # not written by `SimulationResult.save` and is `None` after `load`.
         result._plan_summary = plan_summary  # noqa: SLF001
         result._dissolution_fallbacks = tuple(dissolution_records)  # noqa: SLF001
-        if subject_codes is not None and group_plan is not None:
-            result._subject_rows = group_plan.rows  # noqa: SLF001
+        if agent_codes is not None and group_plan is not None:
+            result._agent_rows = group_plan.rows  # noqa: SLF001
     return result
 
 
@@ -907,16 +910,16 @@ class _Prefetch(Protocol):
 def _simulate_windows_period_by_period(
     *,
     chunks: tuple[
-        Generator[tuple[SubjectChunkResults, ArrayTree], None, SubjectChunkResults],
+        Generator[tuple[AgentChunkResults, ArrayTree], None, AgentChunkResults],
         ...,
     ],
-    n_periods: int,
+    n_steps: int,
     host_device: jax.Device,
     memory: SimulationMemory | None = None,
     prepared_chunks: PreparedSimulationChunks | None = None,
     completed_setup: DeviceBufferFootprint | None = None,
     prefetch: _Prefetch | None = None,
-) -> list[SubjectChunkResults]:
+) -> list[AgentChunkResults]:
     """Run every chunk through a period before any chunk starts the next.
 
     Before a period's chunks run, `prefetch` starts copying what the next period
@@ -935,15 +938,15 @@ def _simulate_windows_period_by_period(
 
     """
     carries: list[ArrayTree] = [() for _ in chunks]
-    so_far: list[SubjectChunkResults] = [{} for _ in chunks]
+    so_far: list[AgentChunkResults] = [{} for _ in chunks]
     # The device copies the read-through views hold, early ones included.
     early: tuple[jax.Array, ...] = ()
-    for period in range(n_periods):
-        if prefetch is not None and period + 1 < n_periods:
-            early = prefetch(period=period + 1)
+    for step in range(n_steps):
+        if prefetch is not None and step + 1 < n_steps:
+            early = prefetch(period=step + 1)
         for index, chunk in enumerate(chunks):
             if memory is not None:
-                if period == 0 and prepared_chunks is not None:
+                if step == 0 and prepared_chunks is not None:
                     prepared_chunks.require_chunk(
                         memory=memory, completed_setup=completed_setup
                     )
@@ -955,9 +958,9 @@ def _simulate_windows_period_by_period(
                 )
             so_far[index], carries[index] = next(chunk)
             for by_period in so_far[index].values():
-                if period in by_period:
-                    by_period[period] = offload_chunk(
-                        tree=by_period[period], host_device=host_device, memory=memory
+                if step in by_period:
+                    by_period[step] = offload_chunk(
+                        tree=by_period[step], host_device=host_device, memory=memory
                     )
             if memory is not None:
                 memory.close_unit()
@@ -979,8 +982,8 @@ def _prefetch_period_reads(
 
     Reading through a read-through view dispatches the copy without waiting and
     keeps it for the period's chunks; a value no program declares is not read.
-    Every regime a subject can occupy at the period counts, so a copy may serve
-    no subject. A value on disk is read by a background thread.
+    Every regime an agent can occupy at the period counts, so a copy may serve
+    no agent. A value on disk is read by a background thread.
 
     Returns:
         The device copies both views hold now, early ones included, which a
@@ -1003,8 +1006,8 @@ def _prefetch_period_reads(
 
 def _finish_chunk(
     *,
-    chunk: Generator[tuple[SubjectChunkResults, ArrayTree], None, SubjectChunkResults],
-) -> SubjectChunkResults:
+    chunk: Generator[tuple[AgentChunkResults, ArrayTree], None, AgentChunkResults],
+) -> AgentChunkResults:
     """Return the results of a chunk that has run through every period."""
     try:
         next(chunk)
@@ -1016,9 +1019,9 @@ def _finish_chunk(
 
 def _window_groups(
     *,
-    windows: tuple[tuple[slice | SubjectRows, int | None], ...],
+    windows: tuple[tuple[slice | AgentRows, int | None], ...],
     codes: tuple[int, ...] | None,
-) -> tuple[tuple[int | None, tuple[tuple[slice | SubjectRows, int | None], ...]], ...]:
+) -> tuple[tuple[int | None, tuple[tuple[slice | AgentRows, int | None], ...]], ...]:
     """Return the windows as one group per code, or as one group without codes.
 
     With `codes`, every code gets a group in that order, empty when no window
@@ -1052,7 +1055,7 @@ def _initialize_chunk_state(
     )
     if memory is not None:
         memory.hold(tree=(states, key))
-    regime_ids, own_member = initialize_subject_membership(
+    regime_ids, own_member = initialize_agent_membership(
         initial_regime_ids=initial_regime_ids,
         initial_own_member=initial_own_member,
         memory=memory,
@@ -1060,17 +1063,17 @@ def _initialize_chunk_state(
     return states, regime_ids, own_member, key
 
 
-class SubjectChunkKwargs(TypedDict):
-    """Keywords `_simulate_subject_chunk` and `_subject_chunk_periods` take."""
+class AgentChunkKwargs(TypedDict):
+    """Keywords `_simulate_agent_chunk` and `_agent_chunk_periods` take."""
 
     initial_states: dict[StateOrActionName, Float1D | IntND]
     initial_regime_ids: Int1D
     starting_periods: Int1D
-    n_subjects: int
-    subject_slice: slice | SubjectRows
+    n_agents: int
+    agent_slice: slice | AgentRows
     code: NotRequired[int | None]
     stored_codes: NotRequired[tuple[int, ...] | None]
-    original_n_subjects: NotRequired[int | None]
+    original_n_agents: NotRequired[int | None]
     regimes: MappingProxyType[RegimeName, Regime]
     regime_names_to_ids: RegimeNamesToIds
     regime_ids_to_names: RegimeIdsToNames
@@ -1099,17 +1102,17 @@ class SubjectChunkKwargs(TypedDict):
     dissolution_records: NotRequired[list[DissolutionFallback] | None]
 
 
-type SubjectChunkResults = dict[RegimeName, dict[int, PeriodRegimeSimulationData]]
+type AgentChunkResults = dict[RegimeName, dict[int, PeriodRegimeSimulationData]]
 
 
-def _simulate_subject_chunk(
-    **kwargs: Unpack[SubjectChunkKwargs],
-) -> SubjectChunkResults:
-    """Run the full period loop for one chunk of subjects.
+def _simulate_agent_chunk(
+    **kwargs: Unpack[AgentChunkKwargs],
+) -> AgentChunkResults:
+    """Run the full period loop for one chunk of agents.
 
-    See `_subject_chunk_periods`, which this runs to its end.
+    See `_agent_chunk_periods`, which this runs to its end.
     """
-    periods = _subject_chunk_periods(**kwargs)
+    periods = _agent_chunk_periods(**kwargs)
     while True:
         try:
             next(periods)
@@ -1117,16 +1120,16 @@ def _simulate_subject_chunk(
             return finished.value
 
 
-def _subject_chunk_periods(  # noqa: PLR0915
+def _agent_chunk_periods(  # noqa: PLR0915
     *,
     initial_states: dict[StateOrActionName, Float1D | IntND],
     initial_regime_ids: Int1D,
     starting_periods: Int1D,
-    n_subjects: int,
-    subject_slice: slice | SubjectRows,
+    n_agents: int,
+    agent_slice: slice | AgentRows,
     code: int | None = None,
     stored_codes: tuple[int, ...] | None = None,
-    original_n_subjects: int | None = None,
+    original_n_agents: int | None = None,
     regimes: MappingProxyType[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
     regime_ids_to_names: RegimeIdsToNames,
@@ -1157,8 +1160,8 @@ def _subject_chunk_periods(  # noqa: PLR0915
         RegimeName, Mapping[StateName, _ContinuousStochasticProcess]
     ] = MappingProxyType({}),
     dissolution_records: list[DissolutionFallback] | None = None,
-) -> Generator[tuple[SubjectChunkResults, ArrayTree], None, SubjectChunkResults]:
-    """Run the period loop for one chunk of subjects, pausing after each period.
+) -> Generator[tuple[AgentChunkResults, ArrayTree], None, AgentChunkResults]:
+    """Run the period loop for one chunk of agents, pausing after each period.
 
     After each period the generator yields the chunk's results so far, the
     period's included, with the carry it keeps until its next period, and at the
@@ -1169,21 +1172,21 @@ def _subject_chunk_periods(  # noqa: PLR0915
     the next.
 
     `initial_states`, `initial_regime_ids`, and `starting_periods` are already
-    sliced to this chunk's subjects; `n_subjects` and `subject_slice` describe the
+    sliced to this chunk's agents; `n_agents` and `agent_slice` describe the
     chunk's position in the full population so RNG keys stay full-population and are
     sliced, or for a grouped chunk gathered, by original row. `code` is the code of
-    the grouping state every subject of a grouped chunk holds, `None` ungrouped;
+    the grouping state every agent of a grouped chunk holds, `None` ungrouped;
     `stored_codes` are the codes the stored values hold along that state's
     axis, `None` for every code.
     The key stream is re-derived from `seed` here so the per-period carry is
-    identical across chunks (it is subject-count-independent).
-    `initial_own_member`: each subject's seeded role, already sliced to
+    identical across chunks (it is agent-count-independent).
+    `initial_own_member`: each agent's seeded role, already sliced to
     this chunk. It is carried through the period loop and updated wherever a
     gated edge routes a row, so a dissolution follows the row's own leg.
     `device_ids`: the model's device ids, ascending; empty names every device
     JAX reports.
 
-    Returns the per-(regime, period) results for this chunk's subjects.
+    Returns the per-(regime, period) results for this chunk's agents.
     """
     chunk_inputs = prepare_simulation_chunk_inputs(
         initial_states=initial_states,
@@ -1203,7 +1206,7 @@ def _subject_chunk_periods(  # noqa: PLR0915
     initial_own_member = chunk_inputs.initial_own_member
     starting_periods = chunk_inputs.starting_periods
     base_state_action_spaces = chunk_inputs.base_state_action_spaces
-    states, subject_regime_ids, own_member, key = _initialize_chunk_state(
+    states, agent_regime_ids, own_member, key = _initialize_chunk_state(
         initial_states=initial_states,
         initial_regime_ids=initial_regime_ids,
         initial_own_member=initial_own_member,
@@ -1216,20 +1219,20 @@ def _subject_chunk_periods(  # noqa: PLR0915
     taste_key = create_taste_shock_key(
         seed=taste_shock_seed if taste_addresses else None,
         memory=memory,
-        live_inputs=(states, subject_regime_ids, own_member, key),
+        live_inputs=(states, agent_regime_ids, own_member, key),
     )
 
     simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
         regime_name: {} for regime_name in regimes
     }
     # Each row's role in the previous period and the source whose gate it
-    # passed open into this period: a household without a feasible action takes
+    # passed open into this period: an agent without a feasible action takes
     # the dissolution route of that gate, once.
     source_roles: Int1D | None = None
     entered_through: Int1D | None = None
 
-    for period, active_regimes in enumerate(
-        forward_regimes_by_period(regimes=regimes, n_periods=ages.n_periods)
+    for step, active_regimes in enumerate(
+        forward_regimes_by_period(regimes=regimes, n_steps=step_count(ages))
     ):
         period_start = time.monotonic()
         if memory is not None:
@@ -1237,7 +1240,7 @@ def _subject_chunk_periods(  # noqa: PLR0915
             # this period's dissolution routes, so they stay roots until then.
             memory.unit_inputs = (
                 states,
-                subject_regime_ids,
+                agent_regime_ids,
                 own_member,
                 key,
                 taste_key,
@@ -1245,11 +1248,11 @@ def _subject_chunk_periods(  # noqa: PLR0915
                 entered_through,
             )
         original_age = chunk_operations.period_age(
-            values=ages.values, period=period, memory=memory
+            values=ages.values, period=step, memory=memory
         )
         age = place_simulation_arguments(
             arguments={"age": original_age},
-            subject_arg_names=(),
+            agent_arg_names=(),
             value_reads=(),
             devices=devices,
             budget_bytes=None if memory is None else memory.budget_bytes,
@@ -1259,27 +1262,27 @@ def _subject_chunk_periods(  # noqa: PLR0915
         if memory is not None:
             memory.hold(tree=age)
 
-        subject_regime_ids, own_member = activate_subject_membership(
-            period=period,
+        agent_regime_ids, own_member = activate_agent_membership(
+            period=step,
             starting_periods=starting_periods,
             initial_regime_ids=initial_regime_ids,
             initial_own_member=initial_own_member,
-            regime_ids=subject_regime_ids,
+            regime_ids=agent_regime_ids,
             own_member=own_member,
             memory=memory,
         )
 
-        new_subject_regime_ids = subject_regime_ids
+        new_agent_regime_ids = agent_regime_ids
         new_own_member = own_member
         new_entered_through = run_simulation_operation(
             memory=memory,
             function=empty_gated_entries,
-            arguments={"regime_ids": subject_regime_ids},
-            subject_arg_names=("regime_ids",),
-            subject_outputs=True,
+            arguments={"regime_ids": agent_regime_ids},
+            agent_arg_names=("regime_ids",),
+            agent_outputs=True,
         )
 
-        age_label = display_age_at(ages=ages, period=period)
+        age_label = display_age_at(ages=ages, step=step)
         log_period_header(
             logger=logger,
             age_label=age_label,
@@ -1287,17 +1290,17 @@ def _subject_chunk_periods(  # noqa: PLR0915
             time_kind=coordinate_kind(ages),
         )
 
-        period_policies = (period_to_regime_to_sim_policy or {}).get(period, {})
-        period_readers = period_to_regime_to_replay_reader.get(period, {})
+        period_policies = (period_to_regime_to_sim_policy or {}).get(step, {})
+        period_readers = period_to_regime_to_replay_reader.get(step, {})
         executor = next(iter(regimes.values())).simulation.programs.executor
         owner = PeriodSimulationReads(
-            period=period,
+            period=step,
             devices=devices,
             reads_by_unit={
                 name: unit_value_reads(
                     regime=active,
                     name=name,
-                    period=period,
+                    period=step,
                     values=period_to_regime_to_V_arr,
                     policy=period_policies.get(name),
                     reader=period_readers.get(name),
@@ -1316,30 +1319,33 @@ def _subject_chunk_periods(  # noqa: PLR0915
         if memory is not None:
             memory.period_owner = owner
 
-        states, subject_regime_ids, own_member, prepared_exits = prepare_exit_period(
-            regimes=regimes,
-            period=period,
-            states=states,
-            regime_ids=subject_regime_ids,
-            roles=own_member,
-            regime_names_to_ids=regime_names_to_ids,
-            flat_params=flat_params,
-            ages=ages,
-            values=period_to_regime_to_V_arr,
-            owner=owner,
-            key=key,
-            subject_slice=subject_slice,
-            original_n_subjects=n_subjects
-            if original_n_subjects is None
-            else original_n_subjects,
-            memory=memory,
-            taste_key=taste_key,
-            taste_addresses=taste_addresses,
-            current_iid_overrides=current_iid_overrides,
+        states, agent_regime_ids, own_member, prepared_composition_actions = (
+            prepare_composition_period(
+                regimes=regimes,
+                period=step,
+                states=states,
+                regime_ids=agent_regime_ids,
+                roles=own_member,
+                regime_names_to_ids=regime_names_to_ids,
+                flat_params=flat_params,
+                ages=ages,
+                values=period_to_regime_to_V_arr,
+                owner=owner,
+                key=key,
+                agent_slice=agent_slice,
+                original_n_agents=n_agents
+                if original_n_agents is None
+                else original_n_agents,
+                memory=memory,
+                taste_key=taste_key,
+                taste_addresses=taste_addresses,
+                current_iid_overrides=current_iid_overrides,
+            )
         )
-        # Current exits are simultaneous. The scheduled transition accumulators
-        # start from final acting membership, after every original choice froze.
-        new_subject_regime_ids = subject_regime_ids
+        # The period's decisions on the composition are simultaneous. The
+        # scheduled transition accumulators start from final acting membership,
+        # after every original choice froze.
+        new_agent_regime_ids = agent_regime_ids
         new_own_member = own_member
 
         ran_this_period: list[RegimeName] = []
@@ -1349,8 +1355,8 @@ def _subject_chunk_periods(  # noqa: PLR0915
                 memory=memory,
                 inputs=(
                     states,
-                    subject_regime_ids,
-                    new_subject_regime_ids,
+                    agent_regime_ids,
+                    new_agent_regime_ids,
                     own_member,
                     new_own_member,
                     key,
@@ -1359,15 +1365,15 @@ def _subject_chunk_periods(  # noqa: PLR0915
                     source_roles,
                     entered_through,
                     new_entered_through,
-                    prepared_exits,
+                    prepared_composition_actions,
                 ),
             )
             (
                 result,
                 new_states,
-                new_subject_regime_ids,
+                new_agent_regime_ids,
                 new_own_member,
-                subject_regime_ids,
+                agent_regime_ids,
                 own_member,
                 entered_through,
                 new_entered_through,
@@ -1376,67 +1382,69 @@ def _subject_chunk_periods(  # noqa: PLR0915
                 regime=dispatched_regime,
                 regimes=regimes,
                 value_owner=owner,
-                subject_devices=devices,
+                agent_devices=devices,
                 memory=memory,
                 base_state_action_space=base_state_action_spaces[regime_name],
-                period=period,
+                period=step,
+                ages=ages,
+                reported_period=period_of_step(ages=ages, step=step),
                 age=age,
                 states=states,
-                subject_regime_ids=subject_regime_ids,
-                new_subject_regime_ids=new_subject_regime_ids,
+                agent_regime_ids=agent_regime_ids,
+                new_agent_regime_ids=new_agent_regime_ids,
                 period_to_regime_to_V_arr=period_to_regime_to_V_arr,
                 base_state_action_spaces=base_state_action_spaces,
                 sim_policy=(period_to_regime_to_sim_policy or {})
-                .get(period, {})
+                .get(step, {})
                 .get(regime_name),
-                replay_reader=period_to_regime_to_replay_reader.get(period, {}).get(
+                replay_reader=period_to_regime_to_replay_reader.get(step, {}).get(
                     regime_name
                 ),
                 flat_params=flat_params,
                 regime_names_to_ids=regime_names_to_ids,
                 decision_targets_next_period=(
                     ()
-                    if period == ages.n_periods - 1
+                    if step == step_count(ages) - 1
                     else regime.solution.reachability.targets(
-                        period=period, source=regime_name
+                        step=step, source=regime_name
                     )
                 ),
                 realization_targets_next_period=(
                     ()
-                    if period == ages.n_periods - 1
+                    if step == step_count(ages) - 1
                     else regime.simulation.reachability.targets(
-                        period=period, source=regime_name
+                        step=step, source=regime_name
                     )
                 ),
                 key=key,
                 taste_key=taste_key,
-                taste_address=taste_addresses.get((period, regime_name)),
+                taste_address=taste_addresses.get((step, regime_name)),
                 current_iid_overrides=current_iid_overrides,
                 node_axis_inputs=node_axis_inputs,
                 logger=logger,
-                n_subjects=n_subjects,
-                subject_slice=subject_slice,
-                original_n_subjects=original_n_subjects,
+                n_agents=n_agents,
+                agent_slice=agent_slice,
+                original_n_agents=original_n_agents,
                 supplied_shocks=shock_path_values(
                     paths=shock_paths,
                     argument_names=tuple(
                         name
                         for name in supplied_shock_argument_names(
-                            regime=regime, period=period
+                            regime=regime, period=step
                         )
                         if name.removeprefix("supplied_shock__") in shock_paths
                     ),
-                    period=period + 1,
-                    subject_slice=subject_slice,
-                    n_subjects=len(subject_regime_ids),
+                    period=step + 1,
+                    agent_slice=agent_slice,
+                    n_agents=len(agent_regime_ids),
                 )
                 if shock_paths
                 else MappingProxyType({}),
                 own_member=own_member,
                 new_own_member=new_own_member,
                 gated_edge_fold_age=(
-                    coordinate_at(ages=ages, period=period + 1)
-                    if regime.gated_edges and period + 1 < ages.n_periods
+                    coordinate_at(ages=ages, step=step + 1)
+                    if regime.gated_edges and step + 1 < step_count(ages)
                     else None
                 ),
                 source_roles=source_roles,
@@ -1445,11 +1453,11 @@ def _subject_chunk_periods(  # noqa: PLR0915
                 process_code_reads=process_code_reads,
                 dissolution_records=dissolution_records,
                 ran_this_period=tuple(ran_this_period),
-                prepared_decision=prepared_exits.get(regime_name),
+                prepared_decision=prepared_composition_actions.get(regime_name),
             )
             ran_this_period.append(regime_name)
             states = new_states
-            simulation_results[regime_name][period] = result
+            simulation_results[regime_name][step] = result
             if memory is not None:
                 memory.publish(tree=result)
             owner.commit(
@@ -1457,7 +1465,7 @@ def _subject_chunk_periods(  # noqa: PLR0915
                 outputs=(
                     result,
                     states,
-                    new_subject_regime_ids,
+                    new_agent_regime_ids,
                     new_own_member,
                     key,
                 ),
@@ -1469,7 +1477,7 @@ def _subject_chunk_periods(  # noqa: PLR0915
                 ).close()
                 memory.close_unit()
 
-        del prepared_exits
+        del prepared_composition_actions
         owner.finish()
         if memory is not None:
             memory.period_owner = None
@@ -1478,8 +1486,8 @@ def _subject_chunk_periods(  # noqa: PLR0915
             # through diagnostics.
             memory.unit_inputs = (
                 states,
-                subject_regime_ids,
-                new_subject_regime_ids,
+                agent_regime_ids,
+                new_agent_regime_ids,
                 own_member,
                 new_own_member,
                 key,
@@ -1498,23 +1506,23 @@ def _subject_chunk_periods(  # noqa: PLR0915
             time_kind=coordinate_kind(ages),
             memory=memory,
             period_results=tuple(
-                (regime_name, simulation_results[regime_name][period])
+                (regime_name, simulation_results[regime_name][step])
                 for regime_name in active_regimes
             ),
         )
 
         # The period's final membership, after dissolution routes moved rows
         # into the regime they acted in, is where each transition starts.
-        prev_regime_ids = subject_regime_ids
+        prev_regime_ids = agent_regime_ids
         source_roles = own_member
         entered_through = new_entered_through
-        subject_regime_ids = new_subject_regime_ids
+        agent_regime_ids = new_agent_regime_ids
         own_member = new_own_member
 
         log_regime_transition_counts(
             logger=logger,
             prev_regime_ids=prev_regime_ids,
-            new_regime_ids=subject_regime_ids,
+            new_regime_ids=agent_regime_ids,
             regime_ids_to_names=regime_ids_to_names,
             counts_factory=(
                 None
@@ -1523,7 +1531,7 @@ def _subject_chunk_periods(  # noqa: PLR0915
                     profiled_transition_counts,
                     memory=memory,
                     prev_regime_ids=prev_regime_ids,
-                    new_regime_ids=subject_regime_ids,
+                    new_regime_ids=agent_regime_ids,
                     sorted_ids=tuple(sorted(regime_ids_to_names)),
                 )
             ),
@@ -1537,7 +1545,7 @@ def _subject_chunk_periods(  # noqa: PLR0915
             simulation_results,
             (
                 states,
-                subject_regime_ids,
+                agent_regime_ids,
                 own_member,
                 key,
                 taste_key,
@@ -1582,11 +1590,11 @@ def _concatenate_chunk_results(
     regimes: MappingProxyType[RegimeName, Regime],
     memory: SimulationMemory | None = None,
 ) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
-    """Concatenate per-chunk simulation results along the subject axis.
+    """Concatenate per-chunk simulation results along the agent axis.
 
     Every chunk runs the full period loop, so each populates the same
-    (regime, period) slots with arrays over its own subjects. Concatenating on
-    axis 0 in chunk order reassembles the full population in global subject order.
+    (regime, period) slots with arrays over its own agents. Concatenating on
+    axis 0 in chunk order reassembles the full population in global agent order.
     A single chunk (the unbatched case) is returned untouched.
     """
     if len(chunk_results) == 1:
@@ -1610,10 +1618,10 @@ def _concatenate_chunk_results(
 
 
 def _population_window(
-    *, array: jax.Array, window: slice | SubjectRows, memory: SimulationMemory | None
+    *, array: jax.Array, window: slice | AgentRows, memory: SimulationMemory | None
 ) -> jax.Array:
     """Take one chunk's rows of a population array: a window, or original rows."""
-    if isinstance(window, SubjectRows):
+    if isinstance(window, AgentRows):
         return chunk_operations.take_population(
             array=array, rows=window.rows, memory=memory
         )
@@ -1625,13 +1633,13 @@ def _population_window(
     )
 
 
-def _restore_subject_order(
+def _restore_agent_order(
     *,
     results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]],
-    plan: SubjectGroupPlan,
+    plan: AgentGroupPlan,
     memory: SimulationMemory | None = None,
 ) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
-    """Gather every grouped output back into original subject order.
+    """Gather every grouped output back into original agent order.
 
     Each original row reads its own output; the outputs of a group's repeated
     tail rows are read by none. Gathering copies bytes, so values, signed zeros
@@ -1659,41 +1667,53 @@ def _restore_subject_order(
 
 def _require_next_period_values(
     *,
-    next_period_values: Mapping[RegimeName, FloatND],
+    period_to_regime_to_V_arr: StoredValues,
+    ages: TimeAxis,
     required_targets: tuple[RegimeName, ...],
     source_regime_name: RegimeName,
     source_period: int,
 ) -> MappingProxyType[RegimeName, FloatND]:
     """Validate and select the solution-graph continuation values a decision needs.
 
+    Each target's value is read where the edge into it lands, at the target's next
+    occurrence.
+
     Args:
-        next_period_values: The caller-supplied value-function arrays for the
-            target period (`source_period + 1`), keyed by regime name.
+        period_to_regime_to_V_arr: The caller-supplied value-function arrays,
+            keyed by step and regime name.
+        ages: The model's time axis.
         required_targets: This source's retained *solution*-graph targets —
-            every one must have an entry in `next_period_values`.
+            every one must have a value at its landing step.
         source_regime_name: The source regime making the decision.
-        source_period: The source period (0-indexed).
+        source_period: The source step (0-indexed).
 
     Returns:
         Immutable mapping of just the required targets to their value arrays.
 
     Raises:
-        InvalidSimulationInputError: If any required target is missing from
-            `next_period_values`.
+        InvalidSimulationInputError: If any required target has no value at its
+            landing step.
 
     """
-    missing = tuple(sorted(set(required_targets) - next_period_values.keys()))
+    landed = {
+        target: period_to_regime_to_V_arr.get(
+            landing_step(ages=ages, step=source_period, target=target),
+            MappingProxyType({}),
+        )
+        for target in required_targets
+    }
+    missing = tuple(sorted(t for t, values in landed.items() if t not in values))
     if missing:
         msg = (
             f"Missing continuation values for source regime '{source_regime_name}' "
-            f"at period {source_period} (target period {source_period + 1}). "
+            f"in {describe_step(ages=ages, step=source_period)}. "
             f"Required solution-graph targets: {required_targets}. "
             f"Missing: {missing}. Supply a solution produced by this model or "
             f"provide all required arrays."
         )
         raise InvalidSimulationInputError(msg)
     return MappingProxyType(
-        {target: next_period_values[target] for target in required_targets}
+        {target: landed[target][target] for target in required_targets}
     )
 
 
@@ -1756,13 +1776,13 @@ def _read_external_replay(
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     flat_params: FlatRegimeParams,
     referenced_value_kwargs: QAndFKwargs,
-    subject_ids_in_regime: BoolND,
+    agent_ids_in_regime: BoolND,
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]:
     """Run one preflighted external reader and verify its chosen actions."""
-    n_subjects = subject_ids_in_regime.shape[0]
+    n_agents = agent_ids_in_regime.shape[0]
     fallback_actions = MappingProxyType(
         {
-            name: jnp.broadcast_to(jnp.asarray(nodes)[0], (n_subjects,))
+            name: jnp.broadcast_to(jnp.asarray(nodes)[0], (n_agents,))
             for name, nodes in state_action_space.actions.items()
         }
     )
@@ -1792,8 +1812,8 @@ def _read_external_replay(
     optimal_actions = _canonicalize_external_replay_actions(
         replay_output=replay_output,
         state_action_space=state_action_space,
-        subject_ids_in_regime=subject_ids_in_regime,
-        n_subjects=n_subjects,
+        agent_ids_in_regime=agent_ids_in_regime,
+        n_agents=n_agents,
         regime_name=regime_name,
         period=period,
     )
@@ -1807,12 +1827,12 @@ def _read_external_replay(
         referenced_value_kwargs=referenced_value_kwargs,
         period=period,
         age=age,
-        active_subjects=subject_ids_in_regime,
+        active_agents=agent_ids_in_regime,
     )
-    if bool(jnp.any(subject_ids_in_regime & ~replay_feasible)):
+    if bool(jnp.any(agent_ids_in_regime & ~replay_feasible)):
         raise InvalidSimulationInputError(
             "External replay reader returned an infeasible action for at least "
-            f"one subject at ({period}, {regime_name!r})."
+            f"one agent at ({period}, {regime_name!r})."
         )
     return optimal_actions, value
 
@@ -1821,8 +1841,8 @@ def _canonicalize_external_replay_actions(
     *,
     replay_output: ActionOutput,
     state_action_space: StateActionSpace,
-    subject_ids_in_regime: BoolND,
-    n_subjects: int,
+    agent_ids_in_regime: BoolND,
+    n_agents: int,
     regime_name: RegimeName,
     period: int,
 ) -> MappingProxyType[ActionName, FloatND | IntND]:
@@ -1832,7 +1852,7 @@ def _canonicalize_external_replay_actions(
         try:
             action = jnp.broadcast_to(
                 jnp.asarray(replay_output.actions[name]),
-                (n_subjects,),
+                (n_agents,),
             )
         except (TypeError, ValueError) as error:
             raise InvalidSimulationInputError(
@@ -1848,7 +1868,7 @@ def _canonicalize_external_replay_actions(
                 "External replay reader returned a non-numeric action for "
                 f"{name!r} at ({period}, {regime_name!r})."
             )
-        if bool(jnp.any(subject_ids_in_regime & ~jnp.isfinite(action))):
+        if bool(jnp.any(agent_ids_in_regime & ~jnp.isfinite(action))):
             raise InvalidSimulationInputError(
                 "External replay reader returned a non-finite action for "
                 f"{name!r} at ({period}, {regime_name!r})."
@@ -1863,7 +1883,7 @@ def _canonicalize_external_replay_actions(
                 )
             domain = jnp.asarray(discrete_domain)
             in_domain = jnp.any(action[:, None] == domain[None, :], axis=1)
-            if bool(jnp.any(subject_ids_in_regime & ~in_domain)):
+            if bool(jnp.any(agent_ids_in_regime & ~in_domain)):
                 raise InvalidSimulationInputError(
                     "External replay reader returned an action outside its declared "
                     f"categorical domain for {name!r} at "
@@ -1922,7 +1942,7 @@ def _validate_period_values(
         else memory.run(
             function=period_value_flags,
             arguments=arguments,
-            subject_arg_names=("values", "in_regime"),
+            agent_arg_names=("values", "in_regime"),
         )
     )
     has_nan, has_non_finite = flags.tolist()
@@ -1937,7 +1957,7 @@ def _validate_period_values(
         if flag:
             _validate_simulated_value(
                 value=data.V_arr,
-                subject_ids_in_regime=data.in_regime,
+                agent_ids_in_regime=data.in_regime,
                 age=age,
                 regime_name=regime_name,
                 logger=logger,
@@ -1949,14 +1969,14 @@ def _validate_period_values(
 def _validate_simulated_value(
     *,
     value: FloatND,
-    subject_ids_in_regime: BoolND,
+    agent_ids_in_regime: BoolND,
     age: ScalarInt | ScalarFloat,
     regime_name: RegimeName,
     logger: logging.Logger,
     memory: SimulationMemory | None = None,
     time_kind: Literal["age", "period"] = "age",
 ) -> None:
-    """Validate values only for subjects whose current regime owns the rows."""
+    """Validate values only for agents whose current regime owns the rows."""
     if not validation_enabled(logger):
         return
     try:
@@ -1964,8 +1984,8 @@ def _validate_simulated_value(
             n_nan = int(
                 memory.run(
                     function=owned_value_nan_count,
-                    arguments={"value": value, "in_regime": subject_ids_in_regime},
-                    subject_arg_names=("value", "in_regime"),
+                    arguments={"value": value, "in_regime": agent_ids_in_regime},
+                    agent_arg_names=("value", "in_regime"),
                 )
             )
             if n_nan:
@@ -1977,12 +1997,11 @@ def _validate_simulated_value(
                     time_kind=time_kind,
                 )
             return
-        # Out-of-regime subjects carry placeholder entries (their state is
+        # Out-of-regime agents carry placeholder entries (their state is
         # meaningless under this regime's problem). A collective value carries a
         # trailing member axis, so broadcast the ownership mask over it.
-        in_regime_mask = subject_ids_in_regime.reshape(
-            subject_ids_in_regime.shape
-            + (1,) * (value.ndim - subject_ids_in_regime.ndim)
+        in_regime_mask = agent_ids_in_regime.reshape(
+            agent_ids_in_regime.shape + (1,) * (value.ndim - agent_ids_in_regime.ndim)
         )
         validate_V(
             logger=logger,
@@ -2001,15 +2020,17 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     regime: Regime,
     regimes: Mapping[RegimeName, Regime],
     value_owner: PeriodSimulationReads,
-    subject_devices: tuple[jax.Device, ...],
+    agent_devices: tuple[jax.Device, ...],
     memory: SimulationMemory | None,
     base_state_action_space: StateActionSpace,
     base_state_action_spaces: Mapping[RegimeName, StateActionSpace],
     period: int,
+    ages: TimeAxis,
+    reported_period: int,
     age: ScalarInt | ScalarFloat,
     states: StatesPerRegime,
-    subject_regime_ids: Int1D,
-    new_subject_regime_ids: Int1D,
+    agent_regime_ids: Int1D,
+    new_agent_regime_ids: Int1D,
     period_to_regime_to_V_arr: MappingProxyType[
         int, MappingProxyType[RegimeName, FloatND]
     ],
@@ -2019,9 +2040,9 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     realization_targets_next_period: tuple[RegimeName, ...],
     key: PRNGKeyND,
     logger: logging.Logger,
-    n_subjects: int,
-    subject_slice: slice | SubjectRows,
-    original_n_subjects: int | None = None,
+    n_agents: int,
+    agent_slice: slice | AgentRows,
+    original_n_agents: int | None = None,
     own_member: Int1D,
     new_own_member: Int1D,
     gated_edge_fold_age: AgeValue | None = None,
@@ -2042,7 +2063,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
     ] = MappingProxyType({}),
     dissolution_records: list[DissolutionFallback] | None = None,
     ran_this_period: tuple[RegimeName, ...] = (),
-    prepared_decision: PreparedExitDecision | None = None,
+    prepared_decision: PreparedCompositionDecision | None = None,
 ) -> tuple[
     PeriodRegimeSimulationData,
     StatesPerRegime,
@@ -2055,7 +2076,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
 ]:
     """Simulate one regime for one period.
 
-    This function processes all subjects in a given regime for a single period,
+    This function processes all agents in a given regime for a single period,
     computing optimal actions, updating states, and determining next regime membership.
 
     Args:
@@ -2069,12 +2090,13 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         base_state_action_spaces: Every regime's params-completed state-action
             space — a gated edge's value-and-gate fold needs its TARGET
             regime's own state grids, not just this regime's.
-        period: Current period (0-indexed).
+        period: Current step (0-indexed).
+        reported_period: The period of that step, which messages name.
         age: Age corresponding to current period.
         states: Carrier of current-period state arrays for every regime and
             state.
-        subject_regime_ids: Current regime membership for all subjects.
-        new_subject_regime_ids: Array to populate with next period's regime memberships.
+        agent_regime_ids: Current regime membership for all agents.
+        new_agent_regime_ids: Array to populate with next period's regime memberships.
         period_to_regime_to_V_arr: Value function arrays for all periods and regimes.
         flat_params: Model parameters for all regimes.
         regime_names_to_ids: Mapping from regime names to integer IDs.
@@ -2088,16 +2110,16 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             `decision_targets_next_period` under a `Phased` regime
             transition.
         key: JAX random key for stochastic operations.
-        n_subjects: Total number of subjects (the full population), used to keep RNG
-            key generation independent of how subjects are chunked.
-        subject_slice: Global-index slice, or original rows, of the subjects in
+        n_agents: Total number of agents (the full population), used to keep RNG
+            key generation independent of how agents are chunked.
+        agent_slice: Global-index slice, or original rows, of the agents in
             this chunk.
-        own_member: The role each subject occupies this period, as a code
+        own_member: The role each agent occupies this period, as a code
             in the model's role vocabulary. Decides which leg of a gated edge
             a row follows, and is published beside the states.
         new_own_member: Array to populate with next period's roles, in the
             same accumulate-across-regimes manner as
-            `new_subject_regime_ids`.
+            `new_agent_regime_ids`.
         gated_edge_fold_age: Age corresponding to `period + 1`; threaded to
             gated-edge folds, gate evaluators, and fallback projectors.
         sim_policy: The regime's published off-grid simulation policy for this
@@ -2106,7 +2128,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         replay_reader: Model-preflighted external policy reader for this exact
             result cell, or ``None`` for an engine-owned replay route.
         value_owner: This period's owner of addressed copies.
-        subject_devices: Actual ordered devices evaluating the population.
+        agent_devices: Actual ordered devices evaluating the population.
         source_roles: Each row's role in the previous period, or `None` in a
             chunk's first period.
         entered_through: Each row's source regime id when it passed that
@@ -2120,18 +2142,18 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             for this regime's rows.
         process_code_reads: Per regime, the process states whose node position
             its readers take.
-        dissolution_records: Collects one record per rerouted subject when
+        dissolution_records: Collects one record per rerouted agent when
             runtime checks are on.
         ran_this_period: The regimes that already ran this period. A row whose
             dissolution route leads into one of them cannot act this period.
         prepared_decision: Final actions already selected by the immutable
-            original-subject exit pass, or `None` for an ordinary decision.
+            original-agent composition pass, or `None` for an ordinary decision.
 
     Returns:
         Tuple containing:
         - PeriodRegimeSimulationData for this regime-period
         - Updated state carrier
-        - Updated new_subject_regime_ids array
+        - Updated new_agent_regime_ids array
         - Updated new_own_member array
         - Current regime membership, after any dissolution route
         - Current roles, after any dissolution route
@@ -2139,24 +2161,24 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         - Updated next-period open-branch entries
 
     """
-    # Select subjects in the current regime
-    subject_ids_in_regime = chunk_operations.regime_mask(
-        regime_ids=subject_regime_ids,
+    # Select agents in the current regime
+    agent_ids_in_regime = chunk_operations.regime_mask(
+        regime_ids=agent_regime_ids,
         regime_id=regime_names_to_ids[regime_name],
         memory=memory,
     )
     genuine = _genuine_rows(
-        subject_slice=subject_slice,
-        n_real=n_subjects if original_n_subjects is None else original_n_subjects,
+        agent_slice=agent_slice,
+        n_real=n_agents if original_n_agents is None else original_n_agents,
     )
-    # Whatever route brought a household here, the position it is read at must
+    # Whatever route brought an agent here, the position it is read at must
     # be a node of this regime. A regime reading no position transfers nothing.
     coded = process_code_reads.get(regime_name, {})
     if coded:
         fail_if_a_held_process_code_is_off_node(
             states=states[regime_name],
             processes=coded,
-            holders=subject_ids_in_regime & genuine,
+            holders=agent_ids_in_regime & genuine,
             where=f"in regime '{regime_name}' at period {period}",
             memory=memory,
         )
@@ -2166,18 +2188,17 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         regime_states=states[regime_name],
         base=base_state_action_space,
     )
-    # The decision reads the next period's reachable values. In the last period
-    # it receives an empty mapping because no continuation is consumed.
-    next_period_values = period_to_regime_to_V_arr.get(period + 1, MappingProxyType({}))
+    # In the last period no continuation is consumed.
     next_regime_to_V_arr = _require_next_period_values(
-        next_period_values=next_period_values,
+        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+        ages=ages,
         required_targets=decision_targets_next_period,
         source_regime_name=regime_name,
         source_period=period,
     )
 
     # Fold only this period's addressed raw values. Copies are shared across
-    # readers in the period and no fold survives into another subject chunk.
+    # readers in the period and no fold survives into another agent chunk.
     raw_gate_reads = gate_reads(
         regime=regime,
         name=regime_name,
@@ -2216,11 +2237,15 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                                 period=period + 1,
                             )
                             for target in regime.gated_edges
-                            if target in next_period_values
+                            # A gated edge lands at the next step.
+                            if target
+                            in period_to_regime_to_V_arr.get(
+                                period + 1, MappingProxyType({})
+                            )
                         }
                     ),
                 },
-                n_subjects=n_subjects,
+                n_agents=n_agents,
             ),
         )
         next_regime_to_V_arr = MappingProxyType(
@@ -2265,21 +2290,21 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             owner=value_owner,
         )
     built_reader = (
-        replay_reader.build(owner=value_owner, devices=subject_devices)
+        replay_reader.build(owner=value_owner, devices=agent_devices)
         if isinstance(replay_reader, PreparedReplayReader)
         else replay_reader
     )
 
-    n_chunk_subjects = subject_ids_in_regime.shape[0]
+    n_chunk_agents = agent_ids_in_regime.shape[0]
     replay_route = regime.simulation.replay_route
     direct_nnbegm_replay = replay_route.consumer_route == "nnbegm_finite" and (
         isinstance(sim_policy, NNBEGMSimPolicy)
     )
     current_shocks: Mapping[str, FloatND | IntND] = MappingProxyType({})
     if prepared_decision is not None:
-        # The immutable original-source pass already made the one Full choice
-        # and revealed a mover's final Participating action. Only this final
-        # actor advances below; it must never make another Full decision here.
+        # The immutable original-source pass already made the one Full choice and
+        # revealed the final Participating action of a member who leaves. Only this
+        # final actor advances below; it must never make another Full decision here.
         current_shocks = prepared_decision.physical
         V_arr = prepared_decision.value
         optimal_actions = run_simulation_operation(
@@ -2289,7 +2314,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 "flat_indices": prepared_decision.indices,
                 "grids": state_action_space.actions,
             },
-            subject_arg_names=("flat_indices",),
+            agent_arg_names=("flat_indices",),
         )
         nested_fallback = None
     elif built_reader is not None:
@@ -2304,12 +2329,12 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             next_regime_to_V_arr=next_regime_to_V_arr,
             flat_params=regime_kernel_params(flat_params, regime_name=regime_name),
             referenced_value_kwargs=referenced_value_kwargs,
-            subject_ids_in_regime=run_simulation_operation(
+            agent_ids_in_regime=run_simulation_operation(
                 memory=memory,
-                function=_active_subjects,
-                arguments={"in_regime": subject_ids_in_regime, "genuine": genuine},
-                subject_arg_names=("in_regime", "genuine"),
-                subject_outputs=True,
+                function=_active_agents,
+                arguments={"in_regime": agent_ids_in_regime, "genuine": genuine},
+                agent_arg_names=("in_regime", "genuine"),
+                agent_outputs=True,
             ),
         )
         nested_fallback = None
@@ -2319,14 +2344,14 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             regime=regime,
             sim_policy=sim_policy,
             states=states[regime_name],
-            subjects=run_simulation_operation(
+            agents=run_simulation_operation(
                 memory=memory,
-                function=_active_subjects,
-                arguments={"in_regime": subject_ids_in_regime, "genuine": genuine},
-                subject_arg_names=("in_regime", "genuine"),
-                subject_outputs=True,
+                function=_active_agents,
+                arguments={"in_regime": agent_ids_in_regime, "genuine": genuine},
+                agent_arg_names=("in_regime", "genuine"),
+                agent_outputs=True,
             ),
-            period=period,
+            period=reported_period,
             memory=memory,
         )
         # The payload names the complete finite candidate set, so the unrelated
@@ -2339,14 +2364,15 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             flat_params=regime_kernel_params(flat_params, regime_name=regime_name),
             period=period,
             age=age,
-            n_subjects=n_chunk_subjects,
+            n_agents=n_chunk_agents,
             next_regime_to_V_arr=next_regime_to_V_arr,
             referenced_value_kwargs=referenced_value_kwargs,
         )
+        V_arr = _egm_value_with_member_axis(value=V_arr, regime=regime)
     else:
         taste_shock_kwargs = {}
         if regime.has_taste_shocks:
-            if isinstance(subject_slice, SubjectRows):
+            if isinstance(agent_slice, AgentRows):
                 raise ExecutionPlanningError(
                     "Grouped simulation does not cover taste shocks."
                 )
@@ -2354,9 +2380,9 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 key=key,
                 taste_key=taste_key,
                 taste_address=taste_address,
-                n_subjects=n_subjects,
-                subject_slice=subject_slice,
-                original_n_subjects=original_n_subjects,
+                n_agents=n_agents,
+                agent_slice=agent_slice,
+                original_n_agents=original_n_agents,
                 memory=memory,
                 period=period,
             )
@@ -2364,18 +2390,18 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
 
         current_iid_keys = MappingProxyType({})
         if regime.simulation.current_iid_draw_plan is not None:
-            if not isinstance(subject_slice, slice):
+            if not isinstance(agent_slice, slice):
                 raise ExecutionPlanningError(
-                    "Current IID replay does not cover grouped subject rows."
+                    "Current IID replay does not cover grouped agent rows."
                 )
             current_iid_keys = prepare_current_iid_keys(
                 plan=regime.simulation.current_iid_draw_plan,
                 key=key,
                 period=period,
-                subject_slice=subject_slice,
-                original_n_subjects=n_subjects
-                if original_n_subjects is None
-                else original_n_subjects,
+                agent_slice=agent_slice,
+                original_n_agents=n_agents
+                if original_n_agents is None
+                else original_n_agents,
                 memory=memory,
             )
 
@@ -2386,15 +2412,15 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             accepted: BoolND | None = None,
         ) -> tuple[IntND, FloatND, int]:
             nonlocal current_shocks
-            active_subjects = (
+            active_agents = (
                 run_simulation_operation(
                     memory=memory,
-                    function=_active_subjects,
+                    function=_active_agents,
                     arguments={"in_regime": in_regime, "genuine": genuine},
-                    subject_arg_names=("in_regime", "genuine"),
-                    subject_outputs=True,
+                    agent_arg_names=("in_regime", "genuine"),
+                    agent_outputs=True,
                 )
-                if declares_active_subjects(
+                if declares_active_agents(
                     program=regime.simulation.programs.forward_decision[period]
                 )
                 else None
@@ -2403,7 +2429,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 programs=regime.simulation.programs,
                 family="decision",
                 period=period,
-                n_subjects=n_chunk_subjects,
+                n_agents=n_chunk_agents,
                 arguments=decision_arguments(
                     current_iid=current_iid_arguments(
                         regime=regime,
@@ -2415,7 +2441,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                             if regime.simulation.current_iid_draw_plan is None
                             else regime.simulation.current_iid_draw_plan.physical_names,
                             period=period,
-                            subject_slice=subject_slice,
+                            agent_slice=agent_slice,
                         ),
                     ),
                     states={
@@ -2439,7 +2465,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                     params=regime_kernel_params(flat_params, regime_name=regime_name),
                     period=jnp.int32(period) if memory is None else np.int32(period),
                     age=age,
-                    active_subjects=active_subjects,
+                    active_agents=active_agents,
                 ),
             )
             if regime.simulation.current_iid_draw_plan is not None:
@@ -2459,7 +2485,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 invalid = cast("BoolND", invalid)
                 if invalid.shape != in_regime.shape or invalid.dtype != jnp.bool_:
                     raise TypeError(
-                        "Current IID replay validity must be Boolean per subject."
+                        "Current IID replay validity must be Boolean per agent."
                     )
                 if bool(
                     run_simulation_operation(
@@ -2483,33 +2509,33 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             )
             indices = cast("IntND", indices)
             values = cast("FloatND", values)
-            # A scalar stateless decision lacks the leading subject axis that
+            # A scalar stateless decision lacks the leading agent axis that
             # every downstream simulation operation expects.
             if not space.states and indices.ndim == 0:
                 indices, values = chunk_operations.broadcast_collective(
                     indices=indices,
                     value=values,
-                    n_subjects=n_chunk_subjects,
+                    n_agents=n_chunk_agents,
                     memory=memory,
                 )
             if accepted is not None:
-                # A subject the policy read decided is never an empty grid row.
+                # An agent the policy read decided is never an empty grid row.
                 indices = jnp.where(accepted, jnp.maximum(indices, 0), indices)
             first_empty = run_simulation_operation(
                 memory=memory,
                 function=_first_empty_action_row,
                 arguments={"indices": indices, "in_regime": in_regime},
-                subject_arg_names=("indices", "in_regime"),
+                agent_arg_names=("indices", "in_regime"),
             ).item()
             return indices, values, int(first_empty)
 
         # Policy-first: a plain DC-EGM or NB-EGM regime decides from its
         # published policy, and the dense grid argmax runs only if some
-        # subject's read is rejected (off support, non-finite, outside the
+        # agent's read is rejected (off support, non-finite, outside the
         # budget, infeasible).
         # ponytail: one host sync per regime-period decides whether the grid
         # argmax runs at all; when it does, it covers the whole chunk and only
-        # the rejected subjects take its decision. Gathering the rejected rows
+        # the rejected agents take its decision. Gathering the rejected rows
         # would recompile per subset size.
         policy_first = None
         if _reads_egm_policy_first(
@@ -2519,10 +2545,10 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         ):
             active_in_regime = run_simulation_operation(
                 memory=memory,
-                function=_active_subjects,
-                arguments={"in_regime": subject_ids_in_regime, "genuine": genuine},
-                subject_arg_names=("in_regime", "genuine"),
-                subject_outputs=True,
+                function=_active_agents,
+                arguments={"in_regime": agent_ids_in_regime, "genuine": genuine},
+                agent_arg_names=("in_regime", "genuine"),
+                agent_outputs=True,
             )
             policy_first = _read_egm_policy_first(
                 regime=regime,
@@ -2548,22 +2574,23 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             jnp.any(active_in_regime & ~policy_first[2])
         ):
             optimal_actions, V_arr, _ = policy_first
+            V_arr = _egm_value_with_member_axis(value=V_arr, regime=regime)
             nested_fallback = None
         else:
             indices_optimal_actions, V_arr, empty_row = decide(
                 space=state_action_space,
-                in_regime=subject_ids_in_regime,
+                in_regime=agent_ids_in_regime,
                 accepted=policy_accepted,
             )
             if empty_row >= 0 and grid_owns_empty and entered_through is not None:
                 (
                     states,
-                    subject_regime_ids,
+                    agent_regime_ids,
                     own_member,
-                    new_subject_regime_ids,
+                    new_agent_regime_ids,
                     new_own_member,
                     entered_through,
-                    subject_ids_in_regime,
+                    agent_ids_in_regime,
                     empty_row,
                     redecide,
                 ) = _take_dissolution_routes(
@@ -2573,23 +2600,23 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                     base_spaces=base_state_action_spaces,
                     ran_this_period=ran_this_period,
                     indices=indices_optimal_actions,
-                    in_regime=subject_ids_in_regime,
+                    in_regime=agent_ids_in_regime,
                     entered_through=entered_through,
                     source_roles=cast("Int1D", source_roles),
                     states=states,
                     canonical_states=state_action_space.states,
-                    subject_regime_ids=subject_regime_ids,
+                    agent_regime_ids=agent_regime_ids,
                     own_member=own_member,
-                    new_subject_regime_ids=new_subject_regime_ids,
+                    new_agent_regime_ids=new_agent_regime_ids,
                     new_own_member=new_own_member,
                     regime_names_to_ids=regime_names_to_ids,
                     flat_params=flat_params,
                     period=period,
+                    ages=ages,
+                    reported_period=reported_period,
                     age=age,
-                    subject_slice=subject_slice,
-                    n_real=n_subjects
-                    if original_n_subjects is None
-                    else original_n_subjects,
+                    agent_slice=agent_slice,
+                    n_real=n_agents if original_n_agents is None else original_n_agents,
                     logger=logger,
                     memory=memory,
                     records=dissolution_records,
@@ -2601,7 +2628,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                     fail_if_a_held_process_code_is_off_node(
                         states=states[regime_name],
                         processes=coded,
-                        holders=subject_ids_in_regime & genuine,
+                        holders=agent_ids_in_regime & genuine,
                         where=f"projected by a dissolution route back into regime "
                         f"'{regime_name}' at period {period}",
                         memory=memory,
@@ -2614,7 +2641,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                     )
                     indices_optimal_actions, V_arr, empty_row = decide(
                         space=state_action_space,
-                        in_regime=subject_ids_in_regime,
+                        in_regime=agent_ids_in_regime,
                         accepted=policy_accepted,
                     )
             if empty_row >= 0 and grid_owns_empty:
@@ -2629,8 +2656,8 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                     memory=memory,
                 )
                 raise NoFeasibleActionError(
-                    f"Regime '{regime_name}', period {period}, state {state} "
-                    "has no feasible action."
+                    f"Regime '{regime_name}', period {reported_period}, state "
+                    f"{state} has no feasible action."
                 )
             optimal_actions = run_simulation_operation(
                 memory=memory,
@@ -2639,10 +2666,11 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                     "flat_indices": indices_optimal_actions,
                     "grids": state_action_space.actions,
                 },
-                subject_arg_names=("flat_indices",)
+                agent_arg_names=("flat_indices",)
                 if indices_optimal_actions.ndim
                 else (),
             )
+            V_arr = _egm_member_value(value=V_arr, regime=regime)
             if policy_first is None:
                 optimal_actions, V_arr, nested_fallback = (
                     _replace_continuous_action_with_policy_read(
@@ -2676,20 +2704,21 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 )
                 V_arr = jnp.where(accepted, policy_value, V_arr)
                 nested_fallback = None
+            V_arr = _egm_value_with_member_axis(value=V_arr, regime=regime)
 
     # Store results for this regime-period
     # For state-less regimes (e.g., terminal regimes with no states), V_arr may be a
-    # scalar. We need to broadcast it to match this chunk's subject count.
+    # scalar. We need to broadcast it to match this chunk's agent count.
     if V_arr.ndim == 0:
         V_arr = chunk_operations.broadcast_value(
-            value=V_arr, n_subjects=n_chunk_subjects, memory=memory
+            value=V_arr, n_agents=n_chunk_agents, memory=memory
         )
 
     # `None` from the reader means no nested continuous-outer read ran for
     # this regime-period (no payload, the flat single-EGM path, passive rows,
-    # the discrete-branch redecide), so no subject fell back on that path.
+    # the discrete-branch redecide), so no agent fell back on that path.
     nested_policy_fallback = (
-        chunk_operations.empty_fallback(mask=subject_ids_in_regime, memory=memory)
+        chunk_operations.empty_fallback(mask=agent_ids_in_regime, memory=memory)
         if nested_fallback is None
         else nested_fallback
     )
@@ -2703,7 +2732,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         V_arr=V_arr,
         actions=optimal_actions,
         states=states[regime_name],
-        in_regime=subject_ids_in_regime,
+        in_regime=agent_ids_in_regime,
         own_member=own_member,
         nested_policy_fallback=nested_policy_fallback,
     )
@@ -2721,33 +2750,34 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 state_action_space=state_action_space,
                 optimal_actions=optimal_actions,
                 period=period,
+                ages=ages,
                 age=age,
                 regime_params=regime_kernel_params(
                     flat_params, regime_name=regime_name
                 ),
                 regime_names_to_ids=regime_names_to_ids,
                 states_per_regime=states,
-                new_subject_regime_ids=new_subject_regime_ids,
+                new_agent_regime_ids=new_agent_regime_ids,
                 active_regimes_next_period=realization_targets_next_period,
                 key=next_regime_key,
-                subjects_in_regime=subject_ids_in_regime,
-                n_subjects=n_subjects,
-                subject_slice=subject_slice,
-                original_n_subjects=original_n_subjects,
+                agents_in_regime=agent_ids_in_regime,
+                n_agents=n_agents,
+                agent_slice=agent_slice,
+                original_n_agents=original_n_agents,
                 memory=memory,
                 runtime_checks=validation_enabled(logger),
             )
 
         if node_axis_inputs is not None:
-            new_subject_regime_ids = draw_next_regimes()
+            new_agent_regime_ids = draw_next_regimes()
             supplied_shocks = {
                 **supplied_shocks,
                 **node_axis_inputs.transition_shocks(
                     key=key,
                     period=period + 1,
-                    regime_ids=new_subject_regime_ids,
-                    in_source=subject_ids_in_regime,
-                    subject_slice=subject_slice,
+                    regime_ids=new_agent_regime_ids,
+                    in_source=agent_ids_in_regime,
+                    agent_slice=agent_slice,
                     regime_names_to_ids=regime_names_to_ids,
                     argument_names=supplied_shock_argument_names(
                         regime=regime, period=period
@@ -2773,11 +2803,11 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             states_per_regime=states,
             state_action_space=state_action_space,
             key=next_states_key,
-            subjects_in_regime=subject_ids_in_regime,
-            n_subjects=n_subjects,
-            subject_slice=subject_slice,
+            agents_in_regime=agent_ids_in_regime,
+            n_agents=n_agents,
+            agent_slice=agent_slice,
             supplied_shocks=supplied_shocks,
-            original_n_subjects=original_n_subjects,
+            original_n_agents=original_n_agents,
             memory=memory,
         )
         if memory is not None:
@@ -2786,9 +2816,9 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         # runs against the pre-advance carrier; only then do the next-period
         # states replace it.
         if node_axis_inputs is None:
-            new_subject_regime_ids = draw_next_regimes()
-        # A subject's raw codes are checked against the regime it was drawn to
-        # before a gate can read a value at them or reroute the subject.
+            new_agent_regime_ids = draw_next_regimes()
+        # An agent's raw codes are checked against the regime it was drawn to
+        # before a gate can read a value at them or reroute the agent.
         if validation_enabled(logger):
             fail_if_drawn_codes_leave_their_grids(
                 next_states=next_states,
@@ -2798,15 +2828,13 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                     regime_names_to_ids=regime_names_to_ids,
                 ),
                 source=regime_name,
-                period=period,
-                new_regime_ids=new_subject_regime_ids,
+                when=describe_step(ages=ages, step=period),
+                new_regime_ids=new_agent_regime_ids,
                 regime_ids=regime_names_to_ids,
-                subjects=subject_ids_in_regime
+                agents=agent_ids_in_regime
                 & _genuine_rows(
-                    subject_slice=subject_slice,
-                    n_real=n_subjects
-                    if original_n_subjects is None
-                    else original_n_subjects,
+                    agent_slice=agent_slice,
+                    n_real=n_agents if original_n_agents is None else original_n_agents,
                 ),
                 memory=memory,
             )
@@ -2816,9 +2844,9 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 fail_if_a_held_process_code_is_off_node(
                     states=next_states.get(target, {}),
                     processes=process_code_reads[target],
-                    holders=subject_ids_in_regime
+                    holders=agent_ids_in_regime
                     & genuine
-                    & (new_subject_regime_ids == regime_names_to_ids[target]),
+                    & (new_agent_regime_ids == regime_names_to_ids[target]),
                     where=f"drawn from regime '{regime_name}' into regime "
                     f"'{target}' at period {period}",
                     memory=memory,
@@ -2830,7 +2858,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
         # drew a (gate-blind) next regime id; `route_gated_edges` now
         # RECOMPUTES the gate at those candidate states
         # and OVERRIDES both — the target when open, a leg's fallback (with
-        # its own projected states) when closed — for every subject in this
+        # its own projected states) when closed — for every agent in this
         # regime. No-op for a regime without gated edges.
         if period in regime.simulation.programs.gate_route:
             route_values = acquire_gate_inputs(
@@ -2843,7 +2871,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                 name=regime_name,
                 values=period_to_regime_to_V_arr,
             )
-            route_delta, new_subject_regime_ids, new_own_member = cast(
+            route_delta, new_agent_regime_ids, new_own_member = cast(
                 "tuple[Mapping[RegimeName, GatedRouteDelta], Int1D, Int1D]",
                 execute_simulation_program(
                     programs=regime.simulation.programs,
@@ -2854,8 +2882,8 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                         next_states=gated_route_candidates(
                             regime=regime, next_states=next_states
                         ),
-                        new_subject_regime_ids=new_subject_regime_ids,
-                        subjects_in_regime=subject_ids_in_regime,
+                        new_agent_regime_ids=new_agent_regime_ids,
+                        agents_in_regime=agent_ids_in_regime,
                         flat_params=flat_params,
                         own_member=own_member,
                         new_own_member=new_own_member,
@@ -2863,7 +2891,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                             0.0 if gated_edge_fold_age is None else gated_edge_fold_age
                         ),
                     ),
-                    n_subjects=n_subjects,
+                    n_agents=n_agents,
                 ),
             )
             next_states = commit_gated_route_delta(
@@ -2879,14 +2907,14 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                             cast("Bool1D", edge_delta["closed"])
                             for edge_delta in route_delta.values()
                         ),
-                        "routed_ids": new_subject_regime_ids,
-                        "subjects_in_regime": subject_ids_in_regime,
+                        "routed_ids": new_agent_regime_ids,
+                        "agents_in_regime": agent_ids_in_regime,
                         "new_entered_through": new_entered_through,
                     },
-                    subject_arg_names=(
+                    agent_arg_names=(
                         "closed_masks",
                         "routed_ids",
-                        "subjects_in_regime",
+                        "agents_in_regime",
                         "new_entered_through",
                     ),
                     static_arguments={
@@ -2895,7 +2923,7 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
                             int(regime_names_to_ids[target]) for target in route_delta
                         ),
                     },
-                    subject_outputs=True,
+                    agent_outputs=True,
                 )
         states = clip_next_states(
             states=next_states,
@@ -2915,25 +2943,25 @@ def _simulate_regime_in_period(  # noqa: C901, PLR0912, PLR0915
             ),
             next_period=period + 1,
             source=regime_name,
-            new_regime_ids=new_subject_regime_ids,
+            new_regime_ids=new_agent_regime_ids,
             regime_ids=regime_names_to_ids,
             logger=logger,
-            subjects=subject_ids_in_regime,
+            agents=agent_ids_in_regime,
             genuine=_genuine_rows(
-                subject_slice=subject_slice,
-                n_real=n_subjects
-                if original_n_subjects is None
-                else original_n_subjects,
+                agent_slice=agent_slice,
+                n_real=n_agents if original_n_agents is None else original_n_agents,
             ),
             memory=memory,
+            ages=ages,
+            step=period,
         )
 
     return (
         simulation_result,
         states,
-        new_subject_regime_ids,
+        new_agent_regime_ids,
         new_own_member,
-        subject_regime_ids,
+        agent_regime_ids,
         own_member,
         entered_through,
         new_entered_through,
@@ -2953,15 +2981,17 @@ def _take_dissolution_routes(
     source_roles: Int1D,
     states: StatesPerRegime,
     canonical_states: Mapping[StateName, FloatND | IntND],
-    subject_regime_ids: Int1D,
+    agent_regime_ids: Int1D,
     own_member: Int1D,
-    new_subject_regime_ids: Int1D,
+    new_agent_regime_ids: Int1D,
     new_own_member: Int1D,
     regime_names_to_ids: RegimeNamesToIds,
     flat_params: FlatParams,
     period: int,
+    ages: TimeAxis,
+    reported_period: int,
     age: ScalarInt | ScalarFloat,
-    subject_slice: slice | SubjectRows,
+    agent_slice: slice | AgentRows,
     n_real: int,
     logger: logging.Logger,
     memory: SimulationMemory | None,
@@ -2987,9 +3017,9 @@ def _take_dissolution_routes(
         entered_through=entered_through,
         source_roles=source_roles,
         states=states,
-        subject_regime_ids=subject_regime_ids,
+        agent_regime_ids=agent_regime_ids,
         own_member=own_member,
-        new_subject_regime_ids=new_subject_regime_ids,
+        new_agent_regime_ids=new_agent_regime_ids,
         new_own_member=new_own_member,
         regime_names_to_ids=regime_names_to_ids,
         flat_params=flat_params,
@@ -2998,7 +3028,7 @@ def _take_dissolution_routes(
     )
     if memory is not None:
         memory.hold(tree=outcome)
-    genuine = _genuine_rows(subject_slice=subject_slice, n_real=n_real)
+    genuine = _genuine_rows(agent_slice=agent_slice, n_real=n_real)
     _fail_if_rerouted_into_a_regime_that_ran(
         outcome=outcome,
         genuine=genuine,
@@ -3008,7 +3038,7 @@ def _take_dissolution_routes(
         canonical_states=canonical_states,
         flat_params=flat_params,
         regime_names_to_ids=regime_names_to_ids,
-        period=period,
+        period=reported_period,
         memory=memory,
     )
     states = clip_next_states(
@@ -3024,12 +3054,13 @@ def _take_dissolution_routes(
             )
         ),
         next_period=period,
-        reported_period=period,
+        ages=ages,
+        step=period,
         source=regime_name,
-        new_regime_ids=outcome.subject_regime_ids,
+        new_regime_ids=outcome.agent_regime_ids,
         regime_ids=regime_names_to_ids,
         logger=logger,
-        subjects=outcome.rerouted,
+        agents=outcome.rerouted,
         genuine=genuine,
         memory=memory,
     )
@@ -3053,12 +3084,12 @@ def _take_dissolution_routes(
             fallbacks = np.asarray(outcome.fallback_ids)
             new_records = tuple(
                 DissolutionFallback(
-                    subject_id=int(
-                        subject_slice.rows[row]
-                        if isinstance(subject_slice, SubjectRows)
-                        else cast("int", subject_slice.start) + row
+                    agent_id=int(
+                        agent_slice.rows[row]
+                        if isinstance(agent_slice, AgentRows)
+                        else cast("int", agent_slice.start) + row
                     ),
-                    period=period,
+                    period=reported_period,
                     regime=regime_name,
                     state=MappingProxyType(
                         physical_state_at_row(
@@ -3079,15 +3110,15 @@ def _take_dissolution_routes(
         log_dissolution_fallbacks(
             logger=logger,
             regime_name=regime_name,
-            period=period,
+            period=reported_period,
             n_rows=int(rerouted_rows.size),
             recorded=records is not None and validation_enabled(logger),
         )
     return (
         states,
-        outcome.subject_regime_ids,
+        outcome.agent_regime_ids,
         outcome.own_member,
-        outcome.new_subject_regime_ids,
+        outcome.new_agent_regime_ids,
         outcome.new_own_member,
         outcome.entered_through,
         remaining,
@@ -3157,18 +3188,18 @@ def _fail_if_a_finite_bank_state_is_off_grid(
     regime: Regime,
     sim_policy: NNBEGMSimPolicy,
     states: Mapping[StateOrActionName, FloatND | IntND],
-    subjects: BoolND,
+    agents: BoolND,
     period: int,
     memory: SimulationMemory | None,
 ) -> None:
-    """Refuse a subject whose continuous state lies outside the finite bank's grid.
+    """Refuse an agent whose continuous state lies outside the finite bank's grid.
 
     The finite NNBEGM bank holds the solve's candidates on the regime's own state
     grid. Off that grid a linear read ranks the candidates wrongly: a candidate
     infeasible at the grid's edge, such as an adjustment that only becomes
     affordable at higher wealth, cannot be extrapolated into view. Process
     states are exempt; their draws are read along the node coordinate. One host
-    sync per regime-period decides whether any subject is off its grid.
+    sync per regime-period decides whether any agent is off its grid.
     """
     checked = {
         name: jnp.asarray(grid.to_jax())
@@ -3180,23 +3211,23 @@ def _fail_if_a_finite_bank_state_is_off_grid(
         run_simulation_operation(
             memory=memory,
             function=count_off_grid,
-            arguments={"values": states[name], "points": points, "feasible": subjects},
-            subject_arg_names=("values", "feasible"),
+            arguments={"values": states[name], "points": points, "feasible": agents},
+            agent_arg_names=("values", "feasible"),
         )
         for name, points in checked.items()
     ]
     if not counts or not int(functools.reduce(jnp.add, counts)):
         return
-    subject_mask = np.asarray(subjects)
+    agent_mask = np.asarray(agents)
     found, off_names = [], []
     for name, points in checked.items():
-        values = np.asarray(states[name])[subject_mask]
+        values = np.asarray(states[name])[agent_mask]
         low, high = float(points[0]), float(points[-1])
         off = values[(values < low) | (values > high)]
         if off.size:
             off_names.append(f"'{name}'")
             found.append(
-                f"{off.size} subject(s) hold '{name}' in "
+                f"{off.size} agent(s) hold '{name}' in "
                 f"[{off.min():.6g}, {off.max():.6g}], outside its grid "
                 f"[{low:.6g}, {high:.6g}]"
             )
@@ -3221,7 +3252,7 @@ def _execute_finite_replay(
     flat_params: FlatRegimeParams,
     period: int,
     age: ScalarFloat | ScalarInt,
-    n_subjects: int,
+    n_agents: int,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     referenced_value_kwargs: QAndFKwargs,
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]:
@@ -3231,7 +3262,7 @@ def _execute_finite_replay(
         programs=regime.simulation.programs,
         family="policy_prepare",
         period=period,
-        n_subjects=n_subjects,
+        n_agents=n_agents,
         arguments=policy_prepare_arguments(
             payload=payload,
             states=states,
@@ -3244,7 +3275,7 @@ def _execute_finite_replay(
         programs=regime.simulation.programs,
         family="policy_rank",
         period=period,
-        n_subjects=n_subjects,
+        n_agents=n_agents,
         arguments=policy_rank_arguments(
             payload=payload,
             bank=bank,
@@ -3297,10 +3328,10 @@ def _replace_continuous_action_with_policy_read(
       pair returns `grid_values` unchanged; every accepted off-grid pair is
       scored by the canonical Q and returns that attained value. A rejected
       nested read keeps the grid pair and its grid value;
-    - a nested-fallback flag: the per-subject Boolean array from
+    - a nested-fallback flag: the per-agent Boolean array from
       `_read_nested_policy`, extended to include canonical infeasibility and
       non-finite scores; or `None` on every other path. The caller resolves
-      `None` to all-False where the regime's subject count is known.
+      `None` to all-False where the regime's agent count is known.
     """
     if sim_policy is None:
         return optimal_actions, grid_values, None
@@ -3435,13 +3466,13 @@ def _read_egm_policy_first(
     (`_read_nbegm_grid_policy`) and reports the canonical value of the emitted
     actions.
 
-    Returns the actions, the reported value, and the per-subject acceptance.
-    A subject is accepted when every live branch read lies inside its row
+    Returns the actions, the reported value, and the per-agent acceptance.
+    An agent is accepted when every live branch read lies inside its row
     support (otherwise the comparison is incomplete) and the winner's value
     and action are finite, the action is positive, within the intrinsic budget
     (`action <= resources - savings_lower_bound`, up to rounding, to which the
     emitted action is clipped) and canonically feasible.
-    The caller replaces every rejected subject's decision by the grid argmax.
+    The caller replaces every rejected agent's decision by the grid argmax.
 
     The read runs as one compiled program, not operation by operation. The
     period is traced, so the periods that share one `Q_and_F` kernel and the
@@ -3608,7 +3639,7 @@ def _policy_first_body(
                 referenced_value_kwargs=referenced_value_kwargs,
                 period=period,
                 age=age,
-                active_subjects=in_regime,
+                active_agents=in_regime,
                 Q_and_F=Q_and_F,
             )
             return cast(
@@ -3636,7 +3667,7 @@ def _policy_first_body(
         referenced_value_kwargs=referenced_value_kwargs,
         period=period,
         age=age,
-        active_subjects=in_regime,
+        active_agents=in_regime,
         Q_and_F=Q_and_F,
     )
     if winner_value is None:
@@ -3671,7 +3702,7 @@ def _read_egm_policy_rows(
     stays unsupported and the caller falls back.
     """
     read = cast("EGMPolicyRead", regime.simulation.egm_policy_read)
-    n_subjects = next(iter(states.values())).shape[0]
+    n_agents = next(iter(states.values())).shape[0]
     selections = _row_selections(
         regime=regime, names=sim_policy.row_discrete_state_names, states=states
     )
@@ -3686,13 +3717,13 @@ def _read_egm_policy_rows(
         data: dict[str, np.ndarray | FloatND | IntND | BoolND | Sequence[str]] = {
             **dict(states),
             **{
-                name: jnp.full((n_subjects,), grid[position], dtype=grid.dtype)
+                name: jnp.full((n_agents,), grid[position], dtype=grid.dtype)
                 for name, grid, position in zip(
                     branch_names, branch_grids, branch, strict=True
                 )
             },
-            "period": jnp.full(n_subjects, period, dtype=jnp.int32),
-            "age": jnp.full(n_subjects, age),
+            "period": jnp.full(n_agents, period, dtype=jnp.int32),
+            "age": jnp.full(n_agents, age),
         }
         branch_resources = jnp.reshape(
             jnp.asarray(
@@ -3703,7 +3734,7 @@ def _read_egm_policy_rows(
                     regime_params=flat_params,
                 )[read.resources_target]
             ),
-            (n_subjects,),
+            (n_agents,),
         )
         value, support = _blended_row_read(
             sim_policy=sim_policy,
@@ -3711,7 +3742,7 @@ def _read_egm_policy_rows(
             selections=selections,
             branch=branch,
             resources=branch_resources,
-            n_subjects=n_subjects,
+            n_agents=n_agents,
         )
         policy, _ = _blended_row_read(
             sim_policy=sim_policy,
@@ -3719,10 +3750,10 @@ def _read_egm_policy_rows(
             selections=selections,
             branch=branch,
             resources=branch_resources,
-            n_subjects=n_subjects,
+            n_agents=n_agents,
         )
         # Resources at or below the savings floor leave no positive action: the
-        # branch is dead, not an unsupported read that rejects the subject.
+        # branch is dead, not an unsupported read that rejects the agent.
         value = jnp.where(branch_resources > read.savings_lower_bound, value, -jnp.inf)
         head, head_constrained = _constrained_head(
             sim_policy=sim_policy,
@@ -3815,9 +3846,9 @@ def _constrained_head(
     branch: tuple[int, ...],
     savings_lower_bound: float,
 ) -> tuple[FloatND, BoolND]:
-    """First node of a subject's contributing rows, and whether all are constrained.
+    """First node of an agent's contributing rows, and whether all are constrained.
 
-    Returns the lowest first abscissa over the rows a subject reads (a row with
+    Returns the lowest first abscissa over the rows an agent reads (a row with
     blend coefficient zero does not count), and whether each of those rows
     starts on the borrowing-constrained segment, i.e. its first policy entry is
     `node - floor` up to rounding.
@@ -3858,12 +3889,12 @@ def _rescore_branches(
     action_name: ActionName,
     savings_lower_bound: float,
 ) -> FloatND:
-    """Rank a rescored subject's live branches by their action's canonical value."""
+    """Rank a rescored agent's live branches by their action's canonical value."""
     scores = []
     for k, branch in enumerate(branches):
-        n_subjects = resources[k].shape[0]
+        n_agents = resources[k].shape[0]
         actions = {
-            name: jnp.full((n_subjects,), grid[position], dtype=grid.dtype)
+            name: jnp.full((n_agents,), grid[position], dtype=grid.dtype)
             for name, grid, position in zip(
                 branch_names, branch_grids, branch, strict=True
             )
@@ -3887,7 +3918,7 @@ def _read_nbegm_grid_policy(
     period: IntND,
     age: ScalarFloat | ScalarInt,
 ) -> tuple[dict[ActionName, FloatND | IntND], None, BoolND]:
-    """Read the published NB-EGM state-grid policy at each subject's state.
+    """Read the published NB-EGM state-grid policy at each agent's state.
 
     The liquid state reads linearly between its two bracketing grid nodes. Every
     other state axis selects its rows as `_row_selections` does, so a process
@@ -3903,7 +3934,7 @@ def _read_nbegm_grid_policy(
     emitted action is clipped).
     """
     read = cast("NBEGMPolicyRead", regime.simulation.egm_policy_read)
-    n_subjects = next(iter(states.values())).shape[0]
+    n_agents = next(iter(states.values())).shape[0]
     liquid = jnp.asarray(states[read.liquid_state_name])
     nodes = jnp.asarray(regime.simulation.grids[read.liquid_state_name].to_jax())
     lo, weight = _node_bracket(nodes=nodes, values=liquid)
@@ -3923,7 +3954,7 @@ def _read_nbegm_grid_policy(
         weight=weight,
     )
     actions: dict[ActionName, FloatND | IntND] = {}
-    live = jnp.ones((n_subjects,), dtype=bool)
+    live = jnp.ones((n_agents,), dtype=bool)
     if sim_policy.branch_value is None or sim_policy.branch_inner_action is None:
         action = surface_read(surface=sim_policy.action)
     else:
@@ -3950,15 +3981,15 @@ def _read_nbegm_grid_policy(
                 data={
                     **dict(states),
                     **actions,
-                    "period": jnp.full(n_subjects, period, dtype=jnp.int32),
-                    "age": jnp.full(n_subjects, age),
+                    "period": jnp.full(n_agents, period, dtype=jnp.int32),
+                    "age": jnp.full(n_agents, age),
                 },
                 targets=[read.resources_target],
                 regime=regime,
                 regime_params=flat_params,
             )[read.resources_target]
         ),
-        (n_subjects,),
+        (n_agents,),
     )
     budget = resources - read.savings_lower_bound
     rounding = 8 * jnp.finfo(action.dtype).eps * jnp.maximum(1.0, jnp.abs(budget))
@@ -3984,7 +4015,7 @@ def _state_grid_read(
     lo: IntND,
     weight: FloatND,
 ) -> FloatND:
-    """Read one state-grid surface at the subjects' liquid brackets and rows.
+    """Read one state-grid surface at the agents' liquid brackets and rows.
 
     Each selected row is read linearly between the liquid nodes `lo` and
     `lo + 1` and blended by its coefficient. A term whose coefficient is zero
@@ -4012,12 +4043,12 @@ def _weighted(*, coefficient: FloatND, value: FloatND) -> FloatND:
 def _interp_across_outer_axis(
     *, nodes: Float1D, values: FloatND, query: FloatND
 ) -> FloatND:
-    """Linear read of per-candidate subject values `(C, n)` at `query` `(n,)`."""
+    """Linear read of per-candidate agent values `(C, n)` at `query` `(n,)`."""
     hi = jnp.clip(jnp.searchsorted(nodes, query), 1, nodes.shape[0] - 1)
     lo = hi - 1
     weight = jnp.clip((query - nodes[lo]) / (nodes[hi] - nodes[lo]), 0.0, 1.0)
-    subject_axis = jnp.arange(query.shape[0])
-    return values[lo, subject_axis] * (1.0 - weight) + values[hi, subject_axis] * weight
+    agent_axis = jnp.arange(query.shape[0])
+    return values[lo, agent_axis] * (1.0 - weight) + values[hi, agent_axis] * weight
 
 
 def _read_nested_policy(
@@ -4032,9 +4063,9 @@ def _read_nested_policy(
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], BoolND]:
     """Replay the continuous-outer keeper/adjuster decision off-grid.
 
-    Reconstructs, per subject, exactly the solve's decision problem in the
+    Reconstructs, per agent, exactly the solve's decision problem in the
     solve's own policy class: read every branch's conditional value row at
-    the subject's liquid state (cubic Hermite with the published marginal as
+    the agent's liquid state (cubic Hermite with the published marginal as
     slope — the solve's read convention), rebuild the outer-value surrogate
     across the shared mesh (`LocalCubicOuterInterpolant`), refine it with the
     same globally safeguarded search the solve used (exact nodes always
@@ -4045,18 +4076,18 @@ def _read_nested_policy(
     the winning post-decision through the transition's affine-unit-slope
     inversion (verified numerically, refused otherwise).
 
-    Subjects off the passive (durable) grid — the normal case after a
+    Agents off the passive (durable) grid — the normal case after a
     continuous adjustment — blend the two bracketing rows linearly, on both
     sides of the comparison.
 
-    Falls back to the grid-argmax pair per subject when any branch read leaves
+    Falls back to the grid-argmax pair per agent when any branch read leaves
     its live row support, or the winning consumption is non-finite,
     non-positive, or outside the intrinsic budget
     (`c <= resources - savings_lower_bound`). A payload whose declared outer
     post-decision or keeper candidate does not resolve against the simulate
     function pool is refused rather than answered with the action-grid winner.
 
-    Returns the recovered actions and a per-subject Boolean fallback flag.
+    Returns the recovered actions and a per-agent Boolean fallback flag.
 
     Inference must refuse whenever any fallback entry is True; the flag reaches
     the user as the `nested_policy_fallback` column.
@@ -4064,7 +4095,7 @@ def _read_nested_policy(
     _fail_if_the_published_capability_is_not_replayable(payload=payload)
     keeper_pol = payload.keeper
     bank = payload.adjuster
-    n_subjects = next(iter(states.values())).shape[0]
+    n_agents = next(iter(states.values())).shape[0]
     liquid = jnp.asarray(states[payload.liquid_state_name])
 
     discrete_idx = tuple(
@@ -4089,7 +4120,7 @@ def _read_nested_policy(
         passive_bracket=passive_bracket,
         discrete_idx=discrete_idx,
         liquid=liquid,
-        n_subjects=n_subjects,
+        n_agents=n_agents,
     )
     keeper_value, keeper_support = row_read(pol=keeper_pol, field="value")
     keeper_action, _ = row_read(pol=keeper_pol, field="policy")
@@ -4100,7 +4131,7 @@ def _read_nested_policy(
             passive_bracket=passive_bracket,
             discrete_idx=discrete_idx,
             liquid=liquid,
-            n_subjects=n_subjects,
+            n_agents=n_agents,
         )
     )(bank.policies)
 
@@ -4135,7 +4166,7 @@ def _read_nested_policy(
         flat_params=flat_params,
         period=period,
         age=age,
-        n_subjects=n_subjects,
+        n_agents=n_agents,
     )
     keep_value = _keeper_post_decision(
         payload=payload,
@@ -4144,7 +4175,7 @@ def _read_nested_policy(
         flat_params=flat_params,
         period=period,
         age=age,
-        n_subjects=n_subjects,
+        n_agents=n_agents,
     )
 
     chosen_post_decision = jnp.where(adjust, search.x, keep_value)
@@ -4161,7 +4192,7 @@ def _read_nested_policy(
         flat_params=flat_params,
         period=period,
         age=age,
-        n_subjects=n_subjects,
+        n_agents=n_agents,
     )
 
     # The keeper is a separately solved exact branch and may lie outside a legal,
@@ -4219,9 +4250,9 @@ def _nested_resources(
     flat_params: FlatRegimeParams,
     period: int,
     age: ScalarFloat | ScalarInt,
-    n_subjects: int,
+    n_agents: int,
 ) -> FloatND:
-    """The chosen branch's resources through the simulate DAG (subject axis kept).
+    """The chosen branch's resources through the simulate DAG (agent axis kept).
 
     The outer post-decision is bound as data: it is a *transition* in the
     simulate DAG, so the target computation cannot derive it from the action.
@@ -4230,8 +4261,8 @@ def _nested_resources(
         **dict(states),
         payload.outer_action_name: outer_action,
         payload.outer_post_decision_name: outer_post_decision,
-        "period": jnp.full(n_subjects, period, dtype=jnp.int32),
-        "age": jnp.full(n_subjects, age),
+        "period": jnp.full(n_agents, period, dtype=jnp.int32),
+        "age": jnp.full(n_agents, age),
     }
     return jnp.reshape(
         jnp.asarray(
@@ -4242,7 +4273,7 @@ def _nested_resources(
                 regime_params=flat_params,
             )[payload.resources_target_name]
         ),
-        (n_subjects,),
+        (n_agents,),
     )
 
 
@@ -4254,7 +4285,7 @@ def _resolve_function_kwargs(
     flat_params: FlatRegimeParams,
     period: int,
     age: ScalarFloat | ScalarInt,
-    n_subjects: int,
+    n_agents: int,
 ) -> dict[str, FloatND | IntND] | None:
     """Bind a simulate-phase function's parameters, or `None` if any is unmet."""
     import inspect  # noqa: PLC0415
@@ -4266,9 +4297,9 @@ def _resolve_function_kwargs(
         elif name in states:
             kwargs[name] = jnp.asarray(states[name])
         elif name == "period":
-            kwargs[name] = jnp.full(n_subjects, period, dtype=jnp.int32)
+            kwargs[name] = jnp.full(n_agents, period, dtype=jnp.int32)
         elif name == "age":
-            kwargs[name] = jnp.full(n_subjects, age)
+            kwargs[name] = jnp.full(n_agents, age)
         elif name in flat_params:
             kwargs[name] = jnp.asarray(flat_params[name])
         else:
@@ -4284,9 +4315,9 @@ def _outer_transition_offset_and_forward(
     flat_params: FlatRegimeParams,
     period: int,
     age: ScalarFloat | ScalarInt,
-    n_subjects: int,
+    n_agents: int,
 ) -> tuple[FloatND, Callable[[FloatND], FloatND]]:
-    """Per-subject offset of the outer post-decision, and the map itself.
+    """Per-agent offset of the outer post-decision, and the map itself.
 
     The winning outer post-decision `s'` is the value of the regime's
     `outer_post_decision` function; the recorded action must invert
@@ -4298,8 +4329,8 @@ def _outer_transition_offset_and_forward(
     not, and would then publish a decision the solve never ranked.
 
     What is evaluated here is only the numbers a certificate cannot carry — the
-    per-subject offset, and the map itself at the recovered action for the
-    per-subject affine residual.
+    per-agent offset, and the map itself at the recovered action for the
+    per-agent affine residual.
 
     `P` is an ordinary regime FUNCTION of this period's states and actions --
     the stock chosen NOW -- not a state transition. The durable's law reads it
@@ -4316,15 +4347,15 @@ def _outer_transition_offset_and_forward(
         flat_params=flat_params,
         period=period,
         age=age,
-        n_subjects=n_subjects,
+        n_agents=n_agents,
     )
-    offset = transition_at(jnp.zeros(n_subjects))
+    offset = transition_at(jnp.zeros(n_agents))
     return offset, transition_at
 
 
 @dataclass(frozen=True, eq=False)
 class _OuterTransitionAt:
-    """The declared outer post-decision map evaluated at one action per subject."""
+    """The declared outer post-decision map evaluated at one action per agent."""
 
     transition_func: Callable[..., FloatND]
     """The regime's outer post-decision function, resolved for replay."""
@@ -4333,15 +4364,15 @@ class _OuterTransitionAt:
     outer_post_decision_name: FunctionName
     """Name of the map, for the capability check's message."""
     states: Mapping[StateOrActionName, FloatND | IntND]
-    """Per-subject state values the map reads."""
+    """Per-agent state values the map reads."""
     flat_params: FlatRegimeParams
     """The regime's flat parameters."""
     period: int
     """Period index of the evaluation."""
     age: ScalarFloat | ScalarInt
     """Age of the evaluation."""
-    n_subjects: int
-    """Number of subjects; the image is reshaped to one value per subject."""
+    n_agents: int
+    """Number of agents; the image is reshaped to one value per agent."""
 
     def resolve(self, *, action_value: FloatND) -> dict[str, FloatND | IntND]:
         """Bind the map's arguments at `action_value`, refusing an unmet capability."""
@@ -4352,7 +4383,7 @@ class _OuterTransitionAt:
             flat_params=self.flat_params,
             period=self.period,
             age=self.age,
-            n_subjects=self.n_subjects,
+            n_agents=self.n_agents,
         )
         _fail_if_the_published_capability_does_not_hold(
             bound=bound, name=self.outer_post_decision_name
@@ -4360,10 +4391,10 @@ class _OuterTransitionAt:
         return cast("dict[str, FloatND | IntND]", bound)
 
     def __call__(self, action: FloatND) -> FloatND:
-        """Return the map's image at `action`, one value per subject."""
+        """Return the map's image at `action`, one value per agent."""
         return jnp.reshape(
             jnp.asarray(self.transition_func(**self.resolve(action_value=action))),
-            (self.n_subjects,),
+            (self.n_agents,),
         )
 
 
@@ -4376,7 +4407,7 @@ def _fail_if_the_published_capability_is_not_replayable(
     unsupported verdict did not come from a publication that honoured that gate.
     The alternative to refusing is a replay that emits the action-grid winner
     under the name of the refined method, which is the outcome the verdict
-    exists to prevent. Structural failure raises here; a per-subject shortfall
+    exists to prevent. Structural failure raises here; a per-agent shortfall
     is a different thing and stays with the pointwise mask below.
 
     Raises:
@@ -4453,9 +4484,9 @@ def _keeper_post_decision(
     flat_params: FlatRegimeParams,
     period: int,
     age: ScalarFloat | ScalarInt,
-    n_subjects: int,
+    n_agents: int,
 ) -> FloatND:
-    """The keeper branch's outer post-decision `s' = keep(Z)` per subject.
+    """The keeper branch's outer post-decision `s' = keep(Z)` per agent.
 
     Uses the solver's declared no-adjustment candidate; without one, keeping
     means holding the current durable (the state the outer post-decision is
@@ -4479,19 +4510,19 @@ def _keeper_post_decision(
         flat_params=flat_params,
         period=period,
         age=age,
-        n_subjects=n_subjects,
+        n_agents=n_agents,
     )
     _fail_if_the_published_capability_does_not_hold(
         bound=kwargs, name=payload.outer_no_adjustment_name
     )
     return jnp.reshape(
         jnp.asarray(keep_func(**cast("dict[str, FloatND | IntND]", kwargs))),
-        (n_subjects,),
+        (n_agents,),
     )
 
 
-# A row index over the discrete-state row axes, with the per-subject coefficient
-# it enters the read with (`None`: the subject's only row).
+# A row index over the discrete-state row axes, with the per-agent coefficient
+# it enters the read with (`None`: the agent's only row).
 type _RowSelection = tuple[tuple[IntND | int, ...], FloatND | None]
 
 
@@ -4501,7 +4532,7 @@ def _row_selections(
     names: tuple[StateName, ...],
     states: Mapping[StateOrActionName, FloatND | IntND],
 ) -> tuple[_RowSelection, ...]:
-    """Select each subject's discrete-state rows and their blend coefficients.
+    """Select each agent's discrete-state rows and their blend coefficients.
 
     An ordinary discrete state selects its node's row. A process state's value
     may lie between nodes; it reads the two bracketing node rows blended linearly
@@ -4510,8 +4541,8 @@ def _row_selections(
     edge node's row under `off_grid="clip_lookup"` or `"clip_state"`. A node
     value takes its own row with
     coefficient exactly one. Where every row axis is a process, every node's row
-    is shared by all subjects and is read once for all of them, rather than
-    gathered per subject.
+    is shared by all agents and is read once for all of them, rather than
+    gathered per agent.
     """
     process_names = {
         name
@@ -4582,13 +4613,13 @@ def _blended_row_read(
     selections: tuple[_RowSelection, ...],
     branch: tuple[int, ...],
     resources: FloatND,
-    n_subjects: int,
+    n_agents: int,
 ) -> tuple[FloatND, BoolND]:
     """Read one field of the selected rows and blend them by their coefficients.
 
     A row with coefficient zero contributes nothing, not even a `-inf` or NaN
     read; the blend is in support where every contributing row is. A row
-    without a coefficient is the subject's only row and is returned as read.
+    without a coefficient is the agent's only row and is returned as read.
     """
     values, supports = [], []
     for index, coefficient in selections:
@@ -4597,7 +4628,7 @@ def _blended_row_read(
             field=field,
             index=(*index, *branch),
             resources=resources,
-            n_subjects=n_subjects,
+            n_agents=n_agents,
         )
         if coefficient is None:
             values.append(read)
@@ -4617,9 +4648,9 @@ def _interp_rows_with_support(
     field: Literal["policy", "value"],
     index: tuple[IntND | int, ...],
     resources: FloatND,
-    n_subjects: int,
+    n_agents: int,
 ) -> tuple[FloatND, BoolND]:
-    """Interpolate one published row field per subject with its support flag.
+    """Interpolate one published row field per agent with its support flag.
 
     The live support runs from the row's first abscissa to its last finite one
     (rows are NaN-padded in the tail). Outside it the interpolant extends an
@@ -4635,8 +4666,8 @@ def _interp_rows_with_support(
     rows_x = sim_policy.endog_grid
     rows_slope = sim_policy.marginal_utility if field == "value" else None
     if any(jnp.ndim(position) for position in index):
-        # Per-subject rows: read the table in place rather than copy a row per
-        # subject, which dominated the read at production row lengths.
+        # Per-agent rows: read the table in place rather than copy a row per
+        # agent, which dominated the read at production row lengths.
         values, in_support = _interp_indexed_rows(
             rows_x=rows_x,
             rows_f=rows_f,
@@ -4652,8 +4683,8 @@ def _interp_rows_with_support(
     values, in_support = _interp_padded_rows(
         rows_x=rows_x, rows_f=rows_f, rows_slope=rows_slope, resources=resources
     )
-    return jnp.broadcast_to(values, (n_subjects,)), jnp.broadcast_to(
-        in_support, (n_subjects,)
+    return jnp.broadcast_to(values, (n_agents,)), jnp.broadcast_to(
+        in_support, (n_agents,)
     )
 
 
@@ -4665,12 +4696,12 @@ def _interp_padded_rows(
     rows_slope: FloatND | None,
     resources: FloatND,
 ) -> tuple[FloatND, BoolND]:
-    """Read one padded row per subject at its resources, with the support flag.
+    """Read one padded row per agent at its resources, with the support flag.
 
     Compiled once per row shape: simulation reads these rows every
     regime-period, and the eager per-operation dispatch dominated the read. A
-    single row shared by every subject (`rows_x.ndim == 1`) is read once at
-    all resources rather than copied per subject.
+    single row shared by every agent (`rows_x.ndim == 1`) is read once at
+    all resources rather than copied per agent.
     """
     if rows_x.ndim == 1:
         values = interp_on_padded_grid(
@@ -4699,10 +4730,10 @@ def _interp_indexed_rows(
     index: tuple[IntND | int, ...],
     resources: FloatND,
 ) -> tuple[FloatND, BoolND]:
-    """Read the row `rows_x[index]` selects per subject, with the support flag.
+    """Read the row `rows_x[index]` selects per agent, with the support flag.
 
     `index` addresses every axis but the last; at least one entry is a
-    per-subject array. Matches `_interp_padded_rows` on the copied rows.
+    per-agent array. Matches `_interp_padded_rows` on the copied rows.
     """
     lead_shape = rows_x.shape[:-1]
     flat_rows = jnp.ravel_multi_index(
@@ -4789,14 +4820,14 @@ def _nnbegm_bank_feasibility(
         },
     }
     shared = {**flat_params, "period": jnp.int32(period), "age": age}
-    per_subject = {
+    per_agent = {
         **canonical_states,
         **{name: optimal_actions[name] for name in action_names if name not in bank},
     }
     names = inspect.signature(feasibility).parameters
 
     # Constraints are written for one state-action point, so the bank is mapped
-    # over candidates and subjects alike.
+    # over candidates and agents alike.
     def at_point(point: Mapping[str, FloatND | IntND]) -> BoolND:
         pool = {**shared, **point}
         evaluated = feasibility(**{name: pool[name] for name in names})
@@ -4804,7 +4835,7 @@ def _nnbegm_bank_feasibility(
         return jnp.asarray(output, dtype=bool)
 
     def at_candidate(candidate: Mapping[ActionName, FloatND | IntND]) -> BoolND:
-        return jax.vmap(at_point)({**per_subject, **candidate})
+        return jax.vmap(at_point)({**per_agent, **candidate})
 
     return jax.vmap(at_candidate)(bank).reshape(n_candidates, -1)
 
@@ -4867,8 +4898,8 @@ def _invert_nnbegm_outer_targets(
         raise TypeError("NNBEGM target inversion requires its replay adapter.")
     target_function = policy_read.outer_target_function_by_period[period]
     accepted = inspect.signature(target_function).parameters
-    n_candidates, n_subjects = candidate_inner.shape
-    candidate_shape = (n_candidates, n_subjects)
+    n_candidates, n_agents = candidate_inner.shape
+    candidate_shape = (n_candidates, n_agents)
     state_inputs = {
         name: jnp.broadcast_to(jnp.asarray(value)[None, :], candidate_shape)
         for name, value in states.items()
@@ -4917,7 +4948,7 @@ def _invert_nnbegm_outer_targets(
     if policy_read.outer_no_adjustment_target is None:
         keeper_targets = jnp.broadcast_to(
             jnp.asarray(states[policy_read.outer_state_name])[None, :],
-            (sim_policy.n_keeper_candidates, n_subjects),
+            (sim_policy.n_keeper_candidates, n_agents),
         )
     else:
         keeper_targets = jnp.broadcast_to(
@@ -4968,7 +4999,7 @@ def _invert_nnbegm_outer_targets(
 
 @dataclass(frozen=True, eq=False)
 class _NNBEGMOuterForward:
-    """The declared outer target map over one candidate bank, per subject."""
+    """The declared outer target map over one candidate bank, per agent."""
 
     target_function: Callable[..., Mapping[str, FloatND]]
     """The period's outer target function from the replay adapter."""
@@ -4977,7 +5008,7 @@ class _NNBEGMOuterForward:
     flat_params: FlatRegimeParams
     """The regime's flat parameters."""
     state_inputs: Mapping[str, FloatND | IntND]
-    """Per-subject states broadcast to the candidate bank's shape."""
+    """Per-agent states broadcast to the candidate bank's shape."""
     discrete_inputs: Mapping[str, IntND]
     """Candidate discrete action codes broadcast to the bank's shape, if any."""
     inner_action_name: ActionName
@@ -4985,7 +5016,7 @@ class _NNBEGMOuterForward:
     outer_action_name: ActionName
     """Name under which the evaluated outer action is bound."""
     candidate_inner: FloatND
-    """Candidate inner actions, shaped `(n_candidates, n_subjects)`."""
+    """Candidate inner actions, shaped `(n_candidates, n_agents)`."""
     period: int
     """Period index of the evaluation."""
     age: ScalarFloat | ScalarInt
@@ -4993,7 +5024,7 @@ class _NNBEGMOuterForward:
     outer_post_decision: str
     """Name of the outer post-decision output read from the map's results."""
     candidate_shape: tuple[int, int]
-    """`(n_candidates, n_subjects)`; every image is broadcast to it."""
+    """`(n_candidates, n_agents)`; every image is broadcast to it."""
 
     def bind(self, *, outer_action: FloatND) -> dict[str, EconFunctionArg]:
         """Assemble the map's accepted inputs at `outer_action`."""
@@ -5082,14 +5113,14 @@ def _prepare_nnbegm_candidate_bank(
     """Pure reconstruction of the candidate bank and its represented mask.
 
     Returns the inner actions, outer actions and published values of every
-    candidate at the subjects' states, and whether each candidate is live (in
+    candidate at the agents' states, and whether each candidate is live (in
     support, finite) and its outer action reaches a stock inside the outer
     state's domain. Support is the grid's extent for an ordinary continuous
     state; a process state's draw is in support wherever it is finite.
     """
-    n_subjects = next(iter(states.values())).shape[0]
+    n_agents = next(iter(states.values())).shape[0]
     coordinates = []
-    in_support = jnp.ones((n_subjects,), dtype=bool)
+    in_support = jnp.ones((n_agents,), dtype=bool)
     for name in sim_policy.state_names:
         values = jnp.asarray(states[name])
         grid = regime.simulation.grids[name]
@@ -5159,11 +5190,11 @@ def _rank_nnbegm_candidate_bank(
 ):
     """Pick the feasible represented candidate with the highest published value.
 
-    Feasibility is the regime's constraints at the subject's state, evaluated
+    Feasibility is the regime's constraints at the agent's state, evaluated
     over the bank; the continuation is not. JAX argmax returns the first
     maximum, preserving keeper/outer-major then declared discrete-product order
     exactly. Canonical Q scores the one winning action tuple for the reported
-    value; a winner it scores non-finite publishes no action, as does a subject
+    value; a winner it scores non-finite publishes no action, as does an agent
     with no feasible represented candidate.
     """
     n_candidates = candidate_inner.shape[0]
@@ -5257,7 +5288,7 @@ def _grid_position(
 
 
 def _take_at_winner(*, stacked: FloatND | BoolND, winner: IntND) -> FloatND | BoolND:
-    """Select the winning candidate's row from a candidate-major stack per subject."""
+    """Select the winning candidate's row from a candidate-major stack per agent."""
     return jnp.take_along_axis(stacked, winner[None, :], axis=0)[0]
 
 
@@ -5268,9 +5299,9 @@ def _blended_nested_read(
     passive_bracket: tuple[IntND, IntND, FloatND] | None,
     discrete_idx: tuple[IntND, ...],
     liquid: FloatND,
-    n_subjects: int,
+    n_agents: int,
 ) -> tuple[FloatND, BoolND]:
-    """Read one policy field at the subjects' liquid values and discrete rows.
+    """Read one policy field at the agents' liquid values and discrete rows.
 
     With a passive bracket, the two enclosing rows on the passive state's axis
     are read and interpolated linearly with the bracket's weight; support is the
@@ -5282,7 +5313,7 @@ def _blended_nested_read(
             field=field,
             index=discrete_idx,
             resources=liquid,
-            n_subjects=n_subjects,
+            n_agents=n_agents,
         )
     lo, hi, weight = passive_bracket
     value_lo, support_lo = _interp_rows_with_support(
@@ -5290,14 +5321,14 @@ def _blended_nested_read(
         field=field,
         index=(*discrete_idx, lo),
         resources=liquid,
-        n_subjects=n_subjects,
+        n_agents=n_agents,
     )
     value_hi, support_hi = _interp_rows_with_support(
         sim_policy=pol,
         field=field,
         index=(*discrete_idx, hi),
         resources=liquid,
-        n_subjects=n_subjects,
+        n_agents=n_agents,
     )
     return (
         value_lo * (1.0 - weight) + value_hi * weight,
@@ -5312,7 +5343,7 @@ def _read_nested_candidate(
     passive_bracket: tuple[IntND, IntND, FloatND] | None,
     discrete_idx: tuple[IntND, ...],
     liquid: FloatND,
-    n_subjects: int,
+    n_agents: int,
 ) -> tuple[FloatND, BoolND, FloatND]:
     """Read one candidate policy's value, support, and action; mapped over the bank."""
     value, support = _blended_nested_read(
@@ -5321,7 +5352,7 @@ def _read_nested_candidate(
         passive_bracket=passive_bracket,
         discrete_idx=discrete_idx,
         liquid=liquid,
-        n_subjects=n_subjects,
+        n_agents=n_agents,
     )
     action, _ = _blended_nested_read(
         pol=pol,
@@ -5329,7 +5360,7 @@ def _read_nested_candidate(
         passive_bracket=passive_bracket,
         discrete_idx=discrete_idx,
         liquid=liquid,
-        n_subjects=n_subjects,
+        n_agents=n_agents,
     )
     return value, support, action
 
@@ -5355,7 +5386,7 @@ class _InterpolatedProfileObjective:
 def _read_candidate_bank(
     *, bank: FloatND, coordinates: list[FloatND | IntND]
 ) -> FloatND:
-    """Interpolate every surface of a candidate bank at the subjects' coordinates."""
+    """Interpolate every surface of a candidate bank at the agents' coordinates."""
     return jax.vmap(functools.partial(map_coordinates, coordinates=coordinates))(
         input=bank
     )
@@ -5372,9 +5403,9 @@ def _canonical_Q_at_actions(
     period: int,
     age: ScalarFloat | ScalarInt,
     referenced_value_kwargs: QAndFKwargs = MappingProxyType({}),
-    active_subjects: BoolND | None = None,
+    active_agents: BoolND | None = None,
 ) -> tuple[FloatND, BoolND]:
-    """Score one action value per subject with the canonical state-action value.
+    """Score one action value per agent with the canonical state-action value.
 
     Evaluates `Q` and its feasibility at exactly the supplied (state, action)
     pairs through `regime.simulation.Q_and_F` — the same objective, transitions,
@@ -5384,7 +5415,7 @@ def _canonical_Q_at_actions(
     feasibility (user constraints and the intrinsic budget alike).
 
     Returns:
-        Tuple of the per-subject canonical value and feasibility.
+        Tuple of the per-agent canonical value and feasibility.
 
     """
     evaluated = _evaluate_canonical_Q_at_actions(
@@ -5398,7 +5429,7 @@ def _canonical_Q_at_actions(
         age=age,
         Q_and_F=cast("QAndFFunction", regime.simulation.Q_and_F[period]),
         referenced_value_kwargs=referenced_value_kwargs,
-        active_subjects=active_subjects,
+        active_agents=active_agents,
     )
     return _validated_canonical_Q(evaluated=evaluated, regime=regime, period=period)
 
@@ -5437,7 +5468,7 @@ def _evaluate_canonical_Q_at_actions(
     age: ScalarFloat | ScalarInt,
     Q_and_F: QAndFFunction,
     referenced_value_kwargs: QAndFKwargs = MappingProxyType({}),
-    active_subjects: BoolND | None = None,
+    active_agents: BoolND | None = None,
 ) -> tuple[FloatND, BoolND] | BoundedResult[tuple[FloatND, BoolND]]:
     """Evaluate canonical actions once, retaining integrity through transformations.
 
@@ -5445,7 +5476,7 @@ def _evaluate_canonical_Q_at_actions(
     caller with the host period; `period` is the `int32` value it receives.
     """
     from _lcm.regime_building.processing import (  # noqa: PLC0415 - completed model's pointwise owner
-        _SubjectPointwiseQAndF,
+        _AgentPointwiseQAndF,
     )
 
     function = Q_and_F
@@ -5465,8 +5496,8 @@ def _evaluate_canonical_Q_at_actions(
         period=period,
         age=age,
         **(
-            {ACTIVE_SUBJECTS_ARGUMENT: active_subjects}
-            if active_subjects is not None and isinstance(owner, _SubjectPointwiseQAndF)
+            {ACTIVE_AGENTS_ARGUMENT: active_agents}
+            if active_agents is not None and isinstance(owner, _AgentPointwiseQAndF)
             else {}
         ),
     )
@@ -5479,7 +5510,10 @@ def _evaluate_canonical_Q_at_actions(
             )
         values, feasible = cast("tuple[FloatND, BoolND]", evaluated.output)
         return BoundedResult(
-            output=(jnp.asarray(values), jnp.asarray(feasible).astype(bool)),
+            output=(
+                _egm_member_value(value=jnp.asarray(values), regime=regime),
+                jnp.asarray(feasible).astype(bool),
+            ),
             bound_status=evaluated.bound_status,
             query_status=evaluated.query_status,
         )
@@ -5488,7 +5522,31 @@ def _evaluate_canonical_Q_at_actions(
             "Canonical actual-action evaluation must produce mandatory integrity."
         )
     values, feasible = evaluated
-    return jnp.asarray(values), jnp.asarray(feasible).astype(bool)
+    return (
+        _egm_member_value(value=jnp.asarray(values), regime=regime),
+        jnp.asarray(feasible).astype(bool),
+    )
+
+
+def _egm_member_value(*, value: FloatND, regime: Regime) -> FloatND:
+    """Read an endogenous-grid regime's one member's value off its member axis.
+
+    The reads of a regime solved by an endogenous-grid solver compare the value
+    of its one member: the published policy rows carry no member axis. Any other
+    regime's value is returned whole.
+    """
+    if regime.simulation.egm_policy_read is None:
+        return value
+    return value[
+        ..., landing_member_index(members=regime.members, role=regime.members[0])
+    ]
+
+
+def _egm_value_with_member_axis(*, value: FloatND, regime: Regime) -> FloatND:
+    """Give an endogenous-grid regime's read value its trailing member axis."""
+    if regime.simulation.egm_policy_read is None:
+        return value
+    return value[..., None]
 
 
 def _drawn_code_targets(
@@ -5502,16 +5560,16 @@ def _drawn_code_targets(
     )
 
 
-def _genuine_rows(*, subject_slice: slice | SubjectRows, n_real: int) -> np.ndarray:
-    """Mark the chunk rows that stand for a distinct real subject.
+def _genuine_rows(*, agent_slice: slice | AgentRows, n_real: int) -> np.ndarray:
+    """Mark the chunk rows that stand for a distinct real agent.
 
     An ungrouped chunk's rows at or past `n_real` are alignment copies of the
-    last subject; a grouped chunk's short tail repeats its last original row.
+    last agent; a grouped chunk's short tail repeats its last original row.
     """
-    if isinstance(subject_slice, SubjectRows):
-        rows = subject_slice.rows
+    if isinstance(agent_slice, AgentRows):
+        rows = agent_slice.rows
         return np.concatenate(([True], rows[1:] != rows[:-1]))
-    return np.arange(subject_slice.start, subject_slice.stop) < n_real
+    return np.arange(agent_slice.start, agent_slice.stop) < n_real
 
 
 def _current_iid_invalid(*, invalid: BoolND, in_regime: BoolND) -> BoolND:
@@ -5519,12 +5577,12 @@ def _current_iid_invalid(*, invalid: BoolND, in_regime: BoolND) -> BoolND:
     return jnp.any(invalid & in_regime)
 
 
-def _active_subjects(
+def _active_agents(
     *,
     in_regime: BoolND,
     genuine: BoolND | np.ndarray[tuple[int], np.dtype[np.bool_]],
 ) -> BoolND:
-    """Own integrity only for real subjects acting in this source regime."""
+    """Own integrity only for real agents acting in this source regime."""
     return in_regime & genuine
 
 
@@ -5567,7 +5625,7 @@ def _lookup_values_from_indices(
 
 # vmap jnp.unravel_index over the first axis of the `indices` argument, while holding
 # the `shape` argument constant (in_axes = (0, None)). Jitted with the shape
-# static so the vmap is traced once per (subject-count, grid-shape) pair
+# static so the vmap is traced once per (agent-count, grid-shape) pair
 # instead of on every period-regime call in the simulation's inner loop.
 vmapped_unravel_index = jax.jit(
     vmap(jnp.unravel_index, in_axes=(0, None)), static_argnums=1
@@ -5580,14 +5638,14 @@ def _compute_starting_periods(
     ages: TimeAxis,
     memory: SimulationMemory | None = None,
 ) -> Int1D:
-    """Convert per-subject initial ages to starting period indices.
+    """Convert per-agent initial ages to starting period indices.
 
     Args:
-        initial_ages: Array of initial ages for each subject.
+        initial_ages: Array of initial ages for each agent.
         ages: TimeAxis defining the lifecycle.
 
     Returns:
-        Array of starting period indices (one per subject).
+        Array of starting period indices (one per agent).
 
     Raises:
         ValueError: If any initial age is not a valid age grid point.
@@ -5597,7 +5655,7 @@ def _compute_starting_periods(
         memory=memory,
         function=population_operations.starting_periods,
         arguments={"initial_ages": initial_ages, "age_values": ages.values},  # noqa: PD011
-        subject_arg_names=("initial_ages",),
+        agent_arg_names=("initial_ages",),
     )
     if not bool(all_valid):
         # Error-detail selection stays on the host after the admitted predicate;

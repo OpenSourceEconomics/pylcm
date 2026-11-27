@@ -1,9 +1,77 @@
 """Original-only finite finder inputs; expected partitions never enter the IR."""
 
 from copy import deepcopy
+from typing import Literal, NotRequired, TypedDict
+
+type ProgramId = str
+type Phase = Literal["both", "solve", "simulation"]
+type Role = dict[str, str | list[str]]
 
 
-ROLE = {
+class Domain(TypedDict, total=False):
+    values: list[int]
+    size: int
+    grid_id: str
+
+
+class OpaquePrimitive(TypedDict):
+    opaque: str
+    reads: list[str]
+
+
+class Transition(TypedDict):
+    probability: str
+    updates: dict[str, str]
+    status_updates: NotRequired[dict[str, str]]
+    phase: NotRequired[Phase]
+
+
+class Read(TypedDict):
+    target: ProgramId
+    offset: int
+    weight: str
+    status_updates: dict[str, str]
+    updates: dict[str, str]
+
+
+class Program(TypedDict, total=False):
+    id: ProgramId
+    when: str
+    role: Role
+    reward: str | OpaquePrimitive
+    discount: str
+    feasible: str
+    terminal: bool
+    terminal_payoff: str
+    declared_states: list[str]
+    declared_actions: list[str]
+    transitions: list[Transition]
+    reads: list[Read]
+    routing_owner: str
+    allocation: str
+    outputs: dict[str, str]
+
+
+class Implementation(TypedDict, total=False):
+    max_block_state_entries: int
+    compact_search: bool
+
+
+class Problem(TypedDict):
+    schema_version: int
+    name: str
+    ages: list[int]
+    parameters: dict[str, str | int]
+    states: dict[str, Domain]
+    actions: dict[str, Domain]
+    programs: list[Program]
+    implementation: NotRequired[Implementation]
+    status_axes: NotRequired[dict[str, list[str]]]
+    winning_cuts: NotRequired[list[int]]
+    external_report_tags: NotRequired[list[dict[str, str]]]
+
+
+ROLE: Role = {
     "actor": "household",
     "observations": [],
     "commitments": [],
@@ -12,16 +80,16 @@ ROLE = {
 
 
 def problem(
-    name,
-    periods,
-    states=None,
-    actions=None,
-    reward="0",
-    feasible="True",
-    updates=None,
-    programs=None,
-    implementation=None,
-):
+    name: str,
+    periods: int,
+    states: dict[str, Domain] | None = None,
+    actions: dict[str, Domain] | None = None,
+    reward: str = "0",
+    feasible: str = "True",
+    updates: dict[str, str] | None = None,
+    programs: list[Program] | None = None,
+    implementation: Implementation | None = None,
+) -> Problem:
     states = states or {}
     actions = actions or {}
     if programs is None:
@@ -55,7 +123,7 @@ def problem(
             "transitions": [],
         }
     )
-    result = {
+    result: Problem = {
         "schema_version": 1,
         "name": name,
         "ages": list(range(periods + 1)),
@@ -69,7 +137,7 @@ def problem(
     return result
 
 
-def fertility():
+def fertility() -> Problem:
     return problem(
         "missing-fertility-and-last-child-consumer",
         8,
@@ -81,8 +149,8 @@ def fertility():
     )
 
 
-def retirement():
-    primitive = {
+def retirement() -> Problem:
+    primitive: Program = {
         "role": deepcopy(ROLE),
         "reward": "(wage * work if age < 2 else 0) - (coverage_lag if age < 5 else 0)",
         "discount": "1",
@@ -101,14 +169,18 @@ def retirement():
         states={"wage": {"values": [1, 2]}, "coverage_lag": {"values": [0, 1]}},
         actions={"work": {"values": [0, 1]}},
         programs=[
-            dict(deepcopy(primitive), id="working_block", when="age < 6"),
-            dict(deepcopy(primitive), id="unnecessary_late_block", when="6 <= age < 8"),
+            {**deepcopy(primitive), "id": "working_block", "when": "age < 6"},
+            {
+                **deepcopy(primitive),
+                "id": "unnecessary_late_block",
+                "when": "6 <= age < 8",
+            },
         ],
     )
 
 
-def duplicate_coefficients():
-    primitive = {
+def duplicate_coefficients() -> Problem:
+    primitive: Program = {
         "role": deepcopy(ROLE),
         "reward": "(age + 1) * x + effort",
         "discount": "1",
@@ -122,13 +194,17 @@ def duplicate_coefficients():
         states={"x": {"values": [0, 1]}},
         actions={"effort": {"values": [0, 1]}},
         programs=[
-            dict(deepcopy(primitive), id="arbitrary_first_name", when="age < 2"),
-            dict(deepcopy(primitive), id="arbitrary_second_name", when="2 <= age < 4"),
+            {**deepcopy(primitive), "id": "arbitrary_first_name", "when": "age < 2"},
+            {
+                **deepcopy(primitive),
+                "id": "arbitrary_second_name",
+                "when": "2 <= age < 4",
+            },
         ],
     )
 
 
-def nontransitive():
+def nontransitive() -> Problem:
     return problem(
         "nontransitive-segment-size-global-optimum",
         3,
@@ -139,7 +215,7 @@ def nontransitive():
     )
 
 
-def endpoint_saving():
+def endpoint_saving() -> Problem:
     return problem(
         "endpoint-saving-clarity",
         3,
@@ -149,7 +225,7 @@ def endpoint_saving():
     )
 
 
-def endpoint_with_redundant_label():
+def endpoint_with_redundant_label() -> Problem:
     p = endpoint_saving()
     first = p["programs"][0]
     first["when"] = "age < 2"
@@ -160,8 +236,8 @@ def endpoint_with_redundant_label():
     return p
 
 
-def invalid_cases():
-    cases = {
+def invalid_cases() -> dict[str, Problem]:
+    cases: dict[str, Problem] = {
         "empty_feasible_state": problem(
             "empty-feasible-row",
             2,
@@ -198,7 +274,7 @@ def invalid_cases():
     return cases
 
 
-def allocation():
+def allocation() -> Problem:
     return problem(
         "fewer-nodes-union-padding-loses",
         6,
@@ -208,8 +284,8 @@ def allocation():
     )
 
 
-def routing():
-    zero = {
+def routing() -> Problem:
+    zero: Program = {
         "role": deepcopy(ROLE),
         "terminal": True,
         "terminal_payoff": "0",
@@ -225,23 +301,23 @@ def routing():
         "states": {},
         "actions": {},
         "programs": [
-            dict(
-                deepcopy(zero),
-                id="fallback_left",
-                when="age == 0",
-                routing_owner="offering_leg",
-            ),
-            dict(
-                deepcopy(zero),
-                id="fallback_right",
-                when="age == 1",
-                routing_owner="response_leg",
-            ),
+            {
+                **deepcopy(zero),
+                "id": "fallback_left",
+                "when": "age == 0",
+                "routing_owner": "offering_leg",
+            },
+            {
+                **deepcopy(zero),
+                "id": "fallback_right",
+                "when": "age == 1",
+                "routing_owner": "response_leg",
+            },
         ],
     }
 
 
-def observed_status():
+def observed_status() -> Problem:
     p = problem(
         "absorbing-claimed-smaller-domain",
         4,
@@ -256,8 +332,8 @@ def observed_status():
     return p
 
 
-def external_read(weight="1", cyclic=False):
-    reader = {
+def external_read(weight: str = "1", cyclic: bool = False) -> Problem:
+    reader: Program = {
         "id": "chooser",
         "when": "mode == 'chooser'",
         "role": deepcopy(ROLE),
@@ -276,10 +352,10 @@ def external_read(weight="1", cyclic=False):
             }
         ],
     }
-    consumer = {
+    consumer: Program = {
         "id": "outside",
         "when": "mode == 'outside'",
-        "role": dict(deepcopy(ROLE), actor="settlement"),
+        "role": dict(deepcopy(ROLE), actor="transfer"),
         "terminal": True,
         "terminal_payoff": "history",
         "declared_actions": [],
@@ -307,7 +383,7 @@ def external_read(weight="1", cyclic=False):
     }
 
 
-def rare_incoming(positive=True, phase="both"):
+def rare_incoming(positive: bool = True, phase: Phase = "both") -> Problem:
     p = problem(
         "rare-incoming-history-" + ("positive" if positive else "zero") + "-" + phase,
         6,
@@ -350,13 +426,15 @@ def rare_incoming(positive=True, phase="both"):
     return p
 
 
-def generated(seed):
+def generated(seed: int) -> Problem:
     """Families with reset laws, so dependency truth tables have a small exact oracle."""
     import random
 
     rng = random.Random(seed)
     periods = rng.randint(3, 6)
-    states = {f"s{k}": {"values": list(range(rng.randint(2, 3)))} for k in range(2)}
+    states: dict[str, Domain] = {
+        f"s{k}": {"values": list(range(rng.randint(2, 3)))} for k in range(2)
+    }
     active = []
     largest_atom = 1
     for age in range(periods):
@@ -383,7 +461,7 @@ def generated(seed):
     )
 
 
-def named_cases():
+def named_cases() -> dict[str, Problem]:
     return {
         "fertility": fertility(),
         "retirement": retirement(),

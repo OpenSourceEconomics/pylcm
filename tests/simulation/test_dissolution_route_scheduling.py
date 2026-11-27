@@ -70,7 +70,7 @@ def test_every_declaration_order_simulates_the_same_panel(
     ]
     result = simulate_chain(model=model, wages=wages, runtime_checks=True)
     panel = result.to_dataframe(use_categorical_codes=True)
-    rows = panel.loc[panel["period"] == 1].sort_values("subject_id")
+    rows = panel.loc[panel["period"] == 1].sort_values("agent_id")
     assert (
         list(zip(rows["regime_name"], rows["wage"], rows["work"], strict=True))
         == expected
@@ -91,7 +91,7 @@ def test_a_fallback_declared_first_still_receives_its_rerouted_rows(
     wages = np.array([1.0, 2.25, 3.0])
     result = simulate_chain(model=model, wages=wages, runtime_checks=True)
     panel = result.to_dataframe(use_categorical_codes=True)
-    rows = panel.loc[panel["period"] == 1].sort_values("subject_id")
+    rows = panel.loc[panel["period"] == 1].sort_values("agent_id")
     assert list(zip(rows["regime_name"], rows["wage"], strict=True)) == [
         ("a", 1.0),
         ("c", 2.25),
@@ -113,7 +113,7 @@ def test_targets_and_fallbacks_in_a_cycle_simulate_when_no_household_is_rerouted
         model=model, wages=np.array([1.0, 3.0]), runtime_checks=False
     )
     panel = result.to_dataframe(use_categorical_codes=True)
-    rows = panel.loc[panel["period"] == 1].sort_values("subject_id")
+    rows = panel.loc[panel["period"] == 1].sort_values("agent_id")
     assert list(zip(rows["regime_name"], rows["wage"], strict=True)) == [
         ("a", 1.0),
         ("b", 3.0),
@@ -266,8 +266,8 @@ def test_a_self_route_decides_again_at_its_projected_state(
         for wage in (1.0, 3.0, 3.0)
     ]
     panel = result.to_dataframe(use_categorical_codes=True)
-    rows = panel.loc[panel["period"] == 1].sort_values("subject_id")
-    assert rows["subject_id"].tolist() == [0, 1, 2]
+    rows = panel.loc[panel["period"] == 1].sort_values("agent_id")
+    assert rows["agent_id"].tolist() == [0, 1, 2]
     assert (
         list(zip(rows["regime_name"], rows["wage"], rows["work"], strict=True))
         == expected
@@ -296,7 +296,7 @@ def test_a_self_route_decides_again_at_its_clipped_projected_state() -> None:
     )
     _, result = _simulate_self_route(model=model, runtime_checks=True)
     panel = result.to_dataframe(use_categorical_codes=True)
-    rows = panel.loc[panel["period"] == 1].sort_values("subject_id")
+    rows = panel.loc[panel["period"] == 1].sort_values("agent_id")
     expected = [
         ("a", wage, reference_action(wage=wage, constrained=True))
         for wage in (1.0, 3.0, 3.0)
@@ -323,7 +323,7 @@ def test_a_forward_reroute_inside_a_cycle_acts_in_a_fallback_that_has_not_run() 
         model=model, wages=np.array([1.0, 2.25, 3.0]), runtime_checks=True
     )
     panel = result.to_dataframe(use_categorical_codes=True)
-    rows = panel.loc[panel["period"] == 1].sort_values("subject_id")
+    rows = panel.loc[panel["period"] == 1].sort_values("agent_id")
     assert list(zip(rows["regime_name"], rows["wage"], rows["work"], strict=True)) == [
         ("a", 1.0, reference_action(wage=1.0, constrained=False)),
         ("a", 2.25, reference_action(wage=2.25, constrained=False)),

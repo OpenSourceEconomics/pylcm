@@ -39,14 +39,13 @@ N_a = \prod_j n_j
 $$
 
 at every state cell. Total work therefore still covers the complete represented action
-support. Eligible JIT solve-value routes—ordinary singleton hard max, collective hard
-max, and singleton EV1 expected max—evaluate bounded C-order action blocks. Gated-target
-continuations and edge-reference mappings are supported unchanged inputs to those
-blocks. Ordinary co-mapped state routes stream while preserving device-local
-continuation reads. The classifier deliberately keeps co-map intersections with a
-separate edge-reference channel, trivial action products, JIT-disabled and raw
-execution, and all simulation-policy construction dense. Collective EV1 and EV1 without
-a discrete action are unsupported by the streamed program. See the canonical
+support. Eligible solve-value routes, those that take a hard maximum, evaluate bounded
+C-order action blocks. Gated-target continuations and edge-reference mappings are
+supported unchanged inputs to those blocks. Ordinary co-mapped state routes stream while
+preserving device-local continuation reads. The classifier deliberately keeps co-map
+intersections with a separate edge-reference channel, trivial action products, EV1 and
+`Decoupled` reductions, and all simulation-policy construction dense. EV1 without a
+discrete action is unsupported by the streamed program. See the canonical
 [GridSearch route matrix](../reference/solvers.md#gridsearch-jit-route-matrix). Streamed
 programs publish solve-time values, not replay or policy artifacts. The blockwise route
 does not establish a runtime or peak-memory improvement without measurement. Grid search

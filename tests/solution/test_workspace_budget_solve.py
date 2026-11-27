@@ -7,11 +7,12 @@ are observed through a period capture, which records exactly what the solve disp
 """
 
 import math
-from collections.abc import Mapping
+import re
+from collections.abc import Collection, Hashable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType
-from typing import TypedDict
+from typing import TypedDict, Unpack
 
 import cloudpickle
 import jax
@@ -30,11 +31,12 @@ from lcm import (
     LinSpacedGrid,
     Model,
 )
+from lcm._solver_api.result import SolutionResult
 from lcm.exceptions import ExecutionPlanningError
-from lcm.persistence import replay_period
 from lcm.solvers import GridSearch
 from tests.conftest import assert_agrees_to_ulp
 from tests.execution.test_compiler_allocation_reservation import synthetic_memory
+from tests.solution.test_pipelined_lowering import _CompileKwargs
 from tests.test_models.deterministic.regression import (
     START_AGE,
     LaborSupply,
@@ -118,7 +120,7 @@ def _solve_capturing(
     tmp_path: Path,
     device_memory_bytes: int | None,
     axis_widths: Mapping[str, int] = MappingProxyType({}),
-):
+) -> SolutionResult:
     """Solve while capturing the first working-life period."""
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", _CAPTURE_TARGET)
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
@@ -140,7 +142,9 @@ def _captured_widths(tmp_path: Path) -> dict[str, dict[str, int]]:
         return cloudpickle.load(stream)["core_tile_widths"]
 
 
-def test_no_budget_uses_the_bootstrap_width(*, monkeypatch, tmp_path) -> None:
+def test_no_budget_uses_the_bootstrap_width(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Extent six streams in blocks of four; the whole product needs a budget."""
     _solve_capturing(
         monkeypatch=monkeypatch,
@@ -151,37 +155,11 @@ def test_no_budget_uses_the_bootstrap_width(*, monkeypatch, tmp_path) -> None:
     assert _captured_widths(tmp_path) == {"main": {"action_product": 4, "cell": 1}}
 
 
-@pytest.mark.usefixtures("synthetic_peaks")
-def test_budget_selects_the_widest_feasible_action_block(
-    *, monkeypatch, tmp_path
-) -> None:
-    """Frontier 1, 2, 4, 6 with a budget of two width units selects width 2."""
-    _solve_capturing(
-        monkeypatch=monkeypatch,
-        tmp_path=tmp_path,
-        device_memory_bytes=_fixed_owner_bytes() + 2 * _BYTES_PER_ACTION,
-    )
-
-    assert _captured_widths(tmp_path) == {"main": {"action_product": 2, "cell": 1}}
-
-
-@pytest.mark.usefixtures("synthetic_peaks")
-def test_budget_above_every_candidate_keeps_the_full_action_product(
-    *, monkeypatch, tmp_path
-) -> None:
-    _solve_capturing(
-        monkeypatch=monkeypatch,
-        tmp_path=tmp_path,
-        device_memory_bytes=_fixed_owner_bytes() + _ACTION_EXTENT * _BYTES_PER_ACTION,
-    )
-
-    assert _captured_widths(tmp_path) == {
-        "main": {"action_product": _ACTION_EXTENT, "cell": 1}
-    }
-
-
 def test_budget_above_every_candidate_lowers_only_the_full_action_product(
-    *, synthetic_peaks, monkeypatch, tmp_path
+    *,
+    synthetic_peaks: list[dict[str, int]],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """A budget every core meets costs no more compilation than no budget."""
     _solve_capturing(
@@ -198,7 +176,10 @@ def test_budget_above_every_candidate_lowers_only_the_full_action_product(
 
 
 def test_budget_lowers_widths_descending_until_one_fits(
-    *, synthetic_peaks, monkeypatch, tmp_path
+    *,
+    synthetic_peaks: list[dict[str, int]],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """Only the candidates wider than the selected one are compiled and rejected."""
     _solve_capturing(
@@ -219,7 +200,10 @@ def test_budget_lowers_widths_descending_until_one_fits(
 
 
 def test_budgeted_values_agree_with_the_unbudgeted_solve(
-    *, synthetic_peaks, monkeypatch, tmp_path
+    *,
+    synthetic_peaks: list[dict[str, int]],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """A narrower block partitions the same maximum; values agree to a few ULP."""
     del synthetic_peaks
@@ -241,7 +225,9 @@ def test_budgeted_values_agree_with_the_unbudgeted_solve(
         )
 
 
-def test_budget_below_every_candidate_fails_closed(*, monkeypatch, tmp_path) -> None:
+def test_budget_below_every_candidate_fails_closed(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """One byte holds not even the model's inputs, so solve refuses before any core.
 
     The transition preflight admits the parameters and model-owned grids before the
@@ -289,14 +275,14 @@ def fixed_width_solve(
 
 
 def test_a_fixed_width_leaves_the_planner_one_candidate_to_compile(
-    *, fixed_width_solve
+    *, fixed_width_solve: _FixedWidthSolve
 ) -> None:
     """A fixed axis width is the only width the planner ever compiles."""
     assert fixed_width_solve["compiled"] == {4}
 
 
 def test_a_fixed_width_is_the_width_the_core_is_dispatched_at(
-    *, fixed_width_solve
+    *, fixed_width_solve: _FixedWidthSolve
 ) -> None:
     """The dispatched core runs at exactly the width the config fixed."""
     assert fixed_width_solve["dispatched"] == {"main": {"action_product": 4, "cell": 1}}
@@ -310,7 +296,7 @@ def test_a_fixed_width_for_an_axis_no_program_declares_is_refused() -> None:
 
 @pytest.mark.usefixtures("synthetic_peaks")
 def test_fixed_action_product_width_over_budget_names_the_request(
-    *, monkeypatch, tmp_path
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A fixed width that no budget can serve is refused, naming the request."""
     with pytest.raises(ExecutionPlanningError, match="explicitly requested"):
@@ -322,23 +308,146 @@ def test_fixed_action_product_width_over_budget_names_the_request(
         )
 
 
-@pytest.mark.usefixtures("synthetic_peaks")
-def test_replay_of_a_budgeted_capture_reproduces_its_value(
-    *, monkeypatch, tmp_path
-) -> None:
-    """Replay lowers the captured width and returns the array the solve published."""
-    budgeted = _solve_capturing(
+_OUT_OF_MEMORY = "RESOURCE_EXHAUSTED: Out of memory while trying to allocate 64B"
+
+
+def _fail_compiles(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    action_widths: Collection[int],
+    error: jax.errors.JaxRuntimeError,
+) -> list[int]:
+    """Raise `error` from XLA's compile of each listed action-product width.
+
+    The error is raised where `Lowered.compile()` raises, on the compile thread, so
+    the solve sees exactly what a device that runs out of memory while compiling
+    hands it.
+
+    Returns:
+        The widths of the failed compiles, one entry per attempt.
+
+    """
+    compile_and_log = backward_induction._compile_and_log
+    attempts: list[int] = []
+
+    def failing(
+        **kwargs: Unpack[_CompileKwargs],
+    ) -> tuple[Hashable, jax.stages.Compiled]:
+        width = re.search(r"'action_product': (\d+)", kwargs["label"])
+        if width is not None and int(width.group(1)) in action_widths:
+            attempts.append(int(width.group(1)))
+            raise error
+        return compile_and_log(**kwargs)
+
+    monkeypatch.setattr(backward_induction, "_compile_and_log", failing)
+    return attempts
+
+
+def _searched_solve(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> SolutionResult:
+    """Solve with a budget that admits the widest action block, six."""
+    return _solve_capturing(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        device_memory_bytes=2 * _BYTES_PER_ACTION,
+        device_memory_bytes=_fixed_owner_bytes() + _ACTION_EXTENT * _BYTES_PER_ACTION,
     )
 
-    replay = replay_period(directory=tmp_path / _CAPTURE_TARGET)
 
-    np.testing.assert_array_equal(
-        np.asarray(replay.output.value),
-        np.asarray(budgeted.values[0]["working_life"]),
+@pytest.mark.usefixtures("synthetic_peaks")
+def test_a_width_whose_compile_runs_out_of_memory_is_not_dispatched(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The core runs at the next-ranked width, four."""
+    _fail_compiles(
+        monkeypatch=monkeypatch,
+        action_widths={_ACTION_EXTENT},
+        error=jax.errors.JaxRuntimeError(_OUT_OF_MEMORY),
     )
+
+    _searched_solve(monkeypatch=monkeypatch, tmp_path=tmp_path)
+
+    assert _captured_widths(tmp_path) == {"main": {"action_product": 4, "cell": 1}}
+
+
+@pytest.mark.usefixtures("synthetic_peaks")
+def test_a_width_out_of_memory_beside_other_compiles_is_compiled_once_alone(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Width six shares its wave with the other cores' compiles, then runs alone."""
+    attempts = _fail_compiles(
+        monkeypatch=monkeypatch,
+        action_widths={_ACTION_EXTENT},
+        error=jax.errors.JaxRuntimeError(_OUT_OF_MEMORY),
+    )
+
+    _searched_solve(monkeypatch=monkeypatch, tmp_path=tmp_path)
+
+    assert attempts == [_ACTION_EXTENT, _ACTION_EXTENT]
+
+
+@pytest.mark.usefixtures("synthetic_peaks")
+def test_a_compile_error_other_than_out_of_memory_stops_the_search(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Only a device out-of-memory refuses a width; any other XLA error is raised."""
+    error = jax.errors.JaxRuntimeError("INTERNAL: the compiler gave up")
+    _fail_compiles(monkeypatch=monkeypatch, action_widths={_ACTION_EXTENT}, error=error)
+
+    with pytest.raises(jax.errors.JaxRuntimeError) as raised:
+        _searched_solve(monkeypatch=monkeypatch, tmp_path=tmp_path)
+
+    assert raised.value is error
+
+
+def _causes(error: BaseException) -> list[BaseException]:
+    """Return `error` and every exception chained below it as a cause."""
+    chain: list[BaseException] = []
+    current: BaseException | None = error
+    while current is not None:
+        chain.append(current)
+        current = current.__cause__
+    return chain
+
+
+@pytest.mark.usefixtures("synthetic_peaks")
+def test_every_width_running_out_of_memory_while_compiling_is_a_planning_error(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The refusal says compilation itself ran out of memory and chains XLA's error."""
+    error = jax.errors.JaxRuntimeError(_OUT_OF_MEMORY)
+    _fail_compiles(monkeypatch=monkeypatch, action_widths={1, 2, 4, 6}, error=error)
+
+    with pytest.raises(
+        ExecutionPlanningError, match="Compilation itself ran out of device memory"
+    ) as raised:
+        _searched_solve(monkeypatch=monkeypatch, tmp_path=tmp_path)
+
+    assert error in _causes(raised.value)
+
+
+@pytest.mark.usefixtures("synthetic_peaks")
+@pytest.mark.parametrize("budgeted", [False, True], ids=["unbudgeted", "budgeted"])
+def test_an_explicit_width_whose_compile_runs_out_of_memory_raises_xla_error(
+    *, budgeted: bool, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A width the configuration fixed has no narrower width to yield to."""
+    error = jax.errors.JaxRuntimeError(_OUT_OF_MEMORY)
+    _fail_compiles(monkeypatch=monkeypatch, action_widths={4}, error=error)
+
+    with pytest.raises(jax.errors.JaxRuntimeError) as raised:
+        _solve_capturing(
+            monkeypatch=monkeypatch,
+            tmp_path=tmp_path,
+            device_memory_bytes=(
+                _fixed_owner_bytes() + _ACTION_EXTENT * _BYTES_PER_ACTION
+                if budgeted
+                else None
+            ),
+            axis_widths={"action_product": 4},
+        )
+
+    assert raised.value is error
 
 
 def _report_pool_limit(*, monkeypatch: pytest.MonkeyPatch, bytes_limit: int) -> None:
@@ -351,7 +460,7 @@ def _report_pool_limit(*, monkeypatch: pytest.MonkeyPatch, bytes_limit: int) -> 
 
 
 def test_an_eager_solve_refuses_the_default_budget_and_runs_without_one(
-    *, monkeypatch
+    *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`enable_jit=False` refuses the device default; opting out solves alike."""
     _report_pool_limit(monkeypatch=monkeypatch, bytes_limit=1 << 30)
@@ -377,19 +486,8 @@ def test_an_eager_solve_refuses_the_default_budget_and_runs_without_one(
         )
 
 
-def test_an_eager_solve_with_an_explicit_budget_is_refused() -> None:
-    """An explicit budget requires admission, which needs a compiled program."""
-    model = _model(
-        execution_config=ExecutionConfig(device_memory_bytes=1 << 30),
-        enable_jit=False,
-    )
-
-    with pytest.raises(ExecutionPlanningError, match="requires JIT compilation"):
-        model.solve(params=get_graph_only_params(n_periods=_N_PERIODS), log_level="off")
-
-
 def test_a_refusal_under_the_default_budget_names_its_source_and_remedies(
-    *, monkeypatch
+    *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A model too large for the device default is told what to change."""
     _report_pool_limit(monkeypatch=monkeypatch, bytes_limit=2)

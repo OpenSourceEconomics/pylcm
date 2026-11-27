@@ -128,7 +128,7 @@ def test_aggregated_solve_publishes_probabilities_and_bounded_values(
     assert det_diagnostics.adjustment_probability is None
     probability = agg_diagnostics.adjustment_probability
     assert probability is not None
-    assert probability.shape == agg.value.shape
+    assert agg.value.shape == (*probability.shape, 1)
     p = np.asarray(probability)
     assert np.all((p >= 0.0) & (p <= 1.0))
     assert np.any((p > 0.0) & (p < 1.0)), "no interior cutoff cell in the toy"

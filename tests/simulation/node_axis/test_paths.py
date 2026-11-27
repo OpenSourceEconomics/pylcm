@@ -1,4 +1,4 @@
-"""Apply tagged current-shock paths only where a subject consumes their cells."""
+"""Apply tagged current-shock paths only where an agent consumes their cells."""
 
 import gc
 import json
@@ -142,11 +142,11 @@ def test_consumed_adapter_path_cell_still_requires_support(*, invalid: float) ->
 def test_heterogeneous_nonreader_entry_ignores_all_unconsumed_cells(
     *, base: bool, reverse: bool
 ) -> None:
-    """One subject never reads eps; another reads it only in column one.
+    """One agent never reads eps; another reads it only in column one.
 
     Uniform(0,1) makes the valid base and physical coordinates equal. The value
     two is outside both supports, but is placed only in unconsumed cells. A row
-    permutation checks that consumption belongs to original subjects.
+    permutation checks that consumption belongs to original agents.
     """
     model = _heterogeneous_entry_model()
     params = {"discount_factor": 1.0}
@@ -237,7 +237,7 @@ def test_other_current_group_keeps_its_tagged_path_and_entry_precedence(
             ),
         },
         execution_config=ExecutionConfig(
-            axis_widths={"subject": 1},
+            axis_widths={"agent": 1},
             device_memory_bytes=2**27 if budgeted else None,
         ),
     )
@@ -291,7 +291,7 @@ def test_transition_local_shock_is_consumed_before_the_terminal_drops_it(
         regime_id_class=_MixedIds,
         shocks={"income": _income(nodes=(0.0, 1.0), weights=(0.5, 0.5))},
         execution_config=ExecutionConfig(
-            axis_widths={"subject": 1},
+            axis_widths={"agent": 1},
             device_memory_bytes=2**27 if budgeted else None,
         ),
     )
@@ -414,22 +414,22 @@ def _destination_replay(
     solution: SolutionResult,
     discount_factor: float = 1.0,
     path_value: float = 0.5,
-    n_subjects: int = 2,
+    n_agents: int = 2,
 ) -> SimulationResult:
     dtype = jnp.asarray(0.0).dtype
     result = model.simulate(
         params={"discount_factor": discount_factor},
         solution=solution,
         initial_conditions={
-            "wealth": np.tile(np.asarray([1.0, 2.0], dtype=dtype), n_subjects // 2),
-            "age": np.zeros(n_subjects, dtype=np.int32),
+            "wealth": np.tile(np.asarray([1.0, 2.0], dtype=dtype), n_agents // 2),
+            "age": np.zeros(n_agents, dtype=np.int32),
             "regime_id": np.full(
-                n_subjects, model.regime_names_to_ids["parent"], dtype=np.int32
+                n_agents, model.regime_names_to_ids["parent"], dtype=np.int32
             ),
         },
         shock_paths={
             "eps": PhysicalValues(
-                values=np.full((n_subjects, 3), path_value, dtype=dtype)
+                values=np.full((n_agents, 3), path_value, dtype=dtype)
             )
         },
         seed=0,
@@ -519,7 +519,7 @@ def test_shock_producer_shape_changes_preserve_prior_replay_code(
         original = _destination_replay(model=model, solution=solution)
         cold = events.copy()
         events.clear()
-        larger = _destination_replay(model=model, solution=solution, n_subjects=4)
+        larger = _destination_replay(model=model, solution=solution, n_agents=4)
         changed = events.copy()
         events.clear()
         repeated = _destination_replay(model=model, solution=solution)
@@ -539,9 +539,7 @@ def test_shock_producer_shape_changes_preserve_prior_replay_code(
     fresh_solution = fresh.solve(params={"discount_factor": 1.0}, log_level="off")
     _assert_identical_replays(
         actual=larger,
-        expected=_destination_replay(
-            model=fresh, solution=fresh_solution, n_subjects=4
-        ),
+        expected=_destination_replay(model=fresh, solution=fresh_solution, n_agents=4),
     )
     for result, expected_count in ((original, 1), (larger, 2), (repeated, 1)):
         child = result.raw_results["child"][1]
@@ -591,7 +589,7 @@ def test_cached_shock_producer_rechecks_budget_and_live_residency(
     function, raw_arguments = _shock_producer_case(name=producer)
     devices = (jax.devices()[0],)
     arguments = place_simulation_arguments(
-        arguments=raw_arguments, subject_arg_names=(), value_reads=(), devices=devices
+        arguments=raw_arguments, agent_arg_names=(), value_reads=(), devices=devices
     )
     owner = ProfiledSimulationOperations()
 
@@ -599,7 +597,7 @@ def test_cached_shock_producer_rechecks_budget_and_live_residency(
         return SimulationMemory(
             budget_bytes=budget,
             devices=devices,
-            subject_devices=devices,
+            agent_devices=devices,
             operations=owner,
             producers=owner,
             inputs=measure_buffer_footprint(tree=arguments),

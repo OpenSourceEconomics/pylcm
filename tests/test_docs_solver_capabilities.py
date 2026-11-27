@@ -34,20 +34,29 @@ _SOLVERS = {
     ),
 }
 _EXPECTED = {
-    "GridSearch": (("action_product",), ("cell",), (), True, True),
-    "EGM": ((), (), (), False, False),
+    "GridSearch": (("action_product",), ("cell",), (), True, True, True),
+    "EGM": ((), (), (), False, False, False),
     "DCEGM": (
         ("stochastic_node",),
         ("cell", "savings_point", "euler_point", "envelope_cell"),
         (),
         True,
         False,
+        False,
     ),
-    "NBEGM": (("stochastic_node", "interval", "branch"), ("cell",), (), False, True),
+    "NBEGM": (
+        ("stochastic_node", "interval", "branch"),
+        ("cell",),
+        (),
+        False,
+        True,
+        False,
+    ),
     "NEGM": (
         ("stochastic_node", "outer_candidate"),
         ("cell", "savings_point", "euler_point", "envelope_cell"),
         (),
+        False,
         False,
         False,
     ),
@@ -57,13 +66,14 @@ _EXPECTED = {
         ("outer_candidate",),
         False,
         True,
+        False,
     ),
 }
 
 
 @pytest.mark.parametrize("name", tuple(_SOLVERS))
 def test_configured_solver_exposes_its_execution_roles(name: str) -> None:
-    """Metadata distinguishes reduced, tiled and host axes and preference support."""
+    """Metadata distinguishes execution axes, preference and member-count support."""
     cap = _SOLVERS[name].capabilities
     assert (
         cap.reduced_axes,
@@ -71,6 +81,7 @@ def test_configured_solver_exposes_its_execution_roles(name: str) -> None:
         cap.host_axes,
         cap.supports_ev1_taste_shocks,
         cap.supports_nonlinear_certainty_equivalent,
+        cap.supports_several_members,
     ) == _EXPECTED[name]
 
 
@@ -82,9 +93,16 @@ def test_public_capabilities_share_one_dependency_safe_type() -> None:
     )
 
 
-def test_required_capability_declaration_has_a_new_api_version() -> None:
-    """A plugin must explicitly target the capability-bearing solver contract."""
-    assert solver_api.SOLVER_API_VERSION == 3
+def test_member_axis_contract_is_solver_api_version_five() -> None:
+    """A plugin must target the contract in which every value carries its members.
+
+    The solution schema and the archive format are those of that contract too.
+    """
+    assert (
+        solver_api.SOLVER_API_VERSION,
+        solver_api.SOLUTION_SCHEMA_VERSION,
+        solver_api.SOLUTION_FORMAT_VERSION,
+    ) == (5, 4, 4)
 
 
 def test_solver_requires_explicit_capability_metadata() -> None:

@@ -179,8 +179,12 @@ def evolve_permanent_income(
     return permanent_income
 
 
-WEALTH_GRID = LinSpacedGrid(start=0.0, stop=30.0, n_points=N_WEALTH)
-ILLIQUID_GRID = LinSpacedGrid(start=0.0, stop=20.0, n_points=N_ILLIQUID)
+WEALTH_GRID = LinSpacedGrid(
+    start=0.0, stop=30.0, n_points=N_WEALTH, off_grid="extrapolate"
+)
+ILLIQUID_GRID = LinSpacedGrid(
+    start=0.0, stop=20.0, n_points=N_ILLIQUID, off_grid="extrapolate"
+)
 CONSUMPTION_GRID = LinSpacedGrid(start=0.1, stop=20.0, n_points=N_CONSUMPTION)
 # The nested solvers' outer action. Spans `s' = Z + Iz` for every (Z, s') pair
 # with Z in [0, 20] and s' in [0, 20]; spanning the range is all that is asked
@@ -193,7 +197,7 @@ SAVINGS_FLOOR = 0.0  # borrowing limit on the inner post-decision balance
 SAVINGS_GRID = LinSpacedGrid(start=SAVINGS_FLOOR, stop=35.0, n_points=60)
 # A second passive continuous stock, held fixed and carried only by the alive
 # regime. Two points keep the extra state-space axis as small as an axis can be.
-RESERVE_GRID = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
+RESERVE_GRID = LinSpacedGrid(start=0.0, stop=1.0, n_points=2, off_grid="extrapolate")
 
 
 def budget_feasible(liquid_savings: FloatND) -> FloatND:
@@ -361,7 +365,9 @@ def build_model(
     if carried_state:
         states["permanent_income"] = Phased(
             solve=impute_permanent_income,
-            simulate=LinSpacedGrid(start=0.0, stop=3.0, n_points=4),
+            simulate=LinSpacedGrid(
+                start=0.0, stop=3.0, n_points=4, off_grid="extrapolate"
+            ),
         )
         state_transitions["permanent_income"] = evolve_permanent_income
     actions = {

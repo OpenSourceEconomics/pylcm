@@ -27,16 +27,16 @@ from _lcm.solution.kernel_output import consume_kernel_output
 from _lcm.solution.landing_counts import LandingCountedGridSearch
 from lcm import (
     AgeGrid,
+    CompositionAction,
+    Destination,
     ExecutionConfig,
-    Exit,
-    ExitTarget,
     LinSpacedGrid,
     Model,
     Regime,
     fixed_transition,
 )
+from lcm.composition_actions import PCOnActions
 from lcm.exceptions import ExecutionPlanningError
-from lcm.exits import Unilateral
 from lcm.typing import BoolND, FloatND
 from tests.simulation.test_no_feasible_action import (
     DecisionId,
@@ -66,8 +66,8 @@ def test_feasibility_blocks_preserve_large_exact_totals() -> None:
 
 def test_large_count_reduction_is_exact_or_refused_before_allocation() -> None:
     """A metadata-only large population requires int64 or a count-naming refusal."""
-    counted = CountedGridSearch(function=_evaluated, collective=False)
-    value = jax.ShapeDtypeStruct((1 << 31,), jnp.result_type(0.0))
+    counted = CountedGridSearch(function=_evaluated)
+    value = jax.ShapeDtypeStruct((1 << 31, 1), jnp.result_type(0.0))
     empty = jax.ShapeDtypeStruct((1 << 31,), jnp.bool_)
 
     if jax.config.x64_enabled:
@@ -89,17 +89,16 @@ def test_small_feasibility_blocks_keep_exact_counts(parts: tuple[int, int]) -> N
     assert tuple(int(count) for count in result) == (left + 2, right + 3)
 
 
-@pytest.mark.parametrize("collective", [False, True])
+@pytest.mark.parametrize("n_members", [1, 2])
 @pytest.mark.parametrize("compiled", [False, True])
 def test_feasibility_reduction_counts_states_once(
-    *, collective: bool, compiled: bool
+    *, n_members: int, compiled: bool
 ) -> None:
     """Empty and economic-infinity totals count states, including whole households."""
-    value = jnp.asarray([-jnp.inf, jnp.inf, 2.0, jnp.nan])
-    if collective:
-        value = jnp.stack((value, jnp.ones_like(value)), axis=-1)
+    first = jnp.asarray([-jnp.inf, jnp.inf, 2.0, jnp.nan])
+    value = jnp.stack((first, *[jnp.ones_like(first)] * (n_members - 1)), axis=-1)
     empty = jnp.asarray([True, False, False, False])
-    function = CountedGridSearch(function=_evaluated, collective=collective)
+    function = CountedGridSearch(function=_evaluated)
     run = jax.jit(function) if compiled else function
 
     result = run(value=value, empty=empty)
@@ -115,17 +114,14 @@ def test_feasibility_reduction_counts_states_once(
 
 
 @pytest.mark.parametrize("n_states", [0, 3])
-@pytest.mark.parametrize("collective", [False, True])
+@pytest.mark.parametrize("n_members", [1, 2])
 def test_feasible_finite_and_empty_domains_have_zero_counts(
-    *, n_states: int, collective: bool
+    *, n_states: int, n_members: int
 ) -> None:
     """Finite feasible states and empty domains publish exact zero summaries."""
-    shape = (n_states, 2) if collective else (n_states,)
-    value = jnp.ones(shape)
+    value = jnp.ones((n_states, n_members))
     empty = jnp.zeros((n_states,), dtype=jnp.bool_)
-    result = jax.jit(CountedGridSearch(function=_evaluated, collective=collective))(
-        value=value, empty=empty
-    )
+    result = jax.jit(CountedGridSearch(function=_evaluated))(value=value, empty=empty)
     assert isinstance(result, tuple)
     assert len(result) == 3
     np.testing.assert_array_equal(result[0], value)
@@ -255,7 +251,7 @@ def test_landing_wrapper_keeps_exact_feasibility_and_int32_saturation(
 
     def outputs() -> tuple[jax.Array, ...]:
         return (
-            jnp.ones(4),
+            jnp.ones((4, 1)),
             jnp.zeros(4, dtype=bool),
             jnp.full((4, 1), 1 << 30, dtype=jnp.int32),
         )
@@ -263,14 +259,13 @@ def test_landing_wrapper_keeps_exact_feasibility_and_int32_saturation(
     counted = LandingCountedGridSearch(
         counted=CountedGridSearch(
             function=cast("Callable[..., tuple[FloatND, BoolND]]", outputs),
-            collective=False,
         )
     )
     result = (jax.jit(counted) if compiled else counted)()
     assert isinstance(result, tuple)
     assert len(result) == 4
     value, empty, other, landing = result
-    np.testing.assert_array_equal(value, np.ones(4))
+    np.testing.assert_array_equal(value, np.ones((4, 1)))
     assert (int(empty), int(other)) == (0, 0)
     expected_dtype = np.dtype(np.int64 if jax.config.x64_enabled else np.int32)
     assert empty.dtype == other.dtype == expected_dtype
@@ -334,9 +329,9 @@ def _query_counter_domain_model(
                     "ability": fixed_transition("ability"),
                 },
                 functions={"utility": _two_state_utility},
-                exit=Exit(
-                    targets={"self": ExitTarget(regime="dead", projection={})},
-                    rule=Unilateral(),
+                composition_action=CompositionAction(
+                    destinations={"self": Destination(regime="dead", projection={})},
+                    rule=PCOnActions(),
                 ),
             ),
             "dead": Regime(functions={"utility": _zero}),
@@ -377,7 +372,7 @@ def test_public_query_padding_preserves_the_int32_last_position(
             "query_banks"
         ]
         assert isinstance(bank, jax.ShapeDtypeStruct)
-        assert bank.shape == (2, 1 << 31)
+        assert bank.shape == (2, 1 << 31, 1)
 
 
 @pytest.mark.parametrize(

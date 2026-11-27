@@ -21,6 +21,7 @@ from typing import NoReturn, NotRequired, Protocol, Unpack, cast
 
 import jax
 import numpy as np
+import pandas as pd
 import pytest
 from jax import numpy as jnp
 from numpy.typing import ArrayLike
@@ -93,12 +94,14 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     Float1D,
+    FloatND,
     ScalarFloat,
     ScalarInt,
     UserParams,
     ValueND,
 )
 from tests.conftest import (
+    INVARIANCE_EPS_MULTIPLE,
     AttachResolvedOutputLayoutKwargs,
     ResidentInventoryKwargs,
     assert_agrees_to_ulp,
@@ -362,7 +365,7 @@ def test_public_replay_uploads_saved_values_directly_to_the_recorded_device(
         log_level="off",
         period_capture=PeriodCapture(
             directory=tmp_path,
-            periods=(("working", 0),),
+            steps=(("working", 0),),
             source_identity=identity,
         ),
     )
@@ -707,6 +710,26 @@ def _constant_retired_value(*, wealth: jax.Array, type1: jax.Array) -> jax.Array
     return jnp.asarray(2.0)
 
 
+def _three_type_working_utility(
+    *, wealth: ContinuousState, consumption: ContinuousAction, type1: DiscreteState
+) -> FloatND:
+    return (jnp.log(consumption) + wealth * 0.001) * (type1 + 1)
+
+
+def _spend_consumption(
+    *, wealth: ContinuousState, consumption: ContinuousAction
+) -> ContinuousState:
+    return wealth - consumption
+
+
+def _half_wealth_utility(*, wealth: ContinuousState) -> FloatND:
+    return wealth * 0.5
+
+
+def _next_three_type_regime(*, age: ScalarFloat) -> ScalarInt:
+    return jnp.where(age >= 3, _ThreeTypeRegimeId.retired, _ThreeTypeRegimeId.working)
+
+
 def _make_three_type_model(
     *,
     distributed: bool,
@@ -729,21 +752,15 @@ def _make_three_type_model(
     """
     working = UserRegime(
         solver=GridSearch() if solver is None else solver,
-        functions={
-            "utility": lambda wealth, consumption, type1: (
-                (jnp.log(consumption) + wealth * 0.001) * (type1 + 1)
-            ),
-        },
+        functions={"utility": _three_type_working_utility},
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=12)},
-        state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
+        state_transitions={"wealth": _spend_consumption},
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
     )
     retired = UserRegime(
         functions={
             "utility": (
-                _constant_retired_value
-                if constant_retired
-                else (lambda wealth: wealth * 0.5)
+                _constant_retired_value if constant_retired else _half_wealth_utility
             )
         },
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=12)},
@@ -766,11 +783,7 @@ def _make_three_type_model(
         edges={
             "working": Transition(
                 targets={"working": (0, 1, 2), "retired": (0, 1, 2, 3)},
-                law=DeterministicTransition(
-                    func=lambda age: jnp.where(
-                        age >= 3, _ThreeTypeRegimeId.retired, _ThreeTypeRegimeId.working
-                    )
-                ),
+                law=DeterministicTransition(func=_next_three_type_regime),
             )
         },
     )
@@ -872,7 +885,9 @@ def test_solve_planning_keeps_descriptors_instead_of_transferred_buffers(
     for values in solution.values.values():
         if "retired" in values:
             expected = np.linspace(1.0, 100.0, 12) * 0.5
-            assert_agrees_to_ulp(got=values["retired"], expected=expected, n_ulp=8)
+            assert_agrees_to_ulp(
+                got=values["retired"], expected=expected[:, None], n_ulp=8
+            )
 
 
 def _assert_only_planning_descriptors[Key: Hashable](
@@ -1045,8 +1060,8 @@ def test_the_regime_beside_a_sharded_one_stays_on_the_configured_devices() -> No
 
 
 @_skip_pytest_parallel
-def test_seeded_subject_states_of_a_restricted_model_stay_on_its_devices() -> None:
-    """Per-subject simulate arrays are seeded on a device the configuration named."""
+def test_seeded_agent_states_of_a_restricted_model_stay_on_its_devices() -> None:
+    """Per-agent simulate arrays are seeded on a device the configuration named."""
     model = _make_three_type_model(distributed=False, devices=(2, 3))
     states_per_regime = build_initial_states(
         initial_states={
@@ -1184,8 +1199,8 @@ def test_a_model_with_one_regime_per_period_is_placed_on_device_zero() -> None:
 
 
 @_skip_pytest_parallel
-def test_simulating_a_submesh_placed_solution_uses_the_subject_devices() -> None:
-    """Subjects span four devices while the original three-device value survives."""
+def test_simulating_a_submesh_placed_solution_uses_the_agent_devices() -> None:
+    """Agents span four devices while the original three-device value survives."""
     model = _make_three_type_model(distributed=True)
     solution = model.solve(params=_PARAMS, log_level="off")
     view = solution._engine_view
@@ -1206,7 +1221,7 @@ def test_simulating_a_submesh_placed_solution_uses_the_subject_devices() -> None
         log_level="off",
         seed=42,
     )
-    assert result.n_subjects == 4
+    assert result.n_agents == 4
     assert result.raw_results["working"][0].V_arr.sharding.device_set == (
         set(jax.devices())
     )
@@ -1280,17 +1295,16 @@ def _make_two_mesh_model() -> Model:
     layout their shared mesh defines.
     """
 
+    def _utility(
+        *, wealth: ContinuousState, consumption: ContinuousAction, type1: DiscreteState
+    ) -> FloatND:
+        return jnp.log(consumption) + wealth * 0.001 * (type1 + 1)
+
     def _worker() -> UserRegime:
         return UserRegime(
-            functions={
-                "utility": lambda wealth, consumption, type1: (
-                    jnp.log(consumption) + wealth * 0.001 * (type1 + 1)
-                ),
-            },
+            functions={"utility": _utility},
             states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=8)},
-            state_transitions={
-                "wealth": lambda wealth, consumption: wealth - consumption
-            },
+            state_transitions={"wealth": _spend_consumption},
             actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=6)},
         )
 
@@ -1299,7 +1313,7 @@ def _make_two_mesh_model() -> Model:
             "alpha": _worker(),
             "beta": _worker(),
             "retired": UserRegime(
-                functions={"utility": lambda wealth: wealth * 0.5},
+                functions={"utility": _half_wealth_utility},
                 states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=8)},
             ),
         },
@@ -1471,10 +1485,16 @@ def _make_two_block_model(*, distributed: bool, exact_layout: bool = False) -> M
             },
         )
 
+    def _dead_utility(*, wealth: ContinuousState, type1: DiscreteState) -> FloatND:
+        return 0.0 * wealth * type1
+
+    def _next_regime(*, age: ScalarFloat) -> ScalarInt:
+        return jnp.where(age >= 3, _TwoBlockRegimeId.dead, _TwoBlockRegimeId.second)
+
     first = _worker()
     second = _worker()
     dead = UserRegime(
-        functions={"utility": lambda wealth, type1: 0.0 * wealth * type1},
+        functions={"utility": _dead_utility},
         states={
             "wealth": LinSpacedGrid(start=8, stop=72, n_points=9)
             if exact_layout
@@ -1495,11 +1515,7 @@ def _make_two_block_model(*, distributed: bool, exact_layout: bool = False) -> M
             "first": {"first": 0, "second": (1, 2)},
             "second": Transition(
                 targets={"second": (0, 1, 2), "dead": (0, 1, 2, 3)},
-                law=DeterministicTransition(
-                    func=lambda age: jnp.where(
-                        age >= 3, _TwoBlockRegimeId.dead, _TwoBlockRegimeId.second
-                    )
-                ),
+                law=DeterministicTransition(func=_next_regime),
             ),
         },
     )
@@ -1512,6 +1528,7 @@ def _get_exact_two_block_values() -> dict[int, np.ndarray]:
     wealth; enumerate every consumption action with discount one-half. Integer
     grids, spacing eight and bounded dyadic coefficients keep intermediate
     interpolation arithmetic exactly representable at both suite precisions.
+    Each value carries the trailing member axis of the regime's one member.
     """
     values = {period: np.empty((2, 9)) for period in range(4)}
     for type1 in range(2):
@@ -1525,7 +1542,7 @@ def _get_exact_two_block_values() -> dict[int, np.ndarray]:
             values[period][type1] = [
                 float(slope * wealth + intercept) for wealth in range(8, 73, 8)
             ]
-    return values
+    return {period: value[..., None] for period, value in values.items()}
 
 
 def _assert_exact_two_block_grids(*, model: Model) -> None:
@@ -1612,7 +1629,10 @@ def test_a_value_read_across_disjoint_blocks_is_a_cross_mesh_copy(
 def test_a_two_block_solve_publishes_the_single_device_values(
     *, regime: RegimeName, exact_layout: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Independent solves agree at array scale; actual copies preserve every byte."""
+    """Independent solves agree at array scale and simulate the same choices.
+
+    Actual copies preserve every byte.
+    """
     copied_periods: set[int] = set()
     original_transfer = transfers_module.apply_value_transfer
 
@@ -1657,6 +1677,7 @@ def test_a_two_block_solve_publishes_the_single_device_values(
         _assert_exact_two_block_values(values=placed.values, regime=regime)
         _assert_exact_two_block_values(values=reference.values, regime=regime)
 
+    last_period = max(placed.values)
     for period in placed.values:
         if regime in placed.values[period]:
             actual = np.asarray(placed.values[period][regime])
@@ -1665,14 +1686,38 @@ def test_a_two_block_solve_publishes_the_single_device_values(
             if exact_layout:
                 np.testing.assert_array_equal(actual, expected)
             else:
+                # Two device layouts are two compiled programs; a last-bit
+                # difference compounds backward, one allowance per period to go.
                 assert_agrees_to_ulp(
                     got=actual,
                     expected=expected,
-                    n_ulp=4,
+                    n_ulp=int(INVARIANCE_EPS_MULTIPLE) * (last_period - period),
                     operand_magnitude=float(
                         max(np.abs(actual).max(), np.abs(expected).max())
                     ),
                 )
+
+    initial_conditions = {
+        "wealth": jnp.linspace(8.0, 72.0, 8),
+        "type1": jnp.array([0, 1] * 4),
+        "age": jnp.zeros(8),
+        "regime_id": jnp.full(8, _TwoBlockRegimeId.first),
+    }
+    placed_panel, reference_panel = (
+        model.simulate(
+            params=params,
+            initial_conditions=initial_conditions,
+            solution=solution,
+            log_level="off",
+            seed=0,
+        ).to_dataframe()
+        for model, solution in zip(models, (placed, reference), strict=True)
+    )
+    pd.testing.assert_frame_equal(
+        placed_panel.drop(columns="value"),
+        reference_panel.drop(columns="value"),
+        check_exact=True,
+    )
 
 
 def _nbegm_toy(*, distributed_kind: bool) -> Model:
@@ -1768,7 +1813,7 @@ def test_the_nbegm_toy_publishes_the_same_values_under_both_placements(
 
 
 @_skip_pytest_parallel
-def test_simulation_topology_reads_a_proper_submesh_on_all_subject_devices() -> None:
+def test_simulation_topology_reads_a_proper_submesh_on_all_agent_devices() -> None:
     """The three-type value keeps its shape in a four-device replicated read."""
     model = _make_three_type_model(distributed=True)
     topologies = {
@@ -1781,7 +1826,7 @@ def test_simulation_topology_reads_a_proper_submesh_on_all_subject_devices() -> 
     }
     stored = topologies["solve"]["working"]
     read = topologies["simulate"]["working"]
-    assert stored.shape == read.shape == (3, 12)
+    assert stored.shape == read.shape == (3, 12, 1)
     assert {device.id for device in stored.sharding.device_set} == {0, 1, 2}
     assert {device.id for device in read.sharding.device_set} == {0, 1, 2, 3}
     assert read.sharding.is_fully_replicated
@@ -2178,10 +2223,10 @@ def _stateless_placement_terminal(*, bequest: ScalarFloat) -> ScalarFloat:
 @pytest.mark.parametrize("selected", [(2,), (1, 3)])
 @pytest.mark.parametrize("log_level", ["off", "debug"])
 @pytest.mark.parametrize("supplied", [False, True])
-def test_stateless_terminal_decision_preserves_scalar_profile_and_subject_rows(
+def test_stateless_terminal_decision_preserves_scalar_profile_and_agent_rows(
     *, selected: tuple[int, ...], log_level: LogLevel, supplied: bool
 ) -> None:
-    """A shared terminal payoff retains one published value per actual subject."""
+    """A shared terminal payoff retains one published value per actual agent."""
     model = _uniform_placement_model(
         selected=selected, sharded=len(selected) > 1, stateless_terminal=True
     )
@@ -2200,7 +2245,7 @@ def test_stateless_terminal_decision_preserves_scalar_profile_and_subject_rows(
     }
     solution = model.solve(params=params, log_level=log_level) if supplied else None
     if solution is not None:
-        assert solution.values[1]["done"].shape == ()
+        assert solution.values[1]["done"].shape == (1,)
         np.testing.assert_array_equal(solution.values[1]["done"], 4.0)
     result = model.simulate(
         params=params,
@@ -2214,9 +2259,9 @@ def test_stateless_terminal_decision_preserves_scalar_profile_and_subject_rows(
         [[1.0, 4.0], [1.0, 5.0], [1.0, 6.0]],
     )
     terminal = result.raw_results["done"][1]
-    assert terminal.V_arr.shape == (3,)
+    assert terminal.V_arr.shape == (3, 1)
     assert not terminal.actions
-    np.testing.assert_array_equal(terminal.V_arr, [4.0, 4.0, 4.0])
+    np.testing.assert_array_equal(terminal.V_arr[..., 0], [4.0, 4.0, 4.0])
     assert terminal.V_arr.devices() == {jax.devices()[device] for device in selected}
 
 

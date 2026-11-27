@@ -3,11 +3,11 @@
 import hashlib
 import json
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
-from typing import TypedDict
+from typing import Protocol, TypedDict
 
 import jax
 import jax.numpy as jnp
@@ -16,13 +16,14 @@ import pytest
 from numpy.typing import ArrayLike
 
 from _lcm import dtypes
-from _lcm.egm.nbegm_step import _NBEGMQueryStep
+from _lcm.egm.nbegm_step import _NBEGMQueryStep, _OwnedNBEGMQueryStep
 from _lcm.params import processing as parameter_processing
 from _lcm.solution import nbegm
 from _lcm.typing import FlatParams
 from lcm import Model
 from lcm.result import SimulationResult
 from lcm.solver_api import SolutionResult
+from lcm.typing import UserParams
 from tests.solution import test_state_dependent_borrowing_limit as fixture
 from tests.solution._nb_scientific_capture_admission import (
     admit_capture,
@@ -40,6 +41,18 @@ _CAPTURE_LOCK = Lock()
 type _Json = (
     str | int | float | bool | list[_Json] | tuple[_Json, ...] | dict[str, _Json] | None
 )
+type _Step = Callable[..., nbegm._NBEGMStepChannels | _OwnedNBEGMQueryStep]
+type _Leaf = jax.Array | np.ndarray | np.generic
+
+
+class _Save(Protocol):
+    def __call__(
+        self,
+        *,
+        filename: str,
+        arrays: Mapping[str, ArrayLike],
+        original_query_leaf_names: list[str] | None = None,
+    ) -> None: ...
 
 
 class _ArrayMetadata(TypedDict):
@@ -115,8 +128,12 @@ class _CaptureManifest(TypedDict):
 
 
 def _source_files(
-    *, original_step, original_solve, original_simulate, original_process
-):
+    *,
+    original_step: _Step,
+    original_solve: Callable[..., SolutionResult],
+    original_simulate: Callable[..., SimulationResult],
+    original_process: Callable[..., FlatParams],
+) -> dict[str, str]:
     expected = (
         (fixture, fixture),
         (nbegm, nbegm),
@@ -131,8 +148,11 @@ def _source_files(
     return dict(source_identity(obj=obj, module=module) for obj, module in expected)
 
 
-def _encode_arrays(arrays):
-    converted, metadata = {}, {}
+def _encode_arrays(
+    arrays: Mapping[str, ArrayLike],
+) -> tuple[dict[str, np.ndarray], dict[str, _ArrayMetadata]]:
+    converted: dict[str, np.ndarray] = {}
+    metadata: dict[str, _ArrayMetadata] = {}
     for name, value in arrays.items():
         array = np.asarray(value)
         original_dtype = str(array.dtype)
@@ -151,7 +171,8 @@ def _encode_arrays(arrays):
     return converted, metadata
 
 
-def _row_matches(*, root, rows):
+def _row_matches(*, root: Path, rows: list[str]) -> list[list[int]]:
+    """Locate each step row's published value in the public values of member "self"."""
     matches = []
     with np.load(root / "nbegm-public-values.npz", allow_pickle=False) as public:
         for filename in rows:
@@ -161,7 +182,7 @@ def _row_matches(*, root, rows):
                     for period in (0, 1)
                     for income in (0, 1)
                     if np.array_equal(
-                        row["published_V"], public[f"p{period}__saving"][income]
+                        row["published_V"], public[f"p{period}__saving"][income, :, 0]
                     )
                 ]
             if len(owners) != 1:
@@ -172,7 +193,15 @@ def _row_matches(*, root, rows):
     return matches
 
 
-def _save_solve(*, self, result, kwargs, solver, save, calls):
+def _save_solve(
+    *,
+    self: Model,
+    result: SolutionResult,
+    params: Mapping[str, ArrayLike],
+    solver: str,
+    save: _Save,
+    calls: list[_Invocation],
+) -> None:
     jax.effects_barrier()
     save(
         filename=f"{solver}-public-values.npz",
@@ -183,7 +212,7 @@ def _save_solve(*, self, result, kwargs, solver, save, calls):
         },
     )
     coordinates = {}
-    schemas = []
+    schemas: list[dict[str, _Json]] = []
     for (period, regime), schema in result.metadata.value_schemas.items():
         schemas.append(
             {
@@ -198,9 +227,10 @@ def _save_solve(*, self, result, kwargs, solver, save, calls):
     save(filename=f"{solver}-value-coordinates.npz", arrays=coordinates)
     # The actual finalized public action declaration consumed by this model.
     action_grid = self.user_regimes["saving"].actions["consumption"]
+    assert action_grid is not None
     save(filename=f"{solver}-actions.npz", arrays={"consumption": action_grid.to_jax()})
     # These are supplied Python declarations, not the processed model-owned tree.
-    save(filename=f"{solver}-params.npz", arrays=dict(kwargs["params"]))
+    save(filename=f"{solver}-params.npz", arrays=dict(params))
     income_axis = result.metadata.value_schemas[1, "saving"].named_axes
     income_codes = np.asarray(
         next(axis.coordinates for axis in income_axis if axis.name == "income")
@@ -242,11 +272,18 @@ class NativeIncomeCapture:
     actions: dict[str, np.ndarray]
 
 
-def _processed_leaves(result: FlatParams):
+def _processed_leaves(
+    result: FlatParams,
+) -> tuple[dict[str, _Leaf], list[_ProcessedLeaf]]:
     """Walk actual qualified mapping paths without constructing parameter values."""
-    arrays, leaves = {}, []
+    arrays: dict[str, _Leaf] = {}
+    leaves: list[_ProcessedLeaf] = []
 
-    def visit(*, value, path):
+    def visit(
+        *,
+        value: object,  # noqa: PAN001 - any node of the canonical parameter tree
+        path: tuple[str, ...],
+    ) -> None:
         if isinstance(value, Mapping):
             for name, child in value.items():
                 if not isinstance(name, str):
@@ -277,7 +314,15 @@ def _processed_leaves(result: FlatParams):
     return arrays, leaves
 
 
-def _save_processed_params(*, result, model, solver, operation, save, calls):
+def _save_processed_params(
+    *,
+    result: FlatParams,
+    model: Model,
+    solver: str,
+    operation: str,
+    save: _Save,
+    calls: list[_ProcessedCall],
+) -> None:
     """Snapshot the completed canonical return while forwarding its original tree."""
     if solver not in ("nbegm", "grid") or operation not in ("solve", "simulate"):
         raise ValueError("Processed parameters have no actual model/operation owner")
@@ -302,10 +347,19 @@ def _save_processed_params(*, result, model, solver, operation, save, calls):
     )
 
 
-def _create_step_observer(*, original_step, active, rows, save, lock):
+def _create_step_observer(
+    *,
+    original_step: _Step,
+    active: dict[str, str],
+    rows: list[str],
+    save: _Save,
+    lock: Lock,
+) -> _Step:
     """Forward each real NB step once and save only its original callback leaves."""
 
-    def observe_step(**kwargs):
+    def observe_step(
+        **kwargs: object,  # noqa: PAN001 - forwards the step's mixed keyword arguments
+    ) -> _NBEGMQueryStep:
         result = original_step(**kwargs)
         assert kwargs["retain_query"] is True
         assert isinstance(result, _NBEGMQueryStep)
@@ -349,7 +403,7 @@ def _create_step_observer(*, original_step, active, rows, save, lock):
                 leaves.append(kwargs[name])
         solver = active["solver"]
 
-        def record(*actual_leaves) -> None:
+        def record(*actual_leaves: np.ndarray) -> None:
             with lock:
                 filename = f"{solver}-row-{len(rows):04d}.npz"
                 save(
@@ -369,23 +423,32 @@ def _create_step_observer(*, original_step, active, rows, save, lock):
 
 def _create_model_observers(
     *,
-    original_process,
-    original_solve,
-    original_simulate,
-    active,
-    processed,
-    processed_calls,
-    solutions,
-    simulations,
-    models,
-    panels,
-    calls,
-    save,
-):
+    original_process: Callable[..., FlatParams],
+    original_solve: Callable[..., SolutionResult],
+    original_simulate: Callable[..., SimulationResult],
+    active: dict[str, str],
+    processed: dict[tuple[str, str], FlatParams],
+    processed_calls: list[_ProcessedCall],
+    solutions: dict[str, SolutionResult],
+    simulations: dict[str, SimulationResult],
+    models: dict[str, Model],
+    panels: dict[str, list[int]],
+    calls: list[_Invocation],
+    save: _Save,
+) -> tuple[
+    Callable[..., FlatParams],
+    Callable[..., SolutionResult],
+    Callable[..., SimulationResult],
+]:
     """Forward each model method once while retaining its original return object."""
 
-    def observe_process(self, *args, **kwargs):
-        result = original_process(self, *args, **kwargs)
+    # keyword-only-exempt: library-callback=lcm.model.Model._canonicalize_params
+    def observe_process(
+        self: Model,
+        params: UserParams,
+        **kwargs: object,  # noqa: PAN001 - forwards the method's keyword options
+    ) -> FlatParams:
+        result = original_process(self, params, **kwargs)
         solver, operation = active["solver"], active["operation"]
         key = (solver, operation)
         if key in processed:
@@ -403,28 +466,41 @@ def _create_model_observers(
         processed[key] = result
         return result
 
-    def observe_solve(self, *args, **kwargs):
+    # keyword-only-exempt: library-callback=lcm.model.Model.solve
+    def observe_solve(
+        self: Model,
+        *,
+        params: Mapping[str, ArrayLike],
+        **kwargs: object,  # noqa: PAN001 - forwards the method's keyword options
+    ) -> SolutionResult:
         active["operation"] = "solve"
-        result = original_solve(self, *args, **kwargs)
+        result = original_solve(self, params=params, **kwargs)
         solutions[active["solver"]] = result
         models[active["solver"]] = self
         _save_solve(
             self=self,
             result=result,
-            kwargs=kwargs,
+            params=params,
             solver=active["solver"],
             save=save,
             calls=calls,
         )
         return result
 
-    def observe_simulate(self, *args, **kwargs):
+    # keyword-only-exempt: library-callback=lcm.model.Model.simulate
+    def observe_simulate(
+        self: Model,
+        *,
+        initial_conditions: Mapping[str, ArrayLike],
+        seed: int,
+        **kwargs: object,  # noqa: PAN001 - forwards the method's keyword options
+    ) -> SimulationResult:
         active["operation"] = "simulate"
         solver = active["solver"]
-        save(
-            filename=f"{solver}-initial.npz", arrays=dict(kwargs["initial_conditions"])
+        save(filename=f"{solver}-initial.npz", arrays=dict(initial_conditions))
+        result = original_simulate(
+            self, initial_conditions=initial_conditions, seed=seed, **kwargs
         )
-        result = original_simulate(self, *args, **kwargs)
         if models[solver] is not self:
             raise ValueError(
                 "Simulation uses a different model than its observed solve"
@@ -434,21 +510,21 @@ def _create_model_observers(
         frame = result.to_dataframe(use_categorical_codes=True)
         save(
             filename=f"{solver}-simulation.npz",
-            arrays={name: frame[name].to_numpy() for name in frame},
+            arrays={str(name): frame[name].to_numpy() for name in frame},
         )
-        period0 = frame.query("period == 0").sort_values("subject_id")
-        panels[solver] = period0["subject_id"].to_list()
+        period0 = frame.query("period == 0").sort_values("agent_id")
+        panels[solver] = period0["agent_id"].to_list()
         assert len(period0) == 60
-        np.testing.assert_array_equal(period0["subject_id"].to_numpy(), np.arange(60))
+        np.testing.assert_array_equal(period0["agent_id"].to_numpy(), np.arange(60))
         save(
             filename=f"{solver}-period0.npz",
-            arrays={name: period0[name].to_numpy() for name in period0},
+            arrays={str(name): period0[name].to_numpy() for name in period0},
         )
         calls.append(
             {
                 "solver": solver,
                 "operation": "simulate",
-                "seed": kwargs["seed"],
+                "seed": seed,
                 "rows": len(frame),
                 "period0_rows": len(period0),
                 "returned_original_result": True,
@@ -461,18 +537,18 @@ def _create_model_observers(
 
 def _finalize_capture_manifest(
     *,
-    root,
-    source_map,
-    source_bytes,
-    observed_root,
-    files,
-    calls,
-    rows,
-    saved,
-    processed_calls,
-    panels,
-    actions,
-    save,
+    root: Path,
+    source_map: Path | None,
+    source_bytes: bytes | None,
+    observed_root: Path,
+    files: dict[str, str],
+    calls: list[_Invocation],
+    rows: list[str],
+    saved: list[_SavedEntry],
+    processed_calls: list[_ProcessedCall],
+    panels: dict[str, list[int]],
+    actions: dict[str, np.ndarray],
+    save: _Save,
 ) -> _CaptureManifest:
     """Save the unchanged diagnostic and admit all same-invocation observations."""
     assert len(rows) == 4, "Expected two income rows at each original saving period."
@@ -570,12 +646,12 @@ def capture_original_nb_income(
     rows: list[str] = []
     calls: list[_Invocation] = []
     saved: list[_SavedEntry] = []
-    panels = {}
-    solutions = {}
-    simulations = {}
-    models = {}
-    processed = {}
-    processed_calls = []
+    panels: dict[str, list[int]] = {}
+    solutions: dict[str, SolutionResult] = {}
+    simulations: dict[str, SimulationResult] = {}
+    models: dict[str, Model] = {}
+    processed: dict[tuple[str, str], FlatParams] = {}
+    processed_calls: list[_ProcessedCall] = []
     original_step = nbegm._solve_ride_along_cell_step
     original_solve = Model.solve
     original_simulate = Model.simulate
@@ -597,12 +673,12 @@ def capture_original_nb_income(
         *,
         filename: str,
         arrays: Mapping[str, ArrayLike],
-        original_query_leaf_names=None,
+        original_query_leaf_names: list[str] | None = None,
     ) -> None:
         converted, metadata = _encode_arrays(arrays)
         path = root / filename
         assert not path.exists(), filename
-        np.savez(path, **converted)
+        np.savez(path, **converted)  # ty: ignore[invalid-argument-type]
         saved.append(
             {
                 "file": filename,
@@ -630,7 +706,7 @@ def capture_original_nb_income(
         save=save,
     )
 
-    actions = {}
+    actions: dict[str, np.ndarray] = {}
     with _CAPTURE_LOCK, monkeypatch.context() as hooks:
         hooks.setattr(Model, "_canonicalize_params", observe_process)
         hooks.setattr(nbegm, "_solve_ride_along_cell_step", observe_step)

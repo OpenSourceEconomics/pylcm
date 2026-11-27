@@ -18,8 +18,14 @@ from _lcm.solution.generation import (
 )
 from _lcm.solution.retained_buffers import retained_artifact_authority_buffers
 from _lcm.typing import FlatParams
+from lcm import Model
 from lcm.exceptions import InvalidSimulationInputError
-from lcm.solver_api import SIMULATION_POLICY, ArtifactRef, ArtifactStore
+from lcm.solver_api import (
+    SIMULATION_POLICY,
+    ArtifactRef,
+    ArtifactStore,
+    SolutionResult,
+)
 from tests.solution.test_solution_result import _small_grid_search_inputs
 from tests.test_models import n_nbegm_discrete_toy as discrete_toy
 from tests.test_models.n_nbegm_toy import RegimeId
@@ -69,7 +75,9 @@ def test_co_mutated_value_and_schema_dtype_is_rejected_before_forward(
         )
 
 
-def _finite_discrete_solution():
+def _finite_discrete_solution() -> tuple[
+    Model, SolutionResult, ArtifactRef, NNBEGMSimPolicy
+]:
     model = discrete_toy.build_model(variant="n_nbegm", n_periods=2)
     solution = model.solve(params=_PARAMS, log_level="off")
     ref = next(ref for ref in solution.replay_artifacts if ref.key == SIMULATION_POLICY)
@@ -226,7 +234,7 @@ def test_published_generation_live_roots_include_lazy_authority_templates() -> N
     )
     assert generation._authority[0] is authority
     policy = authority.artifacts[
-        ArtifactRef(period=0, regime="alive", key=SIMULATION_POLICY)
+        ArtifactRef(step=0, regime="alive", key=SIMULATION_POLICY)
     ]
     policy_arrays = retained_artifact_authority_buffers(authority=policy)
     assert policy_arrays

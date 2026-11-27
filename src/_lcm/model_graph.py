@@ -9,7 +9,11 @@ from typing import Literal, cast
 
 import jax.numpy as jnp
 
-from _lcm.exits import ExitFunctionDemand, exit_for_phase, exit_functions
+from _lcm.composition_actions import (
+    CompositionActionFunctionDemand,
+    composition_action_for_phase,
+    composition_action_functions,
+)
 from _lcm.gated_edge import GatedEdge, gated_edge_from_gate
 from _lcm.reachability import ModelReachability, PhaseReachability
 from _lcm.regime_building.fixed_regime_support import prune_fixed_regime_support
@@ -31,23 +35,30 @@ from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
     _SupportedStochasticTransition,
 )
+from _lcm.regime_building.value_adapter import ValueAdapter
 from _lcm.regime_law import (
     RegimeLaw,
     RegimeLaws,
     bind_regime_law,
 )
-from _lcm.time import TimeAxis, coordinate_kind
+from _lcm.time import (
+    TimeAxis,
+    coordinate_kind,
+    stage_position,
+    stages_per_period,
+    step_count,
+)
 from _lcm.user_regime_validation import (
     fail_if_a_joint_target_is_unreachable,
     validate_regimes,
 )
 from lcm.collective import Gate, MemberRoute, ProjectedRegimeValue
+from lcm.composition_actions import CompositionAction, Consent
 from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
     ModelInitializationError,
     RegimeInitializationError,
 )
-from lcm.exits import Consent, Exit
 from lcm.phased import Phased
 from lcm.regime import Regime
 from lcm.transition import (
@@ -258,20 +269,20 @@ def prepare_graph(
         ages=ages,
         source_ages_by_phase=source_ages,
     )
-    policy_reads, exit_targets = _exit_policy_demand(
+    policy_reads, composition_action_targets = _composition_policy_demand(
         regimes=fixed_support.user_regimes,
         schedules=after,
         ages=ages,
     )
     schedules = resolve_demand(
         policy_reads_by_phase=policy_reads,
-        exit_targets_by_period=exit_targets,
+        composition_targets_by_period=composition_action_targets,
         schedules=after,
         initial_nodes=initial_nodes,
         terminal_regimes=frozenset(name for name, law in laws.items() if law.terminal),
         ages=ages,
     )
-    _validate_exit_availability(
+    _validate_composition_action_availability(
         regimes=fixed_support.user_regimes,
         demanded=schedules,
         available=after,
@@ -291,7 +302,7 @@ def prepare_graph(
     )
 
 
-def _exit_policy_demand(
+def _composition_policy_demand(
     *,
     regimes: Mapping[RegimeName, Regime],
     schedules: RegimeSchedules,
@@ -305,14 +316,16 @@ def _exit_policy_demand(
     """Declare typed reads without pretending a policy query is a Full value."""
     reads = {"solution": {}, "simulation": {}}
     actors = {}
-    if all(regime.exit is None for regime in regimes.values()):
+    if all(regime.composition_action is None for regime in regimes.values()):
         return reads, actors
     for phase, side in (("solution", "solve"), ("simulation", "simulate")):
         for source, regime in regimes.items():
-            declaration = exit_for_phase(declaration=regime.exit, phase=side)
+            declaration = composition_action_for_phase(
+                declaration=regime.composition_action, phase=side
+            )
             for period in schedules.coverage_by_regime[source]:
                 for kind in ("Raw", "Participating", "Full"):
-                    required, final = _exit_reads(
+                    required, final = _composition_action_reads(
                         declaration=declaration,
                         source=source,
                         kind=kind,
@@ -325,9 +338,9 @@ def _exit_policy_demand(
     return reads, actors
 
 
-def _exit_reads(
+def _composition_action_reads(
     *,
-    declaration: Exit | None,
+    declaration: CompositionAction | None,
     source: RegimeName,
     kind: str,
     period: int,
@@ -338,24 +351,24 @@ def _exit_reads(
         declaration is None
         or kind == "Raw"
         or (kind == "Participating" and isinstance(declaration.rule, Consent))
-        or _exit_is_statically_unavailable(
+        or _composition_action_is_statically_unavailable(
             predicate=declaration.available, period=period, ages=ages
         )
     ):
         return (), ()
-    landings = tuple(dict.fromkeys(t.regime for t in declaration.targets.values()))
+    landings = tuple(dict.fromkeys(t.regime for t in declaration.destinations.values()))
     required = tuple((regime, "Participating") for regime in landings)
     if isinstance(declaration.rule, Consent):
         required += ((source, "Raw"), (declaration.rule.counterparty.regime, "Raw"))
     return tuple(dict.fromkeys(required)), landings if kind == "Full" else ()
 
 
-def demanded_exit_function_paths(
+def demanded_composition_action_function_paths(
     *,
     regimes: Mapping[RegimeName, Regime],
     schedules: RegimeSchedules,
     ages: TimeAxis,
-) -> ExitFunctionDemand:
+) -> CompositionActionFunctionDemand:
     """Keep callback namespaces only where an actual typed policy reads them."""
     result = {name: {} for name in regimes}
     for phase, side in (("solution", "solve"), ("simulation", "simulate")):
@@ -366,24 +379,26 @@ def demanded_exit_function_paths(
         contexts.update((p, n, "Full") for p, n in full)
         if phase == "simulation":
             contexts.update(
-                (p, n, "Participating") for p, n in schedules.exit_acting_nodes
+                (p, n, "Participating") for p, n in schedules.composition_acting_nodes
             )
         for owner, regime in regimes.items():
             paths = set()
             for period, name, kind in contexts:
                 if name != owner or kind == "Raw":
                     continue
-                declaration = regime.exit
+                declaration = regime.composition_action
                 if declaration is None or (
                     kind == "Participating" and isinstance(declaration.rule, Consent)
                 ):
                     continue
-                inactive = _exit_is_statically_unavailable(
+                inactive = _composition_action_is_statically_unavailable(
                     predicate=declaration.available, period=period, ages=ages
                 )
                 paths.update(
                     path
-                    for path in exit_functions(declaration=declaration, phase=side)
+                    for path in composition_action_functions(
+                        declaration=declaration, phase=side
+                    )
                     if not inactive or path[-1] == "available"
                 )
             result[owner][side] = frozenset(paths)
@@ -392,7 +407,7 @@ def demanded_exit_function_paths(
     )
 
 
-def _validate_exit_availability(
+def _validate_composition_action_availability(
     *,
     regimes: Mapping[RegimeName, Regime],
     demanded: RegimeSchedules,
@@ -405,12 +420,12 @@ def _validate_exit_availability(
             ("solution", demanded.coverage_by_regime[source]),
             ("simulation", demanded.visited_periods_by_regime[source]),
         ):
-            declaration = regime.exit
+            declaration = regime.composition_action
             if declaration is None:
                 continue
             contexts = [
                 ("destination", target.regime)
-                for target in declaration.targets.values()
+                for target in declaration.destinations.values()
             ]
             if isinstance(declaration.rule, Consent):
                 contexts.append(("counterparty", declaration.rule.counterparty.regime))
@@ -420,19 +435,20 @@ def _validate_exit_availability(
                         target in available.support_by_phase[phase]
                         and not available.support_by_phase[phase][target].get(period)
                     ):
-                        if _exit_is_statically_unavailable(
+                        if _composition_action_is_statically_unavailable(
                             predicate=declaration.available,
                             period=period,
                             ages=ages,
                         ):
                             continue
                         raise RegimeInitializationError(
-                            f"Exit of {source}: {kind} {target!r} is inactive "
+                            f"Composition action of {source}: {kind} {target!r} is "
+                            "inactive "
                             f"at {ages.exact_values[period]} in {phase}."
                         )
 
 
-def _exit_is_statically_unavailable(
+def _composition_action_is_statically_unavailable(
     *,
     predicate: UserFunction | None,
     period: int,
@@ -448,8 +464,16 @@ def _exit_is_statically_unavailable(
     names = set(inspect.signature(predicate).parameters)
     if names - {"period", "age"}:
         return False
+    # A finalized predicate reads the step `period` through its clock; a declared
+    # one reads the period of that step.
+    read_through_clock = (
+        isinstance(predicate, ValueAdapter) and predicate.clock is not None
+    )
     inputs = {
-        "period": jnp.asarray(period, dtype=jnp.int32),
+        "period": jnp.asarray(
+            period if read_through_clock else period // stages_per_period(ages),
+            dtype=jnp.int32,
+        ),
         "age": ages.values[period],
     }
     value = jnp.asarray(predicate(**{name: inputs[name] for name in names}))
@@ -698,8 +722,9 @@ def _transition_targets(
     phases reaches both. Supplied `targets` must then say the same at every
     non-final age; a law over all targets uses the supplied ones.
     """
+    stage = stage_position(ages=ages, regime=source)
     derived = _derived_target_ages(
-        transition=transition, ages=ages, fallback_phases=fallback_phases
+        transition=transition, ages=ages, fallback_phases=fallback_phases, stage=stage
     )
     if derived is None:
         # `Transition` requires `targets` for a law that names no target.
@@ -708,17 +733,20 @@ def _transition_targets(
         )
     if transition.targets is not None:
         period_by_age = _period_by_age(ages)
-        # No transition leaves the final age, so a selector that also selects
+        # No transition leaves the last step, so a selector that also selects
         # it names the same destinations as one that stops before it.
-        final_age = ages.exact_values[-1]
+        last = (
+            {ages.exact_values[-1]} if stage == stages_per_period(ages) - 1 else set()
+        )
         supplied = {
             target: _selected_source_ages(
                 selector=selector,
                 edge=f"'{source}' → '{target}'",
                 ages=ages,
                 period_by_age=period_by_age,
+                stage=stage,
             )
-            - {final_age}
+            - last
             for target, selector in transition.targets.items()
         }
         if supplied != derived:
@@ -739,11 +767,15 @@ def _derived_target_ages(
     transition: Transition,
     ages: TimeAxis,
     fallback_phases: tuple[Side, ...],
+    stage: int,
 ) -> MappingProxyType[RegimeName, frozenset[UserAge]] | None:
-    """The source ages at which a law names each target; `None` if it names none."""
+    """The source ages at which a law names each target; `None` if it names none.
+
+    The source decides at the steps of its `stage`, all but the last.
+    """
     law = cast("CaseLaw | ByAge", transition.law)
     sides = (law.solve, law.simulate) if isinstance(law, Phased) else (law,)
-    non_final = range(ages.n_periods - 1)
+    non_final = range(stage, step_count(ages) - 1, stages_per_period(ages))
     selected: dict[RegimeName, set[UserAge]] = {}
     for side in sides:
         by_period = (
@@ -751,14 +783,14 @@ def _derived_target_ages(
             if isinstance(side, ByAge)
             else dict.fromkeys(non_final, side)
         )
-        for period, case in by_period.items():
-            if period not in non_final:
+        for step, case in by_period.items():
+            if step not in non_final:
                 continue
             names = _case_targets(cast("CaseLaw", case))
             if names is None:
                 return None
             for name in names:
-                selected.setdefault(name, set()).add(ages.exact_values[period])
+                selected.setdefault(name, set()).add(ages.exact_values[step])
     for target, gate in transition.gates.items():
         for route in gate.routes.values():
             for fallback in {
@@ -832,7 +864,7 @@ def _declared_gated_edges(
         if reached_in_both and solve.get(target) != simulate.get(target):
             raise ModelInitializationError(
                 f"The transition of '{source}' into {target!r} is gated differently "
-                "in the two phases. A gate is what the household consents to, so a "
+                "in the two phases. A gate is what the members consent to, so a "
                 "target reached in both phases carries one and the same `Gate` in "
                 "both, or none. A difference the model needs goes in a route's "
                 "`fallback`, which is `Phased` in its own right."
@@ -930,25 +962,27 @@ def _fail_if_role_invalid(
             f"{entry}, and the transition declares both a role and a `Gate` "
             f"for '{target}'. A role is the always-open gate; declare one of them."
         )
-    member_axis = regimes[source].member_axis
-    if member_axis is not None:
+    # The member `"self"` is no role: a row of its regime carries none, and a
+    # role cannot name it.
+    source_members = regimes[source].members
+    if "self" not in source_members:
         raise ModelInitializationError(
-            f"{entry}, but '{source}' is collective (members={member_axis}): "
+            f"{entry}, but '{source}' is collective (members={source_members}): "
             "each of its rows already carries a role. Route a collective source "
             "into another layout with a `Gate`."
         )
     if target not in regimes:
         return
-    target_member_axis = regimes[target].member_axis
-    if target_member_axis is None:
+    target_members = regimes[target].members
+    if "self" in target_members:
         raise ModelInitializationError(
             f"{entry}, but '{target}' is not collective: a role names one of a "
             "collective target's members. Reach a singleton target by a "
             "plain edge."
         )
-    if role not in target_member_axis:
+    if role not in target_members:
         raise ModelInitializationError(
-            f"{entry}, but the members of '{target}' are {target_member_axis}."
+            f"{entry}, but the members of '{target}' are {target_members}."
         )
 
 
@@ -1138,12 +1172,12 @@ def bind_graph_support(
         kernels = (
             transition.resolve(ages=ages).law_by_period
             if isinstance(transition, ByAge)
-            else dict.fromkeys(range(ages.n_periods), transition)
+            else dict.fromkeys(range(step_count(ages)), transition)
         )
         _fail_if_kernel_extends_graph(kernels=kernels, source=source, edges=edges)
         cases: list[tuple[AgeSelector, CaseLaw]] = []
         cache: dict[tuple[int, tuple[str, ...], str], PhaseLaw] = {}
-        for period, age in enumerate(ages.exact_values[:-1]):
+        for step, age in enumerate(ages.exact_values[:-1]):
             targets = {
                 side: tuple(
                     target
@@ -1154,12 +1188,12 @@ def bind_graph_support(
             }
             if not any(targets.values()):
                 continue
-            if period not in kernels:
+            if step not in kernels:
                 raise ModelInitializationError(
                     f"Graph edges out of ({age}, '{source}') have no transition "
                     "kernel selected by `ByAge`."
                 )
-            kernel = kernels[period]
+            kernel = kernels[step]
             sides: dict[Side, PhaseLaw] = {}
             for side in ("solve", "simulate"):
                 law = cast(
@@ -1207,8 +1241,8 @@ def bind_graph_support(
                         if target in named and target not in targets[side]
                     )
                     if missing:
-                        previous = dropped.get((source, period))
-                        dropped[(source, period)] = DroppedCells(
+                        previous = dropped.get((source, step))
+                        dropped[(source, step)] = DroppedCells(
                             age=age,
                             targets=tuple(
                                 dict.fromkeys(
@@ -1332,6 +1366,7 @@ def _resolve_edges(
                 edge=f"'{source}' → '{target}'",
                 ages=ages,
                 period_by_age=period_by_age,
+                stage=stage_position(ages=ages, regime=source),
             )
         resolved[source] = MappingProxyType(selected)
     return MappingProxyType(resolved)
@@ -1343,25 +1378,33 @@ def _selected_source_ages(
     edge: str,
     ages: TimeAxis,
     period_by_age: Mapping[AgeLabel, int],
+    stage: int,
 ) -> frozenset[UserAge]:
-    """Resolve one edge's selector to the source ages at which it can fire."""
+    """Resolve one edge's selector to the source ages at which it can fire.
+
+    The source decides in its `stage` of each selected period; no transition leaves
+    the last step.
+    """
     try:
         _fail_if_invalid_age_selector(selector)
-        periods = _select_periods(
+        steps = _select_periods(
             selector=selector, ages=ages, period_by_age=period_by_age
         )
     except RegimeInitializationError as error:
         raise ModelInitializationError(str(error)) from error
-    if not periods:
+    if not steps:
         raise ModelInitializationError(
             f"Graph selector {selector!r} for {edge} selects no model age."
         )
-    if set(periods) == {ages.n_periods - 1}:
+    n_stages = stages_per_period(ages)
+    if {step // n_stages * n_stages + stage for step in steps} == {
+        step_count(ages) - 1
+    }:
         raise ModelInitializationError(
             f"Graph selector {selector!r} for {edge} selects only the final age "
             f"{ages.exact_values[-1]}, where no transition happens."
         )
-    return frozenset(ages.exact_values[period] for period in periods)
+    return frozenset(ages.exact_values[step] for step in steps)
 
 
 def _bind_law(

@@ -1,7 +1,7 @@
 """Solve demand follows the declared starts: physical visits and value reads.
 
 `model.initial_nodes` is the declared set of starts. From it the engine derives
-the `(age, regime)` pairs a subject can physically visit
+the `(age, regime)` pairs an agent can physically visit
 (`reachability.visited_nodes`) and every pair whose value some required
 problem reads (`reachability.nodes`). A value read adds a solved problem, not a
 visit, and simulation-only routes out of a value-only problem are not followed.
@@ -399,7 +399,7 @@ def test_gate_fallbacks_are_demanded_at_the_landing_age() -> None:
 
 
 def test_simulate_visits_only_visited_pairs_with_zero_node_regimes() -> None:
-    """Subjects starting at a start stay on visited pairs; unused regimes are empty."""
+    """Agents starting at a start stay on visited pairs; unused regimes are empty."""
     model = _phased_model({0: "source"})
     solution = model.solve(params=_PARAMS, log_level="off")
     result = model.simulate(

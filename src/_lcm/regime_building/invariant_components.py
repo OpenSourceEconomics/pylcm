@@ -42,11 +42,11 @@ from _lcm.regime_building.phases import (
     normalize_regime_phases,
 )
 from _lcm.regime_law import RegimeLaws
-from _lcm.time import TimeAxis
+from _lcm.time import TimeAxis, describe_step
 from _lcm.typing import RegimeName, StateName
 from lcm.exceptions import ExecutionPlanningError
 from lcm.grids import DiscreteGrid
-from lcm.transition import AgeSpecializedGrid, StochasticTransition
+from lcm.transition import AgeSpecializedGrid, StochasticTransition, _period_by_age
 from lcm.typing import UserAge, UserFunction
 
 type Phase = Literal["solve", "simulate"]
@@ -155,9 +155,7 @@ def analyze_invariant_components(
         name: normalize_regime_phases(regime, law=laws[name])
         for name, regime in user_regimes.items()
     }
-    period_of_age: dict[UserAge, int] = {
-        age: period for period, age in enumerate(ages.exact_values)
-    }
+    period_of_age = _period_by_age(ages)
     generated = {
         f"{name}_fixed": (name, split) for name, split in fixed_component_splits.items()
     }
@@ -172,6 +170,7 @@ def analyze_invariant_components(
                 reachability=reachability.solution
                 if phase == "solve"
                 else reachability.simulation,
+                ages=ages,
             )
             for phase in ("solve", "simulate")
         }
@@ -285,6 +284,7 @@ def _analyze_phase(
     specs: Mapping[RegimeName, PhasedRegimeSpec],
     regimes: Mapping[RegimeName, Regime],
     reachability: PhaseReachability,
+    ages: TimeAxis,
 ) -> InvariantPhaseAnalysis:
     """Classify every retained edge and value channel of one phase."""
     slices = {
@@ -299,10 +299,10 @@ def _analyze_phase(
     refusals = _grid_refusals(state_name=state_name, slices=slices, carriers=carriers)
     preserving: list[RegimeEdge] = []
     shared: list[RegimeEdge] = []
-    for period in range(reachability.n_periods - 1):
-        for source in sorted(reachability.active_regimes_by_period[period]):
-            for target in reachability.targets(period=period, source=source):
-                edge = RegimeEdge(period=period, source=source, target=target)
+    for step in range(reachability.n_steps - 1):
+        for source in sorted(reachability.active_regimes_by_period[step]):
+            for target in reachability.targets(step=step, source=source):
+                edge = RegimeEdge(period=step, source=source, target=target)
                 if source in carriers and target in carriers:
                     law = _law_toward(
                         phase_slice=slices[source], state_name=state_name, target=target
@@ -311,14 +311,16 @@ def _analyze_phase(
                         preserving.append(edge)
                     else:
                         refusals.append(
-                            f"edge {source} -> {target} at period {period} gives "
+                            f"edge {source} -> {target} at "
+                            f"{describe_step(ages=ages, step=step)} gives "
                             f"{state_name!r} the law {_describe(law)}, not the identity"
                         )
                 elif source in carriers:
                     shared.append(edge)
                 elif target in carriers:
                     refusals.append(
-                        f"edge {source} -> {target} at period {period} enters a "
+                        f"edge {source} -> {target} at "
+                        f"{describe_step(ages=ages, step=step)} enters a "
                         f"carrier of {state_name!r} from a regime without it, so the "
                         "source reads every code's value"
                     )
@@ -330,10 +332,8 @@ def _analyze_phase(
         carrying_periods=MappingProxyType(
             {
                 name: tuple(
-                    period
-                    for period, active in enumerate(
-                        reachability.active_regimes_by_period
-                    )
+                    step
+                    for step, active in enumerate(reachability.active_regimes_by_period)
                     if name in active
                 )
                 for name in sorted(carriers)

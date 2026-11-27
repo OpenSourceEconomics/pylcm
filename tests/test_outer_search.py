@@ -148,7 +148,7 @@ def test_finite_outer_grid_reproduces_the_frozen_candidate_values() -> None:
     )
 
     # The frozen values are `alive` at period 0 and `dead` at period 1. The toy
-    # also starts subjects in `dead`, whose terminal payoff reads no age, so its
+    # also starts agents in `dead`, whose terminal payoff reads no age, so its
     # period-0 value repeats the period-1 one.
     np.testing.assert_array_equal(solution[0]["dead"], solution[1]["dead"])
     values = np.concatenate(

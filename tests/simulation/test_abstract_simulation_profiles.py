@@ -57,14 +57,14 @@ def _abstract[Leaf](leaf: Leaf) -> Leaf | jax.ShapeDtypeStruct:
 def test_an_actual_decision_compiles_from_abstract_arguments_without_allocation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A real continuation-reading decision profiles before any subject upload."""
+    """A real continuation-reading decision profiles before any agent upload."""
     model = get_model(
         n_periods=2,
         wealth_grid=LinSpacedGrid(start=1, stop=3, n_points=3),
         consumption_grid=LinSpacedGrid(start=1, stop=3, n_points=3),
         # The unbudgeted dispatch is the reference the abstract compile reproduces.
         execution_config=ExecutionConfig(
-            axis_widths={"subject": 3, "action_product": 2}, device_memory_bytes=None
+            axis_widths={"agent": 3, "action_product": 2}, device_memory_bytes=None
         ),
     )
     params = get_params(n_periods=2)
@@ -98,7 +98,7 @@ def test_an_actual_decision_compiles_from_abstract_arguments_without_allocation(
     runtime = SimulationRuntime(
         execution=observed_runtime.execution,
         enable_jit=True,
-        subject_devices=observed_runtime.subject_devices,
+        agent_devices=observed_runtime.agent_devices,
     )
     arguments = call["arguments"]
     assert isinstance(arguments, Mapping)
@@ -118,8 +118,8 @@ def test_an_actual_decision_compiles_from_abstract_arguments_without_allocation(
             program=call["program"],
             arguments=abstract_arguments,
             period=call["period"],
-            n_subjects=call["n_subjects"],
-            widths={"action_product": 2, "subject": 3},
+            n_agents=call["n_agents"],
+            widths={"action_product": 2, "agent": 3},
         )
     assert isinstance(compiled.executable, jax.stages.Compiled)
     assert compiler_peak_bytes(compiled=compiled.executable, widths=compiled.widths) > 0
@@ -158,7 +158,7 @@ def test_an_actual_host_operation_profiles_without_allocating_its_arguments(
         profile = prepare(
             function=_lookup_values_from_indices,
             arguments=jax.tree.map(_abstract, arguments),
-            subject_arg_names=("flat_indices",),
+            agent_arg_names=("flat_indices",),
             devices=devices,
         )
     assert profile.peak_bytes == compiler_peak_bytes(
@@ -168,7 +168,7 @@ def test_an_actual_host_operation_profiles_without_allocating_its_arguments(
     actual = operations.dispatch(
         function=_lookup_values_from_indices,
         arguments=arguments,
-        subject_arg_names=("flat_indices",),
+        agent_arg_names=("flat_indices",),
         devices=devices,
         live_footprint=lambda: measure_buffer_footprint(tree=arguments),
         budget_devices=devices,
@@ -219,7 +219,7 @@ def test_abstract_host_operands_cannot_bypass_placement_guards(
                         }
                     ),
                 },
-                subject_arg_names=("flat_indices",),
+                agent_arg_names=("flat_indices",),
                 devices=(device,),
             )
     assert not operations.cache
@@ -241,7 +241,7 @@ def _argument_metadata(value: ArgumentTree) -> Hashable:
 
 @pytest.mark.slow
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_profiled_exit_program_reuses_actual_dispatch_key(  # noqa: PLR0915 - keep one real profile-to-dispatch witness together
+def test_profiled_composition_action_program_reuses_actual_dispatch_key(  # noqa: PLR0915 - keep one real profile-to-dispatch witness together
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A real exit dispatch reuses the exact profiled executable and report."""
@@ -250,16 +250,16 @@ def test_profiled_exit_program_reuses_actual_dispatch_key(  # noqa: PLR0915 - ke
         wealth_n_points=3,
         consumption_n_points=2,
         execution_config=ExecutionConfig(
-            axis_widths={"query_cell": 1, "subject": 4},
+            axis_widths={"query_cell": 1, "agent": 4},
             device_memory_bytes=2**31,
         ),
     )
     assert all(
-        model._regimes[name].simulation.exit_queries
+        model._regimes[name].simulation.composition_queries
         for name in ("couple", "single_f", "single_m")
     )
     params = household.get_params()
-    initial = household.get_initial_conditions(n_subjects=4, model=model)
+    initial = household.get_initial_conditions(n_agents=4, model=model)
     solution = model.solve(params=params, log_level="off", max_compilation_workers=1)
     profiles: dict[
         tuple[int, int, tuple[tuple[str, int], ...]],
@@ -337,7 +337,7 @@ def test_profiled_exit_program_reuses_actual_dispatch_key(  # noqa: PLR0915 - ke
         self: SimulationRuntime,
         *,
         program: MaterializedCoreProgram,
-        n_subjects: int,
+        n_agents: int,
         widths: Mapping[str, int],
         abstract_inputs: bool = False,
     ) -> CompiledSimulationProgram:
@@ -348,8 +348,8 @@ def test_profiled_exit_program_reuses_actual_dispatch_key(  # noqa: PLR0915 - ke
                 "Real exit needs its same-runtime/function/width profile"
             )
             profiled_key, profiled, metadata = profiles[identity]
-            assert n_subjects == 4
-            assert dict(widths) == {"subject": 4}
+            assert n_agents == 4
+            assert dict(widths) == {"agent": 4}
             holders = program.arguments["_holders"]
             assert isinstance(holders, jax.Array)
             assert holders.shape == (4,)
@@ -364,7 +364,7 @@ def test_profiled_exit_program_reuses_actual_dispatch_key(  # noqa: PLR0915 - ke
             key = cast(
                 "tuple[Hashable, ...]",
                 _simulation_lowering_key(
-                    runtime=self, program=program, n_subjects=n_subjects, widths=widths
+                    runtime=self, program=program, n_agents=n_agents, widths=widths
                 ),
             )
             assert key[0] == profiled_key[0]
@@ -388,7 +388,7 @@ def test_profiled_exit_program_reuses_actual_dispatch_key(  # noqa: PLR0915 - ke
             reused = compile_candidate(
                 self,
                 program=program,
-                n_subjects=n_subjects,
+                n_agents=n_agents,
                 widths=widths,
                 abstract_inputs=abstract_inputs,
             )
@@ -400,7 +400,7 @@ def test_profiled_exit_program_reuses_actual_dispatch_key(  # noqa: PLR0915 - ke
         return compile_candidate(
             self,
             program=program,
-            n_subjects=n_subjects,
+            n_agents=n_agents,
             widths=widths,
             abstract_inputs=abstract_inputs,
         )

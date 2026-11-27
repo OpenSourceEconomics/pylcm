@@ -5,8 +5,16 @@ import pytest
 
 import jax.numpy as jnp
 
-from lcm.exits import Unilateral
-from lcm import DiscreteGrid, Exit, ExitTarget, InitialNodes, Model, Regime, categorical
+from lcm.composition_actions import PCOnActions
+from lcm import (
+    DiscreteGrid,
+    CompositionAction,
+    Destination,
+    InitialNodes,
+    Model,
+    Regime,
+    categorical,
+)
 from lcm.shocks import Discrete, GaussHermite, Normal, Product, ShockGroup
 from lcm.typing import DiscreteState, FloatND, ScalarInt
 
@@ -58,14 +66,14 @@ def model(*, shock_group: ShockGroup | None = None) -> Model:
             "source": Regime(
                 states={"lagged_school": DiscreteGrid(Binary)},
                 functions={"utility": stay},
-                exit=Exit(
-                    targets={
-                        "self": ExitTarget(
+                composition_action=CompositionAction(
+                    destinations={
+                        "self": Destination(
                             regime="target",
                             projection={"lagged_school": same_history},
                         )
                     },
-                    rule=Unilateral(),
+                    rule=PCOnActions(),
                     observes=("offer",),
                 ),
             ),
@@ -92,7 +100,7 @@ def model(*, shock_group: ShockGroup | None = None) -> Model:
 def test_capture_to_recommendation_retains_probability_only_history() -> None:
     captured = read_model(model())
     report = analyze_production(captured, facts_backend="metadata")
-    # Literal observed-exit oracle: max(stay=.5, target=0/2) in
+    # Literal observed-composition action oracle: max(stay=.5, target=0/2) in
     # the two offer outcomes. Only their probabilities use this state.
     probabilities = offer_probabilities(jnp.asarray([0, 1], dtype=jnp.int32))
     values = probabilities[:, 0] * 0.5 + probabilities[:, 1] * 2.0

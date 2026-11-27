@@ -1,10 +1,11 @@
 """Integration tests for moves between singleton and collective regimes.
 
 Two moves matter for EKL 2019: the singles->married CONSENT decision (a singleton
-reaches a collective regime only by mutual consent, eq. 27), declared as the
-single's own `Exit` under a `Consent` rule, and the married DISSOLUTION, the
-household's own current-period `Exit` routing each member to her single regime.
-A state-only `Gate` beside the law of a `Transition` routes a landing row into its
+reaches a collective regime only by mutual consent, eq. 27), declared as the single's
+own `CompositionAction` under a `Consent` rule, and the married DISSOLUTION, the
+household's own current-period `CompositionAction` routing each member to her single
+regime. A state-only `Gate` beside the law of a `Transition` routes a landing row into
+its
 target or into that member's fallback::
 
     Wbar^s(x) = jnp.where(gate(x), V_target^{route_s}(x), V_fallback^s(pi_s(x)))
@@ -47,8 +48,8 @@ from lcm import (
     fixed_transition,
 )
 from lcm.ages import AgeGrid
+from lcm.composition_actions import CompositionAction, Destination, PCOnActions
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.exits import Exit, ExitTarget, Unilateral
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.transition import AgeSelector, StochasticTransition
 from lcm.typing import (
@@ -142,7 +143,7 @@ def _consent_laws(edge: Gate | None) -> RegimeLaws:
 
 
 def _formation_laws() -> RegimeLaws:
-    """`single_f` lands in `single_f_terminal`, whose own exit decides the marriage."""
+    """`single_f` lands in `single_f_terminal`, where she decides on the marriage."""
     return bind_laws(
         {
             "single_f": ByAge(
@@ -159,15 +160,15 @@ def _formation_laws() -> RegimeLaws:
     )
 
 
-def _formation_exit() -> Exit:
+def _formation_composition_action() -> CompositionAction:
     """EKL eq. 27: she marries only if both partners strictly gain.
 
     Her couple value is compared with her own single value, his with his single
     value as the counterparty.
     """
-    return Exit(
-        targets={
-            "self": ExitTarget(
+    return CompositionAction(
+        destinations={
+            "self": Destination(
                 regime="married_terminal",
                 role="f",
                 projection={"wage": _identity_wage},
@@ -211,7 +212,7 @@ def _make_consent_regimes() -> dict[str, Regime]:
     single_f_terminal = Regime(
         states={"wage": _WAGE},
         functions={"utility": _u_single_f_terminal},
-        exit=_formation_exit(),
+        composition_action=_formation_composition_action(),
     )
     single_m_terminal = Regime(
         states={"wage": _WAGE},
@@ -302,15 +303,15 @@ def test_consent_routes_marriage_value_and_single_value() -> None:
         wage=1: 1 + 0.95*2 = 2.9;  wage=2: 2 + 0.95*3 = 4.85.
     """
     solution, _sim = _solve_consent()
-    V_single_f = np.asarray(solution[0]["single_f"])
+    V_single_f = np.asarray(solution[0]["single_f"])[..., 0]
     np.testing.assert_allclose(V_single_f, np.array([2.9, 4.85]), rtol=1e-6)
 
 
 def test_consent_matches_under_jit() -> None:
-    """The jitted path prices the same exit."""
+    """The jitted path prices the same composition action."""
     solution, _sim = _solve_consent(enable_jit=True)
     np.testing.assert_allclose(
-        np.asarray(solution[0]["single_f"]), np.array([2.9, 4.85]), rtol=1e-6
+        np.asarray(solution[0]["single_f"])[..., 0], np.array([2.9, 4.85]), rtol=1e-6
     )
 
 
@@ -340,8 +341,8 @@ def _u_zero(wage: ContinuousState) -> FloatND:
     return 0.0 * wage
 
 
-def _u_zero_collective(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
-    return 0.0 * wage * work
+def _u_effort_collective(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    return -0.25 * work + 0.0 * wage
 
 
 # Scope fences and build-time validation (pins)
@@ -353,7 +354,7 @@ def test_raw_ungated_mixed_transition_still_rejected() -> None:
     # Drop the gate but keep the singleton -> collective transition.
     laws = _consent_laws(None)
     ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    with pytest.raises(NotImplementedError, match="member_axis"):
+    with pytest.raises(NotImplementedError, match="members"):
         process_regimes(
             prepared_structure=build_prepared_structure(
                 user_regimes=finalize_regimes(
@@ -444,7 +445,9 @@ def test_consent_model_builds_with_valid_routes() -> None:
         params={"discount_factor": _BETA}, log_level="off"
     )
     np.testing.assert_allclose(
-        np.asarray(solution.values[0]["single_f"]), np.array([2.9, 4.85]), rtol=1e-6
+        np.asarray(solution.values[0]["single_f"])[..., 0],
+        np.array([2.9, 4.85]),
+        rtol=1e-6,
     )
 
 
@@ -468,8 +471,9 @@ def test_edge_leg_naming_a_missing_target_member_is_rejected() -> None:
 # `_make_full_topology_regimes` / `_full_topology_transitions` /
 # `_with_full_topology_laws` are the topology tests/solution imports (fold reads,
 # liveness pins, period replay/waves, release log): state-gated consent edges into
-# `married`. The test here forms `married` through each single's `Consent` exit
-# and dissolves it through the household's own current-period exit instead.
+# `married`. The test here forms `married` through each single's `Consent` composition
+# action and dissolves it through the household's own current-period composition action
+# instead.
 
 
 @categorical(ordered=False)
@@ -521,7 +525,7 @@ def _make_full_topology_regimes() -> dict[str, Regime]:
         actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
-                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+                utilities={"f": _u_effort_collective, "m": _u_effort_collective}
             )
         },
     )
@@ -628,11 +632,13 @@ def _with_full_topology_laws(
     }
 
 
-def _single_formation_exit(*, member: str, spouse: str) -> Exit:
-    """A single's mutual-consent exit into `married` at her own landing period."""
-    return Exit(
-        targets={
-            "self": ExitTarget(
+def _single_formation_composition_action(
+    *, member: str, spouse: str
+) -> CompositionAction:
+    """A single's consent composition action into `married` at her landing period."""
+    return CompositionAction(
+        destinations={
+            "self": Destination(
                 regime="married", role=member, projection={"wage": _identity_wage}
             )
         },
@@ -646,42 +652,45 @@ def _single_formation_exit(*, member: str, spouse: str) -> Exit:
     )
 
 
-def _exit_topology_regimes() -> dict[str, Regime]:
-    """The mini-EKL regimes, formed and dissolved through current-period exits."""
+def _composition_action_topology_regimes() -> dict[str, Regime]:
+    """Mini-EKL regimes, formed and dissolved through current composition actions."""
     regimes = _make_full_topology_regimes()
     regimes["married"] = regimes["married"].replace(
         constraints={},
-        exit=Exit(
-            targets={
-                "f": ExitTarget(
+        composition_action=CompositionAction(
+            destinations={
+                "f": Destination(
                     regime="single_f_p1",
                     projection={"wage": _identity_wage},
                     utility_adjustment=_dissolution_cost_f,
                 ),
-                "m": ExitTarget(
+                "m": Destination(
                     regime="single_m_p1",
                     projection={"wage": _identity_wage},
                     utility_adjustment=_dissolution_cost_m,
                 ),
             },
-            rule=Unilateral(),
+            rule=PCOnActions(),
         ),
     )
     for member, spouse in (("f", "m"), ("m", "f")):
         regimes[f"single_{member}_p1"] = regimes[f"single_{member}_p1"].replace(
-            exit=_single_formation_exit(member=member, spouse=spouse)
+            composition_action=_single_formation_composition_action(
+                member=member, spouse=spouse
+            )
         )
     return regimes
 
 
 def test_full_ekl_topology_via_public_model_api() -> None:
-    """single_f/single_m + married with consent and dissolution exits, one model.
+    """single_f/single_m + married with consent and divorce, in one model.
 
     married (period 1) dissolves at wage=2, where no stay action is kept. Its
     continuation into the (zero-valued) terminal couple is zero, so its V is the
-    felicity readout where both members stay. At wage=2 no common action meets
-    both thresholds and the exit pays each member's single payoff net of the cost.
-    single_f lands in single_f_p1 (period 1), whose CONSENT exit moves her into
+    felicity readout where both members stay. At wage=2 no common action meets both
+    thresholds and the composition action pays each member's single payoff net of the
+    cost. single_f lands in single_f_p1 (period 1), whose CONSENT composition action
+    moves her into
     married:
 
     consent(wage) = (V_married_f > V_single_f) & (V_married_m > V_single_m):
@@ -692,7 +701,7 @@ def test_full_ekl_topology_via_public_model_api() -> None:
     """
     ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
     model = Model(
-        regimes=_exit_topology_regimes(),
+        regimes=_composition_action_topology_regimes(),
         edges={
             "single_f": {"single_f_p1": 0},
             "single_m": {"single_m_p1": 0},
@@ -703,7 +712,7 @@ def test_full_ekl_topology_via_public_model_api() -> None:
         ages=ages,
         regime_id_class=EKLRegimeId,
         # A couple starting at period 1 stores `married`'s value there; a
-        # consent exit alone reads its problem without storing it.
+        # consent composition action alone reads its problem without storing it.
         initial_nodes={
             ages.exact_values[0]: "single_f",
             ages.exact_values[1]: "married",
@@ -714,15 +723,16 @@ def test_full_ekl_topology_via_public_model_api() -> None:
         log_level="off",
     ).values
     # married period-1: continuation zero, the empty cell paid by the
-    # dissolution exit.
+    # dissolution composition action.
     np.testing.assert_allclose(
         np.asarray(solution[1]["married"]),
         np.array([[2.0, 1.0], [5.0, 0.8], [6.0, 3.0]]),
         rtol=1e-6,
     )
-    # single_f period-0: continuation through her single_f_p1 consent exit.
+    # single_f period-0: continuation through her single_f_p1 consent composition
+    # action.
     np.testing.assert_allclose(
-        np.asarray(solution[0]["single_f"]),
+        np.asarray(solution[0]["single_f"])[..., 0],
         np.array([2.425, 7.225, 8.7]),
         rtol=1e-6,
     )

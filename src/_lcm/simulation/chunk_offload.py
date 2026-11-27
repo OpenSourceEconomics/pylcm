@@ -15,10 +15,10 @@ from _lcm.typing import PytreeByPeriod
 from lcm.exceptions import ExecutionPlanningError
 
 
-def chunk_host_device(*, subject_devices: tuple[jax.Device, ...]) -> jax.Device:
+def chunk_host_device(*, agent_devices: tuple[jax.Device, ...]) -> jax.Device:
     """Keep CPU assembly on a selected CPU; GPU offload uses host CPU RAM."""
-    if all(device.platform == "cpu" for device in subject_devices):
-        return subject_devices[0]
+    if all(device.platform == "cpu" for device in agent_devices):
+        return agent_devices[0]
     return jax.devices("cpu")[0]
 
 

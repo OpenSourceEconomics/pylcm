@@ -139,8 +139,8 @@ def egm_one_asset_step(
         next_liquid_grid: The same state's grid in the *next* period (ascending);
             the abscissae of `next_value` and `next_marginal`.
         savings_grid: Post-decision savings grid `s = liquid - consumption` (ascending),
-            shape `(n_savings,)`. Its lower bound is the borrowing limit: zero for a
-            household that cannot borrow, minus the limit for one that can.
+            shape `(n_savings,)`. Its lower bound is the borrowing limit: zero for an
+            agent that cannot borrow, minus the limit for one that can.
         discount_factor: Discount factor `beta`.
         preferences: The regime's felicity `u`, its marginal `u'`, and its
             inverse marginal `(u')^-1`, bound to this solve's parameters.
@@ -224,9 +224,9 @@ def egm_one_asset_step(
         & jnp.isfinite(interior_savings)
     )
 
-    # Constrained: below the smallest endogenous liquid the household would want savings
+    # Constrained: below the smallest endogenous liquid the agent would want savings
     # the grid's lower bound forbids, so it takes that bound and consumes everything
-    # above it. The bound is where the borrowing limit lives — zero for a household that
+    # above it. The bound is where the borrowing limit lives — zero for an agent that
     # cannot borrow, negative for one that can — so both the corner consumption and the
     # landing point it reaches are read off the grid and the law rather than assumed.
     min_savings = savings_grid[0]

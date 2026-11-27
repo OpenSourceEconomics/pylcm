@@ -59,7 +59,13 @@ from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.phases import PhasedRegimeSpec, RegimePhaseSpec
 from _lcm.regime_building.Q_and_F import partition_continuation_targets
 from _lcm.regime_building.V import VInterpolationInfo
-from _lcm.time import TimeAxis, specialization_coordinate_at
+from _lcm.time import (
+    TimeAxis,
+    describe_step,
+    landing_step,
+    specialization_coordinate_at,
+    step_count,
+)
 from _lcm.transition_plans import TargetTransitionPlan
 from _lcm.typing import (
     ConstraintFunction,
@@ -174,9 +180,11 @@ class ResolvedAgeGrid:
 class AgeGridSchedule:
     """All concrete age-dependent grid data, built during model creation.
 
-    `by_period` holds only the periods where a regime is active (there are no
-    inactive-period placeholder grids). `specialized_states_by_regime` records,
-    per regime, which continuous states are age-specialized.
+    `by_period` holds the periods where a regime is active, and each step a regime
+    sits out holds the grids of its next occurrence, where a value read at that
+    step lives; an inactive period has no placeholder grid.
+    `specialized_states_by_regime` records, per regime, which continuous states
+    are age-specialized.
     """
 
     by_period: MappingProxyType[
@@ -218,7 +226,8 @@ class PeriodRegimes:
     """Per period, every regime with its age markers resolved at that period.
 
     A regime that declares no marker, or is inactive at the period, keeps its
-    representative declaration.
+    representative declaration; at a step it sits out it is declared as at its
+    next occurrence.
     """
 
     function_signatures: MappingProxyType[int, MappingProxyType[RegimeName, Hashable]]
@@ -543,9 +552,9 @@ class _ContinuationGroupKey:
     def __call__(self, *, period: int) -> tuple[tuple[RegimeName, ...], Hashable]:
         complete = (
             ()
-            if period == self.phase_reachability.n_periods - 1
+            if period == self.phase_reachability.n_steps - 1
             else self.phase_reachability.targets(
-                period=period, source=self.source_regime_name
+                step=period, source=self.source_regime_name
             )
         )
         # Beside each continuation target, the grids a gated edge into that
@@ -666,7 +675,7 @@ def _resolve_function_marker(
     first_params: frozenset[str] | None = None
     first_period: int | None = None
     for period in active_periods:
-        age = specialization_coordinate_at(ages=ages, period=period)
+        age = specialization_coordinate_at(ages=ages, step=period)
         concrete = marker.build(age)
         params = frozenset(inspect.signature(concrete).parameters)
         if first_params is None:
@@ -675,8 +684,10 @@ def _resolve_function_marker(
             msg = (
                 f"AgeSpecializedFunction in regime '{regime_name}' is not "
                 f"parameter-invariant: build(age) returned parameters "
-                f"{sorted(first_params)} at period {first_period}, but "
-                f"{sorted(params)} at period {period}. Every concrete function "
+                f"{sorted(first_params)} at "
+                f"{describe_step(ages=ages, step=cast('int', first_period))}, but "
+                f"{sorted(params)} at {describe_step(ages=ages, step=period)}. "
+                "Every concrete function "
                 f"returned by build must expose the same call signature; only "
                 f"its behavior may vary."
             )
@@ -732,7 +743,7 @@ def _resolve_grid_marker(
     first_traits: _GridTraits | None = None
     first_period: int | None = None
     for period in active_periods:
-        age = specialization_coordinate_at(ages=ages, period=period)
+        age = specialization_coordinate_at(ages=ages, step=period)
         grid = marker.build(age)
         if not isinstance(grid, ContinuousGrid) or isinstance(
             grid, _ContinuousStochasticProcess
@@ -740,7 +751,8 @@ def _resolve_grid_marker(
             msg = (
                 f"AgeSpecializedGrid '{state_name}' in regime '{regime_name}' "
                 f"build(age) must return a plain ContinuousGrid, not a stochastic "
-                f"process; got {type(grid).__name__} at period {period}. "
+                f"process; got {type(grid).__name__} at "
+                f"{describe_step(ages=ages, step=period)}. "
                 f"Age-varying process states are not supported."
             )
             raise RegimeInitializationError(msg)
@@ -753,7 +765,7 @@ def _resolve_grid_marker(
         except _GridTraitsError as error:
             msg = (
                 f"AgeSpecializedGrid '{state_name}' in regime '{regime_name}' at "
-                f"period {period}: {error}"
+                f"{describe_step(ages=ages, step=period)}: {error}"
             )
             raise RegimeInitializationError(msg) from error
         if first_traits is None:
@@ -763,8 +775,10 @@ def _resolve_grid_marker(
                 f"AgeSpecializedGrid '{state_name}' in regime '{regime_name}' is not "
                 "shape-invariant: "
                 f"{_describe_trait_mismatch(first=first_traits, other=traits)} "
-                f"The first active age is period {first_period}, the offending one is "
-                f"period {period}. Age-varying grids must keep the same class, "
+                "The first active age is at "
+                f"{describe_step(ages=ages, step=cast('int', first_period))}, the "
+                f"offending one at {describe_step(ages=ages, step=period)}. "
+                "Age-varying grids must keep the same class, "
                 f"points mode and resolved node shape/dtype at every "
                 f"active age; only their bounds or node values may vary."
             )
@@ -819,7 +833,7 @@ def _representative_function(
     or the value unchanged. Periods that share a signature share one callable:
     the one built at the earliest period of that signature group, the same rule
     `PeriodizedEconFunction` resolves by. A marker only the simulate slice reads
-    is resolved only at the periods a subject can occupy; elsewhere no solve
+    is resolved only at the periods an agent can occupy; elsewhere no solve
     reads it, and it keeps its representative.
     """
     if isinstance(value, AgeSpecializedFunction):
@@ -1089,6 +1103,24 @@ def _visit_function_marker(
         _visit_function_marker(value=value.simulate, markers=markers)
 
 
+def _fill_sat_out_steps[Entry](
+    *,
+    table: dict[int, dict[RegimeName, Entry]],
+    ages: TimeAxis,
+    names: tuple[RegimeName, ...],
+) -> None:
+    """Give each regime, at a step it sits out, its entry at its next occurrence.
+
+    A value read at such a step is the value at the occurrence, so the step holds
+    the occurrence's grids and functions.
+    """
+    for step in range(step_count(ages)):
+        for name in names:
+            occurrence = landing_step(ages=ages, step=step - 1, target=name)
+            if occurrence != step and name in table.get(occurrence, {}):
+                table.setdefault(step, {})[name] = table[occurrence][name]
+
+
 def normalize_age_specialization(
     *,
     user_regimes: Mapping[RegimeName, FinalizedUserRegime],
@@ -1109,7 +1141,7 @@ def normalize_age_specialization(
     - record all concrete period grids in an `AgeGridSchedule`.
 
     A marker the solve slice reads is required at every active period. A
-    marker only the simulate slice reads is required where a subject can be:
+    marker only the simulate slice reads is required where an agent can be:
     `visited_periods_by_regime`, which defaults to the active periods.
 
     Regimes with no markers pass through unchanged (byte-identical), so an
@@ -1230,6 +1262,12 @@ def normalize_age_specialization(
                         }
                     )
                 )
+
+    _fill_sat_out_steps(table=schedule_by_period, ages=ages, names=tuple(user_regimes))
+    _fill_sat_out_steps(table=regimes_at_period, ages=ages, names=tuple(user_regimes))
+    _fill_sat_out_steps(
+        table=signatures_at_period, ages=ages, names=tuple(user_regimes)
+    )
 
     grid_schedule = (
         AgeGridSchedule(

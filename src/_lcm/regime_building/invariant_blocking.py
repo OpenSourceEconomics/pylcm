@@ -12,7 +12,7 @@ before anything is lowered:
   that its value never changes and that no value read crosses its codes.
 
 When the forward phase preserves the state too, forward simulation groups its
-subjects by the state's code; otherwise it keeps the ungrouped route.
+agents by the state's code; otherwise it keeps the ungrouped route.
 """
 
 import dataclasses
@@ -28,7 +28,7 @@ from _lcm.regime_building.invariant_components import (
     fail_if_invariant_blocking_is_unsafe,
 )
 from _lcm.regime_law import RegimeLaw, RegimeLaws
-from _lcm.simulation.subject_groups import SubjectGroupingRoute
+from _lcm.simulation.agent_groups import AgentGroupingRoute
 from _lcm.solution.backward_induction import _value_axis_names
 from _lcm.solution.grid_search import GridSearch
 from _lcm.time import TimeAxis
@@ -206,7 +206,6 @@ def _regime_failures(
             f"is solved by {type(regime.solver).__name__}, not GridSearch",
         ),
         (regime.taste_shocks is not None, "declares taste shocks"),
-        (regime.member_axis is not None, "is a collective regime"),
         (bool(law.gated_edges), "declares gated edges"),
         *(
             (
@@ -236,7 +235,7 @@ def admit_invariant_blocking(
     """Refuse an unsafe solve-phase request and group simulation where certified.
 
     Nothing is analysed when no state is blocked. Forward simulation groups
-    subjects by the blocked state only when the simulate phase preserves it as
+    agents by the blocked state only when the simulate phase preserves it as
     well, and every regime draws through the ordinary grid decision: no regime
     declares taste shocks or gated edges, or replays a solve payload. Any other
     model keeps the ungrouped forward route.
@@ -277,7 +276,7 @@ def admit_invariant_blocking(
         for regime in regimes.values()
     ):
         return MappingProxyType(dict(regimes))
-    route = SubjectGroupingRoute(
+    route = AgentGroupingRoute(
         state_name=state_name,
         codes=component.codes,
         value_axis_names=_value_axis_names(regimes=regimes),

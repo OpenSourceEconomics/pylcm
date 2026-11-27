@@ -95,8 +95,8 @@ def _mixed_population(model: Model) -> dict[str, jnp.ndarray]:
     }
 
 
-def test_feasibility_mask_reports_each_subject_in_caller_order() -> None:
-    """`True` exactly for subjects admitting an action, in the order supplied."""
+def test_feasibility_mask_reports_each_agent_in_caller_order() -> None:
+    """`True` exactly for agents admitting an action, in the order supplied."""
     model = _constraint_model()
 
     mask = model.initial_conditions_feasibility(
@@ -107,7 +107,7 @@ def test_feasibility_mask_reports_each_subject_in_caller_order() -> None:
 
 
 def test_feasibility_mask_is_a_one_dimensional_boolean_array() -> None:
-    """The mask is a boolean JAX array with one entry per subject."""
+    """The mask is a boolean JAX array with one entry per agent."""
     model = _constraint_model()
 
     mask = model.initial_conditions_feasibility(
@@ -139,7 +139,7 @@ def test_feasibility_mask_agrees_with_exhaustive_scalar_oracle() -> None:
     )
 
 
-def test_jointly_impossible_constraints_mark_subject_infeasible() -> None:
+def test_jointly_impossible_constraints_mark_agent_infeasible() -> None:
     """Constraints each satisfiable alone but jointly impossible yield `False`."""
     model = make_joint_constraint_model()
     alive = model.regime_names_to_ids["alive"]
@@ -159,7 +159,7 @@ def test_jointly_impossible_constraints_mark_subject_infeasible() -> None:
 def test_period_constraint_binds_fixed_and_runtime_scalars() -> None:
     """A constraint reading `period`, a fixed and a runtime scalar evaluates per age.
 
-    With `cap = 2` and fixed `floor = 0.5`, a subject with wealth 1 affords the
+    With `cap = 2` and fixed `floor = 0.5`, an agent with wealth 1 affords the
     minimum consumption of 1 only once `period * cap >= 0.5`, i.e. from age 1.
     """
     model = make_period_constraint_model()
@@ -178,17 +178,17 @@ def test_period_constraint_binds_fixed_and_runtime_scalars() -> None:
 
 
 def test_validate_raises_exactly_when_mask_has_a_false() -> None:
-    """`validate_initial_conditions` rejects the population iff a subject is `False`."""
+    """`validate_initial_conditions` rejects the population iff an agent is `False`."""
     model = _constraint_model()
 
-    with pytest.raises(InvalidInitialConditionsError, match="infeasible for 2 subject"):
+    with pytest.raises(InvalidInitialConditionsError, match="infeasible for 2 agent"):
         model.validate_initial_conditions(
             initial_conditions=_mixed_population(model), params=_CONSTRAINT_PARAMS
         )
 
 
 def test_validate_accepts_an_all_feasible_population() -> None:
-    """`validate_initial_conditions` returns `None` when every subject is feasible."""
+    """`validate_initial_conditions` returns `None` when every agent is feasible."""
     model = _constraint_model()
     working_life = model.regime_names_to_ids["working_life"]
 
@@ -553,7 +553,7 @@ def _age_specialized_model() -> Model:
 
 
 def test_age_specialized_constraint_admits_starts_at_every_active_age() -> None:
-    """Subjects starting at different ages are each checked at their own start age.
+    """Agents starting at different ages are each checked at their own start age.
 
     Both supplied rows admit an action under the cap at their own start age.
     """
@@ -662,7 +662,7 @@ def test_age_specialized_public_checks_use_binding_caps_in_caller_order(
 
 
 def test_budget_is_irrelevant_to_the_public_mask_but_not_to_simulate() -> None:
-    """The same budgeted model simulates the feasible subjects the mask selects."""
+    """The same budgeted model simulates the feasible agents the mask selects."""
     model = make_state_only_constraint_model(device_memory_bytes=2**24)
     dead = model.regime_names_to_ids["dead"]
     params = {"discount_factor": 0.95}
@@ -840,8 +840,8 @@ def test_seeded_simulation_preflight_uses_the_supplied_current_entry_frame(
         runtime_checks=True,
         log_level="warning",
     ).to_dataframe(use_categorical_codes=True)
-    rows = frame.sort_values("subject_id")
-    np.testing.assert_array_equal(rows["subject_id"], [0, 1, 2, 3])
+    rows = frame.sort_values("agent_id")
+    np.testing.assert_array_equal(rows["agent_id"], [0, 1, 2, 3])
     np.testing.assert_array_equal(rows["period"], [0, 0, 0, 0])
     np.testing.assert_array_equal(rows["eps"], [0.25, 0.75, 0.5, 0.125])
     np.testing.assert_array_equal(rows["consumption"], [1.0, 1.0, 1.0, 1.0])
@@ -913,10 +913,10 @@ def test_seeded_entry_preflight_and_native_replay_use_the_same_frame(
             log_level="warning",
         )
         .to_dataframe(use_categorical_codes=True)
-        .sort_values("subject_id")
+        .sort_values("agent_id")
     )
     assert set(observed) == {0, 1, 2, 3}
-    np.testing.assert_array_equal(rows["subject_id"], [0, 1, 2, 3])
+    np.testing.assert_array_equal(rows["agent_id"], [0, 1, 2, 3])
     np.testing.assert_array_equal(rows["period"], [0, 0, 0, 0])
     np.testing.assert_array_equal(rows["eps"], [observed[row] for row in range(4)])
     assert np.all((rows["eps"] >= 0.25) & (rows["eps"] <= 0.75))
@@ -995,10 +995,10 @@ def test_jitted_entry_preflight_matches_original_native_replay(
             log_level="warning",
         )
         .to_dataframe(use_categorical_codes=True)
-        .sort_values("subject_id")
+        .sort_values("agent_id")
     )
     assert set(observed) == {0, 1, 2, 3}
-    np.testing.assert_array_equal(rows["subject_id"], [0, 1, 2, 3])
+    np.testing.assert_array_equal(rows["agent_id"], [0, 1, 2, 3])
     np.testing.assert_array_equal(rows["period"], [0, 0, 0, 0])
     np.testing.assert_array_equal(rows["eps"], [observed[row] for row in range(4)])
     np.testing.assert_array_equal(rows["consumption"], [1.0, 1.0, 1.0, 1.0])
@@ -1012,7 +1012,7 @@ def test_jitted_entry_preflight_matches_original_native_replay(
 def test_seeded_preflight_ignores_padding_but_checks_the_last_real_row(
     *, last_physical: float
 ) -> None:
-    """Alignment padding never becomes a new physical observation or subject."""
+    """Alignment padding never becomes a new physical observation or agent."""
     model = _tagged_current_entry_model()
     initial: dict[str, Array | PhysicalValues] = {
         "period": jnp.zeros(3, dtype=jnp.int32),
@@ -1041,11 +1041,11 @@ def test_seeded_preflight_ignores_padding_but_checks_the_last_real_row(
             ages=model._time,
             logger=get_logger(log_level="warning", runtime_checks=True),
             supplied_frames=provider,
-            original_n_subjects=original,
+            original_n_agents=original,
         )
 
     if last_physical < -1.0:
-        with pytest.raises(NoFeasibleActionError, match=r"for 1 subject\(s\)"):
+        with pytest.raises(NoFeasibleActionError, match=r"for 1 agent\(s\)"):
             validate()
     else:
         validate()
@@ -1108,7 +1108,7 @@ def test_entry_law_context_matches_native_clock_and_period_dtype(
             log_level="warning",
         )
         .to_dataframe(use_categorical_codes=True)
-        .sort_values("subject_id")
+        .sort_values("agent_id")
     )
     canonical, flat_params, supplied_frames = model._canonical_feasibility_inputs(
         initial_conditions=initial, params={}
@@ -1129,7 +1129,7 @@ def test_entry_law_context_matches_native_clock_and_period_dtype(
         needed=frozenset({"eps"}),
         memory=None,
     )
-    np.testing.assert_array_equal(rows["subject_id"], [0, 1])
+    np.testing.assert_array_equal(rows["agent_id"], [0, 1])
     np.testing.assert_array_equal(rows["period"], [1, 1])
     np.testing.assert_array_equal(rows["age"], [21.5, 21.5])
     np.testing.assert_array_equal(rows["consumption"], [1.0, 1.0])

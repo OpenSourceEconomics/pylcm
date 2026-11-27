@@ -92,6 +92,14 @@ def _next_income(match: Mapping[str, FloatND]) -> FloatND:
     return match["income"]
 
 
+def _zero_utility() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def _target_utility(*, wealth: ContinuousState, income: ContinuousState) -> FloatND:
+    return wealth + 2 * income
+
+
 def _build_model(
     *,
     enable_jit: bool,
@@ -101,7 +109,7 @@ def _build_model(
     return Model(
         regimes={
             "source": Regime(
-                functions={"utility": lambda: jnp.asarray(0.0)},
+                functions={"utility": _zero_utility},
                 joint_transitions={
                     "target": {
                         "match": JointTransition(
@@ -121,7 +129,7 @@ def _build_model(
                     "wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
                     "income": LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
                 },
-                functions={"utility": lambda wealth, income: wealth + 2 * income},
+                functions={"utility": _target_utility},
             ),
         },
         ages=AgeGrid(start=20, inclusive_stop=21, step="Y"),
@@ -210,13 +218,13 @@ def test_joint_transition_rejects_invalid_probability_values(
 def test_simulation_shares_one_realization_and_hides_the_joint_node() -> None:
     """All outputs use one sampled node, which never appears in the result schema."""
     model = _build_model(enable_jit=False)
-    n_subjects = 200
+    n_agents = 200
 
     result = model.simulate(
         params=_params(),
         initial_conditions={
-            "age": jnp.full(n_subjects, 20.0),
-            "regime_id": jnp.full(n_subjects, RegimeId.source),
+            "age": jnp.full(n_agents, 20.0),
+            "regime_id": jnp.full(n_agents, RegimeId.source),
         },
         log_level="debug",
     )
@@ -485,7 +493,7 @@ def test_bdy_joint_match_matches_scalar_oracle_without_a_stored_match_axis(
         oracle, _BDY_EXPECTED, decimal=DECIMAL_PRECISION
     )
     np.testing.assert_array_almost_equal(
-        np.asarray(solution.values[0]["single"]),
+        np.asarray(solution.values[0]["single"])[..., 0],
         0.95 * _BDY_EXPECTED,
         decimal=DECIMAL_PRECISION,
     )
@@ -519,14 +527,14 @@ def test_bdy_simulation_samples_one_shared_match_and_agrees_with_solve() -> None
     """BDY simulation samples one row whose outputs reproduce the folded value."""
     model = _bdy_model(enable_jit=False)
     solution = model.solve(params=_bdy_params(), log_level="debug")
-    n_subjects = 10_000
+    n_agents = 10_000
 
     result = model.simulate(
         params=_bdy_params(),
         initial_conditions={
-            "age": jnp.zeros(n_subjects),
-            "wealth": jnp.full(n_subjects, 2.0),
-            "regime_id": jnp.full(n_subjects, BDYRegimeId.single),
+            "age": jnp.zeros(n_agents),
+            "wealth": jnp.full(n_agents, 2.0),
+            "regime_id": jnp.full(n_agents, BDYRegimeId.single),
         },
         solution=solution,
         log_level="debug",
@@ -540,7 +548,7 @@ def test_bdy_simulation_samples_one_shared_match_and_agrees_with_solve() -> None
     np.testing.assert_array_equal(couple["wealth"], expected_wealth)
 
     folded_node_values = np.where(expected_wealth == 2.25, 9.375, 12.625)
-    solved_continuation = float(np.asarray(solution.values[0]["single"])[2] / 0.95)
+    solved_continuation = float(np.asarray(solution.values[0]["single"])[2, 0] / 0.95)
     assert abs(folded_node_values.mean() - solved_continuation) < 0.08
     assert "partner_match" not in frame.columns
     assert "partner_match" not in result.state_names

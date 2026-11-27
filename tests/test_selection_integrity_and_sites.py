@@ -63,7 +63,7 @@ _AGES = AgeGrid(start=25, inclusive_stop=75, step="10Y")
 _LOG_LEVELS = pytest.mark.parametrize("log_level", ["off", "warning"])
 
 
-def _regime_uniforms(*, period: int) -> Float[np.ndarray, " subjects"]:
+def _regime_uniforms(*, period: int) -> Float[np.ndarray, " agents"]:
     """Independently encode the reserved lottery and original rows at this date."""
     encoded = json.dumps(
         ("pylcm.random.v1", "regime", "regime", 0), separators=(",", ":")
@@ -79,9 +79,7 @@ def _regime_uniforms(*, period: int) -> Float[np.ndarray, " subjects"]:
             addressed, dtype=jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
         )
 
-    return np.asarray(
-        jax.jit(jax.vmap(draw))(jnp.arange(_N_SUBJECTS, dtype=jnp.uint32))
-    )
+    return np.asarray(jax.jit(jax.vmap(draw))(jnp.arange(_N_AGENTS, dtype=jnp.uint32)))
 
 
 @categorical(ordered=False)
@@ -318,7 +316,7 @@ def test_a_numeric_gate_output_fails_with_logging_off() -> None:
         _numeric_gate_model().solve(params=_PARAMS, log_level="off")
 
 
-_N_SUBJECTS = 1000
+_N_AGENTS = 1000
 
 
 def _panel(
@@ -327,9 +325,9 @@ def _panel(
     return model.simulate(
         params=_PARAMS,
         initial_conditions={
-            "wealth": jnp.zeros(_N_SUBJECTS),
-            "age": jnp.full(_N_SUBJECTS, age),
-            "regime_id": jnp.full(_N_SUBJECTS, model.regime_names_to_ids[regime]),
+            "wealth": jnp.zeros(_N_AGENTS),
+            "age": jnp.full(_N_AGENTS, age),
+            "regime_id": jnp.full(_N_AGENTS, model.regime_names_to_ids[regime]),
         },
         solution=model.solve(params=_PARAMS, log_level="off"),
         log_level="off",
@@ -349,7 +347,7 @@ def test_two_half_probabilities_split_the_panel() -> None:
     panel = _panel(model=model, age=55.0, regime="working")
     retirement = _regime_uniforms(period=4) < 0.5
     np.testing.assert_array_equal(
-        panel.query("age == 65").sort_values("subject_id")["regime_name"].to_numpy(),
+        panel.query("age == 65").sort_values("agent_id")["regime_name"].to_numpy(),
         np.where(retirement, "retirement", "dead"),
     )
     retirees = np.count_nonzero(retirement)
@@ -431,15 +429,15 @@ def _job_model(
 
 
 def _job_simulate(
-    *, model: Model, log_level: LogLevel, n_subjects: int
+    *, model: Model, log_level: LogLevel, n_agents: int
 ) -> SimulationResult:
     return model.simulate(
         params=_PARAMS,
         initial_conditions={
-            "wealth": jnp.zeros(n_subjects),
-            "age": jnp.full(n_subjects, 25.0),
+            "wealth": jnp.zeros(n_agents),
+            "age": jnp.full(n_agents, 25.0),
             "regime_id": jnp.full(
-                n_subjects, model.regime_names_to_ids["unemployed_before_switch"]
+                n_agents, model.regime_names_to_ids["unemployed_before_switch"]
             ),
         },
         solution=model.solve(params=_PARAMS, log_level="off"),
@@ -474,7 +472,7 @@ def test_remain_mass_counted_for_two_distinct_targets_fails_in_simulate(
     with pytest.raises(
         InvalidRegimeTransitionProbabilitiesError, match=_DOUBLE_COUNTED
     ):
-        _job_simulate(model=model, log_level=log_level, n_subjects=4)
+        _job_simulate(model=model, log_level=log_level, n_agents=4)
 
 
 def test_two_targets_sharing_a_half_probability_callable_simulate() -> None:
@@ -484,18 +482,18 @@ def test_two_targets_sharing_a_half_probability_callable_simulate() -> None:
             _SHARED_HALF, targets_at_25=("unemployed_after_switch", "employed")
         ),
         log_level="warning",
-        n_subjects=_N_SUBJECTS,
+        n_agents=_N_AGENTS,
     ).to_dataframe()
     switched = _regime_uniforms(period=1) < 0.5
     np.testing.assert_array_equal(
-        panel.query("age == 35").sort_values("subject_id")["regime_name"].to_numpy(),
+        panel.query("age == 35").sort_values("agent_id")["regime_name"].to_numpy(),
         np.where(switched, "unemployed_after_switch", "employed"),
     )
     after_switch = np.count_nonzero(switched)
     assert panel.query("age == 35")["regime_name"].value_counts().to_dict() == {
         "unemployed_before_switch": 0,
         "unemployed_after_switch": after_switch,
-        "employed": _N_SUBJECTS - after_switch,
+        "employed": _N_AGENTS - after_switch,
         "dead": 0,
     }
 
@@ -680,10 +678,10 @@ def test_an_admitted_start_evaluates_the_user_law() -> None:
 
 
 @pytest.mark.parametrize(
-    ("n_subjects", "seed"), [(2, 0), (5, 0), (5, 1)], ids=["two", "five", "reseeded"]
+    ("n_agents", "seed"), [(2, 0), (5, 0), (5, 1)], ids=["two", "five", "reseeded"]
 )
 def test_simulate_does_not_resolve_demand_again(
-    *, n_subjects: int, seed: int, monkeypatch: pytest.MonkeyPatch
+    *, n_agents: int, seed: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Batch size and seed do not re-derive the demanded pairs."""
     model = _admission_model({25: "working"})
@@ -710,9 +708,9 @@ def test_simulate_does_not_resolve_demand_again(
     model.simulate(
         params=_PARAMS,
         initial_conditions={
-            "wealth": jnp.zeros(n_subjects),
-            "age": jnp.full(n_subjects, 25.0),
-            "regime_id": jnp.full(n_subjects, model.regime_names_to_ids["working"]),
+            "wealth": jnp.zeros(n_agents),
+            "age": jnp.full(n_agents, 25.0),
+            "regime_id": jnp.full(n_agents, model.regime_names_to_ids["working"]),
         },
         solution=solution,
         log_level="off",
@@ -872,8 +870,8 @@ _EXIT_FORMS = pytest.mark.parametrize(
 
 
 @_EXIT_FORMS
-def test_every_subject_takes_the_single_route(exit_law: AgeCaseLaw) -> None:
-    """A deterministic or singleton exit sends all eight subjects to retirement."""
+def test_every_agent_takes_the_single_route(exit_law: AgeCaseLaw) -> None:
+    """A deterministic or singleton exit sends all eight agents to retirement."""
     panel = _shock_panel(exit_law)
     assert panel.query("age == 35")["regime_name"].tolist() == ["retirement"] * 8
 
@@ -883,7 +881,7 @@ def test_downstream_shock_draws_do_not_depend_on_the_exit_form(
     exit_law: AgeCaseLaw,
 ) -> None:
     """Retirement income draws match those after a plain named exit."""
-    columns = ["subject_id", "age", "income"]
+    columns = ["agent_id", "age", "income"]
     np.testing.assert_array_equal(
         _shock_panel(exit_law)[columns].to_numpy(),
         _shock_panel("retirement")[columns].to_numpy(),

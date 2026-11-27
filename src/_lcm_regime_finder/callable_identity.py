@@ -579,7 +579,7 @@ def capture_session(*, limits=None):
         _CAPTURE_SESSION.reset(token)
 
 
-def note_lost_source(subject: str, error: Exception) -> None:
+def note_lost_source(agent: str, error: Exception) -> None:
     """Name a swallowed source or authority read failure in the active capture report.
 
     The caller still answers "unproved"; the obligation keeps the report from reading
@@ -588,7 +588,7 @@ def note_lost_source(subject: str, error: Exception) -> None:
     session = _CAPTURE_SESSION.get()
     if session is not None:
         session.obligations.append(
-            f'Source or authority unreadable during capture: {subject}: {type(error).__name__}: {error}')
+            f'Source or authority unreadable during capture: {agent}: {type(error).__name__}: {error}')
 
 
 def _file_digest(path):

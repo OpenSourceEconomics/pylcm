@@ -354,7 +354,7 @@ def test_process_support_preserves_simulated_value_and_action(
     )
     assert isinstance(result.solution, SolutionResult)
     np.testing.assert_array_equal(
-        result.solution.value_frame(period=0, regime="alive")["income"],
+        result.solution.value_frame(step=0, regime="alive")["income"],
         [1.0, 1.5, 2.0, 2.5, 3.0],
     )
     if budget is not None:

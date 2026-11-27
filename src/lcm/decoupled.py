@@ -5,6 +5,8 @@ user-facing `Regime`, the regime validators and the regime-building code can
 all import it without an import cycle.
 """
 
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Final, Literal
 
 from beartype import beartype
@@ -66,13 +68,19 @@ def _fail_if_an_objective_variant_is_not_an_aggregator(
 
 
 type KoopmansDeclaration = (
-    UserFunction | Phased[UserFunction, UserFunction] | Decoupled | None
+    UserFunction
+    | Phased[UserFunction, UserFunction]
+    | Decoupled
+    | Mapping[str, UserFunction | Phased[UserFunction, UserFunction]]
+    | None
 )
 
 
 def resolve_koopmans_aggregator(
     *, declaration: KoopmansDeclaration, phase: Literal["solve", "simulate"]
-) -> tuple[UserFunction | None, UserFunction | None]:
+) -> tuple[
+    UserFunction | MappingProxyType[str, UserFunction] | None, UserFunction | None
+]:
     """Return the value aggregator and the objective aggregator one phase runs.
 
     The objective aggregator is `None` unless the slot declares a
@@ -83,8 +91,9 @@ def resolve_koopmans_aggregator(
         phase: Which variant a `Phased` part resolves to.
 
     Returns:
-        The value aggregator, or `None` when the slot is empty, and the
-        objective aggregator, or `None`.
+        The value aggregator — each member's, by member name, when the slot is
+        keyed by member — or `None` when the slot is empty, and the objective
+        aggregator, or `None`.
 
     """
     if isinstance(declaration, Decoupled):
@@ -93,6 +102,13 @@ def resolve_koopmans_aggregator(
         )
     if declaration is None:
         return None, None
+    if isinstance(declaration, Mapping):
+        return MappingProxyType(
+            {
+                member: _phase_variant(value=value, phase=phase)
+                for member, value in declaration.items()
+            }
+        ), None
     return _phase_variant(value=declaration, phase=phase), None
 
 
@@ -123,7 +139,8 @@ def koopmans_aggregator_variants(
         value, objective = resolve_koopmans_aggregator(
             declaration=declaration, phase=current
         )
-        for func in (value, objective):
+        values = tuple(value.values()) if isinstance(value, Mapping) else (value,)
+        for func in (*values, objective):
             if func is not None:
                 found.setdefault(id(func), func)
     return tuple(found.values())

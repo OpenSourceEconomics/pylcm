@@ -1,4 +1,4 @@
-"""Execution widths preserve simulated subjects, decisions and numerical values."""
+"""Execution widths preserve simulated agents, decisions and numerical values."""
 
 import functools
 from dataclasses import dataclass
@@ -53,11 +53,11 @@ def _frames(
     seed: int,
     warm_call: bool,
     action_width: int,
-    subject_width: int | None,
+    agent_width: int | None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Compare first or repeated public calls at fixed widths and seed."""
     expected = _baseline(witness=witness, seed=seed).frame
-    widths = {} if subject_width is None else {"subject": subject_width}
+    widths = {} if agent_width is None else {"agent": agent_width}
     if witness == "multi_regime":
         widths["action_product"] = action_width
     model, params, initial = WITNESSES[witness](
@@ -80,7 +80,7 @@ def _frames(
 @pytest.mark.parametrize("seed", [0, 1])
 @pytest.mark.parametrize("warm_call", [False, True], ids=["cold", "warm"])
 @pytest.mark.parametrize(
-    ("action_width", "subject_width"), [(1, 1), (2, 3), (3, 7), (7, None)]
+    ("action_width", "agent_width"), [(1, 1), (2, 3), (3, 7), (7, None)]
 )
 def test_program_widths_preserve_structural_frame_columns(
     *,
@@ -88,15 +88,15 @@ def test_program_widths_preserve_structural_frame_columns(
     seed: int,
     warm_call: bool,
     action_width: int,
-    subject_width: int | None,
+    agent_width: int | None,
 ) -> None:
-    """Subject identities, membership and selected grid actions are exact."""
+    """Agent identities, membership and selected grid actions are exact."""
     got, expected = _frames(
         witness=witness,
         seed=seed,
         warm_call=warm_call,
         action_width=action_width,
-        subject_width=subject_width,
+        agent_width=agent_width,
     )
     model, _, _ = WITNESSES[witness]()
     states_and_actions = {
@@ -115,7 +115,7 @@ def test_program_widths_preserve_structural_frame_columns(
 @pytest.mark.parametrize("seed", [0, 1])
 @pytest.mark.parametrize("warm_call", [False, True], ids=["cold", "warm"])
 @pytest.mark.parametrize(
-    ("action_width", "subject_width"), [(1, 1), (2, 3), (3, 7), (7, None)]
+    ("action_width", "agent_width"), [(1, 1), (2, 3), (3, 7), (7, None)]
 )
 def test_program_widths_preserve_continuous_frame_columns(
     *,
@@ -123,7 +123,7 @@ def test_program_widths_preserve_continuous_frame_columns(
     seed: int,
     warm_call: bool,
     action_width: int,
-    subject_width: int | None,
+    agent_width: int | None,
 ) -> None:
     """Preserve values at the expression's independently verified numerical scale."""
     got, expected = _frames(
@@ -131,7 +131,7 @@ def test_program_widths_preserve_continuous_frame_columns(
         seed=seed,
         warm_call=warm_call,
         action_width=action_width,
-        subject_width=subject_width,
+        agent_width=agent_width,
     )
     value_columns = [
         name

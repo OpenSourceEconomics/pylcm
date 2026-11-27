@@ -64,7 +64,13 @@ class SolutionResult:
     """Labelled value functions, retained artifacts, and omission records."""
 
     values: _SolutionValuesInput
-    """Value function of every solved cell, keyed by period then regime."""
+    """Value function of every solved cell, keyed by step then regime.
+
+    A step is one stage of one period: `step = period * n_stages + position of
+    the regime's stage`. `Model.period_of_step` and `Model.stage_of_step` give
+    the period and stage of a step, and `Model.step_of` the step of a period and
+    regime. Without `stages` the step is the period.
+    """
     metadata: SolutionMetadata
     """Identity, retention, and schema facts of the solve."""
     retained_continuations: ArtifactStore = field(default_factory=ArtifactStore)
@@ -136,11 +142,14 @@ class SolutionResult:
     def value(
         self,
         *,
-        period: int,
+        step: int,
         regime: RegimeName,
     ) -> _FloatValueBoundary:
-        """Return one value-function array by its explicit coordinates."""
-        return self.values[period][regime]
+        """Return one value-function array by its step and regime.
+
+        `Model.step_of(period=..., regime_name=...)` gives the step of a period.
+        """
+        return self.values[step][regime]
 
     def save(self, *, path: Path) -> Path:
         """Persist this complete result atomically to a versioned archive."""
@@ -151,7 +160,7 @@ class SolutionResult:
     def value_array(
         self,
         *,
-        period: int,
+        step: int,
         regime: RegimeName,
         use_categorical_codes: bool = False,
     ) -> xr.DataArray:
@@ -183,8 +192,8 @@ class SolutionResult:
         on its device until it is converted. Select coordinates with `.sel`
         before converting to a table to keep the conversion small.
         """
-        value = self.value(period=period, regime=regime)
-        schema = self.metadata.value_schemas[period, regime]
+        value = self.value(step=step, regime=regime)
+        schema = self.metadata.value_schemas[step, regime]
         if "V" in schema.axis_names or len(set(schema.axis_names)) != len(
             schema.axis_names
         ):
@@ -217,7 +226,7 @@ class SolutionResult:
     def value_frame(
         self,
         *,
-        period: int,
+        step: int,
         regime: RegimeName,
         use_categorical_codes: bool = False,
     ) -> pd.DataFrame:
@@ -233,7 +242,7 @@ class SolutionResult:
         `Model.lookup_policy`, which uses simulation's interpolation.
         """
         array = self.value_array(
-            period=period,
+            step=step,
             regime=regime,
             use_categorical_codes=use_categorical_codes,
         )

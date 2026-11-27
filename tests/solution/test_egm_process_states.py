@@ -285,7 +285,7 @@ def _get_params(shock_type: str) -> UserParams:
     }
 
 
-def test_rouwenhorst_process_matches_dense_brute_force():
+def test_rouwenhorst_process_matches_dense_brute_force() -> None:
     """DC-EGM with a Rouwenhorst income process matches dense brute force.
 
     Each income node is an axis of V and the carry; the child's node is
@@ -313,7 +313,7 @@ def test_rouwenhorst_process_matches_dense_brute_force():
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["alive"])
         dcegm_V = np.asarray(dcegm_solution[period]["alive"])
-        assert brute_V.shape == dcegm_V.shape == (N_INCOME_NODES, 120)
+        assert brute_V.shape == dcegm_V.shape == (N_INCOME_NODES, 120, 1)
         np.testing.assert_allclose(
             dcegm_V[:, N_BRUTE_UNSTABLE_NODES:],
             brute_V[:, N_BRUTE_UNSTABLE_NODES:],
@@ -323,7 +323,7 @@ def test_rouwenhorst_process_matches_dense_brute_force():
         )
 
 
-def test_iid_process_matches_dense_brute_force():
+def test_iid_process_matches_dense_brute_force() -> None:
     """DC-EGM with a Gauss-Hermite IID income process matches dense brute force.
 
     IID weights are node-independent rows of the intrinsic transition matrix;
@@ -344,7 +344,7 @@ def test_iid_process_matches_dense_brute_force():
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["alive"])
         dcegm_V = np.asarray(dcegm_solution[period]["alive"])
-        assert brute_V.shape == dcegm_V.shape == (N_INCOME_NODES, 120)
+        assert brute_V.shape == dcegm_V.shape == (N_INCOME_NODES, 120, 1)
         np.testing.assert_allclose(
             dcegm_V[:, N_BRUTE_UNSTABLE_NODES:],
             brute_V[:, N_BRUTE_UNSTABLE_NODES:],
@@ -356,7 +356,7 @@ def test_iid_process_matches_dense_brute_force():
 
 def test_nan_process_transition_weights_surface_as_error(
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     """NaN process weights poison the DC-EGM solve loudly, as under brute force.
 
     The intrinsic transition weights of a process state are evaluated inside

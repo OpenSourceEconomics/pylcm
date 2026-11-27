@@ -40,19 +40,18 @@ walk over a state of the source.
   cell has no value, as under the per-action rule.
 - `MutualConsent(settle=Settlement(name=..., candidates=..., default=...))` adds a
   settlement read by exit-target projections and utility adjustments under `name`.
-  1. Each member compares its stay value with its outside value at the default.
+  1. Each member compares its stay value with its outside value at the default. The
+     rule's `tie` decides every comparison of the rule: a member prefers its outside
+     value to its stay value when it is above it, or equal to it under `tie="leave"`.
   1. Nobody refuses: stay. Both refuse: separate at the default.
-  1. Exactly one refuses and the other member, willing to stay at the default, is
-     exactly indifferent there, which happens only under `tie="stay"`: separate at the
-     default if every destination is supported there. No shift is needed to compensate
-     that member; the exit ID, landings and adjustments are those of the default.
-  1. Otherwise, with exactly one refusing: among the candidates strictly on the other
-     member's side of the default, take the one nearest the default at which that member
-     weakly accepts separation. Separate there if the member who wants to leave still
-     gains under the rule's `tie`; otherwise, or without such a candidate, stay.
+  1. Exactly one refuses: among the candidates strictly on the other member's side of
+     the default, take the one nearest the default at which that member prefers its
+     outside value. Separate there if the member who wants to leave prefers its outside
+     value there too; otherwise, or without such a candidate, stay.
 - Two members only. `settle` exists only on `MutualConsent` and `renegotiate` only on
   `Unilateral`.
-- The default reads what `available` reads and is clipped to the candidates' range.
+- The default is one number at the source node, read before the action, and is clipped
+  to the candidates' range.
 - A separating household lands where the projections evaluated at the selected
   settlement put it and receives the adjustments evaluated there. The simulated output
   shows the settlement through those landing states and values; it has no column of its

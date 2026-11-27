@@ -13,23 +13,23 @@ constructed model, with `schema_version == 1`:
 
 - `graph` is `model.graph`: declared and effective phase edges, their bound laws,
   starting nodes, valued nodes, visited nodes and pruning reasons.
-- `regimes_by_period[period][regime_name]` retains finalized user declarations, with the
+- `regimes_by_step[step][regime_name]` retains finalized user declarations, with the
   age/period factories already resolved during construction. This includes
   phase-invariant actions, ownership and preference declarations.
-- `phases[period, regime_name, phase]` contains the resolved phase slice, where `phase`
-  is `"solve"` or `"simulate"`. It retains the full grid states, function pool,
-  constraints, state and joint laws, regime-transition law, aggregators and same-period
-  exits. Undemanded simulation contexts are absent, including contexts whose
+- `phases[step, regime_name, phase]` contains the resolved phase slice, where `phase` is
+  `"solve"` or `"simulate"`. It retains the full grid states, function pool,
+  constraints, state and joint laws, regime-transition law, aggregators and composition
+  action. Undemanded simulation contexts are absent, including contexts whose
   simulation-only factories construction did not need to build.
 - `functions` contains each callable identity and its advertised `signature`. Each
   entry's `arg_names` gives its finite declared DAG inputs, or `None` when the interface
   remains variadic or cannot be inspected. This uses the same Python signature
   convention as construction, including wrappers and partials.
-- `original_periods_by_regime`, `value_periods_by_regime`, `query_periods_by_phase` and
-  `exit_function_demand` preserve the construction roles of physical entry, stored full
-  values and same-period decisions. The query mapping retains the construction namespace
-  keys `"solution"` and `"simulation"`; node keys use the public phase names `"solve"`
-  and `"simulate"`.
+- `original_steps_by_regime`, `value_steps_by_regime`, `query_steps_by_phase` and
+  `composition_action_function_demand` preserve the construction roles of physical
+  entry, stored full values and same-period decisions. The query mapping retains the
+  construction namespace keys `"solution"` and `"simulation"`; node keys use the public
+  phase names `"solve"` and `"simulate"`.
 
 Inspection reads cached declarations. It does not call economic functions or factories,
 prepare a runtime generation, compile programs, solve, simulate, or require runtime
@@ -74,7 +74,7 @@ attributes retain:
 - `declared_edges`: the original declared phase edges, including pruned edges;
 - `pruned_edges`: the selected phase's immutable mapping of removed edges to reasons.
 
-Same-period exits and value reads are metadata in `declarations`, not temporal arcs.
+Composition actions and value reads are metadata in `declarations`, not temporal arcs.
 Temporal edges always advance to the next computational period. A retained edge is
 conditional support, not a promise of positive probability at every state.
 
@@ -150,7 +150,7 @@ source = {"model": "my-recorded-model-revision"}
 params = get_params(n_periods=3)
 capture = PeriodCapture(
     directory=Path("period-captures"),
-    periods=(("working_life", 0),),
+    steps=(("working_life", 0),),
     source_identity=source,
 )
 template = get_model(n_periods=3)
@@ -221,10 +221,10 @@ Admission preserves the production planner's represented-allocation charge: the 
 compiler reservation plus the recorded external residency must fit the same effective
 budget and headroom. It does not recreate unrelated production buffers, allocator state,
 cache pressure or physical peak memory. The initial public route excludes invariant
-blocks, donated inputs, continuation payloads, collective/gated kernels and selected
-artifacts. Capture never changes the model's economic support, horizon, precision or
-result retention to make a route fit. Private environment-selected pickle captures
-retain their separate legacy format.
+blocks, donated inputs, continuation payloads, gated kernels and selected artifacts.
+Capture never changes the model's economic support, horizon, precision or result
+retention to make a route fit. Private environment-selected pickle captures retain their
+separate legacy format.
 
 (execution-configuration)=
 
@@ -309,9 +309,9 @@ Its fields:
   means every device JAX reports. Every id must be one JAX reports.
 
 - A device-memory budget, derived or explicit, selects the top-first outer-cohort
-  planner for simulation regardless of whether `axis_widths["subject"]` is pinned;
-  without a pin the planner resolves its own starting anchor. It changes simulation
-  planning only and does not enter the economic fingerprint.
+  planner for simulation regardless of whether `axis_widths["agent"]` is pinned; without
+  a pin the planner resolves its own starting anchor. It changes simulation planning
+  only and does not enter the economic fingerprint.
 
 - `donate_buffers` is an exact Boolean, defaulting to `True`. `False` disables compiled
   solve input donation without changing the model fingerprint or economic inputs.
@@ -350,12 +350,12 @@ Its fields:
   at the end of its period, while that period's values are still on the device, so the
   error and its breakdown read nothing back from value storage.
   `ValueStore.materialize()` refuses to place every value on the device at once above
-  the budget. A simulation of several subject chunks runs period by period, with every
+  the budget. A simulation of several agent chunks runs period by period, with every
   chunk going through one period before the next, so each period's values and policies
   are copied to the device once rather than once per chunk. Before a period's chunks
   run, the values and policies the next period's programs declare reading start copying,
   so the copies overlap this period's work; under a budget the planner reserves the
-  largest such set beside every subject's state. Under `BLOCK_MAJOR`, `"host"` and a
+  largest such set beside every agent's state. Under `BLOCK_MAJOR`, `"host"` and a
   directory apply to each code's solve; component jobs take `"device"` only. A copy or
   write that fails raises `ValueStorageError`, naming the period, the regime and the
   target.
@@ -371,7 +371,7 @@ when its policy is not applicable. Retained continuation leaves remain ineligibl
 feature promises no particular workflow speedup or backend buffer reuse.
 
 The ceiling applies to the selected compute devices. During GPU simulation, completed
-subject chunks can be transferred to CPU storage for final assembly. That host RAM is
+agent chunks can be transferred to CPU storage for final assembly. That host RAM is
 outside the GPU ceiling; it must be sized separately for the retained chunks and final
 result. GPU source buffers remain live until their transfer completes. During CPU
 simulation, retained chunks, concatenation and trimming occupy the budgeted CPU device
@@ -535,12 +535,12 @@ solution = model.solve(
     retention=ResultRetention.VALUES_AND_REPLAY,
 )
 
-V_working = solution.value(period=0, regime="working")
-values = solution.value_array(period=0, regime="working")
+V_working = solution.value(step=0, regime="working")
+values = solution.value_array(step=0, regime="working")
 curve = values.sel(education="college")
 frame = curve.to_dataframe().reset_index()
-full_frame = solution.value_frame(period=0, regime="working")
-codes = solution.value_frame(period=0, regime="working", use_categorical_codes=True)
+full_frame = solution.value_frame(step=0, regime="working")
+codes = solution.value_frame(step=0, regime="working", use_categorical_codes=True)
 ```
 
 `value_array` returns an xarray `DataArray` named `V` with one dimension per axis in
@@ -548,17 +548,18 @@ codes = solution.value_frame(period=0, regime="working", use_categorical_codes=T
 and cannot be `V`, which is reserved for the value. Discrete states carry their labels
 as a categorical coordinate in declaration order, with the ordering matching simulation;
 a state declared with `values` carries those numbers as a plain coordinate.
-`use_categorical_codes=True` keeps integer codes. Collective regimes also have a
-`member` dimension, and a regime without states yields a zero-dimensional array.
-Coordinates are the resolved grid nodes used by the solve, including parameter-dependent
-process grids and period-specialized grids, and remain available after saving and
-loading. The array wraps the stored value without copying it to the host, so select the
-slice you need before converting it to a table.
+`use_categorical_codes=True` keeps integer codes. The last dimension is `member`, with
+the regime's members as coordinates: `"self"` for a regime declared with a plain utility
+function. A regime without states has that dimension only. Coordinates are the resolved
+grid nodes used by the solve, including parameter-dependent process grids and
+period-specialized grids, and remain available after saving and loading. The array wraps
+the stored value without copying it to the host, so select the slice you need before
+converting it to a table.
 
 `value_frame` is the same array in long form: a pandas DataFrame with one column per
 dimension followed by `V`. It materializes every grid point, so the frame can be large.
 For values between nodes, use `Model.lookup_policy`, which uses the same interpolation
-as simulation. The coordinate-bearing value schema uses solution schema version 3;
+as simulation. The coordinate-bearing value schema uses solution schema version 4;
 archives from a different schema version are refused by the existing compatibility gate.
 
 The result and its supporting types live in the lightweight `lcm.solver_api` submodule;
@@ -571,11 +572,11 @@ they are not re-exported from the top-level `lcm` namespace. The retention modes
 | `ALL_PERSISTABLE_ARTIFACTS` | Values plus every applicable model-verifiable artifact                       |
 
 Values live in a `ValueStore`; artifacts are addressed by an
-`ArtifactRef(period=..., regime=..., key=...)` and kept in immutable `ArtifactStore`
+`ArtifactRef(step=..., regime=..., key=...)` and kept in immutable `ArtifactStore`
 instances. Both stores expose the same eager values after a solve and independently lazy
 entries after restoration. Inspecting coordinates, metadata, omissions, or
 `load_state(...)` does not load numerical data. After restoration, `solution.value(...)`
-and `solution.values[period][regime]` load only the requested value entry and verify its
+and `solution.values[step][regime]` load only the requested value entry and verify its
 checksum first. Whole-store numerical traversal is explicit through
 `solution.values.materialize()`; per-coordinate access preserves independent laziness.
 For ordinary array artifacts, `store[ref]` does the same. A plugin-defined PyTree
@@ -670,7 +671,7 @@ values_only = model.solve(
     retention=ResultRetention.VALUES,
 )
 
-V_alive = values_only.value(period=0, regime="alive")
+V_alive = values_only.value(step=0, regime="alive")
 ```
 
 Such a result simulates only where every decision is recoverable from values; a model
@@ -754,8 +755,8 @@ recoverable from values, but fails closed before forward simulation when a requi
 replay artifact is absent or invalid. Use the default
 `ResultRetention.VALUES_AND_REPLAY` when the model may require such artifacts.
 
-`ExecutionConfig(axis_widths={"subject": width})` controls the model's subject chunks
-and fixes their inner compiled width. The outer chunk is aligned to the selected subject
+`ExecutionConfig(axis_widths={"agent": width})` controls the model's agent chunks and
+fixes their inner compiled width. The outer chunk is aligned to the selected agent
 devices; this alignment does not increase the fixed inner width. With a memory budget
 and no explicit width, complete chunk profiles select the widest fitting candidate.
 Retained full-population inputs and result assembly remain part of the bound even when
@@ -764,7 +765,7 @@ same model accepts different call-time populations. `seed` controls random draws
 independently of those chunk boundaries. The ordinary `seed` is an integer, which
 becomes a Threefry key whatever `jax_default_prng_impl` says, or a scalar typed Threefry
 key; other implementations are refused, because their batched draws change with the
-chunk width. The independent `taste_shock_seed` draws per subject key and accepts an
+chunk width. The independent `taste_shock_seed` draws per agent key and accepts an
 integer or a scalar typed key of any implementation. Caller key buffers join the
 budgeted entry inventory, and profiles distinguish the taste root's actual PRNG
 implementation. A collective model may require an addressed dissolution replay artifact
@@ -772,7 +773,7 @@ and `own_member`; see [Collective regimes](collective_regimes.md).
 
 Under a device-memory budget, the top-first outer-cohort planner profiles the
 whole-population candidate first and descends only on refusal, using either the pinned
-subject width or an automatically resolved one as its starting anchor. Existing live
+agent width or an automatically resolved one as its starting anchor. Existing live
 storage and transfer checks remain active on every call. See
 [Batch forward simulation](../user_guide/tuning.md#batch-forward-simulation) for the
 search limits and memory scope.
@@ -792,14 +793,14 @@ value diagnostics remain warnings; an application requiring all stored values fi
 must retain that stronger invariant.
 
 `model.simulate(...)` also reports the resolved execution plan it dispatched: the
-forward route (`"legacy"` or `"subjects"`), the ordered subject devices and their
-backend, the resolved planner axis widths by regime, the outer chunk count and admitted
-chunk widths, and the budget mode with its effective device-memory bytes. A one-line
-summary logs at `log_level="progress"` and `"debug"`; the complete record logs at
-`"debug"` only, and neither line appears at `"warning"` or `"off"`. This is diagnostic
-only — it changes no numerical, RNG, ownership or admission decision — and exists so a
-clean production run carries evidence of which route actually engaged. The same record
-is available programmatically as `SimulationResult.plan_summary`.
+forward route (`"legacy"` or `"agents"`), the ordered agent devices and their backend,
+the resolved planner axis widths by regime, the outer chunk count and admitted chunk
+widths, and the budget mode with its effective device-memory bytes. A one-line summary
+logs at `log_level="progress"` and `"debug"`; the complete record logs at `"debug"`
+only, and neither line appears at `"warning"` or `"off"`. This is diagnostic only — it
+changes no numerical, RNG, ownership or admission decision — and exists so a clean
+production run carries evidence of which route actually engaged. The same record is
+available programmatically as `SimulationResult.plan_summary`.
 
 pylcm enables a persistent JAX compilation cache by default. Set
 `JAX_COMPILATION_CACHE_DIR` to choose the full directory or `LCM_COMPILATION_CACHE_NAME`
@@ -815,21 +816,21 @@ preallocates; with `XLA_PYTHON_CLIENT_PREALLOCATE=false` pass an explicit
 `Model.lookup_policy(params=..., solution=..., period=..., regime_name=..., states=..., action_grids=None, keep_intermediates=())`
 evaluates the decision that simulate takes at caller-supplied states of one demanded
 period and regime. It returns a `PolicyLookup` with `actions`, a mapping from action
-name to the chosen grid values, and `value`, the maximised value at each state.
-Continuous states off the grid extrapolate as in simulate; discrete states and
-restricted `action_grids` values must lie on their grids. `Model.state_names` gives the
-axis order of `solution.values[period][regime]`, and `Model.state_grid` gives a state's
-grid nodes after runtime parameters.
+name to the chosen grid values, and `value`, the maximised value at each state, with a
+trailing member axis in member order: one entry for a regime declared with a plain
+utility function. Continuous states off the grid extrapolate as in simulate; discrete
+states and restricted `action_grids` values must lie on their grids. `Model.state_names`
+gives the order of the state axes of `solution.values[step][regime]`, which precede its
+member axis, and `Model.state_grid` gives a state's grid nodes after runtime parameters.
 
 A regime that reads a `shocks=` group on the integrated current-IID route, that is a
 group no endogenous-grid regime reads, raises `UnsupportedOperationError`: its decision
 depends on a current shock, which needs an explicit observation or conditional query.
 See [Combinations not yet composed with current shocks](shocks.md#current-iid-refusals).
 
-An active `Unilateral(renegotiate=Renegotiate(...))` also raises
-`UnsupportedOperationError`. Its current decision may change the bargaining state or
-enter a separation destination, which an unrouted `PolicyLookup` cannot express. Use
-`Model.simulate` to execute and report that decision.
+An active `PCOnWeight(state=...)` also raises `UnsupportedOperationError`. Its decision
+may change the Pareto weight or enter a separation destination, which an unrouted
+`PolicyLookup` cannot express. Use `Model.simulate` to execute and report that decision.
 
 `keep_intermediates` names the intermediates of the decision to keep, in any order: the
 action values `"Q"`, their feasibility `"F"`, the flow utility `"U"` and the
@@ -837,7 +838,7 @@ certainty-equivalent continuation `"CE"`. Each kept one fills the field of that 
 over the (possibly restricted) action grid, with one leading row per state and one axis
 per action in the order of `actions`; the others stay `None`, as all four do by default.
 All come from the one kernel evaluation the decision maximizes over, and keeping them
-leaves `actions` and `value` unchanged. Collective regimes refuse the option.
+leaves `actions` and `value` unchanged. `Q`, `U` and `CE` end in the member axis.
 
 `Q`, `U` and `CE` are raw: an infeasible entry holds what the action would have, so a
 `Q` entry can exceed `value`, and `value` is the max of `Q` over the entries `F` admits.
@@ -898,9 +899,9 @@ ordered Categorical over those numbers that `.astype(float)` turns into numbers.
 `use_categorical_codes=True` gives integer codes instead.
 
 Inspection properties include `regime_names`, `state_names`, `action_names`,
-`n_periods`, `n_subjects`, `available_targets`, `raw_results`, `flat_params`, and
-`period_to_regime_to_V_arr`. `plan_summary` carries the resolved execution plan the call
-reported (route, subject devices, resolved widths, chunking, budget mode); it is
+`n_periods`, `n_agents`, `available_targets`, `raw_results`, `flat_params`, and
+`step_to_regime_to_V_arr`. `plan_summary` carries the resolved execution plan the call
+reported (route, agent devices, resolved widths, chunking, budget mode); it is
 diagnostic only and is `None` for a result read back with `load`.
 
 `SimulationResult.save(directory=..., df_additional_targets=None, df_use_categorical_codes=False)`

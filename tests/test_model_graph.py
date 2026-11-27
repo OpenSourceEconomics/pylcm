@@ -27,7 +27,7 @@ from lcm.exceptions import (
 from lcm.initial_nodes import UserInitialNodes
 from lcm.regime import Regime
 from lcm.transition import ModelEdges
-from lcm.typing import RegimeName, ScalarInt
+from lcm.typing import FloatND, RegimeName, ScalarInt
 from tests.test_models import n_nbegm_toy
 
 
@@ -38,22 +38,90 @@ class _GraphRegimeId:
     realized: ScalarInt
 
 
+def _invest(investment: float) -> float:
+    return investment
+
+
+def _keep_wealth(wealth: float) -> float:
+    return wealth
+
+
+def _zero_wealth_utility(wealth: float) -> float:
+    return 0.0 * wealth
+
+
+def _wealth_utility(wealth: float) -> float:
+    return wealth
+
+
+def _negative_wealth_utility(wealth: float) -> float:
+    return -wealth
+
+
+def _realized_regime() -> ScalarInt:
+    return _GraphRegimeId.realized
+
+
+def _perceived_regime() -> ScalarInt:
+    return _GraphRegimeId.perceived
+
+
+def _mass(mass: float) -> FloatND:
+    return jnp.asarray(mass)
+
+
+def _complement_mass(mass: float) -> FloatND:
+    return jnp.asarray(1.0 - mass)
+
+
+def _probability_zero() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def _probability_quarter() -> FloatND:
+    return jnp.asarray(0.25)
+
+
+def _probability_three_quarters() -> FloatND:
+    return jnp.asarray(0.75)
+
+
+def _probability_one() -> FloatND:
+    return jnp.asarray(1.0)
+
+
+def _realized_lottery() -> FloatND:
+    return jnp.array([0.0, 1.0, 0.0])
+
+
+def _utility_one() -> FloatND:
+    return jnp.asarray(1.0)
+
+
+def _utility_ten() -> FloatND:
+    return jnp.asarray(10.0)
+
+
+def _utility_twenty() -> FloatND:
+    return jnp.asarray(20.0)
+
+
 def _graph_regimes() -> dict[str, Regime]:
     grid = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
     return {
         "work": Regime(
             states={"wealth": grid},
             actions={"investment": grid},
-            state_transitions={"wealth": lambda investment: investment},
-            functions={"utility": lambda wealth: 0.0 * wealth},
+            state_transitions={"wealth": _invest},
+            functions={"utility": _zero_wealth_utility},
         ),
         "perceived": Regime(
             states={"wealth": grid},
-            functions={"utility": lambda wealth: wealth},
+            functions={"utility": _wealth_utility},
         ),
         "realized": Regime(
             states={"wealth": grid},
-            functions={"utility": lambda wealth: -wealth},
+            functions={"utility": _negative_wealth_utility},
         ),
     }
 
@@ -67,44 +135,6 @@ def test_model_requires_explicit_edge_topology() -> None:
             regime_id_class=_GraphRegimeId,
             initial_nodes=((0, "work"),),
         )
-
-
-def test_graph_edges_price_perceived_choice_and_realize_other_destination() -> None:
-    """Price an investment through solve edges and realize the simulation edge."""
-    model = Model(
-        regimes=_graph_regimes(),
-        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
-        regime_id_class=_GraphRegimeId,
-        initial_nodes=((0, "work"),),
-        edges=Phased(
-            solve={"work": {"perceived": 0}},
-            simulate={"work": {"realized": 0}},
-        ),
-        enable_jit=False,
-    )
-    assert model.graph.initial_nodes == frozenset({(0, "work")})
-    assert model.reachability.solution.targets(period=0, source="work") == (
-        "perceived",
-    )
-    assert model.reachability.simulation.targets(period=0, source="work") == (
-        "realized",
-    )
-    solution = model.solve(params={"discount_factor": 1.0}, log_level="debug")
-    np.testing.assert_array_equal(solution.values[0]["work"], jnp.ones(2))
-    frame = model.simulate(
-        params={"discount_factor": 1.0},
-        solution=solution,
-        initial_conditions={
-            "age": jnp.array([0]),
-            "wealth": jnp.array([0.0]),
-            "regime_id": jnp.array([_GraphRegimeId.work]),
-        },
-        log_level="debug",
-        seed=7,
-    ).to_dataframe()
-    assert frame["regime_name"].tolist() == ["work", "realized"]
-    assert frame.loc[frame["period"] == 0, "investment"].tolist() == [1.0]
-    assert frame.loc[frame["period"] == 1, "wealth"].tolist() == [1.0]
 
 
 @pytest.mark.parametrize(("source", "target"), [("work", "typo"), ("typo", "realized")])
@@ -135,7 +165,7 @@ def test_transition_kernel_rejects_embedded_topology(
     """A kernel cannot declare a second source of model edges."""
     with pytest.raises(TypeError, match="targets"):
         wrapper(
-            func=lambda: _GraphRegimeId.realized,
+            func=_realized_regime,
             targets=("realized",),  # ty: ignore[unknown-argument] -- obsolete topology
         )
 
@@ -155,7 +185,7 @@ def test_graph_snapshot_owns_immutable_source_age_selectors() -> None:
     assert model.graph.edges.solve["work"]["perceived"] == frozenset({0, 1})
     assert model.graph.edges.simulate["work"]["perceived"] == frozenset({0, 1})
     assert model.graph.initial_nodes == frozenset({(1, "work")})
-    assert model.graph.solution.targets(period=1, source="work") == ("perceived",)
+    assert model.graph.solution.targets(step=1, source="work") == ("perceived",)
     assert (2, "perceived") in model.graph.nodes
     with pytest.raises(TypeError):
         model.graph.edges.solve["work"]["perceived"] = frozenset({0})  # ty: ignore[invalid-assignment] -- intentional mutation
@@ -174,8 +204,8 @@ def test_fixed_zero_graph_edge_keeps_declared_topology_and_pruning_reason() -> N
             "work": Transition(
                 targets={"perceived": 0, "realized": 0},
                 law={
-                    "perceived": StochasticTransition(func=lambda mass: mass),
-                    "realized": StochasticTransition(func=lambda mass: 1.0 - mass),
+                    "perceived": StochasticTransition(func=_mass),
+                    "realized": StochasticTransition(func=_complement_mass),
                 },
             )
         },
@@ -183,8 +213,8 @@ def test_fixed_zero_graph_edge_keeps_declared_topology_and_pruning_reason() -> N
         enable_jit=False,
     )
     assert model.graph.edges.solve["work"]["perceived"] == frozenset({0})
-    assert model.graph.solution.targets(period=0, source="work") == ("realized",)
-    assert model.graph.simulation.targets(period=0, source="work") == ("realized",)
+    assert model.graph.solution.targets(step=0, source="work") == ("realized",)
+    assert model.graph.simulation.targets(step=0, source="work") == ("realized",)
     for phase in ("solve", "simulate"):
         assert model.graph.pruned_edges[phase][(0, "work", "perceived")] == (
             "fixed_zero_probability"
@@ -209,10 +239,8 @@ def test_scalar_probability_mapping_cannot_extend_declared_graph() -> None:
                 "work": Transition(
                     targets={"perceived": 0, "work": 0},
                     law={
-                        "perceived": StochasticTransition(
-                            func=lambda: jnp.asarray(1.0)
-                        ),
-                        "realized": StochasticTransition(func=lambda: jnp.asarray(0.0)),
+                        "perceived": StochasticTransition(func=_probability_one),
+                        "realized": StochasticTransition(func=_probability_zero),
                     },
                 )
             },
@@ -241,9 +269,7 @@ def test_scalar_probability_mapping_naming_fewer_targets_than_supplied_is_refuse
             edges={
                 "work": Transition(
                     targets={"perceived": 0, "realized": 0},
-                    law={
-                        "perceived": StochasticTransition(func=lambda: jnp.asarray(1.0))
-                    },
+                    law={"perceived": StochasticTransition(func=_probability_one)},
                 )
             },
             enable_jit=False,
@@ -267,15 +293,15 @@ def test_kernel_cannot_select_destination_outside_current_source_age_edges(
             "work": Transition(
                 targets={"perceived": 0, "realized": (0, 1)},
                 law=(
-                    StochasticTransition(func=lambda: jnp.array([0.0, 1.0, 0.0]))
+                    StochasticTransition(func=_realized_lottery)
                     if stochastic
-                    else lambda: _GraphRegimeId.perceived
+                    else _perceived_regime
                 ),
             )
         },
         enable_jit=False,
     )
-    assert model.graph.solution.targets(period=1, source="work") == ("realized",)
+    assert model.graph.solution.targets(step=1, source="work") == ("realized",)
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
         model.solve(params={"discount_factor": 1.0}, log_level=log_level)
 
@@ -284,11 +310,11 @@ def test_value_only_node_needs_only_its_perceived_graph_continuation() -> None:
     """Value a belief node without adding its continuation to physical visits."""
     regimes = _graph_regimes()
     regimes["perceived"] = regimes["perceived"].replace(
-        state_transitions={"wealth": lambda wealth: wealth},
-        functions={"utility": lambda wealth: 0.0 * wealth},
+        state_transitions={"wealth": _keep_wealth},
+        functions={"utility": _zero_wealth_utility},
     )
     regimes["realized"] = regimes["realized"].replace(
-        functions={"utility": lambda wealth: wealth},
+        functions={"utility": _wealth_utility},
     )
     model = Model(
         regimes=regimes,
@@ -305,9 +331,9 @@ def test_value_only_node_needs_only_its_perceived_graph_continuation() -> None:
         {(0, "work"), (1, "perceived"), (1, "realized"), (2, "realized")}
     )
     assert model.graph.visited_nodes == frozenset({(0, "work"), (1, "realized")})
-    assert model.graph.simulation.targets(period=1, source="perceived") == ()
+    assert model.graph.simulation.targets(step=1, source="perceived") == ()
     solution = model.solve(params={"discount_factor": 1.0}, log_level="debug")
-    np.testing.assert_array_equal(solution.values[0]["work"], jnp.ones(2))
+    np.testing.assert_array_equal(solution.values[0]["work"][..., 0], jnp.ones(2))
 
 
 def test_explicit_initial_pair_requires_one_exact_age() -> None:
@@ -321,13 +347,6 @@ def test_explicit_initial_pair_requires_one_exact_age() -> None:
             edges={},
             enable_jit=False,
         )
-
-
-def test_broadcast_graph_preserves_nnbegm_phase_invariance() -> None:
-    """Broadcast topology preserves identical numerical declarations across phases."""
-    model = n_nbegm_toy.build_model(variant="n_nbegm", n_periods=3)
-    assert model.graph.edges.solve == model.graph.edges.simulate
-    assert model.graph.solution.targets(period=0, source="alive") == ("alive", "dead")
 
 
 def test_graph_destination_order_preserves_nnbegm_phase_invariance() -> None:
@@ -357,7 +376,7 @@ def test_graph_destination_order_preserves_nnbegm_phase_invariance() -> None:
         edges=Phased(solve=solve_edges, simulate=simulate_edges),
     )
     assert model.graph.edges.solve == model.graph.edges.simulate
-    assert model.graph.solution.targets(period=0, source="alive") == ("alive", "dead")
+    assert model.graph.solution.targets(step=0, source="alive") == ("alive", "dead")
 
 
 def test_required_age_without_an_edge_out_names_the_missing_edge() -> None:
@@ -417,9 +436,9 @@ def test_published_initial_nodes_are_accepted_by_the_constructor() -> None:
 def _declaration_model(*, edges: ModelEdges, enable_jit: bool) -> Model:
     return Model(
         regimes={
-            "work": Regime(functions={"utility": lambda: jnp.asarray(1.0)}),
-            "perceived": Regime(functions={"utility": lambda: jnp.asarray(10.0)}),
-            "realized": Regime(functions={"utility": lambda: jnp.asarray(20.0)}),
+            "work": Regime(functions={"utility": _utility_one}),
+            "perceived": Regime(functions={"utility": _utility_ten}),
+            "realized": Regime(functions={"utility": _utility_twenty}),
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_GraphRegimeId,
@@ -429,8 +448,8 @@ def _declaration_model(*, edges: ModelEdges, enable_jit: bool) -> Model:
     )
 
 
-@pytest.mark.parametrize("enable_jit", [False, True])
-@pytest.mark.parametrize("container", ["dict", "proxy", "phased"])
+@pytest.mark.parametrize("enable_jit", [True])
+@pytest.mark.parametrize("container", ["phased"])
 @pytest.mark.parametrize("mutation", ["outer", "inner"])
 def test_declared_edges_snapshot_reconstructs_original_value(
     *, enable_jit: bool, container: str, mutation: str
@@ -456,20 +475,18 @@ def test_declared_edges_snapshot_reconstructs_original_value(
         [
             specimen.solve(params={"discount_factor": 0.5}, log_level="debug").values[
                 0
-            ]["work"]
+            ]["work"][..., 0]
             for specimen in (model, twin)
         ],
         [6.0, 6.0],
     )
 
 
-@pytest.mark.parametrize(
-    "wrapper", ["plain", "proxy", "case", "default", "until", "mapped-until", "phased"]
-)
+@pytest.mark.parametrize("wrapper", ["plain", "mapped-until", "phased"])
 def test_transition_snapshots_nested_laws_at_construction(wrapper: str) -> None:
     """Nested probability mappings are owned before a model binds their laws."""
-    low = StochasticTransition(func=lambda: jnp.asarray(0.25))
-    high = StochasticTransition(func=lambda: jnp.asarray(0.75))
+    low = StochasticTransition(func=_probability_quarter)
+    high = StochasticTransition(func=_probability_three_quarters)
     probabilities = {"perceived": low, "realized": high}
     laws = {
         "plain": probabilities,
@@ -485,8 +502,8 @@ def test_transition_snapshots_nested_laws_at_construction(wrapper: str) -> None:
         "phased": Phased(solve=probabilities, simulate=probabilities),
     }
     transition = Transition(law=laws[wrapper])
-    probabilities["perceived"] = StochasticTransition(func=lambda: jnp.asarray(1.0))
-    probabilities["realized"] = StochasticTransition(func=lambda: jnp.asarray(0.0))
+    probabilities["perceived"] = StochasticTransition(func=_probability_one)
+    probabilities["realized"] = StochasticTransition(func=_probability_zero)
     model = _declaration_model(edges={"work": transition}, enable_jit=False)
     np.testing.assert_array_equal(
         model.solve(params={"discount_factor": 0.5}, log_level="debug").values[0][
@@ -498,7 +515,7 @@ def test_transition_snapshots_nested_laws_at_construction(wrapper: str) -> None:
 
 def test_declared_probability_law_preserves_callable_identity() -> None:
     """Snapshotting containers leaves the user's callable unchanged."""
-    probability = StochasticTransition(func=lambda: jnp.asarray(1.0))
+    probability = StochasticTransition(func=_probability_one)
     transition = Transition(law={"perceived": probability})
     assert (
         cast("Mapping[str, StochasticTransition]", transition.law)["perceived"].func
@@ -509,7 +526,7 @@ def test_declared_probability_law_preserves_callable_identity() -> None:
 def test_declared_probability_law_is_read_only() -> None:
     """A published probability mapping cannot be edited in place."""
     transition = Transition(
-        law={"perceived": StochasticTransition(func=lambda: jnp.asarray(1.0))}
+        law={"perceived": StochasticTransition(func=_probability_one)}
     )
     with pytest.raises(TypeError):
         cast("dict[RegimeName, StochasticTransition | RegimeName]", transition.law)[

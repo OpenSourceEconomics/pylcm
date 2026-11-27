@@ -90,7 +90,9 @@ def build_model(
 
     """
     if wage_grid is None:
-        wage_grid = LinSpacedGrid(start=0.5, stop=wage_max, n_points=n_wage)
+        wage_grid = LinSpacedGrid(
+            start=0.5, stop=wage_max, n_points=n_wage, off_grid="extrapolate"
+        )
 
     alive_functions = {
         "utility": utility,

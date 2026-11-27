@@ -20,6 +20,7 @@ from collections.abc import Sequence
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 from jax.typing import DTypeLike
 
@@ -243,8 +244,8 @@ def _simulate_replay(
     points: tuple[float, ...],
     outer_dispatch_width: int | None,
     dtype: DTypeLike,
-):
-    """Run the public solve-and-simulate path for three off-grid subjects."""
+) -> pd.DataFrame:
+    """Run the public solve-and-simulate path for three off-grid agents."""
     model = toy.build_model(
         variant="n_nbegm",
         n_periods=2,
@@ -339,14 +340,14 @@ def test_solve_and_simulate_matches_the_scalar_conditional_oracle(
         for row in narrow.itertuples():
             oracle_value, oracle_target, oracle_consumption, winner_index = (
                 _enumerate_joint_candidate(
-                    wealth=float(row.wealth),
-                    illiquid=float(row.illiquid),
+                    wealth=float(row.wealth),  # ty: ignore[invalid-argument-type]
+                    illiquid=float(row.illiquid),  # ty: ignore[invalid-argument-type]
                     scalar=scalar,
                     terminal_data=terminal_data,
                 )
             )
             winner_indices.append(winner_index)
-            replayed_target = float(row.illiquid + row.illiquid_investment)
+            replayed_target = float(row.illiquid + row.illiquid_investment)  # ty: ignore[unsupported-operator]
             np.testing.assert_allclose(
                 replayed_target,
                 oracle_target,
@@ -358,27 +359,27 @@ def test_solve_and_simulate_matches_the_scalar_conditional_oracle(
             # dense scalar optimizer is required to agree within 0.18 units,
             # while the objective checks below remain much tighter.
             np.testing.assert_allclose(
-                float(row.consumption),
+                float(row.consumption),  # ty: ignore[invalid-argument-type]
                 oracle_consumption,
                 rtol=0.0,
                 atol=0.18,
             )
             direct_score = _score_pair(
-                wealth=float(row.wealth),
-                illiquid=float(row.illiquid),
+                wealth=float(row.wealth),  # ty: ignore[invalid-argument-type]
+                illiquid=float(row.illiquid),  # ty: ignore[invalid-argument-type]
                 target=replayed_target,
-                consumption=float(row.consumption),
+                consumption=float(row.consumption),  # ty: ignore[invalid-argument-type]
                 scalar=scalar,
                 terminal_data=terminal_data,
             )
             np.testing.assert_allclose(
-                float(row.value),
+                float(row.value),  # ty: ignore[invalid-argument-type]
                 direct_score,
                 rtol=score_tolerance,
                 atol=score_tolerance,
             )
             np.testing.assert_allclose(
-                float(row.value),
+                float(row.value),  # ty: ignore[invalid-argument-type]
                 oracle_value,
                 rtol=0.0,
                 atol=0.003,

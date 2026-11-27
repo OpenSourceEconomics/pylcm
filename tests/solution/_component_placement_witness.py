@@ -47,13 +47,13 @@ from lcm.typing import (
 # layout. They cover a non-default selected CPU, one chunk, the width boundary
 # and its tail, several codes whose total fits one width, empty codes, permuted
 # rows and job completion, one versus several jobs, eager execution, the default
-# device and an eight-device subject layout.
+# device and an eight-device agent layout.
 class _Case(TypedDict):
     devices: tuple[int, ...]
     width: int
     codes: tuple[int, ...]
     enable_jit: NotRequired[bool]
-    simulation_sharding: NotRequired[Literal["legacy", "subjects"]]
+    simulation_sharding: NotRequired[Literal["legacy", "agents"]]
     assignment: NotRequired[tuple[tuple[int, ...], ...]]
     reverse_workers: NotRequired[bool]
 
@@ -72,7 +72,7 @@ CASES: tuple[_Case, ...] = (
         "devices": tuple(range(8)),
         "width": 8,
         "codes": (2,) * 8,
-        "simulation_sharding": "subjects",
+        "simulation_sharding": "agents",
     },
 )
 
@@ -111,7 +111,7 @@ def _model(
     devices: tuple[int, ...],
     width: int,
     enable_jit: bool,
-    simulation_sharding: Literal["legacy", "subjects"],
+    simulation_sharding: Literal["legacy", "agents"],
 ) -> Model:
     states = {
         "wealth": LinSpacedGrid(start=1.0, stop=2.0, n_points=2),
@@ -136,7 +136,7 @@ def _model(
         execution_config=ExecutionConfig(
             devices=devices,
             device_memory_bytes=None,
-            axis_widths={"subject": width},
+            axis_widths={"agent": width},
             invariant_block_widths={"pref_type": 1},
             invariant_block_schedule=InvariantBlockSchedule.BLOCK_MAJOR,
             simulation_sharding=simulation_sharding,
@@ -146,11 +146,11 @@ def _model(
 
 
 def _initial_population(*, codes: tuple[int, ...]) -> dict[str, jax.Array]:
-    n_subjects = len(codes)
+    n_agents = len(codes)
     return {
-        "age": jnp.zeros(n_subjects),
-        "regime_id": jnp.full(n_subjects, _RegimeId.live, dtype=jnp.int32),
-        "wealth": jnp.linspace(1.0, 2.0, n_subjects),
+        "age": jnp.zeros(n_agents),
+        "regime_id": jnp.full(n_agents, _RegimeId.live, dtype=jnp.int32),
+        "wealth": jnp.linspace(1.0, 2.0, n_agents),
         "pref_type": jnp.asarray(codes, dtype=jnp.int32),
     }
 
@@ -217,7 +217,7 @@ def _run_case(
     width: int,
     codes: tuple[int, ...],
     enable_jit: bool = True,
-    simulation_sharding: Literal["legacy", "subjects"] = "legacy",
+    simulation_sharding: Literal["legacy", "agents"] = "legacy",
     assignment: tuple[tuple[int, ...], ...] = ((0,), (1,), (2,)),
     reverse_workers: bool = False,
 ) -> list[str]:

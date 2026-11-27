@@ -74,6 +74,7 @@ from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.phases import _resolve_solve_functions
 from _lcm.regime_law import DecomposedTransition, RegimeLaw, RegimeLaws
+from _lcm.solution.contract import one_member_utility_name
 from _lcm.solution.dcegm import _BoundDCEGM
 from _lcm.solution.egm import _BoundEGM
 from _lcm.solution.nbegm import _BoundNBEGM
@@ -237,7 +238,10 @@ def validate_dcegm_regime(
         solver_name="DCEGM",
     )
     _fail_if_utility_depends_on_continuous_state(
-        regime_name=regime_name, functions=functions, solver=solver
+        regime_name=regime_name,
+        functions=functions,
+        utility_name=one_member_utility_name(members=user_regime.members),
+        solver=solver,
     )
     _fail_if_resources_depend_on_continuous_action(
         regime_name=regime_name, functions=functions, solver=solver
@@ -591,10 +595,11 @@ def _fail_if_utility_depends_on_continuous_state(
     *,
     regime_name: RegimeName,
     functions: dict[FunctionName, UserFunction],
+    utility_name: FunctionName,
     solver: _BoundDCEGM,
 ) -> None:
     """`utility` must reach the state only through the action (envelope condition)."""
-    ancestors = get_ancestors(functions, targets=["utility"], include_targets=False)
+    ancestors = get_ancestors(functions, targets=[utility_name], include_targets=False)
     if solver.continuous_state in ancestors:
         msg = (
             f"The utility function of regime '{regime_name}' depends on the "
@@ -655,7 +660,13 @@ def fail_if_off_node_process_enters_utility(
     )
     readers = sorted(
         off_node_states
-        & set(get_ancestors(functions, targets=["utility"], include_targets=False))
+        & set(
+            get_ancestors(
+                functions,
+                targets=[one_member_utility_name(members=user_regime.members)],
+                include_targets=False,
+            )
+        )
     )
     if not readers:
         return
@@ -1252,6 +1263,7 @@ def _fail_if_numeric_spot_checks_fail(
     _fail_if_inverse_marginal_utility_inconsistent(
         regime_name=regime_name,
         functions=functions,
+        utility_name=one_member_utility_name(members=user_regime.members),
         solver=solver,
         grids=grids,
         action_sample=action_sample,
@@ -1264,6 +1276,7 @@ def _fail_if_inverse_marginal_utility_inconsistent(
     *,
     regime_name: RegimeName,
     functions: dict[FunctionName, UserFunction],
+    utility_name: FunctionName,
     solver: _BoundDCEGM,
     grids: dict[StateOrActionName, Grid],
     action_sample: Float1D,
@@ -1288,7 +1301,7 @@ def _fail_if_inverse_marginal_utility_inconsistent(
         )
         raise ModelInitializationError(msg)
 
-    utility_func = concatenate_felicity(functions=functions)
+    utility_func = concatenate_felicity(functions=functions, utility_name=utility_name)
     if solver.continuous_action not in inspect.signature(utility_func).parameters:
         return
     # Run the concavity and round-trip checks at a few discrete-combo contexts,

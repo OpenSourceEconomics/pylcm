@@ -186,7 +186,7 @@ def test_valid_late_law_solves_to_wealth_plus_five_halves(
     )
     values = model.solve(params={"discount_factor": 0.5}, log_level=log_level).values
     np.testing.assert_array_equal(
-        np.asarray(values[1]["working"]), np.linspace(0.0, 1.0, n_points) + 2.5
+        np.asarray(values[1]["working"])[..., 0], np.linspace(0.0, 1.0, n_points) + 2.5
     )
 
 
@@ -231,7 +231,7 @@ def test_each_phase_validates_with_its_own_period_feasibility(
         law_phase=law_phase,
     )
     values = model.solve(params={"discount_factor": 0.5}, log_level="off").values
-    np.testing.assert_array_equal(np.asarray(values[1]["working"]), [2.5, 3.5])
+    np.testing.assert_array_equal(np.asarray(values[1]["working"])[..., 0], [2.5, 3.5])
 
 
 @pytest.mark.parametrize("representation", ["helper", "constraint"])

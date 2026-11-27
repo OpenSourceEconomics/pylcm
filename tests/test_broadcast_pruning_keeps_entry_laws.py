@@ -179,10 +179,10 @@ def test_promoting_the_state_leaves_the_simulation_unchanged() -> None:
     )
 
     expected = regime_level.to_dataframe(use_categorical_codes=True).sort_values(
-        ["subject_id", "period"]
+        ["agent_id", "period"]
     )
     got = model_level.to_dataframe(use_categorical_codes=True).sort_values(
-        ["subject_id", "period"]
+        ["agent_id", "period"]
     )
     assert list(got.columns) == list(expected.columns)
     np.testing.assert_array_equal(

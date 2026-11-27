@@ -76,7 +76,7 @@ def _inputs(
     budget: int | None,
     cutoff: float = 2.0,
     n_actions: int = 2,
-    n_subjects: int = 2,
+    n_agents: int = 2,
     constant: bool = False,
     reject: bool = False,
     parameter_only: bool = False,
@@ -128,9 +128,9 @@ def _inputs(
         "done": {},
     }
     initial = {
-        "wealth": jnp.linspace(1.0, 2.0, n_subjects),
-        "age": jnp.zeros(n_subjects),
-        "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
+        "wealth": jnp.linspace(1.0, 2.0, n_agents),
+        "age": jnp.zeros(n_agents),
+        "regime_id": jnp.zeros(n_agents, dtype=jnp.int32),
     }
     return model, params, initial
 
@@ -236,7 +236,7 @@ def test_simulate_refuses_feasibility_workspace_before_diagnostics(
 def test_simulate_refuses_cohort_constant_feasibility_workspace(
     compiler_boundary: _CompilerBoundary,
 ) -> None:
-    """Action-only predicates require admission even when every subject shares them."""
+    """Action-only predicates require admission even when every agent shares them."""
     budget = (9 if jax.config.x64_enabled else 5) * 1024
     model, params, initial = _inputs(budget=budget, n_actions=1024, constant=True)
     with pytest.raises(ExecutionPlanningError, match="compiler peak"):
@@ -251,7 +251,7 @@ def test_simulate_refuses_individual_constraint_gather_with_joint_results_reside
     """Natural invalid-result replay admits the gather for its diagnostic table."""
     budget = (40 if jax.config.x64_enabled else 24) * 1024
     model, params, initial = _inputs(
-        budget=budget, n_subjects=1024, reject=True, parameter_only=True
+        budget=budget, n_agents=1024, reject=True, parameter_only=True
     )
     with pytest.raises(
         ExecutionPlanningError, match=r"compiler peak|before allocation"
@@ -274,7 +274,7 @@ def test_simulate_refuses_individual_predicate_after_diagnostic_gather(
     budget = (44 if jax.config.x64_enabled else 28) * 1024
     model, params, initial = _inputs(
         budget=budget,
-        n_subjects=1024,
+        n_agents=1024,
         reject=True,
         diagnostic_checks=8,
         parameter_only=True,
@@ -317,7 +317,7 @@ def test_generous_budget_preserves_values_actions_and_caller_arrays(
     )
     raw = result.raw_results["alive"][0]
     np.testing.assert_array_equal(raw.actions["saving"], [1.0, 1.0])
-    np.testing.assert_allclose(raw.V_arr, [2.0, 3.0])
+    np.testing.assert_allclose(raw.V_arr[..., 0], [2.0, 3.0])
     for name, snapshot in snapshots.items():
         np.testing.assert_array_equal(initial[name], snapshot)
 
@@ -374,7 +374,7 @@ def test_feasibility_reads_current_parameters_on_each_call(
     result = model.simulate(
         params=params, initial_conditions=initial, log_level="debug"
     )
-    np.testing.assert_allclose(result.raw_results["alive"][0].V_arr, [2.0, 3.0])
+    np.testing.assert_allclose(result.raw_results["alive"][0].V_arr[..., 0], [2.0, 3.0])
     params = {
         "alive": {
             "koopmans_aggregator": {"discount_factor": 0.9},
@@ -393,10 +393,10 @@ def test_feasibility_reads_current_parameters_on_each_call(
 
 
 @pytest.mark.requires(min_devices=2)
-def test_preflight_accepts_a_cohort_shorter_than_the_subject_mesh() -> None:
+def test_preflight_accepts_a_cohort_shorter_than_the_agent_mesh() -> None:
     devices = tuple(device.id for device in jax.devices()[:2])
     model, params, initial = _inputs(
-        budget=2**24, cutoff=-2.0, n_subjects=1, devices=devices
+        budget=2**24, cutoff=-2.0, n_agents=1, devices=devices
     )
     result = model.simulate(
         params=params, initial_conditions=initial, log_level="debug"

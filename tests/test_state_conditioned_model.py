@@ -315,7 +315,7 @@ def test_ar1_simulated_innovation_std_follows_the_conditioned_sigma() -> None:
 
     For an AR(1) the level variance mixes rho and sigma, so the discriminating statistic
     is the residual `income_{t+1} - rho*income_t` — that is what the conditioned sigma
-    scales. `uncertainty` is absorbing here, so each subject's residuals are a clean
+    scales. `uncertainty` is absorbing here, so each agent's residuals are a clean
     draw from a single innovation law.
     """
     sigma_low, sigma_high, n = 0.05, 0.30, 6000
@@ -338,8 +338,8 @@ def test_ar1_simulated_innovation_std_follows_the_conditioned_sigma() -> None:
         )
         .to_dataframe()
     )
-    panel = result.sort_values(["subject_id", "period"]).copy()
-    panel["inc_lag"] = panel.groupby("subject_id")["income"].shift(1)
+    panel = result.sort_values(["agent_id", "period"]).copy()
+    panel["inc_lag"] = panel.groupby("agent_id")["income"].shift(1)
     panel["resid"] = panel["income"] - _AR1_RHO * panel["inc_lag"]
     drawn = panel[
         (panel["age"] > 20) & panel["income"].notna() & panel["inc_lag"].notna()
@@ -429,9 +429,9 @@ def test_simulated_sigma_tracks_the_conditioning_state_THROUGH_TIME() -> None:
         .to_dataframe()
     )
 
-    panel = result.sort_values(["subject_id", "period"]).copy()
+    panel = result.sort_values(["agent_id", "period"]).copy()
     # The sigma that drew `income_t` is the one keyed by `uncertainty_{t-1}`.
-    panel["sigma_state"] = panel.groupby("subject_id")["uncertainty"].shift(1)
+    panel["sigma_state"] = panel.groupby("agent_id")["uncertainty"].shift(1)
     drawn = panel[(panel["age"] > 20) & panel["income"].notna()]
 
     # Pin the switch actually happened, so a degenerate panel cannot pass this test.
@@ -915,9 +915,9 @@ def test_cross_regime_model_level_conditioner_survives_pruning() -> None:
 def test_cross_regime_draw_uses_the_target_spec_at_the_time_t_state() -> None:
     """A cross-regime draw reads the target's spec, indexed by the time-t state.
 
-    Income is conditioned only in `old`, and `uncertainty` is absorbing so each subject
+    Income is conditioned only in `old`, and `uncertainty` is absorbing so each agent
     keeps its starting value. Entering `old`, the draw uses old's per-category sigmas —
-    the target's declaration — selected by the subject's uncertainty at t, so the spread
+    the target's declaration — selected by the agent's uncertainty at t, so the spread
     must follow sigma_low / sigma_high rather than one common sigma.
     """
     sigma_low, sigma_high, n = 0.05, 0.30, 6000
@@ -975,7 +975,7 @@ def test_conditioned_process_the_source_lacks_is_rejected() -> None:
     carries it can still hand the target its unconditional row. A conditioned draw does
     depend on one — the time-t conditioning state — exactly as an AR(1) draw depends on
     the previous value, so entering it at the unconditional row would price every
-    subject on the widest category. The source must carry the process, declare an entry
+    agent on the widest category. The source must carry the process, declare an entry
     law, or not reach the regime at all.
     """
     young = Regime(

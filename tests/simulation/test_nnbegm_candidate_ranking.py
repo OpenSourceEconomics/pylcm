@@ -2,13 +2,15 @@
 
 import dataclasses
 import functools
+from collections.abc import Callable
 from fractions import Fraction
 from types import MappingProxyType
-from typing import cast
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 from jax._src.interpreters.batching import BatchTracer
 
@@ -19,10 +21,11 @@ from _lcm.engine import NNBEGMPolicyRead, Regime
 from _lcm.simulation import compile as simulation_compile
 from _lcm.simulation import simulate as simulation_module
 from _lcm.simulation.simulate import _replay_nnbegm_candidates
+from _lcm.solution.feasibility import BoundedResult
 from lcm import ExecutionConfig, LinSpacedGrid
 from lcm.exceptions import RegimeInitializationError
 from lcm.solver_api import SIMULATION_POLICY
-from lcm.typing import ContinuousAction, ContinuousState
+from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, RegimeName
 from tests.conftest import assert_agrees_to_ulp
 from tests.simulation.test_finite_replay_payload_transport import (
     CandidateBank,
@@ -45,24 +48,22 @@ def _state_dependent_affine_outer_target(
 
 
 def _simulate_rows(
-    *, wealth: np.ndarray, illiquid: np.ndarray, subject_batch_size: int = 0
-):
-    n_subjects = len(wealth)
+    *, wealth: np.ndarray, illiquid: np.ndarray, agent_batch_size: int = 0
+) -> pd.DataFrame:
+    n_agents = len(wealth)
     result = toy.build_model(
         variant="n_nbegm",
         n_periods=2,
         execution_config=ExecutionConfig(
-            axis_widths={}
-            if subject_batch_size == 0
-            else {"subject": subject_batch_size}
+            axis_widths={} if agent_batch_size == 0 else {"agent": agent_batch_size}
         ),
     ).simulate(
         params=_PARAMS,
         initial_conditions={
             "wealth": jnp.asarray(wealth),
             "illiquid": jnp.asarray(illiquid),
-            "age": jnp.full(n_subjects, 20.0),
-            "regime_id": jnp.full(n_subjects, RegimeId.alive, dtype=jnp.int32),
+            "age": jnp.full(n_agents, 20.0),
+            "regime_id": jnp.full(n_agents, RegimeId.alive, dtype=jnp.int32),
         },
         log_level="debug",
         seed=17,
@@ -98,7 +99,7 @@ def test_public_replay_ranks_the_bank_by_its_published_values() -> None:
 
 
 def test_a_state_dependent_outer_slope_is_refused_where_it_is_declared(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A slope that varies by state has no single coefficient, so it is refused.
 
@@ -138,7 +139,7 @@ def _synthetic_replay(
     inner: list[float],
     outer: list[float],
     marker: list[float],
-    q_and_f,
+    q_and_f: Callable[..., tuple[jax.Array, jax.Array]],
     state: jnp.ndarray | None = None,
     discrete_codes: list[list[int]] | None = None,
 ) -> tuple[MappingProxyType[str, jnp.ndarray], jnp.ndarray]:
@@ -185,7 +186,7 @@ def _synthetic_replay(
         discrete_action_names=discrete_names,
     )
 
-    def outer_target(*, outer):
+    def outer_target(*, outer: jax.Array) -> dict[str, jax.Array]:
         return {"outer_target": outer}
 
     template = _synthetic_regime_template()
@@ -247,7 +248,15 @@ def _synthetic_replay(
     )
 
 
-def _q_equal_to_outer(*, inner, outer, state, next_regime_to_V_arr, period, age):
+def _q_equal_to_outer(
+    *,
+    inner: jax.Array,
+    outer: jax.Array,
+    state: jax.Array,
+    next_regime_to_V_arr: MappingProxyType[RegimeName, jax.Array],
+    period: int,
+    age: jax.Array,
+) -> tuple[jax.Array, jax.Array]:
     """Canonical Q that reports the outer action, feasible everywhere."""
     del inner, state, next_regime_to_V_arr, period, age
     return outer, jnp.ones_like(outer, dtype=bool)
@@ -280,7 +289,15 @@ def test_a_winner_canonical_q_rejects_publishes_no_action(
 ) -> None:
     """An infeasible or non-finitely scored winner fails closed, not to a runner-up."""
 
-    def q_and_f(*, inner, outer, state, next_regime_to_V_arr, period, age):
+    def q_and_f(
+        *,
+        inner: jax.Array,
+        outer: jax.Array,
+        state: jax.Array,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, jax.Array],
+        period: int,
+        age: jax.Array,
+    ) -> tuple[jax.Array, jax.Array]:
         del outer, state, next_regime_to_V_arr, period, age
         winner = inner == 1
         return (
@@ -333,7 +350,16 @@ def test_strict_winner_is_permutation_invariant_and_exact_ties_are_first() -> No
 def test_discrete_times_outer_bank_emits_the_winner_complete_tuple() -> None:
     """The winner's exact discrete code travels with its inner and outer actions."""
 
-    def q_and_f(*, inner, outer, choice, state, next_regime_to_V_arr, period, age):
+    def q_and_f(
+        *,
+        inner: jax.Array,
+        outer: jax.Array,
+        choice: jax.Array,
+        state: jax.Array,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, jax.Array],
+        period: int,
+        age: jax.Array,
+    ) -> tuple[jax.Array, jax.Array]:
         del inner, state, next_regime_to_V_arr, period, age
         return 10.0 * outer + choice, jnp.ones_like(outer, dtype=bool)
 
@@ -363,7 +389,16 @@ def test_discrete_times_outer_bank_emits_the_winner_complete_tuple() -> None:
 def test_empty_valid_set_and_out_of_support_fail_closed() -> None:
     """No foreign fallback replaces the existing NaN/-1/-inf sentinels."""
 
-    def q_and_f(*, inner, outer, choice, state, next_regime_to_V_arr, period, age):
+    def q_and_f(
+        *,
+        inner: jax.Array,
+        outer: jax.Array,
+        choice: jax.Array,
+        state: jax.Array,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, jax.Array],
+        period: int,
+        age: jax.Array,
+    ) -> tuple[jax.Array, jax.Array]:
         del outer, choice, state, next_regime_to_V_arr, period, age
         value = jnp.where(inner == 1, jnp.nan, jnp.inf)
         return value, jnp.ones_like(inner, dtype=bool)
@@ -418,7 +453,9 @@ def _literal_bilinear(
 
 
 @functools.cache
-def _public_bank_data():
+def _public_bank_data() -> tuple[
+    np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray
+]:
     """Solve once and expose immutable arrays as data to the independent oracle."""
     model = toy.build_model(variant="n_nbegm", n_periods=2)
     values = model.solve(
@@ -433,7 +470,7 @@ def _public_bank_data():
         np.asarray(policy.candidate_inner_action),
         np.asarray(policy.candidate_outer_target),
         np.asarray(policy.candidate_value),
-        np.asarray(values.values[1]["dead"]),
+        np.asarray(values.values[1]["dead"])[..., 0],
         np.asarray(toy.WEALTH_GRID.to_jax()),
         np.asarray(toy.ILLIQUID_GRID.to_jax()),
     )
@@ -553,23 +590,23 @@ def test_scalar_bank_oracle_matches_public_replay_on_off_grid_mutations() -> Non
     rows = _simulate_rows(wealth=wealth, illiquid=illiquid)
 
     for row, current_wealth, current_illiquid in zip(
-        rows.itertuples(), wealth, illiquid, strict=True
+        rows.to_dict(orient="records"), wealth, illiquid, strict=True
     ):
         oracle = _scalar_bank_oracle(
             wealth=float(current_wealth), illiquid=float(current_illiquid)
         )
-        target = float(row.illiquid + row.illiquid_investment)
+        target = float(row["illiquid"] + row["illiquid_investment"])
         is_fp32 = jnp.asarray(0.0).dtype == jnp.float32
         atol = 5e-5 if is_fp32 else 5e-10
         np.testing.assert_allclose(target, oracle["target"], rtol=0.0, atol=atol)
         np.testing.assert_allclose(
-            row.consumption,
+            row["consumption"],
             oracle["consumption"],
             rtol=0.0,
             atol=2e-4 if is_fp32 else 2e-9,
         )
         np.testing.assert_allclose(
-            row.value,
+            row["value"],
             oracle["value"],
             rtol=0.0,
             atol=2e-3 if is_fp32 else 2e-8,
@@ -613,7 +650,7 @@ def _recorded_bank_and_owners(
     return bank, owners
 
 
-def test_candidate_ranking_is_invariant_to_subject_batching(
+def test_candidate_ranking_is_invariant_to_agent_batching(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Chunk widths preserve bank identity and bound emitted floating-point levels."""
@@ -625,10 +662,10 @@ def test_candidate_ranking_is_invariant_to_subject_batching(
         width: toy.build_model(
             variant="n_nbegm",
             n_periods=2,
-            # Unbudgeted: the recorder is read from the executor cached per subject
+            # Unbudgeted: the recorder is read from the executor cached per agent
             # width, which a budget replaces with one keyed by the padded population.
             execution_config=ExecutionConfig(
-                axis_widths={"subject": width}, device_memory_bytes=None
+                axis_widths={"agent": width}, device_memory_bytes=None
             ),
         )
         for width in (7, 3, 1)
@@ -710,7 +747,15 @@ def test_a_bank_with_every_candidate_dropped_emits_no_winner() -> None:
     represented at all.
     """
 
-    def q_and_f(*, inner, outer, state, next_regime_to_V_arr, period, age):
+    def q_and_f(
+        *,
+        inner: jax.Array,
+        outer: jax.Array,
+        state: jax.Array,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, jax.Array],
+        period: int,
+        age: jax.Array,
+    ) -> tuple[jax.Array, jax.Array]:
         del outer, state, next_regime_to_V_arr, period, age
         return jnp.ones_like(inner), jnp.ones_like(inner, dtype=bool)
 
@@ -735,12 +780,16 @@ def _batch_depth(value: jax.Array) -> int:
     return depth
 
 
-def _record_canonical_q_batching(monkeypatch) -> list[tuple[int, int, int]]:
+def _record_canonical_q_batching(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[tuple[int, int, int]]:
     """Spy canonical Q; record (action depth, state depth, period) per call."""
     original = simulation_module._evaluate_canonical_Q_at_actions
     calls: list[tuple[int, int, int]] = []
 
-    def spy(**kwargs):
+    def spy(
+        **kwargs: Any,  # noqa: PAN002 - forwards any call
+    ) -> tuple[FloatND, BoolND] | BoundedResult[tuple[FloatND, BoolND]]:
         calls.append(
             (
                 max(map(_batch_depth, jax.tree.leaves(kwargs["candidate_actions"]))),
@@ -755,7 +804,7 @@ def _record_canonical_q_batching(monkeypatch) -> list[tuple[int, int, int]]:
 
 
 def test_finite_replay_scores_canonical_q_once_on_the_read_winner(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Canonical Q scores the winning candidate only, never the whole bank.
 

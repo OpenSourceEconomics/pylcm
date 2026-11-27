@@ -9,11 +9,77 @@ import math
 import struct
 import sys
 import zipfile
+from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from pathlib import Path
+from types import ModuleType
+from typing import NotRequired, ReadOnly, TypedDict
 
 
-def encode_object_strings(values):
+class ArrayRecord(TypedDict):
+    """Shape, dtype and encoding of one saved array."""
+
+    shape: ReadOnly[Sequence[int]]
+    dtype: ReadOnly[str]
+    original_dtype: ReadOnly[NotRequired[str]]
+    encoding: ReadOnly[NotRequired[str]]
+
+
+class SavedRecord(TypedDict):
+    """One saved NPZ file with its checksum and per-array metadata."""
+
+    file: ReadOnly[str]
+    arrays: ReadOnly[Mapping[str, ArrayRecord]]
+    sha256: ReadOnly[NotRequired[str]]
+    original_query_leaf_names: ReadOnly[NotRequired[Sequence[str] | None]]
+
+
+class ProcessedLeaf(TypedDict):
+    """One leaf of a model-owned processed parameter result."""
+
+    array: ReadOnly[str]
+    path: ReadOnly[Sequence[str]]
+    object_id: ReadOnly[NotRequired[int]]
+    python_type: ReadOnly[NotRequired[str]]
+    native_dtype: ReadOnly[str]
+    native_shape: ReadOnly[Sequence[int]]
+    bit_pattern_hex: ReadOnly[str]
+
+
+class ProcessedCall(TypedDict):
+    """One observed parameter-processing call of a solve or simulate operation."""
+
+    solver: ReadOnly[str]
+    operation: ReadOnly[str]
+    file: ReadOnly[str]
+    method: ReadOnly[NotRequired[str]]
+    model_object_id: ReadOnly[NotRequired[int]]
+    returned_mapping_id: ReadOnly[NotRequired[int]]
+    returned_original_mapping: ReadOnly[NotRequired[bool]]
+    leaves: ReadOnly[Sequence[ProcessedLeaf]]
+
+
+class CaptureManifest(TypedDict, total=False):
+    """The capture fields admission reads; it refuses absent or contradictory ones."""
+
+    provenance_scope: ReadOnly[str]
+    source_map_externally_admitted: ReadOnly[bool]
+    source_map_sha256: ReadOnly[str | None]
+    precision: ReadOnly[int]
+    source_files: ReadOnly[Mapping[str, str]]
+    original_assertion_retained: ReadOnly[bool]
+    original_comparison_role: ReadOnly[str]
+    original_budget: ReadOnly[float]
+    panels: ReadOnly[Mapping[str, Sequence[int]]]
+    row_matches: ReadOnly[Sequence[Sequence[int]]]
+    rows: ReadOnly[Sequence[str]]
+    saved: ReadOnly[Sequence[SavedRecord]]
+    processed_parameter_calls: ReadOnly[Sequence[ProcessedCall]]
+
+
+def encode_object_strings(
+    values: Sequence[object],  # noqa: PAN001 - object-dtype leaves; non-strings are rejected here
+) -> tuple[list[str], str]:
     """Encode only string object leaves without coercing arbitrary objects."""
     if any(not isinstance(value, str) for value in values):
         raise TypeError("Object columns must contain strings exclusively")
@@ -21,7 +87,9 @@ def encode_object_strings(values):
     return encoded, f"<U{max(map(len, encoded), default=1)}"
 
 
-def admit_capture(*, manifest, precision, source_sha):
+def admit_capture(
+    *, manifest: CaptureManifest, precision: int, source_sha: str | None
+) -> str:
     """Reject incomplete original-fixture observation metadata."""
     scope = manifest.get("provenance_scope", "externally_admitted_whole_source")
     if scope == "externally_admitted_whole_source":
@@ -77,9 +145,9 @@ def admit_capture(*, manifest, precision, source_sha):
         )
         _require_components(files=files, solver=solver)
         for name, shape in (
-            ("p0__saving", [2, 120]),
-            ("p1__saving", [2, 120]),
-            ("p2__done", [120]),
+            ("p0__saving", [2, 120, 1]),
+            ("p1__saving", [2, 120, 1]),
+            ("p2__done", [120, 1]),
         ):
             _require_array(
                 files=files,
@@ -97,7 +165,7 @@ def admit_capture(*, manifest, precision, source_sha):
     )
 
 
-def admit_processed_params(*, manifest, precision):
+def admit_processed_params(*, manifest: CaptureManifest, precision: int) -> str:
     """Require both operations' actual model-owned processed numeric inventories."""
     calls = manifest.get("processed_parameter_calls", [])
     expected = {
@@ -154,7 +222,9 @@ def admit_processed_params(*, manifest, precision):
     )
 
 
-def _admit_processed_leaves(*, call, arrays, precision):
+def _admit_processed_leaves(
+    *, call: ProcessedCall, arrays: Mapping[str, ArrayRecord], precision: int
+) -> None:
     leaves = call.get("leaves", [])
     names = [leaf["array"] for leaf in leaves]
     paths = [tuple(leaf["path"]) for leaf in leaves]
@@ -188,7 +258,9 @@ def _admit_processed_leaves(*, call, arrays, precision):
             raise ValueError("Processed native bit-pattern inventory is incomplete")
 
 
-def _require_original_row(*, files, entry, dtype):
+def _require_original_row(
+    *, files: Mapping[str, Mapping[str, ArrayRecord]], entry: SavedRecord, dtype: str
+) -> None:
     shapes = {
         "continuation_V": [150],
         "continuation_M": [150],
@@ -233,18 +305,30 @@ def _require_original_row(*, files, entry, dtype):
         raise ValueError("Original query leaf inventory is incomplete or contradictory")
 
 
-def source_identity(*, obj, module):
+def source_identity(
+    *,
+    obj: Callable[..., object] | ModuleType,  # noqa: PAN001 - any callable or class whose source is hashed; its return is never read
+    module: ModuleType,
+) -> tuple[str, str]:
     """Hash a real expected module, unwrapping only for provenance identity."""
-    original = inspect.unwrap(obj)
+    # `inspect.unwrap` returns an object without `__wrapped__`, such as a module,
+    # unchanged; typeshed admits only callables.
+    original = inspect.unwrap(obj)  # ty: ignore[invalid-argument-type]
     if inspect.getmodule(original) is not module:
         raise ValueError("Original callable differs from its expected source module")
-    path = Path(module.__file__).resolve()
+    # A module without a source file has `__file__ = None`, and `Path` refuses it.
+    path = Path(module.__file__).resolve()  # ty: ignore[invalid-argument-type]
     if not path.is_file() or path.suffix != ".py":
         raise ValueError("Expected module has no real Python source file")
     return str(path), hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def bind_source_files(*, files, expected_map, source_root):
+def bind_source_files(
+    *,
+    files: Mapping[str, str],
+    expected_map: Mapping[str, Mapping[str, str]] | None,
+    source_root: Path | str,
+) -> None:
     """Bind real in-root sources and authenticate a supplied external map."""
     root = Path(source_root).resolve()
     for filename, digest in files.items():
@@ -267,7 +351,7 @@ def bind_source_files(*, files, expected_map, source_root):
 
 
 @contextmanager
-def drain_owned_callbacks(drain):
+def drain_owned_callbacks(drain: Callable[[], None]) -> Generator[None]:
     """Drain owned callbacks on both exits while preserving the primary exception."""
     try:
         yield
@@ -283,7 +367,9 @@ def drain_owned_callbacks(drain):
         drain()
 
 
-def _require_components(*, files, solver):
+def _require_components(
+    *, files: Mapping[str, Mapping[str, ArrayRecord]], solver: str
+) -> None:
     required = {
         "value-coordinates": {"p1__saving__income", "p1__saving__liquid"},
         "params": {"discount_factor", "tax_rate", "tax_exemption"},
@@ -294,8 +380,8 @@ def _require_components(*, files, solver):
             "declared_floor",
         },
         "initial": {"age", "regime_id", "liquid", "income"},
-        "simulation": {"period", "subject_id", "regime_name", "consumption"},
-        "period0": {"period", "subject_id", "regime_name", "consumption"},
+        "simulation": {"period", "agent_id", "regime_name", "consumption"},
+        "period0": {"period", "agent_id", "regime_name", "consumption"},
     }
     for suffix, fields in required.items():
         if not fields.issubset(files.get(f"{solver}-{suffix}.npz", {})):
@@ -305,13 +391,20 @@ def _require_components(*, files, solver):
         raise ValueError("Original policy comparison diagnostic missing")
 
 
-def _require_array(*, files, filename, name, shape, dtype):
+def _require_array(
+    *,
+    files: Mapping[str, Mapping[str, ArrayRecord]],
+    filename: str,
+    name: str,
+    shape: Sequence[int],
+    dtype: str,
+) -> None:
     record = files.get(filename, {}).get(name, {})
     if record.get("shape") != shape or record.get("dtype") != dtype:
         raise ValueError(f"Missing or mismatched {filename}:{name}")
 
 
-def verify_capture_files(*, manifest, root):
+def verify_capture_files(*, manifest: CaptureManifest, root: Path | str) -> str:
     """Verify complete NPZ inventory, hashes, CRC and NPY header shape without NumPy."""
     root = Path(root)
     names = [entry["file"] for entry in manifest["saved"]]
@@ -350,7 +443,7 @@ def verify_capture_files(*, manifest, root):
     )
 
 
-def _verify_npy(*, data, record):
+def _verify_npy(*, data: bytes, record: ArrayRecord) -> bytes:
     if data[:6] != b"\x93NUMPY" or data[6:8] not in (b"\x01\x00", b"\x02\x00"):
         raise ValueError("Unsupported NPY header")
     width = 2 if data[6] == 1 else 4
@@ -392,7 +485,7 @@ def _verify_npy(*, data, record):
     return data[8 + width + size :]
 
 
-def _verify_string_payload(*, payload, descriptor):
+def _verify_string_payload(*, payload: bytes, descriptor: str) -> None:
     if not descriptor.startswith("U"):
         raise ValueError(
             "Object-origin string transport requires fixed Unicode storage"
@@ -408,7 +501,7 @@ def _verify_string_payload(*, payload, descriptor):
             )
 
 
-def main():
+def main() -> None:
     """Bind one completed observation to verifier-supplied precision and source map."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--capture", type=Path, required=True)

@@ -154,12 +154,16 @@ def get_model(
     """
     last_age = 25 + n_periods - 1
     wealth_grid = LinSpacedGrid(
-        start=WEALTH_GRID.start, stop=WEALTH_GRID.stop, n_points=n_wealth_points
+        start=WEALTH_GRID.start,
+        stop=WEALTH_GRID.stop,
+        n_points=n_wealth_points,
+        off_grid="extrapolate",
     )
     dead_wealth_grid = LinSpacedGrid(
         start=DEAD_WEALTH_GRID.start,
         stop=DEAD_WEALTH_GRID.stop,
         n_points=n_dead_wealth_points,
+        off_grid="extrapolate",
     )
     consumption_grid = LinSpacedGrid(
         start=CONSUMPTION_GRID.start,

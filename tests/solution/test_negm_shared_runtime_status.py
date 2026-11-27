@@ -102,7 +102,7 @@ def test_actual_runtime_source_has_a_healthy_empty_control(
     )
     output = _run_installed(kernel=kernel, context=context)
     assert isinstance(output, FeasibilityKernelOutput)
-    np.testing.assert_array_equal(output.value, [-np.inf, -np.inf])
+    np.testing.assert_array_equal(output.value, [[-np.inf], [-np.inf]])
     np.testing.assert_array_equal(output.feasibility_counts[0], 2)
     assert len(output.bound_status) == 1
     np.testing.assert_array_equal(output.bound_status[0], [False, False])
@@ -154,7 +154,7 @@ def test_actual_runtime_and_child_status_survive_empty_publication(
     }
     output = _run_installed(kernel=kernel, context=changed_context)
     assert isinstance(output, FeasibilityKernelOutput)
-    np.testing.assert_array_equal(output.value, [-np.inf, -np.inf])
+    np.testing.assert_array_equal(output.value, [[-np.inf], [-np.inf]])
     np.testing.assert_array_equal(output.feasibility_counts[0], 2)
     assert len(output.bound_status) == 1
     np.testing.assert_array_equal(

@@ -4,7 +4,7 @@ import statistics
 
 from . import _gpu_mem
 
-_N_SUBJECTS = 1_000
+_N_AGENTS = 1_000
 
 # Warm samples each class's setup_cache collects per commit, shared by
 # track_execution_time and track_peak_cpu_mem: build once, one cold call,
@@ -43,14 +43,14 @@ def _make_model(*, wealth_grid_type="lin", wealth_n_points=10, consumption_n_poi
     return model, params
 
 
-def _make_initial_conditions(n_subjects):
+def _make_initial_conditions(n_agents):
     import jax.numpy as jnp
 
     return {
-        "age": jnp.full(n_subjects, 20.0),
-        "wealth": jnp.full(n_subjects, 5.0),
-        "income": jnp.full(n_subjects, 0.0),
-        "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
+        "age": jnp.full(n_agents, 20.0),
+        "wealth": jnp.full(n_agents, 5.0),
+        "income": jnp.full(n_agents, 0.0),
+        "regime_id": jnp.zeros(n_agents, dtype=jnp.int32),
     }
 
 

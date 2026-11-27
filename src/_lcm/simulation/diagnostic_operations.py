@@ -55,7 +55,7 @@ def profiled_transition_counts(
             "prev_regime_ids": prev_regime_ids,
             "new_regime_ids": new_regime_ids,
         },
-        subject_arg_names=("prev_regime_ids", "new_regime_ids"),
+        agent_arg_names=("prev_regime_ids", "new_regime_ids"),
         static_arguments={"sorted_ids": sorted_ids},
     ).tolist()
 
@@ -66,11 +66,11 @@ class DiagnosticBinding:
 
     function: Callable[..., PytreeValue]
     arguments: MappingProxyType[ReferenceName, PytreeValue | ShapeDtypePytree]
-    subject_arg_names: tuple[ReferenceName, ...]
+    agent_arg_names: tuple[ReferenceName, ...]
     static_arguments: MappingProxyType[str, StaticArgument] = field(
         default_factory=lambda: MappingProxyType({})
     )
-    subject_outputs: bool = False
+    agent_outputs: bool = False
 
     def __post_init__(self) -> None:
         """Reject accidental ownership of caller arrays."""
@@ -106,14 +106,14 @@ def diagnostic_bindings(
             DiagnosticBinding(
                 function=period_value_flags,
                 arguments=MappingProxyType({"values": values, "in_regime": in_regime}),
-                subject_arg_names=("values", "in_regime"),
+                agent_arg_names=("values", "in_regime"),
             )
         )
         bindings.extend(
             DiagnosticBinding(
                 function=owned_value_nan_count,
                 arguments=MappingProxyType({"value": value, "in_regime": mask}),
-                subject_arg_names=("value", "in_regime"),
+                agent_arg_names=("value", "in_regime"),
             )
             for value, mask in zip(values, in_regime, strict=True)
         )
@@ -127,7 +127,7 @@ def diagnostic_bindings(
                         "new_regime_ids": new_regime_ids,
                     }
                 ),
-                subject_arg_names=("prev_regime_ids", "new_regime_ids"),
+                agent_arg_names=("prev_regime_ids", "new_regime_ids"),
                 static_arguments=MappingProxyType({"sorted_ids": sorted_ids}),
             )
         )

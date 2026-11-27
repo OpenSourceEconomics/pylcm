@@ -36,7 +36,7 @@ N_LOW_NODES = 12
 )
 def test_standard_vfi_oracle_reproduces_brute(
     *, n_grid: int, n_housing: int, n_consumption: int, n_periods: int
-):
+) -> None:
     """The oracle's standard mode matches pylcm's brute solve cell for cell.
 
     Running the oracle with `branch_aware=False` reproduces the grid-search VFI the
@@ -65,7 +65,8 @@ def test_standard_vfi_oracle_reproduces_brute(
 
     for period in sorted(solution):
         for regime, brute_raw in solution[period].items():
-            brute_V = np.asarray(brute_raw)
+            # pylcm's value carries the trailing member axis of the single `"self"`.
+            brute_V = np.asarray(brute_raw)[..., 0]
             oracle_V = oracle.value[period][regime]
             if oracle_V.ndim == 3:
                 # Oracle stores the working regime as (wage, housing, liquid); pylcm
@@ -80,7 +81,7 @@ def test_standard_vfi_oracle_reproduces_brute(
 )
 def test_comparator_ordering_localizes_to_ss_band(
     *, n_grid: int, n_housing: int, n_consumption: int, n_periods: int
-):
+) -> None:
     """The comparator-ordering gap is non-negative and confined to the (S, s) band.
 
     Standard VFI interpolates the already-maximized next value array

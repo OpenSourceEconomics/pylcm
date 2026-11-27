@@ -38,7 +38,7 @@ def _memory(*, inputs: FootprintTree, budget: int) -> SimulationMemory:
     return SimulationMemory(
         budget_bytes=budget,
         devices=devices,
-        subject_devices=devices,
+        agent_devices=devices,
         operations=ProfiledSimulationOperations(),
         inputs=measure_buffer_footprint(tree=inputs),
     )
@@ -137,5 +137,5 @@ def test_public_population_setup_uses_its_admitted_pure_bodies(
         seed=17,
         log_level="off",
     )
-    assert result.n_subjects == 1
+    assert result.n_agents == 1
     assert traced

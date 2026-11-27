@@ -140,6 +140,30 @@ def test_importing_this_module_after_jax_init_leaves_the_platform_unpinned() -> 
     assert result.stdout.strip() == "''"
 
 
+def _log_consumption_utility(
+    *, wealth: ScalarFloat, consumption: ScalarFloat, type1: ScalarInt, type2: ScalarInt
+) -> ScalarFloat:
+    return (jnp.log(consumption) + wealth * 0.001) * type1 * type2
+
+
+def _spend_consumption(*, wealth: ScalarFloat, consumption: ScalarFloat) -> ScalarFloat:
+    return wealth - consumption
+
+
+def _flip_type2(*, type2: ScalarInt) -> ScalarInt:
+    return 1 - type2
+
+
+def _half_wealth_utility(*, wealth: ScalarFloat) -> ScalarFloat:
+    return wealth * 0.5
+
+
+def _half_wealth_by_types_utility(
+    *, wealth: ScalarFloat, type1: ScalarInt, type2: ScalarInt
+) -> ScalarFloat:
+    return (wealth * 0.5) * type1 * type2
+
+
 def _make_correct_distributed_model(
     *,
     distributed: bool = True,
@@ -147,7 +171,7 @@ def _make_correct_distributed_model(
     retirement_reads_type2: bool = True,
     move_type2: bool = False,
     cell_width: int | None = None,
-    subject_width: int | None = None,
+    agent_width: int | None = None,
     exact_layout: bool = False,
     one_regime_per_period: bool = False,
 ) -> Model:
@@ -155,6 +179,9 @@ def _make_correct_distributed_model(
     class RegimeId:
         working_life: ScalarInt
         retirement: ScalarInt
+
+    def next_regime(*, age: ScalarFloat) -> ScalarInt:
+        return jnp.where(age >= 4, RegimeId.retirement, RegimeId.working_life)
 
     if distribute_type2 is False:
 
@@ -176,18 +203,14 @@ def _make_correct_distributed_model(
         functions={
             "utility": _calculate_exact_layout_utility
             if exact_layout
-            else lambda wealth, consumption, type1, type2: (
-                (jnp.log(consumption) + wealth * 0.001) * type1 * type2
-            ),
+            else _log_consumption_utility,
         },
         states={
             "wealth": LinSpacedGrid(start=8, stop=72, n_points=9)
             if exact_layout
             else LinSpacedGrid(start=1, stop=100, n_points=10)
         },
-        state_transitions={
-            "wealth": lambda wealth, consumption: wealth - consumption,
-        },
+        state_transitions={"wealth": _spend_consumption},
         actions={
             "consumption": LinSpacedGrid(start=1, stop=9, n_points=9)
             if exact_layout
@@ -195,18 +218,13 @@ def _make_correct_distributed_model(
         },
     )
 
-    def retirement_utility_with_type2(
-        *, wealth: ScalarFloat, type1: ScalarInt, type2: ScalarInt
-    ) -> ScalarFloat:
-        return (wealth * 0.5) * type1 * type2
-
     def retirement_utility_without_type2(
         *, wealth: ScalarFloat, type1: ScalarInt
     ) -> ScalarFloat:
         return (wealth * 0.5) * type1
 
     retirement_utility = (
-        retirement_utility_with_type2
+        _half_wealth_by_types_utility
         if retirement_reads_type2
         else retirement_utility_without_type2
     )
@@ -230,14 +248,12 @@ def _make_correct_distributed_model(
         },
         state_transitions={
             "type1": fixed_transition("type1"),
-            "type2": (lambda type2: 1 - type2)
-            if move_type2
-            else fixed_transition("type2"),
+            "type2": _flip_type2 if move_type2 else fixed_transition("type2"),
         },
         execution_config=ExecutionConfig(
             axis_widths={
                 **({"cell": cell_width} if cell_width is not None else {}),
-                **({"subject": subject_width} if subject_width is not None else {}),
+                **({"agent": agent_width} if agent_width is not None else {}),
             },
             sharded_states=(
                 *(("type1",) if distributed else ()),
@@ -254,11 +270,7 @@ def _make_correct_distributed_model(
             if one_regime_per_period
             else Transition(
                 targets={"working_life": _STAY_AGES, "retirement": _EXIT_AGES},
-                law=DeterministicTransition(
-                    func=lambda age: jnp.where(
-                        age >= 4, RegimeId.retirement, RegimeId.working_life
-                    )
-                ),
+                law=DeterministicTransition(func=next_regime),
             )
         },
     )
@@ -293,6 +305,8 @@ def _get_exact_layout_values(
     denominator dividing 32, so expanded partial sums lie on the 1/512 lattice
     and have magnitude at most 729 + (149/8)*1296 = 24867. Their numerators
     stay below 2**24, within float32's significand under reassociation as well.
+
+    Each value carries the trailing member axis of the regime's one member.
     """
     if move_type2 and n_types != 2:
         raise ValueError("The moving type is the binary permutation 1 - type2.")
@@ -331,7 +345,10 @@ def _get_exact_layout_values(
         continuation = current
     for period in range(1, 6):
         values[period]["retirement"] = terminal_value
-    return values
+    return {
+        period: {regime: value[..., None] for regime, value in by_regime.items()}
+        for period, by_regime in values.items()
+    }
 
 
 def _assert_exact_layout_values(
@@ -464,7 +481,9 @@ def test_exact_layout_reference_rejects_misaligned_or_changed_values(
         )
 
 
-def _make_one_axis_collective_model(*, distributed: bool) -> Model:
+def _make_one_axis_collective_model(
+    *, distributed: bool, enable_jit: bool = True
+) -> Model:
     """Tiny collective GridSearch model with one four-device fixed-state axis."""
 
     @categorical(ordered=False)
@@ -499,9 +518,7 @@ def _make_one_axis_collective_model(*, distributed: bool) -> Model:
         regimes={
             "working": UserRegime(
                 states={"wealth": LinSpacedGrid(start=1, stop=4, n_points=4)},
-                state_transitions={
-                    "wealth": lambda wealth, consumption: wealth - consumption
-                },
+                state_transitions={"wealth": _spend_consumption},
                 actions={"consumption": LinSpacedGrid(start=0.5, stop=1, n_points=2)},
                 functions={
                     "utility": CollectiveUtility(
@@ -520,6 +537,7 @@ def _make_one_axis_collective_model(*, distributed: bool) -> Model:
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=RegimeId,
+        enable_jit=enable_jit,
         states={"type1": DiscreteGrid(category_class=Type)},
         execution_config=ExecutionConfig(
             sharded_states=("type1",) if distributed else ()
@@ -543,6 +561,9 @@ def _make_wrong_distributed_model() -> Model:
         working_life: ScalarInt
         retirement: ScalarInt
 
+    def next_regime(*, age: ScalarFloat) -> ScalarInt:
+        return jnp.where(age >= 4, RegimeId.retirement, RegimeId.working_life)
+
     @categorical(ordered=True)
     class Type:
         low: ScalarInt
@@ -551,9 +572,7 @@ def _make_wrong_distributed_model() -> Model:
 
     working_life = UserRegime(
         functions={
-            "utility": lambda wealth, consumption, type1, type2: (
-                (jnp.log(consumption) + wealth * 0.001) * type1 * type2
-            ),
+            "utility": _log_consumption_utility,
         },
         states={
             "wealth": LinSpacedGrid(
@@ -562,16 +581,12 @@ def _make_wrong_distributed_model() -> Model:
                 n_points=10,
             ),
         },
-        state_transitions={
-            "wealth": lambda wealth, consumption: wealth - consumption,
-        },
+        state_transitions={"wealth": _spend_consumption},
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
     )
 
     retirement = UserRegime(
-        functions={
-            "utility": lambda wealth, type1, type2: (wealth * 0.5) * type1 * type2
-        },
+        functions={"utility": _half_wealth_by_types_utility},
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
         },
@@ -594,11 +609,7 @@ def _make_wrong_distributed_model() -> Model:
         edges={
             "working_life": Transition(
                 targets={"working_life": _STAY_AGES, "retirement": _EXIT_AGES},
-                law=DeterministicTransition(
-                    func=lambda age: jnp.where(
-                        age >= 4, RegimeId.retirement, RegimeId.working_life
-                    )
-                ),
+                law=DeterministicTransition(func=next_regime),
             )
         },
     )
@@ -1176,13 +1187,18 @@ def test_value_transfer_copies_a_named_target_onto_a_single_device_source() -> N
 
 
 @_skip_pytest_parallel
-def test_collective_grid_search_value_has_planned_state_layout() -> None:
-    """Collective V keeps its member axis replicated.
+@pytest.mark.parametrize("enable_jit", [True, False])
+def test_collective_grid_search_value_has_planned_state_layout(
+    *, enable_jit: bool
+) -> None:
+    """Collective V keeps its member axis replicated, compiled or eager.
 
     Values agree across differently fused device topologies to dtype-scale rounding;
     layout remains exact.
     """
-    distributed_model = _make_one_axis_collective_model(distributed=True)
+    distributed_model = _make_one_axis_collective_model(
+        distributed=True, enable_jit=enable_jit
+    )
     working_kernels = distributed_model._regimes["working"].solution.period_kernels
     assert working_kernels
     assert all(
@@ -1208,10 +1224,12 @@ def test_collective_grid_search_value_has_planned_state_layout() -> None:
     for period, regime_to_value in distributed_values.values.items():
         for regime_name, value in regime_to_value.items():
             assert value.shape == (4, 4, 2)
-            # `_RegimeSharding.V_arr_sharding` names only state axes: the
-            # replicated member entry is intentionally omitted.
+            # The state axis is split over the devices, the member axis is whole.
             assert isinstance(value.sharding, NamedSharding)
-            assert value.sharding.spec == PartitionSpec("type1", None)
+            assert value.sharding.is_equivalent_to(
+                NamedSharding(value.sharding.mesh, PartitionSpec("type1", None)),
+                value.ndim,
+            )
             reference = single_values.values[period][regime_name]
             eps = np.finfo(np.asarray(value).dtype).eps
             np.testing.assert_allclose(value, reference, rtol=2 * eps, atol=2 * eps)
@@ -1318,9 +1336,9 @@ def test_save_load_preserves_sharding_and_dataframe(
     res.save(directory=save_dir)
     loaded = SimulationResult.load(directory=save_dir)
 
-    for period, regime_dict in res._period_to_regime_to_V_arr.items():
+    for period, regime_dict in res._step_to_regime_to_V_arr.items():
         for regime_name, V_arr in regime_dict.items():
-            loaded_V = loaded._period_to_regime_to_V_arr[period][regime_name]
+            loaded_V = loaded._step_to_regime_to_V_arr[period][regime_name]
             assert loaded_V.sharding.num_devices == V_arr.sharding.num_devices
             for original_shard, loaded_shard in zip(
                 V_arr.addressable_shards,
@@ -1374,15 +1392,15 @@ def test_model_error_if_grid_product_exceeds_devices() -> None:
 
 
 @_skip_pytest_parallel
-def test_simulation_pads_non_device_multiple_subject_count(
+def test_simulation_pads_non_device_multiple_agent_count(
     correct_distributed_model: Model,
 ) -> None:
-    """A subject count that is not a multiple of the device count simulates cleanly.
+    """An agent count that is not a multiple of the device count simulates cleanly.
 
-    Distributed grids shard subjects across devices, which needs the leading axis to
-    divide evenly. pylcm pads internally (duplicating the last subject up to the next
-    device multiple) and trims the pad rows back out, so 5 subjects on 4 devices
-    yields a result with exactly 5 subjects.
+    Distributed grids shard agents across devices, which needs the leading axis to
+    divide evenly. pylcm pads internally (duplicating the last agent up to the next
+    device multiple) and trims the pad rows back out, so 5 agents on 4 devices
+    yields a result with exactly 5 agents.
     """
     result = correct_distributed_model.simulate(
         log_level="debug",
@@ -1397,21 +1415,21 @@ def test_simulation_pads_non_device_multiple_subject_count(
         seed=12345,
     )
 
-    assert result.n_subjects == 5
-    assert result.to_dataframe()["subject_id"].nunique() == 5
+    assert result.n_agents == 5
+    assert result.to_dataframe()["agent_id"].nunique() == 5
 
 
 @_skip_pytest_parallel
-@pytest.mark.parametrize("subject_batch_size", [3, 4])
-def test_distributed_simulation_with_subject_batching_matches_single_pass(
+@pytest.mark.parametrize("agent_batch_size", [3, 4])
+def test_distributed_simulation_with_agent_batching_matches_single_pass(
     *,
     correct_distributed_model: Model,
-    subject_batch_size: int,
+    agent_batch_size: int,
 ) -> None:
     """Chunked simulate under distributed grids equals the single-pass result.
 
     The value-function arrays stay sharded across the devices throughout; each
-    subject chunk is placed onto the subject mesh axis before its period loop, so
+    agent chunk is placed onto the agent mesh axis before its period loop, so
     chunking bounds the per-chunk device workspace without gathering anything onto
     one device. A batch size that does not divide the device count (3 on 4
     devices) is rounded up to the next device multiple.
@@ -1429,9 +1447,7 @@ def test_distributed_simulation_with_subject_batching_matches_single_pass(
         initial_conditions=initial_conditions,
         seed=12345,
     )
-    chunked = _make_correct_distributed_model(
-        subject_width=subject_batch_size
-    ).simulate(
+    chunked = _make_correct_distributed_model(agent_width=agent_batch_size).simulate(
         log_level="off",
         params={"discount_factor": 0.95},
         initial_conditions=initial_conditions,
@@ -1441,13 +1457,13 @@ def test_distributed_simulation_with_subject_batching_matches_single_pass(
 
 
 @_skip_pytest_parallel
-def test_distributed_simulation_pads_subjects_to_a_chunk_multiple() -> None:
-    """A chunk size that does not divide the subject count simulates cleanly.
+def test_distributed_simulation_pads_agents_to_a_chunk_multiple() -> None:
+    """A chunk size that does not divide the agent count simulates cleanly.
 
     Under distributed grids the chunk size is rounded up to a device multiple
-    and every chunk must match the compiled shape, so the subject axis is
-    padded up to a chunk multiple (duplicating the last subject) and the pad
-    rows are trimmed back out — the result holds exactly the real subjects and
+    and every chunk must match the compiled shape, so the agent axis is
+    padded up to a chunk multiple (duplicating the last agent) and the pad
+    rows are trimmed back out — the result holds exactly the real agents and
     equals the single-pass result.
     """
     model = _make_correct_distributed_model()
@@ -1464,13 +1480,13 @@ def test_distributed_simulation_pads_subjects_to_a_chunk_multiple() -> None:
         initial_conditions=initial_conditions,
         seed=12345,
     )
-    chunked = _make_correct_distributed_model(subject_width=8).simulate(
+    chunked = _make_correct_distributed_model(agent_width=8).simulate(
         log_level="off",
         params={"discount_factor": 0.95},
         initial_conditions=initial_conditions,
         seed=12345,
     )
-    assert chunked.n_subjects == 12
+    assert chunked.n_agents == 12
     pd.testing.assert_frame_equal(chunked.to_dataframe(), single_pass.to_dataframe())
 
 
@@ -1482,6 +1498,9 @@ def _make_partially_distributed_model(*, distributed: bool) -> Model:
         working_life: ScalarInt
         retirement: ScalarInt
 
+    def next_regime(*, age: ScalarFloat) -> ScalarInt:
+        return jnp.where(age >= 4, RegimeId.retirement, RegimeId.working_life)
+
     @categorical(ordered=True)
     class Type:
         low: ScalarInt
@@ -1489,21 +1508,17 @@ def _make_partially_distributed_model(*, distributed: bool) -> Model:
 
     working_life = UserRegime(
         functions={
-            "utility": lambda wealth, consumption, type1, type2: (
-                (jnp.log(consumption) + wealth * 0.001) * type1 * type2
-            ),
+            "utility": _log_consumption_utility,
         },
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
         },
-        state_transitions={
-            "wealth": lambda wealth, consumption: wealth - consumption,
-        },
+        state_transitions={"wealth": _spend_consumption},
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
     )
 
     retirement = UserRegime(
-        functions={"utility": lambda wealth: wealth * 0.5},
+        functions={"utility": _half_wealth_utility},
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
     )
 
@@ -1526,11 +1541,7 @@ def _make_partially_distributed_model(*, distributed: bool) -> Model:
         edges={
             "working_life": Transition(
                 targets={"working_life": _STAY_AGES, "retirement": _EXIT_AGES},
-                law=DeterministicTransition(
-                    func=lambda age: jnp.where(
-                        age >= 4, RegimeId.retirement, RegimeId.working_life
-                    )
-                ),
+                law=DeterministicTransition(func=next_regime),
             )
         },
     )
@@ -1606,17 +1617,15 @@ def test_solve_with_partial_distribution_returns_correct_shardings(
         )
         .values
     )
-    # The sharded and single-device solves reduce in different orders, and the
-    # gap grows toward earlier periods. On CPU with eight host devices under jax
-    # 0.11.1, `working_life` differs by 1 ulp in period 3 and by at most 3 ulp in
-    # period 0, at float64 and at float32, identically on the pull request's base
-    # commit, so it is a reduction-order effect, not a value change.
+    # The sharded and single-device solves are independently compiled programs that
+    # reduce in different orders, and the gap grows toward earlier periods: up to
+    # four ULP in `working_life` at period 0 on CPU with four host devices. A
+    # reduction-order effect, not a value change, within the default allowance.
     for period, regime_to_value in distributed.items():
         for regime_name, value in regime_to_value.items():
             assert_agrees_to_ulp(
                 got=np.asarray(value),
                 expected=np.asarray(single[period][regime_name]),
-                n_ulp=3,
                 err_msg=f"regime {regime_name!r}, period {period}",
             )
 
@@ -1634,12 +1643,19 @@ def test_execution_config_cannot_shard_an_action() -> None:
         alive: ScalarInt
         dead: ScalarInt
 
+    def utility(*, wealth: ScalarFloat, choice: ScalarInt) -> ScalarFloat:
+        return wealth + choice
+
+    def next_wealth(*, wealth: ScalarFloat, choice: ScalarInt) -> ScalarFloat:
+        return wealth - choice
+
+    def dead_utility() -> ScalarFloat:
+        return jnp.asarray(0.0)
+
     regime = UserRegime(
-        functions={"utility": lambda wealth, choice: wealth + choice},
+        functions={"utility": utility},
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
-        state_transitions={
-            "wealth": lambda wealth, choice: wealth - choice,
-        },
+        state_transitions={"wealth": next_wealth},
         actions={
             "choice": DiscreteGrid(category_class=Choice),
         },
@@ -1648,7 +1664,7 @@ def test_execution_config_cannot_shard_an_action() -> None:
         Model(
             regimes={
                 "alive": regime,
-                "dead": UserRegime(functions={"utility": lambda: 0.0}),
+                "dead": UserRegime(functions={"utility": dead_utility}),
             },
             ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
             regime_id_class=RegimeId,

@@ -21,7 +21,11 @@ from typing import Literal, cast
 import dags.tree as dt
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 
-from _lcm.exits import ExitFunctionPath, exit_functions, settlement_names
+from _lcm.composition_actions import (
+    CompositionActionFunctionPath,
+    composition_action_functions,
+    transfer_names,
+)
 from _lcm.params.edges import (
     EDGES,
     FALLBACK,
@@ -40,7 +44,11 @@ from _lcm.params.numeric_roles import (
 )
 from _lcm.params.temporal import validate_temporal_variants
 from _lcm.processes import _ContinuousStochasticProcess
-from _lcm.regime_building.collective import PARETO_OBJECTIVE_ENTRY
+from _lcm.regime_building.collective import (
+    PARETO_OBJECTIVE_ENTRY,
+    member_name,
+    member_slots,
+)
 from _lcm.regime_building.gated_edges import EDGE_PERIOD_CONTEXT_ARGS
 from _lcm.regime_building.transitions import collect_state_transitions
 from _lcm.regime_law import DecomposedTransition, RegimeLaw
@@ -55,8 +63,10 @@ from _lcm.typing import (
 )
 from _lcm.utils.error_messages import path_segment_name_errors
 from _lcm.utils.functools import get_union_of_args, is_user_function
+from lcm.certainty_equivalent import CertaintyEquivalent
 from lcm.collective import Gate, ProjectedRegimeValue
 from lcm.decoupled import (
+    KoopmansDeclaration,
     koopmans_aggregator_variants,
     resolve_koopmans_aggregator,
 )
@@ -100,8 +110,12 @@ def create_regime_params_template(  # noqa: C901 - classify ordinary and law-onl
     other_regime_state_names: frozenset[StateName] = frozenset(),
     declared_variables: frozenset[ReferenceName] = frozenset(),
     current_iid_helpers: frozenset[FunctionName] = frozenset(),
-    exit_function_paths: Mapping[Phase, frozenset[ExitFunctionPath]] | None = None,
-    exit_helper_roots: Mapping[Phase, tuple[UserFunction, ...]] | None = None,
+    composition_action_function_paths: Mapping[
+        Phase, frozenset[CompositionActionFunctionPath]
+    ]
+    | None = None,
+    composition_action_helper_roots: Mapping[Phase, tuple[UserFunction, ...]]
+    | None = None,
 ) -> RegimeParamsTemplate:
     """Create parameter template from a regime specification.
 
@@ -173,12 +187,12 @@ def create_regime_params_template(  # noqa: C901 - classify ordinary and law-onl
     # parameter would answer a next-period question with a constant the user
     # supplies. That is rejected rather than classified.
     template_functions = _collect_all_functions_for_template(user_regime, law=law)
-    excluded_exit_helpers = _undemanded_exit_helpers(
+    excluded_composition_action_helpers = _undemanded_composition_action_helpers(
         user_regime=user_regime,
         template_functions=template_functions,
-        exit_function_paths=exit_function_paths,
+        composition_action_function_paths=composition_action_function_paths,
         current_iid_helpers=current_iid_helpers,
-        ordinary_roots=exit_helper_roots,
+        ordinary_roots=composition_action_helper_roots,
     )
     shared_helpers = set(user_regime.output_only_functions) & current_iid_helpers
     for phase in ("solve", "simulate"):
@@ -235,7 +249,7 @@ def create_regime_params_template(  # noqa: C901 - classify ordinary and law-onl
     )
 
     for name, func in template_functions.items():
-        if name in excluded_exit_helpers:
+        if name in excluded_composition_action_helpers:
             continue
         if name in edge_entry_names:
             continue
@@ -327,11 +341,11 @@ def create_regime_params_template(  # noqa: C901 - classify ordinary and law-onl
         )
 
     per_target_params.update(
-        _exit_params_template(
+        _composition_action_params_template(
             user_regime=user_regime,
             variables=variables,
             reserved=frozenset(function_params) | frozenset(per_target_params),
-            demanded_paths=exit_function_paths,
+            demanded_paths=composition_action_function_paths,
         )
     )
 
@@ -348,18 +362,21 @@ def create_regime_params_template(  # noqa: C901 - classify ordinary and law-onl
     )
 
 
-def _undemanded_exit_helpers(
+def _undemanded_composition_action_helpers(
     *,
     user_regime: UserRegime,
     template_functions: Mapping[FunctionName, UserFunction | Phased],
-    exit_function_paths: Mapping[Phase, frozenset[ExitFunctionPath]] | None,
+    composition_action_function_paths: Mapping[
+        Phase, frozenset[CompositionActionFunctionPath]
+    ]
+    | None,
     current_iid_helpers: frozenset[FunctionName],
     ordinary_roots: Mapping[Phase, tuple[UserFunction, ...]] | None,
 ) -> frozenset[FunctionName]:
     """Drop slots exclusive to ignored callbacks, preserving independent readers."""
     if (
-        user_regime.exit is None
-        or exit_function_paths is None
+        user_regime.composition_action is None
+        or composition_action_function_paths is None
         or ordinary_roots is None
     ):
         return frozenset()
@@ -371,7 +388,7 @@ def _undemanded_exit_helpers(
     required = set()
     protected = (set(template_functions) - user_regime.decomposed_functions.keys()) | {
         "utility",
-        *(f"utility_{member}" for member in user_regime.member_axis or ()),
+        *(member_name(base="utility", member=member) for member in user_regime.members),
         *user_regime.output_only_functions,
         *user_regime.derived_categoricals,
         *current_iid_helpers,
@@ -398,8 +415,10 @@ def _undemanded_exit_helpers(
                         pending.append(pool[name])
             return found
 
-        callbacks = exit_functions(declaration=user_regime.exit, phase=phase)
-        demanded = exit_function_paths.get(phase, frozenset())
+        callbacks = composition_action_functions(
+            declaration=user_regime.composition_action, phase=phase
+        )
+        demanded = composition_action_function_paths.get(phase, frozenset())
         local_ignored = reads(
             functions=[
                 function for path, function in callbacks.items() if path not in demanded
@@ -420,21 +439,26 @@ def _undemanded_exit_helpers(
     return frozenset(ignored - required)
 
 
-def _exit_params_template(
+def _composition_action_params_template(
     *,
     user_regime: UserRegime,
     variables: frozenset[ReferenceName],
     reserved: frozenset[str],
-    demanded_paths: Mapping[Phase, frozenset[ExitFunctionPath]] | None,
+    demanded_paths: Mapping[Phase, frozenset[CompositionActionFunctionPath]] | None,
 ) -> dict[str, dict[str, _TemplateBranch]]:
-    """Union both settlement phases under the exit's exact public path."""
-    if user_regime.exit is None:
+    """Union both transfer phases under the composition action's exact public path."""
+    if user_regime.composition_action is None:
         return {}
-    if "exit" in reserved:
-        raise InvalidNameError("Exit parameters conflict with the regime name 'exit'.")
-    exit_params: _TemplateBranch = {}
+    if "composition_action" in reserved:
+        raise InvalidNameError(
+            "Composition action parameters conflict with the regime name "
+            "'composition_action'."
+        )
+    composition_action_params: _TemplateBranch = {}
     for phase in ("solve", "simulate"):
-        functions = exit_functions(declaration=user_regime.exit, phase=phase)
+        functions = composition_action_functions(
+            declaration=user_regime.composition_action, phase=phase
+        )
         for path, function in functions.items():
             if demanded_paths is not None and path not in demanded_paths.get(
                 phase, frozenset()
@@ -443,17 +467,22 @@ def _exit_params_template(
             params = _discovered_params(
                 name=qname_from_tree_path(path),
                 func=function,
-                non_params=variables | settlement_names(user_regime.exit),
+                non_params=variables | transfer_names(user_regime.composition_action),
             )
-            branch = exit_params
+            branch = composition_action_params
             for segment in path[1:]:
                 branch = cast("_TemplateBranch", branch.setdefault(segment, {}))
             branch.update(merge_template_params(left=branch, right=params))
-    # Every top-level exit slot (`available`, `targets`, `counterparty`) is a branch.
+    # Every top-level composition action slot (`available`, `targets`, `counterparty`)
+    # is a branch.
     return (
         {}
-        if not exit_params
-        else {"exit": cast("dict[str, _TemplateBranch]", exit_params)}
+        if not composition_action_params
+        else {
+            "composition_action": cast(
+                "dict[str, _TemplateBranch]", composition_action_params
+            )
+        }
     )
 
 
@@ -903,9 +932,8 @@ def _wired_names(user_regime: UserRegime) -> frozenset[ReferenceName]:
         user_regime: User-form `Regime` instance.
 
     Returns:
-        Set of the regime's states, actions and functions, `period`, `age` and
-        `CE`, the code `<name>_code` of each discrete variable, plus a collective
-        regime's engine-wired aggregator inputs.
+        Set of the regime's states, actions and functions, `period`, `age`,
+        `CE` and `utility`, and the code `<name>_code` of each discrete variable.
 
     """
     variables = {
@@ -916,13 +944,12 @@ def _wired_names(user_regime: UserRegime) -> frozenset[ReferenceName]:
         "age",
         "CE",
     }
-    if user_regime.member_axis is not None:
-        # A collective regime carries per-member
-        # `utility_<s>` functions instead of a singleton `utility`, but the
-        # Bellman aggregator H still takes a `utility` argument — engine-wired
-        # (the stacked per-member utilities), exactly like `E_next_V` —
-        # so the name must not surface as a user-facing param.
-        variables.add("utility")
+    # `utility` never surfaces as a user-facing param. The member `"self"`
+    # names its utility function `utility`. A regime with several members
+    # carries per-member `utility_<s>` functions, but the Bellman aggregator H
+    # still takes a `utility` argument — engine-wired (the stacked per-member
+    # utilities), exactly like `E_next_V`.
+    variables.add("utility")
     # `<name>_code` reads the code of the discrete variable `<name>`.
     variables.update(
         f"{name}_code"
@@ -1453,12 +1480,14 @@ def _fail_if_a_next_name_is_read_outside_a_transition(
 
     # A certainty equivalent declares parameter names rather than a signature to
     # walk, so its public names get the same test the walk applies to arguments.
-    if user_regime.certainty_equivalent is not None:
+    for entry, certainty_equivalent in _certainty_equivalent_entries(
+        user_regime=user_regime
+    ).items():
         _fail_if_a_next_name_is_read(
-            consumer_name="certainty_equivalent",
+            consumer_name=entry,
             reserved={
                 param_name: ()
-                for param_name in user_regime.certainty_equivalent.param_names
+                for param_name in certainty_equivalent.param_names
                 if param_name.startswith("next_")
             },
         )
@@ -1568,7 +1597,13 @@ def _koopmans_consumers(
     value, objective = resolve_koopmans_aggregator(
         declaration=user_regime.koopmans_aggregator, phase=phase
     )
-    consumers = {} if value is None else {"koopmans_aggregator": value}
+    consumers = dict(
+        member_slots(
+            base="koopmans_aggregator", declaration=value, members=user_regime.members
+        )
+        if value is not None
+        else ()
+    )
     if objective is not None:
         consumers["koopmans_aggregator (objective)"] = objective
     return consumers
@@ -1580,28 +1615,14 @@ def _add_koopmans_aggregator_params(
     """Add the Koopmans aggregator's params under its pseudo-function name in place.
 
     The aggregator's parameters beyond `utility` and `CE` surface in the
-    template under the reserved key `koopmans_aggregator`; a regime function
-    of that name collides and is rejected. Parameters that are states,
+    template under the reserved key `koopmans_aggregator`, or member `m`'s
+    under `koopmans_aggregator_<m>` when the slot is keyed by member; a regime
+    function of that name collides and is rejected. Parameters that are states,
     actions, or regime functions are wired at call time and never surface.
     """
-    if user_regime.koopmans_aggregator is None:
+    declared = user_regime.koopmans_aggregator
+    if declared is None:
         return
-    if "koopmans_aggregator" in function_params:
-        raise InvalidNameError(
-            "The regime declares `koopmans_aggregator`, whose parameters live "
-            "under the pseudo-function name 'koopmans_aggregator' in the "
-            "params — this conflicts with a regime function of the same name."
-        )
-    # Every aggregator the slot runs reads its params from one namespace, so a
-    # name that two of them declare is one parameter.
-    tree: dict[str, str] = {}
-    for aggregator in reversed(
-        koopmans_aggregator_variants(declaration=user_regime.koopmans_aggregator)
-    ):
-        tree = merge_template_params(
-            left=tree,
-            right=_annotated_input_types(name="koopmans_aggregator", func=aggregator),
-        )
     variables = {
         *set(user_regime.states),
         *set(user_regime.actions),
@@ -1611,8 +1632,32 @@ def _add_koopmans_aggregator_params(
         "utility",
         "CE",
     }
-    params = {k: v for k, v in sorted(tree.items()) if k not in variables}
-    function_params["koopmans_aggregator"] = params
+    for entry, declaration in dict(
+        member_slots(
+            base="koopmans_aggregator",
+            declaration=cast("KoopmansDeclaration", declared),
+            members=user_regime.members,
+        )
+    ).items():
+        if entry in function_params:
+            raise InvalidNameError(
+                "The regime declares `koopmans_aggregator`, whose parameters "
+                f"live under the pseudo-function name '{entry}' in the params — "
+                "this conflicts with a regime function of the same name."
+            )
+        # Every aggregator the slot runs reads its params from one namespace,
+        # so a name that two of them declare is one parameter.
+        tree: dict[str, str] = {}
+        for aggregator in reversed(
+            koopmans_aggregator_variants(declaration=declaration)
+        ):
+            tree = merge_template_params(
+                left=tree,
+                right=_annotated_input_types(name=entry, func=aggregator),
+            )
+        function_params[entry] = {
+            k: v for k, v in sorted(tree.items()) if k not in variables
+        }
 
 
 def _add_pareto_objective_params(
@@ -1660,20 +1705,37 @@ def _add_certainty_equivalent_params(
     """Add the certainty equivalent's params under its pseudo-function name in place.
 
     The transform parameters surface in the template under the reserved
-    key `certainty_equivalent`; a regime function of that name collides
-    and is rejected.
+    key `certainty_equivalent`, or member `m`'s under
+    `certainty_equivalent_<m>` when the slot is keyed by member; a regime
+    function of that name collides and is rejected.
     """
-    if user_regime.certainty_equivalent is None:
-        return
-    if "certainty_equivalent" in function_params:
-        raise InvalidNameError(
-            "The regime declares `certainty_equivalent`, whose parameters "
-            "live under the pseudo-function name 'certainty_equivalent' in "
-            "the params — this conflicts with a regime function of the "
-            "same name."
+    for entry, certainty_equivalent in _certainty_equivalent_entries(
+        user_regime=user_regime
+    ).items():
+        if entry in function_params:
+            raise InvalidNameError(
+                "The regime declares `certainty_equivalent`, whose parameters "
+                f"live under the pseudo-function name '{entry}' in the params — "
+                "this conflicts with a regime function of the same name."
+            )
+        function_params[entry] = dict.fromkeys(
+            sorted(certainty_equivalent.param_names), _float_slot()
         )
-    function_params["certainty_equivalent"] = dict.fromkeys(
-        sorted(user_regime.certainty_equivalent.param_names), _float_slot()
+
+
+def _certainty_equivalent_entries(
+    *, user_regime: UserRegime
+) -> dict[str, CertaintyEquivalent]:
+    """Key the declared certainty equivalents by the params entry they read."""
+    declared = user_regime.certainty_equivalent
+    if declared is None:
+        return {}
+    return dict(
+        member_slots(
+            base="certainty_equivalent",
+            declaration=declared,
+            members=user_regime.members,
+        )
     )
 
 

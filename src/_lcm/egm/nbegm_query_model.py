@@ -48,6 +48,10 @@ class NBEGMQueryModel:
     """The target's processed period aggregator."""
     offsets: Float1D
     """One canonical source saving-offset vector."""
+    utility_name: FunctionName = field(
+        default="utility", metadata={"fingerprint_omit_if_default": True}
+    )
+    """Name of the utility function of the regime's one member."""
     intervals: NBEGMIntervalRecipe
     """Independently reconstructed economic interval identity."""
     intervals_by_period: Mapping[int, NBEGMIntervalRecipe]

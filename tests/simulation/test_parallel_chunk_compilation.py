@@ -71,7 +71,7 @@ class _Observation(TypedDict):
     publications: dict[Hashable, tuple[str, int, int]]
     prepared: list[tuple[Hashable, int, int]]
     report_reads: dict[int, int]
-    inventory_exits: list[tuple[int, int]]
+    inventory_composition_actions: list[tuple[int, int]]
     raw_tree: str
     raw_arrays: tuple[tuple[tuple[int, ...], str, bytes], ...]
 
@@ -94,7 +94,7 @@ def _readable_key(key: Hashable) -> tuple[Hashable, ...]:
     """Project a runtime lowering key onto its argument names and specialization.
 
     The program identity is an object address, so it is dropped; the argument
-    names, subject extent and axis widths identify each forward program of the
+    names, agent extent and axis widths identify each forward program of the
     small model.
     """
     _, arguments, specialization, *_ = key  # ty: ignore[not-iterable]
@@ -105,11 +105,11 @@ def _simulate_and_observe(  # noqa: C901, PLR0915 - keep scoped observers at the
     *,
     monkeypatch: pytest.MonkeyPatch,
     max_compilation_workers: int,
-    exits: bool = False,
+    composition_actions: bool = False,
 ) -> _Observation:
     """Simulate a fresh budgeted model, recording chunk planning's lowerings,
     compiles, published forward executables and plan."""
-    if exits:
+    if composition_actions:
         model = household.get_model(
             n_periods=3,
             wealth_n_points=3,
@@ -119,9 +119,9 @@ def _simulate_and_observe(  # noqa: C901, PLR0915 - keep scoped observers at the
             ),
         )
         params = household.get_params()
-        initial = household.get_initial_conditions(n_subjects=4, model=model)
+        initial = household.get_initial_conditions(n_agents=4, model=model)
         assert all(
-            model._regimes[name].simulation.exit_queries
+            model._regimes[name].simulation.composition_queries
             for name in ("couple", "single_f", "single_m")
         )
     else:
@@ -151,7 +151,7 @@ def _simulate_and_observe(  # noqa: C901, PLR0915 - keep scoped observers at the
     compiled_names: dict[int, str] = {}
     report_reads: Counter[int] = Counter()
     inventory_compiled = ChunkProfileInventory.compiled
-    inventory_exits: list[tuple[int, int]] = []
+    inventory_composition_actions: list[tuple[int, int]] = []
     plans: list[SimulationChunkPlan] = []
     lower_body = jax.stages.Traced.lower
     compile_body = jax.stages.Lowered.compile
@@ -239,7 +239,9 @@ def _simulate_and_observe(  # noqa: C901, PLR0915 - keep scoped observers at the
     ) -> ShapeDtypePytree:
         output = inventory_compiled(self, **call)
         if planning[0] and call["name"].startswith("core:exit_"):
-            inventory_exits.append((id(call["executable"]), id(call["memory"])))
+            inventory_composition_actions.append(
+                (id(call["executable"]), id(call["memory"]))
+            )
         return output
 
     def observe_prepare(**call: Unpack[ChunkPreparation]) -> ChunkPreparationResult:
@@ -280,7 +282,7 @@ def _simulate_and_observe(  # noqa: C901, PLR0915 - keep scoped observers at the
     (plan,) = plans
     profile = plan.profile
     contract = (
-        profile.n_subjects,
+        profile.n_agents,
         profile.padded_population,
         tuple(
             (stage.name, stage.peak_bytes, stage.reservation_bytes)
@@ -302,7 +304,7 @@ def _simulate_and_observe(  # noqa: C901, PLR0915 - keep scoped observers at the
         "publications": publications,
         "prepared": prepared_entries,
         "report_reads": dict(report_reads),
-        "inventory_exits": inventory_exits,
+        "inventory_composition_actions": inventory_composition_actions,
         "raw_tree": str(jax.tree.structure(result.raw_results)),
         "raw_arrays": tuple(
             (tuple(array.shape), array.dtype.str, array.tobytes())
@@ -344,7 +346,7 @@ def test_chunk_planning_compiles_every_forward_program_off_the_calling_thread(
 def test_chunk_planning_publishes_one_executable_per_forward_program(
     *, observed: dict[int, _Observation], workers: int
 ) -> None:
-    """The small model's four forward programs, each at three subjects."""
+    """The small model's four forward programs, each at three agents."""
     step = ("age", "koopmans_aggregator__discount_factor", "period", "saving", "wealth")
     keys = sorted(map(_readable_key, observed[workers]["published"]), key=repr)
     assert keys == [
@@ -359,13 +361,13 @@ def test_chunk_planning_publishes_one_executable_per_forward_program(
                 "wealth",
             ),
             3,
-            (("action_product", 2), ("subject", 3)),
+            (("action_product", 2), ("agent", 3)),
         ),
         # The alive transition and route, which read the same operands.
-        (step, 3, (("subject", 3),)),
-        (step, 3, (("subject", 3),)),
+        (step, 3, (("agent", 3),)),
+        (step, 3, (("agent", 3),)),
         # The terminal done decision.
-        (("age", "next_regime_to_V_arr", "period", "wealth"), 3, (("subject", 3),)),
+        (("age", "next_regime_to_V_arr", "period", "wealth"), 3, (("agent", 3),)),
     ]
 
 
@@ -396,13 +398,13 @@ def test_chunk_planning_simulates_the_same_panel_for_every_worker_count(
 
 
 @pytest.fixture(scope="module")
-def exit_observed() -> dict[int, _Observation]:
+def composition_action_observed() -> dict[int, _Observation]:
     with pytest.MonkeyPatch.context() as monkeypatch:
         return {
             workers: _simulate_and_observe(
                 monkeypatch=monkeypatch,
                 max_compilation_workers=workers,
-                exits=True,
+                composition_actions=True,
             )
             for workers in _WORKERS
         }
@@ -410,33 +412,35 @@ def exit_observed() -> dict[int, _Observation]:
 
 @pytest.mark.slow
 @pytest.mark.parametrize("workers", _WORKERS)
-def test_exit_programs_compile_off_the_calling_thread(
-    *, exit_observed: dict[int, _Observation], workers: int
+def test_composition_action_programs_compile_off_the_calling_thread(
+    *, composition_action_observed: dict[int, _Observation], workers: int
 ) -> None:
     """Full and revealed decisions compile without blocking lowering."""
-    observation = exit_observed[workers]
+    observation = composition_action_observed[workers]
     expected = {"simulate_exit_full", "simulate_exit_participating"}
-    exits = [
+    composition_actions = [
         (name, on_caller, text)
         for name, on_caller, text in observation["program_compiles"]
         if name.split(":", 1)[0] in expected
     ]
-    assert {name.split(":", 1)[0] for name, _, _ in exits} == expected
-    assert all("ENTRY" in text for _, _, text in exits)
+    assert {name.split(":", 1)[0] for name, _, _ in composition_actions} == expected
+    assert all("ENTRY" in text for _, _, text in composition_actions)
     assert all(on_caller for name, on_caller in observation["program_lowerings"])
-    assert all(not on_caller for _, on_caller, _ in exits), [
-        name for name, on_caller, _ in exits if on_caller
+    assert all(not on_caller for _, on_caller, _ in composition_actions), [
+        name for name, on_caller, _ in composition_actions if on_caller
     ]
-    assert {text for _, _, text in exits} <= set(observation["published"].values())
+    assert {text for _, _, text in composition_actions} <= set(
+        observation["published"].values()
+    )
 
 
 @pytest.mark.slow
 @pytest.mark.parametrize("workers", _WORKERS)
-def test_exit_profiles_reuse_the_exact_published_executable_and_report(
-    *, exit_observed: dict[int, _Observation], workers: int
+def test_composition_action_profiles_reuse_the_exact_published_executable_and_report(
+    *, composition_action_observed: dict[int, _Observation], workers: int
 ) -> None:
     """Reuse the exact published executable and report without rereading counters."""
-    observed = exit_observed[workers]
+    observed = composition_action_observed[workers]
     assert observed["prepared"]
     families = set()
     for key, executable, memory in observed["prepared"]:
@@ -444,24 +448,27 @@ def test_exit_profiles_reuse_the_exact_published_executable_and_report(
         assert (executable, memory) == (published_executable, published_memory)
         assert observed["report_reads"][executable] == 1
         families.add(name.split(":", 1)[0])
-    assert Counter(observed["inventory_exits"]) == Counter(
+    assert Counter(observed["inventory_composition_actions"]) == Counter(
         (executable, memory) for _, executable, memory in observed["prepared"]
     )
     assert families == {"simulate_exit_full", "simulate_exit_participating"}
 
 
 @pytest.mark.slow
-def test_exit_profiles_keep_the_same_inventory_for_every_worker_count(
-    exit_observed: dict[int, _Observation],
+def test_composition_action_profiles_keep_the_same_inventory_for_every_worker_count(
+    composition_action_observed: dict[int, _Observation],
 ) -> None:
-    assert exit_observed[2]["contract"] == exit_observed[1]["contract"]
+    assert (
+        composition_action_observed[2]["contract"]
+        == composition_action_observed[1]["contract"]
+    )
 
 
 @pytest.mark.slow
-def test_exit_profiles_keep_every_raw_array_for_every_worker_count(
-    exit_observed: dict[int, _Observation],
+def test_composition_action_profiles_keep_every_raw_array_for_every_worker_count(
+    composition_action_observed: dict[int, _Observation],
 ) -> None:
-    expected, actual = exit_observed[1], exit_observed[2]
+    expected, actual = composition_action_observed[1], composition_action_observed[2]
     assert expected["raw_arrays"]
     assert actual["raw_tree"] == expected["raw_tree"]
     # Includes every mask, role, state, shock, action and member value,
@@ -470,13 +477,13 @@ def test_exit_profiles_keep_every_raw_array_for_every_worker_count(
     pd.testing.assert_frame_equal(actual["panel"], expected["panel"], check_exact=True)
 
 
-class _ExitCompileError(RuntimeError):
+class _CompositionCompileError(RuntimeError):
     """A real exit program's compile boundary refused its lowered body."""
 
 
 @pytest.mark.slow
 @pytest.mark.parametrize("failure", ["compile", "report"])
-def test_exit_frontiers_refuse_compile_and_report_failures(  # noqa: C901, PLR0915 - scope fault custody and observations together
+def test_composition_action_frontiers_refuse_compile_and_report_failures(  # noqa: C901, PLR0915 - scope fault custody and observations together
     *, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
     """A failed original or revealed program is never adopted or dispatched."""
@@ -513,7 +520,7 @@ def test_exit_frontiers_refuse_compile_and_report_failures(  # noqa: C901, PLR09
     ) -> jax.stages.Compiled:
         if lowered_names.get(self) == target and failure == "compile":
             attempts.append(threading.get_ident() != caller)
-            raise _ExitCompileError("exit frontier compile failed")
+            raise _CompositionCompileError("exit frontier compile failed")
         compiled = compile_body(self, compiler_options, **kwargs)
         if lowered_names.get(self) == target and failure == "report":
             refused.add(id(compiled))
@@ -561,10 +568,12 @@ def test_exit_frontiers_refuse_compile_and_report_failures(  # noqa: C901, PLR09
         patch.setattr(SimulationRuntime, "_publish", record_cache)
         if failure == "compile":
             with pytest.raises(
-                _ExitCompileError, match="exit frontier compile failed"
+                _CompositionCompileError, match="exit frontier compile failed"
             ) as raised:
                 _simulate_and_observe(
-                    monkeypatch=patch, max_compilation_workers=1, exits=True
+                    monkeypatch=patch,
+                    max_compilation_workers=1,
+                    composition_actions=True,
                 )
             assert any(
                 "while compiling" in note and "exit_full" in note
@@ -575,7 +584,9 @@ def test_exit_frontiers_refuse_compile_and_report_failures(  # noqa: C901, PLR09
                 ExecutionPlanningError, match="not an allocation record"
             ):
                 _simulate_and_observe(
-                    monkeypatch=patch, max_compilation_workers=1, exits=True
+                    monkeypatch=patch,
+                    max_compilation_workers=1,
+                    composition_actions=True,
                 )
             assert refused
             assert not refused.intersection(cached)

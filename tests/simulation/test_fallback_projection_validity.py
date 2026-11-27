@@ -49,7 +49,7 @@ def _replay_wages(*, model: Model, wages: tuple[float, ...]) -> pd.DataFrame:
         )
         .to_dataframe(use_categorical_codes=True)
         .query("period == 1")
-        .sort_values("subject_id")
+        .sort_values("agent_id")
     )
 
 
@@ -58,7 +58,7 @@ def _replay_wages(*, model: Model, wages: tuple[float, ...]) -> pd.DataFrame:
     [(False, None, None), (True, None, 1), (True, 2**28, 2)],
     ids=["eager", "compiled-one-row", "budgeted-two-row"],
 )
-def test_staying_and_leaving_rows_validate_their_actual_exit_projection(
+def test_staying_and_leaving_rows_validate_their_actual_composition_action_projection(
     *, enable_jit: bool, budget: int | None, width: int | None
 ) -> None:
     """Positive-domain valid exit projections cannot reject a staying row's buffer."""
@@ -70,7 +70,7 @@ def test_staying_and_leaving_rows_validate_their_actual_exit_projection(
         enable_jit=enable_jit,
         execution_config=ExecutionConfig(
             device_memory_bytes=budget,
-            axis_widths={} if width is None else {"subject": width},
+            axis_widths={} if width is None else {"agent": width},
         ),
     )
     panel = _replay_wages(model=model, wages=(3.0, 1.0, 2.0))

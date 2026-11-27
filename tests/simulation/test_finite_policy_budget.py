@@ -30,7 +30,7 @@ def _inputs(
         regime_id_class=smooth_toy.RegimeId,
         fixed_params=base.fixed_params,
         execution_config=ExecutionConfig(
-            device_memory_bytes=budget, axis_widths={"subject": width}
+            device_memory_bytes=budget, axis_widths={"agent": width}
         ),
         initial_nodes=initial_nodes_of(model=base),
     )

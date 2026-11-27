@@ -3,7 +3,7 @@
 `ExecutionConfig.axis_width_ceilings` names an upper bound per planner axis. The
 planner intersects its legal candidates with it: no axis extent shortens, no
 output shape changes, and every other axis keeps the widths it had. Solve cell axes
-and simulate subject axes are both bound, budgeted or not.
+and simulate agent axes are both bound, budgeted or not.
 """
 
 from collections.abc import Callable, Mapping
@@ -25,6 +25,7 @@ from _lcm.execution.workspace_planning import (
 from _lcm.solution.period_capture import _PAYLOAD_NAME
 from lcm import AgeGrid, DiscreteGrid, ExecutionConfig, LinSpacedGrid, Model
 from lcm.exceptions import ExecutionPlanningError
+from lcm.solver_api import SolutionResult
 from lcm.solvers import GridSearch
 from tests.conftest import assert_agrees_to_ulp
 from tests.execution.test_workspace_planning import _axis, _tiled
@@ -123,7 +124,7 @@ def _solve_capturing(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     axis_width_ceilings: Mapping[str, int],
-):
+) -> SolutionResult:
     """Solve while capturing the first working-life period's dispatched widths."""
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", _CAPTURE_TARGET)
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
@@ -138,7 +139,9 @@ def _captured_widths(tmp_path: Path) -> dict[str, dict[str, int]]:
         return cloudpickle.load(stream)["core_tile_widths"]
 
 
-def test_ceiling_caps_the_dispatched_cell_width(*, monkeypatch, tmp_path) -> None:
+def test_ceiling_caps_the_dispatched_cell_width(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """The solve tiles cells at the ceiling and keeps the unbounded action width."""
     _solve_capturing(
         monkeypatch=monkeypatch,
@@ -151,7 +154,9 @@ def test_ceiling_caps_the_dispatched_cell_width(*, monkeypatch, tmp_path) -> Non
     }
 
 
-def test_no_ceiling_keeps_the_bootstrap_cell_width(*, monkeypatch, tmp_path) -> None:
+def test_no_ceiling_keeps_the_bootstrap_cell_width(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Without a ceiling the same model tiles cells at its bootstrap width."""
     _solve_capturing(monkeypatch=monkeypatch, tmp_path=tmp_path, axis_width_ceilings={})
 
@@ -164,7 +169,7 @@ def test_ceiling_leaves_the_value_shape_unchanged() -> None:
         params=get_graph_only_params(n_periods=_N_PERIODS), log_level="off"
     )
 
-    assert np.asarray(bounded.values[0]["working_life"]).shape == (_N_WEALTH,)
+    assert np.asarray(bounded.values[0]["working_life"]).shape == (_N_WEALTH, 1)
 
 
 def test_ceiling_leaves_the_solved_values_unchanged() -> None:
@@ -183,8 +188,8 @@ def test_ceiling_leaves_the_solved_values_unchanged() -> None:
     )
 
 
-_N_SUBJECTS = 8
-_SUBJECT_CEILING = 2
+_N_AGENTS = 8
+_AGENT_CEILING = 2
 _SIMULATION_BUDGETS = [None, 2**30]
 
 
@@ -194,7 +199,7 @@ def _simulate_recording_widths(
     axis_width_ceilings: Mapping[str, int],
     device_memory_bytes: int | None,
 ) -> tuple[pd.DataFrame, list[Mapping[str, int]]]:
-    """Simulate `_N_SUBJECTS` subjects, recording every width a dispatch selects."""
+    """Simulate `_N_AGENTS` agents, recording every width a dispatch selects."""
     selected: list[Mapping[str, int]] = []
     plan_workspace = simulation_runtime.plan_workspace
 
@@ -216,9 +221,9 @@ def _simulate_recording_widths(
     result = model.simulate(
         params=params,
         initial_conditions={
-            "wealth": jnp.linspace(1.0, 3.0, _N_SUBJECTS),
-            "age": jnp.full(_N_SUBJECTS, float(START_AGE)),
-            "regime_id": jnp.full(_N_SUBJECTS, RegimeId.working_life, dtype=jnp.int32),
+            "wealth": jnp.linspace(1.0, 3.0, _N_AGENTS),
+            "age": jnp.full(_N_AGENTS, float(START_AGE)),
+            "regime_id": jnp.full(_N_AGENTS, RegimeId.working_life, dtype=jnp.int32),
         },
         solution=model.solve(params=params, log_level="off"),
         seed=7,
@@ -227,43 +232,43 @@ def _simulate_recording_widths(
     return result.to_dataframe(), selected
 
 
-def _subject_widths(selected: list[Mapping[str, int]]) -> set[int]:
-    return {widths["subject"] for widths in selected if "subject" in widths}
+def _agent_widths(selected: list[Mapping[str, int]]) -> set[int]:
+    return {widths["agent"] for widths in selected if "agent" in widths}
 
 
 @pytest.mark.parametrize("device_memory_bytes", _SIMULATION_BUDGETS)
-def test_ceiling_caps_every_simulated_subject_width(
+def test_ceiling_caps_every_simulated_agent_width(
     *, monkeypatch: pytest.MonkeyPatch, device_memory_bytes: int | None
 ) -> None:
-    """Every simulation dispatch tiles subjects at the declared ceiling."""
+    """Every simulation dispatch tiles agents at the declared ceiling."""
     _, selected = _simulate_recording_widths(
         monkeypatch=monkeypatch,
-        axis_width_ceilings={"subject": _SUBJECT_CEILING},
+        axis_width_ceilings={"agent": _AGENT_CEILING},
         device_memory_bytes=device_memory_bytes,
     )
 
-    assert _subject_widths(selected) == {_SUBJECT_CEILING}
+    assert _agent_widths(selected) == {_AGENT_CEILING}
 
 
 @pytest.mark.parametrize("device_memory_bytes", _SIMULATION_BUDGETS)
-def test_no_ceiling_tiles_subjects_wider_than_the_ceiling(
+def test_no_ceiling_tiles_agents_wider_than_the_ceiling(
     *, monkeypatch: pytest.MonkeyPatch, device_memory_bytes: int | None
 ) -> None:
-    """Without a ceiling the same simulation tiles subjects wider than it."""
+    """Without a ceiling the same simulation tiles agents wider than it."""
     _, selected = _simulate_recording_widths(
         monkeypatch=monkeypatch,
         axis_width_ceilings={},
         device_memory_bytes=device_memory_bytes,
     )
 
-    assert min(_subject_widths(selected)) > _SUBJECT_CEILING
+    assert min(_agent_widths(selected)) > _AGENT_CEILING
 
 
 @pytest.mark.parametrize("device_memory_bytes", _SIMULATION_BUDGETS)
-def test_subject_ceiling_leaves_the_simulated_panel_unchanged(
+def test_agent_ceiling_leaves_the_simulated_panel_unchanged(
     *, monkeypatch: pytest.MonkeyPatch, device_memory_bytes: int | None
 ) -> None:
-    """Narrower subject tiles partition the same panel, value for value."""
+    """Narrower agent tiles partition the same panel, value for value."""
     unbounded, _ = _simulate_recording_widths(
         monkeypatch=monkeypatch,
         axis_width_ceilings={},
@@ -271,7 +276,7 @@ def test_subject_ceiling_leaves_the_simulated_panel_unchanged(
     )
     bounded, _ = _simulate_recording_widths(
         monkeypatch=monkeypatch,
-        axis_width_ceilings={"subject": _SUBJECT_CEILING},
+        axis_width_ceilings={"agent": _AGENT_CEILING},
         device_memory_bytes=device_memory_bytes,
     )
 

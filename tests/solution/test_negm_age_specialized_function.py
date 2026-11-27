@@ -466,7 +466,7 @@ def _early_continuation(
             retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
         )
     continuation = result.retained_continuations[
-        ArtifactRef(period=_EARLY_LAST_PERIOD, regime="early", key=EGM_CONTINUATION)
+        ArtifactRef(step=_EARLY_LAST_PERIOD, regime="early", key=EGM_CONTINUATION)
     ]
     assert isinstance(continuation, EGMCarry)
     return continuation

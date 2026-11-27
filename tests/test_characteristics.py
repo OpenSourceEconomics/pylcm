@@ -1,10 +1,14 @@
 """Discrete variables whose categories are combinations of characteristics."""
 
+from collections.abc import Callable, Iterable
+from types import MappingProxyType
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import pytest
+from jax.typing import DTypeLike
 
 from _lcm.simulation.initial_conditions import MISSING_CAT_CODE
 from lcm import (
@@ -20,7 +24,15 @@ from lcm import (
 )
 from lcm.exceptions import CategoricalDefinitionError
 from lcm.regime import Regime
-from lcm.typing import DiscreteAction, DiscreteState, FloatND, IntND, ScalarInt
+from lcm.typing import (
+    BoolND,
+    DiscreteAction,
+    DiscreteState,
+    FloatND,
+    IntND,
+    ScalarInt,
+    ValueND,
+)
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 
 
@@ -43,7 +55,7 @@ STATUS = characteristics(
 )
 
 
-def test_characteristics_hold_each_characteristic_by_code():
+def test_characteristics_hold_each_characteristic_by_code() -> None:
     """`columns[name][code]` is the characteristic of the category with `code`."""
     np.testing.assert_array_equal(STATUS["di_years"], np.array([0, 0, 1, 2]))
 
@@ -52,24 +64,26 @@ def test_characteristics_hold_each_characteristic_by_code():
     ("name", "dtype"),
     [("has_job", np.dtype(bool)), ("di_years", np.dtype(np.int32))],
 )
-def test_characteristics_use_bool_and_int32_dtypes(*, name, dtype):
+def test_characteristics_use_bool_and_int32_dtypes(
+    *, name: str, dtype: np.dtype
+) -> None:
     """Bool characteristics stay boolean; integer ones share the code dtype."""
     assert STATUS[name].dtype == dtype
 
 
-def test_characteristics_list_characteristics_in_row_order():
+def test_characteristics_list_characteristics_in_row_order() -> None:
     """The columns appear in the order the first row lists them."""
     assert tuple(STATUS) == ("has_job", "on_di", "di_years")
 
 
 @pytest.mark.parametrize(("name", "value"), [("di_years", 5), ("has_job", False)])
-def test_characteristic_arrays_are_read_only(*, name, value):
+def test_characteristic_arrays_are_read_only(*, name: str, value: int | bool) -> None:
     """Neither an integer nor a bool column can be changed after the check."""
     with pytest.raises(ValueError, match="read-only"):
         STATUS[name][0] = value
 
 
-def test_characteristics_mapping_is_read_only():
+def test_characteristics_mapping_is_read_only() -> None:
     """No column of the mapping can be replaced or added after the check."""
     with pytest.raises(TypeError, match="does not support item assignment"):
         STATUS["di_years"] = np.array([0, 0, 0, 0], dtype=np.int32)  # ty: ignore[invalid-assignment]
@@ -81,65 +95,65 @@ class _Two:
     b: ScalarInt
 
 
-def _columns_missing_category():
+def _columns_missing_category() -> None:
     characteristics(category_class=_Two, by_category={"a": {"x": 1}})
 
 
-def _columns_extra_category():
+def _columns_extra_category() -> None:
     characteristics(
         category_class=_Two, by_category={"a": {"x": 1}, "b": {"x": 2}, "c": {"x": 3}}
     )
 
 
-def _columns_in_wrong_order():
+def _columns_in_wrong_order() -> None:
     characteristics(category_class=_Two, by_category={"b": {"x": 1}, "a": {"x": 2}})
 
 
-def _columns_with_differing_characteristics():
+def _columns_with_differing_characteristics() -> None:
     characteristics(category_class=_Two, by_category={"a": {"x": 1}, "b": {"y": 2}})
 
 
-def _columns_without_characteristics():
+def _columns_without_characteristics() -> None:
     characteristics(category_class=_Two, by_category={"a": {}, "b": {}})
 
 
-def _columns_with_a_float_in_a_later_row():
+def _columns_with_a_float_in_a_later_row() -> None:
     characteristics(
         category_class=_Two,
         by_category={"a": {"x": 0}, "b": {"x": 1.5}},
     )
 
 
-def _columns_with_a_string_in_a_later_row():
+def _columns_with_a_string_in_a_later_row() -> None:
     characteristics(
         category_class=_Two,
         by_category={"a": {"x": 0}, "b": {"x": "q"}},  # ty: ignore[invalid-argument-type]
     )
 
 
-def _columns_outside_int32():
+def _columns_outside_int32() -> None:
     characteristics(category_class=_Two, by_category={"a": {"x": 0}, "b": {"x": 2**31}})
 
 
-def _columns_with_identical_rows():
+def _columns_with_identical_rows() -> None:
     characteristics(
         category_class=_Two, by_category={"a": {"x": 1, "y": 0}, "b": {"x": 1, "y": 0}}
     )
 
 
-def _columns_with_identical_rows_in_another_key_order():
+def _columns_with_identical_rows_in_another_key_order() -> None:
     characteristics(
         category_class=_Two, by_category={"a": {"x": 0, "y": 1}, "b": {"y": 1, "x": 0}}
     )
 
 
-def _columns_below_int32():
+def _columns_below_int32() -> None:
     characteristics(
         category_class=_Two, by_category={"a": {"x": 0}, "b": {"x": -(2**31) - 1}}
     )
 
 
-def _columns_holding_the_missing_code():
+def _columns_holding_the_missing_code() -> None:
     characteristics(
         category_class=_Two, by_category={"a": {"x": 0}, "b": {"x": -(2**31)}}
     )
@@ -165,7 +179,9 @@ def _columns_holding_the_missing_code():
         (_columns_holding_the_missing_code, r"`b\.x`.*missing-category code"),
     ],
 )
-def test_characteristics_reject_inconsistent_tables(*, build, message):
+def test_characteristics_reject_inconsistent_tables(
+    *, build: Callable[[], None], message: str
+) -> None:
     """Every inconsistency between the class and its table raises."""
     with pytest.raises(CategoricalDefinitionError, match=message):
         build()
@@ -179,14 +195,16 @@ def test_characteristics_reject_inconsistent_tables(*, build, message):
         ({"has_job": False, "on_di": True, "di_years": 2}, 3),
     ],
 )
-def test_category_with_returns_the_code_of_the_matching_category(*, row, code):
+def test_category_with_returns_the_code_of_the_matching_category(
+    *, row: dict[str, bool | int], code: int
+) -> None:
     """A full row maps back to its category's code, in the dtype of codes."""
     found = category_with(STATUS, **row)
     assert found.dtype == jnp.int32
     assert int(found) == code
 
 
-def test_category_with_accepts_a_subset_that_tells_all_categories_apart():
+def test_category_with_accepts_a_subset_that_tells_all_categories_apart() -> None:
     """A subset suffices when no two categories share it."""
     columns = characteristics(
         category_class=_Two, by_category={"a": {"x": 1, "y": 0}, "b": {"x": 2, "y": 0}}
@@ -195,24 +213,24 @@ def test_category_with_accepts_a_subset_that_tells_all_categories_apart():
     assert int(category_with(columns, x=2)) == 1
 
 
-def test_category_with_returns_the_missing_code_for_an_unlisted_combination():
+def test_category_with_returns_the_missing_code_for_an_unlisted_combination() -> None:
     """A combination no category has maps to the missing-category code."""
     found = category_with(STATUS, has_job=True, on_di=True, di_years=1)
 
     assert int(found) == MISSING_CAT_CODE
 
 
-def test_category_with_under_jit_matches_eager():
+def test_category_with_under_jit_matches_eager() -> None:
     """Characteristics computed inside `jit` map to the same codes."""
 
     @jax.jit
-    def next_status(years):
+    def next_status(years: ScalarInt) -> IntND:
         return category_with(STATUS, has_job=False, on_di=True, di_years=years + 1)
 
     assert int(next_status(jnp.int32(1))) == int(Status.di_2)
 
 
-def test_category_with_under_vmap_maps_each_combination():
+def test_category_with_under_vmap_maps_each_combination() -> None:
     """Batched characteristics map to one code each, misses included."""
     years = jnp.array([1, 2, 3], dtype=jnp.int32)
 
@@ -223,7 +241,7 @@ def test_category_with_under_vmap_maps_each_combination():
     np.testing.assert_array_equal(found, np.array([2, 3, MISSING_CAT_CODE]))
 
 
-def test_category_with_broadcasts_array_arguments():
+def test_category_with_broadcasts_array_arguments() -> None:
     """Array characteristics broadcast against each other and against scalars."""
     found = category_with(
         STATUS, has_job=jnp.array([True, False]), on_di=False, di_years=0
@@ -232,25 +250,25 @@ def test_category_with_broadcasts_array_arguments():
     np.testing.assert_array_equal(found, np.array([0, 1]))
 
 
-def test_category_with_a_subset_shared_by_several_categories_raises():
+def test_category_with_a_subset_shared_by_several_categories_raises() -> None:
     """A subset that leaves categories tied raises before reading any value."""
     with pytest.raises(CategoricalDefinitionError, match=r"codes \[0, 1\]"):
         category_with(STATUS, on_di=False, di_years=0)
 
 
-def test_category_with_without_characteristics_raises():
+def test_category_with_without_characteristics_raises() -> None:
     """`category_with` needs at least one characteristic."""
     with pytest.raises(CategoricalDefinitionError, match="at least one"):
         category_with(STATUS)
 
 
-def test_category_with_an_unknown_characteristic_raises():
+def test_category_with_an_unknown_characteristic_raises() -> None:
     """Characteristic names must be columns of the table."""
     with pytest.raises(CategoricalDefinitionError, match="wage"):
         category_with(STATUS, has_job=True, on_di=False, di_years=0, wage=1)
 
 
-def test_characteristics_match_row_entries_by_name_in_any_order():
+def test_characteristics_match_row_entries_by_name_in_any_order() -> None:
     """A row lists its characteristics in any order; columns follow the first row."""
     columns = characteristics(
         category_class=_Two, by_category={"a": {"x": 1, "y": 0}, "b": {"y": 0, "x": 2}}
@@ -262,7 +280,7 @@ def test_characteristics_match_row_entries_by_name_in_any_order():
     }
 
 
-def test_characteristics_accept_the_int32_range_above_the_missing_code():
+def test_characteristics_accept_the_int32_range_above_the_missing_code() -> None:
     """Every int32 above the missing-category code is a valid characteristic."""
     columns = characteristics(
         category_class=_Two,
@@ -292,11 +310,11 @@ SIGNED = characteristics(
 
 
 @pytest.mark.parametrize("mode", ["eager", "jit"])
-def test_category_with_finds_int32_extremes_exactly(*, mode):
+def test_category_with_finds_int32_extremes_exactly(*, mode: str) -> None:
     """Signed queries at and next to the int32 endpoints find their own rows."""
     queries = jnp.array([-(2**31), -(2**31) + 1, -1, 0, 1, 2**31 - 1], dtype=jnp.int32)
 
-    def lookup(values):
+    def lookup(values: IntND) -> IntND:
         return category_with(SIGNED, x=values)
 
     found = jax.jit(lookup)(queries) if mode == "jit" else lookup(queries)
@@ -308,10 +326,12 @@ def test_category_with_finds_int32_extremes_exactly(*, mode):
 
 @pytest.mark.parametrize("mode", ["eager", "jit"])
 @pytest.mark.parametrize("value", [-(2**31) - 1, 2**31, 2**32 - 1, 2**64])
-def test_category_with_treats_python_ints_outside_int32_as_missing(*, mode, value):
+def test_category_with_treats_python_ints_outside_int32_as_missing(
+    *, mode: str, value: int
+) -> None:
     """No category has a characteristic outside int32, so such a value misses."""
 
-    def lookup():
+    def lookup() -> IntND:
         return category_with(SIGNED, x=value)
 
     found = jax.jit(lookup)() if mode == "jit" else lookup()
@@ -319,23 +339,23 @@ def test_category_with_treats_python_ints_outside_int32_as_missing(*, mode, valu
     assert int(found) == MISSING_CAT_CODE
 
 
-def test_category_with_rejects_values_that_are_not_bool_or_signed_integers():
+def test_category_with_rejects_values_that_are_not_bool_or_signed_integers() -> None:
     """Unsigned queries raise before any comparison."""
     with pytest.raises(CategoricalDefinitionError, match="bool or signed integer"):
         category_with(SIGNED, x=jnp.asarray(2**32 - 1, dtype=jnp.uint32))
 
 
-def test_category_with_a_globally_ambiguous_subset_raises_for_a_unique_value():
+def test_category_with_a_globally_ambiguous_subset_raises_for_a_unique_value() -> None:
     """A subset is judged on all categories, also where the queried value is unique."""
     with pytest.raises(CategoricalDefinitionError, match="do not tell all categories"):
         category_with(STATUS, on_di=True, di_years=1)
 
 
 @pytest.mark.parametrize("mode", ["eager", "jit"])
-def test_category_with_broadcasts_two_array_arguments(*, mode):
+def test_category_with_broadcasts_two_array_arguments(*, mode: str) -> None:
     """Two array characteristics broadcast against each other into a grid of codes."""
 
-    def lookup(*, has_job, on_di):
+    def lookup(*, has_job: BoolND, on_di: BoolND) -> IntND:
         return category_with(STATUS, has_job=has_job, on_di=on_di, di_years=0)
 
     has_job = jnp.array([[True], [False]])
@@ -351,13 +371,13 @@ def test_category_with_broadcasts_two_array_arguments(*, mode):
     )
 
 
-def _exact_signed_codes(values):
+def _exact_signed_codes(values: Iterable[int]) -> np.ndarray:
     """Return the code of each value in `SIGNED`, compared as Python integers."""
     stored = {int(value): code for code, value in enumerate(SIGNED["x"].tolist())}
     return np.array([stored.get(int(v), MISSING_CAT_CODE) for v in values], np.int32)
 
 
-def _signed_lookup(values):
+def _signed_lookup(values: ValueND | int) -> IntND:
     return category_with(SIGNED, x=values)
 
 
@@ -369,7 +389,7 @@ _TRANSFORMS = {
 }
 
 
-def _weak_batch(values):
+def _weak_batch(values: Iterable[int]) -> ValueND:
     """Stack weakly typed integer scalars into one weakly typed array."""
     batch = jnp.stack([jnp.asarray(int(value)) for value in values])
     assert batch.weak_type
@@ -380,8 +400,8 @@ def _weak_batch(values):
 @pytest.mark.parametrize("mode", ["eager", "jit"])
 @pytest.mark.parametrize("representation", ["python", "weak", "strong"])
 def test_category_with_a_wide_integer_cannot_alias_a_negative_characteristic(
-    *, mode, representation
-):
+    *, mode: str, representation: str
+) -> None:
     """`2**32 - 1` misses although its low 32 bits equal the stored -1."""
     value = 2**32 - 1
     if representation == "weak":
@@ -399,8 +419,8 @@ def test_category_with_a_wide_integer_cannot_alias_a_negative_characteristic(
 @pytest.mark.parametrize("mode", ["eager", "jit", "vmap", "jit_vmap"])
 @pytest.mark.parametrize("representation", ["weak", "strong"])
 def test_category_with_int64_neighbourhoods_of_every_characteristic(
-    *, mode, representation
-):
+    *, mode: str, representation: str
+) -> None:
     """Each stored value, its neighbours and its 32-bit aliases map exactly."""
     values = sorted(
         {
@@ -434,7 +454,7 @@ def test_category_with_int64_neighbourhoods_of_every_characteristic(
 
 
 @pytest.mark.parametrize("mode", ["eager", "jit", "vmap", "jit_vmap"])
-def test_category_with_small_weak_integers_map_exactly(*, mode):
+def test_category_with_small_weak_integers_map_exactly(*, mode: str) -> None:
     """Weakly typed small integers find their rows at either precision."""
     values = (-1, 0, 1, 2)
 
@@ -447,7 +467,9 @@ def test_category_with_small_weak_integers_map_exactly(*, mode):
 @pytest.mark.parametrize(
     "dtype", [jnp.int8, jnp.int16, jnp.int32, jnp.int64, jnp.bool_]
 )
-def test_category_with_accepts_every_signed_width_and_bool(*, mode, dtype):
+def test_category_with_accepts_every_signed_width_and_bool(
+    *, mode: str, dtype: DTypeLike
+) -> None:
     """Strong signed integers of any width, and bools, compare by value."""
     if dtype == jnp.int64 and not X64_ENABLED:
         pytest.skip("int64 needs x64")
@@ -476,7 +498,7 @@ _FLAG_CODES = np.array(
 )
 
 
-def _flag_lookup(values):
+def _flag_lookup(values: ValueND | int) -> IntND:
     return category_with(FLAG, flag=values)
 
 
@@ -489,7 +511,9 @@ _FLAG_TRANSFORMS = {
 
 
 @pytest.mark.parametrize("mode", ["eager", "jit"])
-def test_category_with_python_ints_other_than_0_and_1_miss_a_bool_column(*, mode):
+def test_category_with_python_ints_other_than_0_and_1_miss_a_bool_column(
+    *, mode: str
+) -> None:
     """A Python int names a bool category only as 0 or 1; 2 is not `True`."""
     lookup = _FLAG_TRANSFORMS[mode]
 
@@ -501,8 +525,8 @@ def test_category_with_python_ints_other_than_0_and_1_miss_a_bool_column(*, mode
 @pytest.mark.parametrize("mode", ["eager", "jit", "vmap", "jit_vmap"])
 @pytest.mark.parametrize("representation", ["weak", "int8", "int16", "int32", "int64"])
 def test_category_with_signed_arrays_other_than_0_and_1_miss_a_bool_column(
-    *, mode, representation
-):
+    *, mode: str, representation: str
+) -> None:
     """Signed arrays of any width name a bool category only as 0 or 1."""
     if representation == "int64" and not X64_ENABLED:
         pytest.skip("int64 needs x64")
@@ -520,7 +544,7 @@ def test_category_with_signed_arrays_other_than_0_and_1_miss_a_bool_column(
 
 @pytest.mark.skipif(not X64_ENABLED, reason="64-bit queries need x64")
 @pytest.mark.parametrize("mode", ["eager", "jit"])
-def test_category_with_wide_weak_values_broadcast_with_bool_flags(*, mode):
+def test_category_with_wide_weak_values_broadcast_with_bool_flags(*, mode: str) -> None:
     """A wide alias misses at every flag it broadcasts against."""
     columns = characteristics(
         category_class=_Signed,
@@ -532,7 +556,7 @@ def test_category_with_wide_weak_values_broadcast_with_bool_flags(*, mode):
         },
     )
 
-    def lookup(*, values, flags):
+    def lookup(*, values: ValueND, flags: BoolND) -> IntND:
         return category_with(columns, x=values, flag=flags)
 
     values = _weak_batch((-1, 2**32 - 1, 0)).reshape(3, 1)
@@ -615,7 +639,7 @@ def _next_pattern_status(
     )
 
 
-def _next_wealth(*, wealth: FloatND, consumption: FloatND, income: FloatND):
+def _next_wealth(*, wealth: FloatND, consumption: FloatND, income: FloatND) -> FloatND:
     return wealth - consumption + income
 
 
@@ -697,19 +721,19 @@ def _simulate(*, use_pattern: bool) -> pd.DataFrame:
     )
 
 
-def test_characteristic_pattern_solves_to_the_hand_table_values():
+def test_characteristic_pattern_solves_to_the_hand_table_values() -> None:
     """Published characteristics and `category_with` reproduce the hand-table V."""
     np.testing.assert_array_equal(_solve(use_pattern=True), _solve(use_pattern=False))
 
 
-def test_characteristic_pattern_simulates_the_hand_table_paths():
+def test_characteristic_pattern_simulates_the_hand_table_paths() -> None:
     """Published characteristics and `category_with` reproduce the simulated paths."""
     pd.testing.assert_frame_equal(
         _simulate(use_pattern=True), _simulate(use_pattern=False), check_exact=True
     )
 
 
-def test_published_characteristics_appear_as_additional_targets():
+def test_published_characteristics_appear_as_additional_targets() -> None:
     """A published characteristic is an output column like any other function."""
     frame = (
         _labour_model(use_pattern=True)
@@ -718,13 +742,13 @@ def test_published_characteristics_appear_as_additional_targets():
         )
         .to_dataframe(additional_targets=["status_di_years"])
         .query("regime_name == 'active' and period == 0")
-        .sort_values("subject_id")
+        .sort_values("agent_id")
     )
 
     np.testing.assert_array_equal(frame["status_di_years"], np.array([0, 0, 1, 2]))
 
 
-def _float_characteristics():
+def _float_characteristics() -> MappingProxyType[str, np.ndarray]:
     return characteristics(
         category_class=_Two,
         by_category={
@@ -734,7 +758,7 @@ def _float_characteristics():
     )
 
 
-def test_characteristics_store_float_values_as_float64():
+def test_characteristics_store_float_values_as_float64() -> None:
     """Floating properties retain their values in a read-only float64 column."""
     column = _float_characteristics()["wage"]
     assert (column.dtype, column.tolist(), column.flags.writeable) == (
@@ -745,11 +769,11 @@ def test_characteristics_store_float_values_as_float64():
 
 
 @pytest.mark.parametrize("mode", ["eager", "jit", "vmap", "jit_vmap"])
-def test_float_characteristics_are_read_by_category_code(*, mode):
+def test_float_characteristics_are_read_by_category_code(*, mode: str) -> None:
     """Category codes select numerical properties under JAX transformations."""
     columns = _float_characteristics()
 
-    def wage(code):
+    def wage(code: IntND) -> FloatND:
         return jnp.asarray(columns["wage"])[code]
 
     transforms = {
@@ -765,7 +789,7 @@ def test_float_characteristics_are_read_by_category_code(*, mode):
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
-def test_characteristics_reject_nonfinite_float_properties(*, value):
+def test_characteristics_reject_nonfinite_float_properties(*, value: float) -> None:
     """A numerical category property must be finite, including later rows."""
     with pytest.raises(CategoricalDefinitionError, match="finite"):
         characteristics(
@@ -774,11 +798,11 @@ def test_characteristics_reject_nonfinite_float_properties(*, value):
 
 
 @pytest.mark.parametrize("mode", ["eager", "jit"])
-def test_category_with_ignores_unqueried_float_properties(*, mode):
+def test_category_with_ignores_unqueried_float_properties(*, mode: str) -> None:
     """Integer identifying fields work in tables that also contain floats."""
     columns = _float_characteristics()
 
-    def lookup(index):
+    def lookup(index: IntND) -> IntND:
         return category_with(columns, index=index)
 
     found = jax.jit(lookup)(jnp.int32(1)) if mode == "jit" else lookup(jnp.int32(1))
@@ -786,18 +810,20 @@ def test_category_with_ignores_unqueried_float_properties(*, mode):
 
 
 @pytest.mark.parametrize("mode", ["eager", "jit"])
-def test_category_with_rejects_float_columns_even_for_integer_queries(*, mode):
+def test_category_with_rejects_float_columns_even_for_integer_queries(
+    *, mode: str
+) -> None:
     """A float property cannot identify a category, even at an exact integer."""
     columns = _float_characteristics()
 
-    def lookup(index):
+    def lookup(index: IntND) -> IntND:
         return category_with(columns, index=index, wage=1)
 
     with pytest.raises(CategoricalDefinitionError, match=r"float.*wage|wage.*float"):
         jax.jit(lookup)(jnp.int32(1)) if mode == "jit" else lookup(jnp.int32(1))
 
 
-def test_characteristics_reject_duplicate_float_rows():
+def test_characteristics_reject_duplicate_float_rows() -> None:
     """Float properties do not remove the requirement that category rows differ."""
     with pytest.raises(CategoricalDefinitionError, match="same characteristics"):
         characteristics(
@@ -805,7 +831,7 @@ def test_characteristics_reject_duplicate_float_rows():
         )
 
 
-def test_category_with_tie_only_floats_break_names_the_float_columns():
+def test_category_with_tie_only_floats_break_names_the_float_columns() -> None:
     """A tie that only float properties break says that no query can resolve it."""
     columns = characteristics(
         category_class=_Two,
@@ -817,14 +843,16 @@ def test_category_with_tie_only_floats_break_names_the_float_columns():
         category_with(columns, hours=0)
 
 
-def test_category_with_tie_other_columns_break_asks_for_more_characteristics():
+def test_category_with_tie_other_columns_break_asks_for_more_characteristics() -> None:
     """A tie that an unqueried integer or bool column breaks asks for more of them."""
     with pytest.raises(CategoricalDefinitionError, match="Pass more characteristics"):
         category_with(STATUS, has_job=False)
 
 
 @pytest.mark.parametrize("value", [1e39, -1e39])
-def test_characteristics_reject_float_properties_float32_cannot_hold(*, value):
+def test_characteristics_reject_float_properties_float32_cannot_hold(
+    *, value: float
+) -> None:
     """A float property must stay finite at either precision the table is read at."""
     with pytest.raises(CategoricalDefinitionError, match="float32"):
         characteristics(

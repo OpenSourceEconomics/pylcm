@@ -423,6 +423,13 @@ def _tolerance() -> float:
     return 100.0 * 10.0**-DECIMAL_PRECISION
 
 
+def _member_value(value: ArgumentTree) -> np.ndarray:
+    """The published value of the regime's one member, its member axis indexed."""
+    value_arr = np.asarray(value)
+    assert value_arr.shape[-1] == 1, value_arr.shape
+    return value_arr[..., 0]
+
+
 def _assert_agrees(*, got: ArgumentTree, expected: np.ndarray, label: str) -> None:
     got_arr = np.asarray(got, dtype=np.float64)
     expected_arr = np.asarray(expected, dtype=np.float64)
@@ -489,6 +496,7 @@ def _assert_nnbegm_route_agrees_with_oracle(route: _Route) -> None:
             child=child_period_context(
                 model=model, context=context, regime_name=route.regime_name
             ),
+            publishes_member_axis=False,
         )
 
 
@@ -520,15 +528,26 @@ def _assert_kernel_agrees_with_oracle(
     kernel: _RideAlongNBEGMPeriodKernel,
     context: OracleContext,
     child: ChildPeriodContext | None,
+    publishes_member_axis: bool = True,
 ) -> None:
+    """Compare one production kernel's channels with the direct oracle.
+
+    A regime's published value ends in its member axis; the inner kernels of the
+    nested solver publish to their outer program, which adds it.
+    """
     outputs = run_production_kernel(kernel=kernel, context=context)
-    value, carry, policy, *banks = outputs
+    published_value, carry, policy, *banks = outputs
+    value = (
+        _member_value(published_value)
+        if publishes_member_axis
+        else np.asarray(published_value)
+    )
     assert isinstance(carry, EGMCarry)
     oracle = direct_oracle_period(
         kernel=kernel,
         context=context,
         child=child,
-        tie_tolerance=_tolerance() * max(1.0, float(np.max(np.abs(np.asarray(value))))),
+        tie_tolerance=_tolerance() * max(1.0, float(np.max(np.abs(value)))),
     )
     _assert_agrees(got=value, expected=oracle.value, label="value")
     _assert_agrees_up_to_ties(
@@ -629,7 +648,9 @@ def test_direct_oracle_detects_a_dropped_target_and_a_dropped_stochastic_node(
             child=child_period_context(model=model, context=context),
         )
         with pytest.raises(AssertionError):
-            _assert_agrees(got=value, expected=oracle.value, label="value")
+            _assert_agrees(
+                got=_member_value(value), expected=oracle.value, label="value"
+            )
         return
     if dropped == "target":
         model = nbegm_multi_target_toy.build_model(
@@ -671,7 +692,7 @@ def test_direct_oracle_detects_a_dropped_target_and_a_dropped_stochastic_node(
     value, *_rest = run_production_kernel(kernel=kernel, context=context)
     oracle = direct_oracle_period(kernel=mutated_kernel, context=context, child=child)
     with pytest.raises(AssertionError):
-        _assert_agrees(got=value, expected=oracle.value, label="value")
+        _assert_agrees(got=_member_value(value), expected=oracle.value, label="value")
 
 
 _SOURCE = Path(__file__).read_text()

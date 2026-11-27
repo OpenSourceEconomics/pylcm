@@ -1,4 +1,4 @@
-"""Unbudgeted simulation operations accept grid points beside sharded subject rows."""
+"""Unbudgeted simulation operations accept grid points beside sharded agent rows."""
 
 import gc
 import weakref
@@ -23,56 +23,52 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _subject_sharding() -> jax.NamedSharding:
-    mesh = jax.make_mesh((2,), ("subjects",), devices=jax.devices()[:2])
-    return jax.NamedSharding(mesh, jax.P("subjects"))
+def _agent_sharding() -> jax.NamedSharding:
+    mesh = jax.make_mesh((2,), ("agents",), devices=jax.devices()[:2])
+    return jax.NamedSharding(mesh, jax.P("agents"))
 
 
 def _count_below_last_point(
-    *, values: jax.Array, points: jax.Array, subjects: jax.Array
+    *, values: jax.Array, points: jax.Array, agents: jax.Array
 ) -> jax.Array:
-    return jnp.sum(subjects & (values < points[-1]))
+    return jnp.sum(agents & (values < points[-1]))
 
 
 def test_run_simulation_operation_reads_points_committed_to_one_device() -> None:
-    """Grid points committed to a single device meet subject rows sharded over
+    """Grid points committed to a single device meet agent rows sharded over
     two devices, and the operation reads them as one replicated operand."""
-    sharding = _subject_sharding()
+    sharding = _agent_sharding()
     values = jax.device_put(jnp.array([0.5, 2.0, 3.5, 1.0, 4.0, 2.5]), sharding)
-    subjects = jax.device_put(
-        jnp.array([True, True, False, True, True, True]), sharding
-    )
+    agents = jax.device_put(jnp.array([True, True, False, True, True, True]), sharding)
     points = jax.device_put(jnp.array([0.0, 1.5, 3.0]), jax.devices()[0])
     assert len(values.sharding.device_set) == 2
     assert points.sharding.device_set == {jax.devices()[0]}
     count = run_simulation_operation(
         memory=None,
         function=_count_below_last_point,
-        arguments={"values": values, "points": points, "subjects": subjects},
+        arguments={"values": values, "points": points, "agents": agents},
     )
     assert int(count) == 4
 
 
 def test_run_simulation_producer_reads_points_committed_to_one_device() -> None:
-    """An unbudgeted producer reads single-device grid points beside subject rows
+    """An unbudgeted producer reads single-device grid points beside agent rows
     sharded over two devices, as an operation does."""
-    sharding = _subject_sharding()
+    sharding = _agent_sharding()
     values = jax.device_put(jnp.array([0.5, 2.0, 3.5, 1.0, 4.0, 2.5]), sharding)
-    subjects = jax.device_put(
-        jnp.array([True, True, False, True, True, True]), sharding
-    )
+    agents = jax.device_put(jnp.array([True, True, False, True, True, True]), sharding)
     points = jax.device_put(jnp.array([0.0, 1.5, 3.0]), jax.devices()[0])
     count = run_simulation_producer(
         memory=None,
         function=_count_below_last_point,
-        arguments={"values": values, "points": points, "subjects": subjects},
+        arguments={"values": values, "points": points, "agents": agents},
     )
     assert int(count) == 4
 
 
 def test_run_simulation_operation_keeps_sharded_outputs_sharded() -> None:
-    """Aligning a single-device operand leaves the subject rows' sharding intact."""
-    sharding = _subject_sharding()
+    """Aligning a single-device operand leaves the agent rows' sharding intact."""
+    sharding = _agent_sharding()
     values = jax.device_put(jnp.arange(6.0), sharding)
     offset = jax.device_put(jnp.asarray(10.0), jax.devices()[1])
     shifted = run_simulation_operation(
@@ -90,7 +86,7 @@ def _return_points(*, values: jax.Array, points: jax.Array) -> jax.Array:  # noq
 
 def test_run_simulation_operation_reuses_the_replica_of_a_live_operand() -> None:
     """Repeated operations on one single-device operand read the same replica."""
-    sharding = _subject_sharding()
+    sharding = _agent_sharding()
     values = jax.device_put(jnp.arange(6.0), sharding)
     points = jax.device_put(jnp.array([0.0, 1.5, 3.0]), jax.devices()[0])
     first, second = (
@@ -106,7 +102,7 @@ def test_run_simulation_operation_reuses_the_replica_of_a_live_operand() -> None
 
 def test_run_simulation_operation_replica_does_not_keep_its_operand_alive() -> None:
     """A single-device operand is freed once its last outside reference goes."""
-    sharding = _subject_sharding()
+    sharding = _agent_sharding()
     values = jax.device_put(jnp.arange(6.0), sharding)
     points = jax.device_put(jnp.array([0.0, 1.5, 3.0]), jax.devices()[0])
     run_simulation_operation(
@@ -122,7 +118,7 @@ def test_run_simulation_operation_replica_does_not_keep_its_operand_alive() -> N
 
 def test_run_simulation_operation_passes_uncommitted_operands_through() -> None:
     """An uncommitted operand reaches the operation as is; JAX places it itself."""
-    values = jax.device_put(jnp.arange(6.0), _subject_sharding())
+    values = jax.device_put(jnp.arange(6.0), _agent_sharding())
     points = jnp.array([0.0, 1.5, 3.0])
     assert not points.committed
     returned = run_simulation_operation(

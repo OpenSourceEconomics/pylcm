@@ -63,7 +63,7 @@ def _capture_with_request(*, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
         params=_PARAMS,
         log_level="off",
         period_capture=PeriodCapture(
-            directory=tmp_path, periods=(_TARGET,), source_identity=_SOURCE
+            directory=tmp_path, steps=(_TARGET,), source_identity=_SOURCE
         ),
     )
 
@@ -147,7 +147,7 @@ def _capture(
             params=_PARAMS,
             log_level="off",
             period_capture=PeriodCapture(
-                directory=tmp_path, periods=(target,), source_identity=_SOURCE
+                directory=tmp_path, steps=(target,), source_identity=_SOURCE
             ),
         )
     else:

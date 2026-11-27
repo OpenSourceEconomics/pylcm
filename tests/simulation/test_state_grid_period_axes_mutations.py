@@ -11,8 +11,8 @@ from tests.simulation.test_state_grid_period_axes import _model
 @pytest.mark.parametrize("shift", [0.0, 0.5])
 @pytest.mark.parametrize("enable_jit", [False, True])
 def test_period_grid_equals_identity_value_coordinates(
-    *, n_points, scale, shift, enable_jit
-):
+    *, n_points: int, scale: float, shift: float, enable_jit: bool
+) -> None:
     model = _model(n_points=n_points, scale=scale, shift=shift, enable_jit=enable_jit)
     values = model.solve(params={}, log_level="off").values
     # Repeat/reorder queries on the same model; the representative must not change.
@@ -24,5 +24,5 @@ def test_period_grid_equals_identity_value_coordinates(
         )
         np.testing.assert_array_equal(np.asarray(got), expected)
         np.testing.assert_array_equal(
-            np.asarray(got), np.asarray(values[period]["end"])
+            np.asarray(got), np.asarray(values[period]["end"])[..., 0]
         )

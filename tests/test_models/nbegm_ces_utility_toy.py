@@ -143,7 +143,9 @@ def build_model(
         The assembled `Model`.
 
     """
-    wage_grid = LinSpacedGrid(start=0.5, stop=wage_max, n_points=n_wage)
+    wage_grid = LinSpacedGrid(
+        start=0.5, stop=wage_max, n_points=n_wage, off_grid="extrapolate"
+    )
 
     schedule = subsidy_kink if breakpoint_kind == "continuous_kink" else subsidy_jump
     alive_functions = {

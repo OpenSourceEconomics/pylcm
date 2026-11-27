@@ -139,6 +139,7 @@ def test_single_axis_counts_jointly_empty_states(
                 "inverse_marginal_utility": allow_args(_inverse),
             }
         ),
+        utility_name="utility",
         consumption_action="consumption",
         discrete_spec=spec,
         taste_shock_scale=0.0,

@@ -22,7 +22,10 @@ from tests.regime_finder.test_declaration_ingestion import (
     json_rows,
 )
 from tests.regime_finder.test_model_adapter import function, grid
-from tests.regime_finder.test_query_owners import exit_reading, policy_snapshot
+from tests.regime_finder.test_query_owners import (
+    composition_action_reading,
+    policy_snapshot,
+)
 
 
 def record(kind: str, **fields: JSONValue) -> dict[str, JSONValue]:
@@ -55,8 +58,12 @@ def spec(
     )
     regimes = {name: deepcopy(base) for name in names}
     for name in (a, b):
-        json_member(regimes[name], "fields")["exit"] = exit_reading(quoted=reference(q))
-    json_member(regimes[q], "fields")["exit"] = exit_reading(nested=reference(r))
+        json_member(regimes[name], "fields")["composition_action"] = (
+            composition_action_reading(quoted=reference(q))
+        )
+    json_member(regimes[q], "fields")["composition_action"] = (
+        composition_action_reading(nested=reference(r))
+    )
     result: dict[str, JSONValue] = {
         "regimes": regimes,
         "n_periods": 3,
@@ -110,25 +117,25 @@ def test_public_spec_route_matches_literal_physical_closure() -> None:
     )
 
 
-def test_projected_reads_and_native_exit_shapes_preserve_owner_kind(
+def test_projected_reads_and_native_composition_action_shapes_preserve_owner_kind(
     *, subtests: pytest.Subtests
 ) -> None:
-    for form in ("projected", "exit"):
+    for form in ("projected", "composition_action"):
         for names in (("A", "B", "Q", "R"), ("reader", "later", "partner", "outside")):
             with subtests.test(form=form, names=names):
                 raw = spec(names=names)
-                if form == "exit":
+                if form == "composition_action":
                     for name in names[:2]:
                         declaration = json_member(raw, "regimes", name, "fields")
-                        target = reference(names[2], "ExitTarget")
+                        target = reference(names[2], "Destination")
                         json_member(target, "fields").update(
                             role="f", utility_adjustment=None
                         )
                         counterparty = reference(names[3], "Counterparty")
                         json_member(counterparty, "fields")["role"] = "m"
-                        declaration["exit"] = {
+                        declaration["composition_action"] = {
                             "marry": record(
-                                "Exit",
+                                "CompositionAction",
                                 available=None,
                                 observes=[],
                                 targets={"self": target},
@@ -145,10 +152,12 @@ def test_projected_reads_and_native_exit_shapes_preserve_owner_kind(
 def test_phase_and_exact_fractional_date_are_preserved() -> None:
     raw = spec(dates=[20, 20.5, 21])
     for name in ("A", "B"):
-        json_member(raw, "regimes", name, "fields")["exit"] = exit_reading(
-            quoted=record("Phased", solve=reference("Q"), simulate=reference("R"))
+        json_member(raw, "regimes", name, "fields")["composition_action"] = (
+            composition_action_reading(
+                quoted=record("Phased", solve=reference("Q"), simulate=reference("R"))
+            )
         )
-    del json_member(raw, "regimes", "Q", "fields")["exit"]
+    del json_member(raw, "regimes", "Q", "fields")["composition_action"]
     normalized, _, _ = _check_source(raw)
     owners = json_entries(normalized, "query_owners")
     assert ({(q["regime"], q["phase"]) for q in owners}) == (
@@ -193,7 +202,7 @@ def test_independent_checker_rejects_manufactured_physical_visit() -> None:
 def test_gate_read_is_query_but_explicit_fallback_is_physical() -> None:
     raw = spec()
     for name in ("A", "B", "Q"):
-        del json_member(raw, "regimes", name, "fields")["exit"]
+        del json_member(raw, "regimes", name, "fields")["composition_action"]
     gate = record(
         "Gate",
         predicate=function("def allowed(x):\n    return x > 0\n", ["x"]),
@@ -207,7 +216,7 @@ def test_gate_read_is_query_but_explicit_fallback_is_physical() -> None:
     assert ({q["period"] for q in json_entries(normalized, "query_owners")}) == ({1})
 
 
-def test_unproved_fallback_type_is_not_invented_as_settlement() -> None:
+def test_unproved_fallback_type_is_not_invented_as_transfer() -> None:
     raw = spec()
     gate = record(
         "Gate",
@@ -216,15 +225,15 @@ def test_unproved_fallback_type_is_not_invented_as_settlement() -> None:
     json_member(raw, "edges")["A"] = record("Transition", law="B", gates={"B": gate})
     result = find_regimes(raw, budget={"seconds": 15}, facts_backend="metadata")
     assert (result["status"]) == ("UNRESOLVED")
-    assert ("settlement contract unavailable") in (result.get("error", ""))
+    assert ("transfer contract unavailable") in (result.get("error", ""))
     assert (result["layouts"]) is None
 
 
 def test_nested_owned_reads_are_visible_to_topological_traversal() -> None:
     raw = policy_snapshot()
-    json_member(raw, "user_regimes", "query_partner", "fields")["exit"] = exit_reading(
-        nested=reference("unused_owner")
-    )
+    json_member(raw, "user_regimes", "query_partner", "fields")[
+        "composition_action"
+    ] = composition_action_reading(nested=reference("unused_owner"))
     normalized = normalize_declarations(raw)
     # Two equal reads remain two distinct owned incidences.
     owner = next(

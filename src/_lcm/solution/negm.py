@@ -102,6 +102,7 @@ from _lcm.solution.feasibility import (
     reduce_continuation_read_counts,
     reduce_query_input_status,
 )
+from _lcm.solution.member_axis import with_member_axis
 from _lcm.time import TimeAxis
 from _lcm.typing import (
     EconFunction,
@@ -329,7 +330,7 @@ class NEGM(TwoMarginSolver):
         A constraint is therefore rebound against each branch's own pool. The
         routes carry the same period groups the keeper build uses, because an
         age-specialized no-adjustment map changes which concrete function is in
-        scope. Simulation sees a complete subject-level candidate and uses the
+        scope. Simulation sees a complete agent-level candidate and uses the
         shared unrestricted route.
         """
         bound = cast("_BoundNEGM", self)
@@ -477,6 +478,8 @@ class NEGM(TwoMarginSolver):
         # is decision-independent without being replaced — and a declared
         # `next_<durable> = (1 - delta) * s_t^post-dec` is therefore the stock the
         # continuation is read at, not the raw node the outer search picked.
+        # The inner kernels publish values without the member axis; the outer
+        # programs append it.
         adjuster_context = replace(
             context,
             functions=_without_outer_post_decision(
@@ -498,7 +501,7 @@ class NEGM(TwoMarginSolver):
         inner_with_child_transport = replace(
             bound_self.inner, _retain_child_feasibility=True
         )
-        adjuster_kernels = inner_with_child_transport.build_period_kernels(
+        adjuster_kernels = inner_with_child_transport.build_inner_period_kernels(
             context=adjuster_context
         )
         # The keeper is a normal passive DC-EGM: the outer post-decision is held
@@ -593,8 +596,10 @@ class NEGM(TwoMarginSolver):
                         periods=group_periods or (template_period,),
                     ),
                 )
-            group_keeper_kernels = inner_with_child_transport.build_period_kernels(
-                context=keeper_context
+            group_keeper_kernels = (
+                inner_with_child_transport.build_inner_period_kernels(
+                    context=keeper_context
+                )
             )
             keeper_param_checks += group_keeper_kernels.param_checks
             keeper_continuation_template = (
@@ -648,6 +653,7 @@ class NEGM(TwoMarginSolver):
                             fixed_state_names=carry_row_state_names,
                         )
                     ),
+                    members=context.members,
                 )
                 for period, adjuster_kernel in adjuster_kernels.period_kernels.items()
             }
@@ -990,6 +996,12 @@ class _NEGMPeriodKernel:
     floor_preparation: _NestedFloorPreparation | None = None
     """Canonical current-floor preparation preceding both nested cost paths."""
 
+    members: tuple[str, ...]
+    """The regime's members, the axis both programs' values carry.
+
+    The inner kernels publish values without it; `keeper` appends it and
+    `outer_sweep` reads the member's slice of the keeper's value."""
+
     _core_programs: MappingProxyType[str, CoreProgram] = field(
         init=False, repr=False, compare=False
     )
@@ -1007,8 +1019,12 @@ class _NEGMPeriodKernel:
             object.__setattr__(
                 self,
                 "_core_programs",
-                _nested_feasibility_programs(
-                    kernel=self, keeper=keeper, adjuster=adjuster
+                _with_member_axis_programs(
+                    programs=_nested_feasibility_programs(
+                        kernel=self, keeper=keeper, adjuster=adjuster
+                    ),
+                    members=self.members,
+                    keeper_output=_KEEPER_RESULT,
                 ),
             )
             return
@@ -1092,7 +1108,15 @@ class _NEGMPeriodKernel:
                 donation_candidates=(),
             ),
         }
-        object.__setattr__(self, "_core_programs", MappingProxyType(programs))
+        object.__setattr__(
+            self,
+            "_core_programs",
+            _with_member_axis_programs(
+                programs=programs,
+                members=self.members,
+                keeper_output=_KEEPER_VALUE,
+            ),
+        )
 
     def core_programs(self) -> Mapping[str, CoreProgram]:
         """Return the native graph used by eager, JIT, AOT, and replay paths."""
@@ -1220,6 +1244,29 @@ class _NEGMPeriodKernel:
             ),
         )
         return KernelOutput(value=V_arr, continuations={EGM_CONTINUATION: carry})
+
+
+def _with_member_axis_programs(
+    *,
+    programs: Mapping[str, CoreProgram],
+    members: tuple[str, ...],
+    keeper_output: str,
+) -> MappingProxyType[str, CoreProgram]:
+    """Publish both programs' values with the member axis.
+
+    The sweep reads the keeper's output under `keeper_output` and takes the
+    member's slice of the keeper value in it.
+    """
+    return MappingProxyType(
+        {
+            "keeper": with_member_axis(program=programs["keeper"], members=members),
+            "outer_sweep": with_member_axis(
+                program=programs["outer_sweep"],
+                members=members,
+                value_input=keeper_output,
+            ),
+        }
+    )
 
 
 def _nested_feasibility_programs(

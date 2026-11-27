@@ -3,22 +3,27 @@
 The solve publishes each branch's conditional value and policy rows on the
 endogenous resources grid. Simulation picks the discrete branch by the largest
 interpolated conditional value and reads the winner's policy row at the
-subject's resources, so the dense action-grid argmax (`decide()`, the
+agent's resources, so the dense action-grid argmax (`decide()`, the
 `"decision"` simulation program) is neither traced nor executed while every
-subject's read is accepted. `DCEGM(replay="grid")` keeps the grid argmax and
+agent's read is accepted. `DCEGM(replay="grid")` keeps the grid argmax and
 serves as the reference route.
 """
 
 import dataclasses
-from collections.abc import Hashable, Mapping
+from collections.abc import Callable, Hashable, Mapping
+from typing import Any, cast
 
+import jax
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
 import _lcm.simulation.simulate as simulation
 import lcm_examples.iskhakov_et_al_2017 as iskhakov
+from _lcm.engine import PeriodRegimeSimulationData
 from _lcm.simulation import host_operations
+from _lcm.typing import PytreeValue, StatesPerRegime
 from lcm import (
     AgeGrid,
     ConsumptionSavingsRegime,
@@ -42,6 +47,7 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FloatND,
+    Int1D,
     ScalarInt,
 )
 from lcm_examples.iskhakov_et_al_2017 import CONSUMPTION_GRID, dead, get_edges
@@ -94,14 +100,29 @@ def _decision_program_owners(*, monkeypatch: pytest.MonkeyPatch) -> list[str]:
     run_regime = simulation._simulate_regime_in_period
     run_program = simulation.execute_simulation_program
 
-    def record_regime(**kwargs):
+    def record_regime(
+        **kwargs: Any,  # noqa: PAN002 - forwards whatever the regime step receives
+    ) -> tuple[
+        PeriodRegimeSimulationData,
+        StatesPerRegime,
+        Int1D,
+        Int1D,
+        Int1D,
+        Int1D,
+        Int1D | None,
+        Int1D | None,
+    ]:
         running.append(kwargs["regime_name"])
         try:
             return run_regime(**kwargs)
         finally:
             running.pop()
 
-    def record_program(*, family: str, **kwargs):
+    def record_program(
+        *,
+        family: str,
+        **kwargs: Any,  # noqa: PAN002 - forwards whatever the program receives
+    ) -> PytreeValue:
         if family == "decision":
             executed.append(running[-1])
         return run_program(family=family, **kwargs)
@@ -111,7 +132,7 @@ def _decision_program_owners(*, monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return executed
 
 
-def _simulate(*, model: Model, wealth: np.ndarray):
+def _simulate(*, model: Model, wealth: np.ndarray) -> pd.DataFrame:
     return model.simulate(
         params=get_full_params(n_periods=_N_PERIODS),
         initial_conditions=_initial_conditions(wealth=wealth),
@@ -126,7 +147,7 @@ _IN_SUPPORT_WEALTH = np.linspace(20.5, 180.5, 9)
 def test_default_dcegm_simulate_does_not_run_the_grid_argmax(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """In-support subjects never reach the dense decision program of an EGM regime."""
+    """In-support agents never reach the dense decision program of an EGM regime."""
     model = _model(replay="candidate")
     executed = _decision_program_owners(monkeypatch=monkeypatch)
 
@@ -150,11 +171,14 @@ def _consumption_step() -> float:
     return float(np.max(np.diff(nodes)))
 
 
-def _per_period_means(frame) -> Mapping[int, tuple[float, float]]:
+def _per_period_means(frame: pd.DataFrame) -> Mapping[int, tuple[float, float]]:
     alive = frame[frame["regime_name"].isin(_EGM_REGIMES)]
     grouped = alive.groupby("period")
     return {
-        int(period): (float(group["consumption"].mean()), float(group["value"].mean()))
+        int(cast("int", period)): (
+            float(group["consumption"].mean()),
+            float(group["value"].mean()),
+        )
         for period, group in grouped
     }
 
@@ -164,7 +188,7 @@ def test_budgeted_simulate_reads_the_policy_first_and_matches_unbudgeted(
 ) -> None:
     """A device-memory budget admits the policy-first route and changes no result.
 
-    The last subject starts beyond the published rows, so its period-0 read is
+    The last agent starts beyond the published rows, so its period-0 read is
     rejected and the budgeted grid-argmax fallback runs as well.
     """
     wealth = np.append(_IN_SUPPORT_WEALTH, 1000.0)
@@ -230,7 +254,7 @@ def test_lookup_policy_on_default_dcegm_returns_the_simulated_decision() -> None
     At every simulated working-life state, the looked-up labor supply equals the
     simulated one, and the looked-up consumption and value agree with the
     simulated ones up to the reassociation a different row count allows. The
-    last subject starts beyond the published rows, so its period-0 read is
+    last agent starts beyond the published rows, so its period-0 read is
     rejected and both take the grid argmax there.
     """
     n_periods = 4
@@ -269,7 +293,7 @@ def test_lookup_policy_on_default_dcegm_returns_the_simulated_decision() -> None
         )
         for got, expected in (
             (lookup.actions["consumption"], rows["consumption"]),
-            (lookup.value, rows["value"]),
+            (lookup.value[..., 0], rows["value"]),
         ):
             reference = expected.to_numpy()
             rtol, atol = invariance_tolerances(reference)
@@ -348,7 +372,7 @@ def _node_state_model(
 
     The shock subtracts a cost from resources, so every node row is the same
     function of resources. `with_health` adds an ordinary discrete state raising
-    resources by `0.5 * health`, a second, per-subject row axis. With log bequest
+    resources by `0.5 * health`, a second, per-agent row axis. With log bequest
     utility and no discounting the optimum is `R / 2`.
     """
     functions = {
@@ -403,18 +427,18 @@ def _node_state_model(
     )
 
 
-def _simulate_node_state(*, model: Model, n_subjects: int = 200):
+def _simulate_node_state(*, model: Model, n_agents: int = 200) -> pd.DataFrame:
     """Period-0 rows of a panel whose shock draws are continuous (off node)."""
     rng = np.random.default_rng(0)
     initial_conditions = {
-        "wealth": jnp.asarray(rng.uniform(1.0, 5.0, size=n_subjects)),
-        "shock": jnp.asarray(rng.standard_normal(n_subjects)),
-        "period": jnp.zeros(n_subjects, dtype=jnp.int32),
-        "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
+        "wealth": jnp.asarray(rng.uniform(1.0, 5.0, size=n_agents)),
+        "shock": jnp.asarray(rng.standard_normal(n_agents)),
+        "period": jnp.zeros(n_agents, dtype=jnp.int32),
+        "regime_id": jnp.zeros(n_agents, dtype=jnp.int32),
     }
     if "health" in model.state_names(regime_name="alive"):
         initial_conditions["health"] = jnp.asarray(
-            rng.integers(0, 2, size=n_subjects), dtype=jnp.int32
+            rng.integers(0, 2, size=n_agents), dtype=jnp.int32
         )
     frame = model.simulate(
         params={},
@@ -422,7 +446,7 @@ def _simulate_node_state(*, model: Model, n_subjects: int = 200):
         seed=0,
         log_level="off",
     ).to_dataframe(use_categorical_codes=True)
-    frame = frame.sort_values(["subject_id", "period"])
+    frame = frame.sort_values(["agent_id", "period"])
     return frame[frame["period"] == 0]
 
 
@@ -446,7 +470,7 @@ def test_node_state_dcegm_reads_the_euler_policy_at_off_node_draws(
 
     The cost shock only shifts resources, so every node row is the same Euler
     policy of resources, and the blend of the two bracketing node rows reads it
-    exactly. A further discrete state selects its own rows per subject alongside
+    exactly. A further discrete state selects its own rows per agent alongside
     the blend.
     """
     first = _simulate_node_state(model=_node_state_model(with_health=with_health))
@@ -510,7 +534,7 @@ def _work_branch_model(*, work_cost: float = 0.1) -> Model:
     Not working leaves `wealth - 1` resources, which for `wealth < 1.5` lies
     below the savings floor `0.5`: no consumption is feasible on that branch.
     Working adds `2`, so with log bequest utility and no discounting the optimum
-    of a subject left with only the work branch is `R / 2`.
+    of an agent left with only the work branch is `R / 2`.
     """
     alive = ConsumptionSavingsRegime(
         states={"wealth": LinSpacedGrid(start=1.0, stop=5.0, n_points=5)},
@@ -549,13 +573,13 @@ def _work_branch_model(*, work_cost: float = 0.1) -> Model:
     )
 
 
-def test_unaffordable_branch_does_not_send_subjects_to_the_grid_argmax(
+def test_unaffordable_branch_does_not_send_agents_to_the_grid_argmax(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A branch whose resources lie below the savings floor is dead, not unread.
 
     Its row read extrapolates below the row's support; that must not reject the
-    subject, whose other branch decides it from the policy.
+    agent, whose other branch decides it from the policy.
     """
     model = _work_branch_model()
     executed = _decision_program_owners(monkeypatch=monkeypatch)
@@ -574,7 +598,7 @@ def test_unaffordable_branch_does_not_send_subjects_to_the_grid_argmax(
     ).to_dataframe(use_categorical_codes=True)
 
     assert "alive" not in executed, executed
-    first = frame[frame["period"] == 0].sort_values("subject_id")
+    first = frame[frame["period"] == 0].sort_values("agent_id")
     poor = first["wealth"].to_numpy(dtype=float) - 1.0 < 0.5
     assert np.all(first["work"].to_numpy()[poor] == _Work.yes)
     np.testing.assert_array_almost_equal(
@@ -601,7 +625,11 @@ def test_budgeted_warm_simulate_reuses_the_policy_read_executable(
     lowered: list[str] = []
     lower = host_operations._lower_operation
 
-    def record(*, function, **kwargs):
+    def record(
+        *,
+        function: Callable[..., PytreeValue],
+        **kwargs: Any,  # noqa: PAN002 - forwards whatever the lowering receives
+    ) -> jax.stages.Lowered:
         lowered.append(getattr(getattr(function, "func", function), "__name__", ""))
         return lower(function=function, **kwargs)
 
@@ -612,7 +640,7 @@ def test_budgeted_warm_simulate_reuses_the_policy_read_executable(
     assert "_policy_first_body" not in lowered, lowered
 
 
-def _producer_identity(regime) -> Hashable:
+def _producer_identity(regime: object) -> Hashable:  # noqa: PAN001 - any bound value
     return host_operations._bound_identity(regime)
 
 
@@ -653,7 +681,7 @@ def test_constrained_segment_below_the_row_is_read_without_the_grid_argmax(
     """Resources between the floor and a row's first node decide from the policy.
 
     Below the row's first (borrowing-constrained) node the branch still consumes
-    everything above the floor, `R - floor`. A subject whose `no`-work branch
+    everything above the floor, `R - floor`. An agent whose `no`-work branch
     lands there is decided without the grid argmax: by the work branch when work
     is cheap, and by the constrained `no`-work choice when work is costly
     enough to outweigh consuming almost nothing.
@@ -674,7 +702,7 @@ def test_constrained_segment_below_the_row_is_read_without_the_grid_argmax(
     ).to_dataframe(use_categorical_codes=True)
 
     assert "alive" not in executed, executed
-    near_floor = frame[(frame["period"] == 0) & (frame["subject_id"] == 0)]
+    near_floor = frame[(frame["period"] == 0) & (frame["agent_id"] == 0)]
     work = int(near_floor["work"].iloc[0])
     consumption = float(near_floor["consumption"].iloc[0])
     if work_cost < 1.0:

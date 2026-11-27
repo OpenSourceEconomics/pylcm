@@ -53,7 +53,7 @@ def non_finite_by_regime(
     selects the regimes to warn about, since an Inf is worth reporting too.
 
     Out-of-regime rows carry placeholder values — possibly `-inf`, because the
-    subject's state is infeasible under another regime's problem — so each
+    agent's state is infeasible under another regime's problem — so each
     array is masked by its own ownership flags before the reductions.
 
     Masking and reducing inside one compiled function keeps a whole period's
@@ -77,10 +77,8 @@ def non_finite_by_regime(
 def _owned_values(*, value: FloatND, in_regime: BoolND) -> FloatND:
     """Replace the rows a regime does not own with zero.
 
-    A collective regime's value carries a trailing member axis, so the
-    per-subject ownership flags gain trailing singleton axes to broadcast
-    against it; a singleton regime's value is already per-subject and the
-    reshape is a no-op.
+    A regime's value carries a trailing member axis, so the per-agent
+    ownership flags gain trailing singleton axes to broadcast against it.
     """
     owned = in_regime.reshape(in_regime.shape + (1,) * (value.ndim - in_regime.ndim))
     return jnp.where(owned, value, 0.0)

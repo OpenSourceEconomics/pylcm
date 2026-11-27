@@ -21,13 +21,13 @@ from _lcm.simulation.host_operations import (
     ProfiledSimulationOperations,
     _abstract_operation,
 )
-from _lcm.simulation.membership import initialize_subject_membership
+from _lcm.simulation.membership import initialize_agent_membership
 from _lcm.simulation.memory import SimulationMemory
-from _lcm.simulation.operand_placement import subject_operand_sharding
+from _lcm.simulation.operand_placement import agent_operand_sharding
 from _lcm.simulation.residency import DeviceBufferFootprint, measure_buffer_footprint
 from _lcm.simulation.simulate import _lookup_values_from_indices
 from _lcm.simulation.transitions import (
-    _advance_states_for_subjects,
+    _advance_states_for_agents,
     _draw_random_regime_ids,
 )
 from _lcm.typing import FootprintTree, PytreeValue, ShapeDtypePytree
@@ -50,7 +50,7 @@ pytestmark = pytest.mark.skipif(
 class _DispatchArguments(TypedDict):
     function: Callable[..., PytreeValue]
     arguments: Mapping[ReferenceName, PytreeValue]
-    subject_arg_names: tuple[ReferenceName, ...]
+    agent_arg_names: tuple[ReferenceName, ...]
     devices: tuple[jax.Device, ...]
     live_footprint: Callable[[], DeviceBufferFootprint]
     budget_devices: tuple[jax.Device, ...]
@@ -88,7 +88,7 @@ def _operation_case(
 ]:
     if name == "merge":
         return (
-            _advance_states_for_subjects,
+            _advance_states_for_agents,
             {
                 "states_per_regime": MappingProxyType(
                     {"target": MappingProxyType({"wealth": jnp.arange(6.0)})}
@@ -96,9 +96,9 @@ def _operation_case(
                 "next_states_per_regime": MappingProxyType(
                     {"target": MappingProxyType({"wealth": jnp.arange(6.0) + 2})}
                 ),
-                "subject_indices": jnp.asarray([True, False, True, False, True, False]),
+                "agent_indices": jnp.asarray([True, False, True, False, True, False]),
             },
-            ("states_per_regime", "next_states_per_regime", "subject_indices"),
+            ("states_per_regime", "next_states_per_regime", "agent_indices"),
         )
     if name == "draw":
         return (
@@ -124,13 +124,13 @@ def _operation_case(
 
 @pytest.mark.parametrize("operation", ["merge", "draw", "gather"])
 def test_profiled_operations_preserve_original_arithmetic(*, operation: str) -> None:
-    function, arguments, subject_names = _operation_case(name=operation)
+    function, arguments, agent_names = _operation_case(name=operation)
     expected = function(**arguments)
     dispatcher = ProfiledSimulationOperations()
     actual = dispatcher.dispatch(
         function=function,
         arguments=arguments,
-        subject_arg_names=subject_names,
+        agent_arg_names=agent_names,
         devices=(jax.devices()[0],),
         live_footprint=_OwnedInputs(arrays=[arguments]),
         budget_devices=(jax.devices()[0],),
@@ -158,7 +158,7 @@ def test_retained_growth_rechecks_the_same_cached_executable() -> None:
     kwargs: _DispatchArguments = {
         "function": _shift,
         "arguments": {"state": state},
-        "subject_arg_names": ("state",),
+        "agent_arg_names": ("state",),
         "devices": (jax.devices()[0],),
         "live_footprint": provider,
         "budget_devices": (jax.devices()[0],),
@@ -190,7 +190,7 @@ def test_impossible_inventory_refuses_before_compilation() -> None:
         dispatcher.dispatch(
             function=_shift,
             arguments={"state": state},
-            subject_arg_names=("state",),
+            agent_arg_names=("state",),
             devices=(jax.devices()[0],),
             live_footprint=_OwnedInputs(arrays=[state]),
             budget_devices=(jax.devices()[0],),
@@ -212,7 +212,7 @@ def test_dispatch_rejects_a_closure_before_caching_it() -> None:
         dispatcher.dispatch(
             function=shift_by_offset,
             arguments={"state": state},
-            subject_arg_names=("state",),
+            agent_arg_names=("state",),
             devices=(jax.devices()[0],),
             live_footprint=_OwnedInputs(arrays=[state]),
             budget_devices=(jax.devices()[0],),
@@ -227,7 +227,7 @@ def test_static_bindings_include_types() -> None:
     kwargs: _BudgetedDispatchArguments = {
         "function": _typed_static_shift,
         "arguments": {"state": state},
-        "subject_arg_names": ("state",),
+        "agent_arg_names": ("state",),
         "devices": (jax.devices()[0],),
         "live_footprint": _OwnedInputs(arrays=[state]),
         "budget_devices": (jax.devices()[0],),
@@ -240,7 +240,7 @@ def test_static_bindings_include_types() -> None:
     assert len(dispatcher.cache) == 2
 
 
-def test_ordered_subject_meshes_have_distinct_compiled_placement() -> None:
+def test_ordered_agent_meshes_have_distinct_compiled_placement() -> None:
     devices = jax.devices()
     dispatcher = ProfiledSimulationOperations()
     for ordered in (
@@ -254,7 +254,7 @@ def test_ordered_subject_meshes_have_distinct_compiled_placement() -> None:
         result = dispatcher.dispatch(
             function=_shift,
             arguments={"state": state},
-            subject_arg_names=("state",),
+            agent_arg_names=("state",),
             devices=ordered,
             live_footprint=_OwnedInputs(arrays=[state]),
             budget_devices=tuple(devices),
@@ -274,7 +274,7 @@ def test_static_float_bindings_preserve_signed_zero() -> None:
         result = dispatcher.dispatch(
             function=_static_zero_sign,
             arguments={"state": state},
-            subject_arg_names=("state",),
+            agent_arg_names=("state",),
             devices=(jax.devices()[0],),
             live_footprint=_OwnedInputs(arrays=[state]),
             budget_devices=(jax.devices()[0],),
@@ -285,7 +285,7 @@ def test_static_float_bindings_preserve_signed_zero() -> None:
     assert len(dispatcher.cache) == 2
 
 
-def test_constant_membership_outputs_keep_the_actual_ordered_subject_layout() -> None:
+def test_constant_membership_outputs_keep_the_actual_ordered_agent_layout() -> None:
     """Constant-output initialization cannot widen to excluded or replicated devices."""
     devices = jax.devices()
     operations = ProfiledSimulationOperations()
@@ -299,18 +299,18 @@ def test_constant_membership_outputs_keep_the_actual_ordered_subject_layout() ->
         sharding = jax.NamedSharding(mesh, jax.P("X"))
         regimes = jax.device_put(np.arange(6, dtype=np.int32), sharding)
         roles = jax.device_put(np.arange(10, 16, dtype=np.int32), sharding)
-        expected = initialize_subject_membership(
+        expected = initialize_agent_membership(
             initial_regime_ids=regimes,
             initial_own_member=roles,
         )
         memory = SimulationMemory(
             budget_bytes=2**24,
             devices=tuple(devices),
-            subject_devices=ordered,
+            agent_devices=ordered,
             operations=operations,
             inputs=measure_buffer_footprint(tree=(regimes, roles, expected)),
         )
-        actual = initialize_subject_membership(
+        actual = initialize_agent_membership(
             initial_regime_ids=regimes,
             initial_own_member=roles,
             memory=memory,
@@ -342,10 +342,10 @@ def _record_compiled_output[Result: PytreeValue](
     return result
 
 
-def test_subject_output_contract_selects_its_own_profile_and_executable(
+def test_agent_output_contract_selects_its_own_profile_and_executable(
     *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Identical arguments keep distinct replicated and subject-output profiles."""
+    """Identical arguments keep distinct replicated and agent-output profiles."""
     all_devices = jax.devices()
     ordered = (all_devices[3], all_devices[1], all_devices[2])
     mesh = jax.make_mesh((3,), ("X",), (jax.sharding.AxisType.Auto,), devices=ordered)
@@ -365,13 +365,13 @@ def test_subject_output_contract_selects_its_own_profile_and_executable(
         ),
     )
     profiles = []
-    for subject_outputs in (False, True, False):
+    for agent_outputs in (False, True, False):
         result = operations.dispatch(
             function=_static_zero_sign,
             arguments={"state": state},
             static_arguments={"selector": -0.0},
-            subject_arg_names=("state",),
-            subject_outputs=subject_outputs,
+            agent_arg_names=("state",),
+            agent_outputs=agent_outputs,
             devices=ordered,
             live_footprint=owner,
             budget_devices=tuple(all_devices),
@@ -388,11 +388,11 @@ def test_subject_output_contract_selects_its_own_profile_and_executable(
         assert isinstance(result, jax.Array)
         assert isinstance(result.sharding, jax.NamedSharding)
         assert tuple(result.sharding.mesh.devices.flat) == ordered
-        assert result.sharding.spec == (jax.P("X") if subject_outputs else jax.P())
+        assert result.sharding.spec == (jax.P("X") if agent_outputs else jax.P())
         assert result.sharding.is_equivalent_to(executable.output_shardings, ndim=1)
         assert {shard.device for shard in result.addressable_shards} == set(ordered)
         assert all(
-            shard.data.nbytes == (2 if subject_outputs else 6) * result.dtype.itemsize
+            shard.data.nbytes == (2 if agent_outputs else 6) * result.dtype.itemsize
             for shard in result.addressable_shards
         )
         np.testing.assert_array_equal(result, np.ones(6, dtype=np.bool_))
@@ -405,15 +405,15 @@ def test_subject_output_contract_selects_its_own_profile_and_executable(
 def _abstract_shift_operands() -> Mapping[ReferenceName, ShapeDtypePytree]:
     device = jax.devices()[0]
     state = jax.ShapeDtypeStruct(
-        (4,), jnp.float32, sharding=subject_operand_sharding(devices=(device,))
+        (4,), jnp.float32, sharding=agent_operand_sharding(devices=(device,))
     )
     _key, abstract, _static, _output_sharding = _abstract_operation(
         function=_shift,
         arguments={"state": state},
-        subject_arg_names=("state",),
+        agent_arg_names=("state",),
         devices=(device,),
         static_arguments=MappingProxyType({}),
-        subject_outputs=False,
+        agent_outputs=False,
     )
     return abstract
 

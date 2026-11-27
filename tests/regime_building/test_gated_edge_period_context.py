@@ -40,7 +40,7 @@ type _TemplateNode = str | Mapping[str, _TemplateNode]
 _BETA = 0.5
 _AGES = AgeGrid(start=40, inclusive_stop=50, step="5Y")
 _X = LinSpacedGrid(start=0.0, stop=2.0, n_points=2)
-_N_SUBJECTS = 2
+_N_AGENTS = 2
 
 
 @categorical(ordered=True)
@@ -213,7 +213,7 @@ def _initial_conditions(model: Model) -> UserInitialConditions:
             "x": jnp.asarray([0.0, 2.0]),
             "age": jnp.asarray([40.0, 40.0]),
             "regime_id": jnp.full(
-                _N_SUBJECTS,
+                _N_AGENTS,
                 model.regime_names_to_ids["source"],
                 dtype=jnp.int32,
             ),
@@ -268,7 +268,7 @@ def test_open_gate_uses_target_period_context() -> None:
     solution, simulation = _solve_and_simulate(gate_open=True)
 
     aaae(
-        solution.values[0]["source"],
+        solution.values[0]["source"][..., 0],
         [5.0, 5.0],
         decimal=DECIMAL_PRECISION,
     )
@@ -283,7 +283,7 @@ def test_period_only_gate_and_age_only_projections_receive_context() -> None:
     )
 
     aaae(
-        solution.values[0]["source"],
+        solution.values[0]["source"][..., 0],
         [5.0, 5.0],
         decimal=DECIMAL_PRECISION,
     )
@@ -295,7 +295,7 @@ def test_fallback_projection_uses_target_period_context() -> None:
     solution, simulation = _solve_and_simulate(gate_open=False)
 
     aaae(
-        solution.values[0]["source"],
+        solution.values[0]["source"][..., 0],
         [51.0, 51.0],
         decimal=DECIMAL_PRECISION,
     )
@@ -316,7 +316,7 @@ def test_simulation_prices_source_actions_with_target_period_context() -> None:
     )
 
     aaae(
-        solution.values[0]["source"],
+        solution.values[0]["source"][..., 0],
         [1.0, 1.0],
         decimal=DECIMAL_PRECISION,
     )

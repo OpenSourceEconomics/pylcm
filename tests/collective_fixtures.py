@@ -29,6 +29,7 @@ from lcm import (
     AgeGrid,
     CollectiveUtility,
     DiscreteGrid,
+    InitialNodes,
     LinSpacedGrid,
     Model,
     NormalIIDProcess,
@@ -36,6 +37,7 @@ from lcm import (
     categorical,
 )
 from lcm.solver_api import KernelOutput
+from lcm.solvers import GridSearch
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -69,7 +71,7 @@ def recorded_dissolution_flags() -> Generator[dict[int, dict[RegimeName, BoolND]
 
     def recording(**kwargs: Unpack[_KernelKwargs]) -> KernelOutput:
         output = original(**kwargs)
-        if kwargs["regime"].member_axis is not None:
+        if kwargs["regime"].members != ("self",):
             flags.setdefault(kwargs["period"], {})[kwargs["regime_name"]] = jnp.all(
                 jnp.isneginf(output.value), axis=-1
             )
@@ -271,8 +273,8 @@ def make_shocked_singleton_model() -> tuple[Model, ParamsDict]:
 def wage_shock_nodes() -> FloatND:
     """Return `WAGE_SHOCK`'s quadrature nodes at the ambient float precision.
 
-    `make_shocked_singleton_initial_conditions` seeds subject `i` at node
-    `i % 5`, so a test computing that subject's expected utility reads the node
+    `make_shocked_singleton_initial_conditions` seeds agent `i` at node
+    `i % 5`, so a test computing that agent's expected utility reads the node
     from here rather than hardcoding a value only one precision can represent.
 
     Returns:
@@ -282,54 +284,104 @@ def wage_shock_nodes() -> FloatND:
     return WAGE_SHOCK.to_jax()
 
 
-def make_couple_initial_conditions(*, n_subjects: int = 2) -> InitialConditions:
-    """Build initial conditions for the collective models in this module.
+# Shares the tied household of `make_tied_shares_model` chooses from.
+SHARE_GRID_POINTS = (0.0, 0.25, 0.5, 0.75, 1.0)
 
-    Every subject starts at age 0 in `couple`, with wages cycling through
-    `WAGE_GRID_POINTS` so that consecutive subjects sit on different nodes.
+
+@categorical(ordered=False)
+class SharesRegimeId:
+    """Regime id of `make_tied_shares_model`."""
+
+    couple: ScalarInt
+
+
+def make_tied_shares_model(
+    *, action_order: tuple[str, str], solver: GridSearch | None = None
+) -> Model:
+    """Build a one-period, stateless household whose every feasible action ties.
+
+    Two members split one unit: actions `a` and `b` on `SHARE_GRID_POINTS` with
+    `a + b == 1`, `u_f = a`, `u_m = b`, equal weights. The objective is `1/2` at
+    every feasible action, so the household's tie rule alone decides: `f`, the
+    first declared member, values `a = 1` most, which gives `V = (1, 0)` whatever
+    the order the two actions are declared in.
 
     Args:
-        n_subjects: Number of subjects to simulate.
+        action_order: The order in which `a` and `b` are declared.
+        solver: The regime's solver; `GridSearch` when omitted.
+
+    Returns:
+        The model, whose only regime is `couple`.
+
+    """
+    grid = DiscreteGrid(values=jnp.asarray(SHARE_GRID_POINTS))
+    couple = Regime(
+        actions=dict.fromkeys(action_order, grid),
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _share_utility_f, "m": _share_utility_m}
+            )
+        },
+        constraints={"shares_sum_to_one": _shares_sum_to_one},
+        solver=GridSearch() if solver is None else solver,
+    )
+    return Model(
+        regimes={"couple": couple},
+        regime_id_class=SharesRegimeId,
+        n_periods=1,
+        initial_nodes=InitialNodes(by_period={0: ("couple",)}),
+        edges={},
+    )
+
+
+def make_couple_initial_conditions(*, n_agents: int = 2) -> InitialConditions:
+    """Build initial conditions for the collective models in this module.
+
+    Every agent starts at age 0 in `couple`, with wages cycling through
+    `WAGE_GRID_POINTS` so that consecutive agents sit on different nodes.
+
+    Args:
+        n_agents: Number of agents to simulate.
 
     Returns:
         Dict of `wage`, `age` and `regime_id` columns, each of length
-        `n_subjects`.
+        `n_agents`.
 
     """
     wages = [
-        WAGE_GRID_POINTS[index % len(WAGE_GRID_POINTS)] for index in range(n_subjects)
+        WAGE_GRID_POINTS[index % len(WAGE_GRID_POINTS)] for index in range(n_agents)
     ]
     return {
         "wage": jnp.asarray(wages),
-        "age": jnp.zeros(n_subjects),
-        "regime_id": jnp.full(n_subjects, CoupleRegimeId.couple, dtype=jnp.int32),
+        "age": jnp.zeros(n_agents),
+        "regime_id": jnp.full(n_agents, CoupleRegimeId.couple, dtype=jnp.int32),
     }
 
 
 def make_shocked_singleton_initial_conditions(
-    *, n_subjects: int = 2
+    *, n_agents: int = 2
 ) -> InitialConditions:
     """Build initial conditions for `make_shocked_singleton_model`.
 
-    Every subject starts at age 0 in `shocked`, seeded at a node of
-    `WAGE_SHOCK` — subject `i` at `wage_shock_nodes()[i % 5]` — so a test
-    can state each subject's realized utility from the node it was given.
+    Every agent starts at age 0 in `shocked`, seeded at a node of
+    `WAGE_SHOCK` — agent `i` at `wage_shock_nodes()[i % 5]` — so a test
+    can state each agent's realized utility from the node it was given.
 
     Args:
-        n_subjects: Number of subjects to simulate.
+        n_agents: Number of agents to simulate.
 
     Returns:
         Dict of `wage_shock`, `age` and `regime_id` columns, each of length
-        `n_subjects`.
+        `n_agents`.
 
     """
     nodes = wage_shock_nodes()
     return {
         "wage_shock": jnp.asarray(
-            [nodes[index % len(nodes)] for index in range(n_subjects)]
+            [nodes[index % len(nodes)] for index in range(n_agents)]
         ),
-        "age": jnp.zeros(n_subjects),
-        "regime_id": jnp.full(n_subjects, ShockRegimeId.shocked, dtype=jnp.int32),
+        "age": jnp.zeros(n_agents),
+        "regime_id": jnp.full(n_agents, ShockRegimeId.shocked, dtype=jnp.int32),
     }
 
 
@@ -359,6 +411,21 @@ def _stateless_utility_f(work: DiscreteAction) -> FloatND:
 def _stateless_utility_m(work: DiscreteAction) -> FloatND:
     """Husband's payoff in the stateless terminal regime: 5 for leisure, 0 for work."""
     return 5.0 * (1.0 - work)
+
+
+def _share_utility_f(a: DiscreteAction) -> FloatND:
+    """Member `f` values its own share."""
+    return a
+
+
+def _share_utility_m(b: DiscreteAction) -> FloatND:
+    """Member `m` values its own share."""
+    return b
+
+
+def _shares_sum_to_one(*, a: DiscreteAction, b: DiscreteAction) -> BoolND:
+    """The two shares exhaust one unit."""
+    return a + b == 1.0
 
 
 def _next_wage(work: DiscreteAction) -> ContinuousState:

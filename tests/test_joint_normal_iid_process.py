@@ -331,8 +331,8 @@ def test_joint_normal_native_values_and_named_simulation(
     aaae(lookup.value, manual_lookup.value, decimal=DECIMAL_PRECISION)
     for period, regime_name in enumerate(("working", "done")):
         aaae(
-            solution.value(period=period, regime=regime_name),
-            reference.value(period=period, regime=regime_name),
+            solution.value(step=period, regime=regime_name),
+            reference.value(step=period, regime=regime_name),
             decimal=DECIMAL_PRECISION,
         )
     size = 10000
@@ -414,7 +414,7 @@ def test_joint_normal_singular_native_roundtrip() -> None:
         states=states,
     )
     aaae(
-        lookup.value,
+        lookup.value[..., 0],
         shocks[:, 0] * shocks[:, 1] + shocks[:, 0] ** 2 + 0.9 * 4.28,
         decimal=DECIMAL_PRECISION,
     )
@@ -454,7 +454,7 @@ def test_joint_normal_budgeted_runtime_lookup_and_simulation() -> None:
     model = _model(
         lcm.Regime(states={"wages": process}, functions={"utility": _utility}),
         execution_config=lcm.ExecutionConfig(
-            device_memory_bytes=2**30, axis_widths={"subject": 1}
+            device_memory_bytes=2**30, axis_widths={"agent": 1}
         ),
     )
     params = {
@@ -467,7 +467,7 @@ def test_joint_normal_budgeted_runtime_lookup_and_simulation() -> None:
     lookup = model.lookup_policy(
         params=params, solution=solution, period=0, regime_name="working", states=states
     )
-    aaae(lookup.value, expected, decimal=DECIMAL_PRECISION)
+    aaae(lookup.value[..., 0], expected, decimal=DECIMAL_PRECISION)
     initial = {
         **states,
         "period": jnp.zeros(2, dtype=jnp.int32),
@@ -657,7 +657,7 @@ def test_joint_normal_age_profile_alignment_matches_manual() -> None:
             period=0,
             states=states,
         )
-        aaae(lookup.value, expected, decimal=DECIMAL_PRECISION)
+        aaae(lookup.value[..., 0], expected, decimal=DECIMAL_PRECISION)
         physical = np.asarray(
             process.compute_gridpoints(cov=jnp.array(((1.0, 0.4), (0.4, 2.0))))
         )
@@ -705,7 +705,7 @@ def test_joint_normal_budgeted_runtime_typed_seed_preserves_physical_frame() -> 
     model = _model(
         lcm.Regime(states={"wages": process}, functions={"utility": _utility}),
         execution_config=lcm.ExecutionConfig(
-            device_memory_bytes=2**30, axis_widths={"subject": 1}
+            device_memory_bytes=2**30, axis_widths={"agent": 1}
         ),
     )
     params = {
@@ -718,7 +718,7 @@ def test_joint_normal_budgeted_runtime_typed_seed_preserves_physical_frame() -> 
     lookup = model.lookup_policy(
         params=params, solution=solution, period=0, regime_name="working", states=states
     )
-    aaae(lookup.value, expected, decimal=DECIMAL_PRECISION)
+    aaae(lookup.value[..., 0], expected, decimal=DECIMAL_PRECISION)
     parts = model.lookup_policy(
         params=params,
         solution=solution,
@@ -732,10 +732,12 @@ def test_joint_normal_budgeted_runtime_typed_seed_preserves_physical_frame() -> 
     assert parts.Q is not None
     assert parts.F is not None
     aaae(
-        parts.U, states["x"] * states["y"] + states["x"] ** 2, decimal=DECIMAL_PRECISION
+        parts.U[..., 0],
+        states["x"] * states["y"] + states["x"] ** 2,
+        decimal=DECIMAL_PRECISION,
     )
-    aaae(parts.CE, jnp.full_like(expected, 1.4), decimal=DECIMAL_PRECISION)
-    aaae(parts.Q, expected, decimal=DECIMAL_PRECISION)
+    aaae(parts.CE[..., 0], jnp.full_like(expected, 1.4), decimal=DECIMAL_PRECISION)
+    aaae(parts.Q[..., 0], expected, decimal=DECIMAL_PRECISION)
     aaae(parts.value, lookup.value, decimal=DECIMAL_PRECISION)
     np.testing.assert_array_equal(parts.F, jnp.ones_like(expected, dtype=bool))
     initial = {
@@ -846,7 +848,7 @@ def test_joint_normal_keeps_an_ordinary_state_carried_to_reader() -> None:
         period=0,
         states=states,
     )
-    aaae(lookup.value, expected, decimal=DECIMAL_PRECISION)
+    aaae(lookup.value[..., 0], expected, decimal=DECIMAL_PRECISION)
     frame = (
         model.simulate(
             params=params,
@@ -861,7 +863,7 @@ def test_joint_normal_keeps_an_ordinary_state_carried_to_reader() -> None:
             log_level="off",
         )
         .to_dataframe(use_categorical_codes=True)
-        .sort_values(["subject_id", "period"])
+        .sort_values(["agent_id", "period"])
     )
     aaae(frame.loc[frame["period"] == 0, "value"], expected, decimal=DECIMAL_PRECISION)
     for period in (0, 1):

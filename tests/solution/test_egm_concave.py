@@ -50,7 +50,9 @@ pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_R
 
 
 @pytest.mark.parametrize(("case", "n_periods"), ANALYTICAL_CASES.items())
-def test_dcegm_matches_analytical_on_full_wealth_grid(*, case, n_periods):
+def test_dcegm_matches_analytical_on_full_wealth_grid(
+    *, case: str, n_periods: int
+) -> None:
     """DC-EGM V equals the analytical retired values on every wealth node.
 
     Tighter than the brute-force tolerance and with no low-wealth exclusion: the
@@ -69,7 +71,9 @@ def test_dcegm_matches_analytical_on_full_wealth_grid(*, case, n_periods):
 
 
 @pytest.mark.parametrize(("case", "n_periods"), ANALYTICAL_CASES.items())
-def test_dcegm_error_not_much_worse_than_brute_force(*, case, n_periods):
+def test_dcegm_error_not_much_worse_than_brute_force(
+    *, case: str, n_periods: int
+) -> None:
     """Diagnostic with slack: DC-EGM should not lose badly to grid search anywhere.
 
     Pointwise EGM dominance is not a theorem (the publish step interpolates onto
@@ -92,7 +96,7 @@ def test_dcegm_error_not_much_worse_than_brute_force(*, case, n_periods):
     assert errors["dcegm"] <= 2.0 * errors["brute_force"] + 1e-12
 
 
-def test_discount_factor_zero_yields_consume_everything_values():
+def test_discount_factor_zero_yields_consume_everything_values() -> None:
     """With `discount_factor = 0`, V equals the utility of consuming all resources.
 
     The degenerate-inversion guard must hold after discounting: a zero
@@ -112,7 +116,7 @@ def test_discount_factor_zero_yields_consume_everything_values():
     wealth = np.asarray(WEALTH_GRID.to_jax())
     for period in range(n_periods - 1):
         np.testing.assert_allclose(
-            np.asarray(period_to_regime_to_V_arr[period]["retirement"]),
+            np.asarray(period_to_regime_to_V_arr[period]["retirement"])[..., 0],
             np.log(wealth),
             atol=2e-5,
             err_msg=f"period={period}",
@@ -123,7 +127,7 @@ def _bequest_utility(*, wealth: ContinuousState, age: float) -> FloatND:
     return (age / 50.0) * jnp.log(wealth)
 
 
-def test_age_dependent_terminal_utility_solves_to_closed_form():
+def test_age_dependent_terminal_utility_solves_to_closed_form() -> None:
     """A bequest utility reading `age` works as a DC-EGM continuation.
 
     Terminal carries are evaluated with the solve loop's `period` and `age`,
@@ -166,7 +170,7 @@ def test_age_dependent_terminal_utility_solves_to_closed_form():
     # test is identical across nodes, so they are excluded rather than the
     # tolerance loosened for the whole grid.
     np.testing.assert_allclose(
-        np.asarray(period_to_regime_to_V_arr[0]["retirement"])[3:],
+        np.asarray(period_to_regime_to_V_arr[0]["retirement"])[3:, 0],
         expected[3:],
         atol=1e-3,
     )
@@ -176,6 +180,10 @@ def test_age_dependent_terminal_utility_solves_to_closed_form():
 class _InterestRegimeId:
     retirement: ScalarInt
     dead: ScalarInt
+
+
+def _dead_utility() -> float:
+    return 0.0
 
 
 def _log_consumption_value(*, wealth: np.ndarray, n_alive: int) -> np.ndarray:
@@ -201,7 +209,7 @@ def _log_consumption_value(*, wealth: np.ndarray, n_alive: int) -> np.ndarray:
     return slope * np.log(wealth) + intercept
 
 
-def test_dcegm_with_interest_matches_closed_form_on_dense_wealth_grid():
+def test_dcegm_with_interest_matches_closed_form_on_dense_wealth_grid() -> None:
     """A 5%-interest retirement model hits the closed form on every wealth node.
 
     With log utility, $\\beta = 0.95$, gross return $1.05$, and a multi-period
@@ -263,7 +271,7 @@ def test_dcegm_with_interest_matches_closed_form_on_dense_wealth_grid():
         ),
     )
     dead = UserRegime(
-        functions={"utility": lambda: 0.0},
+        functions={"utility": _dead_utility},
     )
     model = Model(
         regimes={"retirement": retirement, "dead": dead},
@@ -291,14 +299,14 @@ def test_dcegm_with_interest_matches_closed_form_on_dense_wealth_grid():
     wealth = np.linspace(1.0, 400.0, 1000)
     for period in range(n_periods - 1):
         np.testing.assert_allclose(
-            np.asarray(period_to_regime_to_V_arr[period]["retirement"]),
+            np.asarray(period_to_regime_to_V_arr[period]["retirement"])[..., 0],
             _log_consumption_value(wealth=wealth, n_alive=(n_periods - 1) - period),
             atol=3e-3,
             err_msg=f"period={period}",
         )
 
 
-def test_nan_param_surfaces_as_value_function_error():
+def test_nan_param_surfaces_as_value_function_error() -> None:
     """A NaN parameter raises `InvalidValueFunctionError` naming the regime.
 
     NaN propagates into the published V rows; the solve's NaN diagnostics must
@@ -314,7 +322,7 @@ def test_nan_param_surfaces_as_value_function_error():
         model.solve(params=params, log_level="debug")
 
 
-def test_dcegm_solution_has_standard_v_array_layout():
+def test_dcegm_solution_has_standard_v_array_layout() -> None:
     """DC-EGM publishes V arrays with the same shape/keys as the brute solver."""
     n_periods = 4
     params = get_retirement_only_params(n_periods=n_periods)
@@ -337,7 +345,7 @@ def test_dcegm_solution_has_standard_v_array_layout():
             assert brute[period][regime].shape == dcegm[period][regime].shape
 
 
-def test_neg_inf_bequest_node_does_not_wipe_the_continuation():
+def test_neg_inf_bequest_node_does_not_wipe_the_continuation() -> None:
     """A `-inf` terminal value at one node only affects queries near it.
 
     With a bequest grid that includes zero wealth, the terminal value is
@@ -373,7 +381,7 @@ def test_neg_inf_bequest_node_does_not_wipe_the_continuation():
     consumption = wealth / (1.0 + discount_factor)
     expected = np.log(consumption) + discount_factor * np.log(wealth - consumption)
     np.testing.assert_allclose(
-        np.asarray(period_to_regime_to_V_arr[0]["retirement"])[3:],
+        np.asarray(period_to_regime_to_V_arr[0]["retirement"])[3:, 0],
         expected[3:],
         atol=1e-3,
     )

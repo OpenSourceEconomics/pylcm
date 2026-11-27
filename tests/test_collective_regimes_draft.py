@@ -5,8 +5,6 @@ import inspect
 import jax.numpy as jnp
 import pytest
 
-from _lcm.regime_law import bind_regime_law
-from _lcm.user_regime_validation import validate_regime_law
 from lcm import (
     AgeGrid,
     CollectiveUtility,
@@ -16,8 +14,10 @@ from lcm import (
     categorical,
     fixed_transition,
 )
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime
+from lcm.solvers import DCEGM, EGM, OneMarginSolver
 from lcm.typing import (
     ContinuousAction,
     DiscreteAction,
@@ -75,33 +75,6 @@ class _CoupleRegimeId:
     widowed: ScalarInt
 
 
-def test_declaring_non_terminal_members_constructs() -> None:
-    """A non-terminal collective regime constructs.
-
-    Declaring `members` and binding a regime transition law is accepted: the
-    per-member contract is checked at construction, and the constructed
-    regime keeps both its member tuple and its non-terminal status. What a
-    collective regime is allowed to route to, and how it solves, is pinned in
-    `tests/regime_building/test_nonterminal_collective_solve.py`.
-    """
-
-    def _some_transition(_age: float) -> int:
-        return 0
-
-    regime = Regime(
-        states={"wealth": _WEALTH},
-        actions={"labor_supply_f": DiscreteGrid(category_class=LaborSupply)},
-        state_transitions={"wealth": lambda wealth: wealth},
-        functions={
-            "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
-        },
-    )
-    law = bind_regime_law(_some_transition)
-    validate_regime_law(regime, law=law)
-    assert regime.member_axis == ("f", "m")
-    assert not law.terminal
-
-
 def test_terminal_members_without_per_member_utility_is_rejected() -> None:
     """A collective regime must carry a body for every member it names.
 
@@ -142,13 +115,8 @@ def test_terminal_members_without_per_member_utility_is_rejected() -> None:
         )
 
 
-def test_singleton_default_is_untouched() -> None:
-    """A regime that declares no members is a plain singleton regime.
-
-    Omitting `members` leaves the field `None` and construction takes the
-    ordinary single-value path — the collective branch is reached only by an
-    explicit declaration, never by default.
-    """
+def test_a_plain_utility_declares_the_one_member_self() -> None:
+    """A regime that declares a plain utility has the one member `"self"`."""
 
     def utility(consumption: ContinuousAction) -> FloatND:
         return jnp.log(consumption)
@@ -158,9 +126,46 @@ def test_singleton_default_is_untouched() -> None:
         actions={"consumption": _CONSUMPTION},
         functions={"utility": utility},
     )
-    assert regime.member_axis is None
+    assert regime.members == ("self",)
 
 
 def test_members_is_not_a_constructor_parameter() -> None:
     """A regime's members are declared in its utility, and only there."""
-    assert "member_axis" not in inspect.signature(Regime).parameters
+    assert "members" not in inspect.signature(Regime).parameters
+
+
+@pytest.mark.parametrize(
+    "solver",
+    [EGM(savings_grid=_WEALTH), DCEGM(savings_grid=_WEALTH)],
+    ids=["EGM", "DCEGM"],
+)
+def test_household_with_a_one_member_solver_is_refused(
+    solver: OneMarginSolver,
+) -> None:
+    """A solver that solves one member only refuses a household of two.
+
+    The message names the solver and the household's members.
+    """
+
+    def _utility(consumption: ContinuousAction) -> FloatND:
+        return jnp.log(consumption)
+
+    with pytest.raises(
+        NotImplementedError,
+        match=rf"{type(solver).__name__}.*\('f', 'm'\)",
+    ):
+        ConsumptionSavingsRegime(
+            states={"wealth": _WEALTH},
+            actions={"consumption": _CONSUMPTION},
+            state_transitions={"wealth": lambda wealth: wealth},
+            functions={
+                "utility": CollectiveUtility(utilities={"f": _utility, "m": _utility})
+            },
+            solver=solver,
+            liquid=LiquidMargin(
+                state="wealth",
+                action="consumption",
+                resources="wealth",
+                post_decision_state="savings",
+            ),
+        )

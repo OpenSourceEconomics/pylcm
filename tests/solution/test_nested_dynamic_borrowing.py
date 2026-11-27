@@ -341,7 +341,7 @@ def _assert_published_bank(
             grid = grid + shift[:, None]
         np.testing.assert_array_equal(leaves[("endog_grid",)][..., index, :], grid)
     np.testing.assert_array_equal(
-        published.value,
+        published.value[..., 0],
         jnp.max(jnp.stack([output.value for output in outputs]), axis=0),
     )
 

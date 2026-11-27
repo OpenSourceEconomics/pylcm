@@ -68,7 +68,7 @@ def run_eager_stage[T: PytreeValue](
     budget_devices = tuple(dict.fromkeys((*devices, *current.spans)))
     placed = place_simulation_arguments(
         arguments=arguments,
-        subject_arg_names=(),
+        agent_arg_names=(),
         value_reads=(),
         devices=execution_devices,
         budget_bytes=budget_bytes,

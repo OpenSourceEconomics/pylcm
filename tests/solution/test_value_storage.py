@@ -183,7 +183,7 @@ def test_host_storage_publishes_the_device_storage_values(
     }
     for period, regime_to_value in device.values.items():
         for regime_name, value in regime_to_value.items():
-            host_value = host.value(period=period, regime=regime_name)
+            host_value = host.value(step=period, regime=regime_name)
             assert host_value.sharding.memory_kind == "device"
             np.testing.assert_array_equal(
                 np.asarray(host_value), np.asarray(value), strict=True
@@ -203,8 +203,8 @@ _STOCHASTIC_INITIAL_CONDITIONS = MappingProxyType(
 
 @pytest.mark.parametrize(
     "widths",
-    [MappingProxyType({}), MappingProxyType({"subject": 1})],
-    ids=["one-chunk", "one-subject-per-chunk"],
+    [MappingProxyType({}), MappingProxyType({"agent": 1})],
+    ids=["one-chunk", "one-agent-per-chunk"],
 )
 def test_every_storage_publishes_and_simulates_the_stochastic_model_alike(
     *, tmp_path: Path, widths: Mapping[str, int]
@@ -227,9 +227,7 @@ def test_every_storage_publishes_and_simulates_the_stochastic_model_alike(
         solution = model.solve(params=params, log_level="off")
         values.append(
             {
-                (period, regime): np.asarray(
-                    solution.value(period=period, regime=regime)
-                )
+                (period, regime): np.asarray(solution.value(step=period, regime=regime))
                 for period, regime_to_value in solution.values.items()
                 for regime in regime_to_value
             }
@@ -342,11 +340,11 @@ def test_a_debug_solve_snapshot_holds_the_device_storage_values(
     (directory,) = snapshots.glob("solve_snapshot_*/")
     snapshot = load_snapshot(directory)
     assert isinstance(snapshot, SolveSnapshot)
-    assert snapshot.period_to_regime_to_V_arr is not None
+    assert snapshot.step_to_regime_to_V_arr is not None
     for period, regime_to_value in device.values.items():
         for regime, value in regime_to_value.items():
             np.testing.assert_array_equal(
-                np.asarray(snapshot.period_to_regime_to_V_arr[period][regime]),
+                np.asarray(snapshot.step_to_regime_to_V_arr[period][regime]),
                 np.asarray(value),
                 strict=True,
             )
@@ -737,7 +735,7 @@ def test_several_chunks_read_the_stored_policies_a_single_chunk_reads(
                 )
             ),
         )
-        for widths in (MappingProxyType({}), _ONE_SUBJECT_PER_CHUNK)
+        for widths in (MappingProxyType({}), _ONE_AGENT_PER_CHUNK)
     ]
 
     assert reads[0]
@@ -1365,7 +1363,7 @@ def test_a_blocked_host_storage_solve_publishes_the_blocked_device_values() -> N
     for period, regime_to_value in solutions[0].values.items():
         for regime_name, value in regime_to_value.items():
             np.testing.assert_array_equal(
-                np.asarray(solutions[1].value(period=period, regime=regime_name)),
+                np.asarray(solutions[1].value(step=period, regime=regime_name)),
                 np.asarray(value),
                 strict=True,
             )
@@ -1433,7 +1431,7 @@ def test_disk_storage_publishes_the_device_storage_values(
     }
     for period, regime_to_value in device.values.items():
         for regime_name, value in regime_to_value.items():
-            read = disk.value(period=period, regime=regime_name)
+            read = disk.value(step=period, regime=regime_name)
             assert read.sharding.memory_kind == "device"
             np.testing.assert_array_equal(
                 np.asarray(read), np.asarray(value), strict=True
@@ -1453,8 +1451,8 @@ def test_disk_storage_keeps_each_solve_in_a_file_of_its_own(tmp_path: Path) -> N
         type(entry) for entry in cast("ValueStore", first.values)._entries.values()
     } == {DiskValueEntry}
     np.testing.assert_array_equal(
-        np.asarray(first.value(period=0, regime="a")),
-        np.asarray(second.value(period=0, regime="a")),
+        np.asarray(first.value(step=0, regime="a")),
+        np.asarray(second.value(step=0, regime="a")),
         strict=True,
     )
 
@@ -1483,14 +1481,14 @@ def test_saving_a_disk_result_copies_its_archive(tmp_path: Path) -> None:
     (archive,) = storage.iterdir()
 
     saved = solution.save(path=tmp_path / "kept.h5")
-    value = np.asarray(solution.value(period=4, regime="c"))
+    value = np.asarray(solution.value(step=4, regime="c"))
 
     assert filecmp.cmp(saved, archive, shallow=False)
     del solution
     gc.collect()
     assert list(storage.iterdir()) == []
     np.testing.assert_array_equal(
-        np.asarray(load_solution(path=saved).value(period=4, regime="c")),
+        np.asarray(load_solution(path=saved).value(step=4, regime="c")),
         value,
         strict=True,
     )
@@ -1660,12 +1658,12 @@ def test_a_failed_disk_solve_leaves_an_incomplete_record(
     assert name.endswith(".incomplete")
     with h5py.File(tmp_path / name, "r") as file:
         record = json.loads(bytes(file["incomplete"][()]).decode())
-    assert record["last_completed_period"] == 2
+    assert record["last_completed_step"] == 2
     assert record["dtype"] == (
         "float64" if jax.config.read("jax_enable_x64") else "float32"
     )
     assert set(record) == {
-        "last_completed_period",
+        "last_completed_step",
         "dtype",
         "model_fingerprint",
         "params_fingerprint",
@@ -1706,7 +1704,7 @@ def test_a_nan_is_diagnosed_without_reading_stored_values_back(
     monkeypatch.setattr(host_values, "to_device", _counting_to_device)
     monkeypatch.setattr(DiskValueEntry, "materialize", _counting_materialize)
     model, params = nan_diagnostics._build_nan_model(
-        _host() if storage == "host" else _disk(tmp_path)
+        execution_config=_host() if storage == "host" else _disk(tmp_path)
     )
     with pytest.raises(InvalidValueFunctionError) as stored:
         model.solve(params=params, log_level="off")
@@ -1763,7 +1761,7 @@ def test_a_failed_host_copy_names_its_period_regime_and_target(
     monkeypatch.setattr(host_values, "_to_pinned_host", _fail)
     with pytest.raises(
         ValueStorageError,
-        match=r"period 4, regime '\w+' to pinned host memory",
+        match=r"step 4, regime '\w+' to pinned host memory",
     ) as raised:
         _three_regime_model(_host()).solve(params=_PARAMS, log_level="off")
     assert isinstance(raised.value.__cause__, RuntimeError)
@@ -1779,7 +1777,7 @@ def test_a_failed_wait_for_a_host_copy_names_its_period_and_regime(
 
     monkeypatch.setattr(host_values.jax, "block_until_ready", _fail)
     with pytest.raises(
-        ValueStorageError, match=r"period 3, regime 'b' to pinned host memory"
+        ValueStorageError, match=r"step 3, regime 'b' to pinned host memory"
     ):
         host_values.wait_for_host_copies(copies=((3, "b", _STORED_VALUE),))
 
@@ -1814,7 +1812,7 @@ def test_a_failed_disk_write_names_its_period_regime_and_archive(
     monkeypatch.setattr(StreamedSolutionArchive, "write_value", _fail_at_period_1)
     with pytest.raises(
         ValueStorageError,
-        match=rf"period 1, regime '\w+' to {tmp_path}/solution-\S+\.h5\.partial",
+        match=rf"step 1, regime '\w+' to {tmp_path}/solution-\S+\.h5\.partial",
     ) as raised:
         _three_regime_model(_disk(tmp_path)).solve(params=_PARAMS, log_level="off")
     assert isinstance(raised.value.__cause__, OSError)
@@ -1823,12 +1821,12 @@ def test_a_failed_disk_write_names_its_period_regime_and_archive(
     # The record is in the file while the failed solve is still held.
     (partial,) = tmp_path.iterdir()
     assert partial.name.endswith(".h5.partial")
-    assert _record_in(partial)["last_completed_period"] == 2
+    assert _record_in(partial)["last_completed_step"] == 2
 
     del raised
     (name,) = _archives(tmp_path)
     assert name.endswith(".incomplete")
-    assert _record_in(tmp_path / name)["last_completed_period"] == 2
+    assert _record_in(tmp_path / name)["last_completed_step"] == 2
 
 
 def test_a_failed_flush_of_the_finished_archive_raises_and_keeps_it_loadable(
@@ -1855,7 +1853,7 @@ def test_a_failed_flush_of_the_finished_archive_raises_and_keeps_it_loadable(
     for period, regime_to_value in device.values.items():
         for regime, value in regime_to_value.items():
             np.testing.assert_array_equal(
-                np.asarray(loaded.value(period=period, regime=regime)),
+                np.asarray(loaded.value(step=period, regime=regime)),
                 np.asarray(value),
                 strict=True,
             )
@@ -1890,8 +1888,8 @@ def test_a_disk_value_entry_carries_the_solve_budget(tmp_path: Path) -> None:
     } == {model._execution.device_memory_bytes}
 
 
-# One subject per chunk, so every population here runs in several chunks.
-_ONE_SUBJECT_PER_CHUNK = MappingProxyType({"subject": 1})
+# One agent per chunk, so every population here runs in several chunks.
+_ONE_AGENT_PER_CHUNK = MappingProxyType({"agent": 1})
 
 
 def _while_flagged[**P, R](
@@ -1997,7 +1995,7 @@ def test_several_chunks_find_each_later_period_loaded_before_it_starts(
     step_period: list[int | None] = [None]
     copied_in_a_step: list[tuple[int, int, RegimeName]] = []
     read = host_values._RecentDeviceCopies.read
-    activate = simulate_module.activate_subject_membership
+    activate = simulate_module.activate_agent_membership
 
     # keyword-only-exempt: primary-argument=self
     def _recording_read(
@@ -2036,15 +2034,13 @@ def test_several_chunks_find_each_later_period_loaded_before_it_starts(
     model = build_model(
         ExecutionConfig(
             value_storage="host",
-            axis_widths=_ONE_SUBJECT_PER_CHUNK,
+            axis_widths=_ONE_AGENT_PER_CHUNK,
             device_memory_bytes=None,
         )
     )
     solution = model.solve(params=_PARAMS, log_level="off")
     monkeypatch.setattr(host_values._RecentDeviceCopies, "read", _recording_read)
-    monkeypatch.setattr(
-        simulate_module, "activate_subject_membership", _marking_activate
-    )
+    monkeypatch.setattr(simulate_module, "activate_agent_membership", _marking_activate)
     monkeypatch.setattr(
         simulate_module,
         "_prefetch_period_reads",
@@ -2108,7 +2104,7 @@ def test_several_chunks_copy_the_stored_values_a_single_chunk_copies(
                 initial_conditions=initial_conditions(),
             )[0]
         )
-        for widths in (MappingProxyType({}), _ONE_SUBJECT_PER_CHUNK)
+        for widths in (MappingProxyType({}), _ONE_AGENT_PER_CHUNK)
     ]
 
     assert copies[0]
@@ -2129,12 +2125,10 @@ def test_several_chunks_under_host_storage_simulate_the_device_panel(
     build_model: Callable[[ExecutionConfig], Model],
     initial_conditions: Callable[[], dict[str, jax.Array]],
 ) -> None:
-    """Every subject keeps its keys and row: the panel is the chunked device one."""
+    """Every agent keeps its keys and row: the panel is the chunked device one."""
     device = (
         build_model(
-            ExecutionConfig(
-                axis_widths=_ONE_SUBJECT_PER_CHUNK, device_memory_bytes=None
-            )
+            ExecutionConfig(axis_widths=_ONE_AGENT_PER_CHUNK, device_memory_bytes=None)
         )
         .simulate(
             params=_PARAMS,
@@ -2149,7 +2143,7 @@ def test_several_chunks_under_host_storage_simulate_the_device_panel(
         model=build_model(
             ExecutionConfig(
                 value_storage="host",
-                axis_widths=_ONE_SUBJECT_PER_CHUNK,
+                axis_widths=_ONE_AGENT_PER_CHUNK,
                 device_memory_bytes=None,
             )
         ),
@@ -2164,9 +2158,7 @@ def test_several_chunks_under_disk_storage_simulate_the_device_panel(
 ) -> None:
     device = (
         _three_regime_model(
-            ExecutionConfig(
-                axis_widths=_ONE_SUBJECT_PER_CHUNK, device_memory_bytes=None
-            )
+            ExecutionConfig(axis_widths=_ONE_AGENT_PER_CHUNK, device_memory_bytes=None)
         )
         .simulate(
             params=_PARAMS,
@@ -2181,7 +2173,7 @@ def test_several_chunks_under_disk_storage_simulate_the_device_panel(
         model=_three_regime_model(
             ExecutionConfig(
                 value_storage=tmp_path,
-                axis_widths=_ONE_SUBJECT_PER_CHUNK,
+                axis_widths=_ONE_AGENT_PER_CHUNK,
                 device_memory_bytes=None,
             )
         ),
@@ -2199,7 +2191,7 @@ def test_several_chunks_report_dissolutions_in_the_device_order() -> None:
         model = _make_dissolution_model(
             ExecutionConfig(
                 value_storage=storage,
-                axis_widths=_ONE_SUBJECT_PER_CHUNK,
+                axis_widths=_ONE_AGENT_PER_CHUNK,
                 device_memory_bytes=None,
             )
         )
@@ -2230,8 +2222,8 @@ def _budgeted(*, value_storage: Literal["device", "host"]) -> ExecutionConfig:
     )
 
 
-def _one_subject_per_budgeted_chunk(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make the budgeted planner consider one subject per chunk only.
+def _one_agent_per_budgeted_chunk(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the budgeted planner consider one agent per chunk only.
 
     A budget picks the widest admitted chunk, which for these small models is
     the whole population; only the candidate list forces several chunks.
@@ -2250,7 +2242,7 @@ def test_budgeted_chunks_copy_the_stored_values_a_single_chunk_copies(
         model=_three_regime_model(_budgeted(value_storage="host")),
         initial_conditions=_three_regime_initial_conditions(),
     )
-    _one_subject_per_budgeted_chunk(monkeypatch)
+    _one_agent_per_budgeted_chunk(monkeypatch)
     several, _ = _value_copies_while_simulating(
         monkeypatch=monkeypatch,
         model=_three_regime_model(_budgeted(value_storage="host")),
@@ -2264,7 +2256,7 @@ def test_budgeted_chunks_copy_the_stored_values_a_single_chunk_copies(
 def test_budgeted_chunks_under_host_storage_simulate_the_device_panel(
     *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _one_subject_per_budgeted_chunk(monkeypatch)
+    _one_agent_per_budgeted_chunk(monkeypatch)
     device = (
         _three_regime_model(_budgeted(value_storage="device"))
         .simulate(
@@ -2284,13 +2276,13 @@ def test_budgeted_chunks_under_host_storage_simulate_the_device_panel(
     assert host.equals(device)
 
 
-def test_the_planner_reserves_every_subjects_state_for_several_chunks() -> None:
-    """The reservation covers each initial-condition column of every subject."""
+def test_the_planner_reserves_every_agents_state_for_several_chunks() -> None:
+    """The reservation covers each initial-condition column of every agent."""
     initial_conditions = _three_regime_initial_conditions()
     devices = (jax.devices()[0],)
 
     reserved = chunk_admission._population_carry_bytes(
-        initial_conditions=initial_conditions, subject_devices=devices
+        initial_conditions=initial_conditions, agent_devices=devices
     )
 
     columns = sum(int(column.nbytes) for column in initial_conditions.values())
@@ -2344,7 +2336,7 @@ def test_disk_values_loaded_early_are_read_off_the_simulation_thread(
         _three_regime_model(
             ExecutionConfig(
                 value_storage=storage,
-                axis_widths=_ONE_SUBJECT_PER_CHUNK,
+                axis_widths=_ONE_AGENT_PER_CHUNK,
                 device_memory_bytes=None,
             )
         )
@@ -2396,7 +2388,7 @@ def test_the_planner_reserves_what_one_period_copies_early(
     model = _three_regime_model(
         ExecutionConfig(
             value_storage="host",
-            axis_widths=_ONE_SUBJECT_PER_CHUNK,
+            axis_widths=_ONE_AGENT_PER_CHUNK,
             device_memory_bytes=None,
         )
     )
@@ -2414,7 +2406,7 @@ def test_the_planner_reserves_what_one_period_copies_early(
         regimes=model._regimes,
         values=host_values.planning_stand_in(engine_view.values),
         policies=None,
-        n_periods=model.n_periods,
+        n_steps=model.n_steps,
         devices=tuple(jax.devices()),
     )
 
@@ -2426,7 +2418,7 @@ def test_the_runtime_ledger_charges_the_early_copies(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """While chunks run, the copies loaded early count as live device memory."""
-    _one_subject_per_budgeted_chunk(monkeypatch)
+    _one_agent_per_budgeted_chunk(monkeypatch)
     events: list[tuple[str, frozenset[int]]] = []
     prefetch = simulate_module._prefetch_period_reads
     set_attribute = SimulationMemory.__setattr__
@@ -2493,7 +2485,7 @@ def test_the_runtime_ledger_charges_the_early_copies(
 def test_a_budget_without_room_for_the_early_copies_is_refused(
     *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _one_subject_per_budgeted_chunk(monkeypatch)
+    _one_agent_per_budgeted_chunk(monkeypatch)
     monkeypatch.setattr(
         chunk_admission,
         "_prefetch_bytes",
@@ -2512,11 +2504,11 @@ def test_a_budget_without_room_for_the_early_copies_is_refused(
         )
 
 
-def test_a_budget_without_room_for_every_subjects_state_is_refused(
+def test_a_budget_without_room_for_every_agents_state_is_refused(
     *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The refusal names the remedies that shrink the population's state."""
-    _one_subject_per_budgeted_chunk(monkeypatch)
+    _one_agent_per_budgeted_chunk(monkeypatch)
     monkeypatch.setattr(
         chunk_admission,
         "_population_carry_bytes",
@@ -2525,7 +2517,7 @@ def test_a_budget_without_room_for_every_subjects_state_is_refused(
     model = _three_regime_model(_budgeted(value_storage="host"))
     solution = model.solve(params=_PARAMS, log_level="off")
 
-    with pytest.raises(ExecutionPlanningError, match="fewer subjects"):
+    with pytest.raises(ExecutionPlanningError, match="fewer agents"):
         model.simulate(
             params=_PARAMS,
             initial_conditions=_three_regime_initial_conditions(),
@@ -2539,7 +2531,7 @@ def test_planning_a_budgeted_call_copies_no_more_values_than_an_unbudgeted_one(
     *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Measuring and profiling read the values' metadata, not copies of them."""
-    _one_subject_per_budgeted_chunk(monkeypatch)
+    _one_agent_per_budgeted_chunk(monkeypatch)
     copies = [
         sorted(
             _value_copies_while_simulating(
@@ -2566,7 +2558,7 @@ def _life_cycle(
     """The typed life cycle, blocked by preference type when `schedule` is given."""
     model = life_cycle._model(typed_dead=True)
     config = dataclasses.replace(
-        lifetime._config(schedule=schedule, subject_width=3),
+        lifetime._config(schedule=schedule, agent_width=3),
         value_storage=value_storage,
     )
     return Model(
@@ -2584,7 +2576,7 @@ _LIFE_CYCLE_PARAMS = life_cycle._params(typed_dead=True)
 
 def _life_cycle_values(solution: SolutionResult) -> dict[tuple[int, str], np.ndarray]:
     return {
-        (period, regime): np.asarray(solution.value(period=period, regime=regime))
+        (period, regime): np.asarray(solution.value(step=period, regime=regime))
         for period, regime_to_value in solution.values.items()
         for regime in regime_to_value
     }
@@ -2878,7 +2870,7 @@ def test_a_failed_block_major_disk_write_names_its_code_period_regime_and_archiv
     with pytest.raises(
         ValueStorageError,
         match=(
-            rf"code \d+ of period \d+, regime '\w+' to "
+            rf"code \d+ of step \d+, regime '\w+' to "
             rf"{tmp_path}/solution-\S+\.h5\.partial"
         ),
     ) as raised:
@@ -2942,7 +2934,7 @@ def test_a_block_major_simulation_whose_solve_fails_records_its_completed_codes(
     assert (completed_codes == []) is (nan_code == 0)
     assert set(record) == {
         "completed_codes",
-        "last_completed_period",
+        "last_completed_step",
         "dtype",
         "model_fingerprint",
         "params_fingerprint",

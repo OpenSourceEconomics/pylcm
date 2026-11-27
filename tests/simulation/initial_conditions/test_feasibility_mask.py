@@ -1,4 +1,4 @@
-"""Per-subject action feasibility of initial conditions."""
+"""Per-agent action feasibility of initial conditions."""
 
 import jax.numpy as jnp
 import pytest
@@ -18,7 +18,7 @@ from tests.simulation.initial_conditions._models import (
 )
 
 
-def test_infeasible_initial_states_detected():
+def test_infeasible_initial_states_detected() -> None:
     """Wealth below the constraint threshold makes all actions infeasible.
 
     wealth=0.25 < min consumption (0.5), so consumption <= wealth is always False.
@@ -40,7 +40,7 @@ def test_infeasible_initial_states_detected():
         )
 
 
-def test_on_grid_state_but_combination_infeasible():
+def test_on_grid_state_but_combination_infeasible() -> None:
     """State ON the grid but constraint fails for ALL action combinations.
 
     wealth=0.3 is the grid minimum, but min consumption (0.5) > 0.3,
@@ -63,7 +63,7 @@ def test_on_grid_state_but_combination_infeasible():
         )
 
 
-def test_extrapolated_initial_states_accepted():
+def test_extrapolated_initial_states_accepted() -> None:
     """wealth=1.0 is above constraint threshold but below grid min — feasible."""
     model = make_constraint_model(
         wealth_grid=LinSpacedGrid(start=2.0, stop=10, n_points=15)
@@ -81,7 +81,7 @@ def test_extrapolated_initial_states_accepted():
     )
 
 
-def test_on_grid_initial_states_accepted():
+def test_on_grid_initial_states_accepted() -> None:
     """wealth=5.0 is above grid min — fully on grid, feasible."""
     model = make_constraint_model(
         wealth_grid=LinSpacedGrid(start=2.0, stop=10, n_points=15)
@@ -99,7 +99,7 @@ def test_on_grid_initial_states_accepted():
     )
 
 
-def test_irreg_spaced_grid_with_runtime_points():
+def test_irreg_spaced_grid_with_runtime_points() -> None:
     """Runtime-supplied grid points reach the feasibility check, which then rejects."""
     model = make_constraint_model(wealth_grid=IrregSpacedGrid(n_points=15))
     params = {
@@ -108,7 +108,7 @@ def test_irreg_spaced_grid_with_runtime_points():
         "final_age_alive": 1,
     }
     _working_life = model.regime_names_to_ids["working_life"]
-    with pytest.raises(InvalidInitialConditionsError, match="infeasible for 1 subject"):
+    with pytest.raises(InvalidInitialConditionsError, match="infeasible for 1 agent"):
         model.simulate(
             log_level="debug",
             params=params,
@@ -121,7 +121,7 @@ def test_irreg_spaced_grid_with_runtime_points():
 
 
 def test_constraint_not_checked_for_unused_regime() -> None:
-    """Subject in dead (no constraint); wealth=40 fine even though alive needs > 50."""
+    """Agent in dead (no constraint); wealth=40 fine even though alive needs > 50."""
     model = make_constrained_asymmetric_model()
     flat_params = process_params(
         params={"discount_factor": 0.95}, params_template=model._params_template
@@ -143,7 +143,7 @@ def test_constraint_not_checked_for_unused_regime() -> None:
 
 
 def test_constraint_checked_for_starting_regime() -> None:
-    """Subject in alive (has constraint); wealth=40 is infeasible."""
+    """Agent in alive (has constraint); wealth=40 is infeasible."""
     model = make_constrained_asymmetric_model()
     flat_params = process_params(
         params={"discount_factor": 0.95}, params_template=model._params_template
@@ -166,7 +166,7 @@ def test_constraint_checked_for_starting_regime() -> None:
 
 
 def test_mixed_regimes_constraint_only_checked_for_starting_regime() -> None:
-    """One subject in alive (infeasible), one in dead (no constraint).
+    """One agent in alive (infeasible), one in dead (no constraint).
 
     wealth=40 violates alive's constraint; dead declares no constraint to check.
     """
@@ -192,8 +192,8 @@ def test_mixed_regimes_constraint_only_checked_for_starting_regime() -> None:
         )
 
 
-def test_action_free_regime_state_only_constraint_rejects_violating_subject() -> None:
-    """A subject of an action-free regime violating a state constraint is infeasible."""
+def test_action_free_regime_state_only_constraint_rejects_violating_agent() -> None:
+    """An agent of an action-free regime violating a state constraint is infeasible."""
     model = make_state_only_constraint_model()
     flat_params = process_params(
         params={"discount_factor": 0.95}, params_template=model._params_template
@@ -215,8 +215,8 @@ def test_action_free_regime_state_only_constraint_rejects_violating_subject() ->
         )
 
 
-def test_action_free_regime_state_only_constraint_accepts_satisfying_subjects() -> None:
-    """Subjects in an action-free regime whose states satisfy the constraint pass."""
+def test_action_free_regime_state_only_constraint_accepts_satisfying_agents() -> None:
+    """Agents in an action-free regime whose states satisfy the constraint pass."""
     model = make_state_only_constraint_model()
     flat_params = process_params(
         params={"discount_factor": 0.95}, params_template=model._params_template
@@ -251,7 +251,7 @@ def test_action_free_regime_state_only_constraint_accepts_satisfying_subjects() 
 def test_simulate_rejects_state_only_violation_in_action_free_regime(
     device_memory_bytes: int | None,
 ) -> None:
-    """`simulate` refuses a subject whose action-free regime constraint fails."""
+    """`simulate` refuses an agent whose action-free regime constraint fails."""
     model = make_state_only_constraint_model(device_memory_bytes=device_memory_bytes)
     _dead = model.regime_names_to_ids["dead"]
 
@@ -297,8 +297,8 @@ def test_budgeted_simulate_accepts_action_free_regime_without_serial_validation(
     assert result.to_dataframe()["wealth"].tolist() == [1.0, 5.0]
 
 
-def test_feasibility_mask_marks_each_subject_in_caller_order() -> None:
-    """The mask is `True` exactly for subjects admitting an action, in input order."""
+def test_feasibility_mask_marks_each_agent_in_caller_order() -> None:
+    """The mask is `True` exactly for agents admitting an action, in input order."""
     model = make_constraint_model(
         wealth_grid=LinSpacedGrid(start=2.0, stop=10, n_points=15)
     )
@@ -325,7 +325,7 @@ def test_feasibility_mask_marks_each_subject_in_caller_order() -> None:
 
 
 def test_feasibility_mask_scatters_regime_verdicts_into_interleaved_rows() -> None:
-    """Subjects of different regimes keep their own verdicts at their own rows."""
+    """Agents of different regimes keep their own verdicts at their own rows."""
     model = make_state_only_constraint_model()
     flat_params = process_params(
         params={"discount_factor": 0.95}, params_template=model._params_template

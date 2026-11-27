@@ -56,7 +56,7 @@ _TREE_FIELDS: dict[str, Callable[[], _EngineTree]] = {
             arguments=MappingProxyType(
                 {"source": jax.ShapeDtypeStruct((4,), jnp.int32)}
             ),
-            subject_arg_names=("source",),
+            agent_arg_names=("source",),
         ).arguments
     ),
     "abstract_profile.arguments": lambda: _abstract_profile().arguments,

@@ -65,7 +65,7 @@ def test_runtime_zero_probability_keeps_static_continuation_targets() -> None:
         execution_config=ExecutionConfig(device_memory_bytes=None),
         initial_nodes={0: "source"},
     )
-    graph_targets = model.reachability.solution.targets(period=0, source="source")
+    graph_targets = model.reachability.solution.targets(step=0, source="source")
 
     low_solution = model.solve(
         params={"discount_factor": 1.0, "probability_high": 0.0},
@@ -77,8 +77,6 @@ def test_runtime_zero_probability_keeps_static_continuation_targets() -> None:
     ).values
 
     assert graph_targets == ("high", "low")
-    assert (
-        model.reachability.solution.targets(period=0, source="source") == graph_targets
-    )
+    assert model.reachability.solution.targets(step=0, source="source") == graph_targets
     np.testing.assert_allclose(np.asarray(low_solution[0]["source"]), 0.0)
     np.testing.assert_allclose(np.asarray(high_solution[0]["source"]), 10.0)

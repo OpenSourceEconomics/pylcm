@@ -76,11 +76,11 @@ class _MockRegime(Regime):
         *,
         solution: _MockSolutionPhase,
         gated_edges: MappingProxyType[RegimeName, _MockEdge],
-        member_axis: tuple[str, ...] | None = None,
+        members: tuple[str, ...] = ("self",),
     ) -> None:
         object.__setattr__(self, "solution", solution)
         object.__setattr__(self, "gated_edges", gated_edges)
-        object.__setattr__(self, "member_axis", member_axis)
+        object.__setattr__(self, "members", members)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -210,7 +210,7 @@ def test_the_trailing_axis_is_the_edges_own_channel_count() -> None:
     regimes["source_a"] = _MockRegime(
         solution=_MockSolutionPhase(states=MappingProxyType({})),
         gated_edges=MappingProxyType({"shared_target": _edge(n_components=2)}),
-        member_axis=("f", "m"),
+        members=("f", "m"),
     )
     frozen = MappingProxyType(regimes)
     flat_params = MappingProxyType(dict.fromkeys(frozen, MappingProxyType({})))

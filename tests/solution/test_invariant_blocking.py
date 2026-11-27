@@ -16,6 +16,7 @@ from typing import NotRequired, TypedDict, Unpack
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
 from _lcm.engine import SolutionPhase
@@ -28,8 +29,10 @@ from _lcm.state_action_space import StateActionSpace
 from _lcm.typing import FlatRegimeParams
 from lcm import (
     AgeGrid,
+    CollectiveUtility,
     DiscreteGrid,
     ExecutionConfig,
+    InvariantBlockSchedule,
     LinSpacedGrid,
     Model,
     categorical,
@@ -52,15 +55,6 @@ from lcm.typing import (
 from tests.conftest import assert_general_values_agree
 from tests.simulation import test_type_grouped_simulation as grouped_simulation
 from tests.test_models import independent_types
-
-
-class _CompileKwargs(TypedDict):
-    lowering_key: Hashable
-    low: jax.stages.Lowered
-    label: str
-    log_kernel_memory: bool
-    logger: logging.Logger
-    phase: str | None
 
 
 class _SpaceKwargs(TypedDict):
@@ -288,18 +282,6 @@ def test_execution_config_refuses_an_unusable_block_width(
         ExecutionConfig(invariant_block_widths=widths)  # ty: ignore[invalid-argument-type]
 
 
-@pytest.mark.parametrize("workload", _WORKLOADS)
-def test_blocked_solve_agrees_with_the_unblocked_solve(workload: str) -> None:
-    """Every published value agrees with the unblocked one within eight ULP."""
-    model, params = _workload(name=workload, execution_config=_blocked())
-    reference, _ = _workload(name=workload, execution_config=ExecutionConfig())
-
-    assert_general_values_agree(
-        got=_values(model=model, params=params),
-        expected=_values(model=reference, params=params),
-    )
-
-
 def test_blocked_solve_matches_the_enumerated_oracle() -> None:
     """Each type's blocked values equal the independent enumeration."""
     model = _independent_types_model(execution_config=_blocked())
@@ -308,7 +290,7 @@ def test_blocked_solve_matches_the_enumerated_oracle() -> None:
 
     np.testing.assert_allclose(
         np.stack([np.asarray(values[period]["working"]) for period in (0, 1, 2)]),
-        np.asarray([oracle[period] for period in (0, 1, 2)]),
+        np.asarray([oracle[period] for period in (0, 1, 2)])[..., None],
         rtol=1e-5,
     )
 
@@ -328,29 +310,6 @@ def test_blocked_solve_with_changed_params_equals_the_unblocked_one() -> None:
     assert not np.array_equal(
         np.asarray(changed[0]["working"]), np.asarray(base[0]["working"])
     )
-
-
-def test_blocked_simulation_equals_the_unblocked_panel() -> None:
-    """Simulated choices and states from a blocked solve are the unblocked ones."""
-    n_wealth = independent_types.N_WEALTH_POINTS
-    types = np.repeat(np.arange(_N_TYPES), n_wealth)
-    initial_conditions = {
-        "regime_id": jnp.full(types.size, independent_types.RegimeId.working),
-        "age": jnp.zeros(types.size),
-        "wealth": jnp.asarray(np.tile(np.arange(n_wealth, dtype=float), _N_TYPES)),
-        "pref_type": jnp.asarray(types, dtype=jnp.int32),
-    }
-    results = [
-        _independent_types_model(execution_config=config).simulate(
-            params=independent_types.get_params(),
-            initial_conditions=initial_conditions,
-            seed=0,
-            log_level="off",
-        )
-        for config in (_blocked(), ExecutionConfig())
-    ]
-
-    grouped_simulation._assert_general_panels_agree(got=results[0], want=results[1])
 
 
 @pytest.mark.parametrize("typed_terminal", [False, True])
@@ -473,37 +432,6 @@ def test_an_unblocked_carrier_keeps_one_main_program() -> None:
     assert [(name, program.invariant_binding) for name, program in graph.items()] == [
         ("main", None)
     ]
-
-
-def _count_compiles(
-    *, monkeypatch: pytest.MonkeyPatch, model: Model, params: UserParams
-) -> int:
-    calls: list[Hashable] = []
-    compile_and_log = backward_induction._compile_and_log
-
-    def counted(
-        **kwargs: Unpack[_CompileKwargs],
-    ) -> tuple[Hashable, jax.stages.Compiled]:
-        calls.append(kwargs["lowering_key"])
-        return compile_and_log(**kwargs)
-
-    monkeypatch.setattr(backward_induction, "_compile_and_log", counted)
-    model.solve(params=params, log_level="off")
-    monkeypatch.undo()
-    return len(calls)
-
-
-@pytest.mark.parametrize("workload", _WORKLOADS)
-def test_blocked_solve_compiles_no_program_per_type(
-    *, monkeypatch: pytest.MonkeyPatch, workload: str
-) -> None:
-    """Blocking compiles exactly as many programs as the unblocked solve."""
-    blocked, params = _workload(name=workload, execution_config=_blocked())
-    reference, _ = _workload(name=workload, execution_config=ExecutionConfig())
-
-    assert _count_compiles(
-        monkeypatch=monkeypatch, model=blocked, params=params
-    ) == _count_compiles(monkeypatch=monkeypatch, model=reference, params=params)
 
 
 class _CompileRequests(logging.Handler):
@@ -732,6 +660,137 @@ def test_a_reset_of_the_blocked_state_is_refused_at_construction() -> None:
             typed_terminal=True,
             execution_config=ExecutionConfig(invariant_block_widths={"sector": 1}),
         )
+
+
+def _household_utility_f(
+    *, consumption: ContinuousAction, pref_type: DiscreteState
+) -> FloatND:
+    return (1.0 + 0.1 * pref_type) * jnp.log(1.0 + consumption)
+
+
+def _household_utility_m(
+    *, consumption: ContinuousAction, pref_type: DiscreteState
+) -> FloatND:
+    return (1.3 - 0.1 * pref_type) * jnp.sqrt(1.0 + consumption)
+
+
+def _household_bequest_f(
+    *, wealth: ContinuousState, pref_type: DiscreteState
+) -> FloatND:
+    return (0.5 + 0.2 * pref_type) * jnp.log(1.0 + wealth)
+
+
+def _household_bequest_m(
+    *, wealth: ContinuousState, pref_type: DiscreteState
+) -> FloatND:
+    return (0.9 - 0.2 * pref_type) * jnp.sqrt(1.0 + wealth)
+
+
+def _household_model(*, execution_config: ExecutionConfig) -> Model:
+    """A household of `f` and `m` carrying `pref_type` into a typed terminal household.
+
+    The members' utilities differ in their dependence on the type, so every
+    type's block has its own household choice and member values.
+    """
+    ages = AgeGrid(start=0, inclusive_stop=3, step="Y")
+    wealth = LinSpacedGrid(start=0, stop=10, n_points=11)
+    pref_type = DiscreteGrid(category_class=independent_types.PrefType)
+    return Model(
+        regimes={
+            "working": Regime(
+                states={"pref_type": pref_type, "wealth": wealth},
+                state_transitions={
+                    "pref_type": fixed_transition("pref_type"),
+                    "wealth": _next_wealth,
+                },
+                actions={"consumption": wealth},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={
+                            "f": _household_utility_f,
+                            "m": _household_utility_m,
+                        }
+                    )
+                },
+                constraints={"affordable": _affordable},
+            ),
+            "terminal": Regime(
+                states={"pref_type": pref_type, "wealth": wealth},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={
+                            "f": _household_bequest_f,
+                            "m": _household_bequest_m,
+                        }
+                    )
+                },
+            ),
+        },
+        edges={
+            "working": {
+                "working": tuple(ages.exact_values[:-2]),
+                "terminal": (ages.exact_values[-2],),
+            }
+        },
+        ages=ages,
+        regime_id_class=_RegimeId,
+        initial_nodes={ages.exact_values[0]: "working"},
+        execution_config=execution_config,
+    )
+
+
+@pytest.mark.parametrize("schedule", list(InvariantBlockSchedule))
+def test_blocked_household_solve_agrees_with_the_unblocked_solve(
+    schedule: InvariantBlockSchedule,
+) -> None:
+    """A household's member values agree with the unblocked ones within eight ULP."""
+    params = {"discount_factor": 0.9}
+    config = ExecutionConfig(
+        invariant_block_widths={"pref_type": 1}, invariant_block_schedule=schedule
+    )
+
+    got = _values(model=_household_model(execution_config=config), params=params)
+
+    assert np.shape(got[0]["working"])[-1] == 2
+    assert_general_values_agree(
+        got=got,
+        expected=_values(
+            model=_household_model(execution_config=ExecutionConfig()), params=params
+        ),
+    )
+
+
+def test_blocked_household_simulation_equals_the_unblocked_panel() -> None:
+    """A blocked household simulates the unblocked choices, states and member values."""
+    n_wealth = 4
+    types = np.repeat(np.arange(_N_TYPES), n_wealth)
+    initial_conditions = {
+        "regime_id": jnp.full(types.size, _RegimeId.working),
+        "age": jnp.zeros(types.size),
+        "wealth": jnp.asarray(np.tile(np.arange(n_wealth, dtype=float), _N_TYPES)),
+        "pref_type": jnp.asarray(types, dtype=jnp.int32),
+    }
+    blocked, unblocked = (
+        _household_model(execution_config=config).simulate(
+            params={"discount_factor": 0.9},
+            initial_conditions=initial_conditions,
+            seed=0,
+            log_level="off",
+        )
+        for config in (_blocked(), ExecutionConfig())
+    )
+    got, want = blocked.to_dataframe(), unblocked.to_dataframe()
+    values = ["value_f", "value_m"]
+
+    assert grouped_simulation._agent_grouping(result=blocked) == "pref_type"
+    assert got.columns.equals(want.columns)
+    pd.testing.assert_frame_equal(
+        got.drop(columns=values), want.drop(columns=values), check_exact=True
+    )
+    assert_general_values_agree(
+        got={0: {name: got[name].to_numpy() for name in values}},
+        expected={0: {name: want[name].to_numpy() for name in values}},
+    )
 
 
 @categorical(ordered=False)

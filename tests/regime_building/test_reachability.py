@@ -33,23 +33,23 @@ type SourceText = str
 def test_an_edge_is_the_declared_support_at_its_period() -> None:
     """An edge exists exactly at the periods whose support declares its target."""
     graph = build_phase_reachability(
-        n_periods=3,
+        n_steps=3,
         active_periods_by_regime={"source": {0}, "target": {1}},
         support_by_period={"source": {0: ("target",)}},
     )
 
     assert (
-        graph.edge_status(period=0, source="source", target="target")
+        graph.edge_status(step=0, source="source", target="target")
         == EdgeStatus.CONDITIONAL
     )
-    assert not graph.has_edge(period=1, source="source", target="target")
+    assert not graph.has_edge(step=1, source="source", target="target")
 
 
 def test_a_declared_target_not_covered_next_period_is_rejected() -> None:
     """The graph never drops a declared target; it refuses an uncovered one."""
-    with pytest.raises(ValueError, match="covered at the next period"):
+    with pytest.raises(ValueError, match="covered at the period they land in"):
         build_phase_reachability(
-            n_periods=2,
+            n_steps=2,
             active_periods_by_regime={"source": {0}, "target": {0}},
             support_by_period={"source": {0: ("target",)}},
         )
@@ -58,33 +58,33 @@ def test_a_declared_target_not_covered_next_period_is_rejected() -> None:
 def test_conditional_edge_is_retained_without_runtime_resolution() -> None:
     """A declared conditional edge remains part of the static graph."""
     graph = build_phase_reachability(
-        n_periods=2,
+        n_steps=2,
         active_periods_by_regime={"a": {0}, "b": {1}},
         support_by_period={"a": {0: ("b",)}},
     )
 
-    assert graph.targets(period=0, source="a") == ("b",)
-    assert graph.edge_status(period=0, source="a", target="b") == EdgeStatus.CONDITIONAL
+    assert graph.targets(step=0, source="a") == ("b",)
+    assert graph.edge_status(step=0, source="a", target="b") == EdgeStatus.CONDITIONAL
     assert not hasattr(graph, "resolve")
 
 
 def test_terminal_source_has_no_edge() -> None:
     """A terminal source has no outgoing edge even when support is declared."""
     graph = build_phase_reachability(
-        n_periods=2,
+        n_steps=2,
         active_periods_by_regime={"dead": {0}, "alive": {1}},
         support_by_period={"dead": {0: ("alive",)}},
         terminal_regimes={"dead"},
     )
 
-    assert not graph.has_edge(period=0, source="dead", target="alive")
+    assert not graph.has_edge(step=0, source="dead", target="alive")
 
 
 def test_unknown_target_is_rejected() -> None:
     """Every declared target belongs to the graph's regime universe."""
     with pytest.raises(ValueError, match="unknown regimes"):
         build_phase_reachability(
-            n_periods=2,
+            n_steps=2,
             active_periods_by_regime={"a": {0}},
             support_by_period={"a": {0: ("missing",)}},
         )
@@ -93,7 +93,7 @@ def test_unknown_target_is_rejected() -> None:
 def test_solution_and_simulation_graphs_use_the_same_builder() -> None:
     """Phase-specific declarations produce phase-specific temporal graphs."""
     graph = build_model_reachability(
-        n_periods=2,
+        n_steps=2,
         active_periods_by_regime={
             "source": (0,),
             "solve_target": (0, 1),
@@ -106,8 +106,8 @@ def test_solution_and_simulation_graphs_use_the_same_builder() -> None:
         terminal_regimes={"solve_target", "simulate_target"},
     )
 
-    assert graph.solution.targets(period=0, source="source") == ("solve_target",)
-    assert graph.simulation.targets(period=0, source="source") == ("simulate_target",)
+    assert graph.solution.targets(step=0, source="source") == ("solve_target",)
+    assert graph.simulation.targets(step=0, source="source") == ("simulate_target",)
 
 
 def test_engine_has_no_period_target_inference_helper() -> None:
@@ -379,8 +379,8 @@ def test_fixed_zero_probability_removes_target_problem(
         fixed_params=fixed_params,
         enable_jit=False,
     )
-    assert model.reachability.solution.targets(period=0, source="source") == ("low",)
-    assert model.reachability.simulation.targets(period=0, source="source") == ("low",)
+    assert model.reachability.solution.targets(step=0, source="source") == ("low",)
+    assert model.reachability.simulation.targets(step=0, source="source") == ("low",)
     assert (1, "high") not in model.reachability.nodes
     assert (1, "high") not in model.reachability.visited_nodes
     assert "high" not in model.get_params_template()["source"]

@@ -37,10 +37,11 @@ from _lcm.processes.joint_normal_lowering import (
 )
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.age_normalization import group_periods_by_key
-from _lcm.regime_building.collective import NO_ROLE
+from _lcm.regime_building.collective import NO_ROLE, role_code
 from _lcm.regime_building.Q_and_F import _BoundFeasibility, _get_feasibility
 from _lcm.simulation import population_operations
 from _lcm.simulation.action_grids import PreflightActionGrids
+from _lcm.simulation.agent_devices import simulation_agent_devices
 from _lcm.simulation.assembly import slice_array
 from _lcm.simulation.current_iid_entry import SuppliedEntryFrames
 from _lcm.simulation.host_operations import ProfiledSimulationOperations, _BuilderInput
@@ -54,13 +55,19 @@ from _lcm.simulation.residency import (
     measure_buffer_footprint,
     union_buffer_footprints,
 )
-from _lcm.simulation.subject_devices import simulation_subject_devices
 from _lcm.solution.feasibility import (
     BoundedResult,
     reduce_bound_input_status,
     validate_runtime_bound_status,
 )
-from _lcm.time import TimeAxis, coordinate_kind
+from _lcm.time import (
+    TimeAxis,
+    coordinate_kind,
+    period_of_step,
+    stage_position,
+    stages_per_period,
+    step_count,
+)
 from _lcm.transition_checks import (
     _evaluate_admitted_transition_producer,
     _SerialValidationRequired,
@@ -120,7 +127,7 @@ from lcm.typing import (
 MISSING_CAT_CODE = jnp.iinfo(jnp.int32).min
 
 # Names that behave like states in initial conditions but are not declared on
-# any `Regime.states`. `age` is required for every subject regardless of regime.
+# any `Regime.states`. `age` is required for every agent regardless of regime.
 PSEUDO_STATE_NAMES: frozenset[str] = frozenset({"age"})
 
 # Only module-level numerical operation identities and abstract signatures are
@@ -165,7 +172,7 @@ def validate_simulation_inputs(  # noqa: C901
     process_grid_resolver: ProcessGridResolver | None = None,
     producers: ProfiledSimulationOperations | None = None,
     supplied_frames: SuppliedEntryFrames | None = None,
-    original_n_subjects: int | None = None,
+    original_n_agents: int | None = None,
 ) -> None:
     """Validate a complete call with two host summaries and ordered diagnostics.
 
@@ -254,7 +261,7 @@ def validate_simulation_inputs(  # noqa: C901
                 if memory is not None:
                     memory.close_unit()
                 _collect_feasibility_errors(
-                    original_n_subjects=original_n_subjects,
+                    original_n_agents=original_n_agents,
                     initial_states={
                         name: value
                         for name, value in initial_conditions.items()
@@ -305,7 +312,7 @@ def validate_simulation_inputs(  # noqa: C901
             return
         try:
             validate_initial_conditions(
-                original_n_subjects=original_n_subjects,
+                original_n_agents=original_n_agents,
                 initial_conditions=initial_conditions,
                 regimes=regimes,
                 regime_names_to_ids=regime_names_to_ids,
@@ -355,7 +362,7 @@ def transition_preflight_memory(
     regime_names_to_ids: RegimeNamesToIds,
     ages: TimeAxis,
 ) -> SimulationMemory | None:
-    """Admit transition checks that run before any solution or subject exists.
+    """Admit transition checks that run before any solution or agent exists.
 
     The owner charges the parameters and model-owned grids as live inputs and
     keeps every admitted producer in the model's `producers`, so a retained model
@@ -406,7 +413,7 @@ def _preflight_memory(
     memory = SimulationMemory(
         budget_bytes=execution.device_memory_bytes,
         devices=devices,
-        subject_devices=devices[:1],
+        agent_devices=devices[:1],
         operations=_PREFLIGHT_OPERATIONS,
         budget_note=execution.device_memory_cap_note(),
         producers=ProfiledSimulationOperations() if producers is None else producers,
@@ -525,16 +532,16 @@ def _read_initial_cohorts(
     host = np.asarray(packed).copy()
     count = regime_ids.size
     ids = host[: len(names)]
-    subjects = host[len(names) : len(names) + count]
+    agents = host[len(names) : len(names) + count]
     age_start = len(names) + count
     age_stop = (
         age_start + count * age_values.dtype.itemsize // np.dtype(np.int32).itemsize
     )
     host_ages = host[age_start:age_stop].view(age_values.dtype)
-    if not np.isin(subjects, ids).all():
+    if not np.isin(agents, ids).all():
         raise _SerialValidationRequired
     indices = {
-        name: tuple(np.flatnonzero(subjects == code).tolist())
+        name: tuple(np.flatnonzero(agents == code).tolist())
         for name, code in zip(names, ids, strict=True)
     }
     required = set(PSEUDO_STATE_NAMES)
@@ -552,9 +559,12 @@ def _read_initial_cohorts(
     periods = tuple(host_periods.tolist())
     if (
         any(
-            periods[index] not in regimes[name].active_periods
+            not np.isin(
+                np.asarray(host_periods)[np.asarray(members, dtype=np.intp)]
+                + stage_position(ages=ages, regime=name),
+                regimes[name].active_periods,
+            ).all()
             for name, members in indices.items()
-            for index in members
         )
         or host[age_stop:].any()
     ):
@@ -573,23 +583,26 @@ def resolve_initial_periods(
     Ages and grid are cast to the canonical float dtype the simulation compares
     them in, so a grid age resolves to its period whatever float conversion
     produced it, and admission, validation and simulation agree on each
-    subject's starting period. No device operation runs.
+    agent's starting period. No device operation runs.
 
     Args:
         ages: TimeAxis for the model.
-        initial_ages: One initial age per subject.
+        initial_ages: One initial age per agent.
 
     Returns:
-        Host arrays of each subject's period index and of whether its age is a
+        Host arrays of each agent's period index and of whether its age is a
         grid point. The period of an off-grid age is meaningless.
 
     """
     if coordinate_kind(ages) == "period":
+        # An agent enters at the first step of its period and first acts in
+        # its regime's own stage.
+        n_stages = stages_per_period(ages)
         values = np.asarray(initial_ages)
-        valid = (values >= 0) & (values < ages.n_periods)
+        valid = (values >= 0) & (values < step_count(ages) // n_stages)
         if values.dtype.kind not in "iu":
             valid = np.zeros(values.shape, dtype=bool)
-        return values.astype(np.int32), valid
+        return (values * n_stages).astype(np.int32), valid
     dtype = canonical_float_dtype()
     periods, on_grid, _ = population_operations.match_starting_periods(
         initial_ages=np.asarray(initial_ages, dtype=dtype),
@@ -698,13 +711,13 @@ def build_initial_states(
         return _build_admitted_initial_states(
             initial_states=initial_states, regimes=regimes, memory=memory
         )
-    n_subjects = len(next(iter(initial_states.values())))
+    n_agents = len(next(iter(initial_states.values())))
     states_per_regime: dict[
         RegimeName, MappingProxyType[StateName, Float1D | Int1D]
     ] = {}
 
-    sharding = subject_array_sharding(
-        regimes=regimes, n_subjects=n_subjects, device_ids=device_ids
+    sharding = agent_array_sharding(
+        regimes=regimes, n_agents=n_agents, device_ids=device_ids
     )
     for regime_name, regime in regimes.items():
         regime_states: dict[StateName, Float1D | Int1D] = {}
@@ -721,7 +734,7 @@ def build_initial_states(
                     )
                 else:
                     regime_states[state_name] = jnp.full(
-                        n_subjects, MISSING_CAT_CODE, dtype=target_dtype
+                        n_agents, MISSING_CAT_CODE, dtype=target_dtype
                     )
             elif state_name in initial_states:
                 # Cast user-supplied continuous states to the canonical float
@@ -733,7 +746,7 @@ def build_initial_states(
                 )
             else:
                 regime_states[state_name] = jnp.full(
-                    n_subjects, jnp.nan, dtype=canonical_float_dtype()
+                    n_agents, jnp.nan, dtype=canonical_float_dtype()
                 )
             regime_states[state_name] = jax.device_put(
                 regime_states[state_name], device=sharding
@@ -757,9 +770,9 @@ class _CarrierWriter:
         return self.memory.run(
             function=_cast_carrier,
             arguments={"value": np.asarray(value, dtype=dtype)},
-            subject_arg_names=("value",),
+            agent_arg_names=("value",),
             static_arguments={"dtype": dtype.str},
-            subject_outputs=True,
+            agent_outputs=True,
         )
 
 
@@ -784,20 +797,20 @@ def _build_admitted_initial_states(
                 column = memory.run(
                     function=_fill_carrier,
                     arguments={"template": template},
-                    subject_arg_names=("template",),
+                    agent_arg_names=("template",),
                     static_arguments={
                         "dtype": dtype.str,
                         "fill_value": MISSING_CAT_CODE if discrete else float("nan"),
                     },
-                    subject_outputs=True,
+                    agent_outputs=True,
                 )
             elif discrete:
                 column = memory.run(
                     function=_cast_carrier,
                     arguments={"value": initial_states[name]},
-                    subject_arg_names=("value",),
+                    agent_arg_names=("value",),
                     static_arguments={"dtype": dtype.str},
-                    subject_outputs=True,
+                    agent_outputs=True,
                 )
             else:
                 column = safe_to_float_dtype(
@@ -818,7 +831,7 @@ def _cast_carrier(*, value: jax.Array, dtype: str) -> jax.Array:
 def _fill_carrier(
     *, template: jax.Array, dtype: str, fill_value: float | int
 ) -> jax.Array:
-    """Allocate one missing column at the exact subject extent and canonical dtype.
+    """Allocate one missing column at the exact agent extent and canonical dtype.
 
     `fill_value` is the missing marker in the column's own kind: NaN for a
     continuous state, `MISSING_CAT_CODE` for a discrete one.
@@ -833,15 +846,15 @@ def pad_initial_conditions_to_multiple(
 ) -> tuple[InitialConditions, int]:
     """Pad `initial_conditions`' leading axis up to the next multiple of `multiple`.
 
-    Two simulate paths need the subject axis aligned to a fixed block size:
+    Two simulate paths need the agent axis aligned to a fixed block size:
     distributed grids shard it across the visible devices (the shard must divide
     the axis evenly), and single-device chunking runs fixed-size passes (every
     chunk must match the AOT-compiled shape). Both reduce to padding the leading
     axis up to the next multiple of one number — the device count or the chunk
-    size — adding at most `multiple - 1` rows. Callers pick any `n_subjects` and
+    size — adding at most `multiple - 1` rows. Callers pick any `n_agents` and
     pylcm aligns it internally, dropping the pad rows on the way out.
 
-    Pad rows duplicate the last real subject — they pass validation automatically
+    Pad rows duplicate the last real agent — they pass validation automatically
     (the last real row already did) and produce identical simulate-side outputs
     in their assigned regime, which are then trimmed in `simulate` before
     constructing `SimulationResult`.
@@ -854,21 +867,21 @@ def pad_initial_conditions_to_multiple(
             already divides the count — is a no-op.
 
     Returns:
-        Tuple of `(padded_initial_conditions, original_n_subjects)`. Returns the
+        Tuple of `(padded_initial_conditions, original_n_agents)`. Returns the
         original mapping unchanged and the existing length when `multiple` already
         divides the count.
 
     """
-    original_n_subjects = len(next(iter(initial_conditions.values())))
-    if multiple <= 1 or original_n_subjects % multiple == 0:
-        return initial_conditions, original_n_subjects
-    pad = multiple - (original_n_subjects % multiple)
+    original_n_agents = len(next(iter(initial_conditions.values())))
+    if multiple <= 1 or original_n_agents % multiple == 0:
+        return initial_conditions, original_n_agents
+    pad = multiple - (original_n_agents % multiple)
     padded: dict[str, jax.Array] = {}
     for name, arr in initial_conditions.items():
-        # Duplicate the last subject's row `pad` times along the leading axis.
+        # Duplicate the last agent's row `pad` times along the leading axis.
         pad_block = jnp.repeat(arr[-1:], pad, axis=0)
         padded[name] = jnp.concatenate([arr, pad_block], axis=0)
-    return cast("InitialConditions", MappingProxyType(padded)), original_n_subjects
+    return cast("InitialConditions", MappingProxyType(padded)), original_n_agents
 
 
 def trim_pad_from_raw_results(
@@ -876,26 +889,26 @@ def trim_pad_from_raw_results(
     raw_results: MappingProxyType[
         RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
     ],
-    original_n_subjects: int,
+    original_n_agents: int,
     memory: SimulationMemory | None = None,
 ) -> MappingProxyType[RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]]:
-    """Slice every per-subject array in `raw_results` back to `original_n_subjects`.
+    """Slice every per-agent array in `raw_results` back to `original_n_agents`.
 
     The simulate dispatch runs against a padded leading axis (see
     `pad_initial_conditions_to_multiple`); this drops the trailing pad rows so
-    `SimulationResult` and downstream consumers see only the user's real subjects.
+    `SimulationResult` and downstream consumers see only the user's real agents.
     No-op for any period whose leading-axis length already equals
-    `original_n_subjects`.
+    `original_n_agents`.
 
     Args:
         raw_results: Immutable nested mapping `regime_name -> period ->
             PeriodRegimeSimulationData` produced by the simulate loop.
-        original_n_subjects: Subject count from the user's `initial_conditions`
+        original_n_agents: Agent count from the user's `initial_conditions`
             before any pylcm-internal padding.
 
     Returns:
         New immutable mapping with the trailing pad rows removed from EVERY
-        per-subject field of `PeriodRegimeSimulationData`.
+        per-agent field of `PeriodRegimeSimulationData`.
 
     Note:
         The fields are read off the dataclass rather than enumerated here. An
@@ -912,21 +925,21 @@ def trim_pad_from_raw_results(
     for regime_name, periods in raw_results.items():
         new_periods: dict[int, PeriodRegimeSimulationData] = {}
         for period, data in periods.items():
-            if data.V_arr.shape[0] == original_n_subjects:
+            if data.V_arr.shape[0] == original_n_agents:
                 new_periods[period] = data
                 continue
             sliced: dict[str, ValueND | MappingProxyType[str, ValueND]] = {}
             for name in field_names:
                 value = getattr(data, name)
                 # `actions` and `states` are name -> array mappings; every other
-                # field is a per-subject array with subjects on the leading axis.
+                # field is a per-agent array with agents on the leading axis.
                 if isinstance(value, Mapping):
                     sliced[name] = MappingProxyType(
                         {
                             k: slice_array(
                                 array=v,
                                 start=0,
-                                stop=original_n_subjects,
+                                stop=original_n_agents,
                                 memory=memory,
                             )
                             for k, v in value.items()
@@ -934,56 +947,56 @@ def trim_pad_from_raw_results(
                     )
                 else:
                     sliced[name] = slice_array(
-                        array=value, start=0, stop=original_n_subjects, memory=memory
+                        array=value, start=0, stop=original_n_agents, memory=memory
                     )
             new_periods[period] = dataclasses.replace(data, **sliced)
         trimmed[regime_name] = MappingProxyType(new_periods)
     return MappingProxyType(trimmed)
 
 
-def subject_array_sharding(
+def agent_array_sharding(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
-    n_subjects: int,
+    n_agents: int,
     device_ids: tuple[int, ...] = (),
 ) -> jax.sharding.Sharding:
-    """Return the model-wide device sharding for per-subject simulation arrays.
+    """Return the model-wide device sharding for per-agent simulation arrays.
 
-    Subjects propagate across regime transitions inside the simulate loop, so
-    every regime's per-subject arrays must carry the same device sharding —
+    Agents propagate across regime transitions inside the simulate loop, so
+    every regime's per-agent arrays must carry the same device sharding —
     otherwise an AOT-compiled program lowered with one regime's sharding rejects
     the inputs it receives from another. Bound calls use the forward runtime's
-    devices, including explicit subject sharding without distributed solve grids.
+    devices, including explicit agent sharding without distributed solve grids.
     Unbound callers retain solve-derived legacy placement. A model never simulates
     on a device outside its selected set.
 
     Args:
         regimes: Immutable mapping of regime names to internal regime instances.
-        n_subjects: Number of simulated subjects (per simulate dispatch — the
-            chunk size when subject-batching).
+        n_agents: Number of simulated agents (per simulate dispatch — the
+            chunk size when agent-batching).
         device_ids: The model's device ids, ascending. Empty names every
             device JAX reports.
 
     Returns:
-        The common subject `NamedSharding` for distributed forward execution,
+        The common agent `NamedSharding` for distributed forward execution,
         or the selected single-device sharding for a non-distributed call.
 
     """
-    devices = simulation_subject_devices(regimes=regimes, device_ids=device_ids)
+    devices = simulation_agent_devices(regimes=regimes, device_ids=device_ids)
     distributes_any = len(devices) > 1 or any(
         regime.solution.sharded_state_names for regime in regimes.values()
     )
     if not distributes_any:
         return jax.sharding.make_single_device_sharding(devices[0])
-    if n_subjects % len(devices) != 0:
+    if n_agents % len(devices) != 0:
         # Defensive: `Model.simulate` rounds the chunk size up to a device
         # multiple and pads the population to a chunk multiple, so every
         # dispatch divides evenly. A non-multiple count signals direct/internal
         # misuse.
         raise PyLCMError(
-            "When distributing subjects, the number of subjects per simulate "
+            "When distributing agents, the number of agents per simulate "
             "dispatch must be a multiple of the available devices. "
-            f"Subjects: {n_subjects} Available Devices: {len(devices)}"
+            f"Agents: {n_agents} Available Devices: {len(devices)}"
         )
     mesh = jax.make_mesh(
         (len(devices),), ("X"), (jax.sharding.AxisType.Auto,), devices=devices
@@ -1002,7 +1015,7 @@ def validate_initial_conditions(
     action_grid_resolver: PreflightActionGrids | None = None,
     memory: SimulationMemory | None = None,
     supplied_frames: SuppliedEntryFrames | None = None,
-    original_n_subjects: int | None = None,
+    original_n_agents: int | None = None,
 ) -> None:
     """Validate initial conditions (regimes, states, and feasibility).
 
@@ -1011,8 +1024,8 @@ def validate_initial_conditions(
     2. All required state names (across all regimes) are provided, with no extras
     3. All arrays have the same length
     4. Discrete state values are valid codes
-    5. Each subject has at least one feasible action combination
-    6. Subjects starting in a collective regime declare the role they occupy
+    5. Each agent has at least one feasible action combination
+    6. Agents starting in a collective regime declare the role they occupy
        wherever a reachable gated edge routes by member, exactly as
        `simulate` demands it
 
@@ -1035,7 +1048,7 @@ def validate_initial_conditions(
         ages=ages,
     )
     feasibility_errors = _collect_feasibility_errors(
-        original_n_subjects=original_n_subjects,
+        original_n_agents=original_n_agents,
         supplied_frames=supplied_frames,
         initial_states=initial_states,
         regime_id_arr=regime_arr,
@@ -1069,15 +1082,18 @@ def initial_conditions_feasibility_mask(
     process_grid_resolver: ProcessGridResolver | None = None,
     supplied_frames: SuppliedEntryFrames | None = None,
 ) -> Bool1D:
-    """Return the per-subject feasibility mask of canonical initial conditions.
+    """Return the per-agent feasibility mask of canonical initial conditions.
 
     Structural and discrete-state validity, and the role declaration a
     collective start needs, are preconditions of the mask and raise;
-    feasibility itself is reported per subject. A subject is feasible
+    feasibility itself is reported per agent. An agent is feasible
     when at least one combination of its regime's declared action-grid points
     satisfies every constraint jointly, or, in an action-free regime, when
-    every state-only constraint holds. The mask is computed eagerly on the
-    default device without device-memory admission or subject padding.
+    every state-only constraint holds. An agent starting where its regime's
+    composition action decides in the current period is feasible; the simulation
+    judges it. The mask
+    is computed eagerly on the default device without device-memory admission
+    or agent padding.
 
     Args:
         initial_conditions: Mapping of state names (plus `"regime_id"`) to arrays.
@@ -1089,8 +1105,8 @@ def initial_conditions_feasibility_mask(
         process_grid_resolver: Resolver for runtime-generated process grids.
 
     Returns:
-        Boolean array of shape `(n_subjects,)`, `True` exactly for the feasible
-        subjects, in the order of the supplied rows.
+        Boolean array of shape `(n_agents,)`, `True` exactly for the feasible
+        agents, in the order of the supplied rows.
 
     Raises:
         InvalidInitialConditionsError: If the regime IDs, state names, shapes,
@@ -1110,10 +1126,10 @@ def initial_conditions_feasibility_mask(
     )
     mask = np.ones(int(regime_arr.shape[0]), dtype=bool)
     for regime_name, regime in regimes.items():
-        subject_indices = np.flatnonzero(
+        agent_indices = np.flatnonzero(
             np.asarray(regime_arr) == int(regime_names_to_ids[regime_name])
         ).tolist()
-        if not subject_indices:
+        if not agent_indices:
             continue
         regime_params = _merged_regime_params(
             regime=regime, regime_name=regime_name, flat_params=flat_params
@@ -1121,7 +1137,7 @@ def initial_conditions_feasibility_mask(
         for regime_view, view_indices in _regime_views_by_start_pool(
             regime=regime,
             initial_states=initial_states,
-            subject_indices=subject_indices,
+            agent_indices=agent_indices,
             ages=ages,
         ):
             verdict = _regime_feasibility_mask(
@@ -1129,7 +1145,7 @@ def initial_conditions_feasibility_mask(
                 regime=regime_view,
                 regime_name=regime_name,
                 initial_states=initial_states,
-                subject_indices=view_indices,
+                agent_indices=view_indices,
                 regime_params=regime_params,
                 ages=ages,
                 process_grid_resolver=process_grid_resolver,
@@ -1150,7 +1166,7 @@ def _admitted_initial_states(
     """Return the initial states and regime IDs once their structure is admitted.
 
     Checks, in order, that `"regime_id"` is present and holds valid IDs, that
-    every subject's regime states are supplied with no extras and equal
+    every agent's regime states are supplied with no extras and equal
     lengths at ages on the grid where the regime is active, and that discrete
     states hold valid codes.
 
@@ -1187,7 +1203,7 @@ def _admitted_initial_states(
 
     # `own_member` names a role rather than a state, so it is excluded
     # alongside `regime_id` — the structural check below reports any key that
-    # is not a state of the regime the subject starts in.
+    # is not a state of the regime the agent starts in.
     initial_states = {
         k: v
         for k, v in initial_conditions.items()
@@ -1219,15 +1235,15 @@ def _admitted_initial_states(
 def _regimes_reachable_from(
     *, start: RegimeName, reachability: PhaseReachability
 ) -> frozenset[RegimeName]:
-    """Return `start` and every regime a subject starting there can end up in.
+    """Return `start` and every regime an agent starting there can end up in.
 
     The walk is over the construction-time graph's period-union, so a regime
     stays in the closure when any period retains the edge that leads to it.
-    That is the conservative direction for a question about what a subject
+    That is the conservative direction for a question about what an agent
     might yet encounter.
 
     Args:
-        start: The regime a subject begins in.
+        start: The regime an agent begins in.
         reachability: The simulate phase's static regime graph.
 
     Returns:
@@ -1251,11 +1267,11 @@ def _initial_own_member(
     regime_names_to_ids: RegimeNamesToIds,
     memory: SimulationMemory | None = None,
 ) -> Int1D:
-    """Read and validate each subject's seeded role.
+    """Read and validate each agent's seeded role.
 
-    A subject starting in a collective regime IS one of that regime's
-    members, and which one decides where its row goes when the household
-    ends. Nothing in the model answers that — a cohort of wives and a cohort of
+    An agent starting in a collective regime IS one of that regime's
+    members, and which one decides where its row goes when the members
+    separate. Nothing in the model answers that — a cohort of wives and a cohort of
     husbands are the same states in the same regime — so it is declared, and a
     collective start without it is refused rather than defaulted to whichever
     member happens to be declared first.
@@ -1263,14 +1279,14 @@ def _initial_own_member(
     The seed is demanded exactly where the answer turns on it, which is a
     property of the starting regime rather than of the model:
 
-    - A role selects among a current exit's member destinations or an incoming
+    - A role selects among a composition action's member destinations or an incoming
       decision's source routes, as well as a gated edge's legs. A row keeps its
       role across an ordinary regime transition, so the question is asked over
       the start's forward closure, not over its own decisions alone.
     - A collective start whose closure contains no such edge has no route,
       regime or state projection that can differ by role, and needs no seed —
       a role-routing regime elsewhere in the model decides nothing for it.
-    - A subject starting in a singleton regime occupies no role either.
+    - An agent starting in a singleton regime occupies no role either.
 
     Both unseeded cases default to `NO_ROLE`.
 
@@ -1280,10 +1296,10 @@ def _initial_own_member(
         regime_names_to_ids: Immutable mapping of regime names to codes.
 
     Returns:
-        Each subject's role code.
+        Each agent's role code.
 
     Raises:
-        InvalidInitialConditionsError: A subject starts with no role in a
+        InvalidInitialConditionsError: An agent starts with no role in a
             collective regime that can reach one routing by role, or carries a
             code the model's vocabulary does not define.
     """
@@ -1292,9 +1308,19 @@ def _initial_own_member(
         (regime.member_names_to_ids for regime in regimes.values()),
         MappingProxyType({}),
     )
-    collective_names = [
-        name for name, regime in regimes.items() if regime.member_axis is not None
-    ]
+    # The member `"self"` occupies no role: a row of a regime whose only member
+    # is `"self"` carries `NO_ROLE`, the code an unseeded row already has, so
+    # such a regime neither demands nor checks a role.
+    all_member_codes = {
+        name: tuple(
+            role_code(name=member, role_ids=role_ids) for member in regime.members
+        )
+        for name, regime in regimes.items()
+    }
+    member_codes = {
+        name: codes for name, codes in all_member_codes.items() if NO_ROLE not in codes
+    }
+    collective_names = list(member_codes)
     role_routing = frozenset(
         {
             name
@@ -1306,9 +1332,9 @@ def _initial_own_member(
                     len(targets) > 1
                     for targets in plan.full.definitions[
                         plan.full.root
-                    ].exit_targets.values()
+                    ].composition_action_targets.values()
                 )
-                for plan in regime.simulation.exit_queries.values()
+                for plan in regime.simulation.composition_queries.values()
             )
         }
     )
@@ -1337,7 +1363,7 @@ def _initial_own_member(
                         "regime_ids": regime_ids,
                         "regime_id": regime_names_to_ids[name],
                     },
-                    subject_arg_names=("regime_ids",),
+                    agent_arg_names=("regime_ids",),
                 )
             )
         )
@@ -1346,7 +1372,7 @@ def _initial_own_member(
                 {name for start in occupied for name in starts_needing_a_role[start]}
             )
             msg = (
-                f"Subjects starting in the collective regime(s) {occupied} need "
+                f"Agents starting in the collective regime(s) {occupied} need "
                 "an `own_member` entry in `initial_conditions`, naming the "
                 f"role each one occupies (one of {dict(role_ids)}). They can "
                 f"reach the collective regime(s) {reachable_routes}, which "
@@ -1360,15 +1386,15 @@ def _initial_own_member(
             memory=memory,
             function=population_operations.default_roles,
             arguments={"regime_ids": regime_ids},
-            subject_arg_names=("regime_ids",),
-            subject_outputs=True,
+            agent_arg_names=("regime_ids",),
+            agent_outputs=True,
         )
 
     own_member, roles_known = run_simulation_operation(
         memory=memory,
         function=population_operations.canonical_roles,
         arguments={"declared": declared, "known_role_ids": tuple(role_ids.values())},
-        subject_arg_names=("declared",),
+        agent_arg_names=("declared",),
     )
     if not bool(roles_known):
         msg = (
@@ -1379,11 +1405,11 @@ def _initial_own_member(
         raise InvalidInitialConditionsError(msg)
 
     # The vocabulary is model-wide, so a code being in it does not make it a
-    # role of the regime the subject starts in. Checking against that regime's
+    # role of the regime the agent starts in. Checking against that regime's
     # own members is what establishes the invariant routing then keeps:
     # every row in a collective regime carries one of ITS roles, so the leg
     # selection always has a leg to find.
-    for name in collective_names:
+    for name, codes in member_codes.items():
         mismatch = run_simulation_operation(
             memory=memory,
             function=population_operations.role_mismatch,
@@ -1391,15 +1417,15 @@ def _initial_own_member(
                 "roles": own_member,
                 "regime_ids": regime_ids,
                 "regime_id": regime_names_to_ids[name],
-                "role_ids": tuple(role_ids[s] for s in regimes[name].member_axis or ()),
+                "role_ids": codes,
             },
-            subject_arg_names=("roles", "regime_ids"),
+            agent_arg_names=("roles", "regime_ids"),
         )
         if bool(mismatch):
             msg = (
-                f"Subjects starting in the collective regime {name!r} carry an "
+                f"Agents starting in the collective regime {name!r} carry an "
                 "`own_member` that is not one of its members "
-                f"{regimes[name].member_axis}. Roles are model-wide codes, so "
+                f"{regimes[name].members}. Roles are model-wide codes, so "
                 "a valid code may still name a role this regime does not have."
             )
             raise InvalidInitialConditionsError(msg)
@@ -1433,7 +1459,7 @@ def _format_missing_states_message(*, missing: set[str], required: set[str]) -> 
     if "age" in missing:
         parts.append(
             "'age' must be provided in initial_states so the validation "
-            "knows each subject's starting age. Example: "
+            "knows each agent's starting age. Example: "
             "initial_states={'age': jnp.array([25.0, 25.0]), ...}"
         )
     missing_model_states = sorted(missing - PSEUDO_STATE_NAMES)
@@ -1476,7 +1502,7 @@ def _collect_state_name_errors(
     for regime in regimes.values():
         all_known_states.update(regime.simulation.state_names)
 
-    # Required states — only from regimes subjects actually start in
+    # Required states — only from regimes agents actually start in
     required_states: set[str] = set(PSEUDO_STATE_NAMES)
     used_ids = jnp.unique(regime_id_arr)
     used_regime_names = {
@@ -1567,14 +1593,14 @@ def _collect_structural_errors(
             f"Valid ages are: {[float(v) for v in ages.exact_values]}"
         )
     else:
-        # Validate that each subject's initial regime is declared at their starting age.
+        # Validate that each agent's initial regime is declared at their starting age.
         periods = jnp.asarray(host_periods, dtype=jnp.int32)
 
         active_mask = jnp.ones(regime_id_arr.size, dtype=bool)
         for regime_name, regime in regimes.items():
             in_regime = regime_id_arr == regime_names_to_ids[regime_name]
             period_active = jnp.isin(
-                periods,
+                periods + stage_position(ages=ages, regime=regime_name),
                 jnp.array(regime.active_periods, dtype=jnp.int32),
             )
             active_mask = active_mask & (~in_regime | period_active)
@@ -1590,7 +1616,7 @@ def _collect_structural_errors(
                 for name, age in sorted(invalid_combos)
             )
             errors.append(
-                f"Subjects are assigned to regimes that are not declared "
+                f"Agents are assigned to regimes that are not declared "
                 f"at their starting age:\n{details}"
             )
 
@@ -1611,9 +1637,9 @@ def _collect_feasibility_errors(
     action_grid_resolver: PreflightActionGrids | None = None,
     memory: SimulationMemory | None = None,
     supplied_frames: SuppliedEntryFrames | None = None,
-    original_n_subjects: int | None = None,
+    original_n_agents: int | None = None,
 ) -> list[str]:
-    """Collect errors about action feasibility for each subject.
+    """Collect errors about action feasibility for each agent.
 
     Args:
         initial_states: Mapping of state names to arrays.
@@ -1628,9 +1654,9 @@ def _collect_feasibility_errors(
         List of error message strings (empty if everything is feasible).
 
     """
-    if original_n_subjects is not None and (
-        type(original_n_subjects) is not int
-        or not 0 < original_n_subjects <= len(regime_id_arr)
+    if original_n_agents is not None and (
+        type(original_n_agents) is not int
+        or not 0 < original_n_agents <= len(regime_id_arr)
     ):
         raise ExecutionPlanningError(
             "Preflight requires a valid original population size."
@@ -1639,16 +1665,16 @@ def _collect_feasibility_errors(
     for regime_name, regime in regimes.items():
         if cohorts is None:
             regime_id = regime_names_to_ids[regime_name]
-            subject_indices = np.flatnonzero(
+            agent_indices = np.flatnonzero(
                 np.asarray(regime_id_arr) == int(regime_id)
             ).tolist()
         else:
-            subject_indices = list(cohorts.indices[regime_name])
-        if original_n_subjects is not None:
-            subject_indices = [
-                index for index in subject_indices if index < original_n_subjects
+            agent_indices = list(cohorts.indices[regime_name])
+        if original_n_agents is not None:
+            agent_indices = [
+                index for index in agent_indices if index < original_n_agents
             ]
-        if not subject_indices:
+        if not agent_indices:
             continue
 
         regime_params = _merged_regime_params(
@@ -1657,7 +1683,7 @@ def _collect_feasibility_errors(
         for regime_view, view_indices in _regime_views_by_start_pool(
             regime=regime,
             initial_states=initial_states,
-            subject_indices=subject_indices,
+            agent_indices=agent_indices,
             ages=ages,
             cohorts=cohorts,
         ):
@@ -1666,7 +1692,7 @@ def _collect_feasibility_errors(
                 regime=regime_view,
                 regime_name=regime_name,
                 initial_states=initial_states,
-                subject_indices=view_indices,
+                agent_indices=view_indices,
                 regime_params=regime_params,
                 ages=ages,
                 cohorts=cohorts,
@@ -1690,13 +1716,13 @@ def _validate_discrete_state_values(
 ) -> None:
     """Validate that discrete state values are valid codes.
 
-    Only check subjects in regimes that actually have the state.
+    Only check agents in regimes that actually have the state.
 
     Args:
         initial_states: Mapping of state names to arrays.
         regimes: Immutable mapping of regime names to internal regime
             instances.
-        regime_id_arr: Array of regime IDs for each subject.
+        regime_id_arr: Array of regime IDs for each agent.
         regime_names_to_ids: Mapping from regime names to integer IDs.
 
     Raises:
@@ -1722,7 +1748,7 @@ def _validate_discrete_state_values(
         if state_name not in initial_states:
             continue
         values = initial_states[state_name]
-        # Only validate subjects in regimes that have this state
+        # Only validate agents in regimes that have this state
         in_relevant_regime = jnp.isin(regime_id_arr, jnp.array(sorted(regime_ids)))
         relevant_values = values[in_relevant_regime]
         if relevant_values.size == 0:
@@ -1738,7 +1764,7 @@ def _validate_discrete_state_values(
             )
 
 
-# Group unbudgeted subject work heuristically. Budgeted calls profile the complete
+# Group unbudgeted agent work heuristically. Budgeted calls profile the complete
 # executable, including every batch, slice and concatenation, before dispatch.
 _TARGET_BATCH_BYTES = 256 * 1024 * 1024
 _BYTES_PER_ACTION_ELEMENT = 4
@@ -1747,13 +1773,13 @@ _BYTES_PER_ACTION_ELEMENT = 4
 def _batched_feasibility_check(
     *,
     feasibility_func: ConstraintFunction | _BoundFeasibility,
-    subject_states: Mapping[str, FloatND | IntND],
+    agent_states: Mapping[str, FloatND | IntND],
     action_kwargs: Mapping[str, FloatND | IntND],
     filtered_params: Mapping[ReferenceName, ParamsLeaf],
     flat_actions: Mapping[ActionName, FloatND | IntND],
     memory: SimulationMemory | None = None,
 ) -> BoolND | BoundedResult[BoolND]:
-    """Check feasibility for all subjects, batching to avoid OOM.
+    """Check feasibility for all agents, batching to avoid OOM.
 
     Vmaps over action combos individually (like solve/simulate do) so each
     feasibility call receives scalar actions that broadcast naturally with
@@ -1761,14 +1787,14 @@ def _batched_feasibility_check(
 
     Args:
         feasibility_func: Feasibility function for this regime.
-        subject_states: Per-subject state arrays (shape `(n_subjects,)` each).
+        agent_states: Per-agent state arrays (shape `(n_agents,)` each).
         action_kwargs: Action arrays from the flat action grid, keyed by name.
         filtered_params: Parameter values accepted by the feasibility function.
         flat_actions: Mapping of action names to flat grid arrays (used to compute
             batch size).
 
     Returns:
-        Boolean array of shape `(n_subjects,)` — True where at least one action is
+        Boolean array of shape `(n_agents,)` — True where at least one action is
         feasible.
 
     """
@@ -1779,7 +1805,7 @@ def _batched_feasibility_check(
                 _batched_feasibility_check, feasibility_func=feasibility_func
             ),
             arguments={
-                "subject_states": subject_states,
+                "agent_states": agent_states,
                 "action_kwargs": action_kwargs,
                 "filtered_params": filtered_params,
                 "flat_actions": flat_actions,
@@ -1800,7 +1826,7 @@ def _batched_feasibility_check(
         )
 
     vmapped_check = jax.vmap(pointwise_check)
-    n_subjects = len(next(iter(subject_states.values())))
+    n_agents = len(next(iter(agent_states.values())))
     n_action_combos = max((len(v) for v in flat_actions.values()), default=1)
     batch_size = max(
         1,
@@ -1810,18 +1836,18 @@ def _batched_feasibility_check(
     if type(feasibility_func) is _BoundFeasibility:
         return map_over_leading_axis(
             func=pointwise_check,
-            xs=subject_states,
-            batch_size=min(batch_size, n_subjects),
+            xs=agent_states,
+            batch_size=min(batch_size, n_agents),
             bound_summary=True,
         )
-    if n_subjects <= batch_size:
-        return vmapped_check(subject_states)
+    if n_agents <= batch_size:
+        return vmapped_check(agent_states)
 
     vmapped_check = cast("Callable[..., BoolND]", vmapped_check)
     results: list[BoolND] = []
-    for start in range(0, n_subjects, batch_size):
-        end = min(start + batch_size, n_subjects)
-        batch = {k: v[start:end] for k, v in subject_states.items()}
+    for start in range(0, n_agents, batch_size):
+        end = min(start + batch_size, n_agents)
+        batch = {k: v[start:end] for k, v in agent_states.items()}
         results.append(vmapped_check(batch))
     return jnp.concatenate(results)
 
@@ -1862,51 +1888,53 @@ def _regime_views_by_start_pool(
     *,
     regime: Regime,
     initial_states: Mapping[StateName, FloatND | IntND],
-    subject_indices: list[int],
+    agent_indices: list[int],
     ages: TimeAxis,
     cohorts: _InitialCohorts | None = None,
 ) -> tuple[tuple[Regime, list[int]], ...]:
-    """Pair each group of a regime's subjects with the regime view that judges them.
+    """Pair each group of a regime's agents with the regime view that judges them.
 
     The published `regime.simulation.constraints`/`functions` hold each
     `AgeSpecializedFunction` resolved at the regime's representative (first
-    active) period. When a constraint reads one, every subject is judged by the
-    function and constraint pool of its own start period instead, and subjects
-    whose start periods share a pool share one view. Otherwise all subjects are
+    active) period. When a constraint reads one, every agent is judged by the
+    function and constraint pool of its own start period instead, and agents
+    whose start periods share a pool share one view. Otherwise all agents are
     judged by the published pools.
 
     Args:
         regime: The internal regime instance.
         initial_states: Mapping of state names to arrays (includes "age").
-        subject_indices: Indices of subjects starting in this regime.
+        agent_indices: Indices of agents starting in this regime.
         ages: TimeAxis for the model.
         cohorts: Host cohort metadata of the summary route.
 
     Returns:
-        Pairs of a regime view and the subject indices it judges, together
-        covering `subject_indices` exactly once.
+        Pairs of a regime view and the agent indices it judges, together
+        covering `agent_indices` exactly once.
 
     """
     if not _constraints_read_age_specialized_functions(regime):
-        return ((regime, subject_indices),)
+        return ((regime, agent_indices),)
     if cohorts is None:
-        subject_periods, _ = resolve_initial_periods(
+        agent_periods, _ = resolve_initial_periods(
             ages=ages,
-            initial_ages=np.asarray(initial_states["age"])[np.asarray(subject_indices)],
+            initial_ages=np.asarray(initial_states["age"])[np.asarray(agent_indices)],
         )
     else:
-        subject_periods = np.asarray(cohorts.periods)[np.asarray(subject_indices)]
+        agent_periods = np.asarray(cohorts.periods)[np.asarray(agent_indices)]
+    # An agent is judged at the step its regime first acts in.
+    agent_periods = agent_periods + stage_position(ages=ages, regime=regime.name)
     pools = regime.simulation.feasibility_pools_by_period
     # Start periods in order of first appearance, so groups follow their first
-    # subject and each mask keeps the subjects' order.
-    start_periods, first_positions = np.unique(subject_periods, return_index=True)
+    # agent and each mask keeps the agents' order.
+    start_periods, first_positions = np.unique(agent_periods, return_index=True)
     groups = group_periods_by_key(
         active_periods=tuple(
             int(period) for period in start_periods[np.argsort(first_positions)]
         ),
         key=lambda period: id(pools[period]),
     )
-    indices_array = np.asarray(subject_indices)
+    indices_array = np.asarray(agent_indices)
     return tuple(
         (
             dataclasses.replace(
@@ -1917,7 +1945,7 @@ def _regime_views_by_start_pool(
                     constraints=pools[periods[0]][1],
                 ),
             ),
-            indices_array[np.isin(subject_periods, periods)].tolist(),
+            indices_array[np.isin(agent_periods, periods)].tolist(),
         )
         for periods in groups.values()
     )
@@ -1937,16 +1965,16 @@ def _constraints_read_age_specialized_functions(regime: Regime) -> bool:
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class _RegimeFeasibility:
-    """Per-subject verdict of one regime plus the operands its diagnostics reuse."""
+    """Per-agent verdict of one regime plus the operands its diagnostics reuse."""
 
     feasible: Bool1D
-    """`True` for each subject of the regime admitting an action, in `idx_arr` order."""
-    subject_states: Mapping[str, FloatND | IntND]
-    """Per-subject state arrays read by the regime's feasibility function."""
+    """`True` for each agent of the regime admitting an action, in `idx_arr` order."""
+    agent_states: Mapping[str, FloatND | IntND]
+    """Per-agent state arrays read by the regime's feasibility function."""
     flat_actions: Mapping[ActionName, FloatND | IntND]
     """Flat action grid the verdict was evaluated on; empty without actions."""
     idx_arr: Int1D | _HostIntArray
-    """Subject indices of the regime, in verdict order."""
+    """Agent indices of the regime, in verdict order."""
     state_names: tuple[StateName, ...]
     """State names of the regime's simulation phase."""
 
@@ -1956,7 +1984,7 @@ def _check_regime_feasibility(
     regime: Regime,
     regime_name: RegimeName,
     initial_states: Mapping[StateName, FloatND | IntND],
-    subject_indices: list[int],
+    agent_indices: list[int],
     regime_params: Mapping[QualifiedName, ParamsLeaf],
     ages: TimeAxis,
     cohorts: _InitialCohorts | None = None,
@@ -1966,17 +1994,17 @@ def _check_regime_feasibility(
     memory: SimulationMemory | None = None,
     supplied_frames: SuppliedEntryFrames | None = None,
 ) -> str | None:
-    """Explain which subjects of a regime lack every feasible action.
+    """Explain which agents of a regime lack every feasible action.
 
     The verdict comes from `_regime_feasibility_mask`; this function only turns
     it into a diagnostic message, evaluating per-constraint admission for the
-    subjects the mask marked infeasible.
+    agents the mask marked infeasible.
 
     Args:
         regime: The internal regime instance.
         regime_name: Name of the regime.
         initial_states: Mapping of state names to arrays (includes "age").
-        subject_indices: Indices of subjects starting in this regime.
+        agent_indices: Indices of agents starting in this regime.
         regime_params: Merged fixed and runtime parameters for this regime.
         ages: TimeAxis for the model.
         cohorts: Host cohort metadata of the summary route.
@@ -1987,7 +2015,7 @@ def _check_regime_feasibility(
         memory: Simulation memory budget of the budgeted route.
 
     Returns:
-        An error message string if any subjects are infeasible, or None.
+        An error message string if any agents are infeasible, or None.
 
     """
     verdict = _regime_feasibility_mask(
@@ -1995,7 +2023,7 @@ def _check_regime_feasibility(
         regime=regime,
         regime_name=regime_name,
         initial_states=initial_states,
-        subject_indices=subject_indices,
+        agent_indices=agent_indices,
         regime_params=regime_params,
         ages=ages,
         cohorts=cohorts,
@@ -2013,7 +2041,7 @@ def _check_regime_feasibility(
 
     per_constraint_admits_any = _per_constraint_feasibility(
         regime=regime,
-        subject_states=verdict.subject_states,
+        agent_states=verdict.agent_states,
         regime_params=regime_params,
         flat_actions=verdict.flat_actions,
         idx_arr=verdict.idx_arr,
@@ -2032,7 +2060,7 @@ def _check_regime_feasibility(
         initial_states=initial_states,
         state_names=verdict.state_names,
         per_constraint_admits_any=per_constraint_admits_any,
-        period=int(periods[0]),
+        period=period_of_step(ages=ages, step=int(periods[0])),
         regime_params=regime_params,
         memory=memory,
     )
@@ -2046,7 +2074,7 @@ def physical_state_at_row(
     regime_params: Mapping[QualifiedName, ParamsLeaf],
     memory: SimulationMemory | None,
 ) -> dict[StateName, float | str]:
-    """Name one subject's state in the coordinates the user declared.
+    """Name one agent's state in the coordinates the user declared.
 
     Discrete codes become category labels. Each joint-normal group's internal
     standard coordinates are replaced by its declared physical states, mapped
@@ -2054,13 +2082,13 @@ def physical_state_at_row(
 
     Args:
         regime: The internal regime instance.
-        states: Internal state arrays of the regime, one entry per subject row.
+        states: Internal state arrays of the regime, one entry per agent row.
         row: Row of the subject to describe.
         regime_params: Merged fixed and runtime parameters for this regime.
         memory: Simulation memory budget of the budgeted route.
 
     Returns:
-        Mapping of declared state names to the subject's values.
+        Mapping of declared state names to the agent's values.
 
     """
     state_df = _replace_joint_coordinates(
@@ -2087,7 +2115,7 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
     regime: Regime,
     regime_name: RegimeName,
     initial_states: Mapping[StateName, FloatND | IntND],
-    subject_indices: list[int],
+    agent_indices: list[int],
     regime_params: Mapping[QualifiedName, ParamsLeaf],
     ages: TimeAxis,
     cohorts: _InitialCohorts | None = None,
@@ -2097,25 +2125,25 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
     memory: SimulationMemory | None = None,
     supplied_frames: SuppliedEntryFrames | None = None,
 ) -> _RegimeFeasibility | None:
-    """Decide for each subject of a regime whether some action combination is feasible.
+    """Decide for each agent of a regime whether some action combination is feasible.
 
     Args:
         regime: The internal regime instance.
         regime_name: Name of the regime.
         initial_states: Mapping of state names to arrays (includes "age").
-        subject_indices: Indices of subjects starting in this regime.
+        agent_indices: Indices of agents starting in this regime.
         regime_params: Merged fixed and runtime parameters for this regime.
         ages: TimeAxis for the model.
         cohorts: Host cohort metadata of the summary route.
         summary: Reduced validation summary of the summary route. When given,
-            the reduced flag is appended to it and no subject-sized verdict is
+            the reduced flag is appended to it and no agent-sized verdict is
             retained.
         process_grid_resolver: Resolver for runtime-generated process grids.
         action_grid_resolver: Admitted preflight action grids.
         memory: Simulation memory budget of the budgeted route.
 
     Returns:
-        The per-subject verdict with the operands diagnostics reuse, or `None`
+        The per-agent verdict with the operands diagnostics reuse, or `None`
         when the verdict was reduced into `summary`.
 
     """
@@ -2164,17 +2192,17 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
     needs_age = "age" in accepted
     needs_period = "period" in accepted
 
-    # Build per-subject state arrays
+    # Build per-agent state arrays
     if (cohorts is not None and summary is not None) or memory is not None:
         selected_names = [name for name in state_names if name in accepted]
         if needs_age:
             selected_names.append("age")
-        subject_states = run_simulation_operation(
+        agent_states = run_simulation_operation(
             memory=memory,
             function=_gather_feasibility_inputs,
             arguments={
                 "states": {name: initial_states[name] for name in selected_names},
-                "indices": np.array(subject_indices, dtype=np.int32),
+                "indices": np.array(agent_indices, dtype=np.int32),
                 "periods": np.array(
                     (
                         cohorts.periods
@@ -2191,19 +2219,19 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
             static_arguments={"needs_period": needs_period},
         )
         idx_arr = (
-            None if summary is not None else np.array(subject_indices, dtype=np.int32)
+            None if summary is not None else np.array(agent_indices, dtype=np.int32)
         )
     else:
-        idx_arr = jnp.array(subject_indices, dtype=jnp.int32)
-        subject_states: dict[StateName, FloatND | IntND] = {}
+        idx_arr = jnp.array(agent_indices, dtype=jnp.int32)
+        agent_states: dict[StateName, FloatND | IntND] = {}
         for sn in state_names:
             if sn in accepted:
-                subject_states[sn] = initial_states[sn][idx_arr]
+                agent_states[sn] = initial_states[sn][idx_arr]
 
         if needs_age:
-            subject_states["age"] = initial_states["age"][idx_arr]
+            agent_states["age"] = initial_states["age"][idx_arr]
         if needs_period:
-            subject_states["period"] = jnp.asarray(
+            agent_states["period"] = jnp.asarray(
                 resolve_initial_periods(
                     ages=ages, initial_ages=initial_states["age"][idx_arr]
                 )[0],
@@ -2216,7 +2244,7 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
             regime=regime,
             regime_name=regime_name,
             initial_states=initial_states,
-            indices=subject_indices,
+            indices=agent_indices,
             periods=(
                 np.asarray(cohorts.periods, dtype=np.int32)
                 if cohorts is not None
@@ -2227,18 +2255,18 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
             needed=frozenset(accepted),
             memory=memory,
         )
-        subject_states = {**subject_states, **physical}
+        agent_states = {**agent_states, **physical}
 
     # Split actions and params — actions are vmapped over, params are not
     action_kwargs: dict[str, FloatND | IntND] = {
         k: v for k, v in flat_actions.items() if k in accepted
     }
 
-    if subject_states:
+    if agent_states:
         try:
             any_feasible = _batched_feasibility_check(
                 feasibility_func=feasibility_func,
-                subject_states=subject_states,
+                agent_states=agent_states,
                 action_kwargs=action_kwargs,
                 filtered_params=filtered_params,
                 flat_actions=flat_actions,
@@ -2249,20 +2277,20 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
                 exc=exc,
                 regime_name=regime_name,
                 regime=regime,
-                subject_states=subject_states,
+                agent_states=agent_states,
             )
         any_feasible = _validate_initial_bound_status(
             any_feasible=any_feasible, regime=regime, regime_name=regime_name
         )
         if summary is not None:
             summary.append(
-                function=_subject_feasibility_flag,
+                function=_agent_feasibility_flag,
                 arguments={"feasible": any_feasible},
             )
             return None
         feasible = jnp.asarray(any_feasible, dtype=bool)
     else:
-        # No per-subject varying states: feasibility is identical for all subjects.
+        # No per-agent varying states: feasibility is identical for all agents.
         result = _evaluate_constant_feasibility(
             feasibility_func=cast("ConstraintFunction", feasibility_func),
             action_kwargs=action_kwargs,
@@ -2276,17 +2304,56 @@ def _regime_feasibility_mask(  # noqa: C901, PLR0912
             )
             return None
         feasible = jnp.full(
-            len(subject_indices), bool(np.any(np.asarray(result))), dtype=bool
+            len(agent_indices), bool(np.any(np.asarray(result))), dtype=bool
         )
 
     # The summary route returned above, so the serial index array is present.
     return _RegimeFeasibility(
-        feasible=feasible,
-        subject_states=subject_states,
+        feasible=_admit_composition_decided_starts(
+            feasible=feasible,
+            regime=regime,
+            initial_states=initial_states,
+            agent_indices=agent_indices,
+            ages=ages,
+        ),
+        agent_states=agent_states,
         flat_actions=flat_actions,
         idx_arr=cast("Int1D | _HostIntArray", idx_arr),
         state_names=tuple(state_names),
     )
+
+
+def _admit_composition_decided_starts(
+    *,
+    feasible: Bool1D,
+    regime: Regime,
+    initial_states: Mapping[StateName, FloatND | IntND],
+    agent_indices: list[int],
+    ages: TimeAxis,
+) -> Bool1D:
+    """Admit every agent starting at a step where the composition action decides.
+
+    The first simulated period judges such a start instead. An agent without a
+    feasible stay action can still leave by the decision on the composition. That
+    period raises `NoFeasibleActionError` if the agent neither has a feasible action
+    nor leaves. The
+    reduced summary route counts such a start as infeasible, which sends the call
+    to this serial verdict.
+    """
+    steps = [
+        step
+        for step, plan in regime.simulation.composition_queries.items()
+        if plan.full is not None
+        and plan.full.definitions[plan.full.root].composition_action_targets
+    ]
+    if not steps:
+        return feasible
+    periods, _ = resolve_initial_periods(
+        ages=ages,
+        initial_ages=np.asarray(initial_states["age"])[np.asarray(agent_indices)],
+    )
+    decided = np.isin(periods + stage_position(ages=ages, regime=regime.name), steps)
+    return jnp.asarray(np.asarray(feasible) | decided)
 
 
 def _validate_initial_bound_status(
@@ -2336,8 +2403,8 @@ def _gather_feasibility_inputs(
 
 
 @jax.jit
-def _subject_feasibility_flag(*, feasible: BoolND) -> jax.Array:
-    """Flag a subject lacking every action, retaining no subject-sized mask."""
+def _agent_feasibility_flag(*, feasible: BoolND) -> jax.Array:
+    """Flag an agent lacking every action, retaining no agent-sized mask."""
     return ~jnp.all(feasible)
 
 
@@ -2385,7 +2452,7 @@ def _evaluate_constant_feasibility(
             "BoolND",
             jax.vmap(
                 functools.partial(
-                    _is_combo_feasible_for_all_subjects,
+                    _is_combo_feasible_for_all_agents,
                     feasibility_func=feasibility_func,
                     params=params,
                 )
@@ -2397,24 +2464,24 @@ def _evaluate_constant_feasibility(
 # keyword-only-exempt: library-callback=jax.vmap
 def _is_combo_feasible(
     action_kw: Mapping[str, FloatND | IntND],
-    subject_kw: Mapping[str, FloatND | IntND],
+    agent_kw: Mapping[str, FloatND | IntND],
     *,
     feasibility_func: ConstraintFunction | _BoundFeasibility,
     filtered_params: Mapping[ReferenceName, ParamsLeaf],
 ) -> BoolND | BoundedResult[BoolND]:
-    """Evaluate feasibility of one action combo at one subject's states."""
-    return feasibility_func(**action_kw, **subject_kw, **filtered_params)
+    """Evaluate feasibility of one action combo at one agent's states."""
+    return feasibility_func(**action_kw, **agent_kw, **filtered_params)
 
 
 # keyword-only-exempt: library-callback=jax.vmap
 def _is_any_action_feasible(
-    per_subject_kwargs: Mapping[str, FloatND | IntND],
+    per_agent_kwargs: Mapping[str, FloatND | IntND],
     *,
     feasibility_func: ConstraintFunction | _BoundFeasibility,
     action_kwargs: Mapping[str, FloatND | IntND],
     filtered_params: Mapping[ReferenceName, ParamsLeaf],
 ) -> BoolND | BoundedResult[BoolND]:
-    """Return whether any action combo is feasible at one subject's states."""
+    """Return whether any action combo is feasible at one agent's states."""
     per_combo = jax.vmap(
         functools.partial(
             _is_combo_feasible,
@@ -2422,7 +2489,7 @@ def _is_any_action_feasible(
             filtered_params=filtered_params,
         ),
         in_axes=(0, None),
-    )(action_kwargs, per_subject_kwargs)
+    )(action_kwargs, per_agent_kwargs)
     if type(per_combo) is BoundedResult:
         per_combo = cast("BoundedResult[BoolND]", per_combo)
         return BoundedResult(
@@ -2437,13 +2504,13 @@ def _is_any_action_feasible(
 
 # keyword-only-exempt: library-callback=jax.vmap
 def _is_feasible_without_actions(
-    per_subject_kwargs: Mapping[str, FloatND | IntND],
+    per_agent_kwargs: Mapping[str, FloatND | IntND],
     *,
     feasibility_func: ConstraintFunction | _BoundFeasibility,
     filtered_params: Mapping[ReferenceName, ParamsLeaf],
 ) -> BoolND | BoundedResult[BoolND]:
-    """Return whether an action-free regime is feasible at one subject's states."""
-    evaluated = feasibility_func(**per_subject_kwargs, **filtered_params)
+    """Return whether an action-free regime is feasible at one agent's states."""
+    evaluated = feasibility_func(**per_agent_kwargs, **filtered_params)
     return (
         BoundedResult(
             output=jnp.any(cast("BoundedResult[BoolND]", evaluated).output),
@@ -2455,42 +2522,42 @@ def _is_feasible_without_actions(
 
 
 # keyword-only-exempt: library-callback=jax.vmap
-def _is_combo_feasible_for_all_subjects(
+def _is_combo_feasible_for_all_agents(
     action_kw: Mapping[str, FloatND | IntND],
     *,
     feasibility_func: ConstraintFunction | _BoundFeasibility,
     params: Mapping[ReferenceName, ParamsLeaf],
 ) -> BoolND | BoundedResult[BoolND]:
-    """Evaluate feasibility of one action combo when no state varies by subject."""
+    """Evaluate feasibility of one action combo when no state varies by agent."""
     return feasibility_func(**action_kw, **params)
 
 
 def _per_constraint_feasibility(
     *,
     regime: Regime,
-    subject_states: Mapping[str, FloatND | IntND],
+    agent_states: Mapping[str, FloatND | IntND],
     regime_params: Mapping[QualifiedName, ParamsLeaf],
     flat_actions: Mapping[ActionName, FloatND | IntND],
     idx_arr: Int1D | _HostIntArray,
     infeasible_indices: Sequence[int],
     memory: SimulationMemory | None = None,
 ) -> dict[str, np.ndarray]:
-    """Per-constraint feasibility for the infeasible subjects.
+    """Per-constraint feasibility for the infeasible agents.
 
     For each constraint, returns a boolean array (one entry per infeasible
-    subject) indicating whether that constraint *individually* admits at
+    agent) indicating whether that constraint *individually* admits at
     least one action. Combined with the regime's feasibility verdict, this
     distinguishes "constraint X rejects every action by itself" from
     "constraints jointly reject everything despite each admitting some".
 
     Each constraint's feasibility function has its own argument set (a
-    subset of the combined feasibility's union); filter `subject_states`,
+    subset of the combined feasibility's union); filter `agent_states`,
     `action_kwargs`, and `filtered_params` per constraint so dags doesn't
     raise on stray kwargs.
     """
     constraints = regime.simulation.constraints
     functions = regime.simulation.functions
-    if not constraints or not subject_states:
+    if not constraints or not agent_states:
         return {}
 
     infeasible_positions = np.flatnonzero(
@@ -2500,7 +2567,7 @@ def _per_constraint_feasibility(
         memory=memory,
         function=_gather_feasibility_inputs,
         arguments={
-            "states": subject_states,
+            "states": agent_states,
             "indices": infeasible_positions.astype(np.int32),
             "periods": np.empty(0, dtype=np.int32),
         },
@@ -2522,7 +2589,7 @@ def _per_constraint_feasibility(
         single_params = {k: v for k, v in regime_params.items() if k in accepted}
         n = len(infeasible_indices)
         if not single_states:
-            # Action-only / parameter-only constraint — identical for all subjects.
+            # Action-only / parameter-only constraint — identical for all agents.
             admits_any = _admits_any_action(
                 feasibility_func=single_feasibility,
                 action_kwargs=single_actions,
@@ -2533,7 +2600,7 @@ def _per_constraint_feasibility(
             continue
         any_feasible = _batched_feasibility_check(
             feasibility_func=single_feasibility,
-            subject_states=single_states,
+            agent_states=single_states,
             action_kwargs=single_actions,
             filtered_params=single_params,
             flat_actions=flat_actions,
@@ -2548,7 +2615,7 @@ def _raise_feasibility_type_error(
     exc: TypeError,
     regime_name: RegimeName,
     regime: Regime,
-    subject_states: dict[StateName, FloatND | IntND],
+    agent_states: dict[StateName, FloatND | IntND],
 ) -> NoReturn:
     """Re-raise a TypeError from feasibility checking with diagnostic context.
 
@@ -2556,7 +2623,7 @@ def _raise_feasibility_type_error(
         exc: The original TypeError from the feasibility check.
         regime_name: Name of the regime being checked.
         regime: The internal regime containing variable info.
-        subject_states: Mapping of state names to arrays for subjects in
+        agent_states: Mapping of state names to arrays for agents in
             this regime.
 
     Raises:
@@ -2567,7 +2634,7 @@ def _raise_feasibility_type_error(
     discrete_names = set(regime.simulation.discrete_grids)
 
     bad_dtypes: list[str] = []
-    for name, arr in subject_states.items():
+    for name, arr in agent_states.items():
         if name in discrete_names and not jnp.issubdtype(arr.dtype, jnp.integer):
             bad_dtypes.append(f"  {name!r}: dtype={arr.dtype} (expected integer)")
 
@@ -2592,7 +2659,7 @@ def _initial_physical_joint_states(
     mean: FloatND | None = None,
     cov: FloatND | None = None,
 ) -> Float2D:
-    """Project diagnostic subjects with the canonical law and dynamic operands."""
+    """Project diagnostic agents with the canonical law and dynamic operands."""
     return jax.vmap(lambda node: process.transform(standard=node, mean=mean, cov=cov))(
         standard
     )
@@ -2608,7 +2675,7 @@ def _replace_joint_coordinates(
     """Replace each joint-normal group's standard coordinates by physical states.
 
     Args:
-        state_df: One row per subject, one column per internal state.
+        state_df: One row per agent, one column per internal state.
         regime: The internal regime instance.
         regime_params: Current merged fixed and runtime regime parameters.
         memory: Admission owner for the physical projection.
@@ -2658,19 +2725,19 @@ def _format_infeasibility_message(
     regime_params: Mapping[QualifiedName, ParamsLeaf],
     memory: SimulationMemory | None,
 ) -> str:
-    """Format an error message for infeasible subjects.
+    """Format an error message for infeasible agents.
 
     Args:
-        infeasible_indices: Indices of subjects with no feasible action.
+        infeasible_indices: Indices of agents with no feasible action.
         regime: The internal regime instance.
         regime_name: Name of the regime.
-        period: First infeasible subject's initial period.
+        period: First infeasible agent's initial period.
         regime_params: Current merged fixed and runtime regime parameters.
         memory: Admission owner for diagnostic physical projection.
         initial_states: Mapping of state names to arrays.
         state_names: List of state variable names.
         per_constraint_admits_any: Mapping from constraint name to a boolean
-            array (one entry per infeasible subject) — True where that
+            array (one entry per infeasible agent) — True where that
             constraint *individually* admits at least one action. False
             entries identify constraints that reject every action on their
             own; rows with all-True entries are infeasible only because the
@@ -2680,7 +2747,7 @@ def _format_infeasibility_message(
         Formatted error message string.
 
     """
-    # Build DataFrame of infeasible subjects' states
+    # Build DataFrame of infeasible agents' states
     state_df = pd.DataFrame(
         {
             name: np.asarray(initial_states[name])[list(infeasible_indices)]
@@ -2689,7 +2756,7 @@ def _format_infeasibility_message(
         },
         index=list(infeasible_indices),
     )
-    state_df.index.name = "subject"
+    state_df.index.name = "agent"
 
     state_df = _replace_joint_coordinates(
         state_df=state_df, regime=regime, regime_params=regime_params, memory=memory
@@ -2706,7 +2773,7 @@ def _format_infeasibility_message(
         state[name] = value.item() if isinstance(value, np.generic) else value
 
     # Append one boolean column per constraint: True = admits ≥ 1 action,
-    # False = rejects every action by itself for that subject.
+    # False = rejects every action by itself for that agent.
     for name, mask in per_constraint_admits_any.items():
         state_df[name] = list(mask)
 
@@ -2722,7 +2789,7 @@ def _format_infeasibility_message(
     return (
         f"Regime '{regime_name}', period {period}, state {state} "
         "has no feasible action.\n\n"
-        f"All actions are infeasible for {n} subject(s) "
+        f"All actions are infeasible for {n} agent(s) "
         f"in regime '{regime_name}'.\n\n"
         f"Per-constraint admissibility (True = constraint admits ≥ 1 "
         f"action by itself; False = constraint rejects every action):\n"

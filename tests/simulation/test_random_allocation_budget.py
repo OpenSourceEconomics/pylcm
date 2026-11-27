@@ -156,7 +156,7 @@ def test_budgeted_random_setup_allocates_only_inside_profiled_code(
         log_level="off",
         seed=2**32 - 1,
     )
-    assert result.n_subjects == 1
+    assert result.n_agents == 1
 
 
 @pytest.mark.parametrize("seed", [0, -1, 2**31, 2**32 - 1, 2**40 + 17])
@@ -166,7 +166,7 @@ def test_budgeted_keys_preserve_seed_bits(seed: int) -> None:
     memory = SimulationMemory(
         budget_bytes=2**24,
         devices=devices,
-        subject_devices=devices,
+        agent_devices=devices,
         operations=ProfiledSimulationOperations(),
         inputs=measure_buffer_footprint(tree=()),
     )
@@ -192,7 +192,7 @@ def test_cached_key_creation_is_threefry_under_every_default_prng(
     memory = SimulationMemory(
         budget_bytes=2**24,
         devices=devices,
-        subject_devices=devices,
+        agent_devices=devices,
         operations=ProfiledSimulationOperations(),
         inputs=measure_buffer_footprint(tree=()),
     )
@@ -216,7 +216,7 @@ def test_cached_key_creation_follows_the_current_seed_offset(
     memory = SimulationMemory(
         budget_bytes=2**24,
         devices=devices,
-        subject_devices=devices,
+        agent_devices=devices,
         operations=ProfiledSimulationOperations(),
         inputs=measure_buffer_footprint(tree=()),
     )
@@ -259,7 +259,7 @@ def test_key_creation_refuses_seed_offset_changed_before_tracing(
     memory = SimulationMemory(
         budget_bytes=2**24,
         devices=devices,
-        subject_devices=devices,
+        agent_devices=devices,
         operations=ProfiledSimulationOperations(),
         inputs=measure_buffer_footprint(tree=()),
     )

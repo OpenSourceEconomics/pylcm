@@ -40,10 +40,10 @@ class RegimeId:
     dead: ScalarInt
 
 
-WEALTH_GRID = LinSpacedGrid(start=1.0, stop=20.0, n_points=20)
+WEALTH_GRID = LinSpacedGrid(start=1.0, stop=20.0, n_points=20, off_grid="extrapolate")
 CONSUMPTION_GRID = LinSpacedGrid(start=0.1, stop=25.0, n_points=30)
 SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=20.0, n_points=40)
-ILLIQUID_GRID = LinSpacedGrid(start=0.0, stop=5.0, n_points=8)
+ILLIQUID_GRID = LinSpacedGrid(start=0.0, stop=5.0, n_points=8, off_grid="extrapolate")
 INVESTMENT_GRID = LinSpacedGrid(start=0.0, stop=2.0, n_points=15)
 
 
@@ -225,7 +225,7 @@ def kinked_tax_params() -> dict[str, UserParamsNode]:
 def kinked_tax_initial_conditions() -> dict[
     StateName | Literal["regime_id"], FloatND | IntND
 ]:
-    """Two subjects on opposite sides of the tax exemption."""
+    """Two agents on opposite sides of the tax exemption."""
     return {
         "age": jnp.array([0, 0]),
         "liquid": jnp.array([5.0, 10.0]),
@@ -367,7 +367,7 @@ def example_params() -> dict[str, UserParamsNode]:
 def example_initial_conditions(
     *, nested: bool = False
 ) -> dict[StateName | Literal["regime_id"], FloatND | IntND]:
-    """Two subjects at the start of either example."""
+    """Two agents at the start of either example."""
     conditions = {
         "age": jnp.array([0, 0]),
         "wealth": jnp.array([5.0, 10.0]),

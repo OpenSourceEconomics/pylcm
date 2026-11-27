@@ -12,7 +12,7 @@ from _lcm.simulation.simulate import _compute_starting_periods
 from lcm import AgeGrid
 
 
-def test_all_subjects_start_at_first_age():
+def test_all_agents_start_at_first_age() -> None:
     ages = AgeGrid(start=25, inclusive_stop=75, step="Y")
     initial_ages = jnp.array([25.0, 25.0, 25.0])
     result = _compute_starting_periods(initial_ages=initial_ages, ages=ages)
@@ -20,7 +20,7 @@ def test_all_subjects_start_at_first_age():
     assert jnp.array_equal(result, expected)
 
 
-def test_all_subjects_start_at_last_age():
+def test_all_agents_start_at_last_age() -> None:
     ages = AgeGrid(start=25, inclusive_stop=75, step="Y")
     initial_ages = jnp.array([75.0, 75.0])
     result = _compute_starting_periods(initial_ages=initial_ages, ages=ages)
@@ -29,7 +29,7 @@ def test_all_subjects_start_at_last_age():
     assert jnp.array_equal(result, expected)
 
 
-def test_heterogeneous_ages():
+def test_heterogeneous_ages() -> None:
     ages = AgeGrid(start=25, inclusive_stop=30, step="Y")
     initial_ages = jnp.array([25.0, 27.0, 30.0])
     result = _compute_starting_periods(initial_ages=initial_ages, ages=ages)
@@ -37,7 +37,7 @@ def test_heterogeneous_ages():
     assert jnp.array_equal(result, expected)
 
 
-def test_single_subject():
+def test_single_agent() -> None:
     ages = AgeGrid(start=25, inclusive_stop=75, step="Y")
     initial_ages = jnp.array([40.0])
     result = _compute_starting_periods(initial_ages=initial_ages, ages=ages)
@@ -45,7 +45,7 @@ def test_single_subject():
     assert jnp.array_equal(result, expected)
 
 
-def test_sub_annual_grid():
+def test_sub_annual_grid() -> None:
     ages = AgeGrid(start=25, inclusive_stop=26, step="Q")
     # Grid values: 25.0, 25.25, 25.5, 25.75, 26.0
     initial_ages = jnp.array([25.0, 25.25, 25.5, 25.75, 26.0])
@@ -54,7 +54,7 @@ def test_sub_annual_grid():
     assert jnp.array_equal(result, expected)
 
 
-def test_irregular_grid():
+def test_irregular_grid() -> None:
     ages = AgeGrid(exact_values=[0, 1, 5, 10, 20])
     initial_ages = jnp.array([0.0, 5.0, 20.0])
     result = _compute_starting_periods(initial_ages=initial_ages, ages=ages)
@@ -62,7 +62,7 @@ def test_irregular_grid():
     assert jnp.array_equal(result, expected)
 
 
-def test_multi_year_steps():
+def test_multi_year_steps() -> None:
     ages = AgeGrid(start=40, inclusive_stop=60, step="10Y")
     # Grid values: 40, 50, 60
     initial_ages = jnp.array([40.0, 50.0, 60.0])
@@ -71,28 +71,28 @@ def test_multi_year_steps():
     assert jnp.array_equal(result, expected)
 
 
-def test_age_below_grid_minimum():
+def test_age_below_grid_minimum() -> None:
     ages = AgeGrid(start=25, inclusive_stop=75, step="Y")
     initial_ages = jnp.array([20.0])
     with pytest.raises(ValueError, match="not valid age grid points"):
         _compute_starting_periods(initial_ages=initial_ages, ages=ages)
 
 
-def test_age_above_grid_maximum():
+def test_age_above_grid_maximum() -> None:
     ages = AgeGrid(start=25, inclusive_stop=75, step="Y")
     initial_ages = jnp.array([80.0])
     with pytest.raises(ValueError, match="not valid age grid points"):
         _compute_starting_periods(initial_ages=initial_ages, ages=ages)
 
 
-def test_age_between_grid_points():
+def test_age_between_grid_points() -> None:
     ages = AgeGrid(start=25, inclusive_stop=75, step="Y")
     initial_ages = jnp.array([26.5])
     with pytest.raises(ValueError, match="not valid age grid points"):
         _compute_starting_periods(initial_ages=initial_ages, ages=ages)
 
 
-def test_mix_of_valid_and_invalid_ages():
+def test_mix_of_valid_and_invalid_ages() -> None:
     ages = AgeGrid(start=25, inclusive_stop=30, step="Y")
     initial_ages = jnp.array([25.0, 26.5, 30.0, 80.0])
     with pytest.raises(ValueError, match="not valid age grid points") as exc_info:
@@ -104,14 +104,14 @@ def test_mix_of_valid_and_invalid_ages():
     assert "25.0" not in msg
 
 
-def test_empty_array():
+def test_empty_array() -> None:
     ages = AgeGrid(start=25, inclusive_stop=75, step="Y")
     initial_ages = jnp.array([], dtype=jnp.float32)
     result = _compute_starting_periods(initial_ages=initial_ages, ages=ages)
     assert result.shape == (0,)
 
 
-def test_sub_annual_monthly_grid():
+def test_sub_annual_monthly_grid() -> None:
     ages = AgeGrid(start=25, inclusive_stop=26, step="M")
     # Grid has 13 monthly points: 25.0, 25.0833..., ..., 26.0
     initial_ages = jnp.array([25.0, 26.0])

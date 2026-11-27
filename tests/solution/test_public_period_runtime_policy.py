@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.persistence import period as period_archive
 from _lcm.persistence.period import read_period_archive, write_period_archive
 from _lcm.solution import public_period_replay
 from _lcm.typing import JSONValue
@@ -101,7 +102,7 @@ def _capture(
     target: tuple[str, int] = ("done", 1),
 ) -> Path:
     capture = PeriodCapture(
-        directory=directory, periods=(target,), source_identity=_SOURCE
+        directory=directory, steps=(target,), source_identity=_SOURCE
     )
     _model().solve(
         params=_params(probability_mass=probability_mass),
@@ -153,7 +154,7 @@ def test_public_replay_accepts_a_completed_unchecked_capture(
     assert record.reference is not None
     if target == ("done", 1):
         # A different earlier law is invalid; the selected terminal value is exact.
-        np.testing.assert_array_equal(record.reference, np.array([1.0, 2.0]))
+        np.testing.assert_array_equal(record.reference, np.array([[1.0], [2.0]]))
     elif probability_mass == 0.5:
         assert np.isfinite(record.reference).all()
     else:
@@ -331,3 +332,17 @@ def test_unchecked_public_replay_still_requires_archive_checksum(
             source_identity=_SOURCE,
         )
     run_period.assert_not_called()
+
+
+def test_a_period_archive_of_the_schema_before_the_member_axis_is_refused(
+    *, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Schema 1 archives hold values without the trailing member axis."""
+    monkeypatch.setattr(period_archive, "PERIOD_ARCHIVE_SCHEMA", 1, raising=False)
+    write_period_archive(
+        path=tmp_path / "entry.h5", metadata={}, arrays={"value": np.zeros(2)}
+    )
+    monkeypatch.undo()
+
+    with pytest.raises(ValueError, match="Unsupported period archive schema"):
+        read_period_archive(path=tmp_path / "entry.h5")

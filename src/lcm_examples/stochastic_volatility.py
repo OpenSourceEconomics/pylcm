@@ -126,7 +126,9 @@ def get_model(
     alive_law = DeterministicTransition(func=next_regime)
     alive = Regime(
         states={
-            "wealth": LinSpacedGrid(start=1.0, stop=40.0, n_points=wealth_n_points),
+            "wealth": LinSpacedGrid(
+                start=1.0, stop=40.0, n_points=wealth_n_points, off_grid="extrapolate"
+            ),
             "uncertainty": DiscreteGrid(category_class=Uncertainty),
             "lagged_uncertainty": DiscreteGrid(category_class=Uncertainty),
         },

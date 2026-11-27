@@ -167,6 +167,28 @@ def _next_regime(age: float) -> ScalarInt:
     return jnp.where(age < 2, _RegimeId.alive, _RegimeId.dead)
 
 
+def _zero_utility() -> float:
+    return 0.0
+
+
+def _unit_helper() -> float:
+    return 1.0
+
+
+def _kind_and_group_utility(
+    *, kind_health: DiscreteState, kind_health_fixed: DiscreteState
+) -> FloatND:
+    return 1.0 * kind_health + kind_health_fixed
+
+
+def _reset_kind_health() -> DiscreteState:
+    return jnp.asarray(0, dtype=jnp.int32)
+
+
+def _always_feasible() -> BoolND:
+    return jnp.ones((), dtype=bool)
+
+
 def _model(
     *,
     factored: bool,
@@ -218,7 +240,7 @@ def _model(
                     **laws,
                 },
             ),
-            "dead": Regime(functions={"utility": lambda: 0.0}),
+            "dead": Regime(functions={"utility": _zero_utility}),
         },
         ages=AgeGrid(start=0, inclusive_stop=4, step="Y"),
         regime_id_class=_RegimeId,
@@ -251,10 +273,10 @@ def _values(model: Model) -> dict[tuple[int, RegimeName], np.ndarray]:
     }
 
 
-def test_fixed_component_carries_group_and_position_as_separate_axes():
+def test_fixed_component_carries_group_and_position_as_separate_axes() -> None:
     """The alive value function has a position axis and a group axis, not 4 codes."""
     values = _values(_model(factored=True))
-    assert values[(0, "alive")].shape == (2, 2, 5)
+    assert values[(0, "alive")].shape == (2, 2, 5, 1)
 
 
 def test_fixed_component_solve_equals_the_hand_split_model() -> None:
@@ -265,7 +287,7 @@ def test_fixed_component_solve_equals_the_hand_split_model() -> None:
         _assert_independent_values_agree(got=factored[key], expected=expected)
 
 
-def test_fixed_component_rejects_unequal_groups():
+def test_fixed_component_rejects_unequal_groups() -> None:
     """Groups of different sizes cannot share one within-group axis."""
     with pytest.raises(RegimeInitializationError, match="equal size"):
         _model(factored=True, fixed_component=(0, 0, 0, 1))
@@ -397,7 +419,7 @@ def test_fixed_component_lowering_covers_declarations_and_terminal(
         states={"kind_health": grid} if terminal_carries and form != "model" else {},
         functions={"utility": _code_utility}
         if terminal_carries
-        else {"utility": lambda: 0.0},
+        else {"utility": _zero_utility},
     )
     model = Model(
         regimes={"alive": alive, "dead": dead},
@@ -444,7 +466,7 @@ def test_fixed_component_lowering_keeps_unread_user_helper_validation(
                     functions={"utility": _code_utility},
                 ),
                 "dead": Regime(
-                    functions={"utility": lambda: 0.0, helper_name: lambda: 1.0}
+                    functions={"utility": _zero_utility, helper_name: _unit_helper}
                 ),
             },
             ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
@@ -498,7 +520,7 @@ def test_fixed_component_initial_labels_are_scoped_to_the_initial_regime(
     )
 
 
-def test_fixed_component_rejects_an_occupied_model_state_name():
+def test_fixed_component_rejects_an_occupied_model_state_name() -> None:
     """A user state cannot alias the generated fixed coordinate."""
     with pytest.raises(RegimeInitializationError, match="kind_health_fixed"):
         Model(
@@ -510,13 +532,9 @@ def test_fixed_component_rejects_an_occupied_model_state_name():
                             func=_next_kind_health, fixed_component=(0, 0, 1, 1)
                         )
                     },
-                    functions={
-                        "utility": lambda kind_health, kind_health_fixed: (
-                            1.0 * kind_health + kind_health_fixed
-                        )
-                    },
+                    functions={"utility": _kind_and_group_utility},
                 ),
-                "dead": Regime(functions={"utility": lambda: 0.0}),
+                "dead": Regime(functions={"utility": _zero_utility}),
             },
             states={"kind_health_fixed": DiscreteGrid(_Kind)},
             state_transitions={
@@ -738,7 +756,7 @@ def test_two_fixed_components_cross_adjacent_carriers_and_terminal(
         .to_dataframe(additional_targets=["kind_health", "other"])
         .reset_index()
     )
-    initial = panel.loc[panel["period"] == 0].sort_values("subject_id")
+    initial = panel.loc[panel["period"] == 0].sort_values("agent_id")
     # Two literal Bernoulli steps give P²(stay)=5/8, P²(switch)=3/8.
     expected_first = 1.53125 * first + 0.21875 * (first ^ 2)
     expected_other = 1.53125 * other + 0.21875 * (other ^ 2)
@@ -758,7 +776,7 @@ def test_fixed_component_rejects_incoherent_handoff_laws(*, reset: bool) -> None
         func=_interleaved_kind_health, fixed_component=(0, 1, 0, 1)
     )
     incompatible = (
-        (lambda: jnp.asarray(0, dtype=jnp.int32))
+        _reset_kind_health
         if reset
         else StochasticTransition(func=_next_kind_health, fixed_component=(0, 0, 1, 1))
     )
@@ -802,14 +820,14 @@ def test_fixed_component_generated_names_do_not_shadow_regime_slots(
                         )
                     },
                     functions={"utility": _code_utility},
-                    constraints={"kind_health_fixed": lambda: jnp.ones((), dtype=bool)}
+                    constraints={"kind_health_fixed": _always_feasible}
                     if slot == "constraints"
                     else {},
                     derived_categoricals={"kind_health_fixed": DiscreteGrid(_Kind)}
                     if slot == "derived_categoricals"
                     else {},
                 ),
-                "dead": Regime(functions={"utility": lambda: 0.0}),
+                "dead": Regime(functions={"utility": _zero_utility}),
             },
             ages=AgeGrid(start=0, inclusive_stop=2, step="Y"),
             regime_id_class=_RegimeId,
@@ -843,7 +861,7 @@ def test_fixed_component_rejects_cross_state_identity_at_model_level() -> None:
                     states={"kind_health": DiscreteGrid(_KindHealth)},
                     functions={"utility": _code_utility},
                 ),
-                "dead": Regime(functions={"utility": lambda: 0.0}),
+                "dead": Regime(functions={"utility": _zero_utility}),
             },
             state_transitions={
                 "kind_health": Phased(
@@ -878,7 +896,7 @@ def test_fixed_component_eager_sharding_with_a_state_absent_terminal() -> None:
                 },
                 functions={"utility": _code_utility},
             ),
-            "dead": Regime(functions={"utility": lambda: 0.0}),
+            "dead": Regime(functions={"utility": _zero_utility}),
         },
         ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
         regime_id_class=_RegimeId,
@@ -901,7 +919,7 @@ def test_fixed_component_eager_sharding_with_a_state_absent_terminal() -> None:
         .to_dataframe()
         .reset_index()
     )
-    initial = panel.loc[panel["period"] == 0].sort_values("subject_id")
+    initial = panel.loc[panel["period"] == 0].sort_values("agent_id")
     np.testing.assert_array_equal(initial["value"], [0.0, 1.0, 2.0, 3.0])
 
 
@@ -969,7 +987,7 @@ def test_fixed_component_simulation_preserves_original_sampling_support(
         )
         frame = result.to_dataframe()
         frame = frame.loc[frame["regime_name"] == "alive"].sort_values(
-            ["period", "subject_id"]
+            ["period", "agent_id"]
         )
         if annotation is None:
             codes = frame["kind_health"].cat.codes.to_numpy()
@@ -1085,10 +1103,10 @@ def test_fixed_component_preserves_a_transition_reading_its_next_code(
     ).to_dataframe(use_categorical_codes=True)
     if "period" not in panel.columns:
         panel = panel.reset_index()
-    first = panel.loc[panel["period"] == 0].sort_values("subject_id")
+    first = panel.loc[panel["period"] == 0].sort_values("agent_id")
     expected = np.repeat([0.5, 1.5, 4.5, 5.5], 4) + np.tile(np.arange(4), 4)
     np.testing.assert_array_equal(first["value"].to_numpy(), expected)
-    last = panel.loc[panel["period"] == 1].sort_values("subject_id")
+    last = panel.loc[panel["period"] == 1].sort_values("agent_id")
     next_s = last["s_rest"] + 2 * last["s_fixed"] if annotated else last["s"]
     np.testing.assert_array_equal(last["y"].to_numpy(), next_s.to_numpy())
 
@@ -1215,8 +1233,8 @@ def test_fixed_component_preserves_next_code_probability_and_joint_consumers(
         ).to_dataframe(use_categorical_codes=True)
         if "period" not in panel.columns:
             panel = panel.reset_index()
-        first = panel.loc[panel["period"] == 0].sort_values("subject_id")
-        following = panel.loc[panel["period"] == 1].sort_values("subject_id")
+        first = panel.loc[panel["period"] == 0].sort_values("agent_id")
+        following = panel.loc[panel["period"] == 1].sort_values("agent_id")
         next_s = (
             following["s_rest"] + 2 * following["s_fixed"]
             if annotated
@@ -1232,7 +1250,7 @@ def test_fixed_component_preserves_next_code_probability_and_joint_consumers(
                 else following["t"]
             )
             np.testing.assert_array_equal(next_t, expected_t)
-            terminal = panel.loc[panel["period"] == 2].sort_values("subject_id")
+            terminal = panel.loc[panel["period"] == 2].sort_values("agent_id")
             terminal_s = (
                 terminal["s_rest"] + 2 * terminal["s_fixed"]
                 if annotated
@@ -1307,7 +1325,7 @@ def test_fixed_component_valid_law_matches_the_unannotated_law_under_validation(
         params=params, log_level="debug"
     )
     # Code `2 * group + position` sits at `[group, position]` in the factored layout.
-    got = np.asarray(factored.values[0]["alive"]).reshape(4, 5)
+    got = np.asarray(factored.values[0]["alive"]).reshape(4, 5, 1)
     expected = np.asarray(unannotated.values[0]["alive"])
     assert (got.shape, got.dtype) == (expected.shape, expected.dtype)
     assert_agrees_to_ulp(

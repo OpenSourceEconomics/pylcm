@@ -64,6 +64,10 @@ def _high_mass(*, p_high: ScalarFloat) -> FloatND:
     return jnp.asarray(p_high)
 
 
+def _low_given_high(*, p_high: ScalarFloat) -> FloatND:
+    return 1.0 - p_high
+
+
 def _joint_probabilities(*, tilt: ScalarFloat) -> FloatND:
     return jnp.asarray([0.25, 0.75]) * tilt
 
@@ -88,6 +92,10 @@ def _two() -> FloatND:
     return jnp.asarray(2.0)
 
 
+def _half() -> FloatND:
+    return jnp.asarray(0.5)
+
+
 def _wealth_utility(*, wealth: ContinuousState) -> FloatND:
     return wealth
 
@@ -108,9 +116,9 @@ def _model(
         Phased(
             solve=transitions,
             simulate={
-                "low": StochasticTransition(func=lambda: jnp.asarray(0.5)),
-                "mid": StochasticTransition(func=lambda: jnp.asarray(0.0)),
-                "high": StochasticTransition(func=lambda: jnp.asarray(0.5)),
+                "low": StochasticTransition(func=_half),
+                "mid": StochasticTransition(func=_zero),
+                "high": StochasticTransition(func=_half),
             },
         )
         if simulate_high_mass
@@ -172,7 +180,7 @@ def _reference_value(*, p_mid: Fraction, p_high: Fraction) -> Fraction:
 
 def _source_value(*, model: Model, params: UserParams) -> np.ndarray:
     result = model.solve(params={"discount_factor": 1.0, **params}, log_level="off")
-    return np.asarray(result.values[0]["source"])
+    return np.asarray(result.values[0]["source"])[..., 0]
 
 
 def test_fixed_zero_edge_with_joint_transition_constructs_and_values_exactly() -> None:
@@ -188,8 +196,8 @@ def test_several_fixed_zero_edges_leave_only_the_positive_edge(*, joint: bool) -
     """Every edge fixed at zero is removed from both phases' effective graphs."""
     model = _model(joint=joint, fixed_params=_fixed(joint=joint, p_mid=0.0, p_high=0.0))
     assert (
-        model.graph.solution.targets(period=0, source="source"),
-        model.graph.simulation.targets(period=0, source="source"),
+        model.graph.solution.targets(step=0, source="source"),
+        model.graph.simulation.targets(step=0, source="source"),
         dict(model.graph.pruned_edges["solve"]),
         set(model.graph.edges.solve["source"]),
     ) == (
@@ -224,7 +232,7 @@ def test_nonzero_fixed_probability_keeps_the_edge(*, joint: bool) -> None:
     model = _model(
         joint=joint, fixed_params=_fixed(joint=joint, p_mid=0.25, p_high=0.5)
     )
-    assert set(model.graph.solution.targets(period=0, source="source")) == {
+    assert set(model.graph.solution.targets(step=0, source="source")) == {
         "low",
         "mid",
         "high",
@@ -244,7 +252,7 @@ def test_joint_edge_zero_in_one_phase_only_stays_declared_in_both() -> None:
         simulate_high_mass=True,
     )
     assert (
-        "high" in model.graph.simulation.targets(period=0, source="source"),
+        "high" in model.graph.simulation.targets(step=0, source="source"),
         float(_source_value(model=model, params={})),
     ) == (True, 2.0)
 
@@ -254,12 +262,12 @@ def test_joint_edge_zero_at_one_age_only_keeps_its_lottery_at_the_other() -> Non
     law = ByAge(
         cases={
             0: {
-                "low": StochasticTransition(func=lambda p_high: 1.0 - p_high),
+                "low": StochasticTransition(func=_low_given_high),
                 "high": StochasticTransition(func=_high_mass),
             },
             1: {
-                "low": StochasticTransition(func=lambda: jnp.asarray(0.5)),
-                "high": StochasticTransition(func=lambda: jnp.asarray(0.5)),
+                "low": StochasticTransition(func=_half),
+                "high": StochasticTransition(func=_half),
             },
         }
     )
@@ -295,6 +303,6 @@ def test_joint_edge_zero_at_one_age_only_keeps_its_lottery_at_the_other() -> Non
     values = model.solve(params={"discount_factor": 1.0}, log_level="off").values
     assert (
         dict(model.graph.pruned_edges["solve"]),
-        float(values[0]["source"]),
-        float(values[1]["source"]),
+        float(values[0]["source"][..., 0]),
+        float(values[1]["source"][..., 0]),
     ) == ({(0, "source", "high"): "fixed_zero_probability"}, 2.0, 2.25)

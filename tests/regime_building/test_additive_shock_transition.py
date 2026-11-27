@@ -294,7 +294,7 @@ def _alive_values(model: Model) -> dict[int, np.ndarray]:
     order = model.state_names(regime_name="alive")
     return {
         period: np.transpose(
-            np.asarray(arrays["alive"]),
+            np.asarray(arrays["alive"])[..., 0],
             [order.index("wealth"), order.index("health")],
         )
         for period, arrays in solution.values.items()
@@ -476,7 +476,7 @@ def test_the_fp32_value_matches_the_fp64_reference_at_the_plain_law_accuracy(
 
 
 def test_the_additive_shock_policy_equals_the_plain_law_policy() -> None:
-    """Simulated consumption agrees subject by subject in the first period."""
+    """Simulated consumption agrees agent by agent in the first period."""
     wealth = jnp.asarray(np.asarray(_wealth_grid().to_jax())[::3])
     n = wealth.shape[0]
     consumption = {}
@@ -680,7 +680,7 @@ def test_additive_transition_preserves_each_certainty_equivalent(
             model = cloudpickle.loads(cloudpickle.dumps(model))
         values = model.solve(params=params, log_level="off").values[0]["alive"]
         np.testing.assert_array_almost_equal(
-            values, expected, decimal=DECIMAL_PRECISION
+            values[..., 0], expected, decimal=DECIMAL_PRECISION
         )
 
 

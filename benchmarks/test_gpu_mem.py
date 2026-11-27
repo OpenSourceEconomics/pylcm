@@ -689,7 +689,7 @@ def test_budgeted_mahler_build_keeps_production_input_arguments(
     assert benchmark.model_params == {"params": 1}
     assert benchmark.initial_conditions == {"initial": 2}
     assert input_calls == [
-        {"seed": 0, "n_simulation_subjects": 10_000, "params": {"start": 1}}
+        {"seed": 0, "n_simulation_agents": 10_000, "params": {"start": 1}}
     ]
 
 

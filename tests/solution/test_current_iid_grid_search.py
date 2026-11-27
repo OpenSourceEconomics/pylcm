@@ -27,7 +27,7 @@ from _lcm.simulation import chunk_admission as admission
 from _lcm.simulation.chunk_planning import SimulationChunkProfile, _required_bytes
 from _lcm.simulation.entry_allocations import SimulationEntryAllocations
 from _lcm.simulation.program_arguments import current_iid_arguments
-from _lcm.simulation.program_types import SUBJECT_WIDTH_KEYWORD
+from _lcm.simulation.program_types import AGENT_WIDTH_KEYWORD
 from _lcm.simulation.random_address import RandomAddress, draw_row_keys
 from _lcm.simulation.residency import (
     DeviceBufferFootprint,
@@ -165,7 +165,7 @@ def test_public_solve_integrates_the_nodewise_decision(
     expected, _ = finite_backward(mode="ev1" if ev1 else "hard")
     for period, name in enumerate(("first", "second", "last")):
         assert_array_almost_equal(
-            np.asarray(result.values[period][name]),
+            np.asarray(result.values[period][name])[..., 0],
             [float(expected[period, wealth][0]) for wealth in (0, 1)],
             decimal=DECIMAL_PRECISION,
         )
@@ -329,7 +329,9 @@ def test_fixed_group_root_cannot_bind_a_same_named_legacy_state() -> None:
         params={"alive": {"wealth": {"mu": 0.0}}}, log_level="off", runtime_checks=False
     )
     assert_array_almost_equal(
-        np.asarray(result.values[0]["alive"]), [1.0, 3.0], decimal=DECIMAL_PRECISION
+        np.asarray(result.values[0]["alive"])[..., 0],
+        [1.0, 3.0],
+        decimal=DECIMAL_PRECISION,
     )
 
 
@@ -372,7 +374,9 @@ def test_current_state_used_only_by_law_is_retained(*, broadcast: bool) -> None:
         runtime_checks=False,
     )
     assert_array_almost_equal(
-        np.asarray(result.values[0]["alive"]), [4.0, 16.0], decimal=DECIMAL_PRECISION
+        np.asarray(result.values[0]["alive"])[..., 0],
+        [4.0, 16.0],
+        decimal=DECIMAL_PRECISION,
     )
 
 
@@ -518,7 +522,9 @@ def test_only_law_helper_closure_uses_group_slots(*, helper: bool) -> None:
         params["alive"] = {"report": {"scale": 99.0}}
     result = model.solve(params=params, log_level="off", runtime_checks=False)
     assert_array_almost_equal(
-        np.asarray(result.values[0]["alive"]), [4.0, 16.0], decimal=DECIMAL_PRECISION
+        np.asarray(result.values[0]["alive"])[..., 0],
+        [4.0, 16.0],
+        decimal=DECIMAL_PRECISION,
     )
 
 
@@ -585,7 +591,7 @@ def test_law_callables_observe_value_grid_boundary(*, read_code: bool) -> None:
     )
     result = model.solve(params={}, log_level="off", runtime_checks=False)
     assert_array_almost_equal(
-        np.asarray(result.values[0]["alive"]),
+        np.asarray(result.values[0]["alive"])[..., 0],
         [100.0, 121.0 if read_code else 400.0],
         decimal=DECIMAL_PRECISION,
     )
@@ -914,7 +920,7 @@ def test_public_simulation_replays_fresh_addressed_physical_draws() -> None:
 def test_rbg_physical_replay_matches_scalar_addressed_draws(
     *, uniform: bool, width: int
 ) -> None:
-    """Every key keeps its scalar draw under native subject tiling."""
+    """Every key keeps its scalar draw under native agent tiling."""
 
     model = Model(
         regimes={
@@ -926,7 +932,7 @@ def test_rbg_physical_replay_matches_scalar_addressed_draws(
         regime_id_class=_TerminalId,
         initial_nodes=InitialNodes(by_period={0: "alive"}),
         edges={},
-        execution_config=ExecutionConfig(axis_widths={"subject": width}),
+        execution_config=ExecutionConfig(axis_widths={"agent": width}),
         shocks={
             "innovation": ShockGroup(
                 shocks={
@@ -952,7 +958,7 @@ def test_rbg_physical_replay_matches_scalar_addressed_draws(
     )
     regime = model._regimes["alive"]
     program = regime.simulation.programs.decision[0]
-    output = jax.jit(program.function, static_argnames=(SUBJECT_WIDTH_KEYWORD,))(
+    output = jax.jit(program.function, static_argnames=(AGENT_WIDTH_KEYWORD,))(
         **{
             **current_iid_arguments(
                 regime=regime,
@@ -963,7 +969,7 @@ def test_rbg_physical_replay_matches_scalar_addressed_draws(
             "period": jnp.int32(0),
             "age": jnp.int32(0),
             "next_regime_to_V_arr": {},
-            SUBJECT_WIDTH_KEYWORD: width,
+            AGENT_WIDTH_KEYWORD: width,
         }
     )
     expected = np.asarray(
@@ -1028,7 +1034,7 @@ def test_replay_reuses_physical_draw_for_decision_flow_and_transition() -> None:
     )
     params = {"discount_factor": 0.5}
     solution = model.solve(params=params, log_level="off", runtime_checks=False)
-    np.testing.assert_allclose(solution.values[0]["alive"], [-96.5, 103.5])
+    np.testing.assert_allclose(solution.values[0]["alive"][..., 0], [-96.5, 103.5])
     simulated = model.simulate(
         params=params,
         solution=solution,
@@ -1294,7 +1300,7 @@ def test_current_law_replay_uses_actual_carried_state(*, budgeted: bool) -> None
         initial_nodes=InitialNodes(by_period={0: "alive"}),
         edges={"alive": {"last": Periods(values=(0,))}},
         execution_config=ExecutionConfig(
-            device_memory_bytes=2**26, axis_widths={"subject": 1}
+            device_memory_bytes=2**26, axis_widths={"agent": 1}
         )
         if budgeted
         else ExecutionConfig(),
@@ -1309,7 +1315,7 @@ def test_current_law_replay_uses_actual_carried_state(*, budgeted: bool) -> None
     )
     params = {"discount_factor": 0.0}
     solution = model.solve(params=params, log_level="off", runtime_checks=False)
-    np.testing.assert_allclose(solution.values[0]["alive"], [1.0, 4.0])
+    np.testing.assert_allclose(solution.values[0]["alive"][..., 0], [1.0, 4.0])
     actual_years = jnp.asarray([2.0, 5.0])
     result = model.simulate(
         params=params,
@@ -1364,7 +1370,7 @@ def test_forward_inventory_reserves_physical_bank_and_actual_producers(
         initial_nodes=InitialNodes(by_period={0: "alive"}),
         edges={},
         execution_config=ExecutionConfig(
-            device_memory_bytes=2**27, axis_widths={"subject": 32}
+            device_memory_bytes=2**27, axis_widths={"agent": 32}
         ),
         shocks={
             "innovation": ShockGroup(
@@ -1466,8 +1472,8 @@ def test_solve_law_reads_carried_imputation_without_a_grid_axis() -> None:
     solution = model.solve(
         params={"discount_factor": 0.0}, log_level="off", runtime_checks=False
     )
-    np.testing.assert_allclose(solution.values[0]["alive"], [1.0, 2.0])
-    assert solution.values[0]["alive"].shape == (2,)
+    np.testing.assert_allclose(solution.values[0]["alive"][..., 0], [1.0, 2.0])
+    assert solution.values[0]["alive"].shape == (2, 1)
 
 
 def test_new_iid_policy_query_is_explicitly_deferred() -> None:
@@ -1718,7 +1724,7 @@ def test_exact_positive_correlation_cannot_publish_a_collapsed_active_pivot(
         )
     except ShockDeclarationError:
         return
-    assert float(result.values[0]["alive"]) > 0
+    assert float(result.values[0]["alive"][..., 0]) > 0
 
 
 @pytest.mark.coverage(
@@ -1836,8 +1842,8 @@ def test_current_group_value_averages_the_legacy_state_value(law_name: str) -> N
         edges={},
     ).solve(params={}, log_level="off", runtime_checks=False)
     assert_array_almost_equal(
-        candidate.values[0]["alive"],
-        np.asarray(reference.values[0]["alive"])
+        candidate.values[0]["alive"][..., 0],
+        np.asarray(reference.values[0]["alive"])[..., 0]
         @ np.asarray(legacy.get_transition_probs()[0]),
         decimal=DECIMAL_PRECISION,
     )
@@ -1884,7 +1890,7 @@ def _sharded_flow(*, wealth: FloatND, eps: FloatND) -> FloatND:
 
 
 @pytest.mark.requires(min_devices=2, device="cpu")
-def test_current_iid_preserves_native_state_and_subject_sharding() -> None:
+def test_current_iid_preserves_native_state_and_agent_sharding() -> None:
     if len(jax.devices()) < 2:
         pytest.skip("Requires two visible CPU devices.")
     model = Model(
@@ -1912,7 +1918,9 @@ def test_current_iid_preserves_native_state_and_subject_sharding() -> None:
     )
     params = {"innovation": {"eps__sigma": 1.0}}
     solution = model.solve(params=params, log_level="off", runtime_checks=False)
-    np.testing.assert_allclose(solution.values[0]["alive"], np.arange(6) + 1.0)
+    np.testing.assert_allclose(
+        solution.values[0]["alive"], (np.arange(6) + 1.0)[:, np.newaxis]
+    )
     assert len(solution.values[0]["alive"].sharding.device_set) == 2
     replay = model.simulate(
         params=params,
@@ -1954,7 +1962,7 @@ def test_ordinary_native_consumers_read_the_published_physical_bits(
         initial_nodes=InitialNodes(by_period={0: "alive"}),
         edges={},
         enable_jit=compiled,
-        execution_config=ExecutionConfig(axis_widths={"subject": width}),
+        execution_config=ExecutionConfig(axis_widths={"agent": width}),
         shocks={
             "innovation": ShockGroup(
                 shocks={"eps": Normal(mu=1e20, sigma=1)},

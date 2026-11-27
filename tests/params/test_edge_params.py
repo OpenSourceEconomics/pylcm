@@ -298,7 +298,9 @@ def test_selector_reading_a_function_solves_with_only_declared_parameters(
         log_level="debug",
     ).values
     np.testing.assert_allclose(
-        np.broadcast_to(np.asarray(values[0]["alive"]), (2,)), expected, rtol=1e-6
+        np.broadcast_to(np.asarray(values[0]["alive"])[..., 0], (2,)),
+        expected,
+        rtol=1e-6,
     )
 
 
@@ -329,7 +331,9 @@ def test_gate_on_a_target_state_routes_by_that_state() -> None:
         )
         .values
     )
-    np.testing.assert_allclose(np.asarray(values[0]["src"]), [1.9, 1.45], rtol=1e-6)
+    np.testing.assert_allclose(
+        np.asarray(values[0]["src"])[..., 0], [1.9, 1.45], rtol=1e-6
+    )
 
 
 @pytest.mark.parametrize(

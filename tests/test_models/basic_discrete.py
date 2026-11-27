@@ -28,7 +28,7 @@ class RegimeId:
 working_life = UserRegime(
     states={
         "health": DiscreteGrid(category_class=Health),
-        "wealth": LinSpacedGrid(start=0, stop=100, n_points=10),
+        "wealth": LinSpacedGrid(start=0, stop=100, n_points=10, off_grid="extrapolate"),
     },
     state_transitions={
         "health": fixed_transition("health"),
@@ -40,7 +40,7 @@ working_life = UserRegime(
 retirement = UserRegime(
     states={
         "health": DiscreteGrid(category_class=Health),
-        "wealth": LinSpacedGrid(start=0, stop=100, n_points=10),
+        "wealth": LinSpacedGrid(start=0, stop=100, n_points=10, off_grid="extrapolate"),
     },
     state_transitions={
         "health": fixed_transition("health"),

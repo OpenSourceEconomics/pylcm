@@ -1,13 +1,13 @@
-"""Per-subject evaluation of a gated edge's leg fallback projector.
+"""Per-agent evaluation of a gated edge's leg fallback projector.
 
 A leg's fallback projection is an ordinary model function: the solve-side fold
 evaluates it at ONE target grid cell's scalar state coordinates, and forward
-simulation must evaluate the same function at ONE subject's scalar realized
+simulation must evaluate the same function at ONE agent's scalar realized
 coordinates. The two then agree by construction, which is the whole point of
 building both from the same projection declaration — a household enters its
 fallback regime at the state the solved policy priced.
 
-The projection here is deliberately NOT elementwise: it indexes a settlement
+The projection here is deliberately NOT elementwise: it indexes a transfer
 table with the target's `health` state and totals that row's components. Such a
 function returns one number per household when it is given one household's
 scalar state, and one number for the whole population when it is handed the
@@ -78,14 +78,14 @@ _BETA = 0.95
 # Two periods: the source is active at age 0, its target and fallback from age 1.
 _AGES = AgeGrid(start=0, inclusive_stop=2, step="Y")
 
-# Transferable settlement components (housing, pension), one row per health state.
+# Transferable transfer components (housing, pension), one row per health state.
 _SETTLEMENT_COMPONENTS = ((1.0, 2.0), (3.0, 4.0))
 
-# What each health state's row totals to, i.e. the settlement the projection
+# What each health state's row totals to, i.e. the transfer the projection
 # owes each household: 3.0 for the frail one, 7.0 for the robust one.
 _SETTLEMENT_BY_HEALTH = (3.0, 7.0)
 
-# The settlement carried in the fallback regime's slot before the edge is
+# The transfer carried in the fallback regime's slot before the edge is
 # routed, so a row the router never writes is visible as such.
 _UNWRITTEN_SETTLEMENT = -1.0
 
@@ -100,7 +100,7 @@ class Work:
 
 @categorical(ordered=False)
 class Health:
-    """The health status the settlement table is indexed by."""
+    """The health status the transfer table is indexed by."""
 
     frail: ScalarInt  # code 0
     robust: ScalarInt  # code 1
@@ -125,14 +125,14 @@ def _utility_target(health: DiscreteState) -> FloatND:
     return health * 1.0 + 1.0
 
 
-def _utility_fallback(settlement: ContinuousState) -> FloatND:
-    """`V_fallback(settlement) = settlement`.
+def _utility_fallback(transfer: ContinuousState) -> FloatND:
+    """`V_fallback(transfer) = transfer`.
 
     Linear, hence interpolated exactly on the fallback's grid, so the fold's
     `Wbar` under a closed gate IS the coordinate the fold projected — read off
     the solved arrays rather than recomputed by the test.
     """
-    return settlement
+    return transfer
 
 
 def _gate_dissolves_everywhere(health: DiscreteState) -> BoolND:
@@ -144,13 +144,13 @@ def _gate_dissolves_everywhere(health: DiscreteState) -> BoolND:
     return health < 0
 
 
-def _settlement_from_health(health: DiscreteState) -> FloatND:
+def _transfer_from_health(health: DiscreteState) -> FloatND:
     """Wealth the leaving partner keeps: her health row's components, totalled.
 
     Written for one household, like every model function — `health` is that
     household's own scalar state and `_SETTLEMENT_COMPONENTS[health]` its own
     row of transferable components, so the total is that household's own
-    settlement rather than the population's.
+    transfer rather than the population's.
     """
     components = jnp.asarray(_SETTLEMENT_COMPONENTS)
     return jnp.sum(components[health])
@@ -169,7 +169,7 @@ def _make_regimes() -> dict[str, Regime]:
         functions={"utility": _utility_target},
     )
     fallback = Regime(
-        states={"settlement": LinSpacedGrid(start=0.0, stop=10.0, n_points=11)},
+        states={"transfer": LinSpacedGrid(start=0.0, stop=10.0, n_points=11)},
         functions={"utility": _utility_fallback},
     )
     return {"src": source, "target": target, "fallback": fallback}
@@ -194,7 +194,7 @@ def _laws() -> RegimeLaws:
                             "own": MemberRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
-                                    projection={"settlement": _settlement_from_health},
+                                    projection={"transfer": _transfer_from_health},
                                 )
                             )
                         },
@@ -345,12 +345,12 @@ def _fold_output(
     return wbar, mappings
 
 
-def test_solve_side_fold_projects_one_settlement_per_health_state() -> None:
-    """The fold projects each target grid cell's own settlement.
+def test_solve_side_fold_projects_one_transfer_per_health_state() -> None:
+    """The fold projects each target grid cell's own transfer.
 
     With the gate closed on the whole target grid and
-    `V_fallback(settlement) = settlement`, the folded `Wbar` at a cell is the
-    settlement that cell's health state projects to: 3.0 at `frail`, 7.0 at
+    `V_fallback(transfer) = transfer`, the folded `Wbar` at a cell is the
+    transfer that cell's health state projects to: 3.0 at `frail`, 7.0 at
     `robust`. A projection collapsed across the grid would report one number
     at both cells, so this also establishes that the fixture discriminates.
     """
@@ -359,17 +359,17 @@ def test_solve_side_fold_projects_one_settlement_per_health_state() -> None:
         regimes=regimes, flat_params=flat_params, solution=solution
     )
     aaae(
-        np.asarray(wbar),
+        np.asarray(wbar)[..., 0],
         np.asarray(_SETTLEMENT_BY_HEALTH),
         decimal=DECIMAL_PRECISION,
     )
 
 
-def test_router_writes_each_subject_its_own_projected_fallback_state() -> None:
-    """Each dissolving household enters the fallback at its own settlement.
+def test_router_writes_each_agent_its_own_projected_fallback_state() -> None:
+    """Each dissolving household enters the fallback at its own transfer.
 
     Two households whose realized target health differs project to different
-    settlements, and each must be written into the fallback regime's state slot
+    transfers, and each must be written into the fallback regime's state slot
     with its own — the same coordinate the solve-side fold priced that
     household's dissolution at.
     """
@@ -383,7 +383,7 @@ def test_router_writes_each_subject_its_own_projected_fallback_state() -> None:
                 {"health": jnp.array([Health.frail, Health.robust], dtype=jnp.int32)}
             ),
             "fallback": MappingProxyType(
-                {"settlement": jnp.full((2,), _UNWRITTEN_SETTLEMENT)}
+                {"transfer": jnp.full((2,), _UNWRITTEN_SETTLEMENT)}
             ),
         }
     )
@@ -395,17 +395,17 @@ def test_router_writes_each_subject_its_own_projected_fallback_state() -> None:
         same_period_mappings=mappings,
         next_states=next_states,
         regime_names_to_ids=regime_names_to_ids,
-        new_subject_regime_ids=jnp.full(
+        new_agent_regime_ids=jnp.full(
             (2,), regime_names_to_ids["target"], dtype=jnp.int32
         ),
-        subjects_in_regime=jnp.array([True, True]),
+        agents_in_regime=jnp.array([True, True]),
         flat_params=flat_params,
         own_member=jnp.full_like(jnp.array([True, True]), NO_ROLE, dtype=jnp.int32),
         new_own_member=jnp.full_like(jnp.array([True, True]), NO_ROLE, dtype=jnp.int32),
     )
     aaae(
-        np.asarray(states["fallback"]["settlement"]),
-        np.asarray(wbar),
+        np.asarray(states["fallback"]["transfer"]),
+        np.asarray(wbar)[..., 0],
         decimal=DECIMAL_PRECISION,
     )
 
@@ -413,7 +413,7 @@ def test_router_writes_each_subject_its_own_projected_fallback_state() -> None:
 def test_router_sends_every_dissolving_household_to_the_fallback_regime() -> None:
     """A closed gate routes both households out of the target regime.
 
-    The settlement equality above is only a statement about the coordinate a
+    The transfer equality above is only a statement about the coordinate a
     dissolving household enters with, so the routing decision it presupposes is
     asserted here on its own, exactly.
     """
@@ -427,7 +427,7 @@ def test_router_sends_every_dissolving_household_to_the_fallback_regime() -> Non
                 {"health": jnp.array([Health.frail, Health.robust], dtype=jnp.int32)}
             ),
             "fallback": MappingProxyType(
-                {"settlement": jnp.full((2,), _UNWRITTEN_SETTLEMENT)}
+                {"transfer": jnp.full((2,), _UNWRITTEN_SETTLEMENT)}
             ),
         }
     )
@@ -439,10 +439,10 @@ def test_router_sends_every_dissolving_household_to_the_fallback_regime() -> Non
         same_period_mappings=mappings,
         next_states=next_states,
         regime_names_to_ids=regime_names_to_ids,
-        new_subject_regime_ids=jnp.full(
+        new_agent_regime_ids=jnp.full(
             (2,), regime_names_to_ids["target"], dtype=jnp.int32
         ),
-        subjects_in_regime=jnp.array([True, True]),
+        agents_in_regime=jnp.array([True, True]),
         flat_params=flat_params,
         own_member=jnp.full_like(jnp.array([True, True]), NO_ROLE, dtype=jnp.int32),
         new_own_member=jnp.full_like(jnp.array([True, True]), NO_ROLE, dtype=jnp.int32),

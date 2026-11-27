@@ -12,8 +12,8 @@ from jaxtyping import Int
 
 from _lcm.engine import Regime
 from _lcm.shock_overrides import CurrentIIDOverride
-from _lcm.simulation.exits import query_producing_bindings
-from _lcm.simulation.subject_groups import SubjectRows
+from _lcm.simulation.agent_groups import AgentRows
+from _lcm.simulation.composition_actions import query_producing_bindings
 from _lcm.time import TimeAxis
 from _lcm.typing import RegimeNamesToIds
 from lcm.exceptions import InvalidInitialConditionsError, InvalidSimulationInputError
@@ -135,25 +135,25 @@ def resolve_current_iid_overrides(  # noqa: C901, PLR0912 - shapes and demanded 
     from _lcm.simulation.initial_conditions import (  # noqa: PLC0415
         resolve_initial_periods,
     )
-    from _lcm.simulation.shock_paths import _subject_occupancy  # noqa: PLC0415
+    from _lcm.simulation.shock_paths import _agent_occupancy  # noqa: PLC0415
 
     readers = {}
     for regime_name, regime in regimes.items():
         periods = {}
         for period in (
             regime.simulation.programs.decision.keys()
-            | regime.simulation.exit_queries.keys()
+            | regime.simulation.composition_queries.keys()
         ):
-            exit_plan = regime.simulation.exit_queries.get(period)
-            if exit_plan is not None:
+            composition_plan = regime.simulation.composition_queries.get(period)
+            if composition_plan is not None:
                 queries = (
                     ()
-                    if exit_plan.full is None
+                    if composition_plan.full is None
                     else (
-                        exit_plan.full,
+                        composition_plan.full,
                         *(
-                            exit_plan.participating[name]
-                            for name in exit_plan.final_actors
+                            composition_plan.participating[name]
+                            for name in composition_plan.final_actors
                         ),
                     )
                 )
@@ -204,13 +204,13 @@ def resolve_current_iid_overrides(  # noqa: C901, PLR0912 - shapes and demanded 
             else:
                 valid_shape = values.ndim == 1 and values.shape[0] == count
             if not valid_shape:
-                shape = "(periods,) or (subjects, periods)" if dated else "(subjects,)"
+                shape = "(periods,) or (agents, periods)" if dated else "(agents,)"
                 raise InvalidSimulationInputError(
                     f"Current-IID {'path' if dated else 'entry'} {name!r} "
                     f"requires shape {shape} in original row order; got {values.shape}."
                 )
             target[name] = type(item)(values=values)
-    occupancy = _subject_occupancy(
+    occupancy = _agent_occupancy(
         initial_ages=initial["age"],
         regime_ids=np.asarray(initial["regime_id"]),
         ages=ages,
@@ -242,15 +242,15 @@ def gather_current_iid_overrides(
     bank: CurrentIIDOverrides | None,
     names: tuple[ShockName, ...],
     period: int,
-    subject_slice: slice | SubjectRows,
+    agent_slice: slice | AgentRows,
 ) -> Mapping[ShockName, CurrentIIDOverride]:
     """Gather original rows, repeating the final real row only for inert padding."""
     if bank is None:
         return MappingProxyType({})
     rows = (
-        subject_slice.rows
-        if isinstance(subject_slice, SubjectRows)
-        else np.arange(subject_slice.start or 0, subject_slice.stop)
+        agent_slice.rows
+        if isinstance(agent_slice, AgentRows)
+        else np.arange(agent_slice.start or 0, agent_slice.stop)
     )
     rows = np.minimum(rows, len(bank.starts) - 1)
     result = {}
@@ -286,7 +286,7 @@ def current_iid_override_prototype(
     *,
     schema: CurrentIIDOverrideSchema,
     names: tuple[ShockName, ...],
-    n_subjects: int,
+    n_agents: int,
     sharding: jax.sharding.Sharding,
 ) -> Mapping[ShockName, CurrentIIDOverride]:
     """Build exact array-free native operands without public input constructors."""
@@ -295,9 +295,9 @@ def current_iid_override_prototype(
             name: CurrentIIDOverride(
                 kind=kind,
                 values=jax.ShapeDtypeStruct(
-                    (n_subjects,), np.dtype(dtype), sharding=sharding
+                    (n_agents,), np.dtype(dtype), sharding=sharding
                 ),
-                active=jax.ShapeDtypeStruct((n_subjects,), np.bool_, sharding=sharding),
+                active=jax.ShapeDtypeStruct((n_agents,), np.bool_, sharding=sharding),
             )
             for name, kind, dtype in schema
             if name in names

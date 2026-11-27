@@ -23,7 +23,13 @@ def _scalar_oracle(
     feasible: np.ndarray,
     action_ids: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Reduce each state cell without sharing the reducer's control flow."""
+    """Reduce each state cell without sharing the reducer's control flow.
+
+    The winner maximizes the objective, then each member's value in member
+    order, a NaN member value ranking below every number, then the smallest id.
+    A feasible NaN objective makes the objective and every member value NaN at
+    action zero.
+    """
     state_shape = objectives.shape[:-1]
     n_members = member_values.shape[-1]
     best_objectives = np.full(state_shape, -np.inf, dtype=objectives.dtype)
@@ -35,36 +41,39 @@ def _scalar_oracle(
     best_ids = np.full(state_shape, -1, dtype=np.int32)
     any_feasible = np.zeros(state_shape, dtype=bool)
 
+    def rank(*, state_index: tuple[int, ...], position: int) -> tuple[float, ...]:
+        values = member_values[(*state_index, position)]
+        members = tuple(
+            item
+            for value in values
+            for item in ((0.0, 0.0) if np.isnan(value) else (1.0, float(value)))
+        )
+        objective = float(objectives[(*state_index, position)])
+        return (objective, *members, -float(action_ids[position]))
+
     for state_index in np.ndindex(state_shape):
-        feasible_nan = False
-        for local_index in range(objectives.shape[-1]):
-            if not feasible[(*state_index, local_index)]:
-                continue
-
-            objective = objectives[(*state_index, local_index)]
-            action_id = int(action_ids[local_index])
-            feasible_nan |= bool(np.isnan(objective))
-            choose = not any_feasible[state_index] or (
-                objective > best_objectives[state_index]
-                or (
-                    objective == best_objectives[state_index]
-                    and action_id < best_ids[state_index]
-                )
-            )
-            if choose:
-                best_objectives[state_index] = objective
-                best_values[state_index] = member_values[(*state_index, local_index)]
-                best_ids[state_index] = action_id
-            any_feasible[state_index] = True
-
-        # Dense GridSearch first takes the masked maximum, then argmaxes the
-        # equality mask. A feasible NaN poisons that maximum, so the equality
-        # mask is all false and the dense positional argmax publishes action zero.
-        if feasible_nan:
-            zero_position = int(np.flatnonzero(action_ids == 0)[0])
+        candidates = [
+            position
+            for position in range(objectives.shape[-1])
+            if feasible[(*state_index, position)]
+        ]
+        if not candidates:
+            continue
+        any_feasible[state_index] = True
+        if any(np.isnan(objectives[(*state_index, p)]) for p in candidates):
             best_objectives[state_index] = np.nan
-            best_values[state_index] = member_values[(*state_index, zero_position)]
+            best_values[state_index] = np.nan
             best_ids[state_index] = 0
+            continue
+        winner = max(
+            candidates,
+            key=lambda position, index=state_index: rank(
+                state_index=index, position=position
+            ),
+        )
+        best_objectives[state_index] = objectives[(*state_index, winner)]
+        best_values[state_index] = member_values[(*state_index, winner)]
+        best_ids[state_index] = action_ids[winner]
 
     return best_objectives, best_values, best_ids, any_feasible
 
@@ -202,41 +211,52 @@ def test_collective_hard_max_ties_use_one_global_winner_for_every_member() -> No
 
 
 @pytest.mark.parametrize(
-    "objectives",
+    ("objectives", "member_values"),
     [
-        pytest.param([-0.0, 0.0], id="negative-then-positive"),
-        pytest.param([0.0, -0.0], id="positive-then-negative"),
-        pytest.param([-0.0, -0.0], id="both-negative"),
+        pytest.param(
+            [-0.0, 0.0], [[-5.0, 10.0], [7.0, 8.0]], id="negative-then-positive"
+        ),
+        pytest.param(
+            [0.0, -0.0], [[-5.0, 10.0], [7.0, 8.0]], id="positive-then-negative"
+        ),
+        pytest.param([-0.0, -0.0], [[-5.0, 10.0], [7.0, 8.0]], id="both-negative"),
+        pytest.param(
+            [3.0, 3.0, 3.0],
+            [[2.0, jnp.nan], [2.0, -jnp.inf], [jnp.nan, 9.0]],
+            id="nan-member-value-loses",
+        ),
     ],
 )
-@pytest.mark.parametrize("blocks", [((0,), (1,)), ((1,), (0,))])
-def test_collective_hard_max_matches_dense_signed_zero_and_keeps_one_winner(
+@pytest.mark.parametrize("reverse", [False, True])
+def test_collective_hard_max_tied_objectives_go_to_the_next_member(
     *,
     objectives: list[float],
-    blocks: tuple[tuple[int, ...], ...],
+    member_values: list[list[float]],
+    reverse: bool,
 ) -> None:
-    """Objective max semantics do not change the smallest-ID member readout."""
+    """Tied objectives, `-0` and `+0` included, go to the members in order.
+
+    A NaN member value ranks below every number. Action 1 wins in every case, in
+    either block order, and publishes its own objective, signed zero included.
+    """
     objective_array = jnp.asarray(objectives, dtype=jnp.float32)[jnp.newaxis, :]
-    member_values = jnp.array(
-        [[[-5.0, 10.0], [7.0, 8.0]]],
-        dtype=jnp.float32,
-    )
-    expected_objective = jnp.max(objective_array, axis=-1)
+    member_array = jnp.asarray(member_values, dtype=jnp.float32)[jnp.newaxis]
+    blocks = tuple((position,) for position in range(len(objectives)))
 
     result = _reduce_blocks(
         objectives=objective_array,
-        member_values=member_values,
+        member_values=member_array,
         feasible=jnp.ones_like(objective_array, dtype=bool),
-        action_ids=jnp.array([0, 1], dtype=jnp.int32),
-        blocks=blocks,
+        action_ids=jnp.arange(len(objectives), dtype=jnp.int32),
+        blocks=blocks[::-1] if reverse else blocks,
     )
 
-    assert_array_equal(result.best_objective, expected_objective)
+    assert_array_equal(result.best_objective, objective_array[:, 1])
     assert_array_equal(
-        jnp.signbit(result.best_objective), jnp.signbit(expected_objective)
+        jnp.signbit(result.best_objective), jnp.signbit(objective_array[:, 1])
     )
-    assert_array_equal(result.best_member_values, member_values[:, 0])
-    assert_array_equal(result.best_global_action_id, jnp.array([0]))
+    assert_array_equal(result.best_member_values, member_array[:, 1])
+    assert_array_equal(result.best_global_action_id, jnp.array([1]))
     assert_array_equal(result.any_feasible, jnp.array([True]))
 
 
@@ -260,7 +280,11 @@ def test_collective_hard_max_distinguishes_all_infeasible_from_feasible_minus_in
     assert_array_equal(result.any_feasible, jnp.array([True, False]))
 
 
-def test_collective_hard_max_preserves_dense_action_zero_nan_readout() -> None:
+def test_collective_hard_max_feasible_nan_objective_makes_every_member_nan() -> None:
+    """A feasible NaN objective at a non-zero action publishes NaN for every member.
+
+    The identity reported is action zero, as on the dense route.
+    """
     objectives = np.array([[10.0, 12.0, np.nan, 7.0]], dtype=np.float32)
     feasible = np.array([[False, True, True, True]])
     action_ids = np.array([0, 7, 12, 3], dtype=np.int32)
@@ -286,6 +310,7 @@ def test_collective_hard_max_preserves_dense_action_zero_nan_readout() -> None:
 
         assert_array_equal(jnp.isnan(result.best_objective), jnp.array([True]))
         assert_array_equal(result.best_member_values, expected[1])
+        assert_array_equal(jnp.isnan(result.best_member_values), [[True, True]])
         assert_array_equal(result.best_global_action_id, expected[2])
         assert_array_equal(result.any_feasible, expected[3])
 
@@ -324,12 +349,14 @@ def test_collective_hard_max_supports_jit_vmap_and_int32_global_ids() -> None:
     feasible = jnp.array([[True, True, True], [True, False, True]])
     result = jax.vmap(reduce_one)(objectives, member_values, feasible)
 
+    # The first row's objective ties at ids 2 and 17; the first member values
+    # id 17 more.
     assert_array_equal(result.best_objective, jnp.array([5.0, 8.0]))
     assert_array_equal(
         result.best_member_values,
-        jnp.array([[20.0, 21.0], [60.0, 61.0]]),
+        jnp.array([[30.0, 31.0], [60.0, 61.0]]),
     )
-    assert_array_equal(result.best_global_action_id, jnp.array([2, 17]))
+    assert_array_equal(result.best_global_action_id, jnp.array([17, 17]))
     assert result.best_global_action_id.dtype == jnp.dtype(jnp.int32)
     assert_array_equal(result.any_feasible, jnp.array([True, True]))
 

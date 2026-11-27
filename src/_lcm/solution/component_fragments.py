@@ -12,7 +12,7 @@ is complete and flushed, so a reader sees a whole file or none; an interrupted
 writer leaves a hidden `.tmp` file that no reader opens.
 
 A fragment holds, per code of its job, the exact host bytes of every value
-block, and optionally the rows of its subjects' simulated panel. Each array is
+block, and optionally the rows of its agents' simulated panel. Each array is
 stored with a SHA-256 over its logical address, shape, dtype and bytes, and
 the JSON manifest with a SHA-256 of its own bytes. Reading a fragment verifies
 all of them before any array is returned. No model, callable or Python object
@@ -50,7 +50,7 @@ PLAN_FILE: Final = "plan.json"
 FRAGMENT_DIRECTORY: Final = "fragments"
 PLAN_FORMAT: Final = "pylcm-component-job-plan"
 FRAGMENT_FORMAT: Final = "pylcm-component-fragment"
-FORMAT_VERSION: Final = 2
+FORMAT_VERSION: Final = 3
 
 _MANIFEST: Final = "manifest"
 _VALUES: Final = "values"
@@ -67,10 +67,10 @@ type LeafAddress = tuple[RegimeName, int, str, str | None]
 class FragmentPanel:
     """The simulated rows one job holds."""
 
-    n_subjects: int
-    """Number of real subjects in the whole population."""
+    n_agents: int
+    """Number of real agents in the whole population."""
 
-    subject_batch_size: int
+    agent_batch_size: int
     """Rows of every chunk the job dispatched."""
 
     rows: np.ndarray
@@ -313,7 +313,7 @@ def _write_fragment_file(
                 identity = {
                     "kind": "value",
                     "code": int(code),
-                    "period": int(period),
+                    "step": int(period),
                     "regime": str(regime),
                 }
                 value_entries.append(
@@ -327,8 +327,8 @@ def _write_fragment_file(
         if panel is not None:
             panel_group = file.create_group(_PANEL)
             manifest["panel"] = {
-                "n_subjects": panel.n_subjects,
-                "subject_batch_size": panel.subject_batch_size,
+                "n_agents": panel.n_agents,
+                "agent_batch_size": panel.agent_batch_size,
                 "regimes": [
                     [regime, list(periods)] for regime, periods in panel.regimes
                 ],
@@ -346,7 +346,7 @@ def _write_fragment_file(
                             identity={
                                 "kind": "panel",
                                 "regime": regime,
-                                "period": period,
+                                "step": period,
                                 "field": field_name,
                                 "key": key,
                             },
@@ -414,7 +414,7 @@ def _read_fragment_file(*, path: Path, file: h5py.File) -> Fragment:
             value=entry["identity"], label=f"fragment {path.name} value address"
         )
         if (
-            set(identity) != {"kind", "code", "period", "regime"}
+            set(identity) != {"kind", "code", "step", "regime"}
             or identity["kind"] != "value"
         ):
             msg = f"Fragment {path.name} has an invalid value address {identity!r}."
@@ -429,7 +429,7 @@ def _read_fragment_file(*, path: Path, file: h5py.File) -> Fragment:
             raise SolutionIntegrityError(msg)
         coordinate = (
             _require_nonnegative_exact_int(
-                value=identity["period"], label=f"fragment {path.name} value period"
+                value=identity["step"], label=f"fragment {path.name} value step"
             ),
             _require_nonempty_exact_str(
                 value=identity["regime"], label=f"fragment {path.name} value regime"
@@ -591,7 +591,7 @@ def _read_panel(
     for leaf in cast("list[dict[str, JSONValue]]", entry["leaves"]):
         identity = _require_exact_dict(value=leaf["identity"], label="raw leaf address")
         if (
-            set(identity) != {"kind", "regime", "period", "field", "key"}
+            set(identity) != {"kind", "regime", "step", "field", "key"}
             or identity["kind"] != "panel"
         ):
             msg = f"Fragment {path.name} has an invalid raw leaf address {identity!r}."
@@ -599,9 +599,7 @@ def _read_panel(
         key = identity["key"]
         address = (
             _require_nonempty_exact_str(value=identity["regime"], label="raw regime"),
-            _require_nonnegative_exact_int(
-                value=identity["period"], label="raw period"
-            ),
+            _require_nonnegative_exact_int(value=identity["step"], label="raw step"),
             _require_nonempty_exact_str(value=identity["field"], label="raw field"),
             None
             if key is None
@@ -615,18 +613,18 @@ def _read_panel(
             _require_exact_dict(value=leaf["layout"], label="raw leaf layout")
         )
     return FragmentPanel(
-        n_subjects=_require_nonnegative_exact_int(
-            value=entry["n_subjects"], label="raw population count"
+        n_agents=_require_nonnegative_exact_int(
+            value=entry["n_agents"], label="raw population count"
         ),
-        subject_batch_size=_require_positive_exact_int(
-            value=entry["subject_batch_size"], label="raw chunk width"
+        agent_batch_size=_require_positive_exact_int(
+            value=entry["agent_batch_size"], label="raw chunk width"
         ),
         rows=rows,
         regimes=tuple(
             (
                 _require_nonempty_exact_str(value=regime, label="raw regime"),
                 tuple(
-                    _require_nonnegative_exact_int(value=period, label="raw period")
+                    _require_nonnegative_exact_int(value=period, label="raw step")
                     for period in _require_exact_list(
                         value=periods, label="raw periods"
                     )

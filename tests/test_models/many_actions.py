@@ -132,7 +132,9 @@ def get_model(
     return Model(
         regimes={"working": working, "dead": dead},
         states={
-            "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=N_WEALTH_POINTS),
+            "wealth": LinSpacedGrid(
+                start=1.0, stop=10.0, n_points=N_WEALTH_POINTS, off_grid="extrapolate"
+            ),
             **({"pref_type": pref_type} if typed and type_at_model_level else {}),
         },
         ages=ages,

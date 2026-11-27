@@ -265,7 +265,7 @@ def test_single_value_larger_than_budget_is_refused(*, n_wealth: int) -> None:
     budget = _leaf_bytes(n_wealth=n_wealth) - 1
     solution = _solve(budget=budget, n_wealth=n_wealth)
     with pytest.raises(ExecutionPlanningError):
-        solution.value(period=0, regime="working")
+        solution.value(step=0, regime="working")
 
 
 def test_bulk_materialization_accounts_for_source_and_copy(
@@ -331,7 +331,7 @@ def test_refused_value_still_saves_from_the_host(*, tmp_path: Path) -> None:
     """A device-read refusal must not make a complete host result unusable."""
     solution = _solve(budget=_leaf_bytes() - 1)
     with pytest.raises(ExecutionPlanningError):
-        solution.value(period=0, regime="working")
+        solution.value(step=0, regime="working")
     path = solution.save(path=tmp_path / "host-result")
     assert path.exists()
 
@@ -339,14 +339,14 @@ def test_refused_value_still_saves_from_the_host(*, tmp_path: Path) -> None:
 def test_admitted_reads_have_independent_buffers_and_exact_values() -> None:
     """Deleting one public read must not destroy the result or another read."""
     solution = _solve(budget=None)
-    first = solution.value(period=0, regime="working")
-    second = solution.value(period=0, regime="working")
+    first = solution.value(step=0, regime="working")
+    second = solution.value(step=0, regime="working")
     jax.block_until_ready((first, second))
     before = np.asarray(second).copy()
     first.delete()
     assert not second.is_deleted()
     np.testing.assert_array_equal(np.asarray(second), before)
-    third = solution.value(period=0, regime="working")
+    third = solution.value(step=0, regime="working")
     np.testing.assert_array_equal(np.asarray(third), before)
     assert np.asarray(third).dtype == before.dtype
     assert third.sharding == second.sharding
@@ -370,7 +370,7 @@ def test_single_value_guard_uses_per_device_replication(*, partitions: int) -> N
         budget=budget, devices=devices, action_partitions=partitions
     ).solve(params={"discount_factor": 0.9}, log_level="off")
     with pytest.raises(ExecutionPlanningError):
-        solution.value(period=0, regime="working")
+        solution.value(step=0, regime="working")
 
 
 @pytest.mark.parametrize("offset", [-1, 0, 1])
@@ -384,11 +384,11 @@ def test_admitted_read_near_two_buffer_bound_preserves_bytes(*, offset: int) -> 
     solution = _solve(budget=2 * leaf + offset, n_wealth=256)
     reference = _solve(budget=None, n_wealth=256)
     try:
-        got = solution.value(period=0, regime="working")
+        got = solution.value(step=0, regime="working")
     except ExecutionPlanningError:
         assert offset == -1
         return
-    expected = reference.value(period=0, regime="working")
+    expected = reference.value(step=0, regime="working")
     jax.block_until_ready((got, expected))
     assert got.shape == expected.shape
     assert got.dtype == expected.dtype

@@ -14,7 +14,7 @@ Two properties of that write are pinned here.
   never entered keep whatever they held.
 - **It covers every state the fallback regime carries in simulation.** A state
   declared `Phased(solve=..., simulate=...)` is no axis of the fallback
-  regime's solved value function but is a genuine per-subject state once
+  regime's solved value function but is a genuine per-agent state once
   simulation runs, so a household entering that regime needs a landing point on
   it exactly as it does on the regime's solved states.
 
@@ -162,7 +162,7 @@ def test_dissolving_household_starts_its_fallback_regime_at_the_projected_career
     """A dissolving wife enters `single_f` at the career her leg projects.
 
     `single_f` declares `career` as a carried state — imputed while the regime
-    is solved, evolved per subject once simulation runs — so the leg routing a
+    is solved, evolved per agent once simulation runs — so the leg routing a
     household into it says where on that axis she lands. At the wage-1
     household the projection is 10.0, replacing the 99.0 the cohort started at.
     """
@@ -230,10 +230,10 @@ def _route_three_households() -> StatesPerRegime:
         same_period_mappings=same_period_mappings,
         next_states=next_states,
         regime_names_to_ids=regime_names_to_ids,
-        new_subject_regime_ids=jnp.full(
+        new_agent_regime_ids=jnp.full(
             n_households, regime_names_to_ids["married_terminal"], dtype=jnp.int32
         ),
-        subjects_in_regime=jnp.ones(n_households, dtype=bool),
+        agents_in_regime=jnp.ones(n_households, dtype=bool),
         flat_params=flat_params,
         own_member=own_member,
         new_own_member=own_member,

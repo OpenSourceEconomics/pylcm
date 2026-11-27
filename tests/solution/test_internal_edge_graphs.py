@@ -153,7 +153,12 @@ class _MaxReduction:
 
 @dataclass(frozen=True, kw_only=True)
 class _StateArguments:
-    """Build the wealth row every root program reads."""
+    """Build the wealth row every root program reads.
+
+    The row carries the regime's trailing member axis of length one, so every
+    program of a graph, each declaring a value-role output, publishes the value
+    shape `(n_wealth, 1)`.
+    """
 
     planned: bool
     """Whether the root also receives the streamed candidate coordinate."""
@@ -164,7 +169,7 @@ class _StateArguments:
         """Return the wealth row, plus the candidate row for a planned root."""
         state_action_space = context.state_action_space
         assert isinstance(state_action_space, StateActionSpace)
-        x = state_action_space.states["wealth"]
+        x = state_action_space.states["wealth"][:, None]
         if not self.planned:
             return {"x": x}
         return {"x": x, "candidate": jnp.arange(_CANDIDATES, dtype=x.dtype)}
@@ -553,14 +558,14 @@ def _model(
     )
 
 
-def _wealth(*, n_wealth: int) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
-    """Return the wealth grid the graph programs read."""
-    return np.linspace(1.0, float(n_wealth), n_wealth)
+def _wealth(*, n_wealth: int) -> np.ndarray[tuple[int, int], np.dtype[np.float64]]:
+    """Return the wealth grid the graph programs read, with its member axis."""
+    return np.linspace(1.0, float(n_wealth), n_wealth)[:, None]
 
 
 def _chain_expectation(
     *, depth: int, planned: bool, n_wealth: int
-) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
+) -> np.ndarray[tuple[int, int], np.dtype[np.float64]]:
     """Return the chain's published row, computed independently of the engine."""
     expected = _wealth(n_wealth=n_wealth) + (_CANDIDATES - 1 if planned else 1)
     for _ in range(depth - 1):

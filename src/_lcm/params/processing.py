@@ -584,7 +584,7 @@ class ParameterTemplateSource(Protocol):
     def edge_params_template(self) -> EdgeParamsTemplate: ...
 
 
-def create_params_template(  # noqa: C901, PLR0912 - validate ordinary and exit namespaces
+def create_params_template(  # noqa: C901, PLR0912 - validate ordinary and composition action namespaces
     *,
     regimes: Mapping[RegimeName, ParameterTemplateSource],
     query_periods_by_phase: Mapping[
@@ -639,10 +639,10 @@ def create_params_template(  # noqa: C901, PLR0912 - validate ordinary and exit 
                     f"Parameter {key!r} in regime {name!r} must be nested under "
                     f"a function name, e.g., {{'function_name': {{'{key}': type}}}}"
                 )
-            if key == "exit":
+            if key == "composition_action":
                 for path in _leaf_paths(val):
                     if errors := path_segment_name_errors(
-                        kind="Exit parameter", names=path
+                        kind="Composition action parameter", names=path
                     ):
                         raise InvalidNameError(errors[0])
                     arg_names |= frozenset((path[-1],))

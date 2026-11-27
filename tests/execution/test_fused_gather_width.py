@@ -293,15 +293,15 @@ def _simulated_choices(*, limit: int | None) -> pd.DataFrame:
         model=model,
     )
     wealth, health = np.meshgrid(np.linspace(1, 5, 5), np.arange(2))
-    n_subjects = wealth.size
+    n_agents = wealth.size
     return model.simulate(
         params=get_multi_regime_params("normal"),
         initial_conditions={
             "health": jnp.asarray(health.ravel(), dtype=jnp.int32),
-            "income": jnp.zeros(n_subjects),
+            "income": jnp.zeros(n_agents),
             "wealth": jnp.asarray(wealth.ravel()),
-            "age": jnp.zeros(n_subjects),
-            "regime_id": jnp.full(n_subjects, MultiRegimeId.work, dtype=jnp.int32),
+            "age": jnp.zeros(n_agents),
+            "regime_id": jnp.full(n_agents, MultiRegimeId.work, dtype=jnp.int32),
         },
         solution=solution,
         log_level="off",

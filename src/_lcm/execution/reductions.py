@@ -92,7 +92,7 @@ class ReductionSemantics(ReductionDeclaration, Protocol):
       identity, which is what makes them exact under any partition;
     - the collective one takes the block's `objectives` and `member_values`
       alongside those, and reads every member at the one identity the
-      household objective selects;
+      Pareto-weighted objective selects;
     - the smoothed one takes `values` and the `scale` its exponential mass is
       rescaled by;
     - the weighted expectation takes `values` and their `weights`.

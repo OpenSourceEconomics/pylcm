@@ -157,7 +157,9 @@ def test_a_curved_fallback_projection_is_priced_where_the_source_lands() -> None
     solution = model.solve(params=_PROJECTION_PARAMS, log_level="off")
 
     aaae(
-        np.asarray(solution.values[0]["source"]), [-0.75] * 3, decimal=DECIMAL_PRECISION
+        np.asarray(solution.values[0]["source"])[..., 0],
+        [-0.75] * 3,
+        decimal=DECIMAL_PRECISION,
     )
 
 
@@ -201,5 +203,7 @@ def test_an_affine_projection_is_left_exactly_where_it_was() -> None:
     solution = model.solve(params=_PROJECTION_PARAMS, log_level="off")
 
     aaae(
-        np.asarray(solution.values[0]["source"]), [-0.75] * 3, decimal=DECIMAL_PRECISION
+        np.asarray(solution.values[0]["source"])[..., 0],
+        [-0.75] * 3,
+        decimal=DECIMAL_PRECISION,
     )

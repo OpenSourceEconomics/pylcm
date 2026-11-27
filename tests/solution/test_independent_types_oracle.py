@@ -32,7 +32,11 @@ def test_values_match_the_enumerated_oracle(period: int) -> None:
     oracle, _ = independent_types.solve_by_enumeration()
 
     (published,) = values[period].values()
-    aaae(np.asarray(published), np.asarray(oracle[period]), decimal=DECIMAL_PRECISION)
+    aaae(
+        np.asarray(published)[..., 0],
+        np.asarray(oracle[period]),
+        decimal=DECIMAL_PRECISION,
+    )
 
 
 def test_simulated_consumption_follows_the_enumerated_policy() -> None:
@@ -57,10 +61,10 @@ def test_simulated_consumption_follows_the_enumerated_policy() -> None:
     working = frame[frame["regime_name"] == "working"]
 
     expected = [
-        float(policies[int(period)][int(types[subject])][int(wealth_now)])
-        for period, subject, wealth_now in zip(
+        float(policies[int(period)][int(types[agent])][int(wealth_now)])
+        for period, agent, wealth_now in zip(
             working["period"].to_numpy(dtype=int),
-            working["subject_id"].to_numpy(dtype=int),
+            working["agent_id"].to_numpy(dtype=int),
             working["wealth"].to_numpy(dtype=float),
             strict=True,
         )
@@ -122,7 +126,7 @@ def test_the_oracle_comparison_rejects_a_different_discount_factor() -> None:
 
     with pytest.raises(AssertionError):
         aaae(
-            np.asarray(values[0]["working"]),
+            np.asarray(values[0]["working"])[..., 0],
             np.asarray(perturbed[0]),
             decimal=DECIMAL_PRECISION,
         )

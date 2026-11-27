@@ -1,14 +1,14 @@
 """Tests for logging the resolved simulation execution plan.
 
 `Model.simulate` reports, once per call, the resolved execution route
-(legacy/subjects), the subject devices, the resolved axis widths, the outer
+(legacy/agents), the agent devices, the resolved axis widths, the outer
 chunk admission and the budget mode -- see
 `_lcm.simulation.plan_summary.SimulationPlanSummary`. This is diagnostic
 only: it changes no numerical, RNG, ownership, or admission decision, so
 several checks below also confirm the simulated output is unaffected by
 whether the record is logged.
 
-The subject-sharded (multi-device) route runs in a four-CPU-device child
+The agent-sharded (multi-device) route runs in a four-CPU-device child
 process, following the idiom in `tests/test_sharded_state_pruned_from_regimes.py`:
 the placement under test only exists where several devices do, and a device
 topology must be pinned before JAX initializes a backend.
@@ -38,25 +38,25 @@ from tests.test_models.deterministic.regression import (
 
 _REPO_ROOT = Path(__file__).parent.parent.parent
 _N_PERIODS = 3
-_N_SUBJECTS = 4
+_N_AGENTS = 4
 _N_DEVICES = 4
 
 
 class _ShardedReport(TypedDict):
     messages: list[str]
     route: str
-    n_subject_devices: int
-    subject_backend: str
+    n_agent_devices: int
+    agent_backend: str
     outer_chunk_count: int
     admitted_chunk_widths: list[int]
     budget_mode: str
 
 
-def _initial_conditions(n_subjects: int = _N_SUBJECTS) -> UserInitialConditions:
+def _initial_conditions(n_agents: int = _N_AGENTS) -> UserInitialConditions:
     return {
-        "wealth": jnp.linspace(10.0, 40.0, n_subjects),
-        "age": jnp.full(n_subjects, 18.0),
-        "regime_id": jnp.full(n_subjects, RegimeId.working_life, dtype=jnp.int32),
+        "wealth": jnp.linspace(10.0, 40.0, n_agents),
+        "age": jnp.full(n_agents, 18.0),
+        "regime_id": jnp.full(n_agents, RegimeId.working_life, dtype=jnp.int32),
     }
 
 
@@ -114,10 +114,10 @@ def test_legacy_run_logs_the_plan_summary_and_detail_at_debug() -> None:
     assert result.plan_summary is not None
     assert result.plan_summary.route == "legacy"
     assert result.plan_summary.outer_chunk_count == 1
-    assert result.plan_summary.admitted_chunk_widths == (_N_SUBJECTS,)
+    assert result.plan_summary.admitted_chunk_widths == (_N_AGENTS,)
     assert result.plan_summary.budget_mode == "unbudgeted"
     assert result.plan_summary.effective_device_memory_bytes is None
-    assert len(result.plan_summary.subject_device_ids) >= 1
+    assert len(result.plan_summary.agent_device_ids) >= 1
     assert "working_life" in result.plan_summary.axis_widths_by_regime
 
 
@@ -192,8 +192,8 @@ def test_a_saved_and_reloaded_result_carries_no_plan_summary(tmp_path: Path) -> 
     pd.testing.assert_frame_equal(reloaded.to_dataframe(), result.to_dataframe())
 
 
-def report_subject_sharded(*, decimal: int) -> _ShardedReport:
-    """Run the subject-sharded route on four CPU devices and report the plan.
+def report_agent_sharded(*, decimal: int) -> _ShardedReport:
+    """Run the agent-sharded route on four CPU devices and report the plan.
 
     Module-level so the four-device child process can import and call it (see
     `_run_in_four_device_process`). `decimal` is unused here (accepted to match
@@ -210,15 +210,15 @@ def report_subject_sharded(*, decimal: int) -> _ShardedReport:
             n_periods=_N_PERIODS,
             execution_config=ExecutionConfig(
                 devices=ids,
-                simulation_sharding="subjects",
-                axis_widths={"subject": _N_DEVICES},
+                simulation_sharding="agents",
+                axis_widths={"agent": _N_DEVICES},
             ),
         )
         params = get_params(n_periods=_N_PERIODS)
         solution = model.solve(params=params, log_level="off")
         result = model.simulate(
             params=params,
-            initial_conditions=_initial_conditions(n_subjects=_N_DEVICES),
+            initial_conditions=_initial_conditions(n_agents=_N_DEVICES),
             solution=solution,
             log_level="debug",
             seed=1,
@@ -233,8 +233,8 @@ def report_subject_sharded(*, decimal: int) -> _ShardedReport:
     return {
         "messages": messages,
         "route": summary.route,
-        "n_subject_devices": len(summary.subject_device_ids),
-        "subject_backend": summary.subject_backend,
+        "n_agent_devices": len(summary.agent_device_ids),
+        "agent_backend": summary.agent_backend,
         "outer_chunk_count": summary.outer_chunk_count,
         "admitted_chunk_widths": list(summary.admitted_chunk_widths),
         "budget_mode": summary.budget_mode,
@@ -274,37 +274,35 @@ def _run_in_four_device_process(*, entry_point: str) -> _ShardedReport:
 
 
 @pytest.fixture(scope="module")
-def subject_sharded() -> _ShardedReport:
-    """Return the subject-sharded report from one four-device child process."""
-    return _run_in_four_device_process(entry_point="report_subject_sharded")
+def agent_sharded() -> _ShardedReport:
+    """Return the agent-sharded report from one four-device child process."""
+    return _run_in_four_device_process(entry_point="report_agent_sharded")
 
 
-def test_subjects_run_logs_the_route_and_device_count(
-    subject_sharded: _ShardedReport,
+def test_agents_run_logs_the_route_and_device_count(
+    agent_sharded: _ShardedReport,
 ) -> None:
-    """The subject-sharded route reports `route=subjects` and every device."""
-    assert subject_sharded["route"] == "subjects"
-    assert subject_sharded["n_subject_devices"] == _N_DEVICES
-    assert subject_sharded["subject_backend"] == "cpu"
+    """The agent-sharded route reports `route=agents` and every device."""
+    assert agent_sharded["route"] == "agents"
+    assert agent_sharded["n_agent_devices"] == _N_DEVICES
+    assert agent_sharded["agent_backend"] == "cpu"
 
 
-def test_subjects_run_logs_at_debug(subject_sharded: _ShardedReport) -> None:
-    """A subjects run at `log_level='debug'` logs both the summary and detail."""
+def test_agents_run_logs_at_debug(agent_sharded: _ShardedReport) -> None:
+    """An agents run at `log_level='debug'` logs both the summary and detail."""
     summary_lines = [
-        m for m in subject_sharded["messages"] if m.startswith("Simulation plan:")
+        m for m in agent_sharded["messages"] if m.startswith("Simulation plan:")
     ]
     detail_lines = [
-        m
-        for m in subject_sharded["messages"]
-        if m.startswith("Simulation plan detail:")
+        m for m in agent_sharded["messages"] if m.startswith("Simulation plan detail:")
     ]
     assert len(summary_lines) == 1
     assert len(detail_lines) == 1
-    assert "route=subjects" in summary_lines[0]
-    assert "route=subjects" in detail_lines[0]
+    assert "route=agents" in summary_lines[0]
+    assert "route=agents" in detail_lines[0]
 
 
-def test_subjects_run_reports_chunking(subject_sharded: _ShardedReport) -> None:
-    """The subjects run reports the outer chunk count and admitted widths."""
-    assert subject_sharded["outer_chunk_count"] >= 1
-    assert sum(subject_sharded["admitted_chunk_widths"]) >= _N_DEVICES
+def test_agents_run_reports_chunking(agent_sharded: _ShardedReport) -> None:
+    """The agents run reports the outer chunk count and admitted widths."""
+    assert agent_sharded["outer_chunk_count"] >= 1
+    assert sum(agent_sharded["admitted_chunk_widths"]) >= _N_DEVICES

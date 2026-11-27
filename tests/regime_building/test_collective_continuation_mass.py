@@ -91,7 +91,7 @@ def test_collective_continuation_prices_each_member_as_its_singleton_twin() -> N
                 log_level="off",
             ).values[0]["couple"]
         )
-    expected_V = jnp.stack(twin_values, axis=-1)
+    expected_V = jnp.concatenate(twin_values, axis=-1)
 
     # Certify the reference against the hand-computed values, so a defect in the
     # twins cannot hide one in the collective path.

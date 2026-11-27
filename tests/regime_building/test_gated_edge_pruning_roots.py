@@ -94,7 +94,7 @@ def test_target_state_read_only_by_an_incoming_projection_counts_as_used() -> No
     ).values
 
     aaae(
-        solution[0]["worker"],
+        solution[0]["worker"][..., 0],
         jnp.asarray(_PROJECTION_MODEL_V_PERIOD_0),
         decimal=DECIMAL_PRECISION,
     )

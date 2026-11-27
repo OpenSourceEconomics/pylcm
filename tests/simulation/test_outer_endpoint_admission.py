@@ -36,6 +36,7 @@ from typing import TypedDict
 
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 
@@ -48,7 +49,10 @@ from _lcm.egm.outer_inversion import (
 from _lcm.egm.outer_replay_capability import OuterReplayCapability
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import Regime
+from lcm.model import Model
+from lcm.solver_api import SolutionResult
 from lcm.solvers import AdaptiveOuterMesh
+from lcm.typing import BoolND, FloatND, ScalarFloat
 from tests.test_models import n_nbegm_toy as toy
 
 
@@ -159,7 +163,7 @@ def _payload(
     domain: tuple[float, float],
     nodes: tuple[float, ...],
     winner: int,
-):
+) -> NestedEGMSimPolicy:
     """A replayable continuous-outer payload whose `winner` node ranks highest.
 
     Every branch publishes the same liquid row, so the published values settle
@@ -209,18 +213,24 @@ def _payload(
     )
 
 
-def _new_illiquid(*, illiquid, investment):
+def _new_illiquid(*, illiquid: FloatND, investment: FloatND) -> FloatND:
     """`s' = Z + Iz`: the outer post-decision the replay inverts."""
     return illiquid + investment
 
 
-def _resources(wealth):
+def _resources(wealth: FloatND) -> FloatND:
     """Liquid resources the recovered pair is checked against."""
     return wealth + 20.0
 
 
-def _falls_back(*, domain, nodes, winner: int, stock: float) -> bool:
-    """Replay one subject at `stock` and report whether it fell back."""
+def _falls_back(
+    *,
+    domain: tuple[float, float],
+    nodes: tuple[float, ...],
+    winner: int,
+    stock: float,
+) -> bool:
+    """Replay one agent at `stock` and report whether it fell back."""
     _, fallback = simulation_module._read_nested_policy(
         payload=_payload(domain=domain, nodes=nodes, winner=winner),
         optimal_actions=MappingProxyType(
@@ -246,7 +256,7 @@ def _falls_back(*, domain, nodes, winner: int, stock: float) -> bool:
     return bool(fallback[0])
 
 
-def _admissible(*, domain, target: float, stock: float) -> bool:
+def _admissible(*, domain: tuple[float, float], target: float, stock: float) -> bool:
     """Report whether finite replay may publish the candidate reaching `target`."""
     at_zero = jnp.asarray([stock])
     inversion = invert_declared_outer_target(
@@ -370,14 +380,14 @@ def test_finite_replay_admits_a_nonnegative_direct_law_endpoint(endpoint: int) -
     )
 
 
-def _build(route: str):
+def _build(route: str) -> Model:
     """The smooth two-asset toy under the requested outer search."""
     return toy.build_model(
         variant="n_nbegm", n_periods=_N_PERIODS, outer_search=_ROUTES[route]
     )
 
 
-def _simulate(*, model, solution=None):
+def _simulate(*, model: Model, solution: SolutionResult | None = None) -> pd.DataFrame:
     """Simulate the toy from the shared initial conditions."""
     return model.simulate(
         params=_PARAMS,
@@ -394,14 +404,16 @@ def route(request: pytest.FixtureRequest) -> str:
 
 
 @pytest.fixture(scope="module")
-def solved(route: str):
+def solved(route: str) -> tuple[Model, SolutionResult]:
     """The model plus the complete result its own `solve()` returned."""
     model = _build(route)
     solution = model.solve(params=_PARAMS, log_level="debug")
     return model, solution
 
 
-def test_both_workflows_publish_the_same_endpoint_admissions(solved) -> None:
+def test_both_workflows_publish_the_same_endpoint_admissions(
+    solved: tuple[Model, SolutionResult],
+) -> None:
     """Automatic and split solve-and-simulate admit the same candidates."""
     model, solution = solved
 
@@ -411,10 +423,10 @@ def test_both_workflows_publish_the_same_endpoint_admissions(solved) -> None:
     )
 
 
-def test_a_simulated_nonnegative_model_admits_every_realized_subject(
-    monkeypatch,
+def test_a_simulated_nonnegative_model_admits_every_realized_agent(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The endpoint rule admits the subjects a nonnegative toy actually reaches.
+    """The endpoint rule admits the agents a nonnegative toy actually reaches.
 
     The refusals above are only half the contract: a replay that dropped every
     candidate would satisfy them and publish the action-grid winner throughout.
@@ -423,12 +435,14 @@ def test_a_simulated_nonnegative_model_admits_every_realized_subject(
     pins the other half, that admission is the normal outcome.
 
     What admission being normal means here is that the read admits the branch
-    it settles on for some subject and the run publishes.
+    it settles on for some agent and the run publishes.
     """
     admissions = []
     admissible = simulation_module.outer_candidate_is_admissible
 
-    def record(*, image, target, low, high):
+    def record(
+        *, image: FloatND, target: FloatND, low: ScalarFloat, high: ScalarFloat
+    ) -> BoolND:
         verdict = admissible(image=image, target=target, low=low, high=high)
         admissions.append(verdict)
         return verdict

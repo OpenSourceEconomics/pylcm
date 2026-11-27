@@ -53,16 +53,11 @@ from _lcm.zero_safe import factored_weighted_term
 from lcm.exceptions import RegimeInitializationError
 from lcm.shocks import (
     Discrete,
-    Law,
-    LogNormal,
     MonteCarlo,
     NodeSet,
-    Normal,
-    NormalMixture,
     QuasiMonteCarlo,
     ShockGroupName,
     ShockName,
-    Uniform,
 )
 from lcm.typing import BoolND, FloatND, IntND
 
@@ -87,7 +82,8 @@ def support_size(*, node: QueryNode, period: int) -> int:
 
 def draw_rows(*, node: QueryNode) -> int:
     """Rows a drawn query gives each kept row: its samples, and one more that
-    carries the mass where no exit is available when its draws avoid that mass.
+    carries the mass where no composition action is available when its draws
+    avoid that mass.
     """
     rule = cast("tuple[MonteCarlo | QuasiMonteCarlo, tuple[int, ...]]", node.sample)[0]
     return rule.n + (node.draw_condition is not None)
@@ -118,6 +114,7 @@ def _uniforms(
 ) -> np.ndarray:
     """One point of the unit cube per sample, fixed by the rule, period and owner."""
     encoded = json.dumps(
+        # Frozen identity: the tag seeds the draws and keeps its spelling.
         ("pylcm-exit-query-rule", 1, rule.seed, period, owner),
         ensure_ascii=True,
         separators=(",", ":"),
@@ -139,8 +136,8 @@ def _uniforms(
 def sample_uniforms(*, node: QueryNode) -> np.ndarray:
     """A drawn query's points: one column per drawn group, then per observation.
 
-    The row that carries the mass without an available exit gets the cube's
-    centre; its value is the stay value, which reads no drawn axis.
+    The row that carries the mass without an available composition action gets
+    the cube's centre; its value is the stay value, which reads no drawn axis.
     """
     rule, kept = cast(
         "tuple[MonteCarlo | QuasiMonteCarlo, tuple[int, ...]]", node.sample
@@ -191,7 +188,7 @@ def _draw_available(
 
     Args:
         weights: The group's factors, one row per factor, over its nodes.
-        available: Whether an exit is available at each node.
+        available: Whether the composition action is available at each node.
         uniform: Points of the unit interval, one per draw.
 
     Returns:
@@ -214,13 +211,14 @@ def _draw_available(
     return jnp.append(row, node), jnp.append(scale, rest_scale)
 
 
-def _exit_available(
+def _composition_action_available(
     *,
     predicate: Callable[..., PytreeValue],
     arguments: QAndFKwargs,
     physical: Mapping[ShockName, FloatND | IntND],
 ) -> BoolND:
-    """Whether the exit is available at each node of one group's realisation."""
+    """Whether the composition action is available at each node of one group's
+    realisation."""
 
     def at_node(shocks: Mapping[ShockName, FloatND | IntND]) -> BoolND:
         return jnp.asarray(
@@ -422,24 +420,6 @@ def _refuse_pinning(*, name: str, group: ShockGroupName, reason: str) -> NoRetur
     )
 
 
-def _static_informative(*, law: Law) -> bool | None:
-    """Whether a law's spread fields are literals giving it a nondegenerate spread."""
-    spread = (
-        ("sigma",)
-        if isinstance(law, Normal | LogNormal)
-        else ("start", "stop")
-        if isinstance(law, Uniform)
-        else ()
-    )
-    values = [getattr(law, field) for field in spread]
-    if not values or not all(
-        isinstance(value, int | float) and not isinstance(value, bool)
-        for value in values
-    ):
-        return None
-    return values[0] > 0 if len(values) == 1 else values[1] > values[0]
-
-
 def _pinned_columns(
     *, name: str, definitions: Mapping[str, QueryNode]
 ) -> tuple[int, ...]:
@@ -450,14 +430,11 @@ def _pinned_columns(
     - an available informative observation pins each row's base to the held base;
     - an unavailable observation leaves the rows free, but this node is then one
       of the observation's producing aliases and is itself unavailable;
-    - an uninformative caller law leaves the rows free. An observed group's law
-      here is the one its aliases proved equal to the producer's. A caller's own
-      group is pinned when the caller's spread is a positive literal, the law here
-      a zero literal, or both the identical law without state inputs; otherwise
-      the rows can differ and the model is refused.
+    - an uninformative caller law leaves the rows free, and is uninformative
+      here too. An observed group's law here is the one its aliases proved equal
+      to the producer's; a caller's own group's law is the caller's, which the
+      build proved to be the same at the caller's state and at the landing state.
     """
-    from _lcm.shock_projection import _law_record  # noqa: PLC0415
-
     node = definitions[name]
     plan = node.context.current_iid_plans.get(node.read.period)
     if plan is None or not node.ancestors:
@@ -470,45 +447,16 @@ def _pinned_columns(
         shocks = binding.group.shocks
         if not shocks.keys() <= observed:
             continue
-        for shock, law in shocks.items():
-            source_group, source, observation = sources[shock]
-            if observation:
-                if name not in parent.observation_aliases[source_group]:
-                    _refuse_pinning(
-                        name=name,
-                        group=group,
-                        reason="the query is not a producing alias of the "
-                        "observation, so it can run when the observation is "
-                        "unavailable. Supporting it needs a representative "
-                        "chosen per cell at run time.",
-                    )
-                continue
-            if (
-                isinstance(law, Discrete | NormalMixture)
-                or _static_informative(law=source.group.shocks[shock]) is True
-                or _static_informative(law=law) is False
-            ):
-                continue
-            record = _law_record(
-                shock=shock, group=group, binding=binding, parameter_paths={}
-            )
-            if not isinstance(law, Normal | LogNormal | Uniform) or (
-                record[1]
-                or record
-                != _law_record(
-                    shock=shock,
-                    group=source_group,
-                    binding=source,
-                    parameter_paths={},
-                )
-            ):
+        for shock in shocks:
+            source_group, _, observation = sources[shock]
+            if observation and name not in parent.observation_aliases[source_group]:
                 _refuse_pinning(
                     name=name,
                     group=group,
-                    reason=f"the law of {shock!r} is not the caller's state-free "
-                    "law, so an uninformative caller law need not make it "
-                    "degenerate here. Supporting it needs a proof that both laws "
-                    "share their informativeness.",
+                    reason="the query is not a producing alias of the "
+                    "observation, so it can run when the observation is "
+                    "unavailable. Supporting it needs a representative "
+                    "chosen per cell at run time.",
                 )
         columns.append(column)
     return tuple(columns)
@@ -677,7 +625,7 @@ def _callable_reads(
     and through the parent projection helpers it applies first. Any other
     callable that takes the physical frames could read anything.
     """
-    from _lcm.exit_queries import _Available  # noqa: PLC0415
+    from _lcm.composition_queries import _Available  # noqa: PLC0415
     from _lcm.policy_queries import _PHYSICAL_CONTEXTS  # noqa: PLC0415
     from _lcm.utils.functools import ComposedProjection  # noqa: PLC0415
 
@@ -1198,9 +1146,9 @@ def own_stay_classes(
     """Classes of a query's own rows its action problem cannot tell apart.
 
     Only an unguarded policy query qualifies: its stay table is then the same
-    at every row of a class, and its exit decision still runs at every row. A
-    guarded query's guard may read any of its rows. See `_row_classes` for the
-    result.
+    at every row of a class, and its decision on the composition still runs at
+    every row. A guarded query's guard may read any of its rows. See
+    `_row_classes` for the result.
     """
     node = definitions[name]
     if (
@@ -1740,8 +1688,8 @@ class InformationQueryCell:
         realises, and one uniform per observation axis and row.
 
         Under a draw condition (`QueryNode.draw_condition`) that group is drawn
-        among the nodes where an exit is available, and a last sample per kept
-        row stands for the rest of its mass at full sample weight.
+        among the nodes where the composition action is available, and a last
+        sample per kept row stands for the rest of its mass at full sample weight.
         """
         rule, kept = cast(
             "tuple[MonteCarlo | QuasiMonteCarlo, tuple[int, ...]]", node.sample
@@ -1781,9 +1729,10 @@ class InformationQueryCell:
                     if column != node.draw_condition
                     else _draw_available(
                         weights=weights,
-                        available=_exit_available(
+                        available=_composition_action_available(
                             predicate=cast(
-                                "Callable[..., PytreeValue]", node.exit_availability
+                                "Callable[..., PytreeValue]",
+                                node.composition_action_availability,
                             ),
                             arguments=arguments,
                             physical=site_frame.physical,
@@ -1917,7 +1866,7 @@ class InformationQueryCell:
         """The observed group's node at `row`: its frame, weights and node index.
 
         An unavailable observation yields the neutral representative, which
-        names node zero. Its settlement and law run only on a discarded batch
+        names node zero. Its transfer and law run only on a discarded batch
         lane, reading the producer's stand-in state rather than an unusable
         projection.
 
@@ -2178,8 +2127,8 @@ class InformationQueryCell:
         """This query's stay table once per class of its own rows, and the class
         of each row position; None when every row position is its own class.
 
-        The table holds no participation, which reads the row's exit payoffs; the
-        cell adds it at each row.
+        The table holds no participation, which reads the row's composition action
+        payoffs; the cell adds it at each row.
         """
         from _lcm.policy_queries import (  # noqa: PLC0415
             _PHYSICAL_CONTEXTS,
@@ -2488,7 +2437,7 @@ def _with_unavailable_nodes(
 
 def _standing_rows(*, node: QueryNode) -> np.ndarray:
     """Whether each plan row of a query realises the node standing for the nodes
-    where its exit is unavailable (`QueryNode.available_nodes`)."""
+    where its composition action is unavailable (`QueryNode.available_nodes`)."""
     column, available = cast("tuple[int, tuple[bool, ...]]", node.available_nodes)
     plan = cast("CurrentIIDPlan", _plan(node=node))
     return ~np.asarray(available)[np.asarray(plan.indices)[:, column]]

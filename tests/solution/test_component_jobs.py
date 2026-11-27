@@ -50,7 +50,7 @@ def _model(*, enable_jit: bool = True) -> Model:
         regime_id_class=life_cycle._RegimeId,
         initial_nodes={0: "work"},
         execution_config=lifetime._config(
-            schedule=InvariantBlockSchedule.BLOCK_MAJOR, subject_width=3
+            schedule=InvariantBlockSchedule.BLOCK_MAJOR, agent_width=3
         ),
         enable_jit=enable_jit,
     )
@@ -220,7 +220,7 @@ def _reseal_manifest[Field](*, file: h5py.File, manifest: Mapping[str, Field]) -
 def test_collected_jobs_equal_complete_single_process_result_bitwise(
     complete_campaign: CompleteCampaign,
 ) -> None:
-    """Three component jobs preserve every value, raw leaf and subject's panel."""
+    """Three component jobs preserve every value, raw leaf and agent's panel."""
     component_jobs = importlib.import_module("lcm.component_jobs")
     directory, model, params, reference = complete_campaign
     collected = component_jobs.collect_component_jobs(
@@ -415,7 +415,7 @@ def test_one_dataset_cannot_supply_distinct_panel_addresses(
             for leaf in leaves
             if leaf["identity"]["field"] == "nested_policy_fallback"
             and leaf["identity"]["regime"] == source["identity"]["regime"]
-            and leaf["identity"]["period"] == source["identity"]["period"]
+            and leaf["identity"]["step"] == source["identity"]["step"]
         )
         array = np.asarray(file[source["dataset"]][()])
         target_array = np.asarray(file[target["dataset"]][()])
@@ -468,7 +468,7 @@ def test_fragment_metadata_preserves_exact_address_types(
         elif corruption == "code-fraction":
             identity["code"] += 0.5
         elif corruption == "period-fraction":
-            identity["period"] += 0.5
+            identity["step"] += 0.5
         elif corruption == "kind":
             identity["kind"] = "panel"
         elif corruption == "shape-fraction":
@@ -547,10 +547,10 @@ def test_collector_binds_plan_coordinates_to_the_model(
         )
 
 
-def test_collector_requires_values_of_an_empty_subject_type(
+def test_collector_requires_values_of_an_empty_agent_type(
     *, tmp_path: Path, complete_campaign: CompleteCampaign
 ) -> None:
-    """Complete subject coverage does not authorize omitting an original value code."""
+    """Complete agent coverage does not authorize omitting an original value code."""
     component_jobs = importlib.import_module("lcm.component_jobs")
     campaign, model, params, _ = complete_campaign
     directory = shutil.copytree(campaign, tmp_path / "jobs")
@@ -633,10 +633,11 @@ def test_collector_validates_model_owned_fixed_raw_fields(
                     continue
                 array = np.asarray(file[leaf["dataset"]][()])
                 if corruption.endswith("shape"):
-                    if array.ndim != 1:
-                        msg = "The shape witness requires a singleton raw array."
+                    # An agent's mask is a scalar; its value carries the member axis.
+                    if array.ndim != (2 if corruption == "value-shape" else 1):
+                        msg = "The shape witness requires a known raw array rank."
                         raise ValueError(msg)
-                    array = array[:, None]
+                    array = array[..., None]
                 elif corruption == "role-dtype":
                     array = array.astype(np.float64)
                 elif corruption == "mask-dtype":
@@ -780,16 +781,16 @@ def test_fragment_headers_and_panels_preserve_exact_metadata(
         elif corruption in {"panel-period", "panel-kind"}:
             leaf = manifest["panel"]["leaves"][0]
             if corruption == "panel-period":
-                leaf["identity"]["period"] += 0.5
+                leaf["identity"]["step"] += 0.5
             else:
                 leaf["identity"]["kind"] = "value"
             leaf["sha256"] = _array_checksum(
                 identity=leaf["identity"], array=np.asarray(file[leaf["dataset"]][()])
             )
         elif corruption == "population-count":
-            manifest["panel"]["n_subjects"] += 0.5
+            manifest["panel"]["n_agents"] += 0.5
         else:
-            manifest["panel"]["subject_batch_size"] += 0.5
+            manifest["panel"]["agent_batch_size"] += 0.5
         _reseal_manifest(file=file, manifest=manifest)
 
     with pytest.raises(SolutionIntegrityError):
@@ -798,7 +799,7 @@ def test_fragment_headers_and_panels_preserve_exact_metadata(
         )
 
 
-@pytest.mark.parametrize("field_name", ["seed", "n_subjects"])
+@pytest.mark.parametrize("field_name", ["seed", "n_agents"])
 def test_loaded_plan_preserves_exact_simulation_integers(
     *, tmp_path: Path, complete_campaign: CompleteCampaign, field_name: str
 ) -> None:
@@ -816,7 +817,7 @@ def test_loaded_plan_preserves_exact_simulation_integers(
 
 @pytest.mark.parametrize(
     ("field_name", "foreign"),
-    [("seed", None), ("n_subjects", 0), ("initial_conditions_sha256", 123)],
+    [("seed", None), ("n_agents", 0), ("initial_conditions_sha256", 123)],
 )
 def test_loaded_simulation_plan_preserves_a_complete_admitted_bundle(
     *,
@@ -825,7 +826,7 @@ def test_loaded_simulation_plan_preserves_a_complete_admitted_bundle(
     field_name: str,
     foreign: int | None,
 ) -> None:
-    """A simulation plan needs an integer seed, subjects and a population digest."""
+    """A simulation plan needs an integer seed, agents and a population digest."""
     component_jobs = importlib.import_module("lcm.component_jobs")
     campaign, _, _, _ = complete_campaign
     directory = shutil.copytree(campaign, tmp_path / "jobs")

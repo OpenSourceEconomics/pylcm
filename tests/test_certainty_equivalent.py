@@ -398,14 +398,6 @@ def test_nbegm_with_taste_shocks_rejects_certainty_equivalent() -> None:
         )
 
 
-def _resources(wealth: ContinuousState) -> FloatND:
-    return wealth
-
-
-def _savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
-    return resources - consumption
-
-
 _NBEGM_FUNCTIONS: dict[str, FunctionEntry] = {
     "utility": _utility_alive,
     "resources": _resources,
@@ -984,7 +976,7 @@ def test_stateless_target_is_transformed_before_the_regime_expectation(
     consumption = np.asarray(_CONSUMPTION.to_jax())
     best_flow = np.array([np.log(consumption[consumption <= w].max()) for w in wealth])
     np.testing.assert_allclose(
-        np.asarray(V[0]["alive"]),
+        np.asarray(V[0]["alive"])[..., 0],
         best_flow + discount_factor * _STATELESS_BEQUEST,
         rtol=1e-6,
         err_msg=f"risk_aversion={risk_aversion}",
@@ -1130,7 +1122,7 @@ def test_epstein_zin_solved_values_match_numpy_reference(risk_aversion: float) -
     for period, expected_arr in expected.items():
         # Engine axis order: (health, wealth); reference: (wealth, health).
         np.testing.assert_allclose(
-            np.asarray(solution[period]["alive"]),
+            np.asarray(solution[period]["alive"])[..., 0],
             expected_arr.T,
             rtol=5e-5,
             err_msg=f"period={period}",
@@ -2257,9 +2249,7 @@ def test_quasi_arithmetic_mean_aggregate_propagates_a_negative_weight() -> None:
     here `2.0`, a number a well-posed lottery could genuinely produce — for a
     specification that is not a lottery at all.
     """
-    got = QuasiArithmeticMean(
-        transform=lambda value: value, inverse=lambda value: value
-    ).aggregate(
+    got = QuasiArithmeticMean(transform=_identity, inverse=_identity).aggregate(
         values=jnp.array([1.0, 2.0]),
         weights=jnp.array([2.0, -1.0]),
         params={},
@@ -2292,9 +2282,7 @@ def test_quasi_arithmetic_mean_gradient_is_finite_at_an_impossible_node() -> Non
 
 def test_quasi_arithmetic_mean_aggregate_still_drops_an_impossible_node() -> None:
     """A weight of exactly zero remains a null event, whatever value stands there."""
-    got = QuasiArithmeticMean(
-        transform=lambda value: value, inverse=lambda value: value
-    ).aggregate(
+    got = QuasiArithmeticMean(transform=_identity, inverse=_identity).aggregate(
         values=jnp.array([1.0, jnp.nan, 2.0]),
         weights=jnp.array([0.5, 0.0, 0.5]),
         params={},
@@ -2363,7 +2351,7 @@ def _exact_linear_mean(*, dtype: DTypeLike, exponent: int) -> float:
     "mean",
     [
         LinearExpectation(),
-        QuasiArithmeticMean(transform=lambda value: value, inverse=lambda value: value),
+        QuasiArithmeticMean(transform=_identity, inverse=_identity),
     ],
     ids=["linear", "identity_quasi"],
 )
@@ -2480,7 +2468,7 @@ def test_a_mean_that_states_both_reductions_is_accepted(x64_enabled: None) -> No
     "mean",
     [
         LinearExpectation(),
-        QuasiArithmeticMean(transform=lambda value: value, inverse=lambda value: value),
+        QuasiArithmeticMean(transform=_identity, inverse=_identity),
     ],
     ids=["linear", "identity_quasi"],
 )

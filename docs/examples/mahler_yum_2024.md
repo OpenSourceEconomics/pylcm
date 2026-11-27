@@ -34,7 +34,7 @@ from lcm_examples.mahler_yum_2024.paper import (
 model = create_mahler_yum_model(implementation="paper")
 model_params, initial_conditions = create_inputs(
     seed=7235,
-    n_simulation_subjects=1_000,
+    n_simulation_agents=1_000,
     params=START_PARAMS,
 )
 model_params = adapt_params_to_paper_mode(model_params)

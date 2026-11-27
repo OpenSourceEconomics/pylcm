@@ -17,11 +17,12 @@ from typing import cast
 
 from _lcm.constraints.dispositions import (
     ConstraintContext,
+    ConstraintDisposition,
     Evaluate,
     ProvedByConstruction,
     Reject,
 )
-from _lcm.constraints.processed import normalize_constraints
+from _lcm.constraints.processed import ConstraintLike, normalize_constraints
 from _lcm.constraints.routes import ConstraintRoute, plan_constraints
 from _lcm.engine import VariableInfo, Variables
 from _lcm.solution.contract import ConstraintRouteContext, SolutionKernels
@@ -162,7 +163,9 @@ def _routes_of(*, solver: Solver, phase: str = "solve") -> tuple[ConstraintRoute
     return routes
 
 
-def _disposition(*, solver, constraint, phase="solve"):
+def _disposition(
+    *, solver: Solver, constraint: ConstraintLike, phase: str = "solve"
+) -> ConstraintDisposition:
     """Plan one constraint over `solver`'s routes for one phase."""
     routes = _routes_of(solver=solver, phase=phase)
     plan = plan_constraints(
@@ -188,15 +191,17 @@ def test_grid_search_evaluates_at_the_state_action_stage_when_solving() -> None:
         solver=GridSearch(), constraint=ref("consumption") <= 5.0
     )
 
+    assert isinstance(disposition, Evaluate)
     assert disposition.stage == "state_action"
 
 
 def test_grid_search_evaluates_at_the_simulation_stage_when_simulating() -> None:
-    """The simulate phase checks feasibility against the subject's own candidate."""
+    """The simulate phase checks feasibility against the agent's own candidate."""
     disposition = _disposition(
         solver=GridSearch(), constraint=ref("consumption") <= 5.0, phase="simulate"
     )
 
+    assert isinstance(disposition, Evaluate)
     assert disposition.stage == "simulation"
 
 
@@ -232,6 +237,7 @@ def test_dcegm_evaluates_at_the_discrete_combo_stage() -> None:
     """A non-exact envelope builds the feasibility predicate per discrete combo."""
     disposition = _disposition(solver=_fues_dcegm(), constraint=ref("retire") <= 1)
 
+    assert isinstance(disposition, Evaluate)
     assert disposition.stage == "discrete_combo"
 
 
@@ -239,6 +245,7 @@ def test_exact_dcegm_evaluates_at_the_state_node_stage() -> None:
     """The exact envelope evaluates feasibility at published current-state nodes."""
     disposition = _disposition(solver=_dcegm(), constraint=ref("retire") <= 1)
 
+    assert isinstance(disposition, Evaluate)
     assert disposition.stage == "state_node"
 
 
@@ -417,6 +424,7 @@ def test_the_proof_names_the_savings_grid_as_what_enforces_the_bound() -> None:
     """A diagnostic has to be able to quote what discharged a constraint."""
     disposition = _disposition(solver=_dcegm(), constraint=ref("savings") >= 0.0)
 
+    assert isinstance(disposition, ProvedByConstruction)
     assert "savings grid" in disposition.proof.reason
 
 

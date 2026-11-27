@@ -79,7 +79,7 @@ def test_kept_regime_mass_publishes_the_pinned_value(
         params=_params(certainty_equivalent=certainty_equivalent), log_level="off"
     ).values
     np.testing.assert_array_almost_equal(
-        np.asarray(values[0]["alive"])[1, [0, 4, 9]],
+        np.asarray(values[0]["alive"])[1, [0, 4, 9], 0],
         _EXPECTED_KEPT_V[certainty_equivalent],
         decimal=DECIMAL_PRECISION,
     )

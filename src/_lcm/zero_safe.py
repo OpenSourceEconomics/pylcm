@@ -326,6 +326,8 @@ def scaled_lottery_mean(
     coefficient that is negative, infinite, or NaN poisons its whole row.
     Relative shift spans and the derived exponent sums must fit int32.
 
+    Differentiating through the mean raises `UnsupportedDifferentiationError`.
+
     Args:
         values: Continuation values of the lottery along the last axis.
         coefficients: The weights' significands, over the same axis.
@@ -336,6 +338,13 @@ def scaled_lottery_mean(
         is zero only when the row has no live node.
 
     """
+    return _scaled_lottery_mean_no_derivative(values, coefficients, shifts)
+
+
+# keyword-only-exempt: library-callback=jax.custom_jvp
+def _scaled_lottery_mean_primal(
+    values: FloatND, coefficients: FloatND, shifts: IntND
+) -> tuple[FloatND, FloatND]:
     coefficients = jnp.asarray(coefficients)
     values = jnp.asarray(values)
     shifts = center_lottery_shifts(coefficients=coefficients, shifts=shifts)
@@ -392,6 +401,9 @@ def scaled_lottery_mean(
     nan = jnp.asarray(jnp.nan, dtype=coefficients.dtype)
     invalid_row = jnp.any(invalid, axis=-1)
     return jnp.where(invalid_row, nan, mean), jnp.where(invalid_row, nan, mass)
+
+
+_scaled_lottery_mean_no_derivative = without_derivative(_scaled_lottery_mean_primal)
 
 
 def _largest_selected(

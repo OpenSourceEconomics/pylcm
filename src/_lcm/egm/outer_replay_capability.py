@@ -128,7 +128,7 @@ def resolve_outer_replay_capability(
         outer_no_adjustment_name: The keeper's declared candidate, or `None`
             when keeping means holding the outer state unchanged.
         outer_state_name: The stock the keeper holds.
-        state_names: The states a replay reads at each subject.
+        state_names: The states a replay reads at each agent.
         row_passive_state_names: Passive continuous row axes of the published
             branch rows, in axis order.
         row_discrete_action_names: Discrete-action row axes of those rows.
@@ -183,9 +183,9 @@ def fail_if_continuous_outer_replay_is_unsupported(
     """Refuse to publish a continuous-outer payload replay cannot answer.
 
     The adaptive mesh's reader rebuilds the keeper/adjuster comparison at each
-    subject's own state: it recovers the outer action by subtracting the
+    agent's own state: it recovers the outer action by subtracting the
     declared map's offset, evaluates that map and the keeper's candidate there,
-    and addresses each branch row by the subject's discrete states plus one
+    and addresses each branch row by the agent's discrete states plus one
     bracketed passive continuous state. A declaration outside that envelope
     leaves the reader publishing the generic action-grid winner, which ranks a
     different candidate set and reports no error for doing so -- so it stops
@@ -217,7 +217,7 @@ def fail_if_continuous_outer_replay_is_unsupported(
     if capability.unavailable_keeper_states:
         findings.append(
             f"keeping means holding {list(capability.unavailable_keeper_states)} "
-            "unchanged, which replay does not read at each subject"
+            "unchanged, which replay does not read at each agent"
         )
     if capability.unaddressable_passive_states:
         findings.append(

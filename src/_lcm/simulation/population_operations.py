@@ -56,14 +56,14 @@ def match_starting_periods[ArrayT: (jax.Array, np.ndarray)](
     """Match each initial age to its period with searchsorted and isclose.
 
     Args:
-        initial_ages: One initial age per subject.
+        initial_ages: One initial age per agent.
         age_values: The age grid's values.
         xp: Array namespace evaluating the rule: `jax.numpy` inside the
             simulation's profiled operations, `numpy` for host-side admission on
             arrays already cast to the simulation's precision.
 
     Returns:
-        Each subject's period index, whether its age is a grid point, and
+        Each agent's period index, whether its age is a grid point, and
         whether every age is a grid point.
 
     """

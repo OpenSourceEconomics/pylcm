@@ -97,7 +97,11 @@ def _build_pension_regime() -> UserRegime:
     )
 
 
-_DEAD = UserRegime(functions={"utility": lambda: 0.0})
+def _zero_utility() -> float:
+    return 0.0
+
+
+_DEAD = UserRegime(functions={"utility": _zero_utility})
 
 
 def _build_pension_model(*, pension_as_pair: bool) -> Model:
@@ -187,7 +191,7 @@ def _simulate_pension(*, model: Model, pension_seed: list[float]) -> pd.DataFram
         },
     )
     working = result.to_dataframe().query('regime_name == "working"')
-    return working.set_index(["subject_id", "period"]).sort_index()
+    return working.set_index(["agent_id", "period"]).sort_index()
 
 
 def test_simulate_seeds_and_evolves_true_pension_wealth() -> None:
@@ -204,7 +208,7 @@ def test_simulate_seeds_and_evolves_true_pension_wealth() -> None:
 
 
 def test_simulate_decides_on_imputed_but_accounts_on_true_pension() -> None:
-    """Two subjects with equal AIME impute equal pension, so they choose the same
+    """Two agents with equal AIME impute equal pension, so they choose the same
     consumption; their realized next wealth differs by exactly the true-pension gap."""
     sim = _simulate_pension(
         model=_build_pension_model(pension_as_pair=True), pension_seed=[5.0, 15.0]
@@ -241,7 +245,7 @@ def test_simulate_compiled_runtime_carries_carried_state() -> None:
     sim = (
         result.to_dataframe()
         .query('regime_name == "working"')
-        .set_index(["subject_id", "period"])
+        .set_index(["agent_id", "period"])
         .sort_index()
     )
     np.testing.assert_allclose(sim["pension_wealth"].loc[(0, 1)], 5.0 * 1.03)
@@ -262,7 +266,7 @@ def _retired_utility(pension_wealth: float) -> FloatND:
     return jnp.log(pension_wealth)
 
 
-_DEAD3 = UserRegime(functions={"utility": lambda: 0.0})
+_DEAD3 = UserRegime(functions={"utility": _zero_utility})
 
 
 def _build_handover_model() -> Model:
@@ -331,7 +335,7 @@ def test_simulate_evolves_carried_state_across_carried_only_handover() -> None:
             "regime_id": jnp.array([_ThreeRegimeId.working]),
         },
     )
-    sim = result.to_dataframe().set_index(["subject_id", "period"]).sort_index()
+    sim = result.to_dataframe().set_index(["agent_id", "period"]).sort_index()
     assert sim.loc[(0, 2), "regime_name"] == "retired"
     np.testing.assert_allclose(
         float(cast("float", sim.loc[(0, 2), "pension_wealth"])), 10.0 * 1.03**2
@@ -351,8 +355,9 @@ def test_solve_V_axis_order_follows_canonical_state_order() -> None:
     solution = _solve_pension_model(model)
     for regime_to_V in solution.values():
         if "working" in regime_to_V:
-            # wealth has 10 points, aime 5; pension_wealth contributes no axis.
-            assert regime_to_V["working"].shape == (10, 5)
+            # wealth has 10 points, aime 5; pension_wealth contributes no axis;
+            # the trailing axis is the member axis.
+            assert regime_to_V["working"].shape == (10, 5, 1)
 
 
 def _pension_double(pension_wealth: float) -> float:
@@ -394,7 +399,7 @@ def test_additional_targets_read_carried_value() -> None:
     sim = (
         result.to_dataframe(additional_targets=["pension_double"])
         .query('regime_name == "working"')
-        .set_index(["subject_id", "period"])
+        .set_index(["agent_id", "period"])
         .sort_index()
     )
     np.testing.assert_allclose(
@@ -508,4 +513,4 @@ def test_solved_V_is_accepted_back_by_simulate() -> None:
             "regime_id": jnp.array([RegimeId.working]),
         },
     )
-    assert result.n_subjects == 1
+    assert result.n_agents == 1

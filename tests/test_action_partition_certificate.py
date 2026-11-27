@@ -76,7 +76,7 @@ def test_direct_flow_names_the_action_partitioned_route() -> None:
         repo_root=Path(__file__).parents[1]
     )
     assert result["ok"], result["errors"]
-    assert "singleton_action_partitioned_solve" in result["routes"]
+    assert "collective_action_partitioned_solve" in result["routes"]
 
 
 @pytest.mark.parametrize("mutation", tuple(direct_flow._ACTION_PARTITION_MUTATIONS))

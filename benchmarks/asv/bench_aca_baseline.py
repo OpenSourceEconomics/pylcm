@@ -57,7 +57,7 @@ if TYPE_CHECKING:
 
 from . import _gpu_mem
 
-_N_SUBJECTS = 1000
+_N_AGENTS = 1000
 _SIMULATION_SEED = 0
 
 _LOG_DIR_PREFIX = "aca-bench-debug-log-"
@@ -119,7 +119,7 @@ def _build() -> tuple[Model, UserParams, UserInitialConditions]:
         pref_type_grid=DiscreteGrid(category_class=BenchmarkPrefType),
         **_gpu_mem.lottery_contraction_kwargs(create_benchmark_model),
     )
-    edge_periods = model.reachability.solution.periods_for_edge(
+    edge_periods = model.reachability.solution.steps_for_edge(
         source="retiree_oamc_forced_forcedout",
         target="nongroup_dimc_choose_canwork",
     )
@@ -131,7 +131,7 @@ def _build() -> tuple[Model, UserParams, UserInitialConditions]:
         raise AssertionError(msg)
     model_params = get_benchmark_params(model=model)[2]
     initial_conditions = get_benchmark_initial_conditions(
-        model=model, n_subjects=_N_SUBJECTS, seed=0
+        model=model, n_agents=_N_AGENTS, seed=0
     )
     return model, model_params, initial_conditions
 

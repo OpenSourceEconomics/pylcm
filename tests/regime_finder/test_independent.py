@@ -1,10 +1,13 @@
 """Public-API tests against independent finite and exhaustive partition oracles."""
 
+from collections.abc import Callable
+
 import pytest
 from copy import deepcopy
 import json
 
 from _lcm_regime_finder import find_regimes, verify_certificate
+from _lcm_regime_finder.facts import Record
 from .exhaustive_oracle import FiniteOracle
 from . import fixtures
 
@@ -22,7 +25,9 @@ METRICS = {
 maxDiff = 3000
 
 
-def _check_analysis(problem, compare_optimum=True):
+def _check_analysis(
+    problem: fixtures.Problem, compare_optimum: bool = True
+) -> tuple[Record, Record, FiniteOracle]:
     oracle = FiniteOracle(problem)
     expected = oracle.exhaustive()
     report = find_regimes(problem)
@@ -200,7 +205,7 @@ def test_full_allocations_and_required_outputs() -> None:
     assert ("history") in (report["analysis"]["atoms"][0]["live_states"])
     del outputs["programs"][0]["outputs"]
     outputs["external_report_tags"] = [
-        {"subject": "person-7", "immutable_tag": "history-type"}
+        {"agent": "person-7", "immutable_tag": "history-type"}
     ]
     report, _, _ = _check_analysis(outputs)
     assert ("history") not in (report["analysis"]["atoms"][0]["live_states"])
@@ -288,7 +293,7 @@ def test_certificate_rejects_independent_mutations(
     problem = fixtures.fertility()
     report, _, _ = _check_analysis(problem)
 
-    def altered(mutator):
+    def altered(mutator: Callable[[Record], None]) -> Record:
         result = deepcopy(report)
         mutator(result)
         return result
@@ -350,7 +355,7 @@ def test_certificate_rejects_independent_mutations(
             assert checked["errors"], checked
             METRICS["certificate_mutations_rejected"] += 1
     tagged = deepcopy(problem)
-    tagged["external_report_tags"] = [{"subject": "person-7", "tag": "pension-type-A"}]
+    tagged["external_report_tags"] = [{"agent": "person-7", "tag": "pension-type-A"}]
     result = find_regimes(tagged)
     result["recommended"]["external_report_tags"] = []
     assert (verify_certificate(tagged, result)["status"]) == ("FAIL")

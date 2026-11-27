@@ -1,10 +1,10 @@
-"""Simulate-time V validation considers only subjects that are in the regime.
+"""Simulate-time V validation considers only agents that are in the regime.
 
-The forward simulation evaluates every regime's policy for all subjects and
+The forward simulation evaluates every regime's policy for all agents and
 masks out-of-regime entries afterwards; those placeholder entries can be
-`-inf` (the subject's state is infeasible under the other regime's policy
+`-inf` (the agent's state is infeasible under the other regime's policy
 problem). The NaN/Inf warning must not fire on placeholders — only on the
-values of subjects actually simulated in the regime. It must fire, naming the
+values of agents actually simulated in the regime. It must fire, naming the
 regime and the age, on a value the regime does own.
 """
 
@@ -52,7 +52,9 @@ def _simulate(*, log_level: LogLevel) -> None:
     )
 
 
-def test_no_nan_warning_from_out_of_regime_placeholders(caplog):
+def test_no_nan_warning_from_out_of_regime_placeholders(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Simulating a healthy multi-regime model emits no NaN/Inf warnings."""
     with caplog.at_level(logging.WARNING, logger="lcm"):
         _simulate(log_level="warning")
@@ -65,9 +67,9 @@ def test_no_nan_warning_from_out_of_regime_placeholders(caplog):
 def test_out_of_regime_placeholders_pass_v_validation(log_level: LogLevel) -> None:
     """Per-regime V validation ignores out-of-regime placeholder entries.
 
-    The simulate-time `validate_V` check must consider only the subjects
+    The simulate-time `validate_V` check must consider only the agents
     actually simulated in the regime, so placeholder values of out-of-regime
-    subjects never raise — at any log level.
+    agents never raise — at any log level.
     """
     _simulate(log_level=log_level)
 
@@ -89,7 +91,7 @@ def _off_node_utility(
 
     Every node of the wealth grid is an integer, so `floor(wealth) - wealth` is
     zero wherever the solver tabulates the value function and negative at a
-    subject's own wealth between two nodes. The solve therefore stays finite and
+    agent's own wealth between two nodes. The solve therefore stays finite and
     the forward simulation produces NaN for exactly one regime at one age.
     """
     return jnp.log(consumption) + jnp.where(
@@ -191,7 +193,7 @@ def test_runtime_checks_disabled_allow_owned_simulated_nan(
     assert bool(jnp.any(jnp.isnan(result.raw_results["work"][0].V_arr)))
     assert all(
         bool(jnp.all(jnp.isfinite(value)))
-        for values in result.period_to_regime_to_V_arr.values()
+        for values in result.step_to_regime_to_V_arr.values()
         for value in values.values()
     )
 

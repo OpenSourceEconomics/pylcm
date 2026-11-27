@@ -43,6 +43,8 @@ class SolverExecutionCapabilities:
     """Whether supported model configurations may use EV1 taste shocks."""
     supports_nonlinear_certainty_equivalent: bool = False
     """Whether supported routes implement a nonlinear certainty equivalent."""
+    supports_several_members: bool = False
+    """Whether the solver solves a regime with more than one member."""
 
     def __post_init__(self) -> None:
         for name in (
@@ -82,6 +84,7 @@ class SolverExecutionCapabilities:
         for name in (
             "supports_ev1_taste_shocks",
             "supports_nonlinear_certainty_equivalent",
+            "supports_several_members",
         ):
             if type(getattr(self, name)) is not bool:
                 raise TypeError(f"SolverExecutionCapabilities.{name} must be a bool.")

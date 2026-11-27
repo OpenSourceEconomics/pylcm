@@ -1,7 +1,7 @@
 """Two legs of one gate may share a fallback regime when they write the same row.
 
 Simulation writes every leg's projected fallback state into its fallback regime's
-per-subject slot. Two legs naming one regime write the same value only when their
+per-agent slot. Two legs naming one regime write the same value only when their
 fallbacks are the same declaration, function for function, and read nothing that is
 the leg's own, i.e. no parameter, which lives under the leg's route. Then sharing is
 allowed; otherwise the gate is refused.
@@ -293,7 +293,7 @@ def test_an_accepted_gate_model_keeps_its_values() -> None:
         log_level="off",
     )
     aaae(
-        solution.values[0]["single_f"],
+        solution.values[0]["single_f"][..., 0],
         np.array([2.425, 7.225, 8.7]),
         decimal=DECIMAL_PRECISION,
     )

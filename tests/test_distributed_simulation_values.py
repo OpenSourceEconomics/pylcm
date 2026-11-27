@@ -16,7 +16,7 @@ import pandas as pd
 import pytest
 
 from _lcm.simulation.runtime import CompiledSimulationProgram
-from _lcm.simulation.simulate import SubjectChunkKwargs, SubjectChunkResults
+from _lcm.simulation.simulate import AgentChunkKwargs, AgentChunkResults
 from _lcm.solution.artifacts import OwnedSolutionView
 from _lcm.typing import PytreeValue
 from lcm import (
@@ -129,15 +129,15 @@ def test_chunk_offload_admits_source_destination_overlap_on_selected_cpu(
 
     devices = (jax.devices()[1], jax.devices()[3])
     mesh = jax.make_mesh(
-        (2,), ("subject",), (jax.sharding.AxisType.Auto,), devices=devices
+        (2,), ("agent",), (jax.sharding.AxisType.Auto,), devices=devices
     )
     original = jax.device_put(
-        np.arange(8, dtype=np.int32), jax.NamedSharding(mesh, jax.P("subject"))
+        np.arange(8, dtype=np.int32), jax.NamedSharding(mesh, jax.P("agent"))
     )
     memory = SimulationMemory(
         budget_bytes=24,
         devices=devices,
-        subject_devices=devices,
+        agent_devices=devices,
         operations=ProfiledSimulationOperations(),
         inputs=measure_buffer_footprint(tree=original),
     )
@@ -172,7 +172,7 @@ def test_chunk_assembly_cannot_exempt_an_excluded_cpu_from_a_cpu_budget() -> Non
     memory = SimulationMemory(
         budget_bytes=1_000_000,
         devices=devices,
-        subject_devices=devices,
+        agent_devices=devices,
         operations=ProfiledSimulationOperations(),
         inputs=measure_buffer_footprint(tree=source),
     )
@@ -252,7 +252,7 @@ def _build_model(
     n_types: int,
     devices: tuple[int, ...],
     sharded: bool,
-    subject_width: int | None = None,
+    agent_width: int | None = None,
     budget: int | None = None,
     value_storage: Literal["device", "host"] | Path = "device",
 ) -> Model:
@@ -280,7 +280,7 @@ def _build_model(
         execution_config=ExecutionConfig(
             sharded_states=("preference",) if sharded else (),
             devices=devices,
-            axis_widths={} if subject_width is None else {"subject": subject_width},
+            axis_widths={} if agent_width is None else {"agent": agent_width},
             device_memory_bytes=budget,
             value_storage=value_storage,
         ),
@@ -332,7 +332,7 @@ _PLACEMENTS = [(3, (0, 1, 2, 3)), (4, (0, 1, 2, 3)), (3, (1, 2, 3))]
 def test_placed_solution_simulates_to_the_single_device_result(
     *, n_types: int, devices: tuple[int, ...]
 ) -> None:
-    """Full and proper submeshes preserve all seven subjects' simulated paths."""
+    """Full and proper submeshes preserve all seven agents' simulated paths."""
     _, actual, _ = _simulate(n_types=n_types, devices=devices, sharded=True)
     _, expected, _ = _simulate(n_types=n_types, devices=(0,), sharded=False)
     got = actual.to_dataframe(use_categorical_codes=True)
@@ -363,8 +363,8 @@ def test_simulation_retains_original_value_arrays_on_their_solve_placements(
     for period, values in owned.values.items():
         for regime, value in values.items():
             assert not value.is_deleted()
-            assert first.period_to_regime_to_V_arr[period][regime] is value
-            assert second.period_to_regime_to_V_arr[period][regime] is value
+            assert first.step_to_regime_to_V_arr[period][regime] is value
+            assert second.step_to_regime_to_V_arr[period][regime] is value
 
 
 @pytest.mark.parametrize(("n_types", "devices"), _PLACEMENTS)
@@ -379,7 +379,7 @@ def test_repeated_simulation_of_the_same_placed_solution_is_identical(
 
 
 @pytest.mark.parametrize("devices", [(0, 1, 2, 3), (1, 3)])
-def test_fixed_inner_subject_width_survives_outer_device_alignment(
+def test_fixed_inner_agent_width_survives_outer_device_alignment(
     *,
     devices: tuple[int, ...],
     monkeypatch: pytest.MonkeyPatch,
@@ -393,7 +393,7 @@ def test_fixed_inner_subject_width_survives_outer_device_alignment(
     from _lcm.simulation.runtime import SimulationRuntime
 
     model = _build_model(
-        n_types=4, devices=devices, sharded=True, subject_width=3, budget=2**32
+        n_types=4, devices=devices, sharded=True, agent_width=3, budget=2**32
     )
     params = {"discount_factor": 0.95}
     solution = model.solve(params=params, log_level="off")
@@ -405,10 +405,10 @@ def test_fixed_inner_subject_width_survives_outer_device_alignment(
     }
     chunks: list[int] = []
     widths: list[int] = []
-    run_chunk = simulation._simulate_subject_chunk
+    run_chunk = simulation._simulate_agent_chunk
     prepare = SimulationRuntime._prepare_materialized
 
-    def observe_chunk(**call: Unpack[SubjectChunkKwargs]) -> SubjectChunkResults:
+    def observe_chunk(**call: Unpack[AgentChunkKwargs]) -> AgentChunkResults:
         chunks.append(call["initial_regime_ids"].shape[0])
         return run_chunk(**call)
 
@@ -416,12 +416,12 @@ def test_fixed_inner_subject_width_survives_outer_device_alignment(
         self: SimulationRuntime, **call: Unpack[PrepareMaterializedKwargs]
     ) -> CompiledSimulationProgram:
         selected = prepare(self, **call)
-        if "subject" in selected.widths:
-            widths.append(selected.widths["subject"])
+        if "agent" in selected.widths:
+            widths.append(selected.widths["agent"])
         return selected
 
     with monkeypatch.context() as capture:
-        capture.setattr(simulation, "_simulate_subject_chunk", observe_chunk)
+        capture.setattr(simulation, "_simulate_agent_chunk", observe_chunk)
         capture.setattr(SimulationRuntime, "_prepare_materialized", observe_width)
         actual = model.simulate(
             params=params,
@@ -433,7 +433,7 @@ def test_fixed_inner_subject_width_survives_outer_device_alignment(
     assert chunks == [8]
     assert widths
     assert set(widths) == {3}
-    assert actual.n_subjects == 7
+    assert actual.n_agents == 7
     all_devices = {jax.devices()[index] for index in devices}
     assert all(
         array.devices() == all_devices for array in jax.tree.leaves(actual.raw_results)

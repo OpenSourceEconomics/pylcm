@@ -177,7 +177,7 @@ def _assert_panel(
             "regime_id": jnp.zeros(wealth.shape, dtype=jnp.int32),
         },
     ).to_dataframe(use_categorical_codes=True)
-    first = result[result["period"] == 0].sort_values("subject_id")
+    first = result[result["period"] == 0].sort_values("agent_id")
     # Log utility and a linear bequest imply c=min(resources-floor, scale/alpha).
     resources = scale * (wealth[:, None] + income_factor * np.arange(2))
     consumption = np.minimum(resources, scale / alpha)

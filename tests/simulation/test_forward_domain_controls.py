@@ -1,4 +1,4 @@
-"""Forward simulation work covers exactly the pairs a subject can occupy.
+"""Forward simulation work covers exactly the pairs an agent can occupy.
 
 Budgeted simulation profiles forward units before dispatching them. Every model
 below solves some `(period, regime)` pairs only for their value. Those pairs must
@@ -72,7 +72,7 @@ def _config(*, budgeted: bool) -> ExecutionConfig:
     if not budgeted:
         return ExecutionConfig()
     return ExecutionConfig(
-        devices=(0,), axis_widths={"subject": 2}, device_memory_bytes=2**30
+        devices=(0,), axis_widths={"agent": 2}, device_memory_bytes=2**30
     )
 
 
@@ -191,7 +191,7 @@ class _ForwardProfileInputs(TypedDict):
         int, forward_profiles.Mapping[str, forward_profiles.jax.Array]
     ]
     ages: forward_profiles.TimeAxis
-    n_subjects: int
+    n_agents: int
     widths: forward_profiles.Mapping[str, int]
     columns: forward_profiles.Mapping[str, forward_profiles.jax.ShapeDtypeStruct]
     ordinary_key: forward_profiles.jax.ShapeDtypeStruct
@@ -206,17 +206,19 @@ class _RegimeSimulationInputs(TypedDict):
     regime: simulate.Regime
     regimes: simulate.Mapping[simulate.RegimeName, simulate.Regime]
     value_owner: simulate.PeriodSimulationReads
-    subject_devices: tuple[simulate.jax.Device, ...]
+    agent_devices: tuple[simulate.jax.Device, ...]
     memory: simulate.SimulationMemory | None
     base_state_action_space: simulate.StateActionSpace
     base_state_action_spaces: simulate.Mapping[
         simulate.RegimeName, simulate.StateActionSpace
     ]
     period: int
+    ages: simulate.TimeAxis
+    reported_period: int
     age: simulate.ScalarInt | simulate.ScalarFloat
     states: simulate.StatesPerRegime
-    subject_regime_ids: simulate.Int1D
-    new_subject_regime_ids: simulate.Int1D
+    agent_regime_ids: simulate.Int1D
+    new_agent_regime_ids: simulate.Int1D
     period_to_regime_to_V_arr: simulate.MappingProxyType[
         int, simulate.MappingProxyType[simulate.RegimeName, simulate.FloatND]
     ]
@@ -226,9 +228,9 @@ class _RegimeSimulationInputs(TypedDict):
     realization_targets_next_period: tuple[simulate.RegimeName, ...]
     key: simulate.PRNGKeyND
     logger: simulate.logging.Logger
-    n_subjects: int
-    subject_slice: slice | simulate.SubjectRows
-    original_n_subjects: NotRequired[int | None]
+    n_agents: int
+    agent_slice: slice | simulate.AgentRows
+    original_n_agents: NotRequired[int | None]
     own_member: simulate.Int1D
     new_own_member: simulate.Int1D
     gated_edge_fold_age: NotRequired[float | None]
@@ -306,11 +308,13 @@ def test_budgeted_forward_units_are_exactly_the_visited_pairs(
     for (period, name), expected_values in spec["value_only_values"].items():
         # The value-only pair's solved value stays published.
         np.testing.assert_allclose(
-            np.asarray(solution.values[period][name]), expected_values, rtol=1e-6
+            np.asarray(solution.values[period][name])[..., 0],
+            expected_values,
+            rtol=1e-6,
         )
     if spec["source_values"] is not None:
         np.testing.assert_allclose(
-            np.asarray(solution.values[0]["source"]),
+            np.asarray(solution.values[0]["source"])[..., 0],
             spec["source_values"],
             rtol=1e-6,
         )
