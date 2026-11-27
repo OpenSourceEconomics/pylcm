@@ -3018,6 +3018,7 @@ def _landing_couple(
     wealth: Mapping[StateName, Callable[..., ContinuousState]] | None = None,
     permuted: bool = False,
     enable_jit: bool = True,
+    shocks: Mapping[str, ShockGroup] | None = None,
 ) -> lcm.Model:
     """A couple deciding on its composition, its destinations a stage later.
 
@@ -3079,6 +3080,7 @@ def _landing_couple(
         ),
         edges={},
         enable_jit=enable_jit,
+        shocks={} if shocks is None else shocks,
     )
 
 
@@ -3094,6 +3096,107 @@ def _rule_id(rule: LandingRule) -> str:
     """A rule's test id: its kind, its weight state if any, and its tie."""
     state = getattr(rule, "state", None)
     return "-".join((type(rule).__name__, *((state,) if state else ()), rule.tie))
+
+
+def _utility_with_landing_shock(*, eps: FloatND) -> FloatND:
+    return 4.0 + eps
+
+
+def _utility_of_landing_action(*, offer: ContinuousAction) -> FloatND:
+    return 4.0 - offer
+
+
+def _offer_covers_landing_shock(*, offer: ContinuousAction, eps: FloatND) -> BoolND:
+    return offer >= eps
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("shock_in_constraint", [False, True])
+def test_later_stage_destination_integrates_its_own_shock(
+    *, enable_jit: bool, shock_in_constraint: bool
+) -> None:
+    """The couple compares against a value averaged over the destination's draw.
+
+    With equally likely shocks of -1 and 1, the destination's utilities are 3
+    and 5 if utility reads the shock. If its constraint reads the shock instead,
+    the lowest feasible offers are -0.5 and 1.5 and yield 4.5 and 2.5. Member a
+    prefers either expected outside value to 1 from staying and leaves.
+    """
+    if shock_in_constraint:
+        destination = lcm.Regime(
+            actions={"offer": lcm.LinSpacedGrid(start=-0.5, stop=1.5, n_points=2)},
+            functions={"utility": _utility_of_landing_action},
+            constraints={"affordable": _offer_covers_landing_shock},
+            shocks=("offer_shock",),
+        )
+    else:
+        destination = lcm.Regime(
+            functions={"utility": _utility_with_landing_shock},
+            shocks=("offer_shock",),
+        )
+    model = _landing_couple(
+        stay={},
+        inside_a=_one,
+        destination_a=destination,
+        rule=lcm.PCOnActions(),
+        enable_jit=enable_jit,
+        shocks={
+            "offer_shock": ShockGroup(
+                shocks={"eps": Normal(mu=0.0, sigma=1.0)},
+                nodes=Product(eps=GaussHermite(2)),
+            )
+        },
+    )
+    expected = (3.5 if shock_in_constraint else 4.0, 1.0)
+    assert_agrees_to_ulp(
+        got=_couple_value(model),
+        expected=np.asarray(expected),
+        n_ulp=_SKIP_ULP,
+        operand_magnitude=5.0,
+    )
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_later_stage_destination_requires_feasibility_at_each_possible_shock(
+    *, enable_jit: bool
+) -> None:
+    """An outside option with no feasible action at a possible draw is unavailable.
+
+    Member a gets minus infinity by staying, and would leave on a tie if the
+    destination were supported. Its highest offer is 0.5 and cannot cover a
+    draw of 1, so the couple stays.
+    """
+    model = _landing_couple(
+        stay={},
+        inside_a=_worthless,
+        destination_a=lcm.Regime(
+            actions={"offer": lcm.LinSpacedGrid(start=-0.5, stop=0.5, n_points=2)},
+            functions={"utility": _utility_of_landing_action},
+            constraints={"affordable": _offer_covers_landing_shock},
+            shocks=("offer_shock",),
+        ),
+        rule=lcm.PCOnActions(tie="leave"),
+        enable_jit=enable_jit,
+        shocks={
+            "offer_shock": ShockGroup(
+                shocks={"eps": Normal(mu=0.0, sigma=1.0)},
+                nodes=Product(eps=GaussHermite(2)),
+            )
+        },
+    )
+    rows = model.simulate(
+        params={},
+        initial_conditions=pd.DataFrame(
+            {
+                "period": [0, 0],
+                "regime_name": ["couple", "couple"],
+                "own_member": ["a", "b"],
+            }
+        ),
+        seed=5,
+        log_level="off",
+    ).to_dataframe()
+    assert rows["regime_name"].astype(str).tolist() == ["couple", "couple"]
 
 
 @pytest.mark.parametrize("enable_jit", [False, True])

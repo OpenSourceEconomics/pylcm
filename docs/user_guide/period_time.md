@@ -177,7 +177,9 @@ that decides in two stages of one period is two declared regimes.
   destination draws in its own stage, because that shock is not drawn yet. Draw it in
   the earlier stage and carry it as a state. A destination in a later stage is admitted
   only as one in the source's own stage is, solved by `GridSearch` over its whole action
-  grid; one solved by an endogenous-grid solver is refused when the model is built.
+  grid; one solved by an endogenous-grid solver is refused when the model is built. The
+  destination's value averages over the shocks it draws in its stage, and it needs a
+  feasible action at the landing state for every shock node with positive weight.
 - Agents start in their regime's own stage, so `initial_nodes` and initial conditions
   may name a regime of any stage.
 - The stages of a period are linked without discounting: where a regime's edges land in

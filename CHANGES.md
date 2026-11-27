@@ -127,6 +127,8 @@ fragments keep format version 3.
 - A destination in a later stage is admitted only as one in the source's own stage is,
   solved by `GridSearch` over its whole action grid; one solved by an endogenous-grid
   solver is refused when the model is built.
+- A later-stage destination can use the shocks it draws in its own utility and
+  constraints.
 - An edge into a regime that sits out a stage is a shorthand with limits: a source's
   edges at one age either all stay in its period or all cross into the next one, a
   gated edge skips no stage, and an edge skips no stage of a regime with a continuous

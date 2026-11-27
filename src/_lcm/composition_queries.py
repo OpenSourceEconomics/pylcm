@@ -680,6 +680,15 @@ class _QueryGraphBuilder:
         )
         projection = clip_projection(projection=projection, rules=grid_rules)
         if occurrence != self.period:
+            # Only the landing feasibility check uses the destination's draw.
+            # The source's policy query must have no information about that draw.
+            plan = context.current_iid_plans.get(occurrence)
+            context = replace(
+                context,
+                current_iid_plans=MappingProxyType(
+                    {} if plan is None else {occurrence: plan}
+                ),
+            )
             self.nodes[key] = QueryNode(
                 read=QueryRead(
                     kind=kind,
@@ -2157,7 +2166,12 @@ def _context_structure(*, node: QueryNode) -> _Structure:
     if node.landing is not None:
         # A landing read traces its target's grid at the occurrence.
         grids = context.period_to_regime_v_interp or {}
-        return (shared, id(grids.get(node.landing, {}).get(node.read.target)))
+        return (
+            shared,
+            id(grids.get(node.landing, {}).get(node.read.target)),
+            id(context.Q_and_F_functions.get(node.landing)),
+            _plan_structure(context.current_iid_plans.get(node.landing)),
+        )
     declaration = context.user_regimes_at(period=period)[node.read.target]
     plan = context.current_iid_plans.get(period)
     return (
@@ -2170,15 +2184,20 @@ def _context_structure(*, node: QueryNode) -> _Structure:
             period=period,
             ages=context.ages,
         ),
-        None
-        if plan is None
-        else (
-            tuple(
-                (name, id(binding), _content_digest(tree=nodes))
-                for name, binding, nodes in plan.bindings
-            ),
-            _content_digest(tree=plan.indices),
+        _plan_structure(plan),
+    )
+
+
+def _plan_structure(plan: CurrentIIDPlan | None) -> _Structure | None:
+    """Compare each occurrence's law and node rule independently of array identity."""
+    if plan is None:
+        return None
+    return (
+        tuple(
+            (name, id(binding), _content_digest(tree=nodes))
+            for name, binding, nodes in plan.bindings
         ),
+        _content_digest(tree=plan.indices),
     )
 
 

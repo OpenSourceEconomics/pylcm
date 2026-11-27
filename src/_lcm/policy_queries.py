@@ -21,8 +21,10 @@ from _lcm.current_iid import (
     CURRENT_IID_ARGUMENT,
     CURRENT_IID_NODES_ARGUMENT,
     CURRENT_IID_ROWS_ARGUMENT,
+    AdmittedGroupParams,
     CurrentIIDDrawFrame,
     CurrentIIDPlan,
+    NodeOperands,
 )
 from _lcm.dtypes import Code, as_canonical_float, as_code
 from _lcm.engine import StateActionSpace
@@ -48,6 +50,7 @@ from _lcm.grids import Grid
 from _lcm.off_grid import ProjectedGridRule, count_projected_off_grid
 from _lcm.output_roles import OutputRole, target_role
 from _lcm.params.edges import EDGES, flat_namespaces, regime_kernel_params
+from _lcm.probability import is_represented_zero
 from _lcm.regime_building.collective import (
     collective_argmax_and_readout,
     decider_choice,
@@ -93,7 +96,7 @@ from _lcm.utils.counts import sum_counts
 from _lcm.utils.dispatchers import productmap, vary_carry_like_body
 from lcm.exceptions import ExecutionPlanningError, UnsupportedOperationError
 from lcm.grids import DiscreteGrid
-from lcm.shocks import MonteCarlo, QuasiMonteCarlo, ShockGroupName
+from lcm.shocks import MonteCarlo, QuasiMonteCarlo, ShockGroupName, ShockName
 from lcm.solver_api import KernelOutput
 from lcm.typing import (
     BoolND,
@@ -463,7 +466,8 @@ def _node_inputs(
         ), ()
     if node.landing is not None:
         target = node.read.target
-        return _LandingReadArguments(period=period, target=target), (
+        plan = node.context.current_iid_plans.get(node.landing)
+        return _LandingReadArguments(period=period, target=target, plan=plan), (
             ValueRead(
                 target=ValueArtifactAddress(
                     kind=ValueArtifactKind.REGIME_VALUE,
@@ -501,12 +505,13 @@ def _node_inputs(
 class _LandingReadArguments:
     """A landing read's operands: the clock and its target's stored value.
 
-    Also the target's actions and parameters, at which its feasibility at the
-    landing state is evaluated.
+    Also the target's actions, parameters and draws for evaluating feasibility at
+    the landing state.
     """
 
     period: int
     target: RegimeName
+    plan: CurrentIIDPlan | None
 
     def __call__(
         self, context: CoreBuildContext
@@ -527,6 +532,10 @@ class _LandingReadArguments:
             "PytreeValue",
             MappingProxyType({self.target: context.next_regime_to_V_arr[self.target]}),
         )
+        if self.plan is not None:
+            arguments.update(
+                _current_iid_arguments(plan=self.plan, flat_params=context.flat_params)
+            )
         return MappingProxyType(arguments)
 
 
@@ -551,13 +560,25 @@ class _OutsideReadArguments:
             "age": context.ages.values[self.period],
         }
         if self.plan is not None:
-            arguments[CURRENT_IID_ARGUMENT] = {
-                name: dict(context.flat_params.get(name, {}))
-                for name, _, _ in self.plan.bindings
-            }
-            arguments[CURRENT_IID_NODES_ARGUMENT] = self.plan.node_operands
-            arguments[CURRENT_IID_ROWS_ARGUMENT] = self.plan.indices
+            arguments.update(
+                _current_iid_arguments(plan=self.plan, flat_params=context.flat_params)
+            )
         return MappingProxyType(arguments)
+
+
+def _current_iid_arguments(
+    *,
+    plan: CurrentIIDPlan,
+    flat_params: Mapping[RegimeName, FlatRegimeParams | FlatEdgeParams],
+) -> dict[str, PytreeValue]:
+    """Supply a query's law parameters and numerical support as operands."""
+    return {
+        CURRENT_IID_ARGUMENT: {
+            name: dict(flat_params.get(name, {})) for name, _, _ in plan.bindings
+        },
+        CURRENT_IID_NODES_ARGUMENT: plan.node_operands,
+        CURRENT_IID_ROWS_ARGUMENT: plan.indices,
+    }
 
 
 # Values at one common action, stable ID, support, integrity, reached-landing counts.
@@ -1730,7 +1751,8 @@ def _query_node_parameter_namespaces(
     *, node: QueryNode, information: bool
 ) -> frozenset[str]:
     """Mirror the node's action/law and exact producing projection operands."""
-    plan = node.context.current_iid_plans.get(node.read.period)
+    period = node.read.period if node.landing is None else node.landing
+    plan = node.context.current_iid_plans.get(period)
     names = {name for name, _, _ in (() if plan is None else plan.bindings)} | {
         path[0]
         for path in node.read.operand_paths.values()
@@ -2489,11 +2511,16 @@ def _landing_answer(
             for index, _ in enumerate(context.members)
         )
     )
-    valid = ~jnp.any(jnp.isnan(value)) & _mapped_query_valid(node=node, mapped=mapped)
+    support, law_valid = _landing_support(node=node, arguments=arguments)
+    valid = (
+        law_valid
+        & ~jnp.any(jnp.isnan(value))
+        & _mapped_query_valid(node=node, mapped=mapped)
+    )
     return (
         jnp.where(guard, value, -jnp.inf),
         jnp.asarray(-1, dtype=jnp.int32),
-        live & guard & _landing_support(node=node, arguments=arguments),
+        live & guard & support,
         ~live | valid,
         count_projected_off_grid(rules=node.grid_rules, mapped=mapped, active=guard),
     )
@@ -2501,34 +2528,52 @@ def _landing_answer(
 
 def _landing_support(
     *, node: QueryNode, arguments: Mapping[str, PytreeValue]
-) -> BoolND:
-    """Whether the target has a feasible action at the landing, as at its occurrence.
+) -> tuple[BoolND, BoolND]:
+    """Return feasibility at every positive-mass draw and the law's validity.
 
-    The target's own action problem there decides, over its whole action grid;
-    only its feasibility is read.
+    The destination decides at its occurrence, over its whole action grid. Its
+    draws affect support here, and its stored value already integrates over them.
     """
-    flow = cast(
-        "CanonicalActionKernel",
-        node.context.Q_and_F_functions[cast("int", node.landing)],
-    ).utilities_and_F
+    landing = cast("int", node.landing)
+    flow = cast("CanonicalActionKernel", node.context.Q_and_F_functions[landing])
     action_names = node.context.state_action_space.action_names
-    feasible = cast(
-        "Callable[..., BoolND]",
-        productmap(
-            func=with_signature(
-                functools.partial(
-                    _feasible_at,
-                    flow=flow,
-                    operands={**arguments, "period": jnp.int32(node.landing)},
+    actions = {name: arguments[name] for name in action_names}
+    operands = {
+        **arguments,
+        "period": cast("IntND", arguments["period"]) + (landing - node.read.period),
+    }
+
+    def has_action(shocks: Mapping[ShockName, FloatND | IntND]) -> BoolND:
+        feasible = cast(
+            "Callable[..., BoolND]",
+            productmap(
+                func=with_signature(
+                    functools.partial(
+                        _feasible_at,
+                        flow=flow.utilities_and_F,
+                        operands={**operands, **shocks},
+                    ),
+                    args=list(action_names),
+                    enforce=False,
                 ),
-                args=list(action_names),
-                enforce=False,
+                variables=action_names,
+                batch_sizes=dict.fromkeys(action_names, 0),
             ),
-            variables=action_names,
-            batch_sizes=dict.fromkeys(action_names, 0),
-        ),
+        )
+        return jnp.any(feasible(**actions))
+
+    plan = node.context.current_iid_plans.get(landing)
+    if plan is None:
+        return has_action({}), jnp.asarray(a=True)
+    physical, factors, valid = plan.realise_nodes(
+        arguments=cast("QAndFKwargs", operands),
+        group_params=cast("AdmittedGroupParams", operands[CURRENT_IID_ARGUMENT]),
+        node_operands=cast("NodeOperands", operands[CURRENT_IID_NODES_ARGUMENT]),
+        indices=cast("IntND", operands[CURRENT_IID_ROWS_ARGUMENT]),
     )
-    return jnp.any(feasible(**{name: arguments[name] for name in action_names}))
+    present = jnp.all(~is_represented_zero(factors), axis=0)
+    support = jax.lax.map(has_action, dict(physical))
+    return jnp.all(~present | support), valid
 
 
 def _feasible_at(
