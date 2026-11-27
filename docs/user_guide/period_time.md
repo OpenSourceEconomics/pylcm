@@ -175,7 +175,9 @@ that decides in two stages of one period is two declared regimes.
   destination's value at its occurrence later in the period, at the landing state,
   without discounting. The decision on the composition cannot observe a shock that the
   destination draws in its own stage, because that shock is not drawn yet. Draw it in
-  the earlier stage and carry it as a state.
+  the earlier stage and carry it as a state. A destination in a later stage is admitted
+  only as one in the source's own stage is, solved by `GridSearch` over its whole action
+  grid; one solved by an endogenous-grid solver is refused when the model is built.
 - Agents start in their regime's own stage, so `initial_nodes` and initial conditions
   may name a regime of any stage.
 - The stages of a period are linked without discounting: where a regime's edges land in

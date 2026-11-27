@@ -124,6 +124,9 @@ fragments keep format version 3.
   land in its period that declares a Koopmans aggregator or uses an endogenous-grid
   solver, are refused. So is a composition action whose destination lies in an earlier
   stage, or one that observes a shock its destination draws later.
+- A destination in a later stage is admitted only as one in the source's own stage is,
+  solved by `GridSearch` over its whole action grid; one solved by an endogenous-grid
+  solver is refused when the model is built.
 - An edge into a regime that sits out a stage is a shorthand with limits: a source's
   edges at one age either all stay in its period or all cross into the next one, a
   gated edge skips no stage, and an edge skips no stage of a regime with a continuous

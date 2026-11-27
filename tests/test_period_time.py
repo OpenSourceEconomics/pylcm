@@ -1,5 +1,6 @@
 """Period coordinates have explicit meaning at every public time boundary."""
 
+import functools
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from fractions import Fraction
@@ -38,6 +39,7 @@ from lcm.typing import (
     Period,
     RegimeName,
     ScalarInt,
+    StateName,
     UserInitialNodes,
     UserParams,
 )
@@ -2921,6 +2923,440 @@ def _settling_couple() -> lcm.Model:
         },
         fixed_params={"discount_factor": 0.9},
     )
+
+
+@lcm.categorical(ordered=False)
+class LandingId:
+    couple: ScalarInt
+    idle: ScalarInt
+    single_a: ScalarInt
+    single_b: ScalarInt
+
+
+@lcm.categorical(ordered=True)
+class TwoWeights:
+    low: ScalarInt
+    high: ScalarInt
+
+
+def _one() -> FloatND:
+    return jnp.asarray(1.0)
+
+
+def _seven() -> FloatND:
+    return jnp.asarray(7.0)
+
+
+def _seven_at_every_weight(*, mu: DiscreteState) -> FloatND:
+    return jnp.where(mu >= 0, 7.0, 0.0)
+
+
+def _worthless() -> FloatND:
+    return jnp.asarray(-jnp.inf)
+
+
+def _never() -> BoolND:
+    return jnp.asarray(a=False)
+
+
+def _staying_allowed(*, wealth: ContinuousState) -> BoolND:
+    return (wealth >= 2.0) & (wealth <= 4.0)
+
+
+def _inside_a(*, wealth: ContinuousState) -> FloatND:
+    return jnp.where(wealth <= 2.0, -jnp.inf, 0.0)
+
+
+def _landed_wealth(*, wealth: ContinuousState) -> FloatND:
+    return wealth
+
+
+def _enough_wealth(*, wealth: ContinuousState) -> BoolND:
+    return wealth >= 3.0
+
+
+def _half_more_wealth(*, wealth: ContinuousState) -> ContinuousState:
+    return wealth + 0.5
+
+
+def _landing_settlement() -> lcm.MutualConsent:
+    return lcm.MutualConsent(
+        transfer=lcm.Transfer(
+            name="share",
+            candidates=lcm.LinSpacedGrid(start=0.0, stop=1.0, n_points=5),
+            default=_half,
+        )
+    )
+
+
+def _half() -> FloatND:
+    return jnp.asarray(0.5)
+
+
+type LandingRule = lcm.PCOnActions | lcm.PCOnWeight | lcm.MutualConsent
+
+_LANDING_TOPOLOGIES: dict[str, dict[str, tuple[RegimeName, ...]] | None] = {
+    "adjacent": {"decide": ("couple", "idle"), "land": ("single_a", "single_b")},
+    "skipped": {
+        "decide": ("couple",),
+        "wait": ("idle",),
+        "land": ("single_a", "single_b"),
+    },
+    "split": {"decide": ("couple", "idle", "single_a"), "land": ("single_b",)},
+    "unstaged": None,
+}
+
+
+def _landing_couple(
+    *,
+    stay: Mapping[str, Callable[..., BoolND]],
+    inside_a: Callable[..., FloatND],
+    destination_a: lcm.Regime,
+    rule: LandingRule,
+    topology: str = "adjacent",
+    wealth: Mapping[StateName, Callable[..., ContinuousState]] | None = None,
+    permuted: bool = False,
+    enable_jit: bool = True,
+) -> lcm.Model:
+    """A couple deciding on its composition, its destinations a stage later.
+
+    Member b gets 7 if the couple stays and 1 in `single_b`; member a gets
+    `inside_a` and its value in `destination_a`. `stay` are the couple's
+    constraints. With `wealth`, the couple has wealth on the nodes 1 to 6, and
+    `wealth` projects it into `single_a`. `topology` names the stages, and
+    `permuted` declares regimes, destinations and members in reverse order.
+    """
+    states: dict[StateName, lcm.LinSpacedGrid | lcm.DiscreteGrid] = (
+        {} if wealth is None else {"wealth": _couple_wealth_grid()}
+    )
+    if isinstance(rule, lcm.PCOnWeight) and rule.state is not None:
+        states["mu"] = lcm.DiscreteGrid(TwoWeights)
+    adjustment = _paid if isinstance(rule, lcm.MutualConsent) else None
+    destinations = {
+        "a": lcm.Destination(
+            regime="single_a",
+            projection=wealth or {},
+            utility_adjustment=adjustment,
+        ),
+        "b": lcm.Destination(
+            regime="single_b", projection={}, utility_adjustment=adjustment
+        ),
+    }
+    utilities = {
+        "a": inside_a,
+        "b": _seven_at_every_weight if "mu" in states else _seven,
+    }
+    regimes = {
+        "couple": lcm.Regime(
+            states=states,
+            functions={
+                "utility": lcm.CollectiveUtility(
+                    utilities=dict(reversed(utilities.items()))
+                    if permuted
+                    else utilities
+                )
+            },
+            constraints=stay,
+            composition_action=lcm.CompositionAction(
+                destinations=dict(reversed(destinations.items()))
+                if permuted
+                else destinations,
+                rule=rule,
+            ),
+        ),
+        "idle": lcm.Regime(functions={"utility": _waiting}),
+        "single_a": destination_a,
+        "single_b": lcm.Regime(functions={"utility": _one}),
+    }
+    return lcm.Model(
+        n_periods=1,
+        stages=_LANDING_TOPOLOGIES[topology],
+        regimes=dict(reversed(regimes.items())) if permuted else regimes,
+        regime_id_class=LandingId,
+        initial_nodes=lcm.InitialNodes(
+            by_period={0: tuple(LandingId.__dataclass_fields__)}
+        ),
+        edges={},
+        enable_jit=enable_jit,
+    )
+
+
+def _couple_wealth_grid() -> lcm.LinSpacedGrid:
+    return lcm.LinSpacedGrid(start=1.0, stop=6.0, n_points=6)
+
+
+def _couple_value(model: lcm.Model) -> np.ndarray:
+    return np.asarray(model.solve(params={}, log_level="off").values[0]["couple"])
+
+
+def _rule_id(rule: LandingRule) -> str:
+    """A rule's test id: its kind, its weight state if any, and its tie."""
+    state = getattr(rule, "state", None)
+    return "-".join((type(rule).__name__, *((state,) if state else ()), rule.tie))
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize(
+    "rule",
+    [
+        lcm.PCOnActions(tie="leave"),
+        lcm.PCOnActions(),
+        lcm.PCOnWeight(tie="leave"),
+        lcm.PCOnWeight(),
+        lcm.PCOnWeight(state="mu", tie="leave"),
+        lcm.PCOnWeight(state="mu"),
+        _landing_settlement(),
+    ],
+    ids=_rule_id,
+)
+@pytest.mark.parametrize(
+    ("stay_feasible", "inside_a", "a_feasible", "a_flow", "expected"),
+    [
+        # No feasible stay, and no feasible action for member a in single_a: the
+        # couple has no feasible outcome.
+        (False, _one, False, _one, (-np.inf, -np.inf)),
+        # Member a, worth -inf either way, accepts staying because single_a has
+        # no feasible action; member b prefers 7 to 1.
+        (True, _worthless, False, _one, (-np.inf, 7.0)),
+        # Control: a feasible action worth -inf in single_a is an outside option.
+        (True, _worthless, True, _worthless, None),
+    ],
+    ids=["no_outcome", "infeasible_destination", "feasible_minus_infinity"],
+)
+def test_a_later_stage_destination_without_feasible_action_is_unsupported(
+    *,
+    stay_feasible: bool,
+    inside_a: Callable[[], FloatND],
+    a_feasible: bool,
+    a_flow: Callable[[], FloatND],
+    expected: tuple[float, float] | None,
+    rule: LandingRule,
+    enable_jit: bool,
+) -> None:
+    """A destination's support is its feasibility, whatever stage it decides in.
+
+    Oracles: the hand values, and the same couple with every regime in one stage,
+    whose destinations are read where they decide. A Pareto weight in a state
+    changes no value here, since every weight values the members alike. With a
+    feasible action worth `-inf` in `single_a`, member a leaves under
+    `tie="leave"` and stays under `tie="stay"`; under mutual consent member b
+    keeps the couple together.
+    """
+    model = functools.partial(
+        _landing_couple,
+        stay={} if stay_feasible else {"feasible": _never},
+        inside_a=inside_a,
+        destination_a=lcm.Regime(
+            functions={"utility": a_flow},
+            constraints={} if a_feasible else {"feasible": _never},
+        ),
+        rule=rule,
+    )
+    got = _couple_value(model(enable_jit=enable_jit))
+    same_stage = _couple_value(model(topology="unstaged"))
+    if expected is None:
+        expected = (
+            (-np.inf, 1.0)
+            if rule.tie == "leave" and not isinstance(rule, lcm.MutualConsent)
+            else (-np.inf, 7.0)
+        )
+    np.testing.assert_array_equal(
+        same_stage, np.broadcast_to(np.asarray(expected, dtype=got.dtype), got.shape)
+    )
+    np.testing.assert_array_equal(got, same_stage)
+
+
+def _hand_landing_values(*, offset: float) -> np.ndarray:
+    """The couple's values at wealth 1 to 6 under `tie="leave"`, by hand.
+
+    Member a lands at wealth plus `offset`, where `single_a` is feasible from 3
+    on and worth the wealth. The couple may stay at wealth 2 to 4, where member
+    a gets `-inf` up to wealth 2 and 0 above; member b always prefers to stay.
+    """
+    rows = []
+    for wealth in range(1, 7):
+        landing = wealth + offset
+        supported = landing >= 3.0
+        outside = landing if supported else -np.inf
+        inside = -np.inf if wealth <= 2 else 0.0
+        willing = not supported or inside > outside
+        if 2 <= wealth <= 4 and willing:
+            rows.append((inside, 7.0))
+        elif supported:
+            rows.append((outside, 1.0))
+        else:
+            rows.append((-np.inf, -np.inf))
+    return np.asarray(rows)
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize(
+    "rule", [lcm.PCOnActions(tie="leave"), lcm.PCOnWeight(tie="leave")], ids=_rule_id
+)
+@pytest.mark.parametrize("permuted", [False, True], ids=["declared", "permuted"])
+@pytest.mark.parametrize(
+    ("offset", "projection"),
+    [(0.0, _landed_wealth), (0.5, _half_more_wealth)],
+    ids=["on_grid", "off_grid"],
+)
+@pytest.mark.parametrize("topology", ["adjacent", "skipped", "split"])
+def test_a_destination_is_supported_where_it_has_a_feasible_action_at_the_landing(
+    *,
+    topology: str,
+    offset: float,
+    projection: Callable[..., ContinuousState],
+    permuted: bool,
+    rule: LandingRule,
+    enable_jit: bool,
+) -> None:
+    """Support follows the destination's own constraint, cell by cell.
+
+    `single_a` has wealth on the nodes 0 to 10 and is feasible from wealth 3 on,
+    where it is worth its wealth, so a landing between two feasible nodes reads
+    its value exactly. Oracles: the hand values, and the same couple with every
+    regime in one stage. Declaring regimes, destinations and members in reverse
+    order changes no value of a member.
+    """
+    model = functools.partial(
+        _landing_couple,
+        stay={"allowed": _staying_allowed},
+        inside_a=_inside_a,
+        destination_a=lcm.Regime(
+            states={"wealth": lcm.LinSpacedGrid(start=0.0, stop=10.0, n_points=11)},
+            functions={"utility": _landed_wealth},
+            constraints={"enough": _enough_wealth},
+        ),
+        rule=rule,
+        wealth={"wealth": projection},
+        permuted=permuted,
+    )
+    got = _couple_value(model(topology=topology, enable_jit=enable_jit))
+    same_stage = _couple_value(model(topology="unstaged"))
+    expected = _hand_landing_values(offset=offset).astype(got.dtype)
+    if permuted:
+        expected = expected[:, ::-1]
+    for value, reference in ((same_stage, expected), (got, same_stage)):
+        assert_agrees_to_ulp(
+            got=value, expected=reference, n_ulp=_SKIP_ULP, operand_magnitude=10.0
+        )
+
+
+@pytest.mark.parametrize("enable_jit", [False, True])
+def test_a_couple_stays_where_a_later_destination_has_no_feasible_action(
+    *, enable_jit: bool
+) -> None:
+    """The simulated couple stays where member a's destination admits no action.
+
+    At wealth 2, member a, worth `-inf` inside, accepts staying because
+    `single_a` has no feasible action at the landing, and member b prefers to
+    stay; at wealth 3, member a prefers `single_a`, and the members separate.
+    """
+    model = _landing_couple(
+        stay={"allowed": _staying_allowed},
+        inside_a=_inside_a,
+        destination_a=lcm.Regime(
+            states={"wealth": lcm.LinSpacedGrid(start=0.0, stop=10.0, n_points=11)},
+            functions={"utility": _landed_wealth},
+            constraints={"enough": _enough_wealth},
+        ),
+        rule=lcm.PCOnActions(tie="leave"),
+        wealth={"wealth": _landed_wealth},
+        enable_jit=enable_jit,
+    )
+    frame = model.simulate(
+        params={},
+        initial_conditions=pd.DataFrame(
+            {
+                "period": [0] * 4,
+                "regime_name": ["couple"] * 4,
+                "own_member": ["a", "b"] * 2,
+                "wealth": [2.0, 2.0, 3.0, 3.0],
+            }
+        ),
+        seed=5,
+        log_level="off",
+    ).to_dataframe()
+    rows = frame.reset_index().sort_values("agent_id")
+    assert rows["agent_id"].tolist() == [0, 1, 2, 3]
+    assert rows["regime_name"].astype(str).tolist() == [
+        "couple",
+        "couple",
+        "single_a",
+        "single_b",
+    ]
+
+
+@lcm.categorical(ordered=False)
+class SpendingLandingId:
+    couple: ScalarInt
+    single: ScalarInt
+    final: ScalarInt
+
+
+def test_a_later_stage_destination_solved_on_an_endogenous_grid_is_refused() -> None:
+    """Its feasibility at a landing state is not evaluated, as in one stage.
+
+    The refusal is the one a read of the destination's problem in its own stage
+    meets, raised when the model is built.
+    """
+    wealth = lcm.LinSpacedGrid(start=1.0, stop=6.0, n_points=6)
+    with pytest.raises(
+        lcm.exceptions.UnsupportedOperationError,
+        match="requires its declared GridSearch solver",
+    ):
+        lcm.Model(
+            n_periods=2,
+            stages={"decide": ("couple",), "spend": ("single", "final")},
+            regimes={
+                "couple": lcm.Regime(
+                    states={"wealth": wealth},
+                    functions={
+                        "utility": lcm.CollectiveUtility(
+                            utilities={"a": _landed_wealth, "b": _landed_wealth}
+                        )
+                    },
+                    composition_action=lcm.CompositionAction(
+                        destinations={
+                            member: lcm.Destination(
+                                regime="single", projection={"wealth": _wealth_kept}
+                            )
+                            for member in ("a", "b")
+                        },
+                        rule=lcm.PCOnActions(),
+                    ),
+                ),
+                "single": ConsumptionSavingsRegime(
+                    states={"wealth": wealth},
+                    actions={
+                        "consumption": lcm.LinSpacedGrid(
+                            start=0.5, stop=5.0, n_points=10
+                        )
+                    },
+                    functions={
+                        "utility": _spend_utility,
+                        "resources": _wealth_resources,
+                        "savings": _wealth_savings,
+                    },
+                    state_transitions={"wealth": _wealth_after_saving},
+                    solver=EGM(
+                        savings_grid=lcm.LinSpacedGrid(start=0.0, stop=6.0, n_points=7)
+                    ),
+                    liquid=LiquidMargin(
+                        state="wealth",
+                        action="consumption",
+                        resources="resources",
+                        post_decision_state="savings",
+                    ),
+                ),
+                "final": lcm.Regime(
+                    states={"wealth": wealth}, functions={"utility": _landed_wealth}
+                ),
+            },
+            regime_id_class=SpendingLandingId,
+            initial_nodes=lcm.InitialNodes(by_period={0: ("couple", "single")}),
+            edges={"single": {"final": lcm.PeriodRange()}},
+            fixed_params={"discount_factor": 0.9},
+        )
 
 
 def _period_reader(kind: str) -> tuple[lcm.Model, UserParams, RegimeName, set[int]]:

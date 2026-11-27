@@ -499,7 +499,11 @@ def _node_inputs(
 
 @dataclass(frozen=True, kw_only=True)
 class _LandingReadArguments:
-    """A landing read's operands: the clock and its target's stored value."""
+    """A landing read's operands: the clock and its target's stored value.
+
+    Also the target's actions and parameters, at which its feasibility at the
+    landing state is evaluated.
+    """
 
     period: int
     target: RegimeName
@@ -510,6 +514,12 @@ class _LandingReadArguments:
         if context.ages is None:
             raise ValueError("A landing read needs its actual economic age.")
         arguments: dict[str, PytreeValue | ShapeDtypePytree] = {
+            **dict(cast("StateActionSpace", context.state_action_space).actions),
+            **dict(
+                regime_kernel_params(
+                    cast("FlatParams", context.flat_params), regime_name=self.target
+                )
+            ),
             "period": jnp.int32(self.period),
             "age": context.ages.values[self.period],
         }
@@ -1365,29 +1375,33 @@ def _finish_bank(*, shape: tuple[int, ...], size: int) -> _FinishBank:
 
 
 def _admit_node(*, node: QueryNode, period: int) -> None:
-    """Refuse an unrepresented action/status or information intersection."""
+    """Refuse an unrepresented action/status or information intersection.
+
+    A landing read evaluates its target's feasibility in the target's problem at
+    the occurrence, which is admitted as a read of the target's problem is.
+    """
     context = node.context
     if node.read.phase != "solve" or node.read.period != period:
         raise UnsupportedOperationError(
             "A policy query needs its exact solve phase/period."
         )
-    if node.landing is not None:
-        _fail_if_projection_incomplete(node=node, reader="A query")
-        return
-    _admit_query_solver(context=context, period=period)
-    if period not in context.Q_and_F_functions:
+    problem = period if node.landing is None else node.landing
+    _admit_query_solver(context=context, period=problem)
+    if problem not in context.Q_and_F_functions:
         raise ValueError("The target action problem is inactive at this period.")
     _fail_if_projection_incomplete(node=node, reader="A query")
     if context.invariant_bindings or context.action_partitions != 1:
         raise UnsupportedOperationError(
             "This query closure needs an unblocked action problem."
         )
-    gated_targets = set(gated_query_targets(context=context, period=period))
-    if set(node.gated_channels) != gated_targets:
+    # A landing read takes its target's stored value, not its continuation.
+    if node.landing is None and set(node.gated_channels) != set(
+        gated_query_targets(context=context, period=period)
+    ):
         raise UnsupportedOperationError(
             "A query needs its gated continuation's explicit raw value channels."
         )
-    if runtime_bound_specs(function=context.Q_and_F_functions[period]):
+    if runtime_bound_specs(function=context.Q_and_F_functions[problem]):
         raise UnsupportedOperationError(
             "Query bound integrity must have a native status adapter."
         )
@@ -2450,7 +2464,8 @@ def _landing_answer(
 
     The value is the one stored at the occurrence, interpolated on the target's
     grid there: the target decides later in the period, undiscounted. The read
-    chooses no action and is supported wherever its guard holds.
+    chooses no action. It is supported where its guard holds and the target's
+    problem at the occurrence has a feasible action at the mapped states.
     """
     context = node.context
     target = node.read.target
@@ -2478,9 +2493,54 @@ def _landing_answer(
     return (
         jnp.where(guard, value, -jnp.inf),
         jnp.asarray(-1, dtype=jnp.int32),
-        live & guard,
+        live & guard & _landing_support(node=node, arguments=arguments),
         ~live | valid,
         count_projected_off_grid(rules=node.grid_rules, mapped=mapped, active=guard),
+    )
+
+
+def _landing_support(
+    *, node: QueryNode, arguments: Mapping[str, PytreeValue]
+) -> BoolND:
+    """Whether the target has a feasible action at the landing, as at its occurrence.
+
+    The target's own action problem there decides, over its whole action grid;
+    only its feasibility is read.
+    """
+    flow = cast(
+        "CanonicalActionKernel",
+        node.context.Q_and_F_functions[cast("int", node.landing)],
+    ).utilities_and_F
+    action_names = node.context.state_action_space.action_names
+    feasible = cast(
+        "Callable[..., BoolND]",
+        productmap(
+            func=with_signature(
+                functools.partial(
+                    _feasible_at,
+                    flow=flow,
+                    operands={**arguments, "period": jnp.int32(node.landing)},
+                ),
+                args=list(action_names),
+                enforce=False,
+            ),
+            variables=action_names,
+            batch_sizes=dict.fromkeys(action_names, 0),
+        ),
+    )
+    return jnp.any(feasible(**{name: arguments[name] for name in action_names}))
+
+
+def _feasible_at(
+    *,
+    flow: Callable[..., tuple[PytreeValue, ...]],
+    operands: Mapping[str, PytreeValue],
+    **actions: PytreeValue,
+) -> BoolND:
+    """The feasibility a canonical flow returns last, at one action."""
+    inputs = {**operands, **actions}
+    return jnp.asarray(
+        flow(**{name: inputs[name] for name in inspect.signature(flow).parameters})[-1]
     )
 
 
