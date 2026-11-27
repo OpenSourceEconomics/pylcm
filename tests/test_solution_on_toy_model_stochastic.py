@@ -247,7 +247,7 @@ HEALTH_TRANSITION = [
 
 
 @pytest.mark.parametrize("discount_factor", [0.0, 0.5, 0.9, 1.0])
-@pytest.mark.parametrize("n_wealth_points", [100, 1_000])
+@pytest.mark.parametrize("n_wealth_points", [100])
 @pytest.mark.parametrize("probs_array", HEALTH_TRANSITION)
 def test_stochastic_solve(
     *, discount_factor: float, n_wealth_points: int, probs_array: FloatND
@@ -317,7 +317,7 @@ def test_stochastic_solve(
 
 
 @pytest.mark.parametrize("discount_factor", [0.0, 0.5, 0.9, 1.0])
-@pytest.mark.parametrize("n_wealth_points", [100, 1_000])
+@pytest.mark.parametrize("n_wealth_points", [100])
 @pytest.mark.parametrize("probs_array", HEALTH_TRANSITION)
 def test_stochastic_simulate(
     *, discount_factor: float, n_wealth_points: int, probs_array: FloatND

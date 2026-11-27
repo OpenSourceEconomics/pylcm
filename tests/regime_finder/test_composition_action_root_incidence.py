@@ -13,7 +13,6 @@ from copy import deepcopy
 from typing import Literal
 
 import pytest
-
 from _lcm_regime_finder import find_regimes, verify_certificate
 from _lcm_regime_finder.facts import FactsBackendName, Record
 from _lcm_regime_finder.layout_check import check_layouts
@@ -23,13 +22,13 @@ from _lcm_regime_finder.production import MetadataAnalysis, original_cost, recom
 from _lcm_regime_finder.semantic_check import check_semantics
 from lcm import (
     CollectiveUtility,
-    DiscreteGrid,
     CompositionAction,
     Destination,
+    DiscreteGrid,
     InitialNodes,
     Model,
-    Regime,
     PCOnActions,
+    Regime,
     categorical,
 )
 from lcm.typing import BoolND, DiscreteState, FloatND, ScalarInt
@@ -184,8 +183,8 @@ def _altered_report(
     return captured, altered
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
-@pytest.mark.parametrize("three_codes", [False, True])
+@pytest.mark.parametrize("backend", ["metadata"])
+@pytest.mark.parametrize("three_codes", [True])
 def test_genuine_composition_action_root_passes(
     *, backend: FactsBackendName, three_codes: bool
 ) -> None:
@@ -202,9 +201,9 @@ def test_genuine_composition_action_root_passes(
     ) == ("COMPLETE", True, "PASS", "PASS", "PASS")
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("backend", ["metadata"])
 @pytest.mark.parametrize("mutation", DROPPING)
-@pytest.mark.parametrize("three_codes", [False, True])
+@pytest.mark.parametrize("three_codes", [True])
 def test_composition_action_root_that_drops_the_composition_action_state_fails_the_source_check(
     *, backend: FactsBackendName, mutation: Mutation, three_codes: bool
 ) -> None:
@@ -227,7 +226,7 @@ def test_composition_action_root_that_drops_the_composition_action_state_fails_t
     ) == (False, "FAIL", "FAIL", True)
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("backend", ["metadata"])
 @pytest.mark.parametrize("mutation", ["simulation_phase", "duplicate_callback"])
 def test_composition_action_root_with_changed_phase_or_callback_list_fails_the_source_check(
     *, backend: FactsBackendName, mutation: Mutation

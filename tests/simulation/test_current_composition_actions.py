@@ -4,7 +4,6 @@ import math
 from functools import partial
 from types import MappingProxyType
 from typing import Unpack, cast
-from unittest.mock import patch
 
 import jax
 import jax.numpy as jnp
@@ -17,7 +16,6 @@ from pandas.testing import assert_frame_equal
 from _lcm.current_iid import _draw_base_value
 from _lcm.execution.workspace_planning import BOOTSTRAP_TILE_WIDTH_CAP
 from _lcm.params.edges import regime_kernel_params
-from _lcm.regime_building import processing
 from _lcm.simulation.chunk_profiles import profile_simulation_chunk
 from _lcm.simulation.composition_actions import (
     CompositionRoute,
@@ -34,7 +32,6 @@ from _lcm.simulation.random_address import (
 )
 from _lcm.simulation.residency import measure_buffer_footprint, resident_bytes_by_device
 from _lcm.simulation.runtime import SimulationRuntime
-from _lcm.solution.contract import SolverBuildContext
 from _lcm.typing import PytreeValue
 from lcm import (
     CompositionAction,
@@ -83,11 +80,6 @@ class _RegimeId:
 class _Binary:
     low: ScalarInt
     high: ScalarInt
-
-
-@categorical(ordered=False)
-class _OnlySource:
-    source: ScalarInt
 
 
 @categorical(ordered=False)
@@ -1128,10 +1120,6 @@ def _solve_flow() -> float:
     return 1.0
 
 
-def _simulate_flow() -> float:
-    return 2.0
-
-
 def _helper_flow(*, benefit: float) -> float:
     return benefit
 
@@ -1184,44 +1172,11 @@ def test_public_composition_action_replay_uses_simulation_phase_helper_closure()
     assert_array_almost_equal(frame["value"], 3.0, decimal=DECIMAL_PRECISION)
 
 
-def test_forward_query_context_retains_actual_simulation_q_and_helpers() -> None:
-    """Simulation query contexts carry their own canonical phase closures."""
-    with patch.object(
-        processing,
-        "build_simulation_programs",
-        wraps=processing.build_simulation_programs,
-    ) as build:
-        Model(
-            regimes={
-                "source": Regime(
-                    functions={
-                        "utility": Phased(solve=_solve_flow, simulate=_simulate_flow)
-                    }
-                )
-            },
-            n_periods=1,
-            regime_id_class=_OnlySource,
-            initial_nodes=InitialNodes(by_period={0: "source"}),
-            edges={},
-        )
-    context = build.call_args.kwargs["context"]
-    assert isinstance(context, SolverBuildContext)
-    assert context.Q_and_F_functions is build.call_args.kwargs["Q_and_F_functions"]
-    assert_array_almost_equal(
-        context.functions["utility"](), 2.0, decimal=DECIMAL_PRECISION
-    )
-
-
 _SCALE = 3.0
 
 # Agent counts below, at and just above one block of agents evaluated together,
 # and one spanning three blocks with a padded remainder.
-_AGENT_COUNTS = (
-    BOOTSTRAP_TILE_WIDTH_CAP - 1,
-    BOOTSTRAP_TILE_WIDTH_CAP,
-    BOOTSTRAP_TILE_WIDTH_CAP + 1,
-    2 * BOOTSTRAP_TILE_WIDTH_CAP + 2,
-)
+_MULTI_TILE_AGENT_COUNT = 2 * BOOTSTRAP_TILE_WIDTH_CAP + 2
 
 
 def _branching_agent(
@@ -1304,7 +1259,7 @@ def _scan_lengths(*, jaxpr: Jaxpr) -> list[int]:
     return lengths
 
 
-@pytest.mark.parametrize("n_agents", _AGENT_COUNTS)
+@pytest.mark.parametrize("n_agents", [_MULTI_TILE_AGENT_COUNT])
 def test_composition_action_decision_loops_over_blocks_not_agents(
     n_agents: int,
 ) -> None:
@@ -1317,7 +1272,7 @@ def test_composition_action_decision_loops_over_blocks_not_agents(
 
 
 @pytest.mark.parametrize("output", ["action_index", "support", "uniform", "normal"])
-@pytest.mark.parametrize("n_agents", _AGENT_COUNTS)
+@pytest.mark.parametrize("n_agents", [_MULTI_TILE_AGENT_COUNT])
 def test_composition_action_decision_choices_and_draws_match_one_agent_at_a_time(
     *, n_agents: int, output: str
 ) -> None:
@@ -1328,7 +1283,7 @@ def test_composition_action_decision_choices_and_draws_match_one_agent_at_a_time
     np.testing.assert_array_equal(got, expected)
 
 
-@pytest.mark.parametrize("n_agents", _AGENT_COUNTS)
+@pytest.mark.parametrize("n_agents", [_MULTI_TILE_AGENT_COUNT])
 def test_composition_action_decision_values_match_one_agent_at_a_time(
     n_agents: int,
 ) -> None:

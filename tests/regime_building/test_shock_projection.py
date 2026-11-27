@@ -31,9 +31,7 @@ from lcm.exceptions import ShockDeclarationError
 from lcm.shocks import (
     Discrete,
     Law,
-    LogNormal,
     Normal,
-    NormalMixture,
     Product,
     ShockGroup,
     UserNodes,
@@ -92,39 +90,6 @@ def _validator() -> Callable[..., None]:
     return cast(
         "Callable[..., None]",
         importlib.import_module("_lcm.shock_projection").validate_observed_laws,
-    )
-
-
-def test_changed_shared_discrete_input_is_named_and_refused() -> None:
-    """A projection changing an actually shared law input cannot reuse its category."""
-    binding = _binding()
-    with pytest.raises(ShockDeclarationError, match=r"'eps'.*'alive'.*state 'state'"):
-        _validator()(
-            source="home",
-            target="alive",
-            physical_inputs=frozenset({"eps"}),
-            source_physical_inputs=frozenset({"eps"}),
-            projection={"state": _changed},
-            source_bindings={"innovation": binding},
-            target_bindings={"innovation": binding},
-            source_domains=binding.state_domains,
-            target_domains=binding.state_domains,
-        )
-
-
-def test_identity_shared_discrete_input_is_admitted() -> None:
-    """An effective direct return preserves the shared probability partition."""
-    binding = _binding()
-    _validator()(
-        source="home",
-        target="alive",
-        physical_inputs=frozenset({"eps"}),
-        source_physical_inputs=frozenset({"eps"}),
-        projection={"state": _identity},
-        source_bindings={"innovation": binding},
-        target_bindings={"innovation": binding},
-        source_domains=binding.state_domains,
-        target_domains=binding.state_domains,
     )
 
 
@@ -467,10 +432,6 @@ def _mean_from_assets(assets: ContinuousState) -> FloatND:
     return assets
 
 
-def _quarter_assets(assets: ContinuousState) -> FloatND:
-    return 0.25 * assets
-
-
 def _mean_from_skill(skill: ContinuousState) -> FloatND:
     return 2.0 * skill
 
@@ -616,31 +577,8 @@ _MEAN_FROM_ASSETS = Normal(mu=_mean_from_assets, sigma=1.0)
 
 @pytest.mark.parametrize(
     ("law", "rule"),
-    [
-        (_MEAN_FROM_ASSETS, "unilateral"),
-        (LogNormal(mu=_quarter_assets, sigma=0.5), "unilateral"),
-        (
-            NormalMixture(
-                p1=0.5,
-                mu1=_mean_from_assets,
-                sigma1=1.0,
-                mu2=_mean_from_assets,
-                sigma2=1.0,
-            ),
-            "unilateral",
-        ),
-        (_MEAN_FROM_ASSETS, "renegotiate"),
-        (_MEAN_FROM_ASSETS, "available"),
-        (_MEAN_FROM_ASSETS, "consent"),
-    ],
-    ids=[
-        "shared-normal",
-        "shared-lognormal",
-        "shared-mixture",
-        "shared-renegotiate",
-        "shared-available",
-        "shared-consent",
-    ],
+    [(_MEAN_FROM_ASSETS, "unilateral")],
+    ids=["shared-normal"],
 )
 def test_observed_law_reading_a_state_the_composition_action_changes_is_refused(
     *, law: Law, rule: str

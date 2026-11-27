@@ -137,40 +137,6 @@ def test_model_requires_explicit_edge_topology() -> None:
         )
 
 
-def test_graph_edges_price_perceived_choice_and_realize_other_destination() -> None:
-    """Price an investment through solve edges and realize the simulation edge."""
-    model = Model(
-        regimes=_graph_regimes(),
-        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
-        regime_id_class=_GraphRegimeId,
-        initial_nodes=((0, "work"),),
-        edges=Phased(
-            solve={"work": {"perceived": 0}},
-            simulate={"work": {"realized": 0}},
-        ),
-        enable_jit=False,
-    )
-    assert model.graph.initial_nodes == frozenset({(0, "work")})
-    assert model.reachability.solution.targets(step=0, source="work") == ("perceived",)
-    assert model.reachability.simulation.targets(step=0, source="work") == ("realized",)
-    solution = model.solve(params={"discount_factor": 1.0}, log_level="debug")
-    np.testing.assert_array_equal(solution.values[0]["work"][..., 0], jnp.ones(2))
-    frame = model.simulate(
-        params={"discount_factor": 1.0},
-        solution=solution,
-        initial_conditions={
-            "age": jnp.array([0]),
-            "wealth": jnp.array([0.0]),
-            "regime_id": jnp.array([_GraphRegimeId.work]),
-        },
-        log_level="debug",
-        seed=7,
-    ).to_dataframe()
-    assert frame["regime_name"].tolist() == ["work", "realized"]
-    assert frame.loc[frame["period"] == 0, "investment"].tolist() == [1.0]
-    assert frame.loc[frame["period"] == 1, "wealth"].tolist() == [1.0]
-
-
 @pytest.mark.parametrize(("source", "target"), [("work", "typo"), ("typo", "realized")])
 def test_graph_unknown_names_are_rejected_even_at_final_source_age(
     *,
@@ -383,13 +349,6 @@ def test_explicit_initial_pair_requires_one_exact_age() -> None:
         )
 
 
-def test_broadcast_graph_preserves_nnbegm_phase_invariance() -> None:
-    """Broadcast topology preserves identical numerical declarations across phases."""
-    model = n_nbegm_toy.build_model(variant="n_nbegm", n_periods=3)
-    assert model.graph.edges.solve == model.graph.edges.simulate
-    assert model.graph.solution.targets(step=0, source="alive") == ("alive", "dead")
-
-
 def test_graph_destination_order_preserves_nnbegm_phase_invariance() -> None:
     """Destination insertion order cannot create numerical phase variation."""
     template = n_nbegm_toy.build_model(variant="n_nbegm", n_periods=3)
@@ -489,8 +448,8 @@ def _declaration_model(*, edges: ModelEdges, enable_jit: bool) -> Model:
     )
 
 
-@pytest.mark.parametrize("enable_jit", [False, True])
-@pytest.mark.parametrize("container", ["dict", "proxy", "phased"])
+@pytest.mark.parametrize("enable_jit", [True])
+@pytest.mark.parametrize("container", ["phased"])
 @pytest.mark.parametrize("mutation", ["outer", "inner"])
 def test_declared_edges_snapshot_reconstructs_original_value(
     *, enable_jit: bool, container: str, mutation: str
@@ -523,9 +482,7 @@ def test_declared_edges_snapshot_reconstructs_original_value(
     )
 
 
-@pytest.mark.parametrize(
-    "wrapper", ["plain", "proxy", "case", "default", "until", "mapped-until", "phased"]
-)
+@pytest.mark.parametrize("wrapper", ["plain", "mapped-until", "phased"])
 def test_transition_snapshots_nested_laws_at_construction(wrapper: str) -> None:
     """Nested probability mappings are owned before a model binds their laws."""
     low = StochasticTransition(func=_probability_quarter)

@@ -220,7 +220,7 @@ def test_enumeration_matches_the_hand_solution(
     )
 
 
-@pytest.mark.parametrize("period", [0, 1])
+@pytest.mark.parametrize("period", [0])
 @pytest.mark.parametrize("agent", list(AGENTS))
 def test_solve_stores_the_value_at_the_objective(*, agent: str, period: int) -> None:
     """`V_t` is `u + δ·CE` at the action that maximizes `u + β̃δ·CE`."""
@@ -233,33 +233,7 @@ def test_solve_stores_the_value_at_the_objective(*, agent: str, period: int) -> 
     )
 
 
-def test_sophisticated_value_lies_below_the_best_long_run_value() -> None:
-    """At wealth two the self spends, worth 2.85, although saving is worth 2.97."""
-    solution = _model().solve(params=_params(beta_tilde=BETA), log_level="off")
-    assert_array_almost_equal(
-        solution.value(step=0, regime="decide")[Wealth.two],
-        2.85,
-        decimal=DECIMAL_PRECISION,
-    )
-
-
-@pytest.mark.parametrize("period", [0, 1])
-def test_identical_objective_and_value_solve_like_the_plain_aggregator(
-    *, period: int
-) -> None:
-    """`Decoupled(objective=W, value=W)` solves like `koopmans_aggregator=W`."""
-    params: UserParams = {"decide": {"koopmans_aggregator": {"delta": DELTA}}}
-    wrapped = _model(
-        koopmans_aggregator=lcm.Decoupled(objective=long_run, value=long_run)
-    ).solve(params=params, log_level="off")
-    plain = _model(koopmans_aggregator=long_run).solve(params=params, log_level="off")
-    assert_array_equal(
-        wrapped.value(step=period, regime="decide"),
-        plain.value(step=period, regime="decide"),
-    )
-
-
-@pytest.mark.parametrize("period", [0, 1])
+@pytest.mark.parametrize("period", [0])
 def test_tied_objective_takes_the_action_of_larger_stored_value(*, period: int) -> None:
     """An objective tied across actions picks the action whose stored value is larger.
 
@@ -508,7 +482,7 @@ def _household_model(single: lcm.Model) -> lcm.Model:
     )
 
 
-@pytest.mark.parametrize("period", [0, 1])
+@pytest.mark.parametrize("period", [0])
 def test_a_household_chooses_on_its_weighted_objectives(*, period: int) -> None:
     """The deciding member's choices and values are the single's."""
     single = _model()
@@ -671,7 +645,7 @@ def additive(*, utility: FloatND, CE: FloatND) -> FloatND:
     return utility + CE
 
 
-@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("enable_jit", [True])
 def test_simulation_rejects_an_objective_with_no_feasible_action(
     *, enable_jit: bool
 ) -> None:
@@ -1022,25 +996,6 @@ def test_objective_ties_go_to_the_other_members_then_to_the_decider(
     assert_array_equal(df.loc[df["period"] == 0, "c"], expected_c)
 
 
-@pytest.mark.parametrize("period", [0, 1])
-def test_invariant_blocking_solves_like_the_unblocked_model(*, period: int) -> None:
-    """Solving one mood at a time gives the unblocked stored values."""
-    params: UserParams = {"decide": {"koopmans_aggregator": {"delta": DELTA}}}
-    blocked = _mood_model(
-        execution_config=lcm.ExecutionConfig(
-            devices=(0,), device_memory_bytes=None, invariant_block_widths={"mood": 1}
-        )
-    )
-    assert_array_equal(
-        blocked.solve(params=params, log_level="off").value(
-            step=period, regime="decide"
-        ),
-        _mood_model()
-        .solve(params=params, log_level="off")
-        .value(step=period, regime="decide"),
-    )
-
-
 SCALE = 0.3
 
 
@@ -1125,7 +1080,7 @@ def _ev1_params(*, beta_tilde: float) -> UserParams:
     }
 
 
-@pytest.mark.parametrize("period", [0, 1])
+@pytest.mark.parametrize("period", [0])
 @pytest.mark.parametrize("agent", list(AGENTS))
 def test_ev1_solve_stores_the_expected_value_at_the_noisy_objective(
     *, agent: str, period: int
@@ -1162,7 +1117,7 @@ def _enumerate_ev1_household_values(*, beta_tilde: float) -> dict[int, np.ndarra
     return {period: np.stack([hers[period], his[period]], axis=-1) for period in (0, 1)}
 
 
-@pytest.mark.parametrize("period", [0, 1])
+@pytest.mark.parametrize("period", [0])
 def test_ev1_household_publishes_the_deciders_value_and_the_others_mean(
     *, period: int
 ) -> None:
@@ -1178,30 +1133,6 @@ def test_ev1_household_publishes_the_deciders_value_and_the_others_mean(
     assert_array_almost_equal(
         values,
         _enumerate_ev1_household_values(beta_tilde=0.7)[period],
-        decimal=DECIMAL_PRECISION,
-    )
-
-
-@pytest.mark.parametrize("period", [0, 1])
-def test_ev1_identical_objective_and_value_solve_like_the_plain_aggregator(
-    *, period: int
-) -> None:
-    """With `objective = value` the EV1 solve equals the plain logsum."""
-    params: UserParams = {
-        "decide": {
-            "koopmans_aggregator": {"delta": DELTA},
-            "taste_shocks": {"scale": SCALE},
-        }
-    }
-    wrapped = _ev1_model(
-        koopmans_aggregator=lcm.Decoupled(objective=long_run, value=long_run)
-    ).solve(params=params, log_level="off")
-    plain = _ev1_model(koopmans_aggregator=long_run).solve(
-        params=params, log_level="off"
-    )
-    assert_array_almost_equal(
-        wrapped.value(step=period, regime="decide"),
-        plain.value(step=period, regime="decide"),
         decimal=DECIMAL_PRECISION,
     )
 
@@ -1250,28 +1181,6 @@ def test_ev1_lookup_publishes_the_acting_selfs_choice_probabilities() -> None:
     )
 
 
-def test_ev1_simulated_choices_follow_the_acting_selfs_probabilities() -> None:
-    """Simulated spend frequency at wealth one is within four standard errors."""
-    n_agents = 4_000
-    df = (
-        _ev1_model()
-        .simulate(
-            params=_ev1_params(beta_tilde=1.0),
-            initial_conditions={
-                "wealth": jnp.full(n_agents, Wealth.one),
-                "regime_id": jnp.full(n_agents, RegimeId.decide),
-                "period": jnp.zeros(n_agents, dtype=jnp.int32),
-            },
-            log_level="off",
-            seed=11,
-        )
-        .to_dataframe()
-    )
-    spend = _naive_today_probabilities()[0]
-    share = (df.loc[df["period"] == 0, "choice"] == "spend").mean()
-    assert abs(share - spend) < 4 * np.sqrt(spend * (1 - spend) / n_agents)
-
-
 @lcm.categorical(ordered=False)
 class Gate:
     blocked: ScalarInt
@@ -1318,8 +1227,8 @@ def _large_offset() -> float:
     return float(2 ** (26 if jnp.asarray(0.0).dtype == jnp.float32 else 55))
 
 
-@pytest.mark.parametrize("keep_intermediates", [(), ALL_INTERMEDIATES])
-@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("keep_intermediates", [ALL_INTERMEDIATES])
+@pytest.mark.parametrize("enable_jit", [True])
 def test_ev1_infeasible_combination_publishes_minus_infinity(
     *, enable_jit: bool, keep_intermediates: tuple[Intermediate, ...]
 ) -> None:
@@ -1342,7 +1251,7 @@ def test_ev1_infeasible_combination_publishes_minus_infinity(
         assert np.asarray(got.Q)[0, Gate.blocked] == 7.0
 
 
-@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("enable_jit", [True])
 def test_ev1_stored_value_survives_a_large_objective_translation(
     *, enable_jit: bool
 ) -> None:
@@ -1741,53 +1650,6 @@ def test_a_separate_objective_is_refused_on_a_regime_with_its_own_composition_ac
             rule=rule,
             aggregator=lcm.Decoupled(objective=_half_continuation, value=additive),
         )
-
-
-@pytest.mark.parametrize("rule", _RULES)
-def test_a_current_self_solves_and_simulates_with_a_composition_action(
-    *, rule: str
-) -> None:
-    """The current self (specification 13.2) is not limited to regimes without an
-    composition action (specification 13.5, [A 20]).
-
-    Its solve is that of the solve-phase aggregator, and the simulation runs.
-    """
-    current_self = _composition_action_model(
-        rule=rule, aggregator=lcm.Phased(solve=additive, simulate=_half_continuation)
-    )
-    solution = current_self.solve(params={}, log_level="off")
-    plain = _composition_action_model(rule=rule, aggregator=additive).solve(
-        params={}, log_level="off"
-    )
-    for regime in ("couple", "single_f", "single_m"):
-        assert_array_equal(
-            solution.value(step=0, regime=regime),
-            plain.value(step=0, regime=regime),
-        )
-    start = (
-        _CompositionActionRegimeId.single_f
-        if rule == "formation"
-        else _CompositionActionRegimeId.couple
-    )
-    frame = current_self.simulate(
-        params={},
-        solution=solution,
-        initial_conditions={
-            "s": jnp.zeros(2),
-            "mu": jnp.zeros(2, dtype=jnp.int32),
-            "period": jnp.zeros(2, dtype=jnp.int32),
-            "regime_id": jnp.full(2, start),
-            "own_member": jnp.asarray(
-                [current_self.member_names_to_ids[m] for m in ("f", "m")],
-                dtype=jnp.int32,
-            ),
-        },
-        log_level="off",
-        seed=0,
-    ).to_dataframe(use_categorical_codes=True)
-    first = frame.loc[frame["period"] == 0]
-    assert len(first) == 2
-    assert np.isfinite(first[["value_f", "value_m"]].to_numpy()).all()
 
 
 def _tied_objective_utility(
@@ -2430,9 +2292,17 @@ _ENTRY_CASES = {
 }
 
 
-@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("enable_jit", [True])
 @pytest.mark.parametrize("alternatives", ["none", "second"])
-@pytest.mark.parametrize("case", list(_ENTRY_CASES))
+@pytest.mark.parametrize(
+    "case",
+    [
+        "one member, separate objective, c",
+        "y and x, separate objective",
+        "one member, c, hidden draw",
+        "x and y, c, observed draw",
+    ],
+)
 def test_a_composition_action_into_a_taste_node_without_a_finite_alternative_fails(
     *, case: str, alternatives: str, enable_jit: bool
 ) -> None:

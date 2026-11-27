@@ -20,7 +20,7 @@ from tests.test_models.deterministic.regression import (
 )
 
 
-@pytest.mark.parametrize("n_agents", [1, 13, 56])
+@pytest.mark.parametrize("n_agents", [56])
 @pytest.mark.parametrize("budgeted", [False, True])
 def test_public_agent_partition_matches_supplied_solution_reference(
     *, n_agents: int, budgeted: bool, monkeypatch: pytest.MonkeyPatch

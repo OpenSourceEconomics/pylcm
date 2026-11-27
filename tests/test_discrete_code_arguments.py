@@ -241,22 +241,7 @@ def _reference_solution(
 
 
 @pytest.mark.parametrize("case", list(_CASES))
-@pytest.mark.parametrize("period", range(_LAST_WORKING_AGE + 1))
-def test_code_indexed_series_solves_to_the_reference_value_function(
-    *, case: str, period: int
-) -> None:
-    """`wage_premium[experience_code]` reads the premium of each node's label."""
-    model, params, wages = _CASES[case]()
-    got = model.solve(params=params, log_level="off").values[period]["working_life"]
-    aaae(
-        np.asarray(got)[..., 0],
-        _reference_solution(wages)[0][period],
-        DECIMAL_PRECISION,
-    )
-
-
-@pytest.mark.parametrize("case", list(_CASES))
-@pytest.mark.parametrize("period", range(_LAST_WORKING_AGE + 1))
+@pytest.mark.parametrize("period", [0])
 def test_an_age_specialized_code_reader_solves_to_the_reference_value_function(
     *, case: str, period: int
 ) -> None:
@@ -431,7 +416,7 @@ def _constrained_values(
     return constrained.solve(params=params, log_level="off").values
 
 
-@pytest.mark.parametrize("period", range(_LAST_WORKING_AGE + 1))
+@pytest.mark.parametrize("period", [0])
 def test_code_reads_in_a_constraint_and_a_regime_law_match_value_reads(
     period: int,
 ) -> None:

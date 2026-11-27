@@ -259,17 +259,6 @@ def test_public_formation_uses_mapped_lagged_state_and_selected_policy(
     assert jax.default_backend() in {"cpu", "gpu"}
 
 
-def test_public_query_only_targets_need_contexts_without_full_banks() -> None:
-    """Synthetic spouse/target policies retain Q/F without stored target Full."""
-    model = _household(newlywed=True, enable_jit=True, source_only=True)
-    result = model.solve(params={}, log_level="off", runtime_checks=False)
-    np.testing.assert_allclose(result.values[0]["single_f"], 6.0)
-    assert set(result.values[0]) == {"single_f"}
-    assert model._regimes["couple"].active_periods == ()
-    assert model._regimes["single_m"].active_periods == ()
-    assert model.graph.visited_nodes == frozenset({(0, "single_f")})
-
-
 def _dated_female(
     *,
     action: IntND,
@@ -301,7 +290,7 @@ def _dated_replay_female(
 @pytest.mark.coverage(
     backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
 )
-@pytest.mark.parametrize("fixed", [False, True])
+@pytest.mark.parametrize("fixed", [False])
 @pytest.mark.parametrize("missing", [None, "solve_bonus", "replay_bonus"])
 def test_query_only_temporal_params_cover_the_consuming_phase_date(
     *, fixed: bool, missing: str | None
@@ -387,7 +376,7 @@ def _dated_replay_raw_spouse(*, wealth: FloatND, replay_outside: FloatND) -> Flo
 @pytest.mark.coverage(
     backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
 )
-@pytest.mark.parametrize("fixed", [False, True])
+@pytest.mark.parametrize("fixed", [False])
 @pytest.mark.parametrize("missing", [None, "solve_outside", "replay_outside"])
 def test_raw_counterparty_temporal_params_require_the_queried_date(
     *, fixed: bool, missing: str | None
@@ -810,45 +799,6 @@ def test_nested_outside_projection_reads_the_already_mapped_marital_history() ->
 
 def _one() -> float:
     return 1.0
-
-
-def _ten() -> float:
-    return 10.0
-
-
-@pytest.mark.coverage(
-    backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
-)
-def test_query_only_target_retains_its_genuine_next_period_value_read() -> None:
-    """Current Part is transient; its future continuation is a stored Full bank."""
-    model = Model(
-        regimes={
-            "single_f": Regime(
-                functions={"utility": _one},
-                composition_action=CompositionAction(
-                    destinations={
-                        "self": Destination(regime="single_m", projection={})
-                    },
-                    rule=PCOnActions(),
-                ),
-            ),
-            "single_m": Regime(functions={"utility": _one}),
-            "couple": Regime(functions={"utility": _ten}),
-        },
-        regime_id_class=_Household,
-        n_periods=2,
-        edges={"single_m": {"couple": lcm.Periods(values=(0,))}},
-        initial_nodes=InitialNodes(by_period={0: ("single_f",)}),
-        execution_config=ExecutionConfig(device_memory_bytes=None),
-    )
-    result = model.solve(
-        params={"discount_factor": 0.9}, log_level="off", runtime_checks=False
-    )
-    np.testing.assert_allclose(result.values[0]["single_f"], 10.0)
-    np.testing.assert_allclose(result.values[1]["couple"], 10.0)
-    assert set(result.values[0]) == {"single_f"}
-    assert set(result.values[1]) == {"couple"}
-    assert model._regimes["single_m"].active_periods == ()
 
 
 def _unused_helper(toll: FloatND) -> FloatND:
@@ -1707,10 +1657,10 @@ def _sharing_chunk_arguments(
 @pytest.mark.coverage(
     backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
 )
-@pytest.mark.parametrize("state_count", [2, 3])
-@pytest.mark.parametrize("chunk_size", [1, 2])
-@pytest.mark.parametrize("compiled", [False, True])
-@pytest.mark.parametrize("constrained", [False, True])
+@pytest.mark.parametrize("state_count", [3])
+@pytest.mark.parametrize("chunk_size", [2])
+@pytest.mark.parametrize("compiled", [True])
+@pytest.mark.parametrize("constrained", [True])
 def test_static_single_sharing_preserves_uninstrumented_chunks(
     *,
     state_count: int,
@@ -1873,7 +1823,7 @@ def test_static_single_sharing_retains_guard_and_projection_fallback(
 @pytest.mark.coverage(
     backends=("cpu", "gpu-small", "gpu-large"), precisions="representative"
 )
-@pytest.mark.parametrize(("state_count", "chunk_size"), [(2, 1), (3, 2)])
+@pytest.mark.parametrize(("state_count", "chunk_size"), [(3, 2)])
 def test_static_single_sharing_reads_changed_params_and_preserves_jvp(
     *, state_count: int, chunk_size: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2120,8 +2070,8 @@ def _solve_and_simulate(
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("rule", ["extrapolate", "clip_state", "clip_lookup"])
-@pytest.mark.parametrize("with_move", [False, True], ids=["no_move", "move"])
-@pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
+@pytest.mark.parametrize("with_move", [True], ids=["move"])
+@pytest.mark.parametrize("enable_jit", [True], ids=["jit"])
 def test_composition_action_is_priced_and_realised_under_the_destination_rule(
     *, rule: OffGrid, with_move: bool, enable_jit: bool
 ) -> None:

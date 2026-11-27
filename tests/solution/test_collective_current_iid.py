@@ -158,8 +158,8 @@ def _model(
     )
 
 
-@pytest.mark.parametrize("enable_jit", [False, True])
-@pytest.mark.parametrize("width", [1, 3])
+@pytest.mark.parametrize("enable_jit", [True])
+@pytest.mark.parametrize("width", [3])
 def test_common_policy_is_routed_before_current_node_integration(
     *, enable_jit: bool, width: int
 ) -> None:

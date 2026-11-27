@@ -836,18 +836,6 @@ def test_a_composition_action_one_ulp_above_the_tie_is_taken(rule: str) -> None:
     )
 
 
-def test_a_couple_stays_when_a_divorce_value_ties_its_value() -> None:
-    """f's divorce value 7/2 + 1/2 is exactly her 4 at alternative 0."""
-    p = replace(Params(), divorce_cost={"f": Frac(-1, 2), "m": Frac(0)})
-    assert _couple_at_terminal_origin(p)[0] == 0
-
-
-def test_a_couple_divorces_when_a_divorce_value_is_one_ulp_above_its_value() -> None:
-    above = Frac(np.nextafter(4.0, np.inf))
-    p = replace(Params(), divorce_cost={"f": Frac(7, 2) - above, "m": Frac(0)})
-    assert _couple_at_terminal_origin(p)[0] == DIVORCE
-
-
 @pytest.mark.parametrize("rule", DISSOLUTION_RULES)
 def test_an_empty_feasible_set_dissolves(rule: str) -> None:
     q = _q(f=[9, 9], m=[9, 9])

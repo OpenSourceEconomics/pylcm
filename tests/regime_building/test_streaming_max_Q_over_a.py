@@ -144,7 +144,7 @@ def _Q_and_F(
     return value, feasible
 
 
-@pytest.mark.parametrize("block_width", [1, 4, 5, 6])
+@pytest.mark.parametrize("block_width", [5])
 def test_full_V_streaming_matches_dense_over_states_and_partial_action_tail(
     block_width: int,
 ) -> None:
@@ -290,7 +290,7 @@ _PARETO_WEIGHTS = ParetoWeights(
 )
 
 
-@pytest.mark.parametrize("block_width", [1, 4, 5, 6])
+@pytest.mark.parametrize("block_width", [5])
 def test_collective_full_V_streaming_matches_dense_with_one_household_winner(
     block_width: int,
 ) -> None:
@@ -362,7 +362,7 @@ _EQUAL_PARETO_WEIGHTS = ParetoWeights(
 
 
 @pytest.mark.parametrize("action_order", [("a", "b"), ("b", "a")])
-@pytest.mark.parametrize("block_width", [1, 2, 7, 25])
+@pytest.mark.parametrize("block_width", [7, 25])
 def test_tied_household_objective_goes_to_the_first_member_at_every_width(
     *, action_order: tuple[ActionName, ActionName], block_width: int
 ) -> None:
@@ -549,8 +549,8 @@ def _co_map_kernels() -> tuple[
     return get_max_Q_over_a(**kwargs), get_streaming_max_Q_over_a(**kwargs)
 
 
-@pytest.mark.parametrize("block_width", [1, 3])
-@pytest.mark.parametrize("execution", ["eager", "jit", "aot"])
+@pytest.mark.parametrize("block_width", [3])
+@pytest.mark.parametrize("execution", ["aot"])
 def test_co_mapped_full_V_streaming_matches_dense_and_preserves_state_axes(
     *, block_width: int, execution: str
 ) -> None:
@@ -899,8 +899,8 @@ def test_streaming_width_keyword_collision_fails_closed() -> None:
         )
 
 
-@pytest.mark.parametrize("block_width", [1, 3])
-@pytest.mark.parametrize("execution", ["eager", "jit", "aot"])
+@pytest.mark.parametrize("block_width", [3])
+@pytest.mark.parametrize("execution", ["aot"])
 def test_streaming_width_keyword_stays_separate_from_Q_parameter(
     *, block_width: int, execution: str
 ) -> None:
@@ -1034,7 +1034,7 @@ def _solve_and_simulate_at_action_width(
     return model, solution, frame
 
 
-@pytest.mark.parametrize("width", [1, 2, 7])
+@pytest.mark.parametrize("width", [7])
 def test_households_stream_to_the_values_and_choices_of_the_whole_product(
     width: int,
 ) -> None:

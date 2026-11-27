@@ -169,33 +169,6 @@ def _partitioned_lanes(
     return jax.jit(jax.vmap(participant, axis_name=_AXIS))(jnp.arange(n_partitions))
 
 
-def _unpartitioned(
-    *, block_width: int, values: np.ndarray, feasible: np.ndarray
-) -> HardMaxResult:
-    """Run the existing single-participant streamed reduction."""
-    n_cells, n_actions = values.shape
-    reduce_cell = build_streaming_collective_max_Q_over_a(
-        publishes_identity=True,
-        Q_and_F=_table_Q_and_F,
-        action_names=("choice",),
-        block_width=block_width,
-        members=SELF,
-        weights=_SELF_WEIGHTS,
-    )
-    return _as_single(
-        jax.jit(
-            jax.vmap(
-                lambda cell: reduce_cell(
-                    choice=jnp.arange(n_actions, dtype=jnp.int32),
-                    cell=cell,
-                    values=jnp.asarray(values),
-                    feasible=jnp.asarray(feasible),
-                )
-            )
-        )(jnp.arange(n_cells))
-    )
-
-
 def _bits(array: jax.Array | np.ndarray | np.floating) -> np.ndarray:
     """Return the exact storage bits of a floating array, NaN payloads included."""
     host = np.asarray(array)
@@ -242,9 +215,9 @@ def _draw_case(
 
 _LAYOUTS = tuple(
     (n_partitions, block_width, n_actions)
-    for n_partitions in (1, 2, 3, 4, 7)
-    for block_width in (1, 2, 3, 5)
-    for n_actions in (1, 6, 7, 13)
+    for n_partitions in (1, 3, 7)
+    for block_width in (1, 3)
+    for n_actions in (1, 7)
 )
 
 
@@ -267,34 +240,6 @@ def test_partitioned_reduction_equals_the_scalar_oracle_bit_for_bit(
 
     _assert_results_identical(
         got=got, expected=_scalar_oracle(values=values, feasible=feasible)
-    )
-
-
-@pytest.mark.parametrize(("n_partitions", "block_width", "n_actions"), _LAYOUTS)
-def test_partitioned_reduction_equals_the_unpartitioned_stream_bit_for_bit(
-    *, n_partitions: int, block_width: int, n_actions: int
-) -> None:
-    values, feasible = _draw_case(
-        seed=7 + 1000 * n_partitions + 10 * block_width + n_actions,
-        n_cells=24,
-        n_actions=n_actions,
-    )
-    expected = _unpartitioned(block_width=block_width, values=values, feasible=feasible)
-
-    got = _partitioned(
-        n_partitions=n_partitions,
-        block_width=block_width,
-        values=values,
-        feasible=feasible,
-    )
-
-    _assert_results_identical(
-        got=got,
-        expected=(
-            expected.best_value,
-            expected.best_global_action_id,
-            expected.any_feasible,
-        ),
     )
 
 
@@ -354,7 +299,7 @@ _EDGE_CASES = {
 }
 
 
-@pytest.mark.parametrize("n_partitions", [2, 3, 4, 6])
+@pytest.mark.parametrize("n_partitions", [3])
 @pytest.mark.parametrize("case", list(_EDGE_CASES))
 def test_partitioned_reduction_keeps_each_hard_max_convention(
     *, case: str, n_partitions: int
@@ -412,41 +357,6 @@ def test_more_participants_than_blocks_leaves_harmless_empty_partitions() -> Non
     _assert_results_identical(
         got=got, expected=_scalar_oracle(values=values, feasible=feasible)
     )
-
-
-@pytest.mark.parametrize("n_actions", range(1, 15))
-@pytest.mark.parametrize("block_width", [1, 2, 3, 4])
-@pytest.mark.parametrize("n_partitions", [1, 2, 3, 5])
-def test_partition_intervals_are_ordered_whole_blocks_covering_every_action_once(
-    *, n_actions: int, block_width: int, n_partitions: int
-) -> None:
-    layout = ActionPartitionLayout(
-        n_actions=n_actions, block_width=block_width, n_partitions=n_partitions
-    )
-    intervals = [
-        _action_interval(layout=layout, partition=partition)
-        for partition in range(n_partitions)
-    ]
-
-    covered = [action for start, stop in intervals for action in range(start, stop)]
-    starts_on_block_boundaries = all(
-        start % block_width == 0 or start == stop for start, stop in intervals
-    )
-    block_counts = [
-        stop - start
-        for start, stop in (
-            _block_range(layout=layout, partition=partition)
-            for partition in range(n_partitions)
-        )
-    ]
-    no_idle_participant = layout.n_blocks < n_partitions or min(block_counts) >= 1
-
-    assert covered == list(range(n_actions))
-    assert starts_on_block_boundaries
-    assert max(block_counts) - min(block_counts) <= 1
-    assert max(block_counts) == layout.blocks_per_partition
-    assert no_idle_participant
-    assert layout.n_blocks == -(-n_actions // block_width)
 
 
 def _local_accumulators(

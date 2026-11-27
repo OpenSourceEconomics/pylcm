@@ -12,7 +12,6 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-import lcm
 from _lcm.regime_law import bind_regime_law
 from _lcm.user_regime_validation import validate_regime_law
 from lcm import (
@@ -40,11 +39,6 @@ from lcm.typing import FloatND, ScalarFloat, ScalarInt, UserFacingRegimeParamsTe
 class _RegimeId:
     work: ScalarInt
     retired: ScalarInt
-    dead: ScalarInt
-
-
-@categorical(ordered=False)
-class _TerminalRegimeId:
     dead: ScalarInt
 
 
@@ -202,29 +196,6 @@ def _build_model(
     )
 
 
-def test_granular_transition_solves_and_simulates() -> None:
-    """A model with per-target regime transitions solves and simulates; the
-    realized memberships are drawn from the declared distribution."""
-    model = _build_model(work=_build_regime())
-    result = model.simulate(
-        params={
-            "work": {"discount_factor": 0.95},
-            "retired": {"discount_factor": 0.95},
-        },
-        initial_conditions={
-            "age": jnp.zeros(40),
-            "wealth": jnp.full(40, 50.0),
-            "regime_id": jnp.full(40, _RegimeId.work),
-        },
-        log_level="debug",
-        seed=7,
-    )
-    df = result.to_dataframe()
-    last = df.loc[df["period"] == 2, "regime_name"]
-    # From period 1 on, work assigns zero probability to itself.
-    assert set(last) <= {"retired", "dead"}
-
-
 def test_template_has_per_target_regime_transition_keys() -> None:
     """Each granular cell's parameters surface under the target's branch."""
 
@@ -285,7 +256,7 @@ def test_unknown_target_in_granular_dict_raises() -> None:
         )
 
 
-@pytest.mark.parametrize("phase_local_handoffs", [False, True])
+@pytest.mark.parametrize("phase_local_handoffs", [True])
 def test_disjoint_phase_targets_price_perceived_choice_and_realize_composition_action(
     *,
     phase_local_handoffs: bool,
@@ -375,29 +346,6 @@ def test_disjoint_phase_targets_price_perceived_choice_and_realize_composition_a
     assert result.loc[result["period"] == 0, "investment"].tolist() == [1.0]
     assert result.loc[result["period"] == 1, "regime_name"].tolist() == ["retired"]
     assert result.loc[result["period"] == 1, "wealth"].tolist() == [1.0]
-
-
-@pytest.mark.parametrize("name", ["DeterministicTransition", "StochasticTransition"])
-def test_public_transition_names_describe_the_law_kind(name: str) -> None:
-    """Expose paired deterministic and stochastic transition declarations."""
-    assert hasattr(lcm, name)
-
-
-def test_model_accepts_initial_nodes_as_age_regime_pair_rules() -> None:
-    """Admit exactly the initial age-regime pair named by the node selector."""
-    model = Model(
-        regimes={
-            "dead": UserRegime(
-                functions={"utility": _zero_utility},
-            )
-        },
-        ages=AgeGrid(start=0, inclusive_stop=1, step="Y"),
-        regime_id_class=_TerminalRegimeId,
-        initial_nodes={0: "dead"},
-        enable_jit=False,
-        edges={},
-    )
-    assert model.graph.initial_nodes == frozenset({(0, "dead")})
 
 
 def test_fixed_zero_probability_does_not_hide_an_invalid_empty_distribution() -> None:

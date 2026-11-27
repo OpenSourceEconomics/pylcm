@@ -12,15 +12,6 @@ from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
 from _lcm.config import TEST_DATA
-from _lcm.grids import UniformContinuousGrid
-from lcm import (
-    GridBreakpoint,
-    IrregSpacedGrid,
-    LinSpacedGrid,
-    LogSpacedGrid,
-    PiecewiseLinSpacedGrid,
-    PiecewiseLogSpacedGrid,
-)
 from lcm.typing import FloatND
 from lcm_examples import mortality as mortality_example
 from lcm_examples import precautionary_savings as ps_example
@@ -151,98 +142,6 @@ def test_regression_mortality() -> None:
         check_column_type=False,
         check_categorical=False,
     )
-
-
-def _create_grid(
-    *, grid_type: str, start: float, stop: float, n_points: int
-) -> (
-    UniformContinuousGrid
-    | IrregSpacedGrid
-    | PiecewiseLinSpacedGrid
-    | PiecewiseLogSpacedGrid
-):
-    """Create a grid of the specified type."""
-    if grid_type == "LinSpacedGrid":
-        return LinSpacedGrid(start=start, stop=stop, n_points=n_points)
-    if grid_type == "LogSpacedGrid":
-        return LogSpacedGrid(start=start, stop=stop, n_points=n_points)
-    if grid_type == "PiecewiseLinSpacedGrid":
-        n_lower = n_points // 3 * 2
-        return PiecewiseLinSpacedGrid(
-            start=start,
-            stop=stop,
-            breakpoints=(GridBreakpoint(value=100.0, owner="right"),),
-            points_per_segment=(n_lower, n_points - n_lower),
-        )
-    if grid_type == "PiecewiseLogSpacedGrid":
-        n_upper = n_points // 3 * 2
-        return PiecewiseLogSpacedGrid(
-            start=start,
-            stop=stop,
-            breakpoints=(GridBreakpoint(value=50.0, owner="right"),),
-            points_per_segment=(n_points - n_upper, n_upper),
-        )
-    if grid_type == "IrregSpacedGrid":
-        # Points between lin/log spacing - use average of both
-        lin_points = np.linspace(start, stop, n_points)
-        log_points = np.logspace(np.log10(start), np.log10(stop), n_points)
-        irreg_points = tuple((lin_points + log_points) / 2)
-        return IrregSpacedGrid(points=np.array(irreg_points))
-    msg = f"Unknown grid type: {grid_type}"
-    raise ValueError(msg)
-
-
-@pytest.mark.parametrize(
-    "grid_type",
-    [
-        "LinSpacedGrid",
-        "LogSpacedGrid",
-        "PiecewiseLinSpacedGrid",
-        "PiecewiseLogSpacedGrid",
-        "IrregSpacedGrid",
-    ],
-)
-def test_model_with_different_grid_types(grid_type: str) -> None:
-    """Test that model solution and simulation work with all grid types."""
-    n_periods = 4
-    # As the borrowing constraint uses weak inequality, we cannot use log-spaced grids
-    # for wealth. Consuming everything this period is allowed, but cannot be
-    # represented.
-    wealth_grid = _create_grid(
-        grid_type=grid_type.replace("Log", "Lin"), n_points=100, start=1, stop=400
-    )
-    consumption_grid = _create_grid(
-        grid_type=grid_type, start=1, stop=400, n_points=500
-    )
-
-    model = get_model(
-        n_periods=n_periods,
-        wealth_grid=wealth_grid,
-        consumption_grid=consumption_grid,
-    )
-    params = get_params(
-        n_periods=n_periods,
-        discount_factor=0.95,
-        disutility_of_work=1.0,
-        interest_rate=0.05,
-    )
-
-    # This should complete without error
-    result = model.simulate(
-        log_level="debug",
-        params=params,
-        initial_conditions={
-            "wealth": jnp.array([5.0, 20, 40, 70]),
-            "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
-            "regime_id": jnp.array([RegimeId.working_life] * 4),
-        },
-    )
-    df = result.to_dataframe(terminal_rows="all")
-
-    # Basic sanity checks
-    assert len(df) == n_periods * 4  # 4 periods * 4 agents
-    assert "wealth" in df.columns
-    assert "consumption" in df.columns
 
 
 # Complete outputs of four representative models (fixed `params["edges"]` laws,

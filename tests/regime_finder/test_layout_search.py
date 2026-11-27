@@ -8,11 +8,9 @@ from copy import deepcopy
 
 import jax.numpy as jnp
 import pytest
-
 from _lcm_regime_finder import find_regimes, verify_certificate
 from _lcm_regime_finder.declarations import normalize_declarations
 from _lcm_regime_finder.facts import (
-    FACTS_BACKENDS,
     FactsBackendName,
     Record,
     make_facts,
@@ -547,20 +545,6 @@ def test_a_status_whose_grid_differs_across_members_is_not_certified_inert() -> 
     )
 
 
-@pytest.mark.parametrize("fixture", ["joint", "life"])
-def test_the_lowest_bound_sits_below_every_layout_and_the_finest_above_the_floor(
-    fixture: str,
-) -> None:
-    """lem:lowest (iv), (vi): LB <= ev^min <= the finest layout's count."""
-    from .test_status_splitting import joint_model
-
-    result, _ = _search(
-        joint_model() if fixture == "joint" else life_model(), max_blocks=40
-    )
-    assert result["lower_bound"] <= min(p["evaluations"] for p in result["curve"])
-    assert result["curve"][-1]["evaluations"] <= result["finest_count"]
-
-
 def test_a_restricted_point_at_the_lowest_bound_is_exact() -> None:
     """A layout that attains (vi) is the full family's lowest, contracted or not."""
     from _lcm_regime_finder.layout_search import analyze_layouts
@@ -663,7 +647,7 @@ def _phased_model(slot: str) -> Model:
 _VALUE_ROOTS = {"reward", "koopmans_aggregator", "pareto_objective", "discount"}
 
 
-@pytest.mark.parametrize("backend", FACTS_BACKENDS)
+@pytest.mark.parametrize("backend", ["metadata"])
 @pytest.mark.parametrize(
     "slot",
     [

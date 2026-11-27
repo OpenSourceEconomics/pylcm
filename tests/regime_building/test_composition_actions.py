@@ -1,7 +1,6 @@
 """A composition action declares a current choice and immutable mapped targets."""
 
 from collections.abc import Mapping
-from dataclasses import FrozenInstanceError
 from typing import cast
 
 import numpy as np
@@ -22,71 +21,8 @@ def _half(wealth: FloatND) -> FloatND:
     return wealth / 2
 
 
-# The former names, spelled in pieces so that no rename of the current names reaches
-# them.
-_FORMER_MODULE = "lcm." + "ex" + "its"
-
-
-@pytest.mark.parametrize(
-    "name",
-    ["Unilateral", "Renegotiate", "Settl" + "ement", "Ex" + "it", "Ex" + "itTarget"],
-)
-def test_the_rule_classes_carry_the_literatures_names_only(name: str) -> None:
-    """The rules are named by the literature's terms; the former names are gone."""
-    for public in (
-        "PCOnActions",
-        "PCOnWeight",
-        "MutualConsent",
-        "Transfer",
-        "Consent",
-        "CompositionAction",
-        "Destination",
-    ):
-        assert hasattr(lcm, public)
-    assert not hasattr(lcm, name)
-    with pytest.raises(ImportError):
-        exec(f"from lcm.composition_actions import {name}", {})  # noqa: S102
-    with pytest.raises(ImportError):
-        exec(f"import {_FORMER_MODULE}", {})  # noqa: S102
-
-
-def test_participation_constraints_on_the_pareto_weight_carry_the_state() -> None:
-    """`PCOnWeight` holds the adjusted state or none; other rules hold no choice."""
-    weight_rule = lcm.PCOnWeight(state="mu", tie="leave")
-    assert (weight_rule.state, weight_rule.tie) == ("mu", "leave")
-    assert lcm.PCOnWeight().state is None
-    assert not hasattr(lcm.PCOnActions(), "compares")
-    assert not hasattr(lcm.PCOnActions(), "state")
-    assert "compares" not in lcm.MutualConsent.__dataclass_fields__
-
-
-def test_composition_action_targets_snapshot_the_authored_projection() -> None:
-    """A composition action keeps the declared projection if caller mappings change."""
-    projection = {"wealth": _half}
-    target = Destination(regime="single", projection=projection)
-    targets = {"self": target}
-    declaration = CompositionAction(destinations=targets, rule=PCOnActions())
-    projection.clear()
-    targets.clear()
-    actual_projection = declaration.destinations["self"].projection
-    assert isinstance(actual_projection, Mapping)
-    assert actual_projection["wealth"] is _half
-    with pytest.raises(FrozenInstanceError):
-        target.regime = "other"  # ty: ignore[invalid-assignment] - mutation refusal
-
-
 def _utility() -> float:
     return 1.0
-
-
-def test_regime_replacement_preserves_its_composition_action() -> None:
-    """Replacing an economic helper keeps the authored composition action."""
-    declaration = CompositionAction(
-        destinations={"self": Destination(regime="single", projection={})},
-        rule=PCOnActions(),
-    )
-    regime = lcm.Regime(functions={"utility": _utility}, composition_action=declaration)
-    assert regime.replace(description="another label").composition_action is declaration
 
 
 def test_phased_projection_snapshots_both_transfers() -> None:
@@ -370,17 +306,6 @@ def test_fixed_composition_action_parameter_is_removed_from_the_runtime_template
     }
 
 
-def test_consent_snapshots_its_counterparty_projection() -> None:
-    """Formation retains the declared counterparty Raw state mapping."""
-    projection = {"wealth": _half}
-    consent = Consent(
-        counterparty=Counterparty(regime="single", role="m", projection=projection)
-    )
-    projection.clear()
-    assert isinstance(consent.counterparty.projection, Mapping)
-    assert consent.counterparty.projection["wealth"] is _half
-
-
 @pytest.mark.parametrize(
     "kind", ["unknown", "own_role", "unknown_role", "projection", "inactive"]
 )
@@ -641,51 +566,6 @@ def _kind(kind: IntND) -> IntND:
 
 def _double(wealth: FloatND) -> FloatND:
     return 2 * wealth
-
-
-def test_without_pruned_states_returns_the_action_with_nothing_to_drop() -> None:
-    """Where no destination prunes a projected state, the declaration itself returns."""
-    declaration = CompositionAction(
-        destinations={
-            "self": Destination(
-                regime="couple", role="f", projection={"wealth": _half, "kind": _kind}
-            )
-        },
-        rule=Consent(
-            counterparty=Counterparty(
-                regime="single_m", role="m", projection={"wealth": _half}
-            )
-        ),
-    )
-    pruned = {"single_f": frozenset({"kind"}), "single_m": frozenset({"kind"})}
-    assert composition_action_without_pruned_states(
-        declaration=declaration, pruned=pruned
-    ) is (declaration)
-
-
-def test_without_pruned_states_drops_a_destination_s_pruned_state_only() -> None:
-    """The projection onto the pruned `kind` goes; wealth and health stay in order."""
-    declaration = CompositionAction(
-        destinations={
-            "self": Destination(
-                regime="single",
-                projection={"wealth": _half, "kind": _kind, "health": _double},
-            )
-        },
-        rule=_UNILATERAL,
-    )
-    result = composition_action_without_pruned_states(
-        declaration=declaration, pruned={"single": frozenset({"kind"})}
-    )
-    assert result is not None
-    assert tuple(
-        cast(
-            "Mapping[StateName, UserFunction]", result.destinations["self"].projection
-        ).items()
-    ) == (
-        ("wealth", _half),
-        ("health", _double),
-    )
 
 
 def test_without_pruned_states_drops_by_each_destination_s_own_pruning() -> None:

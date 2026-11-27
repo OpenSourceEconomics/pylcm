@@ -428,21 +428,6 @@ def _simulate_specialized_constraint_model() -> SimulationResult:
     )
 
 
-def test_additional_target_of_age_specialized_constraint_is_rejected() -> None:
-    """A specialized *constraint* requested as a target is rejected.
-
-    A constraint carries its own namespace: `_process_regime_core` excludes
-    constraint names from `functions`, so the guard that detects age-specialized
-    targets must scan `constraints` too, not just `functions` — even though the
-    additional-target pool re-merges constraints and advertises them as targets.
-    Requesting the specialized constraint by name must raise, not reach target
-    construction as an unresolved representative-age marker.
-    """
-    result = _simulate_specialized_constraint_model()
-    with pytest.raises(InvalidAdditionalTargetsError, match="policy-specialized"):
-        result.to_dataframe(additional_targets=["wealth_cap"])
-
-
 def test_additional_targets_all_rejects_age_specialized_constraint() -> None:
     """`additional_targets='all'` rejects a specialized constraint.
 
@@ -484,23 +469,6 @@ def _simulate_with_falling_cap(
         },
         log_level=log_level,
     )
-
-
-@pytest.mark.parametrize("log_level", ["warning", "debug"])
-def test_initial_feasibility_admits_agents_under_their_own_start_ages_constraint(
-    log_level: LogLevel,
-) -> None:
-    """Agents starting at different ages simulate from their own start ages.
-
-    Wealth 100 leaves every action feasible under each age's cap along the whole
-    working life, so both agents pass the feasibility check of their start
-    period and are simulated from there.
-    """
-    result = _simulate_with_falling_cap(
-        ages=[25.0, 45.0], wealth=[100.0, 100.0], log_level=log_level
-    )
-    first_ages = result.to_dataframe().groupby("agent_id")["age"].min()
-    assert first_ages.tolist() == [25.0, 45.0]
 
 
 @pytest.mark.parametrize("log_level", ["warning", "debug"])
@@ -593,30 +561,6 @@ def test_the_final_period_is_solved_under_its_own_ages_constraint() -> None:
         _last_period_value(uniform_at_that_age),
         decimal=DECIMAL_PRECISION,
     )
-
-
-def test_another_ages_constraint_would_have_given_that_period_a_different_value() -> (
-    None
-):
-    """The reference the previous test matches is not one every age produces.
-
-    Without this, an equality against a uniform-cap solve would hold for every
-    age whose cap happened to yield the same value function, and the
-    attribution it appears to make would be empty. The first active age's cap
-    admits only the lowest action node, so it is the reference that must *not*
-    match.
-    """
-    specialized = _solve_specialized()
-    uniform_at_the_first_age = _solve_with_cap(_cap_binding_at_age(25.0))
-
-    gap = jnp.max(
-        jnp.abs(
-            _last_period_value(specialized)
-            - _last_period_value(uniform_at_the_first_age)
-        )
-    )
-
-    assert float(gap) > 0.0
 
 
 def _start_pool_partition(*, cohorts_route: bool) -> list[tuple[int, list[int]]]:

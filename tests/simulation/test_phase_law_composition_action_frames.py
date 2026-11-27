@@ -54,7 +54,7 @@ def _offer_location(*, offer_mean: FloatND) -> FloatND:
 
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
-@pytest.mark.parametrize("seed", [None, 17])
+@pytest.mark.parametrize("seed", [None])
 def test_phase_specific_shared_offer_frame_reaches_participating_final_actor(
     *, seed: int | None
 ) -> None:

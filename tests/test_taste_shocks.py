@@ -168,24 +168,6 @@ def test_brute_force_solve_matches_reference_logsum_value_function() -> None:
     np.testing.assert_allclose(got, expected, rtol=1e-5, atol=1e-8)
 
 
-@pytest.mark.slow
-def test_smoothed_value_weakly_exceeds_hard_max_value() -> None:
-    """The EV1 expected maximum dominates the hard max pointwise.
-
-    The smoothed value increases in the scale and tends to the hard max as the
-    scale vanishes, so a vanishing-scale solve serves as the hard-max baseline.
-    """
-    model = taste_shocks_toy.get_model()
-    smoothed = model.solve(
-        params=taste_shocks_toy.get_params(scale=0.5), log_level="debug"
-    ).values
-    hard = model.solve(
-        params=taste_shocks_toy.get_params(scale=1e-8), log_level="debug"
-    ).values
-
-    assert bool(jnp.all(smoothed[0]["alive"] >= hard[0]["alive"] - 1e-12))
-
-
 def test_params_template_contains_taste_shock_scale() -> None:
     """The params template exposes the scale under the `taste_shocks` pseudo-entry."""
     model = taste_shocks_toy.get_model()

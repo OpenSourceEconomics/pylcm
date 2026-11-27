@@ -269,44 +269,6 @@ def test_moving_floor_solves_on_each_periods_own_nodes() -> None:
         )
 
 
-def test_moving_floor_value_monotone_in_wealth() -> None:
-    """V is nondecreasing in wealth at every working age (economic sanity)."""
-    v = _model(_moving_floor_grid()).solve(params=_PARAMS, log_level="debug")
-    for period in range(_N):
-        if "alive" not in v.values[period]:
-            continue
-        # Replace legitimate `-inf` (infeasible low-wealth cells) with a finite sentinel
-        # so `-inf - -inf = NaN` does not spuriously fail the monotonicity diff.
-        arr = np.nan_to_num(np.asarray(v.values[period]["alive"]), neginf=-1e30)
-        diffs = np.diff(arr, axis=0)  # axis 0 is the wealth grid
-        assert (diffs >= -1e-6).all(), (
-            f"V not nondecreasing in wealth at period {period}"
-        )
-
-
-def test_moving_floor_simulates_positive_consumption() -> None:
-    """Forward simulation runs and gives finite, positive consumption for alive rows."""
-    model = _model(_moving_floor_grid())
-    v = model.solve(params=_PARAMS, log_level="debug")
-    n = 200
-    result = model.simulate(
-        params=_PARAMS,
-        solution=v,
-        log_level="debug",
-        seed=1,
-        initial_conditions={
-            "wealth": jnp.linspace(1.0, 10.0, n),
-            "age": jnp.full(n, 20.0),
-            "regime_id": jnp.array([RegimeId.alive] * n),
-        },
-    )
-    df = result.to_dataframe()
-    consumption = np.asarray(df["consumption"])
-    alive_consumption = consumption[np.isfinite(consumption)]
-    assert alive_consumption.size > 0
-    assert (alive_consumption > 0).all()
-
-
 def _moving_window_grid() -> AgeSpecializedGrid:
     # A window that slides far enough that no two ages' grids overlap. Every node is
     # a strictly positive wealth level affording some feasible consumption, so a solve

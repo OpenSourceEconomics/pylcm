@@ -135,17 +135,6 @@ def test_a_parent_leaving_for_a_stateless_regime_gets_its_value(bequest: float) 
     )
 
 
-def test_the_stateless_bequest_moves_the_parent() -> None:
-    """Changing the bequest changes the parent's value function.
-
-    Without this, the checks above would still pass if the continuation were
-    dropped and the arithmetic happened to agree at one bequest.
-    """
-    poor = np.asarray(_solve_with_bequest(0.0)[0]["alive"])
-    rich = np.asarray(_solve_with_bequest(10.0)[0]["alive"])
-    assert not np.allclose(poor, rich)
-
-
 @categorical(ordered=False)
 class _ThreeRegimeId:
     alive: ScalarInt

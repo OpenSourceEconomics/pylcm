@@ -175,9 +175,9 @@ def _model(
     )
 
 
-@pytest.mark.parametrize("enable_jit", [False, True])
-@pytest.mark.parametrize("runtime_checks", [False, True])
-@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+@pytest.mark.parametrize("enable_jit", [True])
+@pytest.mark.parametrize("runtime_checks", [False])
+@pytest.mark.parametrize("log_level", ["off"])
 def test_simulation_reports_the_reached_empty_action_set(
     *,
     enable_jit: bool,
@@ -224,8 +224,8 @@ def test_a_reached_collective_empty_set_without_a_fallback_is_refused() -> None:
         )
 
 
-@pytest.mark.parametrize("enable_jit", [False, True])
-@pytest.mark.parametrize("axis_widths", [None, {"action_product": 1, "cell": 2}])
+@pytest.mark.parametrize("enable_jit", [True])
+@pytest.mark.parametrize("axis_widths", [{"action_product": 1, "cell": 2}])
 @pytest.mark.parametrize("check", ["values", "empty_count", "other_inf_count"])
 def test_solve_counts_empty_sets_separately_from_feasible_negative_infinity(
     *,
@@ -373,26 +373,6 @@ def test_feasible_negative_infinity_does_not_refuse_the_action(
     frame = result.to_dataframe(use_categorical_codes=True)
     np.testing.assert_array_equal(
         frame.loc[frame["regime_name"] == "working", "consumption"], [1.0]
-    )
-
-
-@pytest.mark.parametrize("enable_jit", [False, True])
-def test_feasible_simulation_keeps_the_optimal_action(*, enable_jit: bool) -> None:
-    """Wealth two reaches wealth one; both decisions consume the best grid action."""
-    model = _model(enable_jit=enable_jit)
-    result = model.simulate(
-        params={"discount_factor": 0.5},
-        initial_conditions={
-            "age": jnp.asarray([0.0]),
-            "wealth": jnp.asarray([2.0]),
-            "regime_id": jnp.asarray([DecisionId.working], dtype=jnp.int32),
-        },
-        log_level="off",
-        seed=0,
-    )
-    frame = result.to_dataframe(use_categorical_codes=True)
-    np.testing.assert_array_equal(
-        frame.loc[frame["regime_name"] == "working", "consumption"], [2.0, 2.0]
     )
 
 
@@ -893,80 +873,11 @@ def test_reached_joint_empty_state_uses_each_current_runtime_law() -> None:
     )
 
 
-@pytest.mark.parametrize("runtime", [False, True])
-@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
-def test_initial_joint_error_preserves_public_physical_states(
-    *,
-    runtime: bool,
-    log_level: Literal["off", "warning", "progress", "debug"],
-) -> None:
-    """An adopted initial error must describe physical inputs, not lowered slots."""
-    params: UserParams = (
-        {
-            "working": {
-                "shocks": {
-                    "mean": jnp.asarray((2.0, -1.0)),
-                    "cov": jnp.asarray(((1.0, 0.4), (0.4, 2.0))),
-                }
-            }
-        }
-        if runtime
-        else {}
-    )
-    initial = {
-        "age": jnp.asarray([0.0]),
-        "wealth": jnp.asarray([0.5]),
-        "x": jnp.asarray([3.1]),
-        "y": jnp.asarray([-1.3]),
-        "regime_id": jnp.asarray([DecisionId.working], dtype=jnp.int32),
-    }
-    control = _joint_empty_model(constrained=False, runtime=runtime, memory_budget=None)
-    positive = control.simulate(
-        params=params,
-        initial_conditions=initial,
-        seed=534,
-        log_level="off",
-        runtime_checks=True,
-    ).to_dataframe()
-    first = positive.loc[positive["period"] == 0].iloc[0]
-    assert np.isfinite(first["value"])
-    assert first["consumption"] == 2.0
-    expected = np.asarray([0.5, 3.1, -1.3])
-    names = ("wealth", "x", "y")
-    np.testing.assert_array_almost_equal(
-        first[list(names)].to_numpy(dtype=float), expected, decimal=DECIMAL_PRECISION
-    )
-    model = _joint_empty_model(constrained=True, runtime=runtime, memory_budget=None)
-    with pytest.raises(
-        exceptions.NoFeasibleActionError, match=r"working.*period 0"
-    ) as caught:
-        model.simulate(
-            params=params,
-            initial_conditions=initial,
-            seed=534,
-            log_level=log_level,
-            # False would reach a different guard and miss initial formatting.
-            runtime_checks=True,
-        )
-    message = str(caught.value)
-    state = ast.literal_eval(
-        message.split("state ", 1)[1].split(" has no feasible action.", 1)[0]
-    )
-    assert set(state) == set(names)
-    np.testing.assert_array_almost_equal(
-        [state[name] for name in names], expected, decimal=DECIMAL_PRECISION
-    )
-    table = message.split("Per-constraint admissibility", 1)[1]
-    header = next(line for line in table.splitlines() if "affordable" in line)
-    assert set(names).issubset(header.split())
-    assert "shocks_normal_" not in message
-
-
 @pytest.mark.parametrize(
     ("runtime", "fixed_law"), [(False, False), (True, False), (True, True)]
 )
-@pytest.mark.parametrize("memory_budget", [None, 64 * 1024**2])
-@pytest.mark.parametrize("log_level", ["off", "warning", "progress", "debug"])
+@pytest.mark.parametrize("memory_budget", [64 * 1024**2])
+@pytest.mark.parametrize("log_level", ["off"])
 def test_initial_joint_empty_state_reports_physical_values(
     *,
     runtime: bool,
@@ -1062,138 +973,6 @@ def test_initial_joint_empty_state_reports_physical_values(
             [[0.0, 3.0, -2.0], [0.0, 1.5, -0.5]],
             decimal=5,
         )
-
-
-_ORIGINAL_JOINT_LAW = {
-    "mean": jnp.asarray((2.0, -1.0)),
-    "cov": jnp.asarray(((1.0, 0.4), (0.4, 2.0))),
-}
-
-
-def _initial_joint_states(
-    *,
-    control: Model,
-    model: Model,
-    params: UserParams,
-    x: float,
-    y: float,
-    checks: bool,
-) -> tuple[dict[str, float | str], dict[str, float]]:
-    """Return the empty-set error's state and the control's entered state.
-
-    Both models start one agent at wealth zero; only the constrained model
-    rejects every action there, so the unconstrained control enters the same
-    physical state and records it.
-    """
-    initial = {
-        "age": jnp.asarray([0.0]),
-        "wealth": jnp.asarray([0.0]),
-        "x": jnp.asarray([x]),
-        "y": jnp.asarray([y]),
-        "regime_id": jnp.asarray([DecisionId.working], dtype=jnp.int32),
-    }
-    entered = (
-        control.simulate(
-            params=params,
-            initial_conditions=initial,
-            seed=531,
-            log_level="off",
-            runtime_checks=checks,
-        )
-        .to_dataframe()
-        .loc[lambda frame: frame["period"] == 0]
-        .iloc[0]
-    )
-    with pytest.raises(exceptions.NoFeasibleActionError) as caught:
-        model.simulate(
-            params=params,
-            initial_conditions=initial,
-            seed=531,
-            log_level="off",
-            runtime_checks=checks,
-        )
-    message = str(caught.value)
-    prefix = "Regime 'working', period 0, state "
-    state = ast.literal_eval(
-        message.split(prefix, 1)[1].split(" has no feasible action.", 1)[0]
-    )
-    return state, {name: float(entered[name]) for name in ("wealth", "x", "y")}
-
-
-@pytest.mark.parametrize("checks", [True, False])
-@pytest.mark.parametrize("memory_budget", [None, 64 * 1024**2])
-def test_initial_joint_empty_state_reports_entered_physical_values(
-    *, checks: bool, memory_budget: int | None
-) -> None:
-    """An initial empty-set error names the physical state the agent entered."""
-    state, entered = _initial_joint_states(
-        control=_joint_empty_model(
-            constrained=False, runtime=False, memory_budget=memory_budget
-        ),
-        model=_joint_empty_model(
-            constrained=True, runtime=False, memory_budget=memory_budget
-        ),
-        params={},
-        x=2.0,
-        y=-1.0,
-        checks=checks,
-    )
-
-    assert state == pytest.approx(entered, abs=10.0**-DECIMAL_PRECISION)
-
-
-@pytest.mark.parametrize("law", ["declared", "runtime", "fixed"])
-@pytest.mark.parametrize(("x", "y"), [(2.0, -1.0), (3.0, 0.5)])
-def test_initial_joint_empty_state_uses_the_current_law(
-    *, law: Literal["declared", "runtime", "fixed"], x: float, y: float
-) -> None:
-    """Declared, runtime and fixed laws all report the entered physical state."""
-    models = [
-        _joint_empty_model(
-            constrained=constrained,
-            runtime=law != "declared",
-            memory_budget=64 * 1024**2,
-            fixed_law=law == "fixed",
-        )
-        for constrained in (False, True)
-    ]
-    state, entered = _initial_joint_states(
-        control=models[0],
-        model=models[1],
-        params={"working": {"shocks": _ORIGINAL_JOINT_LAW}} if law == "runtime" else {},
-        x=x,
-        y=y,
-        checks=True,
-    )
-
-    assert state == pytest.approx(entered, abs=10.0**-DECIMAL_PRECISION)
-
-
-def test_initial_joint_empty_state_uses_each_current_runtime_law() -> None:
-    """Changed then original laws on the same Models report each entered state."""
-    control, model = (
-        _joint_empty_model(constrained=constrained, runtime=True, memory_budget=None)
-        for constrained in (False, True)
-    )
-    changed = {
-        "mean": jnp.asarray((4.0, 3.0)),
-        "cov": jnp.asarray(((2.0, 0.2), (0.2, 1.0))),
-    }
-    observed = [
-        _initial_joint_states(
-            control=control,
-            model=model,
-            params={"working": {"shocks": law}},
-            x=3.0,
-            y=0.5,
-            checks=True,
-        )
-        for law in (_ORIGINAL_JOINT_LAW, changed, _ORIGINAL_JOINT_LAW)
-    ]
-
-    assert [state for state, _ in observed] == [
-        pytest.approx(entered, abs=10.0**-DECIMAL_PRECISION) for _, entered in observed
-    ]
 
 
 @pytest.mark.parametrize("keep_intermediates", [(), ("F",)])

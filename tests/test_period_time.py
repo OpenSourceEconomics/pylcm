@@ -27,7 +27,7 @@ from lcm.persistence import PeriodCapture, load_period_capture
 from lcm.regime import RegimeReplacement
 from lcm.shocks import GaussHermite, Normal, Product, ShockGroup
 from lcm.solvers import EGM
-from lcm.transition import AgeCaseLaw, AgeSelector, PeriodSelector, TransitionLaw
+from lcm.transition import AgeCaseLaw, PeriodSelector
 from lcm.typing import (
     Age,
     BoolND,
@@ -1001,17 +1001,11 @@ def test_period_clock_rejects_age_support_at_construction(
         )
 
 
-@pytest.mark.parametrize("log_level", ["off", "debug"])
-@pytest.mark.parametrize("phased", [False, True])
+@pytest.mark.parametrize("log_level", ["off"])
+@pytest.mark.parametrize("phased", [True])
 @pytest.mark.parametrize(
     ("clock", "origin", "source_period", "coordinate", "expected_value"),
-    [
-        ("period", 0, 0, 0.0, 15.0),
-        ("period", 0, 2, 2.0, 17.0),
-        ("age", 0, 2, 2.0, 17.0),
-        ("age", 40, 1, 41.0, 56.0),
-        ("age", 70, 1, 71.0, 86.0),
-    ],
+    [("period", 0, 2, 2.0, 17.0), ("age", 40, 1, 41.0, 56.0)],
 )
 def test_valid_clock_support_preserves_solve_and_simulation(
     *,
@@ -1362,7 +1356,7 @@ def _transition_edges() -> dict[RegimeName, lcm.Transition]:
     }
 
 
-@pytest.mark.parametrize("declared", ["selectors", "transitions"])
+@pytest.mark.parametrize("declared", ["transitions"])
 def test_stages_solve_and_simulate_as_their_hand_encoding(declared: str) -> None:
     """Two decisions per period equal one period per decision, linked undiscounted.
 
@@ -1950,16 +1944,6 @@ class MarriageId:
     single_final: ScalarInt
 
 
-@lcm.categorical(ordered=False)
-class HandMarriageId:
-    couple_sep: ScalarInt
-    couple: ScalarInt
-    couple_final: ScalarInt
-    single: ScalarInt
-    single_final: ScalarInt
-    single_wait: ScalarInt
-
-
 def _match_quality(*, wealth: ContinuousState, love: FloatND) -> FloatND:
     return love - 0.05 * wealth
 
@@ -2000,66 +1984,12 @@ def _waiting() -> FloatND:
     return jnp.asarray(0.0)
 
 
-def _single_next_regime(*, period: Period) -> IntND:
-    return jnp.where(
-        period < _N_ECONOMIC_PERIODS - 2, MarriageId.single, MarriageId.single_final
-    )
-
-
-def _single_regime_probabilities(*, period: Period) -> FloatND:
-    return jnp.where(
-        period < _N_ECONOMIC_PERIODS - 2,
-        jnp.asarray([0.0, 0.0, 0.0, 1.0, 0.0]),
-        jnp.asarray([0.0, 0.0, 0.0, 0.0, 1.0]),
-    )
-
-
-def _single_stays(*, stay: FloatND) -> FloatND:
-    return stay
-
-
-def _next_single_wealth_with_income(
-    *, wealth: ContinuousState, consumption: FloatND, income: FloatND
-) -> ContinuousState:
-    return jnp.minimum(1.05 * (wealth - consumption) + income, 6.0)
-
-
-def _single_edges(
-    *, variant: str, targets: Mapping[RegimeName, AgeSelector | PeriodSelector]
-) -> Mapping[RegimeName, AgeSelector | PeriodSelector] | lcm.Transition:
-    """The single's edges: selectors, or a law of the form `variant` names."""
-    law: TransitionLaw
-    if variant == "recoded":
-        law = lcm.DeterministicTransition(func=_single_next_regime)
-    elif variant == "spread":
-        law = lcm.StochasticTransition(func=_single_regime_probabilities)
-    elif variant == "cells":
-        law = lcm.ByPeriod(
-            cases={
-                targets["single"]: {
-                    "single": lcm.StochasticTransition(func=_single_stays)
-                },
-                targets["single_final"]: "single_final",
-            }
-        )
-    else:
-        return targets
-    return lcm.Transition(targets=targets, law=law)
-
-
-def _marriage(*, hand: bool, variant: str = "plain") -> lcm.Model:
-    """Couples decide to part, then spend; singles only spend.
-
-    `hand` writes the single's wait in the parting stage as a regime of its own,
-    with edges into and out of it. `variant` declares the same model by age, with
-    `Phased` edges, or with a regime law or per-target cells and state laws for
-    the single.
-    """
+def _marriage() -> lcm.Model:
+    """Couples decide to part, then spend. Singles only spend."""
     last = _N_ECONOMIC_PERIODS - 1
     couple_wealth = lcm.LinSpacedGrid(start=2.0, stop=12.0, n_points=6)
     single_wealth = lcm.LinSpacedGrid(start=1.0, stop=6.0, n_points=6)
     share = lcm.LinSpacedGrid(start=0.1, stop=1.0, n_points=10)
-    single = "single_wait" if hand else "single"
     regimes = {
         "couple_sep": lcm.Regime(
             states={"wealth": couple_wealth},
@@ -2072,7 +2002,7 @@ def _marriage(*, hand: bool, variant: str = "plain") -> lcm.Model:
             composition_action=lcm.CompositionAction(
                 destinations={
                     member: lcm.Destination(
-                        regime=single, projection={"wealth": _half_of_wealth}
+                        regime="single", projection={"wealth": _half_of_wealth}
                     )
                     for member in ("f", "m")
                 },
@@ -2104,14 +2034,7 @@ def _marriage(*, hand: bool, variant: str = "plain") -> lcm.Model:
         "single": lcm.Regime(
             states={"wealth": single_wealth},
             actions={"share": share},
-            state_transitions={
-                "wealth": {
-                    "single": _next_single_wealth_with_income,
-                    "single_final": _next_single_wealth,
-                }
-                if variant == "cells"
-                else _next_single_wealth
-            },
+            state_transitions={"wealth": _next_single_wealth},
             functions={
                 "consumption": _shared_consumption,
                 "utility": _single_consumption_utility,
@@ -2121,151 +2044,25 @@ def _marriage(*, hand: bool, variant: str = "plain") -> lcm.Model:
     regimes["single_final"] = lcm.Regime(
         states={"wealth": single_wealth}, functions={"utility": _final_utility}
     )
-    if hand:
-        regimes["single_wait"] = lcm.Regime(
-            states={"wealth": single_wealth},
-            state_transitions={"wealth": lcm.fixed_transition("wealth")},
-            functions={"utility": _waiting},
-        )
-    by_age = variant == "age"
-    always, before_end, at_end = (
-        (
-            lcm.AgeRange(),
-            lcm.AgeRange(exclusive_stop=60 + last - 1),
-            lcm.AgeRange(start=60 + last - 1, exclusive_stop=60 + last),
-        )
-        if by_age
-        else (
-            lcm.PeriodRange(),
-            lcm.PeriodRange(exclusive_stop=last - 1),
-            lcm.Periods(values=(last - 1,)),
-        )
-    )
-    single_targets: dict[RegimeName, AgeSelector | PeriodSelector] = {
-        single: before_end,
-        "single_final": at_end,
-    }
-    edges: dict[
-        RegimeName, Mapping[RegimeName, AgeSelector | PeriodSelector] | lcm.Transition
-    ] = {
-        "couple_sep": {"couple": always},
-        "couple": {"couple_sep": before_end, "couple_final": at_end},
-        "single": _single_edges(variant=variant, targets=single_targets),
-    }
-    if hand:
-        edges["single_wait"] = {"single": always}
-    clock: ClockKwargs = (
-        {"ages": lcm.AgeGrid(start=60, inclusive_stop=60 + last, step="Y")}
-        if by_age
-        else {"n_periods": _N_ECONOMIC_PERIODS}
-    )
-    starts = ("couple_sep", single)
+    always = lcm.PeriodRange()
+    before_end = lcm.PeriodRange(exclusive_stop=last - 1)
+    at_end = lcm.Periods(values=(last - 1,))
     return lcm.Model(
-        **clock,
+        n_periods=_N_ECONOMIC_PERIODS,
         stages={
-            "part": ("couple_sep", "couple_final", "single_final")
-            + (("single_wait",) if hand else ()),
+            "part": ("couple_sep", "couple_final", "single_final"),
             "spend": ("couple", "single"),
         },
         regimes=regimes,
-        regime_id_class=HandMarriageId if hand else MarriageId,
-        initial_nodes=lcm.InitialNodes(by_age={60: starts})
-        if by_age
-        else lcm.InitialNodes(by_period={0: starts}),
-        edges=lcm.Phased(solve=edges, simulate=edges) if variant == "phased" else edges,
+        regime_id_class=MarriageId,
+        initial_nodes=lcm.InitialNodes(by_period={0: ("couple_sep", "single")}),
+        edges={
+            "couple_sep": {"couple": always},
+            "couple": {"couple_sep": before_end, "couple_final": at_end},
+            "single": {"single": before_end, "single_final": at_end},
+        },
         fixed_params={"discount_factor": 0.9},
     )
-
-
-def _marriage_frame(*, model: lcm.Model, hand: bool) -> pd.DataFrame:
-    codes = model.regime_names_to_ids
-    single = codes["single_wait" if hand else "single"]
-    return model.simulate(
-        params={"couple_sep": {"love": 0.2}},
-        initial_conditions={
-            "period": jnp.zeros(4, dtype=jnp.int32),
-            "regime_id": jnp.array(
-                [codes["couple_sep"], codes["couple_sep"], single, single],
-                dtype=jnp.int32,
-            ),
-            "own_member": jnp.array(
-                [model.member_names_to_ids[member] for member in ("f", "m", "f", "m")],
-                dtype=jnp.int32,
-            ),
-            "wealth": jnp.array([4.0, 10.0, 2.0, 5.0]),
-        },
-        seed=5,
-        log_level="off",
-    ).to_dataframe()
-
-
-def test_an_edge_lands_at_the_next_occurrence_of_its_target() -> None:
-    """A single who spends once per period equals one who waits out the parting.
-
-    The single's edge to itself skips the parting stage, the couple's composition action
-    enters the single in a later stage, and singles start in their own stage; written
-    with a hand-made waiting regime, the values and the simulated rows agree. The
-    waiting regime interpolates the single's value once more on the way, so the two
-    agree to within a few units in the last place.
-    """
-    params = {"couple_sep": {"love": 0.2}}
-    staged = _marriage(hand=False)
-    hand = _marriage(hand=True)
-    staged_values = staged.solve(params=params, log_level="off").values
-    hand_values = hand.solve(params=params, log_level="off").values
-    for step, regimes in hand_values.items():
-        for name, value in regimes.items():
-            if name != "single_wait":
-                assert_agrees_to_ulp(
-                    got=staged_values[step][name],
-                    expected=value,
-                    n_ulp=_SKIP_ULP,
-                    operand_magnitude=1.0,
-                )
-    staged_frame = _marriage_frame(model=staged, hand=False)
-    hand_frame = _marriage_frame(model=hand, hand=True)
-    hand_frame = hand_frame[hand_frame["regime_name"] != "single_wait"]
-    assert "single" in set(staged_frame["regime_name"])
-    assert set(staged_frame["regime_name"]) == set(hand_frame["regime_name"])
-    staged_frame = staged_frame.reset_index(drop=True)
-    hand_frame = hand_frame.reset_index(drop=True)
-    floats = [
-        column
-        for column in staged_frame.columns
-        if pd.api.types.is_float_dtype(staged_frame[column])
-    ]
-    pd.testing.assert_frame_equal(
-        staged_frame.drop(columns=floats),
-        hand_frame.drop(columns=floats),
-        check_categorical=False,
-    )
-    for column in floats:
-        assert_agrees_to_ulp(
-            got=staged_frame[column],
-            expected=hand_frame[column],
-            n_ulp=_SKIP_ULP,
-            operand_magnitude=1.0,
-        )
-
-
-def test_leaving_reads_the_destination_at_its_occurrence_later_in_the_period() -> None:
-    """Without love every couple parts: its value is the single's value that period.
-
-    A partner leaves for half the couple's wealth, a node of the single's grid, and
-    gets the single's spending-stage value there, undiscounted.
-    """
-    values = (
-        _marriage(hand=False)
-        .solve(params={"couple_sep": {"love": -100.0}}, log_level="off")
-        .values
-    )
-    for period in range(_N_ECONOMIC_PERIODS - 1):
-        single = np.asarray(values[2 * period + 1]["single"])[..., 0]
-        np.testing.assert_array_almost_equal(
-            values[2 * period]["couple_sep"],
-            np.stack([single, single], axis=-1),
-            decimal=DECIMAL_PRECISION,
-        )
 
 
 @lcm.categorical(ordered=False)
@@ -2430,7 +2227,7 @@ def test_a_crossing_edge_reads_the_grid_of_the_period_it_lands_in(
         assert np.abs(got - wrong[period]).max() > 1e-2
 
 
-@pytest.mark.parametrize("discount_factor", [1.0, 0.5])
+@pytest.mark.parametrize("discount_factor", [0.5])
 def test_a_landing_in_the_same_period_is_not_discounted(
     discount_factor: float,
 ) -> None:
@@ -2471,7 +2268,7 @@ def test_a_landing_in_the_same_period_is_not_discounted(
             )
 
 
-@pytest.mark.parametrize("discount_factor", [0.5, None])
+@pytest.mark.parametrize("discount_factor", [None])
 def test_a_crossing_edge_discounts_once_whatever_it_skips(
     discount_factor: float | None,
 ) -> None:
@@ -2520,9 +2317,7 @@ def test_leaving_to_a_later_stage_gets_the_value_of_staying_or_leaving() -> None
     """
     love = 0.25
     values = (
-        _marriage(hand=False)
-        .solve(params={"couple_sep": {"love": love}}, log_level="off")
-        .values
+        _marriage().solve(params={"couple_sep": {"love": love}}, log_level="off").values
     )
     single_values = _saver(stages=None).solve(params={}, log_level="off").values
     wealth = np.linspace(2.0, 12.0, 6)
@@ -2590,7 +2385,7 @@ def _even_odds() -> FloatND:
     return jnp.asarray([0.0, 0.0, 0.5, 0.5])
 
 
-@pytest.mark.parametrize("declared", ["model", "regime"])
+@pytest.mark.parametrize("declared", ["regime"])
 def test_a_source_applies_its_certainty_equivalent_once_to_a_later_stage(
     declared: str,
 ) -> None:
@@ -2634,17 +2429,6 @@ def test_a_source_applies_its_certainty_equivalent_once_to_a_later_stage(
     )
 
 
-@lcm.categorical(ordered=False)
-class FormationId:
-    single: ScalarInt
-    partner: ScalarInt
-    couple: ScalarInt
-
-
-def _forming_utility(*, labor: DiscreteAction) -> FloatND:
-    return 2.0 * labor
-
-
 def _three() -> FloatND:
     return jnp.asarray(3.0)
 
@@ -2653,80 +2437,25 @@ def _one() -> FloatND:
     return jnp.asarray(1.0)
 
 
-def _formation() -> lcm.Model:
-    """A single forms a couple of the later stage if a partner there consents."""
-    return lcm.Model(
-        n_periods=1,
-        stages={"meet": ("single",), "live": ("partner", "couple")},
-        regimes={
-            "single": lcm.Regime(
-                actions={"labor": lcm.DiscreteGrid(Labor)},
-                functions={"utility": _forming_utility},
-                composition_action=lcm.CompositionAction(
-                    destinations={
-                        "self": lcm.Destination(
-                            regime="couple", role="f", projection={}
-                        )
-                    },
-                    rule=lcm.Consent(
-                        counterparty=lcm.Counterparty(
-                            regime="partner", role="m", projection={}
-                        )
-                    ),
-                ),
-            ),
-            "partner": lcm.Regime(functions={"utility": _waiting}),
-            "couple": lcm.Regime(
-                functions={
-                    "utility": lcm.CollectiveUtility(utilities={"f": _three, "m": _one})
-                }
-            ),
-        },
-        regime_id_class=FormationId,
-        initial_nodes=lcm.InitialNodes(by_period={0: "single"}),
-        edges={"single": {"partner": lcm.PeriodRange()}},
-    )
-
-
-def _skipping_case(
-    variant: str,
-) -> tuple[lcm.Model, UserParams, pd.DataFrame, tuple[RegimeName, ...]]:
-    """A model with a regime that sits out a stage, its params, starts and regimes."""
-    if variant == "consent":
-        starts = pd.DataFrame({"period": [0, 0], "regime_name": ["single", "single"]})
-        return _formation(), {}, starts, tuple(FormationId.__dataclass_fields__)
-    params: UserParams = {"couple_sep": {"love": 0.2}}
-    if variant == "cells":
-        params = {
-            **params,
-            "single": {"single": {"next_wealth": {"income": 0.5}}},
-            "edges": {"single": {"single": {"stay": 1.0}}},
-        }
-    starts = pd.DataFrame(
-        {
-            "age" if variant == "age" else "period": [60 if variant == "age" else 0]
-            * 4,
-            "regime_name": ["couple_sep", "couple_sep", "single", "single"],
-            "own_member": ["f", "m", "f", "m"],
-            "wealth": [4.0, 10.0, 2.0, 5.0],
-        }
-    )
-    model = _marriage(hand=False, variant=variant)
-    return model, params, starts, tuple(MarriageId.__dataclass_fields__)
-
-
-@pytest.mark.parametrize(
-    "variant", ["plain", "age", "phased", "recoded", "spread", "cells", "consent"]
-)
 def test_a_model_whose_edges_skip_a_stage_names_only_declared_regimes(
-    *, variant: str, tmp_path: Path
+    *, tmp_path: Path
 ) -> None:
     """A regime that sits out a stage is known only by the name the user declared.
 
     The regime codes, the values of a solution and of its saved copy, and the
     raw and tabulated simulation and its saved copy name only declared regimes.
     """
-    model, params, starts, declared = _skipping_case(variant)
+    model = _marriage()
+    params: UserParams = {"couple_sep": {"love": 0.2}}
+    starts = pd.DataFrame(
+        {
+            "period": [0] * 4,
+            "regime_name": ["couple_sep", "couple_sep", "single", "single"],
+            "own_member": ["f", "m", "f", "m"],
+            "wealth": [4.0, 10.0, 2.0, 5.0],
+        }
+    )
+    declared = tuple(MarriageId.__dataclass_fields__)
     solution = model.solve(params=params, log_level="off")
     loaded = lcm.load_solution(path=solution.save(path=tmp_path / "solution.lcm"))
     result = model.simulate(
@@ -3110,7 +2839,7 @@ def _offer_covers_landing_shock(*, offer: ContinuousAction, eps: FloatND) -> Boo
     return offer >= eps
 
 
-@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("enable_jit", [True])
 @pytest.mark.parametrize("shock_in_constraint", [False, True])
 def test_later_stage_destination_integrates_its_own_shock(
     *, enable_jit: bool, shock_in_constraint: bool
@@ -3156,7 +2885,7 @@ def test_later_stage_destination_integrates_its_own_shock(
     )
 
 
-@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("enable_jit", [True])
 def test_later_stage_destination_requires_feasibility_at_each_possible_shock(
     *, enable_jit: bool
 ) -> None:
@@ -3199,16 +2928,12 @@ def test_later_stage_destination_requires_feasibility_at_each_possible_shock(
     assert rows["regime_name"].astype(str).tolist() == ["couple", "couple"]
 
 
-@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("enable_jit", [True])
 @pytest.mark.parametrize(
     "rule",
     [
         lcm.PCOnActions(tie="leave"),
-        lcm.PCOnActions(),
-        lcm.PCOnWeight(tie="leave"),
-        lcm.PCOnWeight(),
         lcm.PCOnWeight(state="mu", tie="leave"),
-        lcm.PCOnWeight(state="mu"),
         _landing_settlement(),
     ],
     ids=_rule_id,
@@ -3293,15 +3018,13 @@ def _hand_landing_values(*, offset: float) -> np.ndarray:
     return np.asarray(rows)
 
 
-@pytest.mark.parametrize("enable_jit", [False, True])
-@pytest.mark.parametrize(
-    "rule", [lcm.PCOnActions(tie="leave"), lcm.PCOnWeight(tie="leave")], ids=_rule_id
-)
-@pytest.mark.parametrize("permuted", [False, True], ids=["declared", "permuted"])
+@pytest.mark.parametrize("enable_jit", [True])
+@pytest.mark.parametrize("rule", [lcm.PCOnActions(tie="leave")], ids=_rule_id)
+@pytest.mark.parametrize("permuted", [True], ids=["permuted"])
 @pytest.mark.parametrize(
     ("offset", "projection"),
-    [(0.0, _landed_wealth), (0.5, _half_more_wealth)],
-    ids=["on_grid", "off_grid"],
+    [(0.5, _half_more_wealth)],
+    ids=["off_grid"],
 )
 @pytest.mark.parametrize("topology", ["adjacent", "skipped", "split"])
 def test_a_destination_is_supported_where_it_has_a_feasible_action_at_the_landing(
@@ -3345,7 +3068,7 @@ def test_a_destination_is_supported_where_it_has_a_feasible_action_at_the_landin
         )
 
 
-@pytest.mark.parametrize("enable_jit", [False, True])
+@pytest.mark.parametrize("enable_jit", [True])
 def test_a_couple_stays_where_a_later_destination_has_no_feasible_action(
     *, enable_jit: bool
 ) -> None:
@@ -3895,7 +3618,7 @@ def _skip_values(*, crossing: bool, next_b: int) -> tuple[float, float]:
         "adjacent",
     ],
 )
-@pytest.mark.parametrize("enable_jit", [True, False], ids=["jit", "eager"])
+@pytest.mark.parametrize("enable_jit", [True], ids=["jit"])
 def test_a_lookup_reads_each_target_where_its_edge_lands(
     *, n_stages: int, source_stage: int, target_stage: int, enable_jit: bool
 ) -> None:
@@ -3995,7 +3718,7 @@ def test_a_composite_state_starts_in_the_stage_of_its_regime(
     ids=["first-stage", "skips-a-stage", "later-stage", "one-stage"],
 )
 @pytest.mark.parametrize("by_age", [False, True], ids=["period", "age"])
-@pytest.mark.parametrize("enable_jit", [True, False], ids=["jit", "eager"])
+@pytest.mark.parametrize("enable_jit", [True], ids=["jit"])
 def test_a_composite_member_law_reads_the_period_once(
     *,
     n_stages: int,

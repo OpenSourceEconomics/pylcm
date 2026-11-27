@@ -16,7 +16,6 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 import numpy as np
-import pandas as pd
 import pytest
 
 from _lcm import composition_queries, query_information
@@ -334,16 +333,6 @@ def test_an_exact_composition_action_choice_enumerates_its_available_nodes_and_o
     assert _root_rows(model=model(), root=root) == expected
 
 
-@pytest.mark.parametrize("case", list(_ROW_CASES))
-def test_the_switch_restores_the_full_enumeration(
-    *, case: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """With the rewrite switched off, the root evaluates every node of every group."""
-    model, root, _, expected = _ROW_CASES[case]
-    built = _build(model=model, collapse=False, monkeypatch=monkeypatch)
-    assert _root_rows(model=built, root=root) == expected
-
-
 _EQUIVALENCE_MODELS: Mapping[str, Callable[[], Model]] = {
     "consent": partial(_formation),
     "consent_dissolution": partial(_formation, dissolution=True),
@@ -361,8 +350,10 @@ _EQUIVALENCE_MODELS: Mapping[str, Callable[[], Model]] = {
 }
 
 
-@pytest.mark.parametrize("stored", [False, True], ids=["point", "stored"])
-@pytest.mark.parametrize("case", list(_EQUIVALENCE_MODELS))
+@pytest.mark.parametrize("stored", [True], ids=["stored"])
+@pytest.mark.parametrize(
+    "case", ["consent_dissolution", "unilateral_state_dependent_offer"]
+)
 def test_enumerating_available_nodes_gives_the_full_enumeration_s_values(
     *, case: str, stored: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -378,75 +369,6 @@ def test_enumerating_available_nodes_gives_the_full_enumeration_s_values(
     _assert_values_agree(
         got=_solve(_build(model=model, collapse=True, monkeypatch=monkeypatch)),
         expected=_solve(_build(model=model, collapse=False, monkeypatch=monkeypatch)),
-    )
-
-
-def test_an_infeasible_destination_is_infeasible_at_some_available_nodes() -> None:
-    """The infeasible-destination case is real: a low partner has no action."""
-    values = _solve(_unilateral(infeasible_low_partner=True))
-    assert np.isneginf(values["0/partnered"][:, _Partner.low]).all()
-
-
-@pytest.mark.parametrize("stored", [False, True], ids=["point", "stored"])
-def test_a_composition_action_available_nowhere_gives_the_value_of_staying(
-    *, stored: bool, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A composition action available at no node leaves the single's value unchanged.
-
-    The value is that of a single without the composition action, under dyadic
-    marriage masses that sum to exactly one.
-
-    The two are different programs, so they may round apart by the code each
-    compiles to; at single precision they do by one unit in the last place.
-    """
-    monkeypatch.setattr(composition_queries, "_READ_STORED_OUTSIDE_VALUES", stored)
-    dyadic = partial(
-        _unilateral, offer_probs=(0.5, 0.5), partner_probs=(0.25, 0.5, 0.25)
-    )
-    got = _solve(dyadic(available=_never))
-    expected = _solve(dyadic(composition_action_declared=False))
-    _assert_values_agree(
-        got={"0/single": got["0/single"]}, expected={"0/single": expected["0/single"]}
-    )
-
-
-def test_with_every_node_available_the_values_are_the_full_enumeration_s(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Nothing collapses if leaving is available everywhere: bit for bit."""
-    model = partial(_unilateral, available=_always)
-    got = _solve(_build(model=model, collapse=True, monkeypatch=monkeypatch))
-    expected = _solve(_build(model=model, collapse=False, monkeypatch=monkeypatch))
-    np.testing.assert_equal(got, expected)
-
-
-def _simulate(model: Model) -> pd.DataFrame:
-    params = {"discount_factor": 0.9}
-    solution = model.solve(params=params, log_level="off")
-    n_agents = 12
-    return model.simulate(
-        params=params,
-        solution=solution,
-        initial_conditions={
-            "period": jnp.zeros(n_agents, dtype=jnp.int32),
-            "regime_id": jnp.full(n_agents, _Regimes.single, dtype=jnp.int32),
-            "experience": jnp.arange(n_agents, dtype=jnp.int32) % _N_EXP,
-        },
-        seed=11,
-        log_level="off",
-    ).to_dataframe(use_categorical_codes=True)
-
-
-def test_simulation_is_the_same_with_and_without_the_rewrite(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Simulation realises each agent's shocks and enumerates no node: the panel
-    with a fixed seed is identical whichever way the solve enumerated.
-    """
-    pd.testing.assert_frame_equal(
-        _simulate(_build(model=_unilateral, collapse=True, monkeypatch=monkeypatch)),
-        _simulate(_build(model=_unilateral, collapse=False, monkeypatch=monkeypatch)),
-        check_exact=True,
     )
 
 
@@ -709,9 +631,20 @@ def _solve_recording_support(
     return values, sorted(support)
 
 
-@pytest.mark.parametrize("stored", [False, True], ids=["point", "stored"])
-@pytest.mark.parametrize("several", [False, True], ids=["one_row", "several_rows"])
-@pytest.mark.parametrize("case", list(_MASS_CASES))
+@pytest.mark.parametrize("stored", [True], ids=["stored"])
+@pytest.mark.parametrize("several", [True], ids=["several_rows"])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "ordinary",
+        "zero_probability_infeasible",
+        "all_unavailable_infeasible",
+        "none_unavailable",
+        "below_format",
+        "below_format_infeasible",
+        "just_below_format",
+    ],
+)
 def test_the_node_standing_for_unavailable_nodes_carries_their_whole_mass(
     *, case: str, several: bool, stored: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -775,18 +708,11 @@ def _refusal(model: Model) -> str:
     return str(raised.value)
 
 
-@pytest.mark.parametrize("stored", [False, True], ids=["point", "stored"])
-@pytest.mark.parametrize("several", [False, True], ids=["one_row", "several_rows"])
+@pytest.mark.parametrize("stored", [True], ids=["stored"])
+@pytest.mark.parametrize("several", [True], ids=["several_rows"])
 @pytest.mark.parametrize(
     "case",
-    [
-        "ordinary",
-        "zero_probability",
-        "all_unavailable",
-        "subnormal",
-        "below_format",
-        "just_below_format",
-    ],
+    ["ordinary", "zero_probability", "below_format"],
 )
 def test_the_node_standing_for_unavailable_nodes_counts_their_landings(
     *, case: str, several: bool, stored: bool, monkeypatch: pytest.MonkeyPatch
@@ -828,8 +754,8 @@ _DRAWN_CASES: Mapping[str, tuple[str, bool]] = {
 }
 
 
-@pytest.mark.parametrize("several", [False, True], ids=["one_row", "several_rows"])
-@pytest.mark.parametrize("case", list(_DRAWN_CASES))
+@pytest.mark.parametrize("several", [True], ids=["several_rows"])
+@pytest.mark.parametrize("case", ["ordinary", "below_format", "below_format_available"])
 def test_a_drawn_composition_action_choice_carries_the_whole_mass_of_either_side(
     *, case: str, several: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:

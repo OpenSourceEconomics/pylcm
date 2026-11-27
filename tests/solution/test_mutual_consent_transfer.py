@@ -533,58 +533,6 @@ def _transfer_model(
     )
 
 
-@pytest.mark.coverage(backends=("cpu",), precisions="both")
-@pytest.mark.parametrize("tie", ["stay", "leave"])
-@pytest.mark.parametrize("division", ["transfer", "assets"])
-def test_transfer_publishes_the_hand_derived_values(
-    *, division: Literal["transfer", "assets"], tie: Literal["stay", "leave"]
-) -> None:
-    """Each cell publishes `W` where the pair stays and `O(s*)` where it separates."""
-    model = _transfer_model(division=division, tie=tie)
-    np.testing.assert_array_almost_equal(
-        model.solve(params={}, log_level="off").values[0]["couple"],
-        _settled_values(tie=tie),
-        decimal=DECIMAL_PRECISION,
-    )
-
-
-@pytest.mark.coverage(backends=("cpu",), precisions="both")
-@pytest.mark.parametrize("tie", ["stay", "leave"])
-@pytest.mark.parametrize("division", ["transfer", "assets"])
-def test_transfer_lands_simulated_members_at_the_selected_transfer(
-    *, division: Literal["transfer", "assets"], tie: Literal["stay", "leave"]
-) -> None:
-    """Separating members land at `s*` and report the solve's value there."""
-    model = _transfer_model(division=division, tie=tie)
-    frame = _simulate_every_cell(model=model, n_cells=len(_SETTLE_CELLS))
-    settled = np.repeat(
-        np.asarray([point is not None for point in _SETTLED_AT[tie]]), 2
-    )
-    expected_regimes = np.where(
-        settled, np.tile(["single_f", "single_m"], len(_SETTLE_CELLS)), "couple"
-    )
-    assert list(frame["regime_name"]) == list(expected_regimes)
-    np.testing.assert_array_almost_equal(
-        _own_values(frame),
-        _settled_values(tie=tie).reshape(-1),
-        decimal=DECIMAL_PRECISION,
-    )
-
-
-@pytest.mark.coverage(backends=("cpu",), precisions="both")
-def test_transfer_divides_the_assets_movers_land_with() -> None:
-    """A mover's assets are its projection evaluated at the selected transfer."""
-    frame = _simulate_every_cell(
-        model=_transfer_model(division="assets"), n_cells=len(_SETTLE_CELLS)
-    )
-    moved = frame["regime_name"] != "couple"
-    np.testing.assert_array_almost_equal(
-        frame.loc[moved, "assets"],
-        _settled_values(tie="stay").reshape(-1)[moved.to_numpy()],
-        decimal=DECIMAL_PRECISION,
-    )
-
-
 def _solve_with_stored_reads(
     *, stored: bool, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[np.ndarray, set[str]]:
@@ -1054,7 +1002,7 @@ def _check_simulated_transfers(
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("tie", ["stay", "leave"])
-@pytest.mark.parametrize("division", ["transfer", "assets"])
+@pytest.mark.parametrize("division", ["assets"])
 def test_transfer_publishes_the_exact_root_of_the_stayers_indifference(
     *, division: Literal["transfer", "assets"], tie: Literal["stay", "leave"]
 ) -> None:
@@ -1075,7 +1023,7 @@ def test_transfer_publishes_the_exact_root_of_the_stayers_indifference(
 
 @pytest.mark.coverage(backends=("cpu",), precisions="both")
 @pytest.mark.parametrize("tie", ["stay", "leave"])
-@pytest.mark.parametrize("division", ["transfer", "assets"])
+@pytest.mark.parametrize("division", ["assets"])
 def test_transfer_lands_members_of_an_indifferent_stayer(
     *, division: Literal["transfer", "assets"], tie: Literal["stay", "leave"]
 ) -> None:

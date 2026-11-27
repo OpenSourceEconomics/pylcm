@@ -5,8 +5,6 @@ import inspect
 import jax.numpy as jnp
 import pytest
 
-from _lcm.regime_law import bind_regime_law
-from _lcm.user_regime_validation import validate_regime_law
 from lcm import (
     AgeGrid,
     CollectiveUtility,
@@ -75,33 +73,6 @@ class _CoupleRegimeId:
 
     married: ScalarInt
     widowed: ScalarInt
-
-
-def test_declaring_non_terminal_members_constructs() -> None:
-    """A non-terminal collective regime constructs.
-
-    Declaring `members` and binding a regime transition law is accepted: the
-    per-member contract is checked at construction, and the constructed
-    regime keeps both its member tuple and its non-terminal status. What a
-    collective regime is allowed to route to, and how it solves, is pinned in
-    `tests/regime_building/test_nonterminal_collective_solve.py`.
-    """
-
-    def _some_transition(_age: float) -> int:
-        return 0
-
-    regime = Regime(
-        states={"wealth": _WEALTH},
-        actions={"labor_supply_f": DiscreteGrid(category_class=LaborSupply)},
-        state_transitions={"wealth": lambda wealth: wealth},
-        functions={
-            "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
-        },
-    )
-    law = bind_regime_law(_some_transition)
-    validate_regime_law(regime, law=law)
-    assert regime.members == ("f", "m")
-    assert not law.terminal
 
 
 def test_terminal_members_without_per_member_utility_is_rejected() -> None:

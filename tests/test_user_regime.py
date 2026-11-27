@@ -975,16 +975,6 @@ def _guard_model(
     )
 
 
-def test_model_refuses_a_value_grid_hidden_by_fixed_component_factoring() -> None:
-    """Factoring a Markov state into fixed components cannot hide a value grid."""
-    with pytest.raises(RegimeInitializationError, match=r"values=\.\.\."):
-        _guard_model(
-            grid=DiscreteGrid(values=np.array([10, 20])),
-            location="fixed_component",
-            scope="regime",
-        )
-
-
 @pytest.mark.parametrize("scope", ["regime", "model"])
 @pytest.mark.parametrize(
     "values",

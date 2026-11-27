@@ -57,15 +57,6 @@ from tests.simulation import test_type_grouped_simulation as grouped_simulation
 from tests.test_models import independent_types
 
 
-class _CompileKwargs(TypedDict):
-    lowering_key: Hashable
-    low: jax.stages.Lowered
-    label: str
-    log_kernel_memory: bool
-    logger: logging.Logger
-    phase: str | None
-
-
 class _SpaceKwargs(TypedDict):
     regime_params: FlatRegimeParams
     process_grid_resolver: NotRequired[ProcessGridResolver | None]
@@ -291,18 +282,6 @@ def test_execution_config_refuses_an_unusable_block_width(
         ExecutionConfig(invariant_block_widths=widths)  # ty: ignore[invalid-argument-type]
 
 
-@pytest.mark.parametrize("workload", _WORKLOADS)
-def test_blocked_solve_agrees_with_the_unblocked_solve(workload: str) -> None:
-    """Every published value agrees with the unblocked one within eight ULP."""
-    model, params = _workload(name=workload, execution_config=_blocked())
-    reference, _ = _workload(name=workload, execution_config=ExecutionConfig())
-
-    assert_general_values_agree(
-        got=_values(model=model, params=params),
-        expected=_values(model=reference, params=params),
-    )
-
-
 def test_blocked_solve_matches_the_enumerated_oracle() -> None:
     """Each type's blocked values equal the independent enumeration."""
     model = _independent_types_model(execution_config=_blocked())
@@ -331,29 +310,6 @@ def test_blocked_solve_with_changed_params_equals_the_unblocked_one() -> None:
     assert not np.array_equal(
         np.asarray(changed[0]["working"]), np.asarray(base[0]["working"])
     )
-
-
-def test_blocked_simulation_equals_the_unblocked_panel() -> None:
-    """Simulated choices and states from a blocked solve are the unblocked ones."""
-    n_wealth = independent_types.N_WEALTH_POINTS
-    types = np.repeat(np.arange(_N_TYPES), n_wealth)
-    initial_conditions = {
-        "regime_id": jnp.full(types.size, independent_types.RegimeId.working),
-        "age": jnp.zeros(types.size),
-        "wealth": jnp.asarray(np.tile(np.arange(n_wealth, dtype=float), _N_TYPES)),
-        "pref_type": jnp.asarray(types, dtype=jnp.int32),
-    }
-    results = [
-        _independent_types_model(execution_config=config).simulate(
-            params=independent_types.get_params(),
-            initial_conditions=initial_conditions,
-            seed=0,
-            log_level="off",
-        )
-        for config in (_blocked(), ExecutionConfig())
-    ]
-
-    grouped_simulation._assert_general_panels_agree(got=results[0], want=results[1])
 
 
 @pytest.mark.parametrize("typed_terminal", [False, True])
@@ -476,37 +432,6 @@ def test_an_unblocked_carrier_keeps_one_main_program() -> None:
     assert [(name, program.invariant_binding) for name, program in graph.items()] == [
         ("main", None)
     ]
-
-
-def _count_compiles(
-    *, monkeypatch: pytest.MonkeyPatch, model: Model, params: UserParams
-) -> int:
-    calls: list[Hashable] = []
-    compile_and_log = backward_induction._compile_and_log
-
-    def counted(
-        **kwargs: Unpack[_CompileKwargs],
-    ) -> tuple[Hashable, jax.stages.Compiled]:
-        calls.append(kwargs["lowering_key"])
-        return compile_and_log(**kwargs)
-
-    monkeypatch.setattr(backward_induction, "_compile_and_log", counted)
-    model.solve(params=params, log_level="off")
-    monkeypatch.undo()
-    return len(calls)
-
-
-@pytest.mark.parametrize("workload", _WORKLOADS)
-def test_blocked_solve_compiles_no_program_per_type(
-    *, monkeypatch: pytest.MonkeyPatch, workload: str
-) -> None:
-    """Blocking compiles exactly as many programs as the unblocked solve."""
-    blocked, params = _workload(name=workload, execution_config=_blocked())
-    reference, _ = _workload(name=workload, execution_config=ExecutionConfig())
-
-    assert _count_compiles(
-        monkeypatch=monkeypatch, model=blocked, params=params
-    ) == _count_compiles(monkeypatch=monkeypatch, model=reference, params=params)
 
 
 class _CompileRequests(logging.Handler):

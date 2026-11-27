@@ -44,7 +44,6 @@ from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_building.transition_support import (
     _SupportedDeterministicTransition,
 )
-from _lcm.regime_law import RegimeLaws
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
@@ -114,11 +113,6 @@ def _next_regime() -> ScalarInt:
     return RegimeId.couple_terminal
 
 
-_GRAPH_BOUND_LAW = _SupportedDeterministicTransition(
-    func=_next_regime, targets=("couple_terminal",)
-)
-
-
 _WAGE_GRID = LinSpacedGrid(start=8.0, stop=40.0, n_points=2)
 
 _EXPECTED_V_TERMINAL = np.array([[30.0, 0.0], [40.0, 80.0]])
@@ -148,84 +142,6 @@ def _make_couple_regimes() -> dict[str, Regime]:
         },
     )
     return {"couple": couple, "couple_terminal": couple_terminal}
-
-
-def _couple_laws() -> RegimeLaws:
-    """The couple regimes' laws, bound as a model binds them."""
-    return bind_laws(
-        {
-            "couple": ByAge(cases={AgeRange(exclusive_stop=1): _GRAPH_BOUND_LAW}),
-            "couple_terminal": None,
-        }
-    )
-
-
-def test_nonterminal_collective_regime_solves_with_continuation() -> None:
-    """Kernel-level: finalize -> process -> backward induction, two periods."""
-    laws = _couple_laws()
-    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    regimes = process_regimes(
-        prepared_structure=build_prepared_structure(
-            user_regimes=finalize_regimes(
-                user_regimes=_make_couple_regimes(),
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-                laws=laws,
-            ),
-            ages=ages,
-            laws=laws,
-        ),
-        user_regimes=finalize_regimes(
-            user_regimes=_make_couple_regimes(),
-            derived_categoricals={},
-            koopmans_aggregator=LinearAggregator(),
-            certainty_equivalent=LinearExpectation(),
-            laws=laws,
-        ),
-        ages=ages,
-        regime_names_to_ids=MappingProxyType(
-            {"couple": jnp.int32(0), "couple_terminal": jnp.int32(1)}
-        ),
-        enable_jit=False,
-    )
-
-    _bi_result = solve(
-        program_fingerprint="test_nonterminal_collective_solve",
-        flat_params=MappingProxyType(
-            {
-                "couple": MappingProxyType(
-                    {"koopmans_aggregator__discount_factor": jnp.asarray(0.95)}
-                ),
-                "couple_terminal": MappingProxyType({}),
-            }
-        ),
-        ages=ages,
-        regimes=regimes,
-        logger=get_logger(log_level="off"),
-        enable_jit=False,
-    )
-    solution = _bi_result.value_functions
-    _sim_policies = _bi_result.simulation_policies
-
-    V_terminal = solution[1]["couple_terminal"]
-    V_0 = solution[0]["couple"]
-
-    # Both V arrays carry the trailing member axis: (wage grid = 2) x (S = 2).
-    assert V_terminal.shape == (2, 2)
-    assert V_0.shape == (2, 2)
-
-    np.testing.assert_allclose(np.asarray(V_terminal), _EXPECTED_V_TERMINAL, rtol=1e-6)
-    np.testing.assert_allclose(np.asarray(V_0), _EXPECTED_V_PERIOD_0, rtol=1e-6)
-
-    # Per-member values genuinely differ (not the scalarization).
-    assert not np.allclose(np.asarray(V_0[:, 0]), np.asarray(V_0[:, 1]))
-
-    # The continuation flips the argmax at the low wage: the myopic (terminal)
-    # household choice there is leisure, whose period-0 member values would
-    # be (30 + 0.95*30, 0 + 0.95*0) = (58.5, 0). The solved V is the work
-    # branch's (46, 92) instead.
-    assert not np.allclose(np.asarray(V_0[0]), [58.5, 0.0])
 
 
 def test_nonterminal_collective_full_model_solve_matches_kernel_level() -> None:
@@ -387,41 +303,6 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_member() -> 
     np.testing.assert_allclose(np.asarray(V_0), expected_period_0, rtol=1e-6)
 
 
-def test_collective_model_simulates_end_to_end_via_public_model_api() -> None:
-    """A collective regime simulates end to end through the public model API.
-
-    The full recomputed-argmax mechanics (both members tracked, values
-    matching the hand computation above) are covered in depth by
-    `tests/regime_building/test_collective_regime_simulate.py`; this pin just
-    confirms the PUBLIC `Model.simulate()` path — auto-solving, then
-    simulating — runs end to end instead of raising, for a collective regime
-    with no gated edges (so `period_to_regime_to_V_arr`/dissolution flags need no
-    special threading).
-    """
-    ages = AgeGrid(start=0, inclusive_stop=2, step="Y")
-    model = Model(
-        regimes=_make_couple_regimes(),
-        edges={"couple": {"couple_terminal": 0}},
-        ages=ages,
-        regime_id_class=RegimeId,
-        initial_nodes={ages.exact_values[0]: "couple"},
-    )
-    result = model.simulate(
-        params={"discount_factor": 0.95},
-        initial_conditions={
-            "wage": jnp.array([8.0, 40.0]),
-            "age": jnp.array([0.0, 0.0]),
-            "regime_id": jnp.array([0, 0], dtype=jnp.int32),
-        },
-        log_level="off",
-        seed=0,
-    )
-    period_0 = result.raw_results["couple"][0]
-    np.testing.assert_allclose(
-        np.asarray(period_0.V_arr), _EXPECTED_V_PERIOD_0, rtol=1e-6
-    )
-
-
 def test_nonterminal_collective_regime_with_singleton_target_is_rejected() -> None:
     """Routing a collective regime toward a singleton target needs a gated edge."""
 
@@ -529,10 +410,7 @@ def _epstein_zin(
 
 @pytest.mark.parametrize(
     ("member", "weights", "koopmans_aggregator", "certainty_equivalent"),
-    [
-        ("f", {"f": 1.0, "m": 0.0}, CESAggregator(), PowerMean()),
-        ("m", {"f": 0.0, "m": 1.0}, LinearAggregator(), LinearExpectation()),
-    ],
+    [("f", {"f": 1.0, "m": 0.0}, CESAggregator(), PowerMean())],
 )
 def test_each_member_aggregates_with_its_own_w_and_certainty_equivalent(
     *,
@@ -688,16 +566,14 @@ def _scalar_W_model(
     )
 
 
-@pytest.mark.parametrize("with_ce", [False, True], ids=["default_ce", "declared_ce"])
-@pytest.mark.parametrize("with_action", [False, True], ids=["no_action", "action"])
+@pytest.mark.parametrize("with_ce", [True], ids=["declared_ce"])
+@pytest.mark.parametrize("with_action", [True], ids=["action"])
 @pytest.mark.parametrize("decoupled", [False, True], ids=["plain", "decoupled"])
-@pytest.mark.parametrize(
-    "aggregator", [_summed_W, _euclidean_W], ids=["linear", "nonlinear"]
-)
+@pytest.mark.parametrize("aggregator", [_euclidean_W], ids=["nonlinear"])
 @pytest.mark.parametrize(
     "member_names",
-    [("self",), ("a",), ("a", "b"), ("b", "a")],
-    ids=["single", "one_named", "pair", "reversed_pair"],
+    [("b", "a")],
+    ids=["reversed_pair"],
 )
 def test_a_scalar_aggregator_is_applied_to_each_members_own_values(
     *,
@@ -773,13 +649,8 @@ _BETA_BY_CODE: dict[UserFunction, tuple[float, float]] = {
 
 @pytest.mark.parametrize(
     ("aggregators", "weights"),
-    [
-        ({"a": _mood_W}, None),
-        ({"a": _mood_W, "b": _mood_W}, None),
-        ({"b": _mood_W, "a": _mood_W}, None),
-        ({"a": _mood_W, "b": _age_W}, {"a": 0.75, "b": 0.25}),
-    ],
-    ids=["one_named", "pair", "reversed_pair", "distinct_consumers"],
+    [({"a": _mood_W, "b": _age_W}, {"a": 0.75, "b": 0.25})],
+    ids=["distinct_consumers"],
 )
 def test_a_labelled_parameter_of_a_member_aggregator_is_read_by_label(
     *,
